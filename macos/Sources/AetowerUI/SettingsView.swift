@@ -44,6 +44,25 @@ public struct SettingsView: View {
                     }
                 }
 
+                GroupBox("Integrations") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        TextField("Chromium endpoint", text: $settings.chromiumEndpoint)
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Docker socket path", text: $settings.dockerSocketPath)
+                            .textFieldStyle(.roundedBorder)
+                        Toggle("Enable privileged helper", isOn: $settings.privilegedHelperEnabled)
+                        TextField("Privileged helper path", text: $settings.privilegedHelperPath)
+                            .textFieldStyle(.roundedBorder)
+                        Text("The privileged helper is optional. It is intended to run with elevated rights when you want deeper socket attribution.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Apply integration settings") {
+                            state.applyIntegrationSettings(settings)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+
                 Text("Capabilities")
                     .font(.largeTitle.weight(.semibold))
                 Text("Aetower keeps core monitoring useful without invasive access, and exposes richer integrations behind explicit capability gates.")

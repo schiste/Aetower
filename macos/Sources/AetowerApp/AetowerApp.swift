@@ -28,6 +28,7 @@ struct AetowerApp: App {
             .frame(minWidth: 1180, minHeight: 760)
             .task {
                 state.start(refreshInterval: settings.refreshIntervalSeconds)
+                state.applyIntegrationSettings(settings)
             }
             .onChange(of: settings.refreshIntervalSeconds) { _, newValue in
                 state.start(refreshInterval: newValue)

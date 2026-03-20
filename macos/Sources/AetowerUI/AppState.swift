@@ -81,6 +81,22 @@ public final class AppState: ObservableObject {
         refresh()
     }
 
+    public func applyIntegrationSettings(_ settings: SettingsStore) {
+        let chromiumEndpoint = settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let dockerSocketPath = settings.dockerSocketPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let privilegedHelperPath = settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        bridge.configureChromiumEndpoint(chromiumEndpoint.isEmpty ? nil : chromiumEndpoint)
+        bridge.configureDockerSocketPath(
+            dockerSocketPath.isEmpty ? "/var/run/docker.sock" : dockerSocketPath
+        )
+        bridge.configurePrivilegedHelper(
+            path: privilegedHelperPath.isEmpty ? nil : privilegedHelperPath,
+            enabled: settings.privilegedHelperEnabled
+        )
+        refresh()
+    }
+
     public func refresh() {
         publishFrontmostState()
         do {

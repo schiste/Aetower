@@ -35,4 +35,16 @@ public final class EngineBridge {
     public func clearFrontmostAppState() {
         engine.clearFrontmostAppState()
     }
+
+    public func configureChromiumEndpoint(_ endpoint: String?) {
+        engine.configureChromiumEndpoint(endpoint: endpoint)
+    }
+
+    public func configureDockerSocketPath(_ socketPath: String) {
+        engine.configureDockerSocketPath(socketPath: socketPath)
+    }
+
+    public func configurePrivilegedHelper(path: String?, enabled: Bool) {
+        engine.configurePrivilegedHelper(helperPath: path, enabled: enabled)
+    }
 }
