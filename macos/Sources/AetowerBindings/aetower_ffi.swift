@@ -1001,6 +1001,8 @@ public struct EntitySnapshot {
     public var displayName: String
     public var bundleId: String?
     public var executablePath: String?
+    public var oldestProcessStartMillis: UInt64
+    public var newestProcessStartMillis: UInt64
     public var entityKind: EntityKind
     public var metrics: AggregateMetrics
     public var friction: FrictionBreakdown
@@ -1011,11 +1013,13 @@ public struct EntitySnapshot {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entityId: String, displayName: String, bundleId: String?, executablePath: String?, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?) {
+    public init(entityId: String, displayName: String, bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?) {
         self.entityId = entityId
         self.displayName = displayName
         self.bundleId = bundleId
         self.executablePath = executablePath
+        self.oldestProcessStartMillis = oldestProcessStartMillis
+        self.newestProcessStartMillis = newestProcessStartMillis
         self.entityKind = entityKind
         self.metrics = metrics
         self.friction = friction
@@ -1040,6 +1044,12 @@ extension EntitySnapshot: Equatable, Hashable {
             return false
         }
         if lhs.executablePath != rhs.executablePath {
+            return false
+        }
+        if lhs.oldestProcessStartMillis != rhs.oldestProcessStartMillis {
+            return false
+        }
+        if lhs.newestProcessStartMillis != rhs.newestProcessStartMillis {
             return false
         }
         if lhs.entityKind != rhs.entityKind {
@@ -1071,6 +1081,8 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(displayName)
         hasher.combine(bundleId)
         hasher.combine(executablePath)
+        hasher.combine(oldestProcessStartMillis)
+        hasher.combine(newestProcessStartMillis)
         hasher.combine(entityKind)
         hasher.combine(metrics)
         hasher.combine(friction)
@@ -1093,6 +1105,8 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
                 displayName: FfiConverterString.read(from: &buf), 
                 bundleId: FfiConverterOptionString.read(from: &buf), 
                 executablePath: FfiConverterOptionString.read(from: &buf), 
+                oldestProcessStartMillis: FfiConverterUInt64.read(from: &buf), 
+                newestProcessStartMillis: FfiConverterUInt64.read(from: &buf), 
                 entityKind: FfiConverterTypeEntityKind.read(from: &buf), 
                 metrics: FfiConverterTypeAggregateMetrics.read(from: &buf), 
                 friction: FfiConverterTypeFrictionBreakdown.read(from: &buf), 
@@ -1108,6 +1122,8 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
         FfiConverterString.write(value.displayName, into: &buf)
         FfiConverterOptionString.write(value.bundleId, into: &buf)
         FfiConverterOptionString.write(value.executablePath, into: &buf)
+        FfiConverterUInt64.write(value.oldestProcessStartMillis, into: &buf)
+        FfiConverterUInt64.write(value.newestProcessStartMillis, into: &buf)
         FfiConverterTypeEntityKind.write(value.entityKind, into: &buf)
         FfiConverterTypeAggregateMetrics.write(value.metrics, into: &buf)
         FfiConverterTypeFrictionBreakdown.write(value.friction, into: &buf)

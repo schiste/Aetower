@@ -148,6 +148,8 @@ pub struct EntitySnapshot {
     pub display_name: String,
     pub bundle_id: Option<String>,
     pub executable_path: Option<String>,
+    pub oldest_process_start_millis: u64,
+    pub newest_process_start_millis: u64,
     pub entity_kind: EntityKind,
     pub metrics: AggregateMetrics,
     pub friction: FrictionBreakdown,

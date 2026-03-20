@@ -9,6 +9,7 @@ use sysinfo::{
 pub struct RawProcessSample {
     pub pid: u32,
     pub parent_pid: Option<u32>,
+    pub start_time_millis: u64,
     pub name: String,
     pub exe: Option<String>,
     pub cmd: Vec<String>,
@@ -84,6 +85,7 @@ impl Collector {
             .map(|process| RawProcessSample {
                 pid: process.pid().as_u32(),
                 parent_pid: process.parent().map(|parent| parent.as_u32()),
+                start_time_millis: process.start_time().saturating_mul(1_000),
                 name: process.name().to_owned(),
                 exe: path_to_string(process.exe()),
                 cmd: process

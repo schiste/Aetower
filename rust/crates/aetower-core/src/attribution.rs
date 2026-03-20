@@ -28,6 +28,15 @@ pub fn build_entities(
             .entry(entity_id.clone())
             .or_insert_with(|| entity_from_seed(seed));
 
+        if process.start_time_millis > 0 {
+            entry.oldest_process_start_millis = match entry.oldest_process_start_millis {
+                0 => process.start_time_millis,
+                current => current.min(process.start_time_millis),
+            };
+            entry.newest_process_start_millis =
+                entry.newest_process_start_millis.max(process.start_time_millis);
+        }
+
         entry.metrics.cpu_percent += process.cpu_percent;
         entry.metrics.memory_resident_bytes =
             entry.metrics.memory_resident_bytes.max(process.memory_bytes);
@@ -78,6 +87,8 @@ fn entity_from_seed(seed: &EntitySeed) -> EntitySnapshot {
         display_name: seed.display_name.clone(),
         bundle_id: seed.bundle_id.clone(),
         executable_path: seed.executable_path.clone(),
+        oldest_process_start_millis: 0,
+        newest_process_start_millis: 0,
         entity_kind: seed.entity_kind.clone(),
         metrics: AggregateMetrics::default(),
         friction: Default::default(),
