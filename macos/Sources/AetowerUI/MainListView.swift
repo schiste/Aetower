@@ -288,7 +288,6 @@ public struct MainListView: View {
             VStack(alignment: .leading, spacing: 14) {
                 if let topConcern {
                     VStack(alignment: .leading, spacing: 6) {
-                        SectionEyebrow(text: "Read")
                         HStack(spacing: 8) {
                             StatusBadge(score: Double(topConcern.friction.totalScore))
                             Text(topConcernSummary(for: topConcern))
@@ -297,12 +296,6 @@ public struct MainListView: View {
                                 .lineLimit(2)
                         }
                     }
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionEyebrow(text: "Filter")
-                    TextField("Search apps, reasons, or badges", text: $searchText)
-                        .textFieldStyle(.roundedBorder)
                 }
 
                 rankedEntitiesSection
@@ -355,9 +348,11 @@ public struct MainListView: View {
 
     private var rankedEntitiesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionEyebrow(text: "Ranking")
             Text("Apps ranked by current friction")
                 .font(.headline)
+
+            TextField("Search apps, reasons, or badges", text: $searchText)
+                .textFieldStyle(.roundedBorder)
 
             if filteredEntities.isEmpty {
                 ContentUnavailableView(
