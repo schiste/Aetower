@@ -15,7 +15,7 @@ public struct TimelineView: View {
                     .frame(maxWidth: .infinity)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    ForEach(events.reversed()) { event in
+                    ForEach(Array(events.reversed()), id: \.id) { event in
                         HStack(alignment: .top, spacing: 12) {
                             Circle()
                                 .fill(color(for: event.severity))

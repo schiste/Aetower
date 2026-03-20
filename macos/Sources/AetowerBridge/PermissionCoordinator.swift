@@ -2,6 +2,13 @@ import AppKit
 import ApplicationServices
 import Foundation
 
+public struct FrontmostAppObservation {
+    public let appName: String
+    public let bundleId: String?
+    public let executablePath: String?
+    public let windowTitle: String?
+}
+
 public struct PermissionResult {
     public let state: CapabilityState
     public let detail: String
@@ -35,6 +42,19 @@ public final class PermissionCoordinator {
                     : "Docker socket not found."
             )
         }
+    }
+
+    public func currentFrontmostAppObservation() -> FrontmostAppObservation? {
+        guard let app = NSWorkspace.shared.frontmostApplication else {
+            return nil
+        }
+
+        return FrontmostAppObservation(
+            appName: app.localizedName ?? app.bundleIdentifier ?? "Unknown App",
+            bundleId: app.bundleIdentifier,
+            executablePath: app.executableURL?.path,
+            windowTitle: currentFocusedWindowTitle(for: app)
+        )
     }
 
     private func requestAccessibility() -> PermissionResult {
@@ -82,5 +102,34 @@ public final class PermissionCoordinator {
             return
         }
         NSWorkspace.shared.open(url)
+    }
+
+    private func currentFocusedWindowTitle(for app: NSRunningApplication) -> String? {
+        guard AXIsProcessTrusted() else {
+            return nil
+        }
+
+        let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
+        var focusedWindow: CFTypeRef?
+        let focusedWindowResult = AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXFocusedWindowAttribute as CFString,
+            &focusedWindow
+        )
+        guard focusedWindowResult == .success, let focusedWindow else {
+            return nil
+        }
+
+        let windowElement = focusedWindow as! AXUIElement
+        var title: CFTypeRef?
+        let titleResult = AXUIElementCopyAttributeValue(
+            windowElement,
+            kAXTitleAttribute as CFString,
+            &title
+        )
+        guard titleResult == .success else {
+            return nil
+        }
+        return title as? String
     }
 }

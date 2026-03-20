@@ -57,7 +57,7 @@ public struct MainListView: View {
             VStack(spacing: 0) {
                 header
                 List(selection: $state.selectedEntityID) {
-                    ForEach(state.visibleEntities) { entity in
+                    ForEach(state.visibleEntities, id: \.entityId) { entity in
                         EntityRow(entity: entity)
                             .tag(entity.entityId)
                     }

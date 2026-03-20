@@ -19,7 +19,7 @@ public final class AppState: ObservableObject {
     ) {
         self.bridge = bridge
         self.permissionCoordinator = permissionCoordinator
-        self.snapshot = SystemSnapshot(
+        self.snapshot = (try? bridge.latestSnapshot()) ?? SystemSnapshot(
             sequence: 0,
             capturedAtMillis: 0,
             host: HostSnapshot(
@@ -30,7 +30,9 @@ public final class AppState: ObservableObject {
                 networkReceiveBps: 0,
                 networkSendBps: 0,
                 thermalState: "nominal",
-                onBattery: false
+                onBattery: false,
+                frontmostAppName: nil,
+                frontmostWindowTitle: nil
             ),
             capabilities: [],
             entities: [],
@@ -75,6 +77,7 @@ public final class AppState: ObservableObject {
     }
 
     public func refresh() {
+        publishFrontmostState()
         do {
             snapshot = try bridge.latestSnapshot()
             if selectedEntityID == nil {
@@ -83,5 +86,19 @@ public final class AppState: ObservableObject {
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    private func publishFrontmostState() {
+        guard let observation = permissionCoordinator.currentFrontmostAppObservation() else {
+            bridge.clearFrontmostAppState()
+            return
+        }
+
+        bridge.updateFrontmostAppState(
+            appName: observation.appName,
+            bundleId: observation.bundleId,
+            executablePath: observation.executablePath,
+            windowTitle: observation.windowTitle
+        )
     }
 }

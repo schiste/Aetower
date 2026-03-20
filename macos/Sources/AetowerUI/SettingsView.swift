@@ -16,14 +16,14 @@ public struct SettingsView: View {
                 Text("Aetower keeps core monitoring useful without invasive access, and exposes richer integrations behind explicit capability gates.")
                     .foregroundStyle(.secondary)
 
-                ForEach(state.snapshot.capabilities) { capability in
+                ForEach(Array(state.snapshot.capabilities.enumerated()), id: \.offset) { _, capability in
                     GroupBox {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
-                                Text(capability.kind.rawValue)
+                                Text(String(describing: capability.kind))
                                     .font(.headline)
                                 Spacer()
-                                Text(capability.state.rawValue)
+                                Text(String(describing: capability.state))
                                     .font(.caption.monospaced())
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)

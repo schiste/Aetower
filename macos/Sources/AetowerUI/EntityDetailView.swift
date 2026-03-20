@@ -24,11 +24,12 @@ public struct EntityDetailView: View {
     private var summary: some View {
         GroupBox("Summary") {
             VStack(alignment: .leading, spacing: 10) {
-                LabeledContent("Entity type", value: entity.entityKind.rawValue)
+                LabeledContent("Entity type", value: String(describing: entity.entityKind))
                 LabeledContent("Bundle", value: entity.bundleId ?? "n/a")
                 LabeledContent("Executable", value: entity.executablePath ?? "n/a")
                 LabeledContent("Processes", value: "\(entity.metrics.processCount)")
                 LabeledContent("Foreground", value: entity.metrics.isForeground ? "yes" : "no")
+                LabeledContent("Active window", value: entity.activeWindowTitle ?? "n/a")
                 LabeledContent("Badges", value: entity.badges.isEmpty ? "none" : entity.badges.joined(separator: ", "))
             }
         }
@@ -56,7 +57,7 @@ public struct EntityDetailView: View {
     private var components: some View {
         GroupBox("Components") {
             LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(entity.components) { component in
+                ForEach(Array(entity.components.enumerated()), id: \.offset) { _, component in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(component.title)

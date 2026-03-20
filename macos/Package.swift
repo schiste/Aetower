@@ -22,17 +22,22 @@ let package = Package(
     ],
     targets: [
         .systemLibrary(
-            name: "CAetowerFFI",
-            path: "Sources/CAetowerFFI"
+            name: "aetower_ffiFFI",
+            path: "Sources/aetower_ffiFFI"
         ),
         .target(
-            name: "AetowerBridge",
-            dependencies: ["CAetowerFFI"],
-            path: "Sources/AetowerBridge",
+            name: "AetowerBindings",
+            dependencies: ["aetower_ffiFFI"],
+            path: "Sources/AetowerBindings",
             linkerSettings: [
                 .unsafeFlags(["-L", rustDebugLibraryPath, "-L", rustReleaseLibraryPath]),
                 .linkedLibrary("aetower_ffi")
             ]
+        ),
+        .target(
+            name: "AetowerBridge",
+            dependencies: ["AetowerBindings"],
+            path: "Sources/AetowerBridge"
         ),
         .target(
             name: "AetowerUI",

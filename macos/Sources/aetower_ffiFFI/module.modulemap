@@ -1,0 +1,4 @@
+module aetower_ffiFFI {
+    header "aetower_ffiFFI.h"
+    export *
+}

@@ -1,0 +1,12 @@
+[package]
+name = "uniffi-bindgen-swift"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "uniffi-bindgen-swift"
+path = "src/main.rs"
+
+[dependencies]
+uniffi.workspace = true
