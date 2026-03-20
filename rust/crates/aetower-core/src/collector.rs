@@ -76,9 +76,9 @@ impl Collector {
 
         let host = RawHostSample {
             cpu_percent: self.system.global_cpu_info().cpu_usage(),
-            memory_used_bytes: self.system.used_memory() * 1024,
-            memory_total_bytes: self.system.total_memory() * 1024,
-            swap_used_bytes: self.system.used_swap() * 1024,
+            memory_used_bytes: self.system.used_memory(),
+            memory_total_bytes: self.system.total_memory(),
+            swap_used_bytes: self.system.used_swap(),
             network_receive_bps: network_totals
                 .received
                 .saturating_sub(self.previous_network_totals.received),
@@ -104,8 +104,8 @@ impl Collector {
                     .map(|segment| segment.to_string())
                     .collect(),
                 cpu_percent: process.cpu_usage(),
-                memory_bytes: process.memory() * 1024,
-                virtual_memory_bytes: process.virtual_memory() * 1024,
+                memory_bytes: process.memory(),
+                virtual_memory_bytes: process.virtual_memory(),
                 disk_read_bytes: process.disk_usage().read_bytes,
                 disk_write_bytes: process.disk_usage().written_bytes,
             })
