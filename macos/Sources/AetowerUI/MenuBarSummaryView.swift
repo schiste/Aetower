@@ -3,11 +3,9 @@ import AetowerBridge
 
 public struct MenuBarSummaryView: View {
     @ObservedObject private var state: AppState
-    @ObservedObject private var settings: SettingsStore
 
-    public init(state: AppState, settings: SettingsStore) {
+    public init(state: AppState) {
         self.state = state
-        self.settings = settings
     }
 
     public var body: some View {
@@ -46,17 +44,17 @@ public struct MenuBarSummaryView: View {
 
             Divider()
 
-            Toggle("Show menu bar extra", isOn: $settings.showMenuBarExtra)
-
             Button("Refresh now") {
                 state.refresh()
             }
             .buttonStyle(.borderedProminent)
+
+            Button("Open Settings") {
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            .buttonStyle(.bordered)
         }
         .padding(14)
         .frame(width: 280)
-        .onChange(of: settings.showMenuBarExtra) { _, _ in
-            settings.persist()
-        }
     }
 }

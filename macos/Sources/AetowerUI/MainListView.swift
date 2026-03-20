@@ -47,6 +47,8 @@ private struct EntityRow: View {
 
 public struct MainListView: View {
     @ObservedObject private var state: AppState
+    @State private var selectedEntityID: String?
+    @State private var searchText = ""
 
     public init(state: AppState) {
         self.state = state
@@ -56,17 +58,23 @@ public struct MainListView: View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 header
-                List(selection: $state.selectedEntityID) {
-                    ForEach(state.visibleEntities, id: \.entityId) { entity in
-                        EntityRow(entity: entity)
-                            .tag(entity.entityId)
+                List {
+                    ForEach(filteredEntities, id: \.entityId) { entity in
+                        Button {
+                            selectedEntityID = entity.entityId
+                        } label: {
+                            EntityRow(entity: entity)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(rowBackground(for: entity.entityId))
                     }
                 }
                 .listStyle(.inset)
             }
             .navigationTitle("Aetower")
         } detail: {
-            if let entity = state.selectedEntity {
+            if let entity = selectedEntity {
                 EntityDetailView(entity: entity)
             } else {
                 ContentUnavailableView("No entity selected", systemImage: "rectangle.stack")
@@ -89,21 +97,55 @@ public struct MainListView: View {
                 MetricCell(label: "Memory", value: "\(formatBytes(state.snapshot.host.memoryUsedBytes)) / \(formatBytes(state.snapshot.host.memoryTotalBytes))")
                 MetricCell(label: "Net", value: "\(formatRate(state.snapshot.host.networkReceiveBps)) ↓")
             }
-            TextField("Filter apps, badges, or activity", text: $state.searchText)
+            TextField("Filter apps, badges, or activity", text: $searchText)
                 .textFieldStyle(.roundedBorder)
         }
         .padding()
         .background(.thinMaterial)
     }
+
+    private var filteredEntities: [EntitySnapshot] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            return state.snapshot.entities
+        }
+
+        let loweredQuery = query.localizedLowercase
+        return state.snapshot.entities.filter { entity in
+            entity.displayName.localizedLowercase.contains(loweredQuery)
+                || entity.badges.joined(separator: " ").localizedLowercase.contains(loweredQuery)
+                || entity.friction.reasons.joined(separator: " ").localizedLowercase.contains(loweredQuery)
+        }
+    }
+
+    private var selectedEntity: EntitySnapshot? {
+        guard let selectedEntityID else {
+            return filteredEntities.first
+        }
+        return filteredEntities.first(where: { $0.entityId == selectedEntityID }) ?? filteredEntities.first
+    }
+
+    private func rowBackground(for entityID: String) -> Color {
+        if selectedEntityID == entityID {
+            return Color(nsColor: .quaternaryLabelColor).opacity(0.12)
+        }
+        return .clear
+    }
 }
 
 func formatBytes(_ bytes: UInt64) -> String {
-    let formatter = ByteCountFormatter()
-    formatter.allowedUnits = [.useMB, .useGB]
-    formatter.countStyle = .binary
-    return formatter.string(fromByteCount: Int64(bytes))
+    ByteFormatters.binary.string(fromByteCount: Int64(bytes))
 }
 
 func formatRate(_ bytesPerSecond: UInt64) -> String {
     "\(formatBytes(bytesPerSecond))/s"
+}
+
+private enum ByteFormatters {
+    static let binary: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB, .useGB]
+        formatter.countStyle = .binary
+        return formatter
+    }()
 }
