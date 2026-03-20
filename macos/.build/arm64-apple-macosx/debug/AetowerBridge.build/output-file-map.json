@@ -1,0 +1,19 @@
+{
+  "": {
+    "swift-dependencies": "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/master.swiftdeps"
+  },
+  "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerBridge/EngineBridge.swift": {
+    "dependencies": "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/EngineBridge.d",
+    "object": "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/EngineBridge.swift.o",
+    "swiftmodule": "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/EngineBridge~partial.swiftmodule",
+    "swift-dependencies": "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/EngineBridge.swiftdeps",
+    "diagnostics": "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/EngineBridge.dia"
+  },
+  "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerBridge/PermissionCoordinator.swift": {
+    "dependencies": "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/PermissionCoordinator.d",
+    "object": "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/PermissionCoordinator.swift.o",
+    "swiftmodule": "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/PermissionCoordinator~partial.swiftmodule",
+    "swift-dependencies": "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/PermissionCoordinator.swiftdeps",
+    "diagnostics": "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/PermissionCoordinator.dia"
+  }
+}

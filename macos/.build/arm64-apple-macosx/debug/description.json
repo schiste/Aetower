@@ -1,0 +1,755 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.AetowerApp-arm64-apple-macosx15.0-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp.build/sources",
+      "importPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerApp/AetowerApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules/AetowerBridge.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules/AetowerUI.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "AetowerApp",
+      "moduleOutputPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules/AetowerApp.swiftmodule",
+      "objects" : [
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp.build/AetowerApp.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-Xcc",
+        "-fmodule-map-file=/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/CAetowerFFI/module.modulemap",
+        "-module-cache-path",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "AetowerApp_main",
+        "-parse-as-library",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "macos"
+      ],
+      "outputFileMapPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp.build/AetowerApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules/AetowerApp.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerApp/AetowerApp.swift"
+      ],
+      "tempsPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.AetowerBridge-arm64-apple-macosx15.0-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/sources",
+      "importPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerBridge/EngineBridge.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerBridge/PermissionCoordinator.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "AetowerBridge",
+      "moduleOutputPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules/AetowerBridge.swiftmodule",
+      "objects" : [
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/EngineBridge.swift.o",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/PermissionCoordinator.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-Xcc",
+        "-fmodule-map-file=/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/CAetowerFFI/module.modulemap",
+        "-module-cache-path",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/include/AetowerBridge-Swift.h",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "macos"
+      ],
+      "outputFileMapPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/EngineBridge.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/PermissionCoordinator.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules/AetowerBridge.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerBridge/EngineBridge.swift",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerBridge/PermissionCoordinator.swift"
+      ],
+      "tempsPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.AetowerUI-arm64-apple-macosx15.0-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/sources",
+      "importPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/AppState.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/EntityDetailView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/MainListView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/SettingsView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/TimelineView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules/AetowerBridge.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "AetowerUI",
+      "moduleOutputPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules/AetowerUI.swiftmodule",
+      "objects" : [
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/AppState.swift.o",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/EntityDetailView.swift.o",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/MainListView.swift.o",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/SettingsView.swift.o",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/TimelineView.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-Xcc",
+        "-fmodule-map-file=/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/CAetowerFFI/module.modulemap",
+        "-module-cache-path",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/include/AetowerUI-Swift.h",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "macos"
+      ],
+      "outputFileMapPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/AppState.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/EntityDetailView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/MainListView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/SettingsView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/TimelineView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules/AetowerUI.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/AppState.swift",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/EntityDetailView.swift",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/MainListView.swift",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/SettingsView.swift",
+        "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/TimelineView.swift"
+      ],
+      "tempsPath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "AetowerApp" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "AetowerApp",
+      "-package-name",
+      "macos",
+      "-c",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerApp/AetowerApp.swift",
+      "-I",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-Xcc",
+      "-fmodule-map-file=/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/CAetowerFFI/module.modulemap",
+      "-module-cache-path",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "AetowerApp_main",
+      "-parse-as-library",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "macos",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "AetowerBridge" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "AetowerBridge",
+      "-package-name",
+      "macos",
+      "-c",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerBridge/EngineBridge.swift",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerBridge/PermissionCoordinator.swift",
+      "-I",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-Xcc",
+      "-fmodule-map-file=/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/CAetowerFFI/module.modulemap",
+      "-module-cache-path",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/include/AetowerBridge-Swift.h",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "macos",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "AetowerUI" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "AetowerUI",
+      "-package-name",
+      "macos",
+      "-c",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/AppState.swift",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/EntityDetailView.swift",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/MainListView.swift",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/SettingsView.swift",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/TimelineView.swift",
+      "-I",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-Xcc",
+      "-fmodule-map-file=/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/CAetowerFFI/module.modulemap",
+      "-module-cache-path",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/include/AetowerUI-Swift.h",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "macos",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "AetowerApp" : [
+      "AetowerUI",
+      "AetowerBridge",
+      "CAetowerFFI"
+    ],
+    "AetowerBridge" : [
+      "CAetowerFFI"
+    ],
+    "AetowerUI" : [
+      "AetowerBridge",
+      "CAetowerFFI"
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp-entitlement.plist" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<entitlement-plist>"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<com.apple.security.get-task-allow>"
+        }
+      ],
+      "outputFilePath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp-entitlement.plist"
+    },
+    "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerApp/AetowerApp.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp.build/sources"
+    },
+    "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp.build/AetowerApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/EngineBridge.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/PermissionCoordinator.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/AppState.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/EntityDetailView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/MainListView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/SettingsView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/TimelineView.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerApp.product/Objects.LinkFileList"
+    },
+    "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerBridge/EngineBridge.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerBridge/PermissionCoordinator.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerBridge.build/sources"
+    },
+    "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/AppState.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/EntityDetailView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/MainListView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/SettingsView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/Sources/AetowerUI/TimelineView.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/AetowerUI.build/sources"
+    },
+    "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/christophehenner/Downloads/Repositories/Aetower/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+module CAetowerFFI [system] {
+    header "include/aetower_ffi.h"
+    link "aetower_ffi"
+    export *
+}
