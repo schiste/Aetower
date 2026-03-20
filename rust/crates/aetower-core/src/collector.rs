@@ -25,6 +25,8 @@ pub struct RawHostSample {
     pub memory_used_bytes: u64,
     pub memory_total_bytes: u64,
     pub swap_used_bytes: u64,
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
 }
@@ -74,21 +76,7 @@ impl Collector {
                 network_totals.transmitted.saturating_add(data.transmitted());
         }
 
-        let host = RawHostSample {
-            cpu_percent: self.system.global_cpu_info().cpu_usage(),
-            memory_used_bytes: self.system.used_memory(),
-            memory_total_bytes: self.system.total_memory(),
-            swap_used_bytes: self.system.used_swap(),
-            network_receive_bps: network_totals
-                .received
-                .saturating_sub(self.previous_network_totals.received),
-            network_send_bps: network_totals
-                .transmitted
-                .saturating_sub(self.previous_network_totals.transmitted),
-        };
-        self.previous_network_totals = network_totals;
-
-        let processes = self
+        let processes: Vec<_> = self
             .system
             .processes()
             .values()
@@ -110,6 +98,29 @@ impl Collector {
                 disk_write_bytes: process.disk_usage().written_bytes,
             })
             .collect();
+
+        let host_disk_read_bps = processes
+            .iter()
+            .fold(0u64, |total, process| total.saturating_add(process.disk_read_bytes));
+        let host_disk_write_bps = processes
+            .iter()
+            .fold(0u64, |total, process| total.saturating_add(process.disk_write_bytes));
+
+        let host = RawHostSample {
+            cpu_percent: self.system.global_cpu_info().cpu_usage(),
+            memory_used_bytes: self.system.used_memory(),
+            memory_total_bytes: self.system.total_memory(),
+            swap_used_bytes: self.system.used_swap(),
+            disk_read_bps: host_disk_read_bps,
+            disk_write_bps: host_disk_write_bps,
+            network_receive_bps: network_totals
+                .received
+                .saturating_sub(self.previous_network_totals.received),
+            network_send_bps: network_totals
+                .transmitted
+                .saturating_sub(self.previous_network_totals.transmitted),
+        };
+        self.previous_network_totals = network_totals;
 
         RawSnapshot { host, processes }
     }

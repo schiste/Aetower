@@ -8,7 +8,7 @@ use std::{
 };
 
 use aetower_model::{
-    CapabilityKind, CapabilitySnapshot, CapabilityState, FrontmostAppState, HostSnapshot,
+    CapabilityKind, CapabilitySnapshot, CapabilityState, FrontmostAppState, HostSnapshot, HostTrend,
     SystemSnapshot,
 };
 use parking_lot::Mutex;
@@ -47,6 +47,7 @@ impl Engine {
             },
             capabilities: capabilities.values().cloned().collect(),
             entities: Vec::new(),
+            host_trend: HostTrend::default(),
             timeline: Vec::new(),
         };
 
@@ -95,6 +96,8 @@ impl Engine {
                     memory_used_bytes: raw.host.memory_used_bytes,
                     memory_total_bytes: raw.host.memory_total_bytes,
                     swap_used_bytes: raw.host.swap_used_bytes,
+                    disk_read_bps: raw.host.disk_read_bps,
+                    disk_write_bps: raw.host.disk_write_bps,
                     network_receive_bps: raw.host.network_receive_bps,
                     network_send_bps: raw.host.network_send_bps,
                     thermal_state: "nominal".to_owned(),
@@ -107,12 +110,13 @@ impl Engine {
 
                 friction::apply(&host, &mut entities);
                 let mut guard = state.lock();
-                let timeline = guard.history.update(captured_at_millis, &mut entities);
+                let (timeline, host_trend) = guard.history.update(captured_at_millis, &host, &mut entities);
                 guard.sequence += 1;
                 guard.latest_snapshot = SystemSnapshot {
                     sequence: guard.sequence,
                     captured_at_millis,
                     host,
+                    host_trend,
                     capabilities: capabilities.values().cloned().collect(),
                     entities,
                     timeline,

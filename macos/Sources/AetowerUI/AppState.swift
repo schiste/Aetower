@@ -25,12 +25,20 @@ public final class AppState: ObservableObject {
                 memoryUsedBytes: 0,
                 memoryTotalBytes: 0,
                 swapUsedBytes: 0,
+                diskReadBps: 0,
+                diskWriteBps: 0,
                 networkReceiveBps: 0,
                 networkSendBps: 0,
                 thermalState: "nominal",
                 onBattery: false,
                 frontmostAppName: nil,
                 frontmostWindowTitle: nil
+            ),
+            hostTrend: HostTrend(
+                machineFriction: [],
+                cpuPercent: [],
+                memoryUsedBytes: [],
+                diskActivityBps: []
             ),
             capabilities: [],
             entities: [],

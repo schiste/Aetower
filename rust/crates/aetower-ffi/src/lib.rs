@@ -54,12 +54,22 @@ pub struct HostSnapshot {
     pub memory_used_bytes: u64,
     pub memory_total_bytes: u64,
     pub swap_used_bytes: u64,
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
     pub thermal_state: String,
     pub on_battery: bool,
     pub frontmost_app_name: Option<String>,
     pub frontmost_window_title: Option<String>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct HostTrend {
+    pub machine_friction: Vec<f32>,
+    pub cpu_percent: Vec<f32>,
+    pub memory_used_bytes: Vec<u64>,
+    pub disk_activity_bps: Vec<u64>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -140,6 +150,7 @@ pub struct SystemSnapshot {
     pub sequence: u64,
     pub captured_at_millis: u64,
     pub host: HostSnapshot,
+    pub host_trend: HostTrend,
     pub capabilities: Vec<CapabilitySnapshot>,
     pub entities: Vec<EntitySnapshot>,
     pub timeline: Vec<TimelineEvent>,
@@ -331,12 +342,25 @@ impl From<model::HostSnapshot> for HostSnapshot {
             memory_used_bytes: value.memory_used_bytes,
             memory_total_bytes: value.memory_total_bytes,
             swap_used_bytes: value.swap_used_bytes,
+            disk_read_bps: value.disk_read_bps,
+            disk_write_bps: value.disk_write_bps,
             network_receive_bps: value.network_receive_bps,
             network_send_bps: value.network_send_bps,
             thermal_state: value.thermal_state,
             on_battery: value.on_battery,
             frontmost_app_name: value.frontmost_app_name,
             frontmost_window_title: value.frontmost_window_title,
+        }
+    }
+}
+
+impl From<model::HostTrend> for HostTrend {
+    fn from(value: model::HostTrend) -> Self {
+        Self {
+            machine_friction: value.machine_friction,
+            cpu_percent: value.cpu_percent,
+            memory_used_bytes: value.memory_used_bytes,
+            disk_activity_bps: value.disk_activity_bps,
         }
     }
 }
@@ -441,6 +465,7 @@ impl From<model::SystemSnapshot> for SystemSnapshot {
             sequence: value.sequence,
             captured_at_millis: value.captured_at_millis,
             host: value.host.into(),
+            host_trend: value.host_trend.into(),
             capabilities: value.capabilities.into_iter().map(Into::into).collect(),
             entities: value.entities.into_iter().map(Into::into).collect(),
             timeline: value.timeline.into_iter().map(Into::into).collect(),

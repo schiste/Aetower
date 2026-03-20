@@ -1327,6 +1327,8 @@ public struct HostSnapshot {
     public var memoryUsedBytes: UInt64
     public var memoryTotalBytes: UInt64
     public var swapUsedBytes: UInt64
+    public var diskReadBps: UInt64
+    public var diskWriteBps: UInt64
     public var networkReceiveBps: UInt64
     public var networkSendBps: UInt64
     public var thermalState: String
@@ -1336,11 +1338,13 @@ public struct HostSnapshot {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, thermalState: String, onBattery: Bool, frontmostAppName: String?, frontmostWindowTitle: String?) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, thermalState: String, onBattery: Bool, frontmostAppName: String?, frontmostWindowTitle: String?) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
         self.swapUsedBytes = swapUsedBytes
+        self.diskReadBps = diskReadBps
+        self.diskWriteBps = diskWriteBps
         self.networkReceiveBps = networkReceiveBps
         self.networkSendBps = networkSendBps
         self.thermalState = thermalState
@@ -1364,6 +1368,12 @@ extension HostSnapshot: Equatable, Hashable {
             return false
         }
         if lhs.swapUsedBytes != rhs.swapUsedBytes {
+            return false
+        }
+        if lhs.diskReadBps != rhs.diskReadBps {
+            return false
+        }
+        if lhs.diskWriteBps != rhs.diskWriteBps {
             return false
         }
         if lhs.networkReceiveBps != rhs.networkReceiveBps {
@@ -1392,6 +1402,8 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(memoryUsedBytes)
         hasher.combine(memoryTotalBytes)
         hasher.combine(swapUsedBytes)
+        hasher.combine(diskReadBps)
+        hasher.combine(diskWriteBps)
         hasher.combine(networkReceiveBps)
         hasher.combine(networkSendBps)
         hasher.combine(thermalState)
@@ -1413,6 +1425,8 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 memoryUsedBytes: FfiConverterUInt64.read(from: &buf), 
                 memoryTotalBytes: FfiConverterUInt64.read(from: &buf), 
                 swapUsedBytes: FfiConverterUInt64.read(from: &buf), 
+                diskReadBps: FfiConverterUInt64.read(from: &buf), 
+                diskWriteBps: FfiConverterUInt64.read(from: &buf), 
                 networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
                 networkSendBps: FfiConverterUInt64.read(from: &buf), 
                 thermalState: FfiConverterString.read(from: &buf), 
@@ -1427,6 +1441,8 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.memoryUsedBytes, into: &buf)
         FfiConverterUInt64.write(value.memoryTotalBytes, into: &buf)
         FfiConverterUInt64.write(value.swapUsedBytes, into: &buf)
+        FfiConverterUInt64.write(value.diskReadBps, into: &buf)
+        FfiConverterUInt64.write(value.diskWriteBps, into: &buf)
         FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)
         FfiConverterUInt64.write(value.networkSendBps, into: &buf)
         FfiConverterString.write(value.thermalState, into: &buf)
@@ -1449,6 +1465,88 @@ public func FfiConverterTypeHostSnapshot_lift(_ buf: RustBuffer) throws -> HostS
 #endif
 public func FfiConverterTypeHostSnapshot_lower(_ value: HostSnapshot) -> RustBuffer {
     return FfiConverterTypeHostSnapshot.lower(value)
+}
+
+
+public struct HostTrend {
+    public var machineFriction: [Float]
+    public var cpuPercent: [Float]
+    public var memoryUsedBytes: [UInt64]
+    public var diskActivityBps: [UInt64]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(machineFriction: [Float], cpuPercent: [Float], memoryUsedBytes: [UInt64], diskActivityBps: [UInt64]) {
+        self.machineFriction = machineFriction
+        self.cpuPercent = cpuPercent
+        self.memoryUsedBytes = memoryUsedBytes
+        self.diskActivityBps = diskActivityBps
+    }
+}
+
+
+
+extension HostTrend: Equatable, Hashable {
+    public static func ==(lhs: HostTrend, rhs: HostTrend) -> Bool {
+        if lhs.machineFriction != rhs.machineFriction {
+            return false
+        }
+        if lhs.cpuPercent != rhs.cpuPercent {
+            return false
+        }
+        if lhs.memoryUsedBytes != rhs.memoryUsedBytes {
+            return false
+        }
+        if lhs.diskActivityBps != rhs.diskActivityBps {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(machineFriction)
+        hasher.combine(cpuPercent)
+        hasher.combine(memoryUsedBytes)
+        hasher.combine(diskActivityBps)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHostTrend: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HostTrend {
+        return
+            try HostTrend(
+                machineFriction: FfiConverterSequenceFloat.read(from: &buf), 
+                cpuPercent: FfiConverterSequenceFloat.read(from: &buf), 
+                memoryUsedBytes: FfiConverterSequenceUInt64.read(from: &buf), 
+                diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HostTrend, into buf: inout [UInt8]) {
+        FfiConverterSequenceFloat.write(value.machineFriction, into: &buf)
+        FfiConverterSequenceFloat.write(value.cpuPercent, into: &buf)
+        FfiConverterSequenceUInt64.write(value.memoryUsedBytes, into: &buf)
+        FfiConverterSequenceUInt64.write(value.diskActivityBps, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHostTrend_lift(_ buf: RustBuffer) throws -> HostTrend {
+    return try FfiConverterTypeHostTrend.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHostTrend_lower(_ value: HostTrend) -> RustBuffer {
+    return FfiConverterTypeHostTrend.lower(value)
 }
 
 
@@ -1538,16 +1636,18 @@ public struct SystemSnapshot {
     public var sequence: UInt64
     public var capturedAtMillis: UInt64
     public var host: HostSnapshot
+    public var hostTrend: HostTrend
     public var capabilities: [CapabilitySnapshot]
     public var entities: [EntitySnapshot]
     public var timeline: [TimelineEvent]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sequence: UInt64, capturedAtMillis: UInt64, host: HostSnapshot, capabilities: [CapabilitySnapshot], entities: [EntitySnapshot], timeline: [TimelineEvent]) {
+    public init(sequence: UInt64, capturedAtMillis: UInt64, host: HostSnapshot, hostTrend: HostTrend, capabilities: [CapabilitySnapshot], entities: [EntitySnapshot], timeline: [TimelineEvent]) {
         self.sequence = sequence
         self.capturedAtMillis = capturedAtMillis
         self.host = host
+        self.hostTrend = hostTrend
         self.capabilities = capabilities
         self.entities = entities
         self.timeline = timeline
@@ -1567,6 +1667,9 @@ extension SystemSnapshot: Equatable, Hashable {
         if lhs.host != rhs.host {
             return false
         }
+        if lhs.hostTrend != rhs.hostTrend {
+            return false
+        }
         if lhs.capabilities != rhs.capabilities {
             return false
         }
@@ -1583,6 +1686,7 @@ extension SystemSnapshot: Equatable, Hashable {
         hasher.combine(sequence)
         hasher.combine(capturedAtMillis)
         hasher.combine(host)
+        hasher.combine(hostTrend)
         hasher.combine(capabilities)
         hasher.combine(entities)
         hasher.combine(timeline)
@@ -1600,6 +1704,7 @@ public struct FfiConverterTypeSystemSnapshot: FfiConverterRustBuffer {
                 sequence: FfiConverterUInt64.read(from: &buf), 
                 capturedAtMillis: FfiConverterUInt64.read(from: &buf), 
                 host: FfiConverterTypeHostSnapshot.read(from: &buf), 
+                hostTrend: FfiConverterTypeHostTrend.read(from: &buf), 
                 capabilities: FfiConverterSequenceTypeCapabilitySnapshot.read(from: &buf), 
                 entities: FfiConverterSequenceTypeEntitySnapshot.read(from: &buf), 
                 timeline: FfiConverterSequenceTypeTimelineEvent.read(from: &buf)
@@ -1610,6 +1715,7 @@ public struct FfiConverterTypeSystemSnapshot: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.sequence, into: &buf)
         FfiConverterUInt64.write(value.capturedAtMillis, into: &buf)
         FfiConverterTypeHostSnapshot.write(value.host, into: &buf)
+        FfiConverterTypeHostTrend.write(value.hostTrend, into: &buf)
         FfiConverterSequenceTypeCapabilitySnapshot.write(value.capabilities, into: &buf)
         FfiConverterSequenceTypeEntitySnapshot.write(value.entities, into: &buf)
         FfiConverterSequenceTypeTimelineEvent.write(value.timeline, into: &buf)

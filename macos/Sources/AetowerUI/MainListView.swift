@@ -1,29 +1,6 @@
 import SwiftUI
 import AetowerBridge
 
-private struct OverviewCard: View {
-    let title: String
-    let value: String
-    let detail: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(.title2, design: .rounded).weight(.semibold))
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
 private struct ReasonPill: View {
     let text: String
 
@@ -202,26 +179,39 @@ public struct MainListView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("What is affecting this Mac right now")
                     .font(.system(size: 30, weight: .semibold, design: .rounded))
-                Text("Aetower ranks apps by friction: a blend of CPU, memory, disk activity, and whether the app is actively in your way. The first rows are the ones most likely to explain slowness, heat, noise, or battery drain.")
+                Text("Machine-wide cards show overall pressure first. Then Aetower explains which app is most likely responsible.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             LazyVGrid(columns: dashboardColumns, alignment: .leading, spacing: 14) {
-                OverviewCard(
-                    title: "Top concern",
-                    value: topConcern?.displayName ?? "Nothing urgent",
-                    detail: topConcern?.friction.reasons.first ?? "No app currently stands out as a strong source of friction."
+                TrendMetricCard(
+                    title: "Machine Friction",
+                    value: String(format: "%.1f", machineFrictionScore(for: state.snapshot.host)),
+                    subtitle: trendLabel(samples: state.snapshot.hostTrend.machineFriction.map(Double.init), stableText: "overall pressure"),
+                    samples: state.snapshot.hostTrend.machineFriction.map(Double.init),
+                    style: .friction
                 )
-                OverviewCard(
-                    title: "Host CPU",
+                TrendMetricCard(
+                    title: "CPU",
                     value: String(format: "%.1f%%", state.snapshot.host.cpuPercent),
-                    detail: "\(foregroundEntities.count) frontmost or foreground-tracked apps right now"
+                    subtitle: "\(foregroundEntities.count) frontmost or foreground-tracked apps",
+                    samples: state.snapshot.hostTrend.cpuPercent.map(Double.init),
+                    style: .cpu
                 )
-                OverviewCard(
-                    title: "Memory in use",
+                TrendMetricCard(
+                    title: "Memory",
                     value: "\(formatBytes(state.snapshot.host.memoryUsedBytes)) / \(formatBytes(state.snapshot.host.memoryTotalBytes))",
-                    detail: "Ranked list shows which apps are actually carrying that footprint"
+                    subtitle: trendLabel(samples: state.snapshot.hostTrend.memoryUsedBytes.map(Double.init), stableText: "used memory"),
+                    samples: state.snapshot.hostTrend.memoryUsedBytes.map(Double.init),
+                    style: .memory
+                )
+                TrendMetricCard(
+                    title: "Disk Activity",
+                    value: formatRate(state.snapshot.host.diskReadBps + state.snapshot.host.diskWriteBps),
+                    subtitle: trendLabel(samples: state.snapshot.hostTrend.diskActivityBps.map(Double.init), stableText: "host throughput"),
+                    samples: state.snapshot.hostTrend.diskActivityBps.map(Double.init),
+                    style: .disk
                 )
             }
         }
@@ -481,4 +471,12 @@ private func memoryTrendSummary(_ entity: EntitySnapshot) -> String {
 
 private func diskTrendSummary(_ entity: EntitySnapshot) -> String {
     trendLabel(samples: entity.trend.diskActivityBps.map(Double.init), stableText: "recent throughput")
+}
+
+private func machineFrictionScore(for host: HostSnapshot) -> Double {
+    let cpuScore = min(Double(host.cpuPercent), 100.0) * 0.5
+    let memoryRatio = host.memoryTotalBytes == 0 ? 0.0 : Double(host.memoryUsedBytes) / Double(host.memoryTotalBytes)
+    let memoryScore = min(memoryRatio, 1.0) * 35.0
+    let swapScore = host.swapUsedBytes == 0 ? 0.0 : (min(Double(host.swapUsedBytes) / 1_073_741_824.0, 8.0) / 8.0) * 15.0
+    return min(cpuScore + memoryScore + swapScore, 100.0)
 }

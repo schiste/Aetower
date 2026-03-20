@@ -84,12 +84,22 @@ pub struct HostSnapshot {
     pub memory_used_bytes: u64,
     pub memory_total_bytes: u64,
     pub swap_used_bytes: u64,
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
     pub thermal_state: String,
     pub on_battery: bool,
     pub frontmost_app_name: Option<String>,
     pub frontmost_window_title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HostTrend {
+    pub machine_friction: Vec<f32>,
+    pub cpu_percent: Vec<f32>,
+    pub memory_used_bytes: Vec<u64>,
+    pub disk_activity_bps: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -170,6 +180,7 @@ pub struct SystemSnapshot {
     pub sequence: u64,
     pub captured_at_millis: u64,
     pub host: HostSnapshot,
+    pub host_trend: HostTrend,
     pub capabilities: Vec<CapabilitySnapshot>,
     pub entities: Vec<EntitySnapshot>,
     pub timeline: Vec<TimelineEvent>,
