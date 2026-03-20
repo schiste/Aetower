@@ -125,9 +125,6 @@ private struct RowSignalBadge: View {
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(.white)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(.white.opacity(0.16), in: Capsule())
 
             Text(title)
                 .font(.caption.weight(.semibold))
@@ -140,15 +137,15 @@ private struct RowSignalBadge: View {
                     .frame(width: 6, height: 6)
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
         .background(
             LinearGradient(
                 colors: [tone.opacity(0.95), tone.opacity(0.65)],
                 startPoint: .leading,
                 endPoint: .trailing
             ),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            in: Capsule()
         )
     }
 
