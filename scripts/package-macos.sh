@@ -7,7 +7,7 @@ APP_DIR="$ROOT/dist/$APP_NAME"
 BIN_DIR="$APP_DIR/Contents/MacOS"
 FRAMEWORK_DIR="$APP_DIR/Contents/Frameworks"
 
-"$ROOT/scripts/build-rust.sh"
+sh "$ROOT/scripts/build-rust.sh"
 swift build --package-path "$ROOT/macos" -c release
 
 rm -rf "$APP_DIR"
