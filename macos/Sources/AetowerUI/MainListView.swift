@@ -114,28 +114,43 @@ private struct InlineMetric: View {
     }
 }
 
-private struct RowSignalCard: View {
+private struct RowSignalBadge: View {
     let score: Double
+    let title: String
     let isForeground: Bool
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [tone.opacity(0.95), tone.opacity(0.55)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .overlay(alignment: .topLeading) {
-                if isForeground {
-                    Circle()
-                        .fill(.white.opacity(0.92))
-                        .frame(width: 6, height: 6)
-                        .padding(6)
-                }
+        HStack(spacing: 8) {
+            Text(String(format: "%.1f", score))
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(.white.opacity(0.16), in: Capsule())
+
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+
+            if isForeground {
+                Circle()
+                    .fill(.white.opacity(0.92))
+                    .frame(width: 6, height: 6)
             }
-            .frame(width: 20, height: 52)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [tone.opacity(0.95), tone.opacity(0.65)],
+                startPoint: .leading,
+                endPoint: .trailing
+            ),
+            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+        )
     }
 
     private var tone: Color {
@@ -158,40 +173,31 @@ private struct EntityRow: View {
     let hostMemoryTotalBytes: UInt64
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            RowSignalCard(score: Double(entity.friction.totalScore), isForeground: entity.metrics.isForeground)
+        VStack(alignment: .leading, spacing: 6) {
+            RowSignalBadge(
+                score: Double(entity.friction.totalScore),
+                title: entity.displayName,
+                isForeground: entity.metrics.isForeground
+            )
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Text(entity.displayName)
-                                .font(.subheadline.weight(.semibold))
-                                .lineLimit(1)
-                            if entity.metrics.isForeground {
-                                Text("Frontmost")
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(.blue)
-                            }
-                        }
-                        Text(primaryNarrative)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    StatusBadge(score: Double(entity.friction.totalScore))
-                }
+            HStack(alignment: .top, spacing: 10) {
+                Text(primaryNarrative)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        InlineMetric(title: "Fr", value: String(format: "%.1f", entity.friction.totalScore))
-                        InlineMetric(title: "CPU", value: String(format: "%.1f%%", entity.metrics.cpuPercent))
-                        InlineMetric(title: "Mem", value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)))
-                        InlineMetric(title: "Disk", value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))
-                        if let badge = entity.badges.first {
-                            InlineMetric(title: "Tag", value: badge)
-                        }
+                Spacer()
+
+                StatusBadge(score: Double(entity.friction.totalScore))
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    InlineMetric(title: "CPU", value: String(format: "%.1f%%", entity.metrics.cpuPercent))
+                    InlineMetric(title: "Mem", value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)))
+                    InlineMetric(title: "Disk", value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))
+                    if let badge = entity.badges.first {
+                        InlineMetric(title: "Tag", value: badge)
                     }
                 }
             }
