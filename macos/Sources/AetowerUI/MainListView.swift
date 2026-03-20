@@ -59,6 +59,7 @@ private let metricColumns = [GridItem(.adaptive(minimum: 150), spacing: 12)]
 private struct EntityRow: View {
     let entity: EntitySnapshot
     let isSelected: Bool
+    let hostMemoryTotalBytes: UInt64
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -99,9 +100,9 @@ private struct EntityRow: View {
                 )
                 TrendMetricCard(
                     title: "Memory",
-                    value: formatBytes(entity.metrics.memoryResidentBytes),
+                    value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)),
                     subtitle: memoryTrendSummary(entity),
-                    samples: entity.trend.memoryResidentBytes.map(Double.init),
+                    samples: entityMemoryTrendPercents(entity, totalBytes: hostMemoryTotalBytes),
                     style: .memory
                 )
                 TrendMetricCard(
@@ -188,28 +189,28 @@ public struct MainListView: View {
                 TrendMetricCard(
                     title: "Machine Friction",
                     value: String(format: "%.1f", machineFrictionScore(for: state.snapshot.host)),
-                    subtitle: trendLabel(samples: state.snapshot.hostTrend.machineFriction.map(Double.init), stableText: "overall pressure"),
+                    subtitle: "\(trendLabel(samples: state.snapshot.hostTrend.machineFriction.map(Double.init), stableText: "overall pressure")) · \(trendWindowLabel(sampleCount: state.snapshot.hostTrend.machineFriction.count))",
                     samples: state.snapshot.hostTrend.machineFriction.map(Double.init),
                     style: .friction
                 )
                 TrendMetricCard(
                     title: "CPU",
                     value: String(format: "%.1f%%", state.snapshot.host.cpuPercent),
-                    subtitle: "\(foregroundEntities.count) frontmost or foreground-tracked apps",
+                    subtitle: "\(foregroundEntities.count) foreground-tracked apps · \(trendWindowLabel(sampleCount: state.snapshot.hostTrend.cpuPercent.count))",
                     samples: state.snapshot.hostTrend.cpuPercent.map(Double.init),
                     style: .cpu
                 )
                 TrendMetricCard(
-                    title: "Memory",
-                    value: "\(formatBytes(state.snapshot.host.memoryUsedBytes)) / \(formatBytes(state.snapshot.host.memoryTotalBytes))",
-                    subtitle: trendLabel(samples: state.snapshot.hostTrend.memoryUsedBytes.map(Double.init), stableText: "used memory"),
-                    samples: state.snapshot.hostTrend.memoryUsedBytes.map(Double.init),
+                    title: "Memory Load",
+                    value: String(format: "%.1f%%", hostMemoryLoadPercent),
+                    subtitle: "\(formatBytes(state.snapshot.host.memoryUsedBytes)) / \(formatBytes(state.snapshot.host.memoryTotalBytes)) · \(trendWindowLabel(sampleCount: state.snapshot.hostTrend.memoryUsedBytes.count))",
+                    samples: hostMemoryTrendPercents,
                     style: .memory
                 )
                 TrendMetricCard(
                     title: "Disk Activity",
                     value: formatRate(state.snapshot.host.diskReadBps + state.snapshot.host.diskWriteBps),
-                    subtitle: trendLabel(samples: state.snapshot.hostTrend.diskActivityBps.map(Double.init), stableText: "host throughput"),
+                    subtitle: "\(trendLabel(samples: state.snapshot.hostTrend.diskActivityBps.map(Double.init), stableText: "host throughput")) · \(trendWindowLabel(sampleCount: state.snapshot.hostTrend.diskActivityBps.count))",
                     samples: state.snapshot.hostTrend.diskActivityBps.map(Double.init),
                     style: .disk
                 )
@@ -250,9 +251,9 @@ public struct MainListView: View {
                         )
                         TrendMetricCard(
                             title: "Memory",
-                            value: formatBytes(topConcern.metrics.memoryResidentBytes),
+                            value: String(format: "%.1f%%", entityMemoryLoadPercent(topConcern, totalBytes: state.snapshot.host.memoryTotalBytes)),
                             subtitle: memoryTrendSummary(topConcern),
-                            samples: topConcern.trend.memoryResidentBytes.map(Double.init),
+                            samples: entityMemoryTrendPercents(topConcern, totalBytes: state.snapshot.host.memoryTotalBytes),
                             style: .memory
                         )
                         TrendMetricCard(
@@ -321,9 +322,9 @@ public struct MainListView: View {
                         )
                         TrendMetricCard(
                             title: "Memory",
-                            value: formatBytes(entity.metrics.memoryResidentBytes),
+                            value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes)),
                             subtitle: memoryTrendSummary(entity),
-                            samples: entity.trend.memoryResidentBytes.map(Double.init),
+                            samples: entityMemoryTrendPercents(entity, totalBytes: state.snapshot.host.memoryTotalBytes),
                             style: .memory
                         )
                         TrendMetricCard(
@@ -375,7 +376,11 @@ public struct MainListView: View {
                         Button {
                             selectedEntityID = entity.entityId
                         } label: {
-                            EntityRow(entity: entity, isSelected: selectedEntityID == entity.entityId)
+                            EntityRow(
+                                entity: entity,
+                                isSelected: selectedEntityID == entity.entityId,
+                                hostMemoryTotalBytes: state.snapshot.host.memoryTotalBytes
+                            )
                         }
                         .buttonStyle(.plain)
                     }
@@ -404,6 +409,16 @@ public struct MainListView: View {
 
     private var foregroundEntities: [EntitySnapshot] {
         state.snapshot.entities.filter(\.metrics.isForeground)
+    }
+
+    private var hostMemoryLoadPercent: Double {
+        memoryLoadPercent(bytes: state.snapshot.host.memoryUsedBytes, totalBytes: state.snapshot.host.memoryTotalBytes)
+    }
+
+    private var hostMemoryTrendPercents: [Double] {
+        state.snapshot.hostTrend.memoryUsedBytes.map {
+            memoryLoadPercent(bytes: $0, totalBytes: state.snapshot.host.memoryTotalBytes)
+        }
     }
 
     private var selectedEntity: EntitySnapshot? {
@@ -458,19 +473,19 @@ private func trendLabel(samples: [Double], stableText: String) -> String {
 }
 
 private func frictionTrendSummary(_ entity: EntitySnapshot) -> String {
-    trendLabel(samples: entity.trend.friction.map(Double.init), stableText: "recent score")
+    "\(trendLabel(samples: entity.trend.friction.map(Double.init), stableText: "recent score")) · \(trendWindowLabel(sampleCount: entity.trend.friction.count))"
 }
 
 private func cpuTrendSummary(_ entity: EntitySnapshot) -> String {
-    trendLabel(samples: entity.trend.cpuPercent.map(Double.init), stableText: "recent load")
+    "\(trendLabel(samples: entity.trend.cpuPercent.map(Double.init), stableText: "recent load")) · \(trendWindowLabel(sampleCount: entity.trend.cpuPercent.count))"
 }
 
 private func memoryTrendSummary(_ entity: EntitySnapshot) -> String {
-    trendLabel(samples: entity.trend.memoryResidentBytes.map(Double.init), stableText: "recent footprint")
+    "\(formatBytes(entity.metrics.memoryResidentBytes)) · \(trendWindowLabel(sampleCount: entity.trend.memoryResidentBytes.count))"
 }
 
 private func diskTrendSummary(_ entity: EntitySnapshot) -> String {
-    trendLabel(samples: entity.trend.diskActivityBps.map(Double.init), stableText: "recent throughput")
+    "\(trendLabel(samples: entity.trend.diskActivityBps.map(Double.init), stableText: "recent throughput")) · \(trendWindowLabel(sampleCount: entity.trend.diskActivityBps.count))"
 }
 
 private func machineFrictionScore(for host: HostSnapshot) -> Double {
@@ -479,4 +494,24 @@ private func machineFrictionScore(for host: HostSnapshot) -> Double {
     let memoryScore = min(memoryRatio, 1.0) * 35.0
     let swapScore = host.swapUsedBytes == 0 ? 0.0 : (min(Double(host.swapUsedBytes) / 1_073_741_824.0, 8.0) / 8.0) * 15.0
     return min(cpuScore + memoryScore + swapScore, 100.0)
+}
+
+private func memoryLoadPercent(bytes: UInt64, totalBytes: UInt64) -> Double {
+    guard totalBytes > 0 else { return 0 }
+    return (Double(bytes) / Double(totalBytes)) * 100.0
+}
+
+private func entityMemoryLoadPercent(_ entity: EntitySnapshot, totalBytes: UInt64) -> Double {
+    memoryLoadPercent(bytes: entity.metrics.memoryResidentBytes, totalBytes: totalBytes)
+}
+
+private func entityMemoryTrendPercents(_ entity: EntitySnapshot, totalBytes: UInt64) -> [Double] {
+    entity.trend.memoryResidentBytes.map {
+        memoryLoadPercent(bytes: $0, totalBytes: totalBytes)
+    }
+}
+
+private func trendWindowLabel(sampleCount: Int) -> String {
+    let seconds = min(sampleCount * 2, 300)
+    return "last \(seconds)s"
 }

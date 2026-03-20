@@ -122,28 +122,28 @@ public struct EntityDetailView: View {
                 TrendMetricCard(
                     title: "Friction",
                     value: String(format: "%.1f", entity.friction.totalScore),
-                    subtitle: "recent score",
+                    subtitle: "recent score · \(trendWindowLabel(sampleCount: entity.trend.friction.count))",
                     samples: entity.trend.friction.map(Double.init),
                     style: .friction
                 )
                 TrendMetricCard(
                     title: "CPU",
                     value: String(format: "%.1f%%", entity.metrics.cpuPercent),
-                    subtitle: entity.metrics.isForeground ? "frontmost app" : "backgrounded app",
+                    subtitle: "\(entity.metrics.isForeground ? "frontmost app" : "backgrounded app") · \(trendWindowLabel(sampleCount: entity.trend.cpuPercent.count))",
                     samples: entity.trend.cpuPercent.map(Double.init),
                     style: .cpu
                 )
                 TrendMetricCard(
-                    title: "Memory",
+                    title: "Memory Footprint",
                     value: formatBytes(entity.metrics.memoryResidentBytes),
-                    subtitle: "\(entity.metrics.processCount) grouped processes",
+                    subtitle: "\(entity.metrics.processCount) grouped processes · \(trendWindowLabel(sampleCount: entity.trend.memoryResidentBytes.count))",
                     samples: entity.trend.memoryResidentBytes.map(Double.init),
                     style: .memory
                 )
                 TrendMetricCard(
                     title: "Disk Activity",
                     value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
-                    subtitle: "read + write throughput",
+                    subtitle: "read + write throughput · \(trendWindowLabel(sampleCount: entity.trend.diskActivityBps.count))",
                     samples: entity.trend.diskActivityBps.map(Double.init),
                     style: .disk
                 )
@@ -250,4 +250,9 @@ private extension ComponentSnapshot {
             .replacingOccurrences(of: "_", with: " ")
             .capitalized
     }
+}
+
+private func trendWindowLabel(sampleCount: Int) -> String {
+    let seconds = min(sampleCount * 2, 300)
+    return "last \(seconds)s"
 }
