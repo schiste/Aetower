@@ -313,28 +313,36 @@ public struct MainListView: View {
 
     private func detailPanel(for entity: EntitySnapshot) -> some View {
         VStack(spacing: 0) {
-            HStack(alignment: .center) {
-                Button {
-                    selectedEntityID = nil
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                        Text("Back to ranking")
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 12) {
+                    Button {
+                        selectedEntityID = nil
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.left")
+                            Text("Back to ranking")
+                        }
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(Color.secondary.opacity(0.08), in: Capsule())
                     }
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(Color.secondary.opacity(0.08), in: Capsule())
-                }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
 
-                VStack(alignment: .leading, spacing: 4) {
                     SectionEyebrow(text: "Detail")
+
                     Text(entity.displayName)
                         .font(.title2.weight(.semibold))
+
+                    StatusBadge(score: Double(entity.friction.totalScore))
+
+                    Spacer()
                 }
-                Spacer()
-                StatusBadge(score: Double(entity.friction.totalScore))
+
+                Text(topConcernSummary(for: entity))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)

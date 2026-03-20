@@ -107,17 +107,6 @@ public struct EntityDetailView: View {
 
     private var hero: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Text(entity.displayName)
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
-                Spacer()
-                DetailStatusBadge(score: Double(entity.friction.totalScore))
-            }
-
-            Text(heroNarrative)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
             LazyVGrid(columns: detailMetricColumns, alignment: .leading, spacing: 12) {
                 TrendMetricCard(
                     title: "Friction",
@@ -216,13 +205,6 @@ public struct EntityDetailView: View {
             }
             .padding(.top, 4)
         }
-    }
-
-    private var heroNarrative: String {
-        if let firstReason = entity.friction.reasons.first {
-            return "\(entity.displayName) is currently ranked here because \(firstReason.lowercased())"
-        }
-        return "\(entity.displayName) is currently tracked, but Aetower does not yet have a dominant friction explanation for it."
     }
 }
 
