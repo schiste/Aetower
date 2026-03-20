@@ -170,23 +170,13 @@ private struct EntityRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            RowSignalBadge(
-                score: Double(entity.friction.totalScore),
-                title: entity.displayName,
-                isForeground: entity.metrics.isForeground
-            )
-
-            HStack(alignment: .top, spacing: 10) {
-                Text(primaryNarrative)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                Spacer()
-            }
-
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(alignment: .center, spacing: 6) {
+                    RowSignalBadge(
+                        score: Double(entity.friction.totalScore),
+                        title: entity.displayName,
+                        isForeground: entity.metrics.isForeground
+                    )
                     InlineMetric(title: "CPU", value: String(format: "%.1f%%", entity.metrics.cpuPercent))
                     InlineMetric(title: "Mem", value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)))
                     InlineMetric(title: "Disk", value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))
@@ -195,6 +185,11 @@ private struct EntityRow: View {
                     }
                 }
             }
+
+            Text(primaryNarrative)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
