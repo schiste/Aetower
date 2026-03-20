@@ -64,8 +64,55 @@ private struct SectionEyebrow: View {
     }
 }
 
-private let dashboardColumns = [GridItem(.adaptive(minimum: 240), spacing: 12)]
-private let metricColumns = [GridItem(.adaptive(minimum: 180), spacing: 8)]
+private struct MachineBandMetric: View {
+    let title: String
+    let value: String
+    let tone: Color
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .lineLimit(1)
+            Text(subtitle)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minWidth: 138, alignment: .leading)
+        .background(tone.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(tone.opacity(0.10), lineWidth: 1)
+        )
+    }
+}
+
+private struct InlineMetric: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Text(value)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.secondary.opacity(0.06), in: Capsule())
+    }
+}
 
 private struct EntityRow: View {
     let entity: EntitySnapshot
@@ -73,21 +120,21 @@ private struct EntityRow: View {
     let hostMemoryTotalBytes: UInt64
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(entity.displayName)
-                            .font(.headline)
+                            .font(.subheadline.weight(.semibold))
                             .lineLimit(1)
                         if entity.metrics.isForeground {
                             Text("Frontmost")
-                                .font(.caption.weight(.medium))
+                                .font(.caption2.weight(.medium))
                                 .foregroundStyle(.blue)
                         }
                     }
                     Text(primaryNarrative)
-                        .font(.subheadline)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -95,55 +142,20 @@ private struct EntityRow: View {
                 StatusBadge(score: Double(entity.friction.totalScore))
             }
 
-            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 8) {
-                TrendMetricCard(
-                    title: "Friction",
-                    value: String(format: "%.1f", entity.friction.totalScore),
-                    subtitle: frictionTrendSummary(entity),
-                    samples: entity.trend.friction.map(Double.init),
-                    style: .friction
-                )
-                TrendMetricCard(
-                    title: "CPU",
-                    value: String(format: "%.1f%%", entity.metrics.cpuPercent),
-                    subtitle: cpuTrendSummary(entity),
-                    samples: entity.trend.cpuPercent.map(Double.init),
-                    style: .cpu
-                )
-                TrendMetricCard(
-                    title: "Memory",
-                    value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)),
-                    subtitle: memoryTrendSummary(entity),
-                    samples: entityMemoryTrendPercents(entity, totalBytes: hostMemoryTotalBytes),
-                    style: .memory
-                )
-                TrendMetricCard(
-                    title: "Disk Activity",
-                    value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
-                    subtitle: diskTrendSummary(entity),
-                    samples: entity.trend.diskActivityBps.map(Double.init),
-                    style: .disk
-                )
-            }
-
-            if let activeWindowTitle = entity.activeWindowTitle, !activeWindowTitle.isEmpty {
-                Text("Window: \(activeWindowTitle)")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-            }
-
-            if !entity.badges.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(entity.badges, id: \.self) { badge in
-                            ReasonPill(text: badge)
-                        }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    InlineMetric(title: "Fr", value: String(format: "%.1f", entity.friction.totalScore))
+                    InlineMetric(title: "CPU", value: String(format: "%.1f%%", entity.metrics.cpuPercent))
+                    InlineMetric(title: "Mem", value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)))
+                    InlineMetric(title: "Disk", value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))
+                    if let badge = entity.badges.first {
+                        InlineMetric(title: "Tag", value: badge)
                     }
                 }
             }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(rowBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
@@ -174,204 +186,111 @@ public struct MainListView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                summaryHeader
-                insightsSection
-                focusedEntitySection
-                filterSection
-                rankedEntitiesSection
+        VStack(spacing: 0) {
+            summaryHeader
+            Divider()
+
+            if let entity = selectedEntity {
+                detailPanel(for: entity)
+            } else {
+                rankingPanel
             }
-            .padding(16)
         }
         .navigationTitle("Aetower")
     }
 
     private var summaryHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionEyebrow(text: "Machine")
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Machine state")
-                    .font(.system(size: 28, weight: .semibold, design: .rounded))
-                Text("Start with system pressure, then drill into the app causing it.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            LazyVGrid(columns: dashboardColumns, alignment: .leading, spacing: 12) {
-                TrendMetricCard(
-                    title: "Machine Friction",
-                    value: String(format: "%.1f", machineFrictionScore(for: state.snapshot.host)),
-                    subtitle: "\(trendLabel(samples: state.snapshot.hostTrend.machineFriction.map(Double.init), stableText: "overall pressure")) · \(trendWindowLabel(sampleCount: state.snapshot.hostTrend.machineFriction.count))",
-                    samples: state.snapshot.hostTrend.machineFriction.map(Double.init),
-                    style: .friction
-                )
-                TrendMetricCard(
-                    title: "CPU",
-                    value: String(format: "%.1f%%", state.snapshot.host.cpuPercent),
-                    subtitle: "\(foregroundEntities.count) foreground-tracked apps · \(trendWindowLabel(sampleCount: state.snapshot.hostTrend.cpuPercent.count))",
-                    samples: state.snapshot.hostTrend.cpuPercent.map(Double.init),
-                    style: .cpu
-                )
-                TrendMetricCard(
-                    title: "Memory Load",
-                    value: String(format: "%.1f%%", hostMemoryLoadPercent),
-                    subtitle: "\(formatBytes(state.snapshot.host.memoryUsedBytes)) / \(formatBytes(state.snapshot.host.memoryTotalBytes)) · \(trendWindowLabel(sampleCount: state.snapshot.hostTrend.memoryUsedBytes.count))",
-                    samples: hostMemoryTrendPercents,
-                    style: .memory
-                )
-                TrendMetricCard(
-                    title: "Disk Activity",
-                    value: formatRate(state.snapshot.host.diskReadBps + state.snapshot.host.diskWriteBps),
-                    subtitle: "\(trendLabel(samples: state.snapshot.hostTrend.diskActivityBps.map(Double.init), stableText: "host throughput")) · \(trendWindowLabel(sampleCount: state.snapshot.hostTrend.diskActivityBps.count))",
-                    samples: state.snapshot.hostTrend.diskActivityBps.map(Double.init),
-                    style: .disk
-                )
-            }
-        }
-    }
-
-    private var insightsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionEyebrow(text: "Read")
-            Text("Immediate read")
-                .font(.headline)
-
-            if let topConcern {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 10) {
-                        StatusBadge(score: Double(topConcern.friction.totalScore))
-                        Text(topConcern.displayName)
-                            .font(.title3.weight(.semibold))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center) {
+                SectionEyebrow(text: "Machine")
+                Spacer()
+                if selectedEntity != nil {
+                    Button("Back to ranking") {
+                        selectedEntityID = nil
                     }
-                    Text(topConcernSummary(for: topConcern))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 8) {
-                        TrendMetricCard(
-                            title: "Friction",
-                            value: String(format: "%.1f", topConcern.friction.totalScore),
-                            subtitle: frictionTrendSummary(topConcern),
-                            samples: topConcern.trend.friction.map(Double.init),
-                            style: .friction
-                        )
-                        TrendMetricCard(
-                            title: "CPU",
-                            value: String(format: "%.1f%%", topConcern.metrics.cpuPercent),
-                            subtitle: cpuTrendSummary(topConcern),
-                            samples: topConcern.trend.cpuPercent.map(Double.init),
-                            style: .cpu
-                        )
-                        TrendMetricCard(
-                            title: "Memory",
-                            value: String(format: "%.1f%%", entityMemoryLoadPercent(topConcern, totalBytes: state.snapshot.host.memoryTotalBytes)),
-                            subtitle: memoryTrendSummary(topConcern),
-                            samples: entityMemoryTrendPercents(topConcern, totalBytes: state.snapshot.host.memoryTotalBytes),
-                            style: .memory
-                        )
-                        TrendMetricCard(
-                            title: "Disk Activity",
-                            value: formatRate(topConcern.metrics.diskReadBps + topConcern.metrics.diskWriteBps),
-                            subtitle: diskTrendSummary(topConcern),
-                            samples: topConcern.trend.diskActivityBps.map(Double.init),
-                            style: .disk
-                        )
-                    }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.semibold))
                 }
-                .padding(12)
-                .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            } else {
-                Text("No entity is currently producing enough friction to be highlighted.")
-                    .foregroundStyle(.secondary)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    MachineBandMetric(
+                        title: "Friction",
+                        value: String(format: "%.1f", machineFrictionScore(for: state.snapshot.host)),
+                        tone: .orange,
+                        subtitle: trendWindowLabel(sampleCount: state.snapshot.hostTrend.machineFriction.count)
+                    )
+                    MachineBandMetric(
+                        title: "CPU",
+                        value: String(format: "%.1f%%", state.snapshot.host.cpuPercent),
+                        tone: .blue,
+                        subtitle: trendWindowLabel(sampleCount: state.snapshot.hostTrend.cpuPercent.count)
+                    )
+                    MachineBandMetric(
+                        title: "Memory",
+                        value: String(format: "%.1f%%", hostMemoryLoadPercent),
+                        tone: .green,
+                        subtitle: "\(formatBytes(state.snapshot.host.memoryUsedBytes)) used"
+                    )
+                    MachineBandMetric(
+                        title: "Disk",
+                        value: formatRate(state.snapshot.host.diskReadBps + state.snapshot.host.diskWriteBps),
+                        tone: .pink,
+                        subtitle: trendWindowLabel(sampleCount: state.snapshot.hostTrend.diskActivityBps.count)
+                    )
+                }
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
-    private var filterSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionEyebrow(text: "Filter")
-            Text("Filter apps")
-                .font(.headline)
-            Text("Search by app name, badge, or ranking reason.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextField("Search apps, reasons, or badges", text: $searchText)
-                .textFieldStyle(.roundedBorder)
-        }
-    }
-
-    private var focusedEntitySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionEyebrow(text: "Likely culprit")
-            Text("Focused app")
-                .font(.headline)
-
-            if let entity = selectedEntity ?? topConcern {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(entity.displayName)
-                                .font(.system(size: 24, weight: .semibold, design: .rounded))
-                            Text(topConcernSummary(for: entity))
+    private var rankingPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if let topConcern {
+                    VStack(alignment: .leading, spacing: 6) {
+                        SectionEyebrow(text: "Read")
+                        HStack(spacing: 8) {
+                            StatusBadge(score: Double(topConcern.friction.totalScore))
+                            Text(topConcernSummary(for: topConcern))
+                                .font(.subheadline)
                                 .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer()
-                        StatusBadge(score: Double(entity.friction.totalScore))
-                    }
-
-                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 8) {
-                        TrendMetricCard(
-                            title: "Friction",
-                            value: String(format: "%.1f", entity.friction.totalScore),
-                            subtitle: frictionTrendSummary(entity),
-                            samples: entity.trend.friction.map(Double.init),
-                            style: .friction
-                        )
-                        TrendMetricCard(
-                            title: "CPU",
-                            value: String(format: "%.1f%%", entity.metrics.cpuPercent),
-                            subtitle: cpuTrendSummary(entity),
-                            samples: entity.trend.cpuPercent.map(Double.init),
-                            style: .cpu
-                        )
-                        TrendMetricCard(
-                            title: "Memory",
-                            value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes)),
-                            subtitle: memoryTrendSummary(entity),
-                            samples: entityMemoryTrendPercents(entity, totalBytes: state.snapshot.host.memoryTotalBytes),
-                            style: .memory
-                        )
-                        TrendMetricCard(
-                            title: "Disk Activity",
-                            value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
-                            subtitle: diskTrendSummary(entity),
-                            samples: entity.trend.diskActivityBps.map(Double.init),
-                            style: .disk
-                        )
-                    }
-
-                    if !entity.friction.reasons.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Why this app matters")
-                                .font(.subheadline.weight(.semibold))
-                            ForEach(entity.friction.reasons.prefix(3), id: \.self) { reason in
-                                Text("• \(reason)")
-                                    .foregroundStyle(.secondary)
-                            }
+                                .lineLimit(2)
                         }
                     }
                 }
-                .padding(14)
-                .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            } else {
-                ContentUnavailableView(
-                    "No focused app",
-                    systemImage: "square.stack.3d.up.slash",
-                    description: Text("Aetower will surface the most important app here.")
-                )
+
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionEyebrow(text: "Filter")
+                    TextField("Search apps, reasons, or badges", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                rankedEntitiesSection
             }
+            .padding(16)
+        }
+    }
+
+    private func detailPanel(for entity: EntitySnapshot) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    SectionEyebrow(text: "Detail")
+                    Text(entity.displayName)
+                        .font(.title2.weight(.semibold))
+                }
+                Spacer()
+                StatusBadge(score: Double(entity.friction.totalScore))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            EntityDetailView(entity: entity)
         }
     }
 
@@ -388,7 +307,7 @@ public struct MainListView: View {
                     description: Text("Try a broader query.")
                 )
             } else {
-                LazyVStack(spacing: 10) {
+                LazyVStack(spacing: 8) {
                     ForEach(filteredEntities, id: \.entityId) { entity in
                         Button {
                             selectedEntityID = entity.entityId
@@ -422,10 +341,6 @@ public struct MainListView: View {
 
     private var topConcern: EntitySnapshot? {
         filteredEntities.first
-    }
-
-    private var foregroundEntities: [EntitySnapshot] {
-        state.snapshot.entities.filter(\.metrics.isForeground)
     }
 
     private var hostMemoryLoadPercent: Double {
