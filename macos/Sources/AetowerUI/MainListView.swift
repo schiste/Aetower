@@ -53,8 +53,19 @@ private struct StatusBadge: View {
     }
 }
 
-private let dashboardColumns = [GridItem(.adaptive(minimum: 220), spacing: 14)]
-private let metricColumns = [GridItem(.adaptive(minimum: 150), spacing: 12)]
+private struct SectionEyebrow: View {
+    let text: String
+
+    var body: some View {
+        Text(text.uppercased())
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.tertiary)
+            .tracking(0.8)
+    }
+}
+
+private let dashboardColumns = [GridItem(.adaptive(minimum: 210), spacing: 12)]
+private let metricColumns = [GridItem(.adaptive(minimum: 145), spacing: 10)]
 
 private struct EntityRow: View {
     let entity: EntitySnapshot
@@ -62,7 +73,7 @@ private struct EntityRow: View {
     let hostMemoryTotalBytes: UInt64
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
@@ -83,7 +94,7 @@ private struct EntityRow: View {
                 StatusBadge(score: Double(entity.friction.totalScore))
             }
 
-            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 12) {
+            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
                 TrendMetricCard(
                     title: "Friction",
                     value: String(format: "%.1f", entity.friction.totalScore),
@@ -131,7 +142,7 @@ private struct EntityRow: View {
                 }
             }
         }
-        .padding(16)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(rowBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
@@ -163,29 +174,30 @@ public struct MainListView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 18) {
                 summaryHeader
                 insightsSection
                 focusedEntitySection
                 filterSection
                 rankedEntitiesSection
             }
-            .padding(20)
+            .padding(16)
         }
         .navigationTitle("Aetower")
     }
 
     private var summaryHeader: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionEyebrow(text: "Machine")
             VStack(alignment: .leading, spacing: 6) {
-                Text("What is affecting this Mac right now")
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
-                Text("Machine-wide cards show overall pressure first. Then Aetower explains which app is most likely responsible.")
+                Text("Machine state")
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                Text("Start with system pressure, then drill into the app causing it.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            LazyVGrid(columns: dashboardColumns, alignment: .leading, spacing: 14) {
+            LazyVGrid(columns: dashboardColumns, alignment: .leading, spacing: 12) {
                 TrendMetricCard(
                     title: "Machine Friction",
                     value: String(format: "%.1f", machineFrictionScore(for: state.snapshot.host)),
@@ -220,6 +232,7 @@ public struct MainListView: View {
 
     private var insightsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            SectionEyebrow(text: "Read")
             Text("Immediate read")
                 .font(.headline)
 
@@ -234,7 +247,7 @@ public struct MainListView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 12) {
+                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
                         TrendMetricCard(
                             title: "Friction",
                             value: String(format: "%.1f", topConcern.friction.totalScore),
@@ -265,7 +278,7 @@ public struct MainListView: View {
                         )
                     }
                 }
-                .padding(16)
+                .padding(14)
                 .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             } else {
                 Text("No entity is currently producing enough friction to be highlighted.")
@@ -276,9 +289,10 @@ public struct MainListView: View {
 
     private var filterSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Filter apps in the global view")
+            SectionEyebrow(text: "Filter")
+            Text("Filter apps")
                 .font(.headline)
-            Text("Search by app name, badges, or the reason Aetower is giving for the ranking.")
+            Text("Search by app name, badge, or ranking reason.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             TextField("Search apps, reasons, or badges", text: $searchText)
@@ -288,6 +302,7 @@ public struct MainListView: View {
 
     private var focusedEntitySection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            SectionEyebrow(text: "Likely culprit")
             Text("Focused app")
                 .font(.headline)
 
@@ -305,7 +320,7 @@ public struct MainListView: View {
                         StatusBadge(score: Double(entity.friction.totalScore))
                     }
 
-                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 12) {
+                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
                         TrendMetricCard(
                             title: "Friction",
                             value: String(format: "%.1f", entity.friction.totalScore),
@@ -347,7 +362,7 @@ public struct MainListView: View {
                         }
                     }
                 }
-                .padding(18)
+                .padding(16)
                 .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             } else {
                 ContentUnavailableView(
@@ -361,6 +376,7 @@ public struct MainListView: View {
 
     private var rankedEntitiesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            SectionEyebrow(text: "Ranking")
             Text("Apps ranked by current friction")
                 .font(.headline)
 
