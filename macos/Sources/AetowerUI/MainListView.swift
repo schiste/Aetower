@@ -184,28 +184,17 @@ public struct MainListView: View {
     }
 
     public var body: some View {
-        NavigationSplitView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    summaryHeader
-                    insightsSection
-                    filterSection
-                    rankedEntitiesSection
-                }
-                .padding(20)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                summaryHeader
+                insightsSection
+                focusedEntitySection
+                filterSection
+                rankedEntitiesSection
             }
-            .navigationTitle("Aetower")
-        } detail: {
-            if let entity = selectedEntity {
-                EntityDetailView(entity: entity)
-            } else {
-                ContentUnavailableView(
-                    "No matching apps",
-                    systemImage: "line.3.horizontal.decrease.circle",
-                    description: Text("Adjust the filter to see ranked apps again.")
-                )
-            }
+            .padding(20)
         }
+        .navigationTitle("Aetower")
     }
 
     private var summaryHeader: some View {
@@ -296,7 +285,7 @@ public struct MainListView: View {
 
     private var filterSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Filter the ranking")
+            Text("Filter apps in the global view")
                 .font(.headline)
             Text("Search by app name, badges, or the reason Aetower is giving for the ranking.")
                 .font(.caption)
@@ -306,9 +295,82 @@ public struct MainListView: View {
         }
     }
 
+    private var focusedEntitySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Focused app")
+                .font(.headline)
+
+            if let entity = selectedEntity ?? topConcern {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(entity.displayName)
+                                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                            Text(topConcernSummary(for: entity))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        StatusBadge(score: Double(entity.friction.totalScore))
+                    }
+
+                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 12) {
+                        TrendMetricCard(
+                            title: "Friction",
+                            value: String(format: "%.1f", entity.friction.totalScore),
+                            subtitle: frictionTrendSummary(entity),
+                            samples: entity.trend.friction.map(Double.init),
+                            style: .friction
+                        )
+                        TrendMetricCard(
+                            title: "CPU",
+                            value: String(format: "%.1f%%", entity.metrics.cpuPercent),
+                            subtitle: cpuTrendSummary(entity),
+                            samples: entity.trend.cpuPercent.map(Double.init),
+                            style: .cpu
+                        )
+                        TrendMetricCard(
+                            title: "Memory",
+                            value: formatBytes(entity.metrics.memoryResidentBytes),
+                            subtitle: memoryTrendSummary(entity),
+                            samples: entity.trend.memoryResidentBytes.map(Double.init),
+                            style: .memory
+                        )
+                        TrendMetricCard(
+                            title: "Disk Activity",
+                            value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
+                            subtitle: diskTrendSummary(entity),
+                            samples: entity.trend.diskActivityBps.map(Double.init),
+                            style: .disk
+                        )
+                    }
+
+                    if !entity.friction.reasons.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Why this app matters")
+                                .font(.subheadline.weight(.semibold))
+                            ForEach(entity.friction.reasons.prefix(3), id: \.self) { reason in
+                                Text("• \(reason)")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .padding(18)
+                .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            } else {
+                ContentUnavailableView(
+                    "No focused app",
+                    systemImage: "square.stack.3d.up.slash",
+                    description: Text("Aetower will surface the most important app here.")
+                )
+            }
+        }
+    }
+
     private var rankedEntitiesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Ranked apps")
+            Text("Apps ranked by current friction")
                 .font(.headline)
 
             if filteredEntities.isEmpty {
@@ -359,7 +421,7 @@ public struct MainListView: View {
             return filteredEntities.first(where: { $0.entityId == selectedEntityID })
                 ?? state.snapshot.entities.first(where: { $0.entityId == selectedEntityID })
         }
-        return filteredEntities.first
+        return nil
     }
 
     private func topConcernSummary(for entity: EntitySnapshot) -> String {
