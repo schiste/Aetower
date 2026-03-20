@@ -11,3 +11,5 @@ parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sysinfo.workspace = true
+tungstenite = "0.24"
+url = "2"

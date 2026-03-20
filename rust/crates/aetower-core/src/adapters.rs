@@ -13,6 +13,9 @@ use aetower_model::{
     EntitySnapshot,
 };
 use serde::Deserialize;
+use serde_json::{json, Value};
+use tungstenite::{connect, Message};
+use url::Url;
 
 const CHROMIUM_TIMEOUT: Duration = Duration::from_millis(300);
 const DOCKER_TIMEOUT: Duration = Duration::from_millis(300);
@@ -45,6 +48,8 @@ struct ChromiumTarget {
 
 #[derive(Debug, Deserialize)]
 struct DockerContainerSummary {
+    #[serde(rename = "Id")]
+    id: String,
     #[serde(rename = "Names")]
     names: Vec<String>,
     #[serde(rename = "Image")]
@@ -67,6 +72,66 @@ struct DockerPortSummary {
     public_port: Option<u16>,
     #[serde(rename = "Type")]
     port_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DockerContainerStats {
+    #[serde(rename = "cpu_stats")]
+    cpu_stats: DockerCpuStats,
+    #[serde(rename = "precpu_stats")]
+    pre_cpu_stats: DockerCpuStats,
+    #[serde(rename = "memory_stats")]
+    memory_stats: DockerMemoryStats,
+    #[serde(default)]
+    networks: BTreeMap<String, DockerNetworkStats>,
+    #[serde(rename = "blkio_stats")]
+    blkio_stats: DockerBlkioStats,
+    #[serde(rename = "pids_stats")]
+    pids_stats: DockerPidsStats,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DockerCpuStats {
+    #[serde(rename = "cpu_usage")]
+    cpu_usage: DockerCpuUsage,
+    system_cpu_usage: Option<u64>,
+    online_cpus: Option<u32>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DockerCpuUsage {
+    total_usage: u64,
+    #[serde(default)]
+    percpu_usage: Vec<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DockerMemoryStats {
+    usage: Option<u64>,
+    limit: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DockerNetworkStats {
+    rx_bytes: u64,
+    tx_bytes: u64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DockerBlkioStats {
+    #[serde(default, rename = "io_service_bytes_recursive")]
+    io_service_bytes_recursive: Vec<DockerBlkioEntry>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DockerBlkioEntry {
+    op: Option<String>,
+    value: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DockerPidsStats {
+    current: Option<u64>,
 }
 
 impl AdapterManager {
@@ -178,12 +243,9 @@ impl AdapterManager {
                         entity.components.push(ComponentSnapshot {
                             kind: ComponentKind::AdapterContext,
                             title: format!("Tab {} · {}", target.id, target.title),
-                            detail: match target.debug_socket.as_deref() {
-                                Some(socket) => format!("{} · {}", target.url, socket),
-                                None => target.url.clone(),
-                            },
+                            detail: chromium_target_detail(target),
                             cpu_percent: 0.0,
-                            memory_bytes: 0,
+                            memory_bytes: target.js_heap_used_bytes,
                         });
                     }
                     if !targets.is_empty() && !entity.badges.iter().any(|badge| badge == "chromium-live") {
@@ -198,18 +260,9 @@ impl AdapterManager {
                         entity.components.push(ComponentSnapshot {
                             kind: ComponentKind::AdapterContext,
                             title: container.name.clone(),
-                            detail: if container.ports.is_empty() {
-                                format!("{} · {}", container.image, container.status)
-                            } else {
-                                format!(
-                                    "{} · {} · {}",
-                                    container.image,
-                                    container.status,
-                                    container.ports.join(", ")
-                                )
-                            },
-                            cpu_percent: 0.0,
-                            memory_bytes: 0,
+                            detail: docker_container_detail(container),
+                            cpu_percent: container.cpu_percent,
+                            memory_bytes: container.memory_usage_bytes,
                         });
                     }
                     if !containers.is_empty() && !entity.badges.iter().any(|badge| badge == "docker-live") {
@@ -227,14 +280,28 @@ struct ChromiumPageTarget {
     title: String,
     url: String,
     debug_socket: Option<String>,
+    js_heap_used_bytes: u64,
+    js_heap_total_bytes: u64,
+    dom_nodes: u64,
+    documents: u64,
+    frames: u64,
 }
 
 #[derive(Debug, Clone)]
 struct DockerContainer {
+    id: String,
     name: String,
     image: String,
     status: String,
     ports: Vec<String>,
+    cpu_percent: f32,
+    memory_usage_bytes: u64,
+    memory_limit_bytes: u64,
+    network_rx_bytes: u64,
+    network_tx_bytes: u64,
+    block_read_bytes: u64,
+    block_write_bytes: u64,
+    pids: u64,
 }
 
 fn chromium_config() -> Option<ChromiumAdapterConfig> {
@@ -265,6 +332,23 @@ fn fetch_chromium_targets(config: &ChromiumAdapterConfig) -> Result<Vec<Chromium
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "about:blank".to_owned()),
             debug_socket: target.web_socket_debugger_url,
+            js_heap_used_bytes: 0,
+            js_heap_total_bytes: 0,
+            dom_nodes: 0,
+            documents: 0,
+            frames: 0,
+        })
+        .map(|mut target| {
+            if let Some(debug_socket) = target.debug_socket.as_deref() {
+                if let Ok(metrics) = fetch_chromium_metrics(debug_socket) {
+                    target.js_heap_used_bytes = metrics.js_heap_used_bytes;
+                    target.js_heap_total_bytes = metrics.js_heap_total_bytes;
+                    target.dom_nodes = metrics.dom_nodes;
+                    target.documents = metrics.documents;
+                    target.frames = metrics.frames;
+                }
+            }
+            target
         })
         .collect())
 }
@@ -281,6 +365,7 @@ fn fetch_docker_containers(config: &DockerAdapterConfig) -> Result<Vec<DockerCon
     Ok(parsed
         .into_iter()
         .map(|container| DockerContainer {
+            id: container.id.clone(),
             name: container
                 .names
                 .into_iter()
@@ -307,8 +392,232 @@ fn fetch_docker_containers(config: &DockerAdapterConfig) -> Result<Vec<DockerCon
                     _ => format!("{} {}", port.private_port, port.port_type),
                 })
                 .collect(),
+            cpu_percent: 0.0,
+            memory_usage_bytes: 0,
+            memory_limit_bytes: 0,
+            network_rx_bytes: 0,
+            network_tx_bytes: 0,
+            block_read_bytes: 0,
+            block_write_bytes: 0,
+            pids: 0,
+        })
+        .map(|mut container| {
+            if let Ok(stats) = fetch_docker_container_stats(config, &container.id) {
+                container.cpu_percent = docker_cpu_percent(&stats);
+                container.memory_usage_bytes = stats.memory_stats.usage.unwrap_or(0);
+                container.memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0);
+                (container.network_rx_bytes, container.network_tx_bytes) =
+                    docker_network_totals(&stats.networks);
+                (container.block_read_bytes, container.block_write_bytes) =
+                    docker_block_io_totals(&stats.blkio_stats.io_service_bytes_recursive);
+                container.pids = stats.pids_stats.current.unwrap_or(0);
+            }
+            container
         })
         .collect())
+}
+
+#[derive(Debug, Default)]
+struct ChromiumMetrics {
+    js_heap_used_bytes: u64,
+    js_heap_total_bytes: u64,
+    dom_nodes: u64,
+    documents: u64,
+    frames: u64,
+}
+
+fn fetch_chromium_metrics(debug_socket: &str) -> Result<ChromiumMetrics, String> {
+    let _ = Url::parse(debug_socket).map_err(|error| format!("invalid websocket url: {error}"))?;
+    let (mut socket, _) =
+        connect(debug_socket).map_err(|error| format!("websocket connect failed: {error}"))?;
+
+    let enable_command = json!({ "id": 1, "method": "Performance.enable" });
+    socket
+        .send(Message::Text(enable_command.to_string().into()))
+        .map_err(|error| format!("websocket enable failed: {error}"))?;
+    let _ = read_cdp_response(&mut socket, 1)?;
+
+    let metrics_command = json!({ "id": 2, "method": "Performance.getMetrics" });
+    socket
+        .send(Message::Text(metrics_command.to_string().into()))
+        .map_err(|error| format!("websocket metrics failed: {error}"))?;
+    let payload = read_cdp_response(&mut socket, 2)?;
+    let metrics = payload
+        .get("result")
+        .and_then(|value| value.get("metrics"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| "cdp response missing metrics array".to_owned())?;
+
+    let metric = |name: &str| -> u64 {
+        metrics
+            .iter()
+            .find(|value| value.get("name").and_then(Value::as_str) == Some(name))
+            .and_then(|value| value.get("value"))
+            .and_then(Value::as_f64)
+            .map(|value| value.max(0.0) as u64)
+            .unwrap_or(0)
+    };
+
+    Ok(ChromiumMetrics {
+        js_heap_used_bytes: metric("JSHeapUsedSize"),
+        js_heap_total_bytes: metric("JSHeapTotalSize"),
+        dom_nodes: metric("Nodes"),
+        documents: metric("Documents"),
+        frames: metric("Frames"),
+    })
+}
+
+fn read_cdp_response(
+    socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>,
+    expected_id: u64,
+) -> Result<Value, String> {
+    loop {
+        let message = socket
+            .read()
+            .map_err(|error| format!("websocket read failed: {error}"))?;
+        match message {
+            Message::Text(text) => {
+                let payload: Value = serde_json::from_str(&text)
+                    .map_err(|error| format!("invalid cdp payload: {error}"))?;
+                if payload.get("id").and_then(Value::as_u64) == Some(expected_id) {
+                    return Ok(payload);
+                }
+            }
+            Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
+            Message::Close(_) => return Err("websocket closed before expected response".to_owned()),
+        }
+    }
+}
+
+fn fetch_docker_container_stats(
+    config: &DockerAdapterConfig,
+    container_id: &str,
+) -> Result<DockerContainerStats, String> {
+    let response = http_get_unix(
+        &config.socket_path,
+        &format!("/containers/{container_id}/stats?stream=0"),
+        DOCKER_TIMEOUT,
+    )?;
+    serde_json::from_str(&response).map_err(|error| format!("invalid docker stats json: {error}"))
+}
+
+fn docker_cpu_percent(stats: &DockerContainerStats) -> f32 {
+    let cpu_delta = stats
+        .cpu_stats
+        .cpu_usage
+        .total_usage
+        .saturating_sub(stats.pre_cpu_stats.cpu_usage.total_usage);
+    let system_delta = stats
+        .cpu_stats
+        .system_cpu_usage
+        .unwrap_or(0)
+        .saturating_sub(stats.pre_cpu_stats.system_cpu_usage.unwrap_or(0));
+    if cpu_delta == 0 || system_delta == 0 {
+        return 0.0;
+    }
+
+    let cpu_count = stats
+        .cpu_stats
+        .online_cpus
+        .filter(|count| *count > 0)
+        .map(|count| count as f32)
+        .unwrap_or_else(|| stats.cpu_stats.cpu_usage.percpu_usage.len().max(1) as f32);
+
+    (cpu_delta as f32 / system_delta as f32) * cpu_count * 100.0
+}
+
+fn docker_network_totals(networks: &BTreeMap<String, DockerNetworkStats>) -> (u64, u64) {
+    networks.values().fold((0, 0), |(rx, tx), network| {
+        (
+            rx.saturating_add(network.rx_bytes),
+            tx.saturating_add(network.tx_bytes),
+        )
+    })
+}
+
+fn docker_block_io_totals(entries: &[DockerBlkioEntry]) -> (u64, u64) {
+    entries.iter().fold((0, 0), |(read, write), entry| {
+        let value = entry.value.unwrap_or(0);
+        match entry.op.as_deref() {
+            Some("Read") => (read.saturating_add(value), write),
+            Some("Write") => (read, write.saturating_add(value)),
+            _ => (read, write),
+        }
+    })
+}
+
+fn chromium_target_detail(target: &ChromiumPageTarget) -> String {
+    let mut parts = vec![target.url.clone()];
+    if target.js_heap_used_bytes > 0 || target.js_heap_total_bytes > 0 {
+        parts.push(format!(
+            "heap {} / {}",
+            human_bytes(target.js_heap_used_bytes),
+            human_bytes(target.js_heap_total_bytes)
+        ));
+    }
+    if target.dom_nodes > 0 || target.documents > 0 || target.frames > 0 {
+        parts.push(format!(
+            "{} nodes · {} docs · {} frames",
+            target.dom_nodes, target.documents, target.frames
+        ));
+    }
+    if let Some(socket) = target.debug_socket.as_deref() {
+        parts.push(socket.to_owned());
+    }
+    parts.join(" · ")
+}
+
+fn docker_container_detail(container: &DockerContainer) -> String {
+    let mut parts = vec![
+        container.image.clone(),
+        container.status.clone(),
+        format!(
+            "cpu {:.1}% · mem {}",
+            container.cpu_percent,
+            human_bytes(container.memory_usage_bytes)
+        ),
+    ];
+    if container.memory_limit_bytes > 0 {
+        parts.push(format!("limit {}", human_bytes(container.memory_limit_bytes)));
+    }
+    if container.network_rx_bytes > 0 || container.network_tx_bytes > 0 {
+        parts.push(format!(
+            "net {}↓ {}↑",
+            human_bytes(container.network_rx_bytes),
+            human_bytes(container.network_tx_bytes)
+        ));
+    }
+    if container.block_read_bytes > 0 || container.block_write_bytes > 0 {
+        parts.push(format!(
+            "io {} read {} write",
+            human_bytes(container.block_read_bytes),
+            human_bytes(container.block_write_bytes)
+        ));
+    }
+    if container.pids > 0 {
+        parts.push(format!("{} pids", container.pids));
+    }
+    if !container.ports.is_empty() {
+        parts.push(container.ports.join(", "));
+    }
+    parts.join(" · ")
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let value = bytes as f64;
+    if value >= GB {
+        format!("{:.1} GiB", value / GB)
+    } else if value >= MB {
+        format!("{:.1} MiB", value / MB)
+    } else if value >= KB {
+        format!("{:.1} KiB", value / KB)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 fn parse_http_endpoint(raw: &str) -> Option<(String, u16, String)> {
@@ -378,7 +687,13 @@ fn read_http_body(stream: &mut impl Read) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_http_endpoint, ChromiumTarget, DockerContainerSummary};
+    use std::collections::BTreeMap;
+
+    use super::{
+        docker_block_io_totals, docker_cpu_percent, docker_network_totals, parse_http_endpoint,
+        ChromiumTarget, DockerBlkioEntry, DockerContainerStats, DockerContainerSummary,
+        DockerNetworkStats,
+    };
 
     #[test]
     fn parses_http_endpoint_with_explicit_path() {
@@ -409,11 +724,64 @@ mod tests {
 
     #[test]
     fn docker_container_deserializes() {
-        let raw = r#"{"Names":["/web"],"Image":"nginx:latest","State":"running","Status":"Up 3 minutes","Ports":[{"IP":"0.0.0.0","PrivatePort":80,"PublicPort":8080,"Type":"tcp"}]}"#;
+        let raw = r#"{"Id":"abc123","Names":["/web"],"Image":"nginx:latest","State":"running","Status":"Up 3 minutes","Ports":[{"IP":"0.0.0.0","PrivatePort":80,"PublicPort":8080,"Type":"tcp"}]}"#;
         let parsed: DockerContainerSummary = serde_json::from_str(raw).unwrap();
         assert_eq!(parsed.names[0], "/web");
         assert_eq!(parsed.image, "nginx:latest");
         assert_eq!(parsed.status, "Up 3 minutes");
         assert_eq!(parsed.ports[0].public_port, Some(8080));
+    }
+
+    #[test]
+    fn docker_cpu_percent_uses_usage_deltas() {
+        let raw = r#"{
+            "cpu_stats":{"cpu_usage":{"total_usage":300,"percpu_usage":[100,200]},"system_cpu_usage":2000,"online_cpus":2},
+            "precpu_stats":{"cpu_usage":{"total_usage":100,"percpu_usage":[50,50]},"system_cpu_usage":1000,"online_cpus":2},
+            "memory_stats":{"usage":0,"limit":0},
+            "networks":{},
+            "blkio_stats":{"io_service_bytes_recursive":[]},
+            "pids_stats":{"current":1}
+        }"#;
+        let parsed: DockerContainerStats = serde_json::from_str(raw).unwrap();
+        assert_eq!(docker_cpu_percent(&parsed), 40.0);
+    }
+
+    #[test]
+    fn docker_network_totals_accumulate_interfaces() {
+        let mut networks = BTreeMap::new();
+        networks.insert(
+            "eth0".to_owned(),
+            DockerNetworkStats {
+                rx_bytes: 1024,
+                tx_bytes: 2048,
+            },
+        );
+        networks.insert(
+            "eth1".to_owned(),
+            DockerNetworkStats {
+                rx_bytes: 512,
+                tx_bytes: 256,
+            },
+        );
+        assert_eq!(docker_network_totals(&networks), (1536, 2304));
+    }
+
+    #[test]
+    fn docker_block_io_totals_split_read_write() {
+        let entries = vec![
+            DockerBlkioEntry {
+                op: Some("Read".to_owned()),
+                value: Some(2048),
+            },
+            DockerBlkioEntry {
+                op: Some("Write".to_owned()),
+                value: Some(4096),
+            },
+            DockerBlkioEntry {
+                op: Some("Read".to_owned()),
+                value: Some(1024),
+            },
+        ];
+        assert_eq!(docker_block_io_totals(&entries), (3072, 4096));
     }
 }
