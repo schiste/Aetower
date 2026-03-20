@@ -114,14 +114,42 @@ private struct InlineMetric: View {
     }
 }
 
+private enum RankingDimension: String, CaseIterable, Identifiable {
+    case friction
+    case cpu
+    case memory
+    case disk
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .friction: return "Friction"
+        case .cpu: return "CPU"
+        case .memory: return "Memory"
+        case .disk: return "Disk"
+        }
+    }
+
+    var tone: Color {
+        switch self {
+        case .friction: return .orange
+        case .cpu: return .blue
+        case .memory: return .green
+        case .disk: return .pink
+        }
+    }
+}
+
 private struct RowSignalBadge: View {
-    let score: Double
+    let valueText: String
     let title: String
-    let isForeground: Bool
+    let tone: Color
+    let showsForegroundDot: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(String(format: "%.1f", score))
+            Text(valueText)
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(.white)
@@ -131,7 +159,7 @@ private struct RowSignalBadge: View {
                 .foregroundStyle(.white)
                 .lineLimit(1)
 
-            if isForeground {
+            if showsForegroundDot {
                 Circle()
                     .fill(.white.opacity(0.92))
                     .frame(width: 6, height: 6)
@@ -149,33 +177,23 @@ private struct RowSignalBadge: View {
         )
     }
 
-    private var tone: Color {
-        switch score {
-        case 75...:
-            return .red
-        case 40...:
-            return .orange
-        case 15...:
-            return .yellow
-        default:
-            return .green
-        }
-    }
 }
 
 private struct EntityRow: View {
     let entity: EntitySnapshot
     let isSelected: Bool
     let hostMemoryTotalBytes: UInt64
+    let rankingDimension: RankingDimension
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .center, spacing: 6) {
                     RowSignalBadge(
-                        score: Double(entity.friction.totalScore),
+                        valueText: badgeValueText,
                         title: entity.displayName,
-                        isForeground: entity.metrics.isForeground
+                        tone: rankingDimension.tone,
+                        showsForegroundDot: entity.metrics.isForeground
                     )
                     InlineMetric(title: "CPU", value: String(format: "%.1f%%", entity.metrics.cpuPercent))
                     InlineMetric(title: "Mem", value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)))
@@ -211,12 +229,26 @@ private struct EntityRow: View {
     private var rowBackground: Color {
         isSelected ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.04)
     }
+
+    private var badgeValueText: String {
+        switch rankingDimension {
+        case .friction:
+            return String(format: "%.1f", entity.friction.totalScore)
+        case .cpu:
+            return String(format: "%.1f%%", entity.metrics.cpuPercent)
+        case .memory:
+            return String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes))
+        case .disk:
+            return formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps)
+        }
+    }
 }
 
 public struct MainListView: View {
     @ObservedObject private var state: AppState
     @State private var selectedEntityID: String?
     @State private var searchText = ""
+    @State private var rankingDimension: RankingDimension = .friction
 
     public init(state: AppState) {
         self.state = state
@@ -289,8 +321,13 @@ public struct MainListView: View {
                 if let topConcern {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 8) {
-                            StatusBadge(score: Double(topConcern.friction.totalScore))
-                            Text(topConcernSummary(for: topConcern))
+                            RowSignalBadge(
+                                valueText: rankingValueText(for: topConcern),
+                                title: topConcern.displayName,
+                                tone: rankingDimension.tone,
+                                showsForegroundDot: topConcern.metrics.isForeground
+                            )
+                            Text(topConcernSummary(for: topConcern, dimension: rankingDimension))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
@@ -332,7 +369,7 @@ public struct MainListView: View {
                     Spacer()
                 }
 
-                Text(topConcernSummary(for: entity))
+                Text(topConcernSummary(for: entity, dimension: rankingDimension))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -348,8 +385,18 @@ public struct MainListView: View {
 
     private var rankedEntitiesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Apps ranked by current friction")
-                .font(.headline)
+            HStack(alignment: .center, spacing: 8) {
+                Text("Apps ranked by")
+                    .font(.headline)
+
+                Picker("Ranking dimension", selection: $rankingDimension) {
+                    ForEach(RankingDimension.allCases) { dimension in
+                        Text(dimension.title).tag(dimension)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
 
             TextField("Search apps, reasons, or badges", text: $searchText)
                 .textFieldStyle(.roundedBorder)
@@ -369,7 +416,8 @@ public struct MainListView: View {
                             EntityRow(
                                 entity: entity,
                                 isSelected: selectedEntityID == entity.entityId,
-                                hostMemoryTotalBytes: state.snapshot.host.memoryTotalBytes
+                                hostMemoryTotalBytes: state.snapshot.host.memoryTotalBytes,
+                                rankingDimension: rankingDimension
                             )
                         }
                         .buttonStyle(.plain)
@@ -381,15 +429,20 @@ public struct MainListView: View {
 
     private var filteredEntities: [EntitySnapshot] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            return state.snapshot.entities
+        let filtered: [EntitySnapshot]
+        if query.isEmpty {
+            filtered = state.snapshot.entities
+        } else {
+            let loweredQuery = query.localizedLowercase
+            filtered = state.snapshot.entities.filter { entity in
+                entity.displayName.localizedLowercase.contains(loweredQuery)
+                    || entity.badges.joined(separator: " ").localizedLowercase.contains(loweredQuery)
+                    || entity.friction.reasons.joined(separator: " ").localizedLowercase.contains(loweredQuery)
+            }
         }
 
-        let loweredQuery = query.localizedLowercase
-        return state.snapshot.entities.filter { entity in
-            entity.displayName.localizedLowercase.contains(loweredQuery)
-                || entity.badges.joined(separator: " ").localizedLowercase.contains(loweredQuery)
-                || entity.friction.reasons.joined(separator: " ").localizedLowercase.contains(loweredQuery)
+        return filtered.sorted {
+            rankingValue(for: $0) > rankingValue(for: $1)
         }
     }
 
@@ -415,12 +468,47 @@ public struct MainListView: View {
         return nil
     }
 
-    private func topConcernSummary(for entity: EntitySnapshot) -> String {
-        let reason = entity.friction.reasons.first ?? "No single dominant reason was recorded."
-        if entity.metrics.isForeground {
-            return "\(entity.displayName) is frontmost and currently ranked highest because \(reason.lowercased())"
+    private func topConcernSummary(for entity: EntitySnapshot, dimension: RankingDimension) -> String {
+        switch dimension {
+        case .friction:
+            let reason = entity.friction.reasons.first ?? "no single dominant reason was recorded."
+            if entity.metrics.isForeground {
+                return "\(entity.displayName) is frontmost and currently ranked highest because \(reason.lowercased())"
+            }
+            return "\(entity.displayName) is the highest-ranked background source of friction because \(reason.lowercased())"
+        case .cpu:
+            return "\(entity.displayName) is currently highest by CPU usage at \(String(format: "%.1f%%", entity.metrics.cpuPercent))."
+        case .memory:
+            return "\(entity.displayName) is currently highest by memory load at \(String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes)))."
+        case .disk:
+            return "\(entity.displayName) is currently highest by disk activity at \(formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))."
         }
-        return "\(entity.displayName) is the highest-ranked background source of friction because \(reason.lowercased())"
+    }
+
+    private func rankingValue(for entity: EntitySnapshot) -> Double {
+        switch rankingDimension {
+        case .friction:
+            return Double(entity.friction.totalScore)
+        case .cpu:
+            return Double(entity.metrics.cpuPercent)
+        case .memory:
+            return entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes)
+        case .disk:
+            return Double(entity.metrics.diskReadBps + entity.metrics.diskWriteBps)
+        }
+    }
+
+    private func rankingValueText(for entity: EntitySnapshot) -> String {
+        switch rankingDimension {
+        case .friction:
+            return String(format: "%.1f", entity.friction.totalScore)
+        case .cpu:
+            return String(format: "%.1f%%", entity.metrics.cpuPercent)
+        case .memory:
+            return String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes))
+        case .disk:
+            return formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps)
+        }
     }
 
 }
