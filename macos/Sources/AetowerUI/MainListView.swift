@@ -125,8 +125,8 @@ private struct RowSignalBadge: View {
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
                 .background(.white.opacity(0.16), in: Capsule())
 
             Text(title)
@@ -140,16 +140,15 @@ private struct RowSignalBadge: View {
                     .frame(width: 6, height: 6)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
         .background(
             LinearGradient(
                 colors: [tone.opacity(0.95), tone.opacity(0.65)],
                 startPoint: .leading,
                 endPoint: .trailing
             ),
-            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
         )
     }
 
@@ -187,8 +186,6 @@ private struct EntityRow: View {
                     .lineLimit(1)
 
                 Spacer()
-
-                StatusBadge(score: Double(entity.friction.totalScore))
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
