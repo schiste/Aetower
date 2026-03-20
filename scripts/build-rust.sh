@@ -7,6 +7,9 @@ cd "$ROOT/rust"
 cargo build -p aetower-ffi
 cargo build -p aetower-ffi --release
 
+install_name_tool -id "@rpath/libaetower_ffi.dylib" target/debug/libaetower_ffi.dylib
+install_name_tool -id "@rpath/libaetower_ffi.dylib" target/release/libaetower_ffi.dylib
+
 mkdir -p "$ROOT/macos/Sources/AetowerBindings" "$ROOT/macos/Sources/aetower_ffiFFI"
 find "$ROOT/macos/Sources/AetowerBindings" -type f ! -name '.gitkeep' -delete
 find "$ROOT/macos/Sources/aetower_ffiFFI" -type f ! -name '.gitkeep' -delete

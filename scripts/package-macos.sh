@@ -47,3 +47,11 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 PLIST
 
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$BIN_DIR/Aetower" || true
+install_name_tool -change "$ROOT/rust/target/debug/deps/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
+install_name_tool -change "$ROOT/rust/target/debug/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
+install_name_tool -change "$ROOT/rust/target/release/deps/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
+install_name_tool -change "$ROOT/rust/target/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
+
+codesign --force --sign - "$FRAMEWORK_DIR/libaetower_ffi.dylib"
+codesign --force --sign - "$HELPER_DIR/aetower-helper"
+codesign --force --deep --sign - "$APP_DIR"

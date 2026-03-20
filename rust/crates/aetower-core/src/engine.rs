@@ -79,13 +79,16 @@ impl Engine {
                 let captured_at_millis = time::now_millis();
                 let raw = collector.collect();
                 let identity = identity::resolve(&raw.processes);
-                let mut guard = state.lock();
-                let mut entities = attribution::build_entities(
-                    &raw.processes,
-                    &identity,
-                    guard.frontmost_app_state.as_ref(),
-                );
-                adapters.enrich_entities(&mut entities, &guard.capabilities);
+                let (frontmost_app_state, capabilities) = {
+                    let guard = state.lock();
+                    (
+                        guard.frontmost_app_state.clone(),
+                        guard.capabilities.clone(),
+                    )
+                };
+                let mut entities =
+                    attribution::build_entities(&raw.processes, &identity, frontmost_app_state.as_ref());
+                adapters.enrich_entities(&mut entities, &capabilities);
 
                 let host = HostSnapshot {
                     cpu_percent: raw.host.cpu_percent,
@@ -96,24 +99,21 @@ impl Engine {
                     network_send_bps: raw.host.network_send_bps,
                     thermal_state: "nominal".to_owned(),
                     on_battery: false,
-                    frontmost_app_name: guard
-                        .frontmost_app_state
-                        .as_ref()
-                        .map(|state| state.app_name.clone()),
-                    frontmost_window_title: guard
-                        .frontmost_app_state
+                    frontmost_app_name: frontmost_app_state.as_ref().map(|state| state.app_name.clone()),
+                    frontmost_window_title: frontmost_app_state
                         .as_ref()
                         .and_then(|state| state.window_title.clone()),
                 };
 
                 friction::apply(&host, &mut entities);
+                let mut guard = state.lock();
                 let timeline = guard.history.update(captured_at_millis, &entities);
                 guard.sequence += 1;
                 guard.latest_snapshot = SystemSnapshot {
                     sequence: guard.sequence,
                     captured_at_millis,
                     host,
-                    capabilities: guard.capabilities.values().cloned().collect(),
+                    capabilities: capabilities.values().cloned().collect(),
                     entities,
                     timeline,
                 };
