@@ -4,6 +4,7 @@ import AetowerUI
 @main
 struct AetowerApp: App {
     @StateObject private var state = AppState()
+    @StateObject private var settings = SettingsStore()
 
     var body: some Scene {
         WindowGroup {
@@ -19,18 +20,24 @@ struct AetowerApp: App {
                         Label("Timeline", systemImage: "timeline.selection")
                     }
 
-                SettingsView(state: state)
+                SettingsView(state: state, settings: settings)
                     .tabItem {
                         Label("Settings", systemImage: "slider.horizontal.3")
                     }
             }
             .frame(minWidth: 1180, minHeight: 760)
             .task {
-                state.start()
+                state.start(refreshInterval: settings.refreshIntervalSeconds)
+            }
+            .onChange(of: settings.refreshIntervalSeconds) { _, newValue in
+                state.start(refreshInterval: newValue)
             }
             .onDisappear {
                 state.stop()
             }
+        }
+        MenuBarExtra("Aetower", systemImage: "gauge.with.needle", isInserted: $settings.showMenuBarExtra) {
+            MenuBarSummaryView(state: state, settings: settings)
         }
         .windowStyle(.titleBar)
     }

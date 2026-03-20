@@ -3,14 +3,47 @@ import AetowerBridge
 
 public struct SettingsView: View {
     @ObservedObject private var state: AppState
+    @ObservedObject private var settings: SettingsStore
 
-    public init(state: AppState) {
+    public init(state: AppState, settings: SettingsStore) {
         self.state = state
+        self.settings = settings
     }
 
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                GroupBox("Behavior") {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Toggle("Show menu bar extra", isOn: $settings.showMenuBarExtra)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Refresh interval")
+                                .font(.headline)
+                            Picker("Refresh interval", selection: $settings.refreshIntervalSeconds) {
+                                Text("0.5s").tag(0.5)
+                                Text("1.0s").tag(1.0)
+                                Text("2.0s").tag(2.0)
+                            }
+                            .pickerStyle(.segmented)
+                        }
+
+                        Toggle(
+                            "Launch at login",
+                            isOn: Binding(
+                                get: { settings.launchAtLoginEnabled },
+                                set: { settings.setLaunchAtLogin($0) }
+                            )
+                        )
+
+                        if let error = settings.launchAtLoginError {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+
                 Text("Capabilities")
                     .font(.largeTitle.weight(.semibold))
                 Text("Aetower keeps core monitoring useful without invasive access, and exposes richer integrations behind explicit capability gates.")

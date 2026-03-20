@@ -41,8 +41,13 @@ public final class AppState: ObservableObject {
     }
 
     public func start() {
+        start(refreshInterval: 1.0)
+    }
+
+    public func start(refreshInterval: Double) {
+        stop()
         refresh()
-        timerCancellable = Timer.publish(every: 1.0, on: .main, in: .common)
+        timerCancellable = Timer.publish(every: max(0.25, refreshInterval), on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.refresh()
