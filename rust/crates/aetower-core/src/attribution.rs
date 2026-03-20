@@ -29,8 +29,12 @@ pub fn build_entities(
             .or_insert_with(|| entity_from_seed(seed));
 
         entry.metrics.cpu_percent += process.cpu_percent;
-        entry.metrics.memory_resident_bytes += process.memory_bytes;
-        entry.metrics.virtual_memory_bytes += process.virtual_memory_bytes;
+        entry.metrics.memory_resident_bytes =
+            entry.metrics.memory_resident_bytes.max(process.memory_bytes);
+        entry.metrics.virtual_memory_bytes = entry
+            .metrics
+            .virtual_memory_bytes
+            .max(process.virtual_memory_bytes);
         entry.metrics.disk_read_bps += process.disk_read_bytes;
         entry.metrics.disk_write_bps += process.disk_write_bytes;
         entry.metrics.process_count += 1;
