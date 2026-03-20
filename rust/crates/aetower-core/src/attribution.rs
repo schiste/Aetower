@@ -1,13 +1,19 @@
 use std::collections::BTreeMap;
 
-use aetower_model::{AggregateMetrics, ComponentKind, ComponentSnapshot, EntitySnapshot};
+use aetower_model::{
+    AggregateMetrics, ComponentKind, ComponentSnapshot, EntitySnapshot, FrontmostAppState,
+};
 
 use crate::{
     collector::RawProcessSample,
     identity::{EntitySeed, IdentityMap},
 };
 
-pub fn build_entities(processes: &[RawProcessSample], identity: &IdentityMap) -> Vec<EntitySnapshot> {
+pub fn build_entities(
+    processes: &[RawProcessSample],
+    identity: &IdentityMap,
+    frontmost: Option<&FrontmostAppState>,
+) -> Vec<EntitySnapshot> {
     let mut grouped: BTreeMap<String, EntitySnapshot> = BTreeMap::new();
 
     for process in processes {
@@ -28,7 +34,11 @@ pub fn build_entities(processes: &[RawProcessSample], identity: &IdentityMap) ->
         entry.metrics.disk_read_bps += process.disk_read_bytes;
         entry.metrics.disk_write_bps += process.disk_write_bytes;
         entry.metrics.process_count += 1;
-        entry.metrics.is_foreground = entry.metrics.is_foreground || is_foreground_candidate(seed);
+        entry.metrics.is_foreground =
+            entry.metrics.is_foreground || is_foreground_match(seed, frontmost);
+        if entry.metrics.is_foreground {
+            entry.active_window_title = frontmost.and_then(|state| state.window_title.clone());
+        }
 
         entry.components.push(ComponentSnapshot {
             kind: if seed.entity_kind == aetower_model::EntityKind::TerminalSession {
@@ -69,6 +79,7 @@ fn entity_from_seed(seed: &EntitySeed) -> EntitySnapshot {
         friction: Default::default(),
         components: Vec::new(),
         badges: seed.badges.clone(),
+        active_window_title: None,
     }
 }
 
@@ -80,11 +91,31 @@ fn summarize_process(process: &RawProcessSample) -> String {
     }
 }
 
-fn is_foreground_candidate(seed: &EntitySeed) -> bool {
-    matches!(
-        seed.entity_kind,
-        aetower_model::EntityKind::App
-            | aetower_model::EntityKind::Browser
-            | aetower_model::EntityKind::TerminalSession
-    )
+fn is_foreground_match(seed: &EntitySeed, frontmost: Option<&FrontmostAppState>) -> bool {
+    let Some(frontmost) = frontmost else {
+        return matches!(
+            seed.entity_kind,
+            aetower_model::EntityKind::App
+                | aetower_model::EntityKind::Browser
+                | aetower_model::EntityKind::TerminalSession
+        );
+    };
+
+    if let (Some(seed_bundle), Some(frontmost_bundle)) =
+        (seed.bundle_id.as_deref(), frontmost.bundle_id.as_deref())
+    {
+        if seed_bundle == frontmost_bundle {
+            return true;
+        }
+    }
+
+    if let (Some(seed_path), Some(frontmost_path)) =
+        (seed.executable_path.as_deref(), frontmost.executable_path.as_deref())
+    {
+        if seed_path == frontmost_path {
+            return true;
+        }
+    }
+
+    seed.display_name == frontmost.app_name
 }

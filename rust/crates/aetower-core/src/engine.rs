@@ -8,7 +8,8 @@ use std::{
 };
 
 use aetower_model::{
-    CapabilityKind, CapabilitySnapshot, CapabilityState, HostSnapshot, SystemSnapshot,
+    CapabilityKind, CapabilitySnapshot, CapabilityState, FrontmostAppState, HostSnapshot,
+    SystemSnapshot,
 };
 use parking_lot::Mutex;
 
@@ -21,6 +22,7 @@ struct EngineState {
     sequence: u64,
     latest_snapshot: SystemSnapshot,
     capabilities: BTreeMap<CapabilityKind, CapabilitySnapshot>,
+    frontmost_app_state: Option<FrontmostAppState>,
     history: History,
 }
 
@@ -51,6 +53,7 @@ impl Engine {
                 sequence: 0,
                 latest_snapshot: snapshot,
                 capabilities,
+                frontmost_app_state: None,
                 history: History::new(),
             })),
             running: Arc::new(AtomicBool::new(false)),
@@ -73,9 +76,12 @@ impl Engine {
                 let captured_at_millis = time::now_millis();
                 let raw = collector.collect();
                 let identity = identity::resolve(&raw.processes);
-                let mut entities = attribution::build_entities(&raw.processes, &identity);
-
                 let mut guard = state.lock();
+                let mut entities = attribution::build_entities(
+                    &raw.processes,
+                    &identity,
+                    guard.frontmost_app_state.as_ref(),
+                );
                 adapters.enrich_entities(&mut entities, &guard.capabilities);
 
                 let host = HostSnapshot {
@@ -87,6 +93,14 @@ impl Engine {
                     network_send_bps: raw.host.network_send_bps,
                     thermal_state: "nominal".to_owned(),
                     on_battery: false,
+                    frontmost_app_name: guard
+                        .frontmost_app_state
+                        .as_ref()
+                        .map(|state| state.app_name.clone()),
+                    frontmost_window_title: guard
+                        .frontmost_app_state
+                        .as_ref()
+                        .and_then(|state| state.window_title.clone()),
                 };
 
                 friction::apply(&host, &mut entities);
@@ -114,8 +128,8 @@ impl Engine {
         }
     }
 
-    pub fn latest_snapshot_json(&self) -> String {
-        serde_json::to_string(&self.state.lock().latest_snapshot).unwrap_or_else(|_| "{}".to_owned())
+    pub fn latest_snapshot(&self) -> SystemSnapshot {
+        self.state.lock().latest_snapshot.clone()
     }
 
     pub fn set_capability_state(
@@ -134,6 +148,20 @@ impl Engine {
             }
         }
         guard.latest_snapshot.capabilities = guard.capabilities.values().cloned().collect();
+    }
+
+    pub fn update_frontmost_app_state(&self, state: FrontmostAppState) {
+        let mut guard = self.state.lock();
+        guard.latest_snapshot.host.frontmost_app_name = Some(state.app_name.clone());
+        guard.latest_snapshot.host.frontmost_window_title = state.window_title.clone();
+        guard.frontmost_app_state = Some(state);
+    }
+
+    pub fn clear_frontmost_app_state(&self) {
+        let mut guard = self.state.lock();
+        guard.latest_snapshot.host.frontmost_app_name = None;
+        guard.latest_snapshot.host.frontmost_window_title = None;
+        guard.frontmost_app_state = None;
     }
 }
 

@@ -36,8 +36,11 @@ struct DockerAdapterConfig {
 struct ChromiumTarget {
     #[serde(rename = "type")]
     target_type: Option<String>,
+    id: Option<String>,
     title: Option<String>,
     url: Option<String>,
+    #[serde(rename = "webSocketDebuggerUrl")]
+    web_socket_debugger_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +53,20 @@ struct DockerContainerSummary {
     state: String,
     #[serde(rename = "Status")]
     status: String,
+    #[serde(rename = "Ports", default)]
+    ports: Vec<DockerPortSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DockerPortSummary {
+    #[serde(rename = "IP")]
+    ip: Option<String>,
+    #[serde(rename = "PrivatePort")]
+    private_port: u16,
+    #[serde(rename = "PublicPort")]
+    public_port: Option<u16>,
+    #[serde(rename = "Type")]
+    port_type: String,
 }
 
 impl AdapterManager {
@@ -160,8 +177,11 @@ impl AdapterManager {
                     for target in targets.iter().take(5) {
                         entity.components.push(ComponentSnapshot {
                             kind: ComponentKind::AdapterContext,
-                            title: target.title.clone(),
-                            detail: target.url.clone(),
+                            title: format!("Tab {} · {}", target.id, target.title),
+                            detail: match target.debug_socket.as_deref() {
+                                Some(socket) => format!("{} · {}", target.url, socket),
+                                None => target.url.clone(),
+                            },
                             cpu_percent: 0.0,
                             memory_bytes: 0,
                         });
@@ -178,7 +198,16 @@ impl AdapterManager {
                         entity.components.push(ComponentSnapshot {
                             kind: ComponentKind::AdapterContext,
                             title: container.name.clone(),
-                            detail: format!("{} · {}", container.image, container.status),
+                            detail: if container.ports.is_empty() {
+                                format!("{} · {}", container.image, container.status)
+                            } else {
+                                format!(
+                                    "{} · {} · {}",
+                                    container.image,
+                                    container.status,
+                                    container.ports.join(", ")
+                                )
+                            },
                             cpu_percent: 0.0,
                             memory_bytes: 0,
                         });
@@ -194,8 +223,10 @@ impl AdapterManager {
 
 #[derive(Debug, Clone)]
 struct ChromiumPageTarget {
+    id: String,
     title: String,
     url: String,
+    debug_socket: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -203,6 +234,7 @@ struct DockerContainer {
     name: String,
     image: String,
     status: String,
+    ports: Vec<String>,
 }
 
 fn chromium_config() -> Option<ChromiumAdapterConfig> {
@@ -223,6 +255,7 @@ fn fetch_chromium_targets(config: &ChromiumAdapterConfig) -> Result<Vec<Chromium
         .into_iter()
         .filter(|target| target.target_type.as_deref() == Some("page"))
         .map(|target| ChromiumPageTarget {
+            id: target.id.unwrap_or_else(|| "?".to_owned()),
             title: target
                 .title
                 .filter(|value| !value.is_empty())
@@ -231,6 +264,7 @@ fn fetch_chromium_targets(config: &ChromiumAdapterConfig) -> Result<Vec<Chromium
                 .url
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "about:blank".to_owned()),
+            debug_socket: target.web_socket_debugger_url,
         })
         .collect())
 }
@@ -260,6 +294,19 @@ fn fetch_docker_containers(config: &DockerAdapterConfig) -> Result<Vec<DockerCon
             } else {
                 container.status
             },
+            ports: container
+                .ports
+                .into_iter()
+                .map(|port| match (port.ip, port.public_port) {
+                    (Some(ip), Some(public_port)) => {
+                        format!("{}:{}->{} {}", ip, public_port, port.private_port, port.port_type)
+                    }
+                    (None, Some(public_port)) => {
+                        format!("{}->{} {}", public_port, port.private_port, port.port_type)
+                    }
+                    _ => format!("{} {}", port.private_port, port.port_type),
+                })
+                .collect(),
         })
         .collect())
 }
@@ -353,18 +400,20 @@ mod tests {
 
     #[test]
     fn chromium_target_deserializes() {
-        let raw = r#"{"type":"page","title":"Docs","url":"https://example.com"}"#;
+        let raw = r#"{"type":"page","id":"1","title":"Docs","url":"https://example.com","webSocketDebuggerUrl":"ws://localhost/devtools/page/1"}"#;
         let parsed: ChromiumTarget = serde_json::from_str(raw).unwrap();
         assert_eq!(parsed.target_type.as_deref(), Some("page"));
+        assert_eq!(parsed.id.as_deref(), Some("1"));
         assert_eq!(parsed.title.as_deref(), Some("Docs"));
     }
 
     #[test]
     fn docker_container_deserializes() {
-        let raw = r#"{"Names":["/web"],"Image":"nginx:latest","State":"running","Status":"Up 3 minutes"}"#;
+        let raw = r#"{"Names":["/web"],"Image":"nginx:latest","State":"running","Status":"Up 3 minutes","Ports":[{"IP":"0.0.0.0","PrivatePort":80,"PublicPort":8080,"Type":"tcp"}]}"#;
         let parsed: DockerContainerSummary = serde_json::from_str(raw).unwrap();
         assert_eq!(parsed.names[0], "/web");
         assert_eq!(parsed.image, "nginx:latest");
         assert_eq!(parsed.status, "Up 3 minutes");
+        assert_eq!(parsed.ports[0].public_port, Some(8080));
     }
 }

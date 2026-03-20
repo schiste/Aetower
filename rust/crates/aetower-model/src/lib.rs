@@ -87,6 +87,8 @@ pub struct HostSnapshot {
     pub network_send_bps: u64,
     pub thermal_state: String,
     pub on_battery: bool,
+    pub frontmost_app_name: Option<String>,
+    pub frontmost_window_title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -132,6 +134,7 @@ pub struct EntitySnapshot {
     pub friction: FrictionBreakdown,
     pub components: Vec<ComponentSnapshot>,
     pub badges: Vec<String>,
+    pub active_window_title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -160,4 +163,13 @@ pub struct SystemSnapshot {
     pub capabilities: Vec<CapabilitySnapshot>,
     pub entities: Vec<EntitySnapshot>,
     pub timeline: Vec<TimelineEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FrontmostAppState {
+    pub app_name: String,
+    pub bundle_id: Option<String>,
+    pub executable_path: Option<String>,
+    pub window_title: Option<String>,
+    pub captured_at_millis: u64,
 }
