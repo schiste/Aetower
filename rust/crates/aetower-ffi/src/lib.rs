@@ -95,6 +95,14 @@ pub struct ComponentSnapshot {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct MetricTrend {
+    pub friction: Vec<f32>,
+    pub cpu_percent: Vec<f32>,
+    pub memory_resident_bytes: Vec<u64>,
+    pub disk_activity_bps: Vec<u64>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct EntitySnapshot {
     pub entity_id: String,
     pub display_name: String,
@@ -104,6 +112,7 @@ pub struct EntitySnapshot {
     pub metrics: AggregateMetrics,
     pub friction: FrictionBreakdown,
     pub components: Vec<ComponentSnapshot>,
+    pub trend: MetricTrend,
     pub badges: Vec<String>,
     pub active_window_title: Option<String>,
 }
@@ -373,6 +382,17 @@ impl From<model::ComponentSnapshot> for ComponentSnapshot {
     }
 }
 
+impl From<model::MetricTrend> for MetricTrend {
+    fn from(value: model::MetricTrend) -> Self {
+        Self {
+            friction: value.friction,
+            cpu_percent: value.cpu_percent,
+            memory_resident_bytes: value.memory_resident_bytes,
+            disk_activity_bps: value.disk_activity_bps,
+        }
+    }
+}
+
 impl From<model::EntitySnapshot> for EntitySnapshot {
     fn from(value: model::EntitySnapshot) -> Self {
         Self {
@@ -384,6 +404,7 @@ impl From<model::EntitySnapshot> for EntitySnapshot {
             metrics: value.metrics.into(),
             friction: value.friction.into(),
             components: value.components.into_iter().map(Into::into).collect(),
+            trend: value.trend.into(),
             badges: value.badges,
             active_window_title: value.active_window_title,
         }

@@ -1005,12 +1005,13 @@ public struct EntitySnapshot {
     public var metrics: AggregateMetrics
     public var friction: FrictionBreakdown
     public var components: [ComponentSnapshot]
+    public var trend: MetricTrend
     public var badges: [String]
     public var activeWindowTitle: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entityId: String, displayName: String, bundleId: String?, executablePath: String?, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], badges: [String], activeWindowTitle: String?) {
+    public init(entityId: String, displayName: String, bundleId: String?, executablePath: String?, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?) {
         self.entityId = entityId
         self.displayName = displayName
         self.bundleId = bundleId
@@ -1019,6 +1020,7 @@ public struct EntitySnapshot {
         self.metrics = metrics
         self.friction = friction
         self.components = components
+        self.trend = trend
         self.badges = badges
         self.activeWindowTitle = activeWindowTitle
     }
@@ -1052,6 +1054,9 @@ extension EntitySnapshot: Equatable, Hashable {
         if lhs.components != rhs.components {
             return false
         }
+        if lhs.trend != rhs.trend {
+            return false
+        }
         if lhs.badges != rhs.badges {
             return false
         }
@@ -1070,6 +1075,7 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(metrics)
         hasher.combine(friction)
         hasher.combine(components)
+        hasher.combine(trend)
         hasher.combine(badges)
         hasher.combine(activeWindowTitle)
     }
@@ -1091,6 +1097,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
                 metrics: FfiConverterTypeAggregateMetrics.read(from: &buf), 
                 friction: FfiConverterTypeFrictionBreakdown.read(from: &buf), 
                 components: FfiConverterSequenceTypeComponentSnapshot.read(from: &buf), 
+                trend: FfiConverterTypeMetricTrend.read(from: &buf), 
                 badges: FfiConverterSequenceString.read(from: &buf), 
                 activeWindowTitle: FfiConverterOptionString.read(from: &buf)
         )
@@ -1105,6 +1112,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
         FfiConverterTypeAggregateMetrics.write(value.metrics, into: &buf)
         FfiConverterTypeFrictionBreakdown.write(value.friction, into: &buf)
         FfiConverterSequenceTypeComponentSnapshot.write(value.components, into: &buf)
+        FfiConverterTypeMetricTrend.write(value.trend, into: &buf)
         FfiConverterSequenceString.write(value.badges, into: &buf)
         FfiConverterOptionString.write(value.activeWindowTitle, into: &buf)
     }
@@ -1441,6 +1449,88 @@ public func FfiConverterTypeHostSnapshot_lift(_ buf: RustBuffer) throws -> HostS
 #endif
 public func FfiConverterTypeHostSnapshot_lower(_ value: HostSnapshot) -> RustBuffer {
     return FfiConverterTypeHostSnapshot.lower(value)
+}
+
+
+public struct MetricTrend {
+    public var friction: [Float]
+    public var cpuPercent: [Float]
+    public var memoryResidentBytes: [UInt64]
+    public var diskActivityBps: [UInt64]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(friction: [Float], cpuPercent: [Float], memoryResidentBytes: [UInt64], diskActivityBps: [UInt64]) {
+        self.friction = friction
+        self.cpuPercent = cpuPercent
+        self.memoryResidentBytes = memoryResidentBytes
+        self.diskActivityBps = diskActivityBps
+    }
+}
+
+
+
+extension MetricTrend: Equatable, Hashable {
+    public static func ==(lhs: MetricTrend, rhs: MetricTrend) -> Bool {
+        if lhs.friction != rhs.friction {
+            return false
+        }
+        if lhs.cpuPercent != rhs.cpuPercent {
+            return false
+        }
+        if lhs.memoryResidentBytes != rhs.memoryResidentBytes {
+            return false
+        }
+        if lhs.diskActivityBps != rhs.diskActivityBps {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(friction)
+        hasher.combine(cpuPercent)
+        hasher.combine(memoryResidentBytes)
+        hasher.combine(diskActivityBps)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMetricTrend: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MetricTrend {
+        return
+            try MetricTrend(
+                friction: FfiConverterSequenceFloat.read(from: &buf), 
+                cpuPercent: FfiConverterSequenceFloat.read(from: &buf), 
+                memoryResidentBytes: FfiConverterSequenceUInt64.read(from: &buf), 
+                diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MetricTrend, into buf: inout [UInt8]) {
+        FfiConverterSequenceFloat.write(value.friction, into: &buf)
+        FfiConverterSequenceFloat.write(value.cpuPercent, into: &buf)
+        FfiConverterSequenceUInt64.write(value.memoryResidentBytes, into: &buf)
+        FfiConverterSequenceUInt64.write(value.diskActivityBps, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMetricTrend_lift(_ buf: RustBuffer) throws -> MetricTrend {
+    return try FfiConverterTypeMetricTrend.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMetricTrend_lower(_ value: MetricTrend) -> RustBuffer {
+    return FfiConverterTypeMetricTrend.lower(value)
 }
 
 
@@ -2071,6 +2161,56 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         case 1: return try FfiConverterString.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceUInt64: FfiConverterRustBuffer {
+    typealias SwiftType = [UInt64]
+
+    public static func write(_ value: [UInt64], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterUInt64.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt64] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UInt64]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterUInt64.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceFloat: FfiConverterRustBuffer {
+    typealias SwiftType = [Float]
+
+    public static func write(_ value: [Float], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterFloat.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Float] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Float]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterFloat.read(from: &buf))
+        }
+        return seq
     }
 }
 

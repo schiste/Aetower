@@ -125,6 +125,14 @@ pub struct ComponentSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MetricTrend {
+    pub friction: Vec<f32>,
+    pub cpu_percent: Vec<f32>,
+    pub memory_resident_bytes: Vec<u64>,
+    pub disk_activity_bps: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EntitySnapshot {
     pub entity_id: String,
     pub display_name: String,
@@ -134,6 +142,7 @@ pub struct EntitySnapshot {
     pub metrics: AggregateMetrics,
     pub friction: FrictionBreakdown,
     pub components: Vec<ComponentSnapshot>,
+    pub trend: MetricTrend,
     pub badges: Vec<String>,
     pub active_window_title: Option<String>,
 }

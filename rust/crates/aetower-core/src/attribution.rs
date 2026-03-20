@@ -82,6 +82,7 @@ fn entity_from_seed(seed: &EntitySeed) -> EntitySnapshot {
         metrics: AggregateMetrics::default(),
         friction: Default::default(),
         components: Vec::new(),
+        trend: Default::default(),
         badges: seed.badges.clone(),
         active_window_title: None,
     }

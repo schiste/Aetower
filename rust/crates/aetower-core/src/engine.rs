@@ -107,7 +107,7 @@ impl Engine {
 
                 friction::apply(&host, &mut entities);
                 let mut guard = state.lock();
-                let timeline = guard.history.update(captured_at_millis, &entities);
+                let timeline = guard.history.update(captured_at_millis, &mut entities);
                 guard.sequence += 1;
                 guard.latest_snapshot = SystemSnapshot {
                     sequence: guard.sequence,
