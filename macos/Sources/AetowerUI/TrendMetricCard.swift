@@ -29,24 +29,24 @@ struct TrendMetricCard: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(style.color.opacity(0.08))
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(style.color.opacity(0.10), lineWidth: 1)
 
             TrendSparkline(samples: samples, color: style.color)
-                .padding(8)
+                .padding(6)
                 .opacity(0.85)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.caption.weight(.medium))
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
 
                 Spacer(minLength: 0)
 
                 Text(value)
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
 
@@ -55,10 +55,10 @@ struct TrendMetricCard: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .padding(12)
+            .padding(10)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .aspectRatio(1, contentMode: .fit)
+        .frame(minHeight: 104, maxHeight: 104)
     }
 }
 

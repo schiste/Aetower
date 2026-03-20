@@ -64,8 +64,8 @@ private struct SectionEyebrow: View {
     }
 }
 
-private let dashboardColumns = [GridItem(.adaptive(minimum: 210), spacing: 12)]
-private let metricColumns = [GridItem(.adaptive(minimum: 145), spacing: 10)]
+private let dashboardColumns = [GridItem(.adaptive(minimum: 240), spacing: 12)]
+private let metricColumns = [GridItem(.adaptive(minimum: 180), spacing: 8)]
 
 private struct EntityRow: View {
     let entity: EntitySnapshot
@@ -73,12 +73,13 @@ private struct EntityRow: View {
     let hostMemoryTotalBytes: UInt64
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(entity.displayName)
                             .font(.headline)
+                            .lineLimit(1)
                         if entity.metrics.isForeground {
                             Text("Frontmost")
                                 .font(.caption.weight(.medium))
@@ -88,13 +89,13 @@ private struct EntityRow: View {
                     Text(primaryNarrative)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(1)
                 }
                 Spacer()
                 StatusBadge(score: Double(entity.friction.totalScore))
             }
 
-            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
+            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 8) {
                 TrendMetricCard(
                     title: "Friction",
                     value: String(format: "%.1f", entity.friction.totalScore),
@@ -142,11 +143,11 @@ private struct EntityRow: View {
                 }
             }
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(rowBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(isSelected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
         )
     }
@@ -247,7 +248,7 @@ public struct MainListView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
+                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 8) {
                         TrendMetricCard(
                             title: "Friction",
                             value: String(format: "%.1f", topConcern.friction.totalScore),
@@ -278,8 +279,8 @@ public struct MainListView: View {
                         )
                     }
                 }
-                .padding(14)
-                .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(12)
+                .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
                 Text("No entity is currently producing enough friction to be highlighted.")
                     .foregroundStyle(.secondary)
@@ -307,7 +308,7 @@ public struct MainListView: View {
                 .font(.headline)
 
             if let entity = selectedEntity ?? topConcern {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(entity.displayName)
@@ -320,7 +321,7 @@ public struct MainListView: View {
                         StatusBadge(score: Double(entity.friction.totalScore))
                     }
 
-                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
+                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 8) {
                         TrendMetricCard(
                             title: "Friction",
                             value: String(format: "%.1f", entity.friction.totalScore),
@@ -362,8 +363,8 @@ public struct MainListView: View {
                         }
                     }
                 }
-                .padding(16)
-                .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .padding(14)
+                .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             } else {
                 ContentUnavailableView(
                     "No focused app",
@@ -387,7 +388,7 @@ public struct MainListView: View {
                     description: Text("Try a broader query.")
                 )
             } else {
-                LazyVStack(spacing: 12) {
+                LazyVStack(spacing: 10) {
                     ForEach(filteredEntities, id: \.entityId) { entity in
                         Button {
                             selectedEntityID = entity.entityId
