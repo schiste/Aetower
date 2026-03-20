@@ -114,42 +114,84 @@ private struct InlineMetric: View {
     }
 }
 
+private struct RowSignalCard: View {
+    let score: Double
+    let isForeground: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [tone.opacity(0.95), tone.opacity(0.55)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(alignment: .topLeading) {
+                if isForeground {
+                    Circle()
+                        .fill(.white.opacity(0.92))
+                        .frame(width: 6, height: 6)
+                        .padding(6)
+                }
+            }
+            .frame(width: 20, height: 52)
+    }
+
+    private var tone: Color {
+        switch score {
+        case 75...:
+            return .red
+        case 40...:
+            return .orange
+        case 15...:
+            return .yellow
+        default:
+            return .green
+        }
+    }
+}
+
 private struct EntityRow: View {
     let entity: EntitySnapshot
     let isSelected: Bool
     let hostMemoryTotalBytes: UInt64
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(entity.displayName)
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
-                        if entity.metrics.isForeground {
-                            Text("Frontmost")
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.blue)
-                        }
-                    }
-                    Text(primaryNarrative)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                StatusBadge(score: Double(entity.friction.totalScore))
-            }
+        HStack(alignment: .top, spacing: 10) {
+            RowSignalCard(score: Double(entity.friction.totalScore), isForeground: entity.metrics.isForeground)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    InlineMetric(title: "Fr", value: String(format: "%.1f", entity.friction.totalScore))
-                    InlineMetric(title: "CPU", value: String(format: "%.1f%%", entity.metrics.cpuPercent))
-                    InlineMetric(title: "Mem", value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)))
-                    InlineMetric(title: "Disk", value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))
-                    if let badge = entity.badges.first {
-                        InlineMetric(title: "Tag", value: badge)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(entity.displayName)
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(1)
+                            if entity.metrics.isForeground {
+                                Text("Frontmost")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                        Text(primaryNarrative)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    StatusBadge(score: Double(entity.friction.totalScore))
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        InlineMetric(title: "Fr", value: String(format: "%.1f", entity.friction.totalScore))
+                        InlineMetric(title: "CPU", value: String(format: "%.1f%%", entity.metrics.cpuPercent))
+                        InlineMetric(title: "Mem", value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)))
+                        InlineMetric(title: "Disk", value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))
+                        if let badge = entity.badges.first {
+                            InlineMetric(title: "Tag", value: badge)
+                        }
                     }
                 }
             }
@@ -277,6 +319,20 @@ public struct MainListView: View {
     private func detailPanel(for entity: EntitySnapshot) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .center) {
+                Button {
+                    selectedEntityID = nil
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                        Text("Back to ranking")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.secondary.opacity(0.08), in: Capsule())
+                }
+                .buttonStyle(.plain)
+
                 VStack(alignment: .leading, spacing: 4) {
                     SectionEyebrow(text: "Detail")
                     Text(entity.displayName)
