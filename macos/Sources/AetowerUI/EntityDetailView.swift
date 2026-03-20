@@ -1,28 +1,6 @@
 import SwiftUI
 import AetowerBridge
 
-private struct DetailMetricCard: View {
-    let title: String
-    let value: String
-    let detail: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.title3.monospacedDigit().weight(.semibold))
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
 private struct DetailStatusBadge: View {
     let score: Double
 
@@ -62,7 +40,7 @@ private struct DetailStatusBadge: View {
     }
 }
 
-private let detailMetricColumns = [GridItem(.adaptive(minimum: 180), spacing: 12)]
+private let detailMetricColumns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
 
 private struct ComponentCard: View {
     let component: ComponentSnapshot
@@ -85,15 +63,19 @@ private struct ComponentCard: View {
             }
 
             LazyVGrid(columns: detailMetricColumns, alignment: .leading, spacing: 12) {
-                DetailMetricCard(
+                TrendMetricCard(
                     title: "Memory",
                     value: formatBytes(component.memoryBytes),
-                    detail: "Resident footprint seen for this component"
+                    subtitle: "component footprint",
+                    samples: component.memoryBytes > 0 ? [Double(component.memoryBytes), Double(component.memoryBytes)] : [],
+                    style: .memory
                 )
-                DetailMetricCard(
-                    title: "Kind",
-                    value: component.kindLabel,
-                    detail: "How Aetower classified this component"
+                TrendMetricCard(
+                    title: "CPU",
+                    value: String(format: "%.1f%%", component.cpuPercent),
+                    subtitle: component.kindLabel,
+                    samples: component.cpuPercent > 0 ? [Double(component.cpuPercent), Double(component.cpuPercent)] : [],
+                    style: .cpu
                 )
             }
         }
@@ -137,20 +119,33 @@ public struct EntityDetailView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             LazyVGrid(columns: detailMetricColumns, alignment: .leading, spacing: 12) {
-                DetailMetricCard(
+                TrendMetricCard(
                     title: "Friction",
                     value: String(format: "%.1f", entity.friction.totalScore),
-                    detail: "Higher means this app is more likely to explain current slowdown or heat"
+                    subtitle: "recent score",
+                    samples: entity.trend.friction.map(Double.init),
+                    style: .friction
                 )
-                DetailMetricCard(
+                TrendMetricCard(
                     title: "CPU",
                     value: String(format: "%.1f%%", entity.metrics.cpuPercent),
-                    detail: entity.metrics.isForeground ? "This app is actively in the foreground" : "This app is currently backgrounded"
+                    subtitle: entity.metrics.isForeground ? "frontmost app" : "backgrounded app",
+                    samples: entity.trend.cpuPercent.map(Double.init),
+                    style: .cpu
                 )
-                DetailMetricCard(
+                TrendMetricCard(
                     title: "Memory",
                     value: formatBytes(entity.metrics.memoryResidentBytes),
-                    detail: "\(entity.metrics.processCount) related processes grouped into this row"
+                    subtitle: "\(entity.metrics.processCount) grouped processes",
+                    samples: entity.trend.memoryResidentBytes.map(Double.init),
+                    style: .memory
+                )
+                TrendMetricCard(
+                    title: "Disk Activity",
+                    value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
+                    subtitle: "read + write throughput",
+                    samples: entity.trend.diskActivityBps.map(Double.init),
+                    style: .disk
                 )
             }
         }
@@ -175,18 +170,6 @@ public struct EntityDetailView: View {
                     }
                 }
 
-                LazyVGrid(columns: detailMetricColumns, alignment: .leading, spacing: 12) {
-                    DetailMetricCard(
-                        title: "Disk activity",
-                        value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
-                        detail: "Read and write throughput grouped into this app"
-                    )
-                    DetailMetricCard(
-                        title: "Bundle",
-                        value: entity.bundleId ?? "Unknown",
-                        detail: "Application identity used for grouping"
-                    )
-                }
             }
             .padding(.top, 4)
         }

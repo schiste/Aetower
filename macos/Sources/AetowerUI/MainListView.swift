@@ -76,26 +76,8 @@ private struct StatusBadge: View {
     }
 }
 
-private struct MetricPill: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.body.monospacedDigit())
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-}
-
 private let dashboardColumns = [GridItem(.adaptive(minimum: 220), spacing: 14)]
-private let metricColumns = [GridItem(.adaptive(minimum: 120), spacing: 10)]
+private let metricColumns = [GridItem(.adaptive(minimum: 150), spacing: 12)]
 
 private struct EntityRow: View {
     let entity: EntitySnapshot
@@ -123,11 +105,35 @@ private struct EntityRow: View {
                 StatusBadge(score: Double(entity.friction.totalScore))
             }
 
-            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
-                MetricPill(title: "Friction", value: String(format: "%.1f", entity.friction.totalScore))
-                MetricPill(title: "CPU", value: String(format: "%.1f%%", entity.metrics.cpuPercent))
-                MetricPill(title: "Memory", value: formatBytes(entity.metrics.memoryResidentBytes))
-                MetricPill(title: "Processes", value: "\(entity.metrics.processCount)")
+            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 12) {
+                TrendMetricCard(
+                    title: "Friction",
+                    value: String(format: "%.1f", entity.friction.totalScore),
+                    subtitle: frictionTrendSummary(entity),
+                    samples: entity.trend.friction.map(Double.init),
+                    style: .friction
+                )
+                TrendMetricCard(
+                    title: "CPU",
+                    value: String(format: "%.1f%%", entity.metrics.cpuPercent),
+                    subtitle: cpuTrendSummary(entity),
+                    samples: entity.trend.cpuPercent.map(Double.init),
+                    style: .cpu
+                )
+                TrendMetricCard(
+                    title: "Memory",
+                    value: formatBytes(entity.metrics.memoryResidentBytes),
+                    subtitle: memoryTrendSummary(entity),
+                    samples: entity.trend.memoryResidentBytes.map(Double.init),
+                    style: .memory
+                )
+                TrendMetricCard(
+                    title: "Disk Activity",
+                    value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
+                    subtitle: diskTrendSummary(entity),
+                    samples: entity.trend.diskActivityBps.map(Double.init),
+                    style: .disk
+                )
             }
 
             if let activeWindowTitle = entity.activeWindowTitle, !activeWindowTitle.isEmpty {
@@ -248,10 +254,35 @@ public struct MainListView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
-                        MetricPill(title: "CPU", value: String(format: "%.1f%%", topConcern.metrics.cpuPercent))
-                        MetricPill(title: "Memory", value: formatBytes(topConcern.metrics.memoryResidentBytes))
-                        MetricPill(title: "Disk", value: formatRate(topConcern.metrics.diskReadBps + topConcern.metrics.diskWriteBps))
+                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 12) {
+                        TrendMetricCard(
+                            title: "Friction",
+                            value: String(format: "%.1f", topConcern.friction.totalScore),
+                            subtitle: frictionTrendSummary(topConcern),
+                            samples: topConcern.trend.friction.map(Double.init),
+                            style: .friction
+                        )
+                        TrendMetricCard(
+                            title: "CPU",
+                            value: String(format: "%.1f%%", topConcern.metrics.cpuPercent),
+                            subtitle: cpuTrendSummary(topConcern),
+                            samples: topConcern.trend.cpuPercent.map(Double.init),
+                            style: .cpu
+                        )
+                        TrendMetricCard(
+                            title: "Memory",
+                            value: formatBytes(topConcern.metrics.memoryResidentBytes),
+                            subtitle: memoryTrendSummary(topConcern),
+                            samples: topConcern.trend.memoryResidentBytes.map(Double.init),
+                            style: .memory
+                        )
+                        TrendMetricCard(
+                            title: "Disk Activity",
+                            value: formatRate(topConcern.metrics.diskReadBps + topConcern.metrics.diskWriteBps),
+                            subtitle: diskTrendSummary(topConcern),
+                            samples: topConcern.trend.diskActivityBps.map(Double.init),
+                            style: .disk
+                        )
                     }
                 }
                 .padding(16)
@@ -338,6 +369,7 @@ public struct MainListView: View {
         }
         return "\(entity.displayName) is the highest-ranked background source of friction because \(reason.lowercased())"
     }
+
 }
 
 func formatBytes(_ bytes: UInt64) -> String {
@@ -355,4 +387,36 @@ private enum ByteFormatters {
         formatter.countStyle = .binary
         return formatter
     }()
+}
+
+private func trendLabel(samples: [Double], stableText: String) -> String {
+    guard let first = samples.first, let last = samples.last, samples.count >= 2 else {
+        return stableText
+    }
+
+    let baseline = max(abs(first), 1.0)
+    let deltaRatio = (last - first) / baseline
+    if deltaRatio > 0.12 {
+        return "rising"
+    }
+    if deltaRatio < -0.12 {
+        return "falling"
+    }
+    return stableText
+}
+
+private func frictionTrendSummary(_ entity: EntitySnapshot) -> String {
+    trendLabel(samples: entity.trend.friction.map(Double.init), stableText: "recent score")
+}
+
+private func cpuTrendSummary(_ entity: EntitySnapshot) -> String {
+    trendLabel(samples: entity.trend.cpuPercent.map(Double.init), stableText: "recent load")
+}
+
+private func memoryTrendSummary(_ entity: EntitySnapshot) -> String {
+    trendLabel(samples: entity.trend.memoryResidentBytes.map(Double.init), stableText: "recent footprint")
+}
+
+private func diskTrendSummary(_ entity: EntitySnapshot) -> String {
+    trendLabel(samples: entity.trend.diskActivityBps.map(Double.init), stableText: "recent throughput")
 }
