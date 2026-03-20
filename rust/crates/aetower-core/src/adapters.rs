@@ -22,6 +22,9 @@ use url::Url;
 
 const CHROMIUM_TIMEOUT: Duration = Duration::from_millis(300);
 const DOCKER_TIMEOUT: Duration = Duration::from_millis(300);
+const CHROMIUM_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
+const DOCKER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
+const PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
 
 #[derive(Clone)]
 pub struct AdapterManager {
@@ -35,6 +38,12 @@ struct AdapterState {
     privileged_helper_path: Option<String>,
     privileged_helper_enabled: bool,
     chromium_samples: BTreeMap<String, ChromiumRuntimeSample>,
+    last_chromium_fetch_millis: u64,
+    cached_chromium_targets: Vec<ChromiumPageTarget>,
+    last_docker_fetch_millis: u64,
+    cached_docker_containers: Vec<DockerContainer>,
+    last_privileged_helper_fetch_millis: u64,
+    cached_privileged_helper_sample: Option<PrivilegedHelperSnapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,12 +164,12 @@ struct DockerPidsStats {
     current: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct PrivilegedHelperSnapshot {
     processes: Vec<PrivilegedProcessSample>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct PrivilegedProcessSample {
     pid: u32,
     process_name: String,
@@ -180,6 +189,12 @@ impl Default for AdapterManager {
                     .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
                     .unwrap_or(false),
                 chromium_samples: BTreeMap::new(),
+                last_chromium_fetch_millis: 0,
+                cached_chromium_targets: Vec::new(),
+                last_docker_fetch_millis: 0,
+                cached_docker_containers: Vec::new(),
+                last_privileged_helper_fetch_millis: 0,
+                cached_privileged_helper_sample: None,
             })),
         }
     }
@@ -250,6 +265,8 @@ impl AdapterManager {
         let mut guard = self.state.lock();
         guard.chromium_endpoint = endpoint.filter(|value| !value.trim().is_empty());
         guard.chromium_samples.clear();
+        guard.cached_chromium_targets.clear();
+        guard.last_chromium_fetch_millis = 0;
     }
 
     pub fn configure_docker_socket_path(&self, socket_path: String) {
@@ -259,12 +276,16 @@ impl AdapterManager {
         } else {
             socket_path
         };
+        guard.cached_docker_containers.clear();
+        guard.last_docker_fetch_millis = 0;
     }
 
     pub fn configure_privileged_helper(&self, helper_path: Option<String>, enabled: bool) {
         let mut guard = self.state.lock();
         guard.privileged_helper_path = helper_path.filter(|value| !value.trim().is_empty());
         guard.privileged_helper_enabled = enabled;
+        guard.cached_privileged_helper_sample = None;
+        guard.last_privileged_helper_fetch_millis = 0;
     }
 
     pub fn enrich_entities(
@@ -272,29 +293,112 @@ impl AdapterManager {
         entities: &mut [EntitySnapshot],
         capabilities: &BTreeMap<CapabilityKind, CapabilitySnapshot>,
     ) {
-        let mut guard = self.state.lock();
+        let now = crate::time::now_millis();
+        let (
+            chromium_fetch_plan,
+            mut chromium_targets,
+            docker_fetch_plan,
+            mut docker_containers,
+            privileged_helper_fetch_path,
+            mut privileged_helper_sample,
+        ) = {
+            let guard = self.state.lock();
 
-        let chromium_targets = capabilities
-            .get(&CapabilityKind::ChromiumDebug)
-            .filter(|capability| capability.state == CapabilityState::Granted)
-            .and_then(|_| guard.chromium_config())
-            .and_then(|config| fetch_chromium_targets(&config, &mut guard.chromium_samples).ok());
+            let chromium_targets = capabilities
+                .get(&CapabilityKind::ChromiumDebug)
+                .filter(|capability| capability.state == CapabilityState::Granted)
+                .and_then(|_| {
+                    let is_stale = now.saturating_sub(guard.last_chromium_fetch_millis)
+                        >= CHROMIUM_REFRESH_INTERVAL_MILLIS;
+                    if is_stale {
+                        guard.chromium_config().map(|config| {
+                            (config, guard.chromium_samples.clone())
+                        })
+                    } else {
+                        None
+                    }
+                });
 
-        let docker_containers = capabilities
-            .get(&CapabilityKind::DockerSocket)
-            .filter(|capability| capability.state == CapabilityState::Granted)
-            .map(|_| DockerAdapterConfig {
-                socket_path: guard.docker_socket_path.clone(),
-            })
-            .and_then(|config| fetch_docker_containers(&config).ok());
+            let cached_chromium_targets = capabilities
+                .get(&CapabilityKind::ChromiumDebug)
+                .filter(|capability| capability.state == CapabilityState::Granted)
+                .map(|_| guard.cached_chromium_targets.clone());
 
-        let privileged_helper_sample = capabilities
-            .get(&CapabilityKind::PrivilegedHelper)
-            .filter(|capability| capability.state == CapabilityState::Granted)
-            .and_then(|_| guard.privileged_helper_path())
-            .and_then(|path| fetch_privileged_helper_sample(&path).ok());
+            let docker_fetch_plan = capabilities
+                .get(&CapabilityKind::DockerSocket)
+                .filter(|capability| capability.state == CapabilityState::Granted)
+                .and_then(|_| {
+                    let is_stale = now.saturating_sub(guard.last_docker_fetch_millis)
+                        >= DOCKER_REFRESH_INTERVAL_MILLIS;
+                    if is_stale {
+                        Some(DockerAdapterConfig {
+                            socket_path: guard.docker_socket_path.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                });
 
-        drop(guard);
+            let cached_docker_containers = capabilities
+                .get(&CapabilityKind::DockerSocket)
+                .filter(|capability| capability.state == CapabilityState::Granted)
+                .map(|_| guard.cached_docker_containers.clone());
+
+            let privileged_helper_fetch_path = capabilities
+                .get(&CapabilityKind::PrivilegedHelper)
+                .filter(|capability| capability.state == CapabilityState::Granted)
+                .and_then(|_| {
+                    let is_stale = now.saturating_sub(guard.last_privileged_helper_fetch_millis)
+                        >= PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS;
+                    if is_stale {
+                        guard.privileged_helper_path()
+                    } else {
+                        None
+                    }
+                });
+
+            let cached_privileged_helper_sample = capabilities
+                .get(&CapabilityKind::PrivilegedHelper)
+                .filter(|capability| capability.state == CapabilityState::Granted)
+                .and_then(|_| guard.cached_privileged_helper_sample.clone());
+
+            (
+                chromium_targets,
+                cached_chromium_targets,
+                docker_fetch_plan,
+                cached_docker_containers,
+                privileged_helper_fetch_path,
+                cached_privileged_helper_sample,
+            )
+        };
+
+        if let Some((config, mut chromium_samples)) = chromium_fetch_plan {
+            if let Ok(fetched) = fetch_chromium_targets(&config, &mut chromium_samples) {
+                let mut guard = self.state.lock();
+                guard.chromium_samples = chromium_samples;
+                guard.cached_chromium_targets = fetched.clone();
+                guard.last_chromium_fetch_millis = now;
+                chromium_targets = Some(fetched);
+            }
+        }
+
+        if let Some(config) = docker_fetch_plan {
+            if let Ok(fetched) = fetch_docker_containers(&config) {
+                let mut guard = self.state.lock();
+                guard.cached_docker_containers = fetched.clone();
+                guard.last_docker_fetch_millis = now;
+                docker_containers = Some(fetched);
+            }
+        }
+
+        if let Some(path) = privileged_helper_fetch_path {
+            if let Ok(fetched) = fetch_privileged_helper_sample(&path) {
+                let mut guard = self.state.lock();
+                guard.cached_privileged_helper_sample = Some(fetched.clone());
+                guard.last_privileged_helper_fetch_millis = now;
+                privileged_helper_sample = Some(fetched);
+            }
+        }
 
         for entity in entities {
             if matches!(entity.entity_kind, aetower_model::EntityKind::TerminalSession) {
