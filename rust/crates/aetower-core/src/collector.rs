@@ -44,6 +44,7 @@ struct NetworkTotals {
 pub struct Collector {
     system: System,
     previous_network_totals: NetworkTotals,
+    self_pid: u32,
 }
 
 impl Collector {
@@ -57,13 +58,13 @@ impl Collector {
         Self {
             system,
             previous_network_totals: NetworkTotals::default(),
+            self_pid: std::process::id(),
         }
     }
 
     pub fn collect(&mut self) -> RawSnapshot {
         self.system.refresh_cpu();
         self.system.refresh_memory();
-        self.system.refresh_processes();
         self.system.refresh_processes_specifics(ProcessRefreshKind::everything());
 
         let mut network_totals = NetworkTotals::default();
@@ -91,6 +92,7 @@ impl Collector {
             .system
             .processes()
             .values()
+            .filter(|process| process.pid().as_u32() != self.self_pid)
             .map(|process| RawProcessSample {
                 pid: process.pid().as_u32(),
                 parent_pid: process.parent().map(|parent| parent.as_u32()),

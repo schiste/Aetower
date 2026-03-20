@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub const FAST_TICK: Duration = Duration::from_millis(1000);
+pub const FAST_TICK: Duration = Duration::from_millis(2000);
 
 pub fn now_millis() -> u64 {
     SystemTime::now()

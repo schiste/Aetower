@@ -21,9 +21,9 @@ public struct SettingsView: View {
                             Text("Refresh interval")
                                 .font(.headline)
                             Picker("Refresh interval", selection: $settings.refreshIntervalSeconds) {
-                                Text("0.5s").tag(0.5)
                                 Text("1.0s").tag(1.0)
                                 Text("2.0s").tag(2.0)
+                                Text("5.0s").tag(5.0)
                             }
                             .pickerStyle(.segmented)
                         }
