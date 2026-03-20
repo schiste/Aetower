@@ -30,7 +30,7 @@ public final class SettingsStore: ObservableObject {
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.showMenuBarExtra = defaults.object(forKey: Self.showMenuBarExtraKey) as? Bool ?? true
-        self.refreshIntervalSeconds = defaults.object(forKey: Self.refreshIntervalKey) as? Double ?? 1.0
+        self.refreshIntervalSeconds = defaults.object(forKey: Self.refreshIntervalKey) as? Double ?? 2.0
         self.chromiumEndpoint = defaults.string(forKey: Self.chromiumEndpointKey) ?? ""
         self.dockerSocketPath = defaults.string(forKey: Self.dockerSocketPathKey) ?? "/var/run/docker.sock"
         self.privilegedHelperPath = defaults.string(forKey: Self.privilegedHelperPathKey)

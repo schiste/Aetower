@@ -12,6 +12,10 @@ public final class EngineBridge {
         engine.latestSnapshot()
     }
 
+    public func latestSequence() throws -> UInt64 {
+        engine.latestSequence()
+    }
+
     public func setCapability(_ kind: CapabilityKind, state: CapabilityState, detail: String? = nil) {
         engine.setCapabilityState(kind: kind, state: state, detailOverride: detail)
     }

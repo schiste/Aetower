@@ -135,6 +135,10 @@ impl Engine {
         self.state.lock().latest_snapshot.clone()
     }
 
+    pub fn latest_sequence(&self) -> u64 {
+        self.state.lock().latest_snapshot.sequence
+    }
+
     pub fn set_capability_state(
         &self,
         kind: CapabilityKind,

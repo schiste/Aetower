@@ -169,6 +169,13 @@ impl MonitorEngine {
             .into()
     }
 
+    pub fn latest_sequence(&self) -> u64 {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .latest_sequence()
+    }
+
     pub fn set_capability_state(
         &self,
         kind: CapabilityKind,

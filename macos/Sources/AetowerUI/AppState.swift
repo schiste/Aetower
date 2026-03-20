@@ -5,21 +5,19 @@ import AetowerBridge
 @MainActor
 public final class AppState: ObservableObject {
     @Published public private(set) var snapshot: SystemSnapshot
-    @Published public var selectedEntityID: String?
     @Published public var lastError: String?
-    @Published public var searchText: String = ""
 
     private let bridge: EngineBridge
     private let permissionCoordinator: PermissionCoordinator
     private var timerCancellable: AnyCancellable?
+    private var lastObservedSequence: UInt64
+    private var lastPublishedFrontmostSignature: String?
 
     public init(
         bridge: EngineBridge = EngineBridge(),
         permissionCoordinator: PermissionCoordinator = PermissionCoordinator()
     ) {
-        self.bridge = bridge
-        self.permissionCoordinator = permissionCoordinator
-        self.snapshot = (try? bridge.latestSnapshot()) ?? SystemSnapshot(
+        let initialSnapshot = (try? bridge.latestSnapshot()) ?? SystemSnapshot(
             sequence: 0,
             capturedAtMillis: 0,
             host: HostSnapshot(
@@ -38,6 +36,10 @@ public final class AppState: ObservableObject {
             entities: [],
             timeline: []
         )
+        self.bridge = bridge
+        self.permissionCoordinator = permissionCoordinator
+        self.snapshot = initialSnapshot
+        self.lastObservedSequence = initialSnapshot.sequence
     }
 
     public func start() {
@@ -46,8 +48,8 @@ public final class AppState: ObservableObject {
 
     public func start(refreshInterval: Double) {
         stop()
-        refresh()
-        timerCancellable = Timer.publish(every: max(0.25, refreshInterval), on: .main, in: .common)
+        refresh(force: true)
+        timerCancellable = Timer.publish(every: max(0.5, refreshInterval), on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.refresh()
@@ -59,26 +61,10 @@ public final class AppState: ObservableObject {
         timerCancellable = nil
     }
 
-    public var visibleEntities: [EntitySnapshot] {
-        guard !searchText.isEmpty else { return snapshot.entities }
-        return snapshot.entities.filter {
-            $0.displayName.localizedCaseInsensitiveContains(searchText)
-                || $0.badges.joined(separator: " ").localizedCaseInsensitiveContains(searchText)
-        }
-    }
-
-    public var selectedEntity: EntitySnapshot? {
-        let source = visibleEntities.isEmpty ? snapshot.entities : visibleEntities
-        if let selectedEntityID {
-            return source.first(where: { $0.entityId == selectedEntityID }) ?? snapshot.entities.first(where: { $0.entityId == selectedEntityID })
-        }
-        return source.first
-    }
-
     public func requestCapability(_ capability: CapabilitySnapshot) {
         let result = permissionCoordinator.request(capability.kind)
         bridge.setCapability(capability.kind, state: result.state, detail: result.detail)
-        refresh()
+        refresh(force: true)
     }
 
     public func applyIntegrationSettings(_ settings: SettingsStore) {
@@ -94,16 +80,19 @@ public final class AppState: ObservableObject {
             path: privilegedHelperPath.isEmpty ? nil : privilegedHelperPath,
             enabled: settings.privilegedHelperEnabled
         )
-        refresh()
+        refresh(force: true)
     }
 
-    public func refresh() {
+    public func refresh(force: Bool = false) {
         publishFrontmostState()
         do {
-            snapshot = try bridge.latestSnapshot()
-            if selectedEntityID == nil {
-                selectedEntityID = snapshot.entities.first?.entityId
+            let latestSequence = try bridge.latestSequence()
+            if !force && latestSequence == lastObservedSequence {
+                return
             }
+            snapshot = try bridge.latestSnapshot()
+            lastObservedSequence = snapshot.sequence
+            lastError = nil
         } catch {
             lastError = error.localizedDescription
         }
@@ -111,7 +100,21 @@ public final class AppState: ObservableObject {
 
     private func publishFrontmostState() {
         guard let observation = permissionCoordinator.currentFrontmostAppObservation() else {
-            bridge.clearFrontmostAppState()
+            if lastPublishedFrontmostSignature != nil {
+                bridge.clearFrontmostAppState()
+                lastPublishedFrontmostSignature = nil
+            }
+            return
+        }
+
+        let signature = [
+            observation.appName,
+            observation.bundleId ?? "",
+            observation.executablePath ?? "",
+            observation.windowTitle ?? ""
+        ].joined(separator: "\u{1f}")
+
+        guard signature != lastPublishedFrontmostSignature else {
             return
         }
 
@@ -121,5 +124,6 @@ public final class AppState: ObservableObject {
             executablePath: observation.executablePath,
             windowTitle: observation.windowTitle
         )
+        lastPublishedFrontmostSignature = signature
     }
 }

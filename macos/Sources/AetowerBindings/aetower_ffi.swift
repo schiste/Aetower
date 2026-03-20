@@ -522,6 +522,8 @@ public protocol MonitorEngineProtocol : AnyObject {
     
     func configurePrivilegedHelper(helperPath: String?, enabled: Bool) 
     
+    func latestSequence()  -> UInt64
+    
     func latestSnapshot()  -> SystemSnapshot
     
     func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?) 
@@ -613,6 +615,13 @@ open func configurePrivilegedHelper(helperPath: String?, enabled: Bool) {try! ru
         FfiConverterBool.lower(enabled),$0
     )
 }
+}
+    
+open func latestSequence() -> UInt64 {
+    return try!  FfiConverterUInt64.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_latest_sequence(self.uniffiClonePointer(),$0
+    )
+})
 }
     
 open func latestSnapshot() -> SystemSnapshot {
@@ -2215,6 +2224,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_privileged_helper() != 57500) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_sequence() != 61139) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_snapshot() != 64950) {
