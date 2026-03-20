@@ -6,15 +6,18 @@ APP_NAME="Aetower.app"
 APP_DIR="$ROOT/dist/$APP_NAME"
 BIN_DIR="$APP_DIR/Contents/MacOS"
 FRAMEWORK_DIR="$APP_DIR/Contents/Frameworks"
+HELPER_DIR="$APP_DIR/Contents/Helpers"
 
 sh "$ROOT/scripts/build-rust.sh"
+cargo build --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper --release
 swift build --package-path "$ROOT/macos" -c release
 
 rm -rf "$APP_DIR"
-mkdir -p "$BIN_DIR" "$FRAMEWORK_DIR" "$APP_DIR/Contents/Resources"
+mkdir -p "$BIN_DIR" "$FRAMEWORK_DIR" "$HELPER_DIR" "$APP_DIR/Contents/Resources"
 
 cp "$ROOT/macos/.build/release/AetowerApp" "$BIN_DIR/Aetower"
 cp "$ROOT/rust/target/release/libaetower_ffi.dylib" "$FRAMEWORK_DIR/"
+cp "$ROOT/rust/target/release/aetower-helper" "$HELPER_DIR/aetower-helper"
 
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

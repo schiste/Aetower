@@ -28,13 +28,15 @@ struct EngineState {
 
 pub struct Engine {
     state: Arc<Mutex<EngineState>>,
+    adapters: AdapterManager,
     running: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl Engine {
     pub fn new() -> Self {
-        let capabilities = AdapterManager::initial_capabilities();
+        let adapters = AdapterManager::default();
+        let capabilities = adapters.initial_capabilities();
         let snapshot = SystemSnapshot {
             sequence: 0,
             captured_at_millis: time::now_millis(),
@@ -56,6 +58,7 @@ impl Engine {
                 frontmost_app_state: None,
                 history: History::new(),
             })),
+            adapters,
             running: Arc::new(AtomicBool::new(false)),
             worker: None,
         }
@@ -67,10 +70,10 @@ impl Engine {
         }
 
         let state = Arc::clone(&self.state);
+        let adapters = self.adapters.clone();
         let running = Arc::clone(&self.running);
         self.worker = Some(thread::spawn(move || {
             let mut collector = Collector::new();
-            let adapters = AdapterManager::default();
 
             while running.load(Ordering::SeqCst) {
                 let captured_at_millis = time::now_millis();
@@ -162,6 +165,30 @@ impl Engine {
         guard.latest_snapshot.host.frontmost_app_name = None;
         guard.latest_snapshot.host.frontmost_window_title = None;
         guard.frontmost_app_state = None;
+    }
+
+    pub fn configure_chromium_endpoint(&self, endpoint: Option<String>) {
+        self.adapters.configure_chromium_endpoint(endpoint);
+        self.refresh_capability(CapabilityKind::ChromiumDebug);
+    }
+
+    pub fn configure_docker_socket_path(&self, socket_path: String) {
+        self.adapters.configure_docker_socket_path(socket_path);
+        self.refresh_capability(CapabilityKind::DockerSocket);
+    }
+
+    pub fn configure_privileged_helper(&self, helper_path: Option<String>, enabled: bool) {
+        self.adapters
+            .configure_privileged_helper(helper_path, enabled);
+        self.refresh_capability(CapabilityKind::PrivilegedHelper);
+    }
+
+    fn refresh_capability(&self, kind: CapabilityKind) {
+        let mut guard = self.state.lock();
+        guard
+            .capabilities
+            .insert(kind.clone(), self.adapters.capability_snapshot(kind, time::now_millis()));
+        guard.latest_snapshot.capabilities = guard.capabilities.values().cloned().collect();
     }
 }
 

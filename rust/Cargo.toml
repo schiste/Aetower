@@ -3,6 +3,7 @@ members = [
   "crates/aetower-model",
   "crates/aetower-core",
   "crates/aetower-ffi",
+  "crates/aetower-helper",
   "crates/uniffi-bindgen-swift",
 ]
 resolver = "2"

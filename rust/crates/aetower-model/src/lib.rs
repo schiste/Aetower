@@ -39,6 +39,7 @@ pub enum CapabilityKind {
     AppleAutomation,
     ChromiumDebug,
     DockerSocket,
+    PrivilegedHelper,
 }
 
 impl Default for CapabilityKind {

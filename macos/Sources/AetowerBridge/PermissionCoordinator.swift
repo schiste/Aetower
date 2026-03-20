@@ -41,6 +41,11 @@ public final class PermissionCoordinator {
                     ? "Docker socket detected."
                     : "Docker socket not found."
             )
+        case .privilegedHelper:
+            return PermissionResult(
+                state: .requested,
+                detail: "Configure a helper path and run the helper with elevated privileges when deeper attribution is required."
+            )
         }
     }
 

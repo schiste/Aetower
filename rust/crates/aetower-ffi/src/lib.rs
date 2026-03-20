@@ -29,6 +29,7 @@ pub enum CapabilityKind {
     AppleAutomation,
     ChromiumDebug,
     DockerSocket,
+    PrivilegedHelper,
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -193,6 +194,27 @@ impl MonitorEngine {
             .expect("engine lock poisoned")
             .clear_frontmost_app_state();
     }
+
+    pub fn configure_chromium_endpoint(&self, endpoint: Option<String>) {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .configure_chromium_endpoint(endpoint);
+    }
+
+    pub fn configure_docker_socket_path(&self, socket_path: String) {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .configure_docker_socket_path(socket_path);
+    }
+
+    pub fn configure_privileged_helper(&self, helper_path: Option<String>, enabled: bool) {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .configure_privileged_helper(helper_path, enabled);
+    }
 }
 
 impl Drop for MonitorEngine {
@@ -234,6 +256,7 @@ impl From<CapabilityKind> for model::CapabilityKind {
             CapabilityKind::AppleAutomation => Self::AppleAutomation,
             CapabilityKind::ChromiumDebug => Self::ChromiumDebug,
             CapabilityKind::DockerSocket => Self::DockerSocket,
+            CapabilityKind::PrivilegedHelper => Self::PrivilegedHelper,
         }
     }
 }
@@ -246,6 +269,7 @@ impl From<model::CapabilityKind> for CapabilityKind {
             model::CapabilityKind::AppleAutomation => Self::AppleAutomation,
             model::CapabilityKind::ChromiumDebug => Self::ChromiumDebug,
             model::CapabilityKind::DockerSocket => Self::DockerSocket,
+            model::CapabilityKind::PrivilegedHelper => Self::PrivilegedHelper,
         }
     }
 }

@@ -516,6 +516,12 @@ public protocol MonitorEngineProtocol : AnyObject {
     
     func clearFrontmostAppState() 
     
+    func configureChromiumEndpoint(endpoint: String?) 
+    
+    func configureDockerSocketPath(socketPath: String) 
+    
+    func configurePrivilegedHelper(helperPath: String?, enabled: Bool) 
+    
     func latestSnapshot()  -> SystemSnapshot
     
     func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?) 
@@ -583,6 +589,28 @@ public convenience init() {
     
 open func clearFrontmostAppState() {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_clear_frontmost_app_state(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+open func configureChromiumEndpoint(endpoint: String?) {try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_configure_chromium_endpoint(self.uniffiClonePointer(),
+        FfiConverterOptionString.lower(endpoint),$0
+    )
+}
+}
+    
+open func configureDockerSocketPath(socketPath: String) {try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_configure_docker_socket_path(self.uniffiClonePointer(),
+        FfiConverterString.lower(socketPath),$0
+    )
+}
+}
+    
+open func configurePrivilegedHelper(helperPath: String?, enabled: Bool) {try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_configure_privileged_helper(self.uniffiClonePointer(),
+        FfiConverterOptionString.lower(helperPath),
+        FfiConverterBool.lower(enabled),$0
     )
 }
 }
@@ -1612,6 +1640,7 @@ public enum CapabilityKind {
     case appleAutomation
     case chromiumDebug
     case dockerSocket
+    case privilegedHelper
 }
 
 
@@ -1634,6 +1663,8 @@ public struct FfiConverterTypeCapabilityKind: FfiConverterRustBuffer {
         case 4: return .chromiumDebug
         
         case 5: return .dockerSocket
+        
+        case 6: return .privilegedHelper
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1661,6 +1692,10 @@ public struct FfiConverterTypeCapabilityKind: FfiConverterRustBuffer {
         
         case .dockerSocket:
             writeInt(&buf, Int32(5))
+        
+        
+        case .privilegedHelper:
+            writeInt(&buf, Int32(6))
         
         }
     }
@@ -2171,6 +2206,15 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_clear_frontmost_app_state() != 44857) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_chromium_endpoint() != 3795) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_docker_socket_path() != 15511) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_privileged_helper() != 57500) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_snapshot() != 64950) {
