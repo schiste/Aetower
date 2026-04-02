@@ -536,6 +536,13 @@ impl AdapterManager {
 
             if matches!(entity.entity_kind, aetower_model::EntityKind::Browser) {
                 if let Some(targets) = chromium_targets.as_ref() {
+                    let total_network_bps = targets.iter().fold(0u64, |total, target| {
+                        total.saturating_add(target.network_bps)
+                    });
+                    entity.metrics.network_receive_bps = entity
+                        .metrics
+                        .network_receive_bps
+                        .saturating_add(total_network_bps);
                     for target in targets.iter().take(5) {
                         entity.components.push(ComponentSnapshot {
                             kind: ComponentKind::AdapterContext,
@@ -565,6 +572,20 @@ impl AdapterManager {
             if entity.display_name.contains("Docker") || entity.display_name == "com.docker.backend"
             {
                 if let Some(containers) = docker_containers.as_ref() {
+                    let total_receive_bps = containers.iter().fold(0u64, |total, container| {
+                        total.saturating_add(container.network_rx_bytes)
+                    });
+                    let total_send_bps = containers.iter().fold(0u64, |total, container| {
+                        total.saturating_add(container.network_tx_bytes)
+                    });
+                    entity.metrics.network_receive_bps = entity
+                        .metrics
+                        .network_receive_bps
+                        .saturating_add(total_receive_bps);
+                    entity.metrics.network_send_bps = entity
+                        .metrics
+                        .network_send_bps
+                        .saturating_add(total_send_bps);
                     for container in containers.iter().take(5) {
                         entity.components.push(ComponentSnapshot {
                             kind: ComponentKind::AdapterContext,
@@ -590,6 +611,8 @@ impl AdapterManager {
                     }
                 }
             }
+
+            enrich_vscode_entity(entity);
 
             if let Some(helper) = privileged_helper_sample.as_ref() {
                 if let Some(process) = helper
@@ -756,6 +779,15 @@ struct DockerContainer {
     block_read_bytes: u64,
     block_write_bytes: u64,
     pids: u64,
+}
+
+#[derive(Debug, Default)]
+struct VsCodeHeuristicSummary {
+    workspace: Option<String>,
+    extension_hosts: usize,
+    watchers: usize,
+    pty_hosts: usize,
+    shared_processes: usize,
 }
 
 #[derive(Debug, Default)]
@@ -1561,6 +1593,153 @@ fn docker_container_detail(container: &DockerContainer) -> String {
     parts.join(" · ")
 }
 
+fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
+    if !is_vscode_entity(entity) {
+        return;
+    }
+
+    let summary = summarize_vscode_entity(entity);
+    if summary.workspace.is_none()
+        && summary.extension_hosts == 0
+        && summary.watchers == 0
+        && summary.pty_hosts == 0
+        && summary.shared_processes == 0
+    {
+        return;
+    }
+
+    if let Some(workspace) = summary.workspace.as_deref() {
+        entity.components.push(ComponentSnapshot {
+            kind: ComponentKind::AdapterContext,
+            title: "Workspace".to_owned(),
+            detail: workspace.to_owned(),
+            provenance: Some(ProvenanceSnapshot {
+                kind: ProvenanceKind::ParentProcess,
+                label: "VS Code workspace context".to_owned(),
+            }),
+            process_id: None,
+            executable_path: None,
+            command_line: None,
+            parent_summary: None,
+            launched_by: None,
+            cpu_percent: 0.0,
+            memory_bytes: 0,
+        });
+    }
+
+    if summary.extension_hosts > 0 {
+        entity.components.push(ComponentSnapshot {
+            kind: ComponentKind::AdapterContext,
+            title: "Extension Host".to_owned(),
+            detail: format!("{} extension host process(es)", summary.extension_hosts),
+            provenance: None,
+            process_id: None,
+            executable_path: None,
+            command_line: None,
+            parent_summary: None,
+            launched_by: None,
+            cpu_percent: 0.0,
+            memory_bytes: 0,
+        });
+        push_unique_badge(entity, "vscode-extension-host");
+    }
+
+    if summary.watchers > 0 || summary.pty_hosts > 0 || summary.shared_processes > 0 {
+        let mut parts = Vec::new();
+        if summary.watchers > 0 {
+            parts.push(format!("{} watcher(s)", summary.watchers));
+        }
+        if summary.pty_hosts > 0 {
+            parts.push(format!("{} pty host(s)", summary.pty_hosts));
+        }
+        if summary.shared_processes > 0 {
+            parts.push(format!("{} shared process(es)", summary.shared_processes));
+        }
+        entity.components.push(ComponentSnapshot {
+            kind: ComponentKind::AdapterContext,
+            title: "Editor runtime".to_owned(),
+            detail: parts.join(" · "),
+            provenance: None,
+            process_id: None,
+            executable_path: None,
+            command_line: None,
+            parent_summary: None,
+            launched_by: None,
+            cpu_percent: 0.0,
+            memory_bytes: 0,
+        });
+    }
+
+    push_unique_badge(entity, "vscode-live");
+}
+
+fn is_vscode_entity(entity: &EntitySnapshot) -> bool {
+    let display_name = entity.display_name.to_lowercase();
+    let bundle_id = entity
+        .bundle_id
+        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase();
+    matches!(
+        display_name.as_str(),
+        "visual studio code" | "code" | "code - insiders" | "cursor" | "vscodium"
+    ) || bundle_id.contains("code")
+        || bundle_id.contains("cursor")
+}
+
+fn summarize_vscode_entity(entity: &EntitySnapshot) -> VsCodeHeuristicSummary {
+    let mut summary = VsCodeHeuristicSummary::default();
+
+    for component in &entity.components {
+        let command_line = component.command_line.as_deref().unwrap_or_default();
+        if command_line.contains("--type=extensionHost") {
+            summary.extension_hosts += 1;
+        }
+        if command_line.contains("--type=fileWatcher") || command_line.contains("watcherService") {
+            summary.watchers += 1;
+        }
+        if command_line.contains("--type=ptyHost") {
+            summary.pty_hosts += 1;
+        }
+        if command_line.contains("--type=shared-process") {
+            summary.shared_processes += 1;
+        }
+        if summary.workspace.is_none() {
+            summary.workspace = workspace_hint_from_command_line(command_line);
+        }
+    }
+
+    summary
+}
+
+fn workspace_hint_from_command_line(command_line: &str) -> Option<String> {
+    for segment in command_line.split_whitespace() {
+        if let Some(uri) = segment.strip_prefix("--folder-uri=") {
+            return Some(trim_file_uri(uri));
+        }
+        if let Some(uri) = segment.strip_prefix("--file-uri=") {
+            return Some(trim_file_uri(uri));
+        }
+        if segment.starts_with('/') && !segment.starts_with("/Applications/") {
+            return Some(segment.trim_matches('"').to_owned());
+        }
+    }
+    None
+}
+
+fn trim_file_uri(uri: &str) -> String {
+    uri.trim_matches('"')
+        .strip_prefix("file://")
+        .unwrap_or(uri.trim_matches('"'))
+        .to_owned()
+}
+
+fn push_unique_badge(entity: &mut EntitySnapshot, badge: &str) {
+    if !entity.badges.iter().any(|existing| existing == badge) {
+        entity.badges.push(badge.to_owned());
+    }
+}
+
 fn human_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
@@ -1636,9 +1815,15 @@ fn read_http_body(stream: &mut impl Read) -> Result<String, String> {
 mod tests {
     use std::collections::BTreeMap;
 
+    use aetower_model::{
+        AggregateMetrics, ComponentKind, ComponentSnapshot, EntityKind, EntitySnapshot,
+        FrictionBreakdown, MetricTrend,
+    };
+
     use super::{
         adapter_runtime_detail, capability_status, docker_block_io_totals, docker_cpu_percent,
-        docker_network_totals, parse_http_endpoint, AdapterState, CapabilityKind, CapabilityState,
+        docker_network_totals, enrich_vscode_entity, parse_http_endpoint,
+        workspace_hint_from_command_line, AdapterState, CapabilityKind, CapabilityState,
         ChromiumTarget, DockerBlkioEntry, DockerContainerStats, DockerContainerSummary,
         DockerNetworkStats,
     };
@@ -1766,5 +1951,84 @@ mod tests {
         );
         assert!(degraded.contains("status degraded"));
         assert!(degraded.contains("last error: tcp connect failed"));
+    }
+
+    #[test]
+    fn workspace_hint_extracts_folder_uri() {
+        let command = r#"code --folder-uri=file:///Users/test/src/project --reuse-window"#;
+        assert_eq!(
+            workspace_hint_from_command_line(command).as_deref(),
+            Some("/Users/test/src/project")
+        );
+    }
+
+    #[test]
+    fn vscode_enrichment_adds_workspace_and_extension_context() {
+        let mut entity = EntitySnapshot {
+            entity_id: "bundle-path:/Applications/Visual Studio Code.app".to_owned(),
+            display_name: "Visual Studio Code".to_owned(),
+            primary_provenance: None,
+            bundle_id: Some("com.microsoft.VSCode".to_owned()),
+            executable_path: Some(
+                "/Applications/Visual Studio Code.app/Contents/MacOS/Electron".to_owned(),
+            ),
+            oldest_process_start_millis: 0,
+            newest_process_start_millis: 0,
+            entity_kind: EntityKind::App,
+            metrics: AggregateMetrics::default(),
+            friction: FrictionBreakdown::default(),
+            components: vec![
+                ComponentSnapshot {
+                    kind: ComponentKind::Process,
+                    title: "Code".to_owned(),
+                    detail: String::new(),
+                    provenance: None,
+                    process_id: Some(1),
+                    executable_path: None,
+                    command_line: Some(
+                        "code --folder-uri=file:///Users/test/src/project".to_owned(),
+                    ),
+                    parent_summary: None,
+                    launched_by: None,
+                    cpu_percent: 0.0,
+                    memory_bytes: 0,
+                },
+                ComponentSnapshot {
+                    kind: ComponentKind::Process,
+                    title: "Code Helper".to_owned(),
+                    detail: String::new(),
+                    provenance: None,
+                    process_id: Some(2),
+                    executable_path: None,
+                    command_line: Some(
+                        "/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper --type=extensionHost".to_owned(),
+                    ),
+                    parent_summary: None,
+                    launched_by: None,
+                    cpu_percent: 0.0,
+                    memory_bytes: 0,
+                },
+            ],
+            trend: MetricTrend::default(),
+            badges: Vec::new(),
+            active_window_title: None,
+            recommendations: Vec::new(),
+        };
+
+        enrich_vscode_entity(&mut entity);
+
+        assert!(entity.badges.iter().any(|badge| badge == "vscode-live"));
+        assert!(entity
+            .badges
+            .iter()
+            .any(|badge| badge == "vscode-extension-host"));
+        assert!(entity
+            .components
+            .iter()
+            .any(|component| component.title == "Workspace"));
+        assert!(entity
+            .components
+            .iter()
+            .any(|component| component.title == "Extension Host"));
     }
 }
