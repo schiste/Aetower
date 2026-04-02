@@ -12,6 +12,10 @@ public final class EngineBridge {
         engine.latestSnapshot()
     }
 
+    public func latestSnapshotIfNewer(since sequence: UInt64) throws -> SystemSnapshot? {
+        engine.latestSnapshotIfNewer(lastSequence: sequence)
+    }
+
     public func latestSequence() throws -> UInt64 {
         engine.latestSequence()
     }
@@ -50,5 +54,9 @@ public final class EngineBridge {
 
     public func configurePrivilegedHelper(path: String?, enabled: Bool) {
         engine.configurePrivilegedHelper(helperPath: path, enabled: enabled)
+    }
+
+    public func configureChau7Endpoint(_ socketPath: String?) {
+        engine.configureChau7Endpoint(socketPath: socketPath)
     }
 }

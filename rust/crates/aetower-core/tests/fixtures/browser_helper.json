@@ -1,0 +1,80 @@
+{
+  "host": {
+    "cpu_percent": 12.0,
+    "memory_used_bytes": 4294967296,
+    "memory_total_bytes": 17179869184,
+    "swap_used_bytes": 0,
+    "disk_read_bps": 1048576,
+    "disk_write_bps": 524288,
+    "network_receive_bps": 0,
+    "network_send_bps": 0,
+    "thermal_state": "nominal",
+    "on_battery": false,
+    "battery_charge_percent": null,
+    "low_power_mode": false,
+    "frontmost_app_name": null,
+    "frontmost_window_title": null
+  },
+  "frontmost": {
+    "app_name": "Google Chrome",
+    "bundle_id": "local.google-chrome",
+    "executable_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "window_title": "Fixture Window",
+    "captured_at_millis": 0
+  },
+  "processes": [
+    {
+      "pid": 1,
+      "parent_pid": null,
+      "start_time_millis": 1000,
+      "name": "launchd",
+      "exe": "/sbin/launchd",
+      "cmd": ["/sbin/launchd"],
+      "cpu_percent": 0.0,
+      "memory_bytes": 0,
+      "virtual_memory_bytes": 0,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 100,
+      "parent_pid": 1,
+      "start_time_millis": 2000,
+      "name": "Google Chrome",
+      "exe": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "cmd": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+      "cpu_percent": 14.0,
+      "memory_bytes": 268435456,
+      "virtual_memory_bytes": 536870912,
+      "disk_read_bytes": 1048576,
+      "disk_write_bytes": 262144
+    },
+    {
+      "pid": 101,
+      "parent_pid": 100,
+      "start_time_millis": 3000,
+      "name": "Google Chrome Helper",
+      "exe": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper",
+      "cmd": ["/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper", "--type=renderer"],
+      "cpu_percent": 18.0,
+      "memory_bytes": 536870912,
+      "virtual_memory_bytes": 1073741824,
+      "disk_read_bytes": 2097152,
+      "disk_write_bytes": 524288
+    }
+  ],
+  "expected_entities": [
+    {
+      "display_name": "Google Chrome",
+      "entity_kind": "browser",
+      "primary_provenance": "helper-tree",
+      "component_expectations": [
+        {
+          "title": "Google Chrome Helper",
+          "provenance": "helper-tree",
+          "launched_by_contains": "Google Chrome"
+        }
+      ]
+    }
+  ]
+}

@@ -10,7 +10,11 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
         let disk_mib =
             (entity.metrics.disk_read_bps + entity.metrics.disk_write_bps) as f32 / 1_048_576.0;
         let disk_score = disk_mib.min(20.0) * 1.5;
-        let foreground_bonus = if entity.metrics.is_foreground { 10.0 } else { 0.0 };
+        let foreground_bonus = if entity.metrics.is_foreground {
+            10.0
+        } else {
+            0.0
+        };
 
         let total_score = cpu_score + memory_score + disk_score + foreground_bonus;
 
@@ -25,10 +29,7 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
             ));
         }
         if disk_score > 8.0 {
-            reasons.push(format!(
-                "heavy disk {:.1} MiB/s",
-                disk_mib
-            ));
+            reasons.push(format!("heavy disk {:.1} MiB/s", disk_mib));
         }
         if entity.metrics.is_foreground {
             reasons.push("foreground app".to_owned());
@@ -55,4 +56,90 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
             .then_with(|| left.display_name.cmp(&right.display_name))
             .then_with(|| left.entity_id.cmp(&right.entity_id))
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use aetower_model::{
+        AggregateMetrics, EntityKind, EntitySnapshot, FrictionBreakdown, HostSnapshot, MetricTrend,
+    };
+
+    use super::apply;
+
+    fn entity(id: &str, display_name: &str, metrics: AggregateMetrics) -> EntitySnapshot {
+        EntitySnapshot {
+            entity_id: id.to_owned(),
+            display_name: display_name.to_owned(),
+            primary_provenance: None,
+            bundle_id: None,
+            executable_path: None,
+            oldest_process_start_millis: 0,
+            newest_process_start_millis: 0,
+            entity_kind: EntityKind::Service,
+            metrics,
+            friction: FrictionBreakdown::default(),
+            components: Vec::new(),
+            trend: MetricTrend::default(),
+            badges: Vec::new(),
+            active_window_title: None,
+        }
+    }
+
+    #[test]
+    fn baseline_activity_is_only_reason_when_no_hot_signals_exist() {
+        let host = HostSnapshot {
+            memory_total_bytes: 8 * 1024 * 1024 * 1024,
+            ..HostSnapshot::default()
+        };
+        let mut entities = vec![entity("baseline", "baseline", AggregateMetrics::default())];
+
+        apply(&host, &mut entities);
+
+        assert_eq!(
+            entities[0].friction.reasons,
+            vec!["background baseline activity".to_owned()]
+        );
+    }
+
+    #[test]
+    fn friction_reasons_include_foreground_and_hot_metrics() {
+        let host = HostSnapshot {
+            memory_total_bytes: 8 * 1024 * 1024 * 1024,
+            ..HostSnapshot::default()
+        };
+        let mut entities = vec![entity(
+            "busy",
+            "busy",
+            AggregateMetrics {
+                cpu_percent: 60.0,
+                memory_resident_bytes: 3 * 1024 * 1024 * 1024,
+                disk_read_bps: 12 * 1024 * 1024,
+                is_foreground: true,
+                ..AggregateMetrics::default()
+            },
+        )];
+
+        apply(&host, &mut entities);
+
+        assert!(entities[0]
+            .friction
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("high CPU")));
+        assert!(entities[0]
+            .friction
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("high memory")));
+        assert!(entities[0]
+            .friction
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("heavy disk")));
+        assert!(entities[0]
+            .friction
+            .reasons
+            .iter()
+            .any(|reason| reason == "foreground app"));
+    }
 }

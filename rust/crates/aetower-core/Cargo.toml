@@ -5,11 +5,15 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+aetower-collector = { path = "../aetower-collector" }
+aetower-identity = { path = "../aetower-identity" }
 aetower-model = { path = "../aetower-model" }
+aetower-time = { path = "../aetower-time" }
 anyhow.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sysinfo.workspace = true
+dirs = "5"
 tungstenite = "0.24"
 url = "2"

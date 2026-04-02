@@ -28,7 +28,9 @@ struct WorkingSample {
 }
 
 fn main() -> Result<()> {
-    let command = std::env::args().nth(1).unwrap_or_else(|| "sample".to_owned());
+    let command = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "sample".to_owned());
     match command.as_str() {
         "sample" => {
             let snapshot = collect_snapshot()?;
@@ -105,7 +107,11 @@ fn collect_snapshot() -> Result<HelperSnapshot> {
             connections: sample.connections.into_iter().take(5).collect(),
         })
         .collect::<Vec<_>>();
-    processes.sort_by(|left, right| left.process_name.cmp(&right.process_name).then(left.pid.cmp(&right.pid)));
+    processes.sort_by(|left, right| {
+        left.process_name
+            .cmp(&right.process_name)
+            .then(left.pid.cmp(&right.pid))
+    });
 
     Ok(HelperSnapshot { processes })
 }
@@ -133,7 +139,11 @@ fn collect_executable_names() -> Result<BTreeMap<u32, String>> {
         let Some(command_path) = parts.next() else {
             continue;
         };
-        let executable_name = command_path.rsplit('/').next().unwrap_or(command_path).to_owned();
+        let executable_name = command_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(command_path)
+            .to_owned();
         map.insert(pid, executable_name);
     }
     Ok(map)

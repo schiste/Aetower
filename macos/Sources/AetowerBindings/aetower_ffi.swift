@@ -399,6 +399,22 @@ fileprivate class UniffiHandleMap<T> {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt8: FfiConverterPrimitive {
+    typealias FfiType = UInt8
+    typealias SwiftType = UInt8
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt8 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: UInt8, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     typealias FfiType = UInt32
     typealias SwiftType = UInt32
@@ -516,6 +532,8 @@ public protocol MonitorEngineProtocol : AnyObject {
     
     func clearFrontmostAppState() 
     
+    func configureChau7Endpoint(socketPath: String?) 
+    
     func configureChromiumEndpoint(endpoint: String?) 
     
     func configureDockerSocketPath(socketPath: String) 
@@ -525,6 +543,8 @@ public protocol MonitorEngineProtocol : AnyObject {
     func latestSequence()  -> UInt64
     
     func latestSnapshot()  -> SystemSnapshot
+    
+    func latestSnapshotIfNewer(lastSequence: UInt64)  -> SystemSnapshot?
     
     func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?) 
     
@@ -595,6 +615,13 @@ open func clearFrontmostAppState() {try! rustCall() {
 }
 }
     
+open func configureChau7Endpoint(socketPath: String?) {try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_configure_chau7_endpoint(self.uniffiClonePointer(),
+        FfiConverterOptionString.lower(socketPath),$0
+    )
+}
+}
+    
 open func configureChromiumEndpoint(endpoint: String?) {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_configure_chromium_endpoint(self.uniffiClonePointer(),
         FfiConverterOptionString.lower(endpoint),$0
@@ -627,6 +654,14 @@ open func latestSequence() -> UInt64 {
 open func latestSnapshot() -> SystemSnapshot {
     return try!  FfiConverterTypeSystemSnapshot.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_snapshot(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func latestSnapshotIfNewer(lastSequence: UInt64) -> SystemSnapshot? {
+    return try!  FfiConverterOptionTypeSystemSnapshot.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_latest_snapshot_if_newer(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(lastSequence),$0
     )
 })
 }
@@ -827,14 +862,16 @@ public func FfiConverterTypeAggregateMetrics_lower(_ value: AggregateMetrics) ->
 public struct CapabilitySnapshot {
     public var kind: CapabilityKind
     public var state: CapabilityState
+    public var health: CapabilityHealth
     public var detail: String
     public var lastUpdatedMillis: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: CapabilityKind, state: CapabilityState, detail: String, lastUpdatedMillis: UInt64) {
+    public init(kind: CapabilityKind, state: CapabilityState, health: CapabilityHealth, detail: String, lastUpdatedMillis: UInt64) {
         self.kind = kind
         self.state = state
+        self.health = health
         self.detail = detail
         self.lastUpdatedMillis = lastUpdatedMillis
     }
@@ -850,6 +887,9 @@ extension CapabilitySnapshot: Equatable, Hashable {
         if lhs.state != rhs.state {
             return false
         }
+        if lhs.health != rhs.health {
+            return false
+        }
         if lhs.detail != rhs.detail {
             return false
         }
@@ -862,6 +902,7 @@ extension CapabilitySnapshot: Equatable, Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(kind)
         hasher.combine(state)
+        hasher.combine(health)
         hasher.combine(detail)
         hasher.combine(lastUpdatedMillis)
     }
@@ -877,6 +918,7 @@ public struct FfiConverterTypeCapabilitySnapshot: FfiConverterRustBuffer {
             try CapabilitySnapshot(
                 kind: FfiConverterTypeCapabilityKind.read(from: &buf), 
                 state: FfiConverterTypeCapabilityState.read(from: &buf), 
+                health: FfiConverterTypeCapabilityHealth.read(from: &buf), 
                 detail: FfiConverterString.read(from: &buf), 
                 lastUpdatedMillis: FfiConverterUInt64.read(from: &buf)
         )
@@ -885,6 +927,7 @@ public struct FfiConverterTypeCapabilitySnapshot: FfiConverterRustBuffer {
     public static func write(_ value: CapabilitySnapshot, into buf: inout [UInt8]) {
         FfiConverterTypeCapabilityKind.write(value.kind, into: &buf)
         FfiConverterTypeCapabilityState.write(value.state, into: &buf)
+        FfiConverterTypeCapabilityHealth.write(value.health, into: &buf)
         FfiConverterString.write(value.detail, into: &buf)
         FfiConverterUInt64.write(value.lastUpdatedMillis, into: &buf)
     }
@@ -910,15 +953,27 @@ public struct ComponentSnapshot {
     public var kind: ComponentKind
     public var title: String
     public var detail: String
+    public var provenance: ProvenanceSnapshot?
+    public var processId: UInt32?
+    public var executablePath: String?
+    public var commandLine: String?
+    public var parentSummary: String?
+    public var launchedBy: String?
     public var cpuPercent: Float
     public var memoryBytes: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: ComponentKind, title: String, detail: String, cpuPercent: Float, memoryBytes: UInt64) {
+    public init(kind: ComponentKind, title: String, detail: String, provenance: ProvenanceSnapshot?, processId: UInt32?, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64) {
         self.kind = kind
         self.title = title
         self.detail = detail
+        self.provenance = provenance
+        self.processId = processId
+        self.executablePath = executablePath
+        self.commandLine = commandLine
+        self.parentSummary = parentSummary
+        self.launchedBy = launchedBy
         self.cpuPercent = cpuPercent
         self.memoryBytes = memoryBytes
     }
@@ -937,6 +992,24 @@ extension ComponentSnapshot: Equatable, Hashable {
         if lhs.detail != rhs.detail {
             return false
         }
+        if lhs.provenance != rhs.provenance {
+            return false
+        }
+        if lhs.processId != rhs.processId {
+            return false
+        }
+        if lhs.executablePath != rhs.executablePath {
+            return false
+        }
+        if lhs.commandLine != rhs.commandLine {
+            return false
+        }
+        if lhs.parentSummary != rhs.parentSummary {
+            return false
+        }
+        if lhs.launchedBy != rhs.launchedBy {
+            return false
+        }
         if lhs.cpuPercent != rhs.cpuPercent {
             return false
         }
@@ -950,6 +1023,12 @@ extension ComponentSnapshot: Equatable, Hashable {
         hasher.combine(kind)
         hasher.combine(title)
         hasher.combine(detail)
+        hasher.combine(provenance)
+        hasher.combine(processId)
+        hasher.combine(executablePath)
+        hasher.combine(commandLine)
+        hasher.combine(parentSummary)
+        hasher.combine(launchedBy)
         hasher.combine(cpuPercent)
         hasher.combine(memoryBytes)
     }
@@ -966,6 +1045,12 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
                 kind: FfiConverterTypeComponentKind.read(from: &buf), 
                 title: FfiConverterString.read(from: &buf), 
                 detail: FfiConverterString.read(from: &buf), 
+                provenance: FfiConverterOptionTypeProvenanceSnapshot.read(from: &buf), 
+                processId: FfiConverterOptionUInt32.read(from: &buf), 
+                executablePath: FfiConverterOptionString.read(from: &buf), 
+                commandLine: FfiConverterOptionString.read(from: &buf), 
+                parentSummary: FfiConverterOptionString.read(from: &buf), 
+                launchedBy: FfiConverterOptionString.read(from: &buf), 
                 cpuPercent: FfiConverterFloat.read(from: &buf), 
                 memoryBytes: FfiConverterUInt64.read(from: &buf)
         )
@@ -975,6 +1060,12 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
         FfiConverterTypeComponentKind.write(value.kind, into: &buf)
         FfiConverterString.write(value.title, into: &buf)
         FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterOptionTypeProvenanceSnapshot.write(value.provenance, into: &buf)
+        FfiConverterOptionUInt32.write(value.processId, into: &buf)
+        FfiConverterOptionString.write(value.executablePath, into: &buf)
+        FfiConverterOptionString.write(value.commandLine, into: &buf)
+        FfiConverterOptionString.write(value.parentSummary, into: &buf)
+        FfiConverterOptionString.write(value.launchedBy, into: &buf)
         FfiConverterFloat.write(value.cpuPercent, into: &buf)
         FfiConverterUInt64.write(value.memoryBytes, into: &buf)
     }
@@ -999,6 +1090,7 @@ public func FfiConverterTypeComponentSnapshot_lower(_ value: ComponentSnapshot) 
 public struct EntitySnapshot {
     public var entityId: String
     public var displayName: String
+    public var primaryProvenance: ProvenanceSnapshot?
     public var bundleId: String?
     public var executablePath: String?
     public var oldestProcessStartMillis: UInt64
@@ -1013,9 +1105,10 @@ public struct EntitySnapshot {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entityId: String, displayName: String, bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?) {
+    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?) {
         self.entityId = entityId
         self.displayName = displayName
+        self.primaryProvenance = primaryProvenance
         self.bundleId = bundleId
         self.executablePath = executablePath
         self.oldestProcessStartMillis = oldestProcessStartMillis
@@ -1038,6 +1131,9 @@ extension EntitySnapshot: Equatable, Hashable {
             return false
         }
         if lhs.displayName != rhs.displayName {
+            return false
+        }
+        if lhs.primaryProvenance != rhs.primaryProvenance {
             return false
         }
         if lhs.bundleId != rhs.bundleId {
@@ -1079,6 +1175,7 @@ extension EntitySnapshot: Equatable, Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(entityId)
         hasher.combine(displayName)
+        hasher.combine(primaryProvenance)
         hasher.combine(bundleId)
         hasher.combine(executablePath)
         hasher.combine(oldestProcessStartMillis)
@@ -1103,6 +1200,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
             try EntitySnapshot(
                 entityId: FfiConverterString.read(from: &buf), 
                 displayName: FfiConverterString.read(from: &buf), 
+                primaryProvenance: FfiConverterOptionTypeProvenanceSnapshot.read(from: &buf), 
                 bundleId: FfiConverterOptionString.read(from: &buf), 
                 executablePath: FfiConverterOptionString.read(from: &buf), 
                 oldestProcessStartMillis: FfiConverterUInt64.read(from: &buf), 
@@ -1120,6 +1218,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
     public static func write(_ value: EntitySnapshot, into buf: inout [UInt8]) {
         FfiConverterString.write(value.entityId, into: &buf)
         FfiConverterString.write(value.displayName, into: &buf)
+        FfiConverterOptionTypeProvenanceSnapshot.write(value.primaryProvenance, into: &buf)
         FfiConverterOptionString.write(value.bundleId, into: &buf)
         FfiConverterOptionString.write(value.executablePath, into: &buf)
         FfiConverterUInt64.write(value.oldestProcessStartMillis, into: &buf)
@@ -1349,12 +1448,14 @@ public struct HostSnapshot {
     public var networkSendBps: UInt64
     public var thermalState: String
     public var onBattery: Bool
+    public var batteryChargePercent: UInt8?
+    public var lowPowerMode: Bool
     public var frontmostAppName: String?
     public var frontmostWindowTitle: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, thermalState: String, onBattery: Bool, frontmostAppName: String?, frontmostWindowTitle: String?) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, thermalState: String, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
@@ -1365,6 +1466,8 @@ public struct HostSnapshot {
         self.networkSendBps = networkSendBps
         self.thermalState = thermalState
         self.onBattery = onBattery
+        self.batteryChargePercent = batteryChargePercent
+        self.lowPowerMode = lowPowerMode
         self.frontmostAppName = frontmostAppName
         self.frontmostWindowTitle = frontmostWindowTitle
     }
@@ -1404,6 +1507,12 @@ extension HostSnapshot: Equatable, Hashable {
         if lhs.onBattery != rhs.onBattery {
             return false
         }
+        if lhs.batteryChargePercent != rhs.batteryChargePercent {
+            return false
+        }
+        if lhs.lowPowerMode != rhs.lowPowerMode {
+            return false
+        }
         if lhs.frontmostAppName != rhs.frontmostAppName {
             return false
         }
@@ -1424,6 +1533,8 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(networkSendBps)
         hasher.combine(thermalState)
         hasher.combine(onBattery)
+        hasher.combine(batteryChargePercent)
+        hasher.combine(lowPowerMode)
         hasher.combine(frontmostAppName)
         hasher.combine(frontmostWindowTitle)
     }
@@ -1447,6 +1558,8 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 networkSendBps: FfiConverterUInt64.read(from: &buf), 
                 thermalState: FfiConverterString.read(from: &buf), 
                 onBattery: FfiConverterBool.read(from: &buf), 
+                batteryChargePercent: FfiConverterOptionUInt8.read(from: &buf), 
+                lowPowerMode: FfiConverterBool.read(from: &buf), 
                 frontmostAppName: FfiConverterOptionString.read(from: &buf), 
                 frontmostWindowTitle: FfiConverterOptionString.read(from: &buf)
         )
@@ -1463,6 +1576,8 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.networkSendBps, into: &buf)
         FfiConverterString.write(value.thermalState, into: &buf)
         FfiConverterBool.write(value.onBattery, into: &buf)
+        FfiConverterOptionUInt8.write(value.batteryChargePercent, into: &buf)
+        FfiConverterBool.write(value.lowPowerMode, into: &buf)
         FfiConverterOptionString.write(value.frontmostAppName, into: &buf)
         FfiConverterOptionString.write(value.frontmostWindowTitle, into: &buf)
     }
@@ -1645,6 +1760,72 @@ public func FfiConverterTypeMetricTrend_lift(_ buf: RustBuffer) throws -> Metric
 #endif
 public func FfiConverterTypeMetricTrend_lower(_ value: MetricTrend) -> RustBuffer {
     return FfiConverterTypeMetricTrend.lower(value)
+}
+
+
+public struct ProvenanceSnapshot {
+    public var kind: ProvenanceKind
+    public var label: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: ProvenanceKind, label: String) {
+        self.kind = kind
+        self.label = label
+    }
+}
+
+
+
+extension ProvenanceSnapshot: Equatable, Hashable {
+    public static func ==(lhs: ProvenanceSnapshot, rhs: ProvenanceSnapshot) -> Bool {
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(label)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProvenanceSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProvenanceSnapshot {
+        return
+            try ProvenanceSnapshot(
+                kind: FfiConverterTypeProvenanceKind.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ProvenanceSnapshot, into buf: inout [UInt8]) {
+        FfiConverterTypeProvenanceKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProvenanceSnapshot_lift(_ buf: RustBuffer) throws -> ProvenanceSnapshot {
+    return try FfiConverterTypeProvenanceSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProvenanceSnapshot_lower(_ value: ProvenanceSnapshot) -> RustBuffer {
+    return FfiConverterTypeProvenanceSnapshot.lower(value)
 }
 
 
@@ -1854,6 +2035,84 @@ public func FfiConverterTypeTimelineEvent_lower(_ value: TimelineEvent) -> RustB
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum CapabilityHealth {
+    
+    case configured
+    case live
+    case cached
+    case degraded
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCapabilityHealth: FfiConverterRustBuffer {
+    typealias SwiftType = CapabilityHealth
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CapabilityHealth {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .configured
+        
+        case 2: return .live
+        
+        case 3: return .cached
+        
+        case 4: return .degraded
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CapabilityHealth, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .configured:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .live:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .cached:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .degraded:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCapabilityHealth_lift(_ buf: RustBuffer) throws -> CapabilityHealth {
+    return try FfiConverterTypeCapabilityHealth.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCapabilityHealth_lower(_ value: CapabilityHealth) -> RustBuffer {
+    return FfiConverterTypeCapabilityHealth.lower(value)
+}
+
+
+
+extension CapabilityHealth: Equatable, Hashable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum CapabilityKind {
     
     case accessibility
@@ -1862,6 +2121,7 @@ public enum CapabilityKind {
     case chromiumDebug
     case dockerSocket
     case privilegedHelper
+    case chau7
 }
 
 
@@ -1886,6 +2146,8 @@ public struct FfiConverterTypeCapabilityKind: FfiConverterRustBuffer {
         case 5: return .dockerSocket
         
         case 6: return .privilegedHelper
+        
+        case 7: return .chau7
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1917,6 +2179,10 @@ public struct FfiConverterTypeCapabilityKind: FfiConverterRustBuffer {
         
         case .privilegedHelper:
             writeInt(&buf, Int32(6))
+        
+        
+        case .chau7:
+            writeInt(&buf, Int32(7))
         
         }
     }
@@ -2109,6 +2375,7 @@ public enum EntityKind {
     case daemon
     case terminalSession
     case service
+    case aiAgent
     case unknown
 }
 
@@ -2133,7 +2400,9 @@ public struct FfiConverterTypeEntityKind: FfiConverterRustBuffer {
         
         case 5: return .service
         
-        case 6: return .unknown
+        case 6: return .aiAgent
+        
+        case 7: return .unknown
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -2163,8 +2432,12 @@ public struct FfiConverterTypeEntityKind: FfiConverterRustBuffer {
             writeInt(&buf, Int32(5))
         
         
-        case .unknown:
+        case .aiAgent:
             writeInt(&buf, Int32(6))
+        
+        
+        case .unknown:
+            writeInt(&buf, Int32(7))
         
         }
     }
@@ -2188,6 +2461,133 @@ public func FfiConverterTypeEntityKind_lower(_ value: EntityKind) -> RustBuffer 
 
 
 extension EntityKind: Equatable, Hashable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum ProvenanceKind {
+    
+    case userLaunch
+    case appBundle
+    case helperTree
+    case shellSession
+    case loginItem
+    case serviceManager
+    case xpcService
+    case browserContext
+    case containerWorkload
+    case parentProcess
+    case unknown
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProvenanceKind: FfiConverterRustBuffer {
+    typealias SwiftType = ProvenanceKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProvenanceKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .userLaunch
+        
+        case 2: return .appBundle
+        
+        case 3: return .helperTree
+        
+        case 4: return .shellSession
+        
+        case 5: return .loginItem
+        
+        case 6: return .serviceManager
+        
+        case 7: return .xpcService
+        
+        case 8: return .browserContext
+        
+        case 9: return .containerWorkload
+        
+        case 10: return .parentProcess
+        
+        case 11: return .unknown
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ProvenanceKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .userLaunch:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .appBundle:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .helperTree:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .shellSession:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .loginItem:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .serviceManager:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .xpcService:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .browserContext:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .containerWorkload:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .parentProcess:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .unknown:
+            writeInt(&buf, Int32(11))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProvenanceKind_lift(_ buf: RustBuffer) throws -> ProvenanceKind {
+    return try FfiConverterTypeProvenanceKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProvenanceKind_lower(_ value: ProvenanceKind) -> RustBuffer {
+    return FfiConverterTypeProvenanceKind.lower(value)
+}
+
+
+
+extension ProvenanceKind: Equatable, Hashable {}
 
 
 
@@ -2265,6 +2665,54 @@ extension TimelineSeverity: Equatable, Hashable {}
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt8: FfiConverterRustBuffer {
+    typealias SwiftType = UInt8?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt8.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt8.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = UInt32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     typealias SwiftType = String?
 
@@ -2281,6 +2729,54 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeProvenanceSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = ProvenanceSnapshot?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeProvenanceSnapshot.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeProvenanceSnapshot.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSystemSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = SystemSnapshot?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSystemSnapshot.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSystemSnapshot.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -2479,6 +2975,9 @@ private var initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_clear_frontmost_app_state() != 44857) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_chau7_endpoint() != 4030) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_chromium_endpoint() != 3795) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2492,6 +2991,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_snapshot() != 64950) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_snapshot_if_newer() != 34622) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_set_capability_state() != 11556) {

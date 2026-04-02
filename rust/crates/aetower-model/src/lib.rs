@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum EntityKind {
     App,
@@ -8,49 +8,37 @@ pub enum EntityKind {
     Daemon,
     TerminalSession,
     Service,
+    AiAgent,
+    #[default]
     Unknown,
 }
 
-impl Default for EntityKind {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum ComponentKind {
+    #[default]
     Process,
     Command,
     AdapterContext,
 }
 
-impl Default for ComponentKind {
-    fn default() -> Self {
-        Self::Process
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum CapabilityKind {
+    #[default]
     Accessibility,
     FullDiskAccess,
     AppleAutomation,
     ChromiumDebug,
     DockerSocket,
     PrivilegedHelper,
+    Chau7,
 }
 
-impl Default for CapabilityKind {
-    fn default() -> Self {
-        Self::Accessibility
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum CapabilityState {
+    #[default]
     Unknown,
     Granted,
     Denied,
@@ -58,24 +46,46 @@ pub enum CapabilityState {
     Unavailable,
 }
 
-impl Default for CapabilityState {
-    fn default() -> Self {
-        Self::Unknown
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum CapabilityHealth {
+    #[default]
+    Configured,
+    Live,
+    Cached,
+    Degraded,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum TimelineSeverity {
+    #[default]
     Info,
     Warning,
     Critical,
 }
 
-impl Default for TimelineSeverity {
-    fn default() -> Self {
-        Self::Info
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProvenanceKind {
+    UserLaunch,
+    AppBundle,
+    HelperTree,
+    ShellSession,
+    LoginItem,
+    ServiceManager,
+    XpcService,
+    BrowserContext,
+    ContainerWorkload,
+    ParentProcess,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProvenanceSnapshot {
+    pub kind: ProvenanceKind,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -90,6 +100,8 @@ pub struct HostSnapshot {
     pub network_send_bps: u64,
     pub thermal_state: String,
     pub on_battery: bool,
+    pub battery_charge_percent: Option<u8>,
+    pub low_power_mode: bool,
     pub frontmost_app_name: Option<String>,
     pub frontmost_window_title: Option<String>,
 }
@@ -130,6 +142,12 @@ pub struct ComponentSnapshot {
     pub kind: ComponentKind,
     pub title: String,
     pub detail: String,
+    pub provenance: Option<ProvenanceSnapshot>,
+    pub process_id: Option<u32>,
+    pub executable_path: Option<String>,
+    pub command_line: Option<String>,
+    pub parent_summary: Option<String>,
+    pub launched_by: Option<String>,
     pub cpu_percent: f32,
     pub memory_bytes: u64,
 }
@@ -146,6 +164,7 @@ pub struct MetricTrend {
 pub struct EntitySnapshot {
     pub entity_id: String,
     pub display_name: String,
+    pub primary_provenance: Option<ProvenanceSnapshot>,
     pub bundle_id: Option<String>,
     pub executable_path: Option<String>,
     pub oldest_process_start_millis: u64,
@@ -163,6 +182,7 @@ pub struct EntitySnapshot {
 pub struct CapabilitySnapshot {
     pub kind: CapabilityKind,
     pub state: CapabilityState,
+    pub health: CapabilityHealth,
     pub detail: String,
     pub last_updated_millis: u64,
 }

@@ -56,6 +56,11 @@ public struct SettingsView: View {
                         Text("The privileged helper is optional. It is intended to run with elevated rights when you want deeper socket attribution.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        TextField("Chau7 socket path", text: $settings.chau7Endpoint, prompt: Text("~/.chau7/mcp.sock"))
+                            .textFieldStyle(.roundedBorder)
+                        Text("Optional. Auto-detected when Chau7 is running. Enriches terminal sessions with AI agent context.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         Button("Apply integration settings") {
                             state.applyIntegrationSettings(settings)
                         }
@@ -75,11 +80,22 @@ public struct SettingsView: View {
                                 Text(String(describing: capability.kind))
                                     .font(.headline)
                                 Spacer()
-                                Text(String(describing: capability.state))
-                                    .font(.caption.monospaced())
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.secondary.opacity(0.1), in: Capsule())
+                                HStack(spacing: 6) {
+                                    Text(String(describing: capability.state))
+                                        .font(.caption.monospaced())
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.secondary.opacity(0.1), in: Capsule())
+                                    Text(capabilityHealthLabel(capability.health))
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(capabilityHealthColor(capability.health))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            capabilityHealthColor(capability.health).opacity(0.14),
+                                            in: Capsule()
+                                        )
+                                }
                             }
                             Text(capability.detail)
                                 .font(.caption)
@@ -101,5 +117,31 @@ public struct SettingsView: View {
             .padding(24)
         }
         .navigationTitle("Settings")
+    }
+}
+
+private func capabilityHealthLabel(_ health: CapabilityHealth) -> String {
+    switch health {
+    case .configured:
+        return "Configured"
+    case .live:
+        return "Live"
+    case .cached:
+        return "Cached"
+    case .degraded:
+        return "Degraded"
+    }
+}
+
+private func capabilityHealthColor(_ health: CapabilityHealth) -> Color {
+    switch health {
+    case .configured:
+        return .secondary
+    case .live:
+        return .green
+    case .cached:
+        return .orange
+    case .degraded:
+        return .red
     }
 }

@@ -97,6 +97,7 @@ private struct MachineBandMetric: View {
 private struct InlineMetric: View {
     let title: String
     let value: String
+    let isHighlighted: Bool
 
     var body: some View {
         HStack(spacing: 5) {
@@ -111,6 +112,13 @@ private struct InlineMetric: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(Color.secondary.opacity(0.06), in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(
+                    isHighlighted ? Color.red.opacity(0.9) : Color.clear,
+                    lineWidth: isHighlighted ? 1 : 0
+                )
+        )
     }
 }
 
@@ -187,6 +195,7 @@ private struct RowSignalBadge: View {
     let title: String
     let tone: Color
     let showsForegroundDot: Bool
+    let isHighlighted: Bool
 
     var body: some View {
         HStack(spacing: 8) {
@@ -218,8 +227,24 @@ private struct RowSignalBadge: View {
             ),
             in: Capsule()
         )
+        .overlay(
+            Capsule()
+                .stroke(
+                    isHighlighted ? Color.red.opacity(0.9) : Color.clear,
+                    lineWidth: isHighlighted ? 1 : 0
+                )
+        )
     }
 
+}
+
+private struct RowFrictionHighlights {
+    let title: Bool
+    let cpu: Bool
+    let memory: Bool
+    let disk: Bool
+
+    static let none = Self(title: false, cpu: false, memory: false, disk: false)
 }
 
 private struct EntityRow: View {
@@ -233,25 +258,45 @@ private struct EntityRow: View {
         VStack(alignment: .leading, spacing: 6) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .center, spacing: 6) {
+                    if entity.entityKind == .aiAgent {
+                        Circle()
+                            .fill(aiAgentDotColor)
+                            .frame(width: 8, height: 8)
+                    }
                     RowSignalBadge(
                         valueText: badgeValueText,
                         title: entity.displayName,
                         tone: sortKey.tone,
-                        showsForegroundDot: entity.metrics.isForeground
+                        showsForegroundDot: entity.metrics.isForeground,
+                        isHighlighted: rowFrictionHighlights.title
                     )
-                    InlineMetric(title: "CPU", value: String(format: "%.1f%%", entity.metrics.cpuPercent))
-                    InlineMetric(title: "Mem", value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)))
-                    InlineMetric(title: "Disk", value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))
+                    InlineMetric(
+                        title: "CPU",
+                        value: String(format: "%.1f%%", entity.metrics.cpuPercent),
+                        isHighlighted: rowFrictionHighlights.cpu
+                    )
+                    InlineMetric(
+                        title: "Mem",
+                        value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)),
+                        isHighlighted: rowFrictionHighlights.memory
+                    )
+                    InlineMetric(
+                        title: "Disk",
+                        value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
+                        isHighlighted: rowFrictionHighlights.disk
+                    )
                     if let badge = entity.badges.first {
-                        InlineMetric(title: "Tag", value: badge)
+                        InlineMetric(title: "Tag", value: badge, isHighlighted: false)
                     }
                 }
             }
-
-            Text(primaryNarrative)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            if let provenanceSummary {
+                Text(provenanceSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.leading, 2)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -263,15 +308,19 @@ private struct EntityRow: View {
         )
     }
 
-    private var primaryNarrative: String {
-        if let firstReason = entity.friction.reasons.first, !firstReason.isEmpty {
-            return firstReason
-        }
-        return "Aetower is tracking this app, but it is not currently a top source of friction."
-    }
-
     private var rowBackground: Color {
         isSelected ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.04)
+    }
+
+    private var aiAgentDotColor: Color {
+        if entity.badges.contains("claude") { return .blue }
+        if entity.badges.contains("codex") { return .green }
+        if entity.badges.contains("chatgpt") { return .orange }
+        return .purple
+    }
+
+    private var rowFrictionHighlights: RowFrictionHighlights {
+        frictionHighlights(for: entity)
     }
 
     private var badgeValueText: String? {
@@ -291,6 +340,21 @@ private struct EntityRow: View {
         case .newestFirst:
             return ageLabel(from: entity.newestProcessStartMillis, now: snapshotCapturedAtMillis)
         }
+    }
+
+    private var provenanceSummary: String? {
+        if let provenance = entity.primaryProvenance {
+            let summary = "Provenance: \(provenanceSummaryLabel(provenance))"
+            if provenance.kind == .parentProcess,
+               let launcher = entity.components.first(where: { $0.launchedBy != nil })?.launchedBy {
+                return "\(summary) via \(launcher)"
+            }
+            return summary
+        }
+        if let launcher = entity.components.first(where: { $0.launchedBy != nil })?.launchedBy {
+            return "Provenance: launched by \(launcher)"
+        }
+        return nil
     }
 }
 
@@ -360,6 +424,10 @@ public struct MainListView: View {
                     )
                 }
             }
+
+            Text(hostStatusSummary(state.snapshot.host))
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -375,7 +443,8 @@ public struct MainListView: View {
                                 valueText: badgeValueText(for: topConcern),
                                 title: topConcern.displayName,
                                 tone: sortKey.tone,
-                                showsForegroundDot: topConcern.metrics.isForeground
+                                showsForegroundDot: topConcern.metrics.isForeground,
+                                isHighlighted: frictionHighlights(for: topConcern).title
                             )
                             Text(topConcernSummary(for: topConcern, sortKey: sortKey))
                                 .font(.subheadline)
@@ -532,11 +601,10 @@ public struct MainListView: View {
     private func topConcernSummary(for entity: EntitySnapshot, sortKey: SortKey) -> String {
         switch sortKey {
         case .friction:
-            let reason = entity.friction.reasons.first ?? "no single dominant reason was recorded."
             if entity.metrics.isForeground {
-                return "\(entity.displayName) is frontmost and currently ranked highest because \(reason.lowercased())"
+                return "\(entity.displayName) is frontmost and currently highest by friction score."
             }
-            return "\(entity.displayName) is the highest-ranked background source of friction because \(reason.lowercased())"
+            return "\(entity.displayName) is the highest-ranked background source by friction score."
         case .cpu:
             return "\(entity.displayName) is currently highest by CPU usage at \(String(format: "%.1f%%", entity.metrics.cpuPercent))."
         case .memory:
@@ -573,6 +641,67 @@ public struct MainListView: View {
         }
     }
 
+}
+
+private func frictionHighlights(for entity: EntitySnapshot) -> RowFrictionHighlights {
+    let reasons = entity.friction.reasons.map { $0.localizedLowercase }
+    let isBaselineOnly = !reasons.isEmpty && reasons.allSatisfy { $0.contains("baseline activity") }
+    guard !isBaselineOnly else {
+        return .none
+    }
+
+    return RowFrictionHighlights(
+        title: reasons.contains(where: { $0.contains("foreground app") }),
+        cpu: reasons.contains(where: { $0.contains("high cpu") }),
+        memory: reasons.contains(where: { $0.contains("high memory") }),
+        disk: reasons.contains(where: { $0.contains("heavy disk") })
+    )
+}
+
+private func provenanceSummaryLabel(_ provenance: ProvenanceSnapshot) -> String {
+    switch provenance.kind {
+    case .userLaunch:
+        return provenance.label.isEmpty ? "user-launched app" : provenance.label.lowercased()
+    case .appBundle:
+        return "application bundle"
+    case .helperTree:
+        return provenance.label.isEmpty ? "grouped app helpers" : provenance.label.lowercased()
+    case .shellSession:
+        return provenance.label.isEmpty ? "interactive shell session" : provenance.label.lowercased()
+    case .loginItem:
+        return provenance.label.isEmpty ? "login item" : provenance.label.lowercased()
+    case .serviceManager:
+        return provenance.label.isEmpty ? "launchd-managed service" : provenance.label.lowercased()
+    case .xpcService:
+        return provenance.label.isEmpty ? "xpc service" : provenance.label.lowercased()
+    case .browserContext:
+        return provenance.label.isEmpty ? "browser context" : provenance.label.lowercased()
+    case .containerWorkload:
+        return provenance.label.isEmpty ? "container workload" : provenance.label.lowercased()
+    case .parentProcess:
+        return provenance.label.isEmpty ? "parent process" : provenance.label.lowercased()
+    case .unknown:
+        return provenance.label.isEmpty ? "unknown" : provenance.label.lowercased()
+    }
+}
+
+private func hostStatusSummary(_ host: HostSnapshot) -> String {
+    var parts = [powerStatusSummary(host)]
+    parts.append("thermal \(host.thermalState)")
+    if host.lowPowerMode {
+        parts.append("low power mode")
+    }
+    return parts.joined(separator: " · ")
+}
+
+private func powerStatusSummary(_ host: HostSnapshot) -> String {
+    if host.onBattery {
+        if let batteryChargePercent = host.batteryChargePercent {
+            return "battery \(batteryChargePercent)%"
+        }
+        return "battery power"
+    }
+    return "AC power"
 }
 
 func formatBytes(_ bytes: UInt64) -> String {

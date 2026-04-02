@@ -1,0 +1,9 @@
+[package]
+name = "aetower-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aetower-core = { path = "../aetower-core" }
+serde_json.workspace = true

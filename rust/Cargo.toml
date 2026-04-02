@@ -1,9 +1,13 @@
 [workspace]
 members = [
+  "crates/aetower-time",
   "crates/aetower-model",
+  "crates/aetower-collector",
+  "crates/aetower-identity",
   "crates/aetower-core",
   "crates/aetower-ffi",
   "crates/aetower-helper",
+  "crates/aetower-bench",
   "crates/uniffi-bindgen-swift",
 ]
 resolver = "2"
@@ -20,3 +24,4 @@ sysinfo = "0.29"
 anyhow = "1"
 parking_lot = "0.12"
 uniffi = { version = "0.28", features = ["cli"] }
+core-foundation-sys = "0.8.7"

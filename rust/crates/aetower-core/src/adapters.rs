@@ -7,13 +7,14 @@ use std::{
     path::Path,
     process::Command,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use aetower_model::{
-    CapabilityKind, CapabilitySnapshot, CapabilityState, ComponentKind, ComponentSnapshot,
-    EntitySnapshot,
+    CapabilityHealth, CapabilityKind, CapabilitySnapshot, CapabilityState, ComponentKind,
+    ComponentSnapshot, EntitySnapshot, ProvenanceKind, ProvenanceSnapshot,
 };
+use aetower_time as time;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -25,6 +26,12 @@ const DOCKER_TIMEOUT: Duration = Duration::from_millis(300);
 const CHROMIUM_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
 const DOCKER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
 const PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
+const CHROMIUM_FETCH_BUDGET: Duration = Duration::from_millis(750);
+const DOCKER_FETCH_BUDGET: Duration = Duration::from_millis(750);
+const CHAU7_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
+const MAX_CHROMIUM_TARGETS: usize = 5;
+const MAX_DOCKER_CONTAINERS: usize = 5;
+const MAX_CHAU7_TABS: usize = 30;
 
 #[derive(Clone)]
 pub struct AdapterManager {
@@ -39,11 +46,22 @@ struct AdapterState {
     privileged_helper_enabled: bool,
     chromium_samples: BTreeMap<String, ChromiumRuntimeSample>,
     last_chromium_fetch_millis: u64,
+    last_chromium_success_millis: u64,
+    chromium_last_error: Option<String>,
     cached_chromium_targets: Vec<ChromiumPageTarget>,
     last_docker_fetch_millis: u64,
+    last_docker_success_millis: u64,
+    docker_last_error: Option<String>,
     cached_docker_containers: Vec<DockerContainer>,
     last_privileged_helper_fetch_millis: u64,
+    last_privileged_helper_success_millis: u64,
+    privileged_helper_last_error: Option<String>,
     cached_privileged_helper_sample: Option<PrivilegedHelperSnapshot>,
+    chau7_socket_path: Option<String>,
+    last_chau7_fetch_millis: u64,
+    last_chau7_success_millis: u64,
+    chau7_last_error: Option<String>,
+    cached_chau7_snapshot: Option<crate::chau7::Chau7Snapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -190,11 +208,22 @@ impl Default for AdapterManager {
                     .unwrap_or(false),
                 chromium_samples: BTreeMap::new(),
                 last_chromium_fetch_millis: 0,
+                last_chromium_success_millis: 0,
+                chromium_last_error: None,
                 cached_chromium_targets: Vec::new(),
                 last_docker_fetch_millis: 0,
+                last_docker_success_millis: 0,
+                docker_last_error: None,
                 cached_docker_containers: Vec::new(),
                 last_privileged_helper_fetch_millis: 0,
+                last_privileged_helper_success_millis: 0,
+                privileged_helper_last_error: None,
                 cached_privileged_helper_sample: None,
+                chau7_socket_path: chau7_socket_path(),
+                last_chau7_fetch_millis: 0,
+                last_chau7_success_millis: 0,
+                chau7_last_error: None,
+                cached_chau7_snapshot: None,
             })),
         }
     }
@@ -202,14 +231,16 @@ impl Default for AdapterManager {
 
 impl AdapterManager {
     pub fn initial_capabilities(&self) -> BTreeMap<CapabilityKind, CapabilitySnapshot> {
-        let now = crate::time::now_millis();
+        let now = time::now_millis();
         BTreeMap::from([
             (
                 CapabilityKind::Accessibility,
                 CapabilitySnapshot {
                     kind: CapabilityKind::Accessibility,
                     state: CapabilityState::Unknown,
-                    detail: "Required for richer UI-state correlation and future window context.".to_owned(),
+                    health: CapabilityHealth::Configured,
+                    detail: "Required for richer UI-state correlation and future window context."
+                        .to_owned(),
                     last_updated_millis: now,
                 },
             ),
@@ -218,7 +249,10 @@ impl AdapterManager {
                 CapabilitySnapshot {
                     kind: CapabilityKind::FullDiskAccess,
                     state: CapabilityState::Unknown,
-                    detail: "Optional. Improves origin and metadata access for protected locations.".to_owned(),
+                    health: CapabilityHealth::Configured,
+                    detail:
+                        "Optional. Improves origin and metadata access for protected locations."
+                            .to_owned(),
                     last_updated_millis: now,
                 },
             ),
@@ -227,7 +261,9 @@ impl AdapterManager {
                 CapabilitySnapshot {
                     kind: CapabilityKind::AppleAutomation,
                     state: CapabilityState::Unknown,
-                    detail: "Optional. Enables scriptable-app enrichments like media context.".to_owned(),
+                    health: CapabilityHealth::Configured,
+                    detail: "Optional. Enables scriptable-app enrichments like media context."
+                        .to_owned(),
                     last_updated_millis: now,
                 },
             ),
@@ -243,6 +279,10 @@ impl AdapterManager {
                 CapabilityKind::PrivilegedHelper,
                 self.capability_snapshot(CapabilityKind::PrivilegedHelper, now),
             ),
+            (
+                CapabilityKind::Chau7,
+                self.capability_snapshot(CapabilityKind::Chau7, now),
+            ),
         ])
     }
 
@@ -253,11 +293,15 @@ impl AdapterManager {
     ) -> CapabilitySnapshot {
         let guard = self.state.lock();
         let (state, detail) = capability_status(&guard, &kind);
+        let status_millis =
+            capability_status_timestamp(&guard, &kind).unwrap_or(last_updated_millis);
+        let health = capability_health(&guard, &kind, time::now_millis());
         CapabilitySnapshot {
             kind,
             state,
+            health,
             detail,
-            last_updated_millis,
+            last_updated_millis: status_millis,
         }
     }
 
@@ -267,6 +311,8 @@ impl AdapterManager {
         guard.chromium_samples.clear();
         guard.cached_chromium_targets.clear();
         guard.last_chromium_fetch_millis = 0;
+        guard.last_chromium_success_millis = 0;
+        guard.chromium_last_error = None;
     }
 
     pub fn configure_docker_socket_path(&self, socket_path: String) {
@@ -278,6 +324,8 @@ impl AdapterManager {
         };
         guard.cached_docker_containers.clear();
         guard.last_docker_fetch_millis = 0;
+        guard.last_docker_success_millis = 0;
+        guard.docker_last_error = None;
     }
 
     pub fn configure_privileged_helper(&self, helper_path: Option<String>, enabled: bool) {
@@ -286,43 +334,43 @@ impl AdapterManager {
         guard.privileged_helper_enabled = enabled;
         guard.cached_privileged_helper_sample = None;
         guard.last_privileged_helper_fetch_millis = 0;
+        guard.last_privileged_helper_success_millis = 0;
+        guard.privileged_helper_last_error = None;
     }
 
-    pub fn enrich_entities(
-        &self,
-        entities: &mut [EntitySnapshot],
-        capabilities: &BTreeMap<CapabilityKind, CapabilitySnapshot>,
-    ) {
-        let now = crate::time::now_millis();
+    pub fn configure_chau7_endpoint(&self, socket_path: Option<String>) {
+        let mut guard = self.state.lock();
+        guard.chau7_socket_path = socket_path.filter(|value| !value.trim().is_empty());
+        guard.cached_chau7_snapshot = None;
+        guard.last_chau7_fetch_millis = 0;
+        guard.last_chau7_success_millis = 0;
+        guard.chau7_last_error = None;
+    }
+
+    pub fn refresh_caches(&self, capabilities: &BTreeMap<CapabilityKind, CapabilitySnapshot>) {
+        let now = time::now_millis();
         let (
             chromium_fetch_plan,
-            mut chromium_targets,
             docker_fetch_plan,
-            mut docker_containers,
             privileged_helper_fetch_path,
-            mut privileged_helper_sample,
+            chau7_fetch_path,
         ) = {
             let guard = self.state.lock();
 
-            let chromium_targets = capabilities
+            let chromium_fetch_plan = capabilities
                 .get(&CapabilityKind::ChromiumDebug)
                 .filter(|capability| capability.state == CapabilityState::Granted)
                 .and_then(|_| {
                     let is_stale = now.saturating_sub(guard.last_chromium_fetch_millis)
                         >= CHROMIUM_REFRESH_INTERVAL_MILLIS;
                     if is_stale {
-                        guard.chromium_config().map(|config| {
-                            (config, guard.chromium_samples.clone())
-                        })
+                        guard
+                            .chromium_config()
+                            .map(|config| (config, guard.chromium_samples.clone()))
                     } else {
                         None
                     }
                 });
-
-            let cached_chromium_targets = capabilities
-                .get(&CapabilityKind::ChromiumDebug)
-                .filter(|capability| capability.state == CapabilityState::Granted)
-                .map(|_| guard.cached_chromium_targets.clone());
 
             let docker_fetch_plan = capabilities
                 .get(&CapabilityKind::DockerSocket)
@@ -339,11 +387,6 @@ impl AdapterManager {
                     }
                 });
 
-            let cached_docker_containers = capabilities
-                .get(&CapabilityKind::DockerSocket)
-                .filter(|capability| capability.state == CapabilityState::Granted)
-                .map(|_| guard.cached_docker_containers.clone());
-
             let privileged_helper_fetch_path = capabilities
                 .get(&CapabilityKind::PrivilegedHelper)
                 .filter(|capability| capability.state == CapabilityState::Granted)
@@ -357,54 +400,138 @@ impl AdapterManager {
                     }
                 });
 
-            let cached_privileged_helper_sample = capabilities
-                .get(&CapabilityKind::PrivilegedHelper)
+            let chau7_fetch_path = capabilities
+                .get(&CapabilityKind::Chau7)
                 .filter(|capability| capability.state == CapabilityState::Granted)
-                .and_then(|_| guard.cached_privileged_helper_sample.clone());
+                .and_then(|_| {
+                    let is_stale = now.saturating_sub(guard.last_chau7_fetch_millis)
+                        >= CHAU7_REFRESH_INTERVAL_MILLIS;
+                    if is_stale {
+                        guard.chau7_socket_path.clone()
+                    } else {
+                        None
+                    }
+                });
 
             (
-                chromium_targets,
-                cached_chromium_targets,
+                chromium_fetch_plan,
                 docker_fetch_plan,
-                cached_docker_containers,
                 privileged_helper_fetch_path,
-                cached_privileged_helper_sample,
+                chau7_fetch_path,
             )
         };
 
         if let Some((config, mut chromium_samples)) = chromium_fetch_plan {
-            if let Ok(fetched) = fetch_chromium_targets(&config, &mut chromium_samples) {
-                let mut guard = self.state.lock();
-                guard.chromium_samples = chromium_samples;
-                guard.cached_chromium_targets = fetched.clone();
-                guard.last_chromium_fetch_millis = now;
-                chromium_targets = Some(fetched);
+            match fetch_chromium_targets(&config, &mut chromium_samples) {
+                Ok(fetched) => {
+                    let mut guard = self.state.lock();
+                    guard.chromium_samples = chromium_samples;
+                    guard.cached_chromium_targets = fetched;
+                    guard.last_chromium_fetch_millis = now;
+                    guard.last_chromium_success_millis = now;
+                    guard.chromium_last_error = None;
+                }
+                Err(error) => {
+                    let mut guard = self.state.lock();
+                    guard.last_chromium_fetch_millis = now;
+                    guard.chromium_last_error = Some(error);
+                }
             }
         }
 
         if let Some(config) = docker_fetch_plan {
-            if let Ok(fetched) = fetch_docker_containers(&config) {
-                let mut guard = self.state.lock();
-                guard.cached_docker_containers = fetched.clone();
-                guard.last_docker_fetch_millis = now;
-                docker_containers = Some(fetched);
+            match fetch_docker_containers(&config) {
+                Ok(fetched) => {
+                    let mut guard = self.state.lock();
+                    guard.cached_docker_containers = fetched;
+                    guard.last_docker_fetch_millis = now;
+                    guard.last_docker_success_millis = now;
+                    guard.docker_last_error = None;
+                }
+                Err(error) => {
+                    let mut guard = self.state.lock();
+                    guard.last_docker_fetch_millis = now;
+                    guard.docker_last_error = Some(error);
+                }
             }
         }
 
         if let Some(path) = privileged_helper_fetch_path {
-            if let Ok(fetched) = fetch_privileged_helper_sample(&path) {
-                let mut guard = self.state.lock();
-                guard.cached_privileged_helper_sample = Some(fetched.clone());
-                guard.last_privileged_helper_fetch_millis = now;
-                privileged_helper_sample = Some(fetched);
+            match fetch_privileged_helper_sample(&path) {
+                Ok(fetched) => {
+                    let mut guard = self.state.lock();
+                    guard.cached_privileged_helper_sample = Some(fetched);
+                    guard.last_privileged_helper_fetch_millis = now;
+                    guard.last_privileged_helper_success_millis = now;
+                    guard.privileged_helper_last_error = None;
+                }
+                Err(error) => {
+                    let mut guard = self.state.lock();
+                    guard.last_privileged_helper_fetch_millis = now;
+                    guard.privileged_helper_last_error = Some(error);
+                }
             }
         }
 
-        for entity in entities {
-            if matches!(entity.entity_kind, aetower_model::EntityKind::TerminalSession) {
-                if !entity.badges.iter().any(|badge| badge == "command-attributed") {
-                    entity.badges.push("command-attributed".to_owned());
+        if let Some(path) = chau7_fetch_path {
+            match crate::chau7::fetch_snapshot(&path) {
+                Ok(fetched) => {
+                    let mut guard = self.state.lock();
+                    guard.cached_chau7_snapshot = Some(fetched);
+                    guard.last_chau7_fetch_millis = now;
+                    guard.last_chau7_success_millis = now;
+                    guard.chau7_last_error = None;
                 }
+                Err(error) => {
+                    let mut guard = self.state.lock();
+                    guard.last_chau7_fetch_millis = now;
+                    guard.chau7_last_error = Some(error);
+                }
+            }
+        }
+    }
+
+    pub fn enrich_entities(
+        &self,
+        entities: &mut [EntitySnapshot],
+        capabilities: &BTreeMap<CapabilityKind, CapabilitySnapshot>,
+    ) {
+        let (chromium_targets, docker_containers, privileged_helper_sample, chau7_snapshot) = {
+            let guard = self.state.lock();
+            let chromium_targets = capabilities
+                .get(&CapabilityKind::ChromiumDebug)
+                .filter(|capability| capability.state == CapabilityState::Granted)
+                .map(|_| guard.cached_chromium_targets.clone());
+            let docker_containers = capabilities
+                .get(&CapabilityKind::DockerSocket)
+                .filter(|capability| capability.state == CapabilityState::Granted)
+                .map(|_| guard.cached_docker_containers.clone());
+            let privileged_helper_sample = capabilities
+                .get(&CapabilityKind::PrivilegedHelper)
+                .filter(|capability| capability.state == CapabilityState::Granted)
+                .and_then(|_| guard.cached_privileged_helper_sample.clone());
+            let chau7_snapshot = capabilities
+                .get(&CapabilityKind::Chau7)
+                .filter(|capability| capability.state == CapabilityState::Granted)
+                .and_then(|_| guard.cached_chau7_snapshot.clone());
+            (
+                chromium_targets,
+                docker_containers,
+                privileged_helper_sample,
+                chau7_snapshot,
+            )
+        };
+
+        for entity in entities {
+            if matches!(
+                entity.entity_kind,
+                aetower_model::EntityKind::TerminalSession
+            ) && !entity
+                .badges
+                .iter()
+                .any(|badge| badge == "command-attributed")
+            {
+                entity.badges.push("command-attributed".to_owned());
             }
 
             if matches!(entity.entity_kind, aetower_model::EntityKind::Browser) {
@@ -414,28 +541,51 @@ impl AdapterManager {
                             kind: ComponentKind::AdapterContext,
                             title: format!("Tab {} · {}", target.id, target.title),
                             detail: chromium_target_detail(target),
+                            provenance: Some(ProvenanceSnapshot {
+                                kind: ProvenanceKind::BrowserContext,
+                                label: "Browser tab context".to_owned(),
+                            }),
+                            process_id: None,
+                            executable_path: None,
+                            command_line: None,
+                            parent_summary: None,
+                            launched_by: None,
                             cpu_percent: target.cpu_percent,
                             memory_bytes: target.js_heap_used_bytes,
                         });
                     }
-                    if !targets.is_empty() && !entity.badges.iter().any(|badge| badge == "chromium-live") {
+                    if !targets.is_empty()
+                        && !entity.badges.iter().any(|badge| badge == "chromium-live")
+                    {
                         entity.badges.push("chromium-live".to_owned());
                     }
                 }
             }
 
-            if entity.display_name.contains("Docker") || entity.display_name == "com.docker.backend" {
+            if entity.display_name.contains("Docker") || entity.display_name == "com.docker.backend"
+            {
                 if let Some(containers) = docker_containers.as_ref() {
                     for container in containers.iter().take(5) {
                         entity.components.push(ComponentSnapshot {
                             kind: ComponentKind::AdapterContext,
                             title: container.name.clone(),
                             detail: docker_container_detail(container),
+                            provenance: Some(ProvenanceSnapshot {
+                                kind: ProvenanceKind::ContainerWorkload,
+                                label: "Container workload".to_owned(),
+                            }),
+                            process_id: None,
+                            executable_path: None,
+                            command_line: None,
+                            parent_summary: None,
+                            launched_by: None,
                             cpu_percent: container.cpu_percent,
                             memory_bytes: container.memory_usage_bytes,
                         });
                     }
-                    if !containers.is_empty() && !entity.badges.iter().any(|badge| badge == "docker-live") {
+                    if !containers.is_empty()
+                        && !entity.badges.iter().any(|badge| badge == "docker-live")
+                    {
                         entity.badges.push("docker-live".to_owned());
                     }
                 }
@@ -450,17 +600,126 @@ impl AdapterManager {
                     entity.components.push(ComponentSnapshot {
                         kind: ComponentKind::AdapterContext,
                         title: format!("Privileged sockets · {}", process.process_name),
+                        provenance: None,
                         detail: format!(
                             "pid {} · {}",
                             process.pid,
                             process.connections.join(" · ")
                         ),
+                        process_id: Some(process.pid),
+                        executable_path: None,
+                        command_line: None,
+                        parent_summary: None,
+                        launched_by: None,
                         cpu_percent: 0.0,
                         memory_bytes: 0,
                     });
-                    if !entity.badges.iter().any(|badge| badge == "privileged-helper") {
+                    if !entity
+                        .badges
+                        .iter()
+                        .any(|badge| badge == "privileged-helper")
+                    {
                         entity.badges.push("privileged-helper".to_owned());
                     }
+                }
+            }
+
+            // Chau7 enrichment: match tabs to entities, promote AI agents.
+            //
+            // Matching strategy (in priority order):
+            // 1. Entity already classified as AiAgent by identity resolver
+            //    → match any tab whose active_app contains the entity name
+            // 2. Entity executable path lives under a tab's repo_root/cwd
+            // 3. Entity display_name matches a tab's active_app (case-insensitive)
+            if let Some(snapshot) = chau7_snapshot.as_ref() {
+                let entity_name_lower = entity.display_name.to_lowercase();
+                let is_already_ai_agent =
+                    matches!(entity.entity_kind, aetower_model::EntityKind::AiAgent);
+
+                // Collect all executable paths from components for cwd matching.
+                let entity_exe_paths: Vec<&str> = entity
+                    .components
+                    .iter()
+                    .filter_map(|c| c.executable_path.as_deref())
+                    .chain(entity.executable_path.as_deref())
+                    .collect();
+
+                for tab in snapshot.tabs.iter().take(MAX_CHAU7_TABS) {
+                    // Strategy 1: already an AI agent → match by provider/app name.
+                    let matches_by_agent_name = is_already_ai_agent
+                        && tab.is_ai_agent()
+                        && tab
+                            .active_app
+                            .as_deref()
+                            .map(|app| entity_name_lower.contains(&app.to_lowercase()))
+                            .unwrap_or(false);
+
+                    // Strategy 2: any component exe lives under the tab's repo root.
+                    // Only use repo_root (not raw cwd) to avoid false positives from
+                    // short paths like /Users/dev.  Use Path::starts_with for proper
+                    // component-boundary matching.
+                    let matches_by_path = tab
+                        .repo_root
+                        .as_deref()
+                        .filter(|p| !p.is_empty())
+                        .map(|root| {
+                            let root_path = Path::new(root);
+                            entity_exe_paths
+                                .iter()
+                                .any(|p| Path::new(p).starts_with(root_path))
+                        })
+                        .unwrap_or(false);
+
+                    // Strategy 3: display_name matches active_app.
+                    let matches_by_display_name = tab
+                        .active_app
+                        .as_deref()
+                        .map(|app| entity_name_lower == app.to_lowercase())
+                        .unwrap_or(false);
+
+                    let tab_matches =
+                        matches_by_agent_name || matches_by_path || matches_by_display_name;
+
+                    if !tab_matches {
+                        continue;
+                    }
+
+                    if tab.is_ai_agent() {
+                        entity.entity_kind = aetower_model::EntityKind::AiAgent;
+                    }
+
+                    let provider = tab.provider_label().unwrap_or("shell");
+                    let session_detail = chau7_tab_detail(tab, snapshot);
+                    entity.components.push(ComponentSnapshot {
+                        kind: ComponentKind::AdapterContext,
+                        title: format!("{} · {}", provider, tab.title),
+                        detail: session_detail,
+                        provenance: None,
+                        process_id: None,
+                        executable_path: None,
+                        command_line: None,
+                        parent_summary: None,
+                        launched_by: None,
+                        cpu_percent: 0.0,
+                        memory_bytes: 0,
+                    });
+
+                    if tab.is_ai_agent() {
+                        if let Some(label) = tab.provider_label() {
+                            if !entity.badges.iter().any(|b| b == label) {
+                                entity.badges.push(label.to_owned());
+                            }
+                        }
+                        if !entity.badges.iter().any(|b| b == "ai-agent") {
+                            entity.badges.push("ai-agent".to_owned());
+                        }
+                    }
+
+                    if !entity.badges.iter().any(|b| b == "chau7-live") {
+                        entity.badges.push("chau7-live".to_owned());
+                    }
+
+                    break; // one tab match per entity
                 }
             }
         }
@@ -528,11 +787,15 @@ impl AdapterState {
 }
 
 fn capability_status(state: &AdapterState, kind: &CapabilityKind) -> (CapabilityState, String) {
+    let now = time::now_millis();
     match kind {
         CapabilityKind::ChromiumDebug => match state.chromium_endpoint.as_deref() {
             Some(raw) if parse_http_endpoint(raw).is_some() => (
                 CapabilityState::Granted,
-                format!("Chromium target discovery configured at {raw}."),
+                format!(
+                    "Chromium target discovery configured at {raw}. {}",
+                    chromium_runtime_detail(state, now)
+                ),
             ),
             Some(raw) => (
                 CapabilityState::Denied,
@@ -547,7 +810,11 @@ fn capability_status(state: &AdapterState, kind: &CapabilityKind) -> (Capability
             if Path::new(&state.docker_socket_path).exists() {
                 (
                     CapabilityState::Granted,
-                    format!("Docker socket detected at {}.", state.docker_socket_path),
+                    format!(
+                        "Docker socket detected at {}. {}",
+                        state.docker_socket_path,
+                        docker_runtime_detail(state, now)
+                    ),
                 )
             } else {
                 (
@@ -559,7 +826,10 @@ fn capability_status(state: &AdapterState, kind: &CapabilityKind) -> (Capability
         CapabilityKind::PrivilegedHelper => match (state.privileged_helper_enabled, state.privileged_helper_path.as_deref()) {
             (true, Some(path)) if Path::new(path).exists() => (
                 CapabilityState::Granted,
-                format!("Privileged helper configured at {path}."),
+                format!(
+                    "Privileged helper configured at {path}. {}",
+                    privileged_helper_runtime_detail(state, now)
+                ),
             ),
             (true, Some(path)) => (
                 CapabilityState::Unavailable,
@@ -574,7 +844,257 @@ fn capability_status(state: &AdapterState, kind: &CapabilityKind) -> (Capability
                 "Privileged helper is disabled. Enable it and provide a helper path for deeper attribution.".to_owned(),
             ),
         },
-        _ => unreachable!("capability_status only handles adapter-backed capabilities"),
+        CapabilityKind::Chau7 => match state.chau7_socket_path.as_deref() {
+            Some(path) if Path::new(path).exists() => (
+                CapabilityState::Granted,
+                format!(
+                    "Chau7 MCP socket detected at {path}. {}",
+                    chau7_runtime_detail(state, now)
+                ),
+            ),
+            Some(path) => (
+                CapabilityState::Unavailable,
+                format!("Chau7 socket not found at {path}. Is Chau7 running?"),
+            ),
+            None => (
+                CapabilityState::Unavailable,
+                "No Chau7 socket configured. Set a path or ensure ~/.chau7/mcp.sock exists."
+                    .to_owned(),
+            ),
+        },
+        _ => (CapabilityState::Unknown, String::new()),
+    }
+}
+
+fn capability_status_timestamp(state: &AdapterState, kind: &CapabilityKind) -> Option<u64> {
+    match kind {
+        CapabilityKind::ChromiumDebug => Some(
+            state
+                .last_chromium_fetch_millis
+                .max(state.last_chromium_success_millis),
+        )
+        .filter(|value| *value > 0),
+        CapabilityKind::DockerSocket => Some(
+            state
+                .last_docker_fetch_millis
+                .max(state.last_docker_success_millis),
+        )
+        .filter(|value| *value > 0),
+        CapabilityKind::PrivilegedHelper => Some(
+            state
+                .last_privileged_helper_fetch_millis
+                .max(state.last_privileged_helper_success_millis),
+        )
+        .filter(|value| *value > 0),
+        CapabilityKind::Chau7 => Some(
+            state
+                .last_chau7_fetch_millis
+                .max(state.last_chau7_success_millis),
+        )
+        .filter(|value| *value > 0),
+        _ => None,
+    }
+}
+
+fn capability_health(state: &AdapterState, kind: &CapabilityKind, now: u64) -> CapabilityHealth {
+    match kind {
+        CapabilityKind::ChromiumDebug => adapter_health_kind(
+            state.last_chromium_success_millis,
+            state.last_chromium_fetch_millis,
+            state.chromium_last_error.as_deref(),
+            CHROMIUM_REFRESH_INTERVAL_MILLIS,
+            now,
+        ),
+        CapabilityKind::DockerSocket => {
+            if !Path::new(&state.docker_socket_path).exists() {
+                CapabilityHealth::Configured
+            } else {
+                adapter_health_kind(
+                    state.last_docker_success_millis,
+                    state.last_docker_fetch_millis,
+                    state.docker_last_error.as_deref(),
+                    DOCKER_REFRESH_INTERVAL_MILLIS,
+                    now,
+                )
+            }
+        }
+        CapabilityKind::PrivilegedHelper => {
+            if !state.privileged_helper_enabled {
+                CapabilityHealth::Configured
+            } else if state
+                .privileged_helper_path
+                .as_deref()
+                .is_none_or(|path| !Path::new(path).exists())
+            {
+                CapabilityHealth::Degraded
+            } else {
+                adapter_health_kind(
+                    state.last_privileged_helper_success_millis,
+                    state.last_privileged_helper_fetch_millis,
+                    state.privileged_helper_last_error.as_deref(),
+                    PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS,
+                    now,
+                )
+            }
+        }
+        CapabilityKind::Chau7 => {
+            if state
+                .chau7_socket_path
+                .as_deref()
+                .is_none_or(|path| !Path::new(path).exists())
+            {
+                CapabilityHealth::Configured
+            } else {
+                adapter_health_kind(
+                    state.last_chau7_success_millis,
+                    state.last_chau7_fetch_millis,
+                    state.chau7_last_error.as_deref(),
+                    CHAU7_REFRESH_INTERVAL_MILLIS,
+                    now,
+                )
+            }
+        }
+        _ => CapabilityHealth::Configured,
+    }
+}
+
+fn chromium_runtime_detail(state: &AdapterState, now: u64) -> String {
+    adapter_runtime_detail(
+        "tabs",
+        state.cached_chromium_targets.len(),
+        state.last_chromium_success_millis,
+        state.last_chromium_fetch_millis,
+        state.chromium_last_error.as_deref(),
+        CHROMIUM_REFRESH_INTERVAL_MILLIS,
+        now,
+    )
+}
+
+fn docker_runtime_detail(state: &AdapterState, now: u64) -> String {
+    adapter_runtime_detail(
+        "containers",
+        state.cached_docker_containers.len(),
+        state.last_docker_success_millis,
+        state.last_docker_fetch_millis,
+        state.docker_last_error.as_deref(),
+        DOCKER_REFRESH_INTERVAL_MILLIS,
+        now,
+    )
+}
+
+fn privileged_helper_runtime_detail(state: &AdapterState, now: u64) -> String {
+    let process_count = state
+        .cached_privileged_helper_sample
+        .as_ref()
+        .map(|sample| sample.processes.len())
+        .unwrap_or(0);
+    adapter_runtime_detail(
+        "processes",
+        process_count,
+        state.last_privileged_helper_success_millis,
+        state.last_privileged_helper_fetch_millis,
+        state.privileged_helper_last_error.as_deref(),
+        PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS,
+        now,
+    )
+}
+
+fn chau7_runtime_detail(state: &AdapterState, now: u64) -> String {
+    let tab_count = state
+        .cached_chau7_snapshot
+        .as_ref()
+        .map(|s| s.tabs.len())
+        .unwrap_or(0);
+    adapter_runtime_detail(
+        "tabs",
+        tab_count,
+        state.last_chau7_success_millis,
+        state.last_chau7_fetch_millis,
+        state.chau7_last_error.as_deref(),
+        CHAU7_REFRESH_INTERVAL_MILLIS,
+        now,
+    )
+}
+
+fn adapter_runtime_detail(
+    unit_label: &str,
+    cached_count: usize,
+    last_success_millis: u64,
+    last_attempt_millis: u64,
+    last_error: Option<&str>,
+    refresh_interval_millis: u64,
+    now: u64,
+) -> String {
+    let mut parts = Vec::new();
+    parts.push(adapter_health_label(
+        last_success_millis,
+        last_attempt_millis,
+        last_error,
+        refresh_interval_millis,
+        now,
+    ));
+    if cached_count > 0 {
+        parts.push(format!("{cached_count} cached {unit_label}"));
+    }
+    if last_success_millis > 0 {
+        parts.push(format!(
+            "last success {}s ago",
+            now.saturating_sub(last_success_millis) / 1000
+        ));
+    } else {
+        parts.push("waiting for first successful refresh".to_owned());
+    }
+    if let Some(error) = last_error {
+        parts.push(format!("last error: {error}"));
+    }
+    parts.join(" · ")
+}
+
+fn adapter_health_label(
+    last_success_millis: u64,
+    last_attempt_millis: u64,
+    last_error: Option<&str>,
+    refresh_interval_millis: u64,
+    now: u64,
+) -> String {
+    match adapter_health_kind(
+        last_success_millis,
+        last_attempt_millis,
+        last_error,
+        refresh_interval_millis,
+        now,
+    ) {
+        CapabilityHealth::Configured => "status configured".to_owned(),
+        CapabilityHealth::Live => "status live".to_owned(),
+        CapabilityHealth::Cached => "status cached".to_owned(),
+        CapabilityHealth::Degraded => "status degraded".to_owned(),
+    }
+}
+
+fn adapter_health_kind(
+    last_success_millis: u64,
+    last_attempt_millis: u64,
+    last_error: Option<&str>,
+    refresh_interval_millis: u64,
+    now: u64,
+) -> CapabilityHealth {
+    if last_success_millis == 0 {
+        return if last_error.is_some() {
+            CapabilityHealth::Degraded
+        } else {
+            CapabilityHealth::Configured
+        };
+    }
+
+    let age = now.saturating_sub(last_success_millis);
+    if last_error.is_some() {
+        CapabilityHealth::Degraded
+    } else if age > refresh_interval_millis.saturating_mul(2) {
+        CapabilityHealth::Cached
+    } else if last_attempt_millis > 0 {
+        CapabilityHealth::Live
+    } else {
+        CapabilityHealth::Configured
     }
 }
 
@@ -582,14 +1102,55 @@ fn docker_socket_path() -> String {
     env::var("AETOWER_DOCKER_SOCKET").unwrap_or_else(|_| "/var/run/docker.sock".to_owned())
 }
 
+fn chau7_socket_path() -> Option<String> {
+    if let Ok(value) = env::var("AETOWER_CHAU7_SOCKET") {
+        if !value.trim().is_empty() {
+            return Some(value);
+        }
+    }
+    let default = dirs::home_dir()
+        .map(|home| home.join(".chau7").join("mcp.sock"))
+        .and_then(|path| {
+            if path.exists() {
+                path.to_str().map(|s| s.to_owned())
+            } else {
+                None
+            }
+        });
+    default
+}
+
+fn chau7_tab_detail(
+    tab: &crate::chau7::Chau7Tab,
+    snapshot: &crate::chau7::Chau7Snapshot,
+) -> String {
+    let mut parts = Vec::new();
+    parts.push(format!("status {}", tab.status));
+    if let Some(repo) = tab.repo_root.as_deref() {
+        let short = repo.rsplit('/').next().unwrap_or(repo);
+        parts.push(short.to_owned());
+    }
+    if let Some(branch) = tab.git_branch.as_deref() {
+        parts.push(branch.to_owned());
+    }
+    // Attach run count from matching session.
+    if let Some(sid) = tab.ai_session_id.as_deref() {
+        if let Some(session) = snapshot.sessions.iter().find(|s| s.session_id == sid) {
+            parts.push(format!("{} runs", session.run_count));
+        }
+    }
+    parts.join(" · ")
+}
+
 fn fetch_chromium_targets(
     config: &ChromiumAdapterConfig,
     samples: &mut BTreeMap<String, ChromiumRuntimeSample>,
 ) -> Result<Vec<ChromiumPageTarget>, String> {
     let response = http_get_tcp(&config.host, config.port, &config.path, CHROMIUM_TIMEOUT)?;
-    let parsed: Vec<ChromiumTarget> =
-        serde_json::from_str(&response).map_err(|error| format!("invalid chromium json: {error}"))?;
-    let captured_at_millis = crate::time::now_millis();
+    let parsed: Vec<ChromiumTarget> = serde_json::from_str(&response)
+        .map_err(|error| format!("invalid chromium json: {error}"))?;
+    let captured_at_millis = time::now_millis();
+    let started_at = Instant::now();
     let mut seen_ids = BTreeSet::new();
 
     let mut targets = parsed
@@ -614,45 +1175,58 @@ fn fetch_chromium_targets(
             cpu_percent: 0.0,
             network_bps: 0,
         })
-        .map(|mut target| {
-            seen_ids.insert(target.id.clone());
-            if let Some(debug_socket) = target.debug_socket.as_deref() {
-                if let Ok(metrics) = fetch_chromium_metrics(debug_socket) {
-                    target.js_heap_used_bytes = metrics.js_heap_used_bytes;
-                    target.js_heap_total_bytes = metrics.js_heap_total_bytes;
-                    target.dom_nodes = metrics.dom_nodes;
-                    target.documents = metrics.documents;
-                    target.frames = metrics.frames;
+        .collect::<Vec<_>>();
+    targets.sort_by(|left, right| left.title.cmp(&right.title).then(left.id.cmp(&right.id)));
+    targets.truncate(MAX_CHROMIUM_TARGETS);
 
-                    if let Some(previous) = samples.insert(
-                        target.id.clone(),
-                        ChromiumRuntimeSample {
-                            captured_at_millis,
-                            task_duration_seconds: metrics.task_duration_seconds,
-                            network_bytes: metrics.network_bytes,
-                        },
-                    ) {
-                        let elapsed_seconds = ((captured_at_millis.saturating_sub(previous.captured_at_millis))
-                            as f64
+    for target in &mut targets {
+        seen_ids.insert(target.id.clone());
+        if started_at.elapsed() >= CHROMIUM_FETCH_BUDGET {
+            break;
+        }
+
+        if let Some(debug_socket) = target.debug_socket.as_deref() {
+            if let Ok(metrics) = fetch_chromium_metrics(debug_socket) {
+                target.js_heap_used_bytes = metrics.js_heap_used_bytes;
+                target.js_heap_total_bytes = metrics.js_heap_total_bytes;
+                target.dom_nodes = metrics.dom_nodes;
+                target.documents = metrics.documents;
+                target.frames = metrics.frames;
+
+                if let Some(previous) = samples.insert(
+                    target.id.clone(),
+                    ChromiumRuntimeSample {
+                        captured_at_millis,
+                        task_duration_seconds: metrics.task_duration_seconds,
+                        network_bytes: metrics.network_bytes,
+                    },
+                ) {
+                    let elapsed_seconds =
+                        ((captured_at_millis.saturating_sub(previous.captured_at_millis)) as f64
                             / 1000.0)
                             .max(0.001);
-                        let task_delta = if metrics.task_duration_seconds >= previous.task_duration_seconds {
+                    let task_delta =
+                        if metrics.task_duration_seconds >= previous.task_duration_seconds {
                             metrics.task_duration_seconds - previous.task_duration_seconds
                         } else {
                             0.0
                         };
-                        let network_delta = metrics.network_bytes.saturating_sub(previous.network_bytes);
-                        target.cpu_percent = ((task_delta / elapsed_seconds) * 100.0) as f32;
-                        target.network_bps = ((network_delta as f64) / elapsed_seconds) as u64;
-                    }
+                    let network_delta =
+                        metrics.network_bytes.saturating_sub(previous.network_bytes);
+                    target.cpu_percent = ((task_delta / elapsed_seconds) * 100.0) as f32;
+                    target.network_bps = ((network_delta as f64) / elapsed_seconds) as u64;
                 }
             }
-            target
-        })
-        .collect::<Vec<_>>();
+        }
+    }
 
     samples.retain(|id, _| seen_ids.contains(id));
-    targets.sort_by(|left, right| right.cpu_percent.total_cmp(&left.cpu_percent).then(left.title.cmp(&right.title)));
+    targets.sort_by(|left, right| {
+        right
+            .cpu_percent
+            .total_cmp(&left.cpu_percent)
+            .then(left.title.cmp(&right.title))
+    });
     Ok(targets)
 }
 
@@ -664,8 +1238,8 @@ fn fetch_docker_containers(config: &DockerAdapterConfig) -> Result<Vec<DockerCon
     )?;
     let parsed: Vec<DockerContainerSummary> =
         serde_json::from_str(&response).map_err(|error| format!("invalid docker json: {error}"))?;
-
-    Ok(parsed
+    let started_at = Instant::now();
+    let mut containers = parsed
         .into_iter()
         .map(|container| DockerContainer {
             id: container.id.clone(),
@@ -687,7 +1261,10 @@ fn fetch_docker_containers(config: &DockerAdapterConfig) -> Result<Vec<DockerCon
                 .into_iter()
                 .map(|port| match (port.ip, port.public_port) {
                     (Some(ip), Some(public_port)) => {
-                        format!("{}:{}->{} {}", ip, public_port, port.private_port, port.port_type)
+                        format!(
+                            "{}:{}->{} {}",
+                            ip, public_port, port.private_port, port.port_type
+                        )
                     }
                     (None, Some(public_port)) => {
                         format!("{}->{} {}", public_port, port.private_port, port.port_type)
@@ -704,20 +1281,28 @@ fn fetch_docker_containers(config: &DockerAdapterConfig) -> Result<Vec<DockerCon
             block_write_bytes: 0,
             pids: 0,
         })
-        .map(|mut container| {
-            if let Ok(stats) = fetch_docker_container_stats(config, &container.id) {
-                container.cpu_percent = docker_cpu_percent(&stats);
-                container.memory_usage_bytes = stats.memory_stats.usage.unwrap_or(0);
-                container.memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0);
-                (container.network_rx_bytes, container.network_tx_bytes) =
-                    docker_network_totals(&stats.networks);
-                (container.block_read_bytes, container.block_write_bytes) =
-                    docker_block_io_totals(&stats.blkio_stats.io_service_bytes_recursive);
-                container.pids = stats.pids_stats.current.unwrap_or(0);
-            }
-            container
-        })
-        .collect())
+        .collect::<Vec<_>>();
+    containers.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+    containers.truncate(MAX_DOCKER_CONTAINERS);
+
+    for container in &mut containers {
+        if started_at.elapsed() >= DOCKER_FETCH_BUDGET {
+            break;
+        }
+
+        if let Ok(stats) = fetch_docker_container_stats(config, &container.id) {
+            container.cpu_percent = docker_cpu_percent(&stats);
+            container.memory_usage_bytes = stats.memory_stats.usage.unwrap_or(0);
+            container.memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0);
+            (container.network_rx_bytes, container.network_tx_bytes) =
+                docker_network_totals(&stats.networks);
+            (container.block_read_bytes, container.block_write_bytes) =
+                docker_block_io_totals(&stats.blkio_stats.io_service_bytes_recursive);
+            container.pids = stats.pids_stats.current.unwrap_or(0);
+        }
+    }
+
+    Ok(containers)
 }
 
 fn fetch_privileged_helper_sample(helper_path: &str) -> Result<PrivilegedHelperSnapshot, String> {
@@ -771,13 +1356,13 @@ fn fetch_chromium_metrics(debug_socket: &str) -> Result<ChromiumMetrics, String>
 
     let enable_command = json!({ "id": 1, "method": "Performance.enable" });
     socket
-        .send(Message::Text(enable_command.to_string().into()))
+        .send(Message::Text(enable_command.to_string()))
         .map_err(|error| format!("websocket enable failed: {error}"))?;
     let _ = read_cdp_response(&mut socket, 1)?;
 
     let metrics_command = json!({ "id": 2, "method": "Performance.getMetrics" });
     socket
-        .send(Message::Text(metrics_command.to_string().into()))
+        .send(Message::Text(metrics_command.to_string()))
         .map_err(|error| format!("websocket metrics failed: {error}"))?;
     let payload = read_cdp_response(&mut socket, 2)?;
     let metrics = payload
@@ -795,7 +1380,7 @@ fn fetch_chromium_metrics(debug_socket: &str) -> Result<ChromiumMetrics, String>
         }
     });
     socket
-        .send(Message::Text(runtime_command.to_string().into()))
+        .send(Message::Text(runtime_command.to_string()))
         .map_err(|error| format!("websocket runtime evaluate failed: {error}"))?;
     let runtime_payload = read_cdp_response(&mut socket, 3)?;
 
@@ -948,7 +1533,10 @@ fn docker_container_detail(container: &DockerContainer) -> String {
         ),
     ];
     if container.memory_limit_bytes > 0 {
-        parts.push(format!("limit {}", human_bytes(container.memory_limit_bytes)));
+        parts.push(format!(
+            "limit {}",
+            human_bytes(container.memory_limit_bytes)
+        ));
     }
     if container.network_rx_bytes > 0 || container.network_tx_bytes > 0 {
         parts.push(format!(
@@ -1012,8 +1600,8 @@ fn http_get_tcp(host: &str, port: u16, path: &str, timeout: Duration) -> Result<
 }
 
 fn http_get_unix(socket_path: &str, path: &str, timeout: Duration) -> Result<String, String> {
-    let mut stream =
-        UnixStream::connect(socket_path).map_err(|error| format!("unix connect failed: {error}"))?;
+    let mut stream = UnixStream::connect(socket_path)
+        .map_err(|error| format!("unix connect failed: {error}"))?;
     stream
         .set_read_timeout(Some(timeout))
         .map_err(|error| format!("unix read timeout failed: {error}"))?;
@@ -1049,9 +1637,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        capability_status, docker_block_io_totals, docker_cpu_percent, docker_network_totals,
-        parse_http_endpoint, AdapterState, CapabilityKind, CapabilityState, ChromiumTarget,
-        DockerBlkioEntry, DockerContainerStats, DockerContainerSummary, DockerNetworkStats,
+        adapter_runtime_detail, capability_status, docker_block_io_totals, docker_cpu_percent,
+        docker_network_totals, parse_http_endpoint, AdapterState, CapabilityKind, CapabilityState,
+        ChromiumTarget, DockerBlkioEntry, DockerContainerStats, DockerContainerSummary,
+        DockerNetworkStats,
     };
 
     #[test]
@@ -1151,8 +1740,31 @@ mod tests {
             privileged_helper_path: Some("/tmp/missing-helper".to_owned()),
             ..AdapterState::default()
         };
-        let (capability_state, detail) = capability_status(&state, &CapabilityKind::PrivilegedHelper);
+        let (capability_state, detail) =
+            capability_status(&state, &CapabilityKind::PrivilegedHelper);
         assert_eq!(capability_state, CapabilityState::Unavailable);
         assert!(detail.contains("missing"));
+    }
+
+    #[test]
+    fn adapter_runtime_detail_reports_live_cached_and_errors() {
+        let live = adapter_runtime_detail("tabs", 3, 20_000, 20_000, None, 10_000, 25_000);
+        assert!(live.contains("status live"));
+        assert!(live.contains("3 cached tabs"));
+
+        let cached = adapter_runtime_detail("tabs", 1, 1_000, 1_000, None, 5_000, 20_000);
+        assert!(cached.contains("status cached"));
+
+        let degraded = adapter_runtime_detail(
+            "tabs",
+            0,
+            15_000,
+            20_000,
+            Some("tcp connect failed"),
+            10_000,
+            21_000,
+        );
+        assert!(degraded.contains("status degraded"));
+        assert!(degraded.contains("last error: tcp connect failed"));
     }
 }

@@ -1,0 +1,111 @@
+{
+  "host": {
+    "cpu_percent": 8.0,
+    "memory_used_bytes": 3221225472,
+    "memory_total_bytes": 17179869184,
+    "swap_used_bytes": 0,
+    "disk_read_bps": 0,
+    "disk_write_bps": 0,
+    "network_receive_bps": 0,
+    "network_send_bps": 0,
+    "thermal_state": "nominal",
+    "on_battery": false,
+    "battery_charge_percent": null,
+    "low_power_mode": false,
+    "frontmost_app_name": null,
+    "frontmost_window_title": null
+  },
+  "processes": [
+    {
+      "pid": 1,
+      "parent_pid": null,
+      "start_time_millis": 1000,
+      "name": "launchd",
+      "exe": "/sbin/launchd",
+      "cmd": ["/sbin/launchd"],
+      "cpu_percent": 0.0,
+      "memory_bytes": 0,
+      "virtual_memory_bytes": 0,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 10,
+      "parent_pid": 1,
+      "start_time_millis": 2000,
+      "name": "Terminal",
+      "exe": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+      "cmd": ["Terminal"],
+      "cpu_percent": 0.0,
+      "memory_bytes": 0,
+      "virtual_memory_bytes": 0,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 20,
+      "parent_pid": 10,
+      "start_time_millis": 3000,
+      "name": "zsh",
+      "exe": "/bin/zsh",
+      "cmd": ["-zsh"],
+      "cpu_percent": 0.5,
+      "memory_bytes": 10485760,
+      "virtual_memory_bytes": 20971520,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 21,
+      "parent_pid": 20,
+      "start_time_millis": 4000,
+      "name": "python3",
+      "exe": "/opt/homebrew/bin/python3",
+      "cmd": ["python3", "server.py"],
+      "cpu_percent": 5.0,
+      "memory_bytes": 134217728,
+      "virtual_memory_bytes": 268435456,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 31,
+      "parent_pid": 1,
+      "start_time_millis": 5000,
+      "name": "sysmond",
+      "exe": "/usr/libexec/sysmond",
+      "cmd": ["/usr/libexec/sysmond"],
+      "cpu_percent": 1.0,
+      "memory_bytes": 33554432,
+      "virtual_memory_bytes": 67108864,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    }
+  ],
+  "expected_entities": [
+    {
+      "display_name": "zsh session",
+      "entity_kind": "terminal-session",
+      "primary_provenance": "shell-session",
+      "component_expectations": [
+        {
+          "title": "python3",
+          "provenance": "shell-session",
+          "launched_by_contains": "shell session"
+        }
+      ]
+    },
+    {
+      "display_name": "sysmond",
+      "entity_kind": "daemon",
+      "primary_provenance": "service-manager",
+      "component_expectations": [
+        {
+          "title": "sysmond",
+          "provenance": "service-manager",
+          "launched_by_contains": "launchd"
+        }
+      ]
+    }
+  ]
+}

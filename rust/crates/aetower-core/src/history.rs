@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, VecDeque};
 
-use aetower_model::{EntitySnapshot, HostSnapshot, HostTrend, MetricTrend, TimelineEvent, TimelineSeverity};
+use aetower_model::{
+    EntitySnapshot, HostSnapshot, HostTrend, MetricTrend, TimelineEvent, TimelineSeverity,
+};
 
 pub struct History {
     previous_scores: BTreeMap<String, f32>,
@@ -41,25 +43,38 @@ impl History {
         host: &HostSnapshot,
         entities: &mut [EntitySnapshot],
     ) -> (Vec<TimelineEvent>, HostTrend) {
-        let active_entity_ids: Vec<String> = entities.iter().map(|entity| entity.entity_id.clone()).collect();
+        let active_entity_ids: Vec<String> = entities
+            .iter()
+            .map(|entity| entity.entity_id.clone())
+            .collect();
         self.host_history.push(host);
 
         for entity in entities.iter_mut() {
             let trend_state = self
                 .metric_history
                 .entry(entity.entity_id.clone())
-                .or_insert_with(MetricTrendState::default);
+                .or_default();
             trend_state.push(entity);
             entity.trend = trend_state.snapshot();
         }
 
-        self.metric_history
-            .retain(|entity_id, _| active_entity_ids.iter().any(|active_id| active_id == entity_id));
-        self.previous_scores
-            .retain(|entity_id, _| active_entity_ids.iter().any(|active_id| active_id == entity_id));
+        self.metric_history.retain(|entity_id, _| {
+            active_entity_ids
+                .iter()
+                .any(|active_id| active_id == entity_id)
+        });
+        self.previous_scores.retain(|entity_id, _| {
+            active_entity_ids
+                .iter()
+                .any(|active_id| active_id == entity_id)
+        });
 
         for entity in entities.iter().take(5) {
-            let previous = self.previous_scores.get(&entity.entity_id).copied().unwrap_or_default();
+            let previous = self
+                .previous_scores
+                .get(&entity.entity_id)
+                .copied()
+                .unwrap_or_default();
             let delta = entity.friction.total_score - previous;
             if previous == 0.0 && entity.friction.total_score >= 20.0 {
                 self.push_event(
@@ -136,7 +151,10 @@ impl MetricTrendState {
         );
         push_point(
             &mut self.disk_activity_bps,
-            entity.metrics.disk_read_bps.saturating_add(entity.metrics.disk_write_bps),
+            entity
+                .metrics
+                .disk_read_bps
+                .saturating_add(entity.metrics.disk_write_bps),
         );
     }
 

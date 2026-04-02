@@ -42,6 +42,24 @@ private struct DetailStatusBadge: View {
 
 private let detailMetricColumns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
 
+private struct ComponentMetadataLine: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.tertiary)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 private struct ComponentCard: View {
     let component: ComponentSnapshot
 
@@ -51,10 +69,13 @@ private struct ComponentCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(component.title)
                         .font(.headline)
-                    Text(component.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                    if let headlineDetail {
+                        Text(headlineDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer()
                 Text(String(format: "%.1f%% CPU", component.cpuPercent))
@@ -78,9 +99,53 @@ private struct ComponentCard: View {
                     style: .cpu
                 )
             }
+
+            if hasMetadata {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 10) {
+                    if let provenance = component.provenance {
+                        ComponentMetadataLine(title: "Provenance", value: detailProvenanceLabel(provenance))
+                    }
+                    if let processId = component.processId {
+                        ComponentMetadataLine(title: "PID", value: "\(processId)")
+                    }
+                    if let parentSummary = component.parentSummary {
+                        ComponentMetadataLine(title: "Parent", value: parentSummary)
+                    }
+                    if let launchedBy = component.launchedBy {
+                        ComponentMetadataLine(title: "Launched By", value: launchedBy)
+                    }
+                    if let executablePath = component.executablePath {
+                        ComponentMetadataLine(title: "Executable", value: executablePath)
+                    }
+                    if let commandLine = component.commandLine {
+                        ComponentMetadataLine(title: "Command", value: commandLine)
+                    }
+                }
+            }
         }
         .padding(14)
         .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var headlineDetail: String? {
+        guard !component.detail.isEmpty else {
+            return nil
+        }
+        if component.detail == component.commandLine {
+            return nil
+        }
+        return component.detail
+    }
+
+    private var hasMetadata: Bool {
+        component.provenance != nil
+            || component.processId != nil
+            || component.parentSummary != nil
+            || component.launchedBy != nil
+            || component.executablePath != nil
+            || component.commandLine != nil
     }
 }
 
@@ -95,6 +160,7 @@ public struct EntityDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 hero
+                if entity.entityKind == .aiAgent { aiAgentSession }
                 whyItMatters
                 whatAetowerSees
                 components
@@ -164,10 +230,45 @@ public struct EntityDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var aiAgentSession: some View {
+        let agentComponents = entity.components.filter { $0.kind == .adapterContext && $0.title.contains(" · ") }
+        if entity.badges.contains("chau7-live"), !agentComponents.isEmpty {
+            GroupBox("AI Agent Session") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(agentComponents.enumerated()), id: \.offset) { _, component in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(component.title)
+                                    .font(.headline)
+                                Spacer()
+                                if let status = component.detail.split(separator: " · ").first.map(String.init) {
+                                    Text(status)
+                                        .font(.caption.monospaced())
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.secondary.opacity(0.1), in: Capsule())
+                                }
+                            }
+                            Text(component.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+    }
+
     private var whatAetowerSees: some View {
         GroupBox("What Aetower sees") {
             VStack(alignment: .leading, spacing: 12) {
                 LabeledContent("Entity type", value: String(describing: entity.entityKind))
+                LabeledContent(
+                    "Provenance",
+                    value: entity.primaryProvenance.map(detailProvenanceLabel) ?? "Unknown"
+                )
                 LabeledContent("Executable", value: entity.executablePath ?? "Unknown")
                 LabeledContent("Frontmost", value: entity.metrics.isForeground ? "Yes" : "No")
                 LabeledContent("Active window", value: entity.activeWindowTitle ?? "None detected")
@@ -237,4 +338,31 @@ private extension ComponentSnapshot {
 private func trendWindowLabel(sampleCount: Int) -> String {
     let seconds = min(sampleCount * 2, 300)
     return "last \(seconds)s"
+}
+
+private func detailProvenanceLabel(_ provenance: ProvenanceSnapshot) -> String {
+    switch provenance.kind {
+    case .userLaunch:
+        return provenance.label.isEmpty ? "User-launched app" : provenance.label
+    case .appBundle:
+        return provenance.label.isEmpty ? "Application bundle" : provenance.label
+    case .helperTree:
+        return provenance.label.isEmpty ? "Grouped app helpers" : provenance.label
+    case .shellSession:
+        return provenance.label.isEmpty ? "Interactive shell session" : provenance.label
+    case .loginItem:
+        return provenance.label.isEmpty ? "Login item" : provenance.label
+    case .serviceManager:
+        return provenance.label.isEmpty ? "launchd-managed service" : provenance.label
+    case .xpcService:
+        return provenance.label.isEmpty ? "XPC service" : provenance.label
+    case .browserContext:
+        return provenance.label.isEmpty ? "Browser context" : provenance.label
+    case .containerWorkload:
+        return provenance.label.isEmpty ? "Container workload" : provenance.label
+    case .parentProcess:
+        return provenance.label.isEmpty ? "Parent process" : provenance.label
+    case .unknown:
+        return provenance.label.isEmpty ? "Unknown" : provenance.label
+    }
 }

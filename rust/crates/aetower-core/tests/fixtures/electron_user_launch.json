@@ -1,0 +1,86 @@
+{
+  "host": {
+    "cpu_percent": 12.0,
+    "memory_used_bytes": 4294967296,
+    "memory_total_bytes": 17179869184,
+    "swap_used_bytes": 0,
+    "disk_read_bps": 0,
+    "disk_write_bps": 0,
+    "network_receive_bps": 0,
+    "network_send_bps": 0,
+    "thermal_state": "nominal",
+    "on_battery": false,
+    "battery_charge_percent": null,
+    "low_power_mode": false,
+    "frontmost_app_name": null,
+    "frontmost_window_title": null
+  },
+  "processes": [
+    {
+      "pid": 1,
+      "parent_pid": null,
+      "start_time_millis": 1000,
+      "name": "launchd",
+      "exe": "/sbin/launchd",
+      "cmd": ["/sbin/launchd"],
+      "cpu_percent": 0.0,
+      "memory_bytes": 0,
+      "virtual_memory_bytes": 0,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 2,
+      "parent_pid": 1,
+      "start_time_millis": 2000,
+      "name": "Dock",
+      "exe": "/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock",
+      "cmd": ["Dock"],
+      "cpu_percent": 0.0,
+      "memory_bytes": 0,
+      "virtual_memory_bytes": 0,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 100,
+      "parent_pid": 2,
+      "start_time_millis": 3000,
+      "name": "Slack",
+      "exe": "/Applications/Slack.app/Contents/MacOS/Slack",
+      "cmd": ["Slack"],
+      "cpu_percent": 1.0,
+      "memory_bytes": 52428800,
+      "virtual_memory_bytes": 104857600,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 101,
+      "parent_pid": 100,
+      "start_time_millis": 4000,
+      "name": "Slack Helper",
+      "exe": "/Applications/Slack.app/Contents/Frameworks/Slack Helper.app/Contents/MacOS/Slack Helper",
+      "cmd": ["Slack Helper", "--type=renderer"],
+      "cpu_percent": 4.5,
+      "memory_bytes": 157286400,
+      "virtual_memory_bytes": 314572800,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    }
+  ],
+  "expected_entities": [
+    {
+      "display_name": "Slack",
+      "entity_kind": "app",
+      "primary_provenance": "user-launch",
+      "component_expectations": [
+        {
+          "title": "Slack Helper",
+          "provenance": "helper-tree",
+          "launched_by_contains": "Slack"
+        }
+      ]
+    }
+  ]
+}

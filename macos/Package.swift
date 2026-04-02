@@ -11,6 +11,34 @@ let rustReleaseLibraryPath = URL(fileURLWithPath: packageDirectory)
     .deletingLastPathComponent()
     .appendingPathComponent("rust/target/release")
     .path
+let rustDebugLibrary = URL(fileURLWithPath: rustDebugLibraryPath)
+    .appendingPathComponent("libaetower_ffi.dylib")
+    .path
+
+func ensureRustBridgeLibrary() {
+    guard !FileManager.default.fileExists(atPath: rustDebugLibrary) else {
+        return
+    }
+
+    let rootDirectory = URL(fileURLWithPath: packageDirectory).deletingLastPathComponent().path
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["cargo", "build", "--manifest-path", "\(rootDirectory)/rust/Cargo.toml", "-p", "aetower-ffi"]
+    process.currentDirectoryURL = URL(fileURLWithPath: rootDirectory)
+
+    do {
+        try process.run()
+        process.waitUntilExit()
+    } catch {
+        fatalError("Failed to start Rust bridge build: \(error)")
+    }
+
+    guard process.terminationStatus == 0 else {
+        fatalError("Rust bridge build failed with status \(process.terminationStatus)")
+    }
+}
+
+ensureRustBridgeLibrary()
 
 let package = Package(
     name: "AetowerMac",

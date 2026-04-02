@@ -12,6 +12,7 @@ pub enum EntityKind {
     Daemon,
     TerminalSession,
     Service,
+    AiAgent,
     Unknown,
 }
 
@@ -30,6 +31,7 @@ pub enum CapabilityKind {
     ChromiumDebug,
     DockerSocket,
     PrivilegedHelper,
+    Chau7,
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -42,10 +44,39 @@ pub enum CapabilityState {
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
+pub enum CapabilityHealth {
+    Configured,
+    Live,
+    Cached,
+    Degraded,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
 pub enum TimelineSeverity {
     Info,
     Warning,
     Critical,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum ProvenanceKind {
+    UserLaunch,
+    AppBundle,
+    HelperTree,
+    ShellSession,
+    LoginItem,
+    ServiceManager,
+    XpcService,
+    BrowserContext,
+    ContainerWorkload,
+    ParentProcess,
+    Unknown,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct ProvenanceSnapshot {
+    pub kind: ProvenanceKind,
+    pub label: String,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -60,6 +91,8 @@ pub struct HostSnapshot {
     pub network_send_bps: u64,
     pub thermal_state: String,
     pub on_battery: bool,
+    pub battery_charge_percent: Option<u8>,
+    pub low_power_mode: bool,
     pub frontmost_app_name: Option<String>,
     pub frontmost_window_title: Option<String>,
 }
@@ -100,6 +133,12 @@ pub struct ComponentSnapshot {
     pub kind: ComponentKind,
     pub title: String,
     pub detail: String,
+    pub provenance: Option<ProvenanceSnapshot>,
+    pub process_id: Option<u32>,
+    pub executable_path: Option<String>,
+    pub command_line: Option<String>,
+    pub parent_summary: Option<String>,
+    pub launched_by: Option<String>,
     pub cpu_percent: f32,
     pub memory_bytes: u64,
 }
@@ -116,6 +155,7 @@ pub struct MetricTrend {
 pub struct EntitySnapshot {
     pub entity_id: String,
     pub display_name: String,
+    pub primary_provenance: Option<ProvenanceSnapshot>,
     pub bundle_id: Option<String>,
     pub executable_path: Option<String>,
     pub oldest_process_start_millis: u64,
@@ -133,6 +173,7 @@ pub struct EntitySnapshot {
 pub struct CapabilitySnapshot {
     pub kind: CapabilityKind,
     pub state: CapabilityState,
+    pub health: CapabilityHealth,
     pub detail: String,
     pub last_updated_millis: u64,
 }
@@ -191,6 +232,14 @@ impl MonitorEngine {
             .into()
     }
 
+    pub fn latest_snapshot_if_newer(&self, last_sequence: u64) -> Option<SystemSnapshot> {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .latest_snapshot_if_newer(last_sequence)
+            .map(Into::into)
+    }
+
     pub fn latest_sequence(&self) -> u64 {
         self.inner
             .lock()
@@ -244,6 +293,13 @@ impl MonitorEngine {
             .expect("engine lock poisoned")
             .configure_privileged_helper(helper_path, enabled);
     }
+
+    pub fn configure_chau7_endpoint(&self, socket_path: Option<String>) {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .configure_chau7_endpoint(socket_path);
+    }
 }
 
 impl Drop for MonitorEngine {
@@ -262,6 +318,7 @@ impl From<model::EntityKind> for EntityKind {
             model::EntityKind::Daemon => Self::Daemon,
             model::EntityKind::TerminalSession => Self::TerminalSession,
             model::EntityKind::Service => Self::Service,
+            model::EntityKind::AiAgent => Self::AiAgent,
             model::EntityKind::Unknown => Self::Unknown,
         }
     }
@@ -286,6 +343,7 @@ impl From<CapabilityKind> for model::CapabilityKind {
             CapabilityKind::ChromiumDebug => Self::ChromiumDebug,
             CapabilityKind::DockerSocket => Self::DockerSocket,
             CapabilityKind::PrivilegedHelper => Self::PrivilegedHelper,
+            CapabilityKind::Chau7 => Self::Chau7,
         }
     }
 }
@@ -299,6 +357,7 @@ impl From<model::CapabilityKind> for CapabilityKind {
             model::CapabilityKind::ChromiumDebug => Self::ChromiumDebug,
             model::CapabilityKind::DockerSocket => Self::DockerSocket,
             model::CapabilityKind::PrivilegedHelper => Self::PrivilegedHelper,
+            model::CapabilityKind::Chau7 => Self::Chau7,
         }
     }
 }
@@ -327,6 +386,35 @@ impl From<model::CapabilityState> for CapabilityState {
     }
 }
 
+impl From<model::CapabilityHealth> for CapabilityHealth {
+    fn from(value: model::CapabilityHealth) -> Self {
+        match value {
+            model::CapabilityHealth::Configured => Self::Configured,
+            model::CapabilityHealth::Live => Self::Live,
+            model::CapabilityHealth::Cached => Self::Cached,
+            model::CapabilityHealth::Degraded => Self::Degraded,
+        }
+    }
+}
+
+impl From<model::ProvenanceKind> for ProvenanceKind {
+    fn from(value: model::ProvenanceKind) -> Self {
+        match value {
+            model::ProvenanceKind::UserLaunch => Self::UserLaunch,
+            model::ProvenanceKind::AppBundle => Self::AppBundle,
+            model::ProvenanceKind::HelperTree => Self::HelperTree,
+            model::ProvenanceKind::ShellSession => Self::ShellSession,
+            model::ProvenanceKind::LoginItem => Self::LoginItem,
+            model::ProvenanceKind::ServiceManager => Self::ServiceManager,
+            model::ProvenanceKind::XpcService => Self::XpcService,
+            model::ProvenanceKind::BrowserContext => Self::BrowserContext,
+            model::ProvenanceKind::ContainerWorkload => Self::ContainerWorkload,
+            model::ProvenanceKind::ParentProcess => Self::ParentProcess,
+            model::ProvenanceKind::Unknown => Self::Unknown,
+        }
+    }
+}
+
 impl From<model::TimelineSeverity> for TimelineSeverity {
     fn from(value: model::TimelineSeverity) -> Self {
         match value {
@@ -350,6 +438,8 @@ impl From<model::HostSnapshot> for HostSnapshot {
             network_send_bps: value.network_send_bps,
             thermal_state: value.thermal_state,
             on_battery: value.on_battery,
+            battery_charge_percent: value.battery_charge_percent,
+            low_power_mode: value.low_power_mode,
             frontmost_app_name: value.frontmost_app_name,
             frontmost_window_title: value.frontmost_window_title,
         }
@@ -396,12 +486,27 @@ impl From<model::FrictionBreakdown> for FrictionBreakdown {
     }
 }
 
+impl From<model::ProvenanceSnapshot> for ProvenanceSnapshot {
+    fn from(value: model::ProvenanceSnapshot) -> Self {
+        Self {
+            kind: value.kind.into(),
+            label: value.label,
+        }
+    }
+}
+
 impl From<model::ComponentSnapshot> for ComponentSnapshot {
     fn from(value: model::ComponentSnapshot) -> Self {
         Self {
             kind: value.kind.into(),
             title: value.title,
             detail: value.detail,
+            provenance: value.provenance.map(Into::into),
+            process_id: value.process_id,
+            executable_path: value.executable_path,
+            command_line: value.command_line,
+            parent_summary: value.parent_summary,
+            launched_by: value.launched_by,
             cpu_percent: value.cpu_percent,
             memory_bytes: value.memory_bytes,
         }
@@ -424,6 +529,7 @@ impl From<model::EntitySnapshot> for EntitySnapshot {
         Self {
             entity_id: value.entity_id,
             display_name: value.display_name,
+            primary_provenance: value.primary_provenance.map(Into::into),
             bundle_id: value.bundle_id,
             executable_path: value.executable_path,
             oldest_process_start_millis: value.oldest_process_start_millis,
@@ -444,6 +550,7 @@ impl From<model::CapabilitySnapshot> for CapabilitySnapshot {
         Self {
             kind: value.kind.into(),
             state: value.state.into(),
+            health: value.health.into(),
             detail: value.detail,
             last_updated_millis: value.last_updated_millis,
         }

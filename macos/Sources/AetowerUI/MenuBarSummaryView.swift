@@ -28,6 +28,36 @@ public struct MenuBarSummaryView: View {
                     .lineLimit(1)
             }
 
+            HStack {
+                Text("Power")
+                Spacer()
+                Text(menuBarPowerSummary(state.snapshot.host))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            HStack {
+                Text("Thermal")
+                Spacer()
+                Text(state.snapshot.host.thermalState)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            let agentEntities = state.snapshot.entities.filter { $0.entityKind == .aiAgent }
+            if !agentEntities.isEmpty {
+                let running = agentEntities.filter { $0.badges.contains(where: { $0 == "running" }) }.count
+                let agentSummary = running > 0
+                    ? "\(agentEntities.count) (\(running) active)"
+                    : "\(agentEntities.count) idle"
+                HStack {
+                    Text("AI agents")
+                    Spacer()
+                    Text(agentSummary)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if let top = state.snapshot.entities.first {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Top friction")
@@ -57,4 +87,14 @@ public struct MenuBarSummaryView: View {
         .padding(14)
         .frame(width: 280)
     }
+}
+
+private func menuBarPowerSummary(_ host: HostSnapshot) -> String {
+    if host.onBattery {
+        if let batteryChargePercent = host.batteryChargePercent {
+            return host.lowPowerMode ? "Battery \(batteryChargePercent)% · Low Power" : "Battery \(batteryChargePercent)%"
+        }
+        return host.lowPowerMode ? "Battery · Low Power" : "Battery"
+    }
+    return host.lowPowerMode ? "AC Power · Low Power" : "AC Power"
 }

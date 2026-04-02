@@ -46,10 +46,20 @@ public final class PermissionCoordinator {
                 state: .requested,
                 detail: "Configure a helper path and run the helper with elevated privileges when deeper attribution is required."
             )
+        case .chau7:
+            let defaultPath = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".chau7/mcp.sock").path
+            let exists = FileManager.default.fileExists(atPath: defaultPath)
+            return PermissionResult(
+                state: exists ? .granted : .unavailable,
+                detail: exists
+                    ? "Chau7 MCP socket detected at \(defaultPath)."
+                    : "Chau7 MCP socket not found. Ensure Chau7 is running."
+            )
         }
     }
 
-    public func currentFrontmostAppObservation() -> FrontmostAppObservation? {
+    public func currentFrontmostAppObservation(includeWindowTitle: Bool = true) -> FrontmostAppObservation? {
         guard let app = NSWorkspace.shared.frontmostApplication else {
             return nil
         }
@@ -58,7 +68,7 @@ public final class PermissionCoordinator {
             appName: app.localizedName ?? app.bundleIdentifier ?? "Unknown App",
             bundleId: app.bundleIdentifier,
             executablePath: app.executableURL?.path,
-            windowTitle: currentFocusedWindowTitle(for: app)
+            windowTitle: includeWindowTitle ? currentFocusedWindowTitle(for: app) : nil
         )
     }
 
