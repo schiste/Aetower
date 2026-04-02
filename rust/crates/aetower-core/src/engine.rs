@@ -16,7 +16,7 @@ use aetower_time::{self as time, ADAPTER_TICK, FAST_TICK};
 use parking_lot::Mutex;
 
 use crate::{
-    adapters::AdapterManager, collector::Collector, history::History, run_entity_pipeline,
+    adapters::AdapterManager, collector::Collector, friction, history::History, run_entity_pipeline,
 };
 
 struct EngineState {
@@ -107,10 +107,12 @@ impl Engine {
                         memory_used_bytes: raw.host.memory_used_bytes,
                         memory_total_bytes: raw.host.memory_total_bytes,
                         swap_used_bytes: raw.host.swap_used_bytes,
+                        compressed_memory_bytes: raw.host.compressed_memory_bytes,
                         disk_read_bps: raw.host.disk_read_bps,
                         disk_write_bps: raw.host.disk_write_bps,
                         network_receive_bps: raw.host.network_receive_bps,
                         network_send_bps: raw.host.network_send_bps,
+                        wakeups_per_second: raw.host.wakeups_per_second,
                         thermal_state: raw.host.thermal_state.clone(),
                         on_battery: raw.host.on_battery,
                         battery_charge_percent: raw.host.battery_charge_percent,
@@ -132,10 +134,12 @@ impl Engine {
                     memory_used_bytes: raw.host.memory_used_bytes,
                     memory_total_bytes: raw.host.memory_total_bytes,
                     swap_used_bytes: raw.host.swap_used_bytes,
+                    compressed_memory_bytes: raw.host.compressed_memory_bytes,
                     disk_read_bps: raw.host.disk_read_bps,
                     disk_write_bps: raw.host.disk_write_bps,
                     network_receive_bps: raw.host.network_receive_bps,
                     network_send_bps: raw.host.network_send_bps,
+                    wakeups_per_second: raw.host.wakeups_per_second,
                     thermal_state: raw.host.thermal_state,
                     on_battery: raw.host.on_battery,
                     battery_charge_percent: raw.host.battery_charge_percent,
@@ -147,6 +151,7 @@ impl Engine {
                         .as_ref()
                         .and_then(|state| state.window_title.clone()),
                 };
+                friction::apply(&host, &mut entities);
 
                 let mut guard = state.lock();
                 let (timeline, host_trend) =

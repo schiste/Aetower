@@ -94,10 +94,14 @@ pub struct HostSnapshot {
     pub memory_used_bytes: u64,
     pub memory_total_bytes: u64,
     pub swap_used_bytes: u64,
+    #[serde(default)]
+    pub compressed_memory_bytes: u64,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
+    #[serde(default)]
+    pub wakeups_per_second: f32,
     pub thermal_state: String,
     pub on_battery: bool,
     pub battery_charge_percent: Option<u8>,
@@ -112,6 +116,12 @@ pub struct HostTrend {
     pub cpu_percent: Vec<f32>,
     pub memory_used_bytes: Vec<u64>,
     pub disk_activity_bps: Vec<u64>,
+    #[serde(default)]
+    pub network_activity_bps: Vec<u64>,
+    #[serde(default)]
+    pub wakeups_per_second: Vec<f32>,
+    #[serde(default)]
+    pub compressed_memory_bytes: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -123,6 +133,8 @@ pub struct AggregateMetrics {
     pub disk_write_bps: u64,
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
+    #[serde(default)]
+    pub wakeups_per_second: f32,
     pub process_count: u32,
     pub is_foreground: bool,
 }
@@ -133,6 +145,12 @@ pub struct FrictionBreakdown {
     pub cpu_score: f32,
     pub memory_score: f32,
     pub disk_score: f32,
+    #[serde(default)]
+    pub network_score: f32,
+    #[serde(default)]
+    pub wakeups_score: f32,
+    #[serde(default)]
+    pub pressure_score: f32,
     pub foreground_bonus: f32,
     pub reasons: Vec<String>,
 }
@@ -158,6 +176,16 @@ pub struct MetricTrend {
     pub cpu_percent: Vec<f32>,
     pub memory_resident_bytes: Vec<u64>,
     pub disk_activity_bps: Vec<u64>,
+    #[serde(default)]
+    pub network_activity_bps: Vec<u64>,
+    #[serde(default)]
+    pub wakeups_per_second: Vec<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Recommendation {
+    pub title: String,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -176,6 +204,8 @@ pub struct EntitySnapshot {
     pub trend: MetricTrend,
     pub badges: Vec<String>,
     pub active_window_title: Option<String>,
+    #[serde(default)]
+    pub recommendations: Vec<Recommendation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

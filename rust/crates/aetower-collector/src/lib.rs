@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 use sysinfo::{
@@ -19,6 +19,8 @@ pub struct RawProcessSample {
     pub virtual_memory_bytes: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
+    #[serde(default)]
+    pub wakeups_per_second: f32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -27,10 +29,14 @@ pub struct RawHostSample {
     pub memory_used_bytes: u64,
     pub memory_total_bytes: u64,
     pub swap_used_bytes: u64,
+    #[serde(default)]
+    pub compressed_memory_bytes: u64,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
+    #[serde(default)]
+    pub wakeups_per_second: f32,
     pub thermal_state: String,
     pub on_battery: bool,
     pub battery_charge_percent: Option<u8>,
@@ -49,6 +55,12 @@ struct NetworkTotals {
     transmitted: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ProcessCounterSample {
+    start_time_millis: u64,
+    wakeups: u64,
+}
+
 pub struct Collector {
     system: System,
     previous_network_totals: NetworkTotals,
@@ -56,6 +68,7 @@ pub struct Collector {
     process_metadata_tick: u8,
     host_environment_refresh_tick: u8,
     cached_host_environment: HostEnvironment,
+    previous_process_counters: HashMap<u32, ProcessCounterSample>,
 }
 
 impl Collector {
@@ -73,6 +86,7 @@ impl Collector {
             process_metadata_tick: 0,
             host_environment_refresh_tick: 0,
             cached_host_environment: HostEnvironment::default(),
+            previous_process_counters: HashMap::new(),
         }
     }
 
@@ -96,29 +110,51 @@ impl Collector {
                 .saturating_add(data.transmitted());
         }
 
+        let mut next_process_counters = HashMap::with_capacity(self.system.processes().len());
         let processes: Vec<_> = self
             .system
             .processes()
             .values()
             .filter(|process| process.pid().as_u32() != self.self_pid)
-            .map(|process| RawProcessSample {
-                pid: process.pid().as_u32(),
-                parent_pid: process.parent().map(|parent| parent.as_u32()),
-                start_time_millis: process.start_time().saturating_mul(1_000),
-                name: process.name().to_owned(),
-                exe: path_to_string(process.exe()),
-                cmd: process
-                    .cmd()
-                    .iter()
-                    .map(|segment| segment.to_string())
-                    .collect(),
-                cpu_percent: process.cpu_usage(),
-                memory_bytes: process.memory(),
-                virtual_memory_bytes: process.virtual_memory(),
-                disk_read_bytes: process.disk_usage().read_bytes,
-                disk_write_bytes: process.disk_usage().written_bytes,
+            .map(|process| {
+                let pid = process.pid().as_u32();
+                let start_time_millis = process.start_time().saturating_mul(1_000);
+                let wakeups = platform::process_wakeups(pid).unwrap_or(0);
+                let wakeups_per_second = self
+                    .previous_process_counters
+                    .get(&pid)
+                    .filter(|previous| previous.start_time_millis == start_time_millis)
+                    .map(|previous| wakeups.saturating_sub(previous.wakeups) as f32)
+                    .unwrap_or(0.0);
+                next_process_counters.insert(
+                    pid,
+                    ProcessCounterSample {
+                        start_time_millis,
+                        wakeups,
+                    },
+                );
+
+                RawProcessSample {
+                    pid,
+                    parent_pid: process.parent().map(|parent| parent.as_u32()),
+                    start_time_millis,
+                    name: process.name().to_owned(),
+                    exe: path_to_string(process.exe()),
+                    cmd: process
+                        .cmd()
+                        .iter()
+                        .map(|segment| segment.to_string())
+                        .collect(),
+                    cpu_percent: process.cpu_usage(),
+                    memory_bytes: process.memory(),
+                    virtual_memory_bytes: process.virtual_memory(),
+                    disk_read_bytes: process.disk_usage().read_bytes,
+                    disk_write_bytes: process.disk_usage().written_bytes,
+                    wakeups_per_second,
+                }
             })
             .collect();
+        self.previous_process_counters = next_process_counters;
 
         let host_disk_read_bps = processes.iter().fold(0u64, |total, process| {
             total.saturating_add(process.disk_read_bytes)
@@ -127,11 +163,17 @@ impl Collector {
             total.saturating_add(process.disk_write_bytes)
         });
 
+        let compressed_memory_bytes = platform::compressed_memory_bytes().unwrap_or(0);
+        let host_wakeups_per_second = processes
+            .iter()
+            .fold(0.0f32, |total, process| total + process.wakeups_per_second);
+
         let host = RawHostSample {
             cpu_percent: self.system.global_cpu_info().cpu_usage(),
             memory_used_bytes: self.system.used_memory(),
             memory_total_bytes: self.system.total_memory(),
             swap_used_bytes: self.system.used_swap(),
+            compressed_memory_bytes,
             disk_read_bps: host_disk_read_bps,
             disk_write_bps: host_disk_write_bps,
             network_receive_bps: network_totals
@@ -140,6 +182,7 @@ impl Collector {
             network_send_bps: network_totals
                 .transmitted
                 .saturating_sub(self.previous_network_totals.transmitted),
+            wakeups_per_second: host_wakeups_per_second,
             thermal_state: self.cached_host_environment.thermal_state.clone(),
             on_battery: self.cached_host_environment.on_battery,
             battery_charge_percent: self.cached_host_environment.battery_charge_percent,
@@ -238,6 +281,15 @@ mod platform {
         fn IOPSCopyPowerSourcesList(blob: CFTypeRef) -> CFArrayRef;
         fn IOPSGetPowerSourceDescription(blob: CFTypeRef, ps: CFTypeRef) -> CFDictionaryRef;
         fn IOPSGetProvidingPowerSourceType(snapshot: CFTypeRef) -> CFStringRef;
+        fn mach_host_self() -> u32;
+        fn host_page_size(host: u32, page_size: *mut u32) -> i32;
+        fn host_statistics64(
+            host: u32,
+            flavor: i32,
+            host_info_out: *mut i32,
+            host_info_out_cnt: *mut u32,
+        ) -> i32;
+        fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut c_void) -> i32;
     }
 
     #[link(name = "objc")]
@@ -258,6 +310,99 @@ mod platform {
             battery_charge_percent,
             low_power_mode,
         }
+    }
+
+    pub fn process_wakeups(pid: u32) -> Option<u64> {
+        let mut info = RUsageInfoV2::default();
+        let result = unsafe {
+            proc_pid_rusage(
+                pid as i32,
+                RUSAGE_INFO_V2,
+                &mut info as *mut RUsageInfoV2 as *mut c_void,
+            )
+        };
+        (result == 0).then_some(
+            info.ri_interrupt_wkups
+                .saturating_add(info.ri_pkg_idle_wkups),
+        )
+    }
+
+    pub fn compressed_memory_bytes() -> Option<u64> {
+        unsafe {
+            let host = mach_host_self();
+            let mut page_size = 0u32;
+            if host_page_size(host, &mut page_size as *mut u32) != KERN_SUCCESS {
+                return None;
+            }
+
+            let mut stats = VmStatistics64::default();
+            let mut count = (mem::size_of::<VmStatistics64>() / mem::size_of::<i32>()) as u32;
+            let result = host_statistics64(
+                host,
+                HOST_VM_INFO64,
+                &mut stats as *mut VmStatistics64 as *mut i32,
+                &mut count as *mut u32,
+            );
+            (result == KERN_SUCCESS)
+                .then_some((stats.compressor_page_count as u64).saturating_mul(page_size as u64))
+        }
+    }
+
+    const HOST_VM_INFO64: i32 = 4;
+    const KERN_SUCCESS: i32 = 0;
+    const RUSAGE_INFO_V2: i32 = 2;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct RUsageInfoV2 {
+        ri_uuid: [u8; 16],
+        ri_user_time: u64,
+        ri_system_time: u64,
+        ri_pkg_idle_wkups: u64,
+        ri_interrupt_wkups: u64,
+        ri_pageins: u64,
+        ri_wired_size: u64,
+        ri_resident_size: u64,
+        ri_phys_footprint: u64,
+        ri_proc_start_abstime: u64,
+        ri_proc_exit_abstime: u64,
+        ri_child_user_time: u64,
+        ri_child_system_time: u64,
+        ri_child_pkg_idle_wkups: u64,
+        ri_child_interrupt_wkups: u64,
+        ri_child_pageins: u64,
+        ri_child_elapsed_abstime: u64,
+        ri_diskio_bytesread: u64,
+        ri_diskio_byteswritten: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct VmStatistics64 {
+        free_count: u32,
+        active_count: u32,
+        inactive_count: u32,
+        wire_count: u32,
+        zero_fill_count: u64,
+        reactivations: u64,
+        pageins: u64,
+        pageouts: u64,
+        faults: u64,
+        cow_faults: u64,
+        lookups: u64,
+        hits: u64,
+        purges: u64,
+        purgeable_count: u32,
+        speculative_count: u32,
+        decompressions: u64,
+        compressions: u64,
+        swapins: u64,
+        swapouts: u64,
+        compressor_page_count: u32,
+        throttled_count: u32,
+        external_page_count: u32,
+        internal_page_count: u32,
+        total_uncompressed_pages_in_compressor: u64,
     }
 
     fn thermal_state() -> String {
@@ -428,5 +573,13 @@ mod platform {
 
     pub fn read_environment() -> HostEnvironment {
         HostEnvironment::default()
+    }
+
+    pub fn process_wakeups(_pid: u32) -> Option<u64> {
+        None
+    }
+
+    pub fn compressed_memory_bytes() -> Option<u64> {
+        None
     }
 }

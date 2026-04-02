@@ -745,12 +745,13 @@ public struct AggregateMetrics {
     public var diskWriteBps: UInt64
     public var networkReceiveBps: UInt64
     public var networkSendBps: UInt64
+    public var wakeupsPerSecond: Float
     public var processCount: UInt32
     public var isForeground: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryResidentBytes: UInt64, virtualMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, processCount: UInt32, isForeground: Bool) {
+    public init(cpuPercent: Float, memoryResidentBytes: UInt64, virtualMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, processCount: UInt32, isForeground: Bool) {
         self.cpuPercent = cpuPercent
         self.memoryResidentBytes = memoryResidentBytes
         self.virtualMemoryBytes = virtualMemoryBytes
@@ -758,6 +759,7 @@ public struct AggregateMetrics {
         self.diskWriteBps = diskWriteBps
         self.networkReceiveBps = networkReceiveBps
         self.networkSendBps = networkSendBps
+        self.wakeupsPerSecond = wakeupsPerSecond
         self.processCount = processCount
         self.isForeground = isForeground
     }
@@ -788,6 +790,9 @@ extension AggregateMetrics: Equatable, Hashable {
         if lhs.networkSendBps != rhs.networkSendBps {
             return false
         }
+        if lhs.wakeupsPerSecond != rhs.wakeupsPerSecond {
+            return false
+        }
         if lhs.processCount != rhs.processCount {
             return false
         }
@@ -805,6 +810,7 @@ extension AggregateMetrics: Equatable, Hashable {
         hasher.combine(diskWriteBps)
         hasher.combine(networkReceiveBps)
         hasher.combine(networkSendBps)
+        hasher.combine(wakeupsPerSecond)
         hasher.combine(processCount)
         hasher.combine(isForeground)
     }
@@ -825,6 +831,7 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
                 diskWriteBps: FfiConverterUInt64.read(from: &buf), 
                 networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
                 networkSendBps: FfiConverterUInt64.read(from: &buf), 
+                wakeupsPerSecond: FfiConverterFloat.read(from: &buf), 
                 processCount: FfiConverterUInt32.read(from: &buf), 
                 isForeground: FfiConverterBool.read(from: &buf)
         )
@@ -838,6 +845,7 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.diskWriteBps, into: &buf)
         FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)
         FfiConverterUInt64.write(value.networkSendBps, into: &buf)
+        FfiConverterFloat.write(value.wakeupsPerSecond, into: &buf)
         FfiConverterUInt32.write(value.processCount, into: &buf)
         FfiConverterBool.write(value.isForeground, into: &buf)
     }
@@ -1102,10 +1110,11 @@ public struct EntitySnapshot {
     public var trend: MetricTrend
     public var badges: [String]
     public var activeWindowTitle: String?
+    public var recommendations: [Recommendation]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?) {
+    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recommendations: [Recommendation]) {
         self.entityId = entityId
         self.displayName = displayName
         self.primaryProvenance = primaryProvenance
@@ -1120,6 +1129,7 @@ public struct EntitySnapshot {
         self.trend = trend
         self.badges = badges
         self.activeWindowTitle = activeWindowTitle
+        self.recommendations = recommendations
     }
 }
 
@@ -1169,6 +1179,9 @@ extension EntitySnapshot: Equatable, Hashable {
         if lhs.activeWindowTitle != rhs.activeWindowTitle {
             return false
         }
+        if lhs.recommendations != rhs.recommendations {
+            return false
+        }
         return true
     }
 
@@ -1187,6 +1200,7 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(trend)
         hasher.combine(badges)
         hasher.combine(activeWindowTitle)
+        hasher.combine(recommendations)
     }
 }
 
@@ -1211,7 +1225,8 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
                 components: FfiConverterSequenceTypeComponentSnapshot.read(from: &buf), 
                 trend: FfiConverterTypeMetricTrend.read(from: &buf), 
                 badges: FfiConverterSequenceString.read(from: &buf), 
-                activeWindowTitle: FfiConverterOptionString.read(from: &buf)
+                activeWindowTitle: FfiConverterOptionString.read(from: &buf), 
+                recommendations: FfiConverterSequenceTypeRecommendation.read(from: &buf)
         )
     }
 
@@ -1230,6 +1245,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
         FfiConverterTypeMetricTrend.write(value.trend, into: &buf)
         FfiConverterSequenceString.write(value.badges, into: &buf)
         FfiConverterOptionString.write(value.activeWindowTitle, into: &buf)
+        FfiConverterSequenceTypeRecommendation.write(value.recommendations, into: &buf)
     }
 }
 
@@ -1254,16 +1270,22 @@ public struct FrictionBreakdown {
     public var cpuScore: Float
     public var memoryScore: Float
     public var diskScore: Float
+    public var networkScore: Float
+    public var wakeupsScore: Float
+    public var pressureScore: Float
     public var foregroundBonus: Float
     public var reasons: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(totalScore: Float, cpuScore: Float, memoryScore: Float, diskScore: Float, foregroundBonus: Float, reasons: [String]) {
+    public init(totalScore: Float, cpuScore: Float, memoryScore: Float, diskScore: Float, networkScore: Float, wakeupsScore: Float, pressureScore: Float, foregroundBonus: Float, reasons: [String]) {
         self.totalScore = totalScore
         self.cpuScore = cpuScore
         self.memoryScore = memoryScore
         self.diskScore = diskScore
+        self.networkScore = networkScore
+        self.wakeupsScore = wakeupsScore
+        self.pressureScore = pressureScore
         self.foregroundBonus = foregroundBonus
         self.reasons = reasons
     }
@@ -1285,6 +1307,15 @@ extension FrictionBreakdown: Equatable, Hashable {
         if lhs.diskScore != rhs.diskScore {
             return false
         }
+        if lhs.networkScore != rhs.networkScore {
+            return false
+        }
+        if lhs.wakeupsScore != rhs.wakeupsScore {
+            return false
+        }
+        if lhs.pressureScore != rhs.pressureScore {
+            return false
+        }
         if lhs.foregroundBonus != rhs.foregroundBonus {
             return false
         }
@@ -1299,6 +1330,9 @@ extension FrictionBreakdown: Equatable, Hashable {
         hasher.combine(cpuScore)
         hasher.combine(memoryScore)
         hasher.combine(diskScore)
+        hasher.combine(networkScore)
+        hasher.combine(wakeupsScore)
+        hasher.combine(pressureScore)
         hasher.combine(foregroundBonus)
         hasher.combine(reasons)
     }
@@ -1316,6 +1350,9 @@ public struct FfiConverterTypeFrictionBreakdown: FfiConverterRustBuffer {
                 cpuScore: FfiConverterFloat.read(from: &buf), 
                 memoryScore: FfiConverterFloat.read(from: &buf), 
                 diskScore: FfiConverterFloat.read(from: &buf), 
+                networkScore: FfiConverterFloat.read(from: &buf), 
+                wakeupsScore: FfiConverterFloat.read(from: &buf), 
+                pressureScore: FfiConverterFloat.read(from: &buf), 
                 foregroundBonus: FfiConverterFloat.read(from: &buf), 
                 reasons: FfiConverterSequenceString.read(from: &buf)
         )
@@ -1326,6 +1363,9 @@ public struct FfiConverterTypeFrictionBreakdown: FfiConverterRustBuffer {
         FfiConverterFloat.write(value.cpuScore, into: &buf)
         FfiConverterFloat.write(value.memoryScore, into: &buf)
         FfiConverterFloat.write(value.diskScore, into: &buf)
+        FfiConverterFloat.write(value.networkScore, into: &buf)
+        FfiConverterFloat.write(value.wakeupsScore, into: &buf)
+        FfiConverterFloat.write(value.pressureScore, into: &buf)
         FfiConverterFloat.write(value.foregroundBonus, into: &buf)
         FfiConverterSequenceString.write(value.reasons, into: &buf)
     }
@@ -1442,10 +1482,12 @@ public struct HostSnapshot {
     public var memoryUsedBytes: UInt64
     public var memoryTotalBytes: UInt64
     public var swapUsedBytes: UInt64
+    public var compressedMemoryBytes: UInt64
     public var diskReadBps: UInt64
     public var diskWriteBps: UInt64
     public var networkReceiveBps: UInt64
     public var networkSendBps: UInt64
+    public var wakeupsPerSecond: Float
     public var thermalState: String
     public var onBattery: Bool
     public var batteryChargePercent: UInt8?
@@ -1455,15 +1497,17 @@ public struct HostSnapshot {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, thermalState: String, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: String, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
         self.swapUsedBytes = swapUsedBytes
+        self.compressedMemoryBytes = compressedMemoryBytes
         self.diskReadBps = diskReadBps
         self.diskWriteBps = diskWriteBps
         self.networkReceiveBps = networkReceiveBps
         self.networkSendBps = networkSendBps
+        self.wakeupsPerSecond = wakeupsPerSecond
         self.thermalState = thermalState
         self.onBattery = onBattery
         self.batteryChargePercent = batteryChargePercent
@@ -1489,6 +1533,9 @@ extension HostSnapshot: Equatable, Hashable {
         if lhs.swapUsedBytes != rhs.swapUsedBytes {
             return false
         }
+        if lhs.compressedMemoryBytes != rhs.compressedMemoryBytes {
+            return false
+        }
         if lhs.diskReadBps != rhs.diskReadBps {
             return false
         }
@@ -1499,6 +1546,9 @@ extension HostSnapshot: Equatable, Hashable {
             return false
         }
         if lhs.networkSendBps != rhs.networkSendBps {
+            return false
+        }
+        if lhs.wakeupsPerSecond != rhs.wakeupsPerSecond {
             return false
         }
         if lhs.thermalState != rhs.thermalState {
@@ -1527,10 +1577,12 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(memoryUsedBytes)
         hasher.combine(memoryTotalBytes)
         hasher.combine(swapUsedBytes)
+        hasher.combine(compressedMemoryBytes)
         hasher.combine(diskReadBps)
         hasher.combine(diskWriteBps)
         hasher.combine(networkReceiveBps)
         hasher.combine(networkSendBps)
+        hasher.combine(wakeupsPerSecond)
         hasher.combine(thermalState)
         hasher.combine(onBattery)
         hasher.combine(batteryChargePercent)
@@ -1552,10 +1604,12 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 memoryUsedBytes: FfiConverterUInt64.read(from: &buf), 
                 memoryTotalBytes: FfiConverterUInt64.read(from: &buf), 
                 swapUsedBytes: FfiConverterUInt64.read(from: &buf), 
+                compressedMemoryBytes: FfiConverterUInt64.read(from: &buf), 
                 diskReadBps: FfiConverterUInt64.read(from: &buf), 
                 diskWriteBps: FfiConverterUInt64.read(from: &buf), 
                 networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
                 networkSendBps: FfiConverterUInt64.read(from: &buf), 
+                wakeupsPerSecond: FfiConverterFloat.read(from: &buf), 
                 thermalState: FfiConverterString.read(from: &buf), 
                 onBattery: FfiConverterBool.read(from: &buf), 
                 batteryChargePercent: FfiConverterOptionUInt8.read(from: &buf), 
@@ -1570,10 +1624,12 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.memoryUsedBytes, into: &buf)
         FfiConverterUInt64.write(value.memoryTotalBytes, into: &buf)
         FfiConverterUInt64.write(value.swapUsedBytes, into: &buf)
+        FfiConverterUInt64.write(value.compressedMemoryBytes, into: &buf)
         FfiConverterUInt64.write(value.diskReadBps, into: &buf)
         FfiConverterUInt64.write(value.diskWriteBps, into: &buf)
         FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)
         FfiConverterUInt64.write(value.networkSendBps, into: &buf)
+        FfiConverterFloat.write(value.wakeupsPerSecond, into: &buf)
         FfiConverterString.write(value.thermalState, into: &buf)
         FfiConverterBool.write(value.onBattery, into: &buf)
         FfiConverterOptionUInt8.write(value.batteryChargePercent, into: &buf)
@@ -1604,14 +1660,20 @@ public struct HostTrend {
     public var cpuPercent: [Float]
     public var memoryUsedBytes: [UInt64]
     public var diskActivityBps: [UInt64]
+    public var networkActivityBps: [UInt64]
+    public var wakeupsPerSecond: [Float]
+    public var compressedMemoryBytes: [UInt64]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(machineFriction: [Float], cpuPercent: [Float], memoryUsedBytes: [UInt64], diskActivityBps: [UInt64]) {
+    public init(machineFriction: [Float], cpuPercent: [Float], memoryUsedBytes: [UInt64], diskActivityBps: [UInt64], networkActivityBps: [UInt64], wakeupsPerSecond: [Float], compressedMemoryBytes: [UInt64]) {
         self.machineFriction = machineFriction
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.diskActivityBps = diskActivityBps
+        self.networkActivityBps = networkActivityBps
+        self.wakeupsPerSecond = wakeupsPerSecond
+        self.compressedMemoryBytes = compressedMemoryBytes
     }
 }
 
@@ -1631,6 +1693,15 @@ extension HostTrend: Equatable, Hashable {
         if lhs.diskActivityBps != rhs.diskActivityBps {
             return false
         }
+        if lhs.networkActivityBps != rhs.networkActivityBps {
+            return false
+        }
+        if lhs.wakeupsPerSecond != rhs.wakeupsPerSecond {
+            return false
+        }
+        if lhs.compressedMemoryBytes != rhs.compressedMemoryBytes {
+            return false
+        }
         return true
     }
 
@@ -1639,6 +1710,9 @@ extension HostTrend: Equatable, Hashable {
         hasher.combine(cpuPercent)
         hasher.combine(memoryUsedBytes)
         hasher.combine(diskActivityBps)
+        hasher.combine(networkActivityBps)
+        hasher.combine(wakeupsPerSecond)
+        hasher.combine(compressedMemoryBytes)
     }
 }
 
@@ -1653,7 +1727,10 @@ public struct FfiConverterTypeHostTrend: FfiConverterRustBuffer {
                 machineFriction: FfiConverterSequenceFloat.read(from: &buf), 
                 cpuPercent: FfiConverterSequenceFloat.read(from: &buf), 
                 memoryUsedBytes: FfiConverterSequenceUInt64.read(from: &buf), 
-                diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf)
+                diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
+                networkActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
+                wakeupsPerSecond: FfiConverterSequenceFloat.read(from: &buf), 
+                compressedMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf)
         )
     }
 
@@ -1662,6 +1739,9 @@ public struct FfiConverterTypeHostTrend: FfiConverterRustBuffer {
         FfiConverterSequenceFloat.write(value.cpuPercent, into: &buf)
         FfiConverterSequenceUInt64.write(value.memoryUsedBytes, into: &buf)
         FfiConverterSequenceUInt64.write(value.diskActivityBps, into: &buf)
+        FfiConverterSequenceUInt64.write(value.networkActivityBps, into: &buf)
+        FfiConverterSequenceFloat.write(value.wakeupsPerSecond, into: &buf)
+        FfiConverterSequenceUInt64.write(value.compressedMemoryBytes, into: &buf)
     }
 }
 
@@ -1686,14 +1766,18 @@ public struct MetricTrend {
     public var cpuPercent: [Float]
     public var memoryResidentBytes: [UInt64]
     public var diskActivityBps: [UInt64]
+    public var networkActivityBps: [UInt64]
+    public var wakeupsPerSecond: [Float]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(friction: [Float], cpuPercent: [Float], memoryResidentBytes: [UInt64], diskActivityBps: [UInt64]) {
+    public init(friction: [Float], cpuPercent: [Float], memoryResidentBytes: [UInt64], diskActivityBps: [UInt64], networkActivityBps: [UInt64], wakeupsPerSecond: [Float]) {
         self.friction = friction
         self.cpuPercent = cpuPercent
         self.memoryResidentBytes = memoryResidentBytes
         self.diskActivityBps = diskActivityBps
+        self.networkActivityBps = networkActivityBps
+        self.wakeupsPerSecond = wakeupsPerSecond
     }
 }
 
@@ -1713,6 +1797,12 @@ extension MetricTrend: Equatable, Hashable {
         if lhs.diskActivityBps != rhs.diskActivityBps {
             return false
         }
+        if lhs.networkActivityBps != rhs.networkActivityBps {
+            return false
+        }
+        if lhs.wakeupsPerSecond != rhs.wakeupsPerSecond {
+            return false
+        }
         return true
     }
 
@@ -1721,6 +1811,8 @@ extension MetricTrend: Equatable, Hashable {
         hasher.combine(cpuPercent)
         hasher.combine(memoryResidentBytes)
         hasher.combine(diskActivityBps)
+        hasher.combine(networkActivityBps)
+        hasher.combine(wakeupsPerSecond)
     }
 }
 
@@ -1735,7 +1827,9 @@ public struct FfiConverterTypeMetricTrend: FfiConverterRustBuffer {
                 friction: FfiConverterSequenceFloat.read(from: &buf), 
                 cpuPercent: FfiConverterSequenceFloat.read(from: &buf), 
                 memoryResidentBytes: FfiConverterSequenceUInt64.read(from: &buf), 
-                diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf)
+                diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
+                networkActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
+                wakeupsPerSecond: FfiConverterSequenceFloat.read(from: &buf)
         )
     }
 
@@ -1744,6 +1838,8 @@ public struct FfiConverterTypeMetricTrend: FfiConverterRustBuffer {
         FfiConverterSequenceFloat.write(value.cpuPercent, into: &buf)
         FfiConverterSequenceUInt64.write(value.memoryResidentBytes, into: &buf)
         FfiConverterSequenceUInt64.write(value.diskActivityBps, into: &buf)
+        FfiConverterSequenceUInt64.write(value.networkActivityBps, into: &buf)
+        FfiConverterSequenceFloat.write(value.wakeupsPerSecond, into: &buf)
     }
 }
 
@@ -1826,6 +1922,72 @@ public func FfiConverterTypeProvenanceSnapshot_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeProvenanceSnapshot_lower(_ value: ProvenanceSnapshot) -> RustBuffer {
     return FfiConverterTypeProvenanceSnapshot.lower(value)
+}
+
+
+public struct Recommendation {
+    public var title: String
+    public var detail: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(title: String, detail: String) {
+        self.title = title
+        self.detail = detail
+    }
+}
+
+
+
+extension Recommendation: Equatable, Hashable {
+    public static func ==(lhs: Recommendation, rhs: Recommendation) -> Bool {
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.detail != rhs.detail {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(title)
+        hasher.combine(detail)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRecommendation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Recommendation {
+        return
+            try Recommendation(
+                title: FfiConverterString.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Recommendation, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecommendation_lift(_ buf: RustBuffer) throws -> Recommendation {
+    return try FfiConverterTypeRecommendation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecommendation_lower(_ value: Recommendation) -> RustBuffer {
+    return FfiConverterTypeRecommendation.lower(value)
 }
 
 
@@ -2927,6 +3089,31 @@ fileprivate struct FfiConverterSequenceTypeEntitySnapshot: FfiConverterRustBuffe
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeEntitySnapshot.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeRecommendation: FfiConverterRustBuffer {
+    typealias SwiftType = [Recommendation]
+
+    public static func write(_ value: [Recommendation], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRecommendation.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Recommendation] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Recommendation]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRecommendation.read(from: &buf))
         }
         return seq
     }

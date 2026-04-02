@@ -85,10 +85,12 @@ pub struct HostSnapshot {
     pub memory_used_bytes: u64,
     pub memory_total_bytes: u64,
     pub swap_used_bytes: u64,
+    pub compressed_memory_bytes: u64,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
+    pub wakeups_per_second: f32,
     pub thermal_state: String,
     pub on_battery: bool,
     pub battery_charge_percent: Option<u8>,
@@ -103,6 +105,9 @@ pub struct HostTrend {
     pub cpu_percent: Vec<f32>,
     pub memory_used_bytes: Vec<u64>,
     pub disk_activity_bps: Vec<u64>,
+    pub network_activity_bps: Vec<u64>,
+    pub wakeups_per_second: Vec<f32>,
+    pub compressed_memory_bytes: Vec<u64>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -114,6 +119,7 @@ pub struct AggregateMetrics {
     pub disk_write_bps: u64,
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
+    pub wakeups_per_second: f32,
     pub process_count: u32,
     pub is_foreground: bool,
 }
@@ -124,6 +130,9 @@ pub struct FrictionBreakdown {
     pub cpu_score: f32,
     pub memory_score: f32,
     pub disk_score: f32,
+    pub network_score: f32,
+    pub wakeups_score: f32,
+    pub pressure_score: f32,
     pub foreground_bonus: f32,
     pub reasons: Vec<String>,
 }
@@ -149,6 +158,14 @@ pub struct MetricTrend {
     pub cpu_percent: Vec<f32>,
     pub memory_resident_bytes: Vec<u64>,
     pub disk_activity_bps: Vec<u64>,
+    pub network_activity_bps: Vec<u64>,
+    pub wakeups_per_second: Vec<f32>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct Recommendation {
+    pub title: String,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -167,6 +184,7 @@ pub struct EntitySnapshot {
     pub trend: MetricTrend,
     pub badges: Vec<String>,
     pub active_window_title: Option<String>,
+    pub recommendations: Vec<Recommendation>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -432,10 +450,12 @@ impl From<model::HostSnapshot> for HostSnapshot {
             memory_used_bytes: value.memory_used_bytes,
             memory_total_bytes: value.memory_total_bytes,
             swap_used_bytes: value.swap_used_bytes,
+            compressed_memory_bytes: value.compressed_memory_bytes,
             disk_read_bps: value.disk_read_bps,
             disk_write_bps: value.disk_write_bps,
             network_receive_bps: value.network_receive_bps,
             network_send_bps: value.network_send_bps,
+            wakeups_per_second: value.wakeups_per_second,
             thermal_state: value.thermal_state,
             on_battery: value.on_battery,
             battery_charge_percent: value.battery_charge_percent,
@@ -453,6 +473,9 @@ impl From<model::HostTrend> for HostTrend {
             cpu_percent: value.cpu_percent,
             memory_used_bytes: value.memory_used_bytes,
             disk_activity_bps: value.disk_activity_bps,
+            network_activity_bps: value.network_activity_bps,
+            wakeups_per_second: value.wakeups_per_second,
+            compressed_memory_bytes: value.compressed_memory_bytes,
         }
     }
 }
@@ -467,6 +490,7 @@ impl From<model::AggregateMetrics> for AggregateMetrics {
             disk_write_bps: value.disk_write_bps,
             network_receive_bps: value.network_receive_bps,
             network_send_bps: value.network_send_bps,
+            wakeups_per_second: value.wakeups_per_second,
             process_count: value.process_count,
             is_foreground: value.is_foreground,
         }
@@ -480,6 +504,9 @@ impl From<model::FrictionBreakdown> for FrictionBreakdown {
             cpu_score: value.cpu_score,
             memory_score: value.memory_score,
             disk_score: value.disk_score,
+            network_score: value.network_score,
+            wakeups_score: value.wakeups_score,
+            pressure_score: value.pressure_score,
             foreground_bonus: value.foreground_bonus,
             reasons: value.reasons,
         }
@@ -520,6 +547,17 @@ impl From<model::MetricTrend> for MetricTrend {
             cpu_percent: value.cpu_percent,
             memory_resident_bytes: value.memory_resident_bytes,
             disk_activity_bps: value.disk_activity_bps,
+            network_activity_bps: value.network_activity_bps,
+            wakeups_per_second: value.wakeups_per_second,
+        }
+    }
+}
+
+impl From<model::Recommendation> for Recommendation {
+    fn from(value: model::Recommendation) -> Self {
+        Self {
+            title: value.title,
+            detail: value.detail,
         }
     }
 }
@@ -541,6 +579,7 @@ impl From<model::EntitySnapshot> for EntitySnapshot {
             trend: value.trend.into(),
             badges: value.badges,
             active_window_title: value.active_window_title,
+            recommendations: value.recommendations.into_iter().map(Into::into).collect(),
         }
     }
 }

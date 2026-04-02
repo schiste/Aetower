@@ -54,6 +54,7 @@ pub fn build_entities(
             .metrics
             .disk_write_bps
             .saturating_add(process.disk_write_bytes);
+        entry.metrics.wakeups_per_second += process.wakeups_per_second;
         entry.metrics.process_count += 1;
         entry.metrics.is_foreground =
             entry.metrics.is_foreground || is_foreground_match(seed, frontmost);
@@ -111,6 +112,7 @@ fn entity_from_seed(seed: &EntitySeed) -> EntitySnapshot {
         trend: Default::default(),
         badges: seed.badges.clone(),
         active_window_title: None,
+        recommendations: Vec::new(),
     }
 }
 
@@ -399,6 +401,7 @@ mod tests {
                 virtual_memory_bytes: 512,
                 disk_read_bytes: 100,
                 disk_write_bytes: 200,
+                wakeups_per_second: 0.0,
             },
             RawProcessSample {
                 pid: 2,
@@ -412,6 +415,7 @@ mod tests {
                 virtual_memory_bytes: 1024,
                 disk_read_bytes: 300,
                 disk_write_bytes: 400,
+                wakeups_per_second: 0.0,
             },
         ];
         let entity_id = "bundle:test".to_owned();
@@ -481,6 +485,7 @@ mod tests {
                 virtual_memory_bytes: 256,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
             RawProcessSample {
                 pid: 11,
@@ -497,6 +502,7 @@ mod tests {
                 virtual_memory_bytes: 512,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
             RawProcessSample {
                 pid: 1,
@@ -510,6 +516,7 @@ mod tests {
                 virtual_memory_bytes: 0,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
         ];
         let identity = IdentityMap {
@@ -586,6 +593,7 @@ mod tests {
                 virtual_memory_bytes: 0,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
             RawProcessSample {
                 pid: 21,
@@ -599,6 +607,7 @@ mod tests {
                 virtual_memory_bytes: 128,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
             RawProcessSample {
                 pid: 10,
@@ -615,6 +624,7 @@ mod tests {
                 virtual_memory_bytes: 0,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
         ];
         let identity = IdentityMap {
@@ -657,6 +667,7 @@ mod tests {
                 virtual_memory_bytes: 128,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
             RawProcessSample {
                 pid: 1,
@@ -670,6 +681,7 @@ mod tests {
                 virtual_memory_bytes: 0,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
         ];
         let identity = IdentityMap {
@@ -713,6 +725,7 @@ mod tests {
                 virtual_memory_bytes: 128,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
             RawProcessSample {
                 pid: 3,
@@ -726,6 +739,7 @@ mod tests {
                 virtual_memory_bytes: 0,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
             RawProcessSample {
                 pid: 2,
@@ -742,6 +756,7 @@ mod tests {
                 virtual_memory_bytes: 0,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
             RawProcessSample {
                 pid: 1,
@@ -755,6 +770,7 @@ mod tests {
                 virtual_memory_bytes: 0,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
             },
         ];
         let identity = IdentityMap {
