@@ -162,6 +162,7 @@ public struct EntityDetailView: View {
                 hero
                 if entity.entityKind == .aiAgent { aiAgentSession }
                 whyItMatters
+                recommendedNextActions
                 whatAetowerSees
                 components
             }
@@ -202,6 +203,20 @@ public struct EntityDetailView: View {
                     samples: entity.trend.diskActivityBps.map(Double.init),
                     style: .disk
                 )
+                TrendMetricCard(
+                    title: "Network",
+                    value: formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps),
+                    subtitle: "read + send throughput · \(trendWindowLabel(sampleCount: entity.trend.networkActivityBps.count))",
+                    samples: entity.trend.networkActivityBps.map(Double.init),
+                    style: .disk
+                )
+                TrendMetricCard(
+                    title: "Wakeups",
+                    value: formatWakeups(entity.metrics.wakeupsPerSecond),
+                    subtitle: "timer and interrupt churn · \(trendWindowLabel(sampleCount: entity.trend.wakeupsPerSecond.count))",
+                    samples: entity.trend.wakeupsPerSecond.map(Double.init),
+                    style: .friction
+                )
             }
         }
     }
@@ -225,6 +240,29 @@ public struct EntityDetailView: View {
                     }
                 }
 
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private var recommendedNextActions: some View {
+        GroupBox("Recommended next actions") {
+            VStack(alignment: .leading, spacing: 12) {
+                if entity.recommendations.isEmpty {
+                    Text("No action recommendation is attached right now. The current signals look more informational than urgent.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(entity.recommendations.enumerated()), id: \.offset) { _, recommendation in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(recommendation.title)
+                                .font(.headline)
+                            Text(recommendation.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
             }
             .padding(.top, 4)
         }
@@ -272,6 +310,8 @@ public struct EntityDetailView: View {
                 LabeledContent("Executable", value: entity.executablePath ?? "Unknown")
                 LabeledContent("Frontmost", value: entity.metrics.isForeground ? "Yes" : "No")
                 LabeledContent("Active window", value: entity.activeWindowTitle ?? "None detected")
+                LabeledContent("Network", value: formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps))
+                LabeledContent("Wakeups", value: formatWakeups(entity.metrics.wakeupsPerSecond))
 
                 if !entity.badges.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {

@@ -127,6 +127,7 @@ private enum SortKey: String, CaseIterable, Identifiable {
     case cpu
     case memory
     case disk
+    case network
     case alphabeticalAsc
     case alphabeticalDesc
     case oldestFirst
@@ -140,6 +141,7 @@ private enum SortKey: String, CaseIterable, Identifiable {
         case .cpu: return "CPU"
         case .memory: return "Memory"
         case .disk: return "Disk"
+        case .network: return "Network"
         case .alphabeticalAsc: return "A - Z"
         case .alphabeticalDesc: return "Z - A"
         case .oldestFirst: return "Oldest first"
@@ -153,6 +155,7 @@ private enum SortKey: String, CaseIterable, Identifiable {
         case .cpu: return .blue
         case .memory: return .green
         case .disk: return .pink
+        case .network: return .teal
         case .alphabeticalAsc, .alphabeticalDesc, .oldestFirst, .newestFirst:
             return .gray
         }
@@ -160,7 +163,7 @@ private enum SortKey: String, CaseIterable, Identifiable {
 
     var usesMetricValue: Bool {
         switch self {
-        case .friction, .cpu, .memory, .disk:
+        case .friction, .cpu, .memory, .disk, .network:
             return true
         case .alphabeticalAsc, .alphabeticalDesc, .oldestFirst, .newestFirst:
             return false
@@ -243,8 +246,10 @@ private struct RowFrictionHighlights {
     let cpu: Bool
     let memory: Bool
     let disk: Bool
+    let network: Bool
+    let wakeups: Bool
 
-    static let none = Self(title: false, cpu: false, memory: false, disk: false)
+    static let none = Self(title: false, cpu: false, memory: false, disk: false, network: false, wakeups: false)
 }
 
 private struct EntityRow: View {
@@ -259,9 +264,18 @@ private struct EntityRow: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .center, spacing: 6) {
                     if entity.entityKind == .aiAgent {
-                        Circle()
-                            .fill(aiAgentDotColor)
-                            .frame(width: 8, height: 8)
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(aiAgentDotColor)
+                                .frame(width: 8, height: 8)
+                            Text(aiAgentProviderLabel)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(aiAgentDotColor)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(aiAgentDotColor.opacity(0.12), in: Capsule())
+                        .help("AI agent managed by Chau7")
                     }
                     RowSignalBadge(
                         valueText: badgeValueText,
@@ -285,9 +299,16 @@ private struct EntityRow: View {
                         value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
                         isHighlighted: rowFrictionHighlights.disk
                     )
-                    if let badge = entity.badges.first {
-                        InlineMetric(title: "Tag", value: badge, isHighlighted: false)
-                    }
+                    InlineMetric(
+                        title: "Net",
+                        value: formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps),
+                        isHighlighted: rowFrictionHighlights.network
+                    )
+                    InlineMetric(
+                        title: "Wake",
+                        value: formatWakeups(entity.metrics.wakeupsPerSecond),
+                        isHighlighted: rowFrictionHighlights.wakeups
+                    )
                 }
             }
             if let provenanceSummary {
@@ -319,6 +340,13 @@ private struct EntityRow: View {
         return .purple
     }
 
+    private var aiAgentProviderLabel: String {
+        if entity.badges.contains("claude") { return "Claude" }
+        if entity.badges.contains("codex") { return "Codex" }
+        if entity.badges.contains("chatgpt") { return "ChatGPT" }
+        return "AI"
+    }
+
     private var rowFrictionHighlights: RowFrictionHighlights {
         frictionHighlights(for: entity)
     }
@@ -333,6 +361,8 @@ private struct EntityRow: View {
             return String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes))
         case .disk:
             return formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps)
+        case .network:
+            return formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps)
         case .alphabeticalAsc, .alphabeticalDesc:
             return nil
         case .oldestFirst:
@@ -421,6 +451,18 @@ public struct MainListView: View {
                         value: formatRate(state.snapshot.host.diskReadBps + state.snapshot.host.diskWriteBps),
                         tone: .pink,
                         subtitle: trendWindowLabel(sampleCount: state.snapshot.hostTrend.diskActivityBps.count)
+                    )
+                    MachineBandMetric(
+                        title: "Network",
+                        value: formatRate(state.snapshot.host.networkReceiveBps + state.snapshot.host.networkSendBps),
+                        tone: .teal,
+                        subtitle: trendWindowLabel(sampleCount: state.snapshot.hostTrend.networkActivityBps.count)
+                    )
+                    MachineBandMetric(
+                        title: "Wakeups",
+                        value: formatWakeups(state.snapshot.host.wakeupsPerSecond),
+                        tone: .orange,
+                        subtitle: hostCompressedSummary(state.snapshot.host)
                     )
                 }
             }
@@ -611,6 +653,8 @@ public struct MainListView: View {
             return "\(entity.displayName) is currently highest by memory load at \(String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes)))."
         case .disk:
             return "\(entity.displayName) is currently highest by disk activity at \(formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))."
+        case .network:
+            return "\(entity.displayName) is currently highest by network activity at \(formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps))."
         case .alphabeticalAsc:
             return "\(entity.displayName) is first in the current alphabetical A-Z sort."
         case .alphabeticalDesc:
@@ -632,6 +676,8 @@ public struct MainListView: View {
             return String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes))
         case .disk:
             return formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps)
+        case .network:
+            return formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps)
         case .alphabeticalAsc, .alphabeticalDesc:
             return nil
         case .oldestFirst:
@@ -654,7 +700,9 @@ private func frictionHighlights(for entity: EntitySnapshot) -> RowFrictionHighli
         title: reasons.contains(where: { $0.contains("foreground app") }),
         cpu: reasons.contains(where: { $0.contains("high cpu") }),
         memory: reasons.contains(where: { $0.contains("high memory") }),
-        disk: reasons.contains(where: { $0.contains("heavy disk") })
+        disk: reasons.contains(where: { $0.contains("heavy disk") }),
+        network: reasons.contains(where: { $0.contains("heavy network") }),
+        wakeups: reasons.contains(where: { $0.contains("wakeups") })
     )
 }
 
@@ -688,6 +736,12 @@ private func provenanceSummaryLabel(_ provenance: ProvenanceSnapshot) -> String 
 private func hostStatusSummary(_ host: HostSnapshot) -> String {
     var parts = [powerStatusSummary(host)]
     parts.append("thermal \(host.thermalState)")
+    if host.compressedMemoryBytes > 0 {
+        parts.append("compressed \(formatBytes(host.compressedMemoryBytes))")
+    }
+    if host.wakeupsPerSecond > 0 {
+        parts.append("\(formatWakeups(host.wakeupsPerSecond)) wakeups")
+    }
     if host.lowPowerMode {
         parts.append("low power mode")
     }
@@ -710,6 +764,13 @@ func formatBytes(_ bytes: UInt64) -> String {
 
 func formatRate(_ bytesPerSecond: UInt64) -> String {
     "\(formatBytes(bytesPerSecond))/s"
+}
+
+func formatWakeups(_ wakeupsPerSecond: Float) -> String {
+    if wakeupsPerSecond >= 100 {
+        return String(format: "%.0f/s", wakeupsPerSecond)
+    }
+    return String(format: "%.1f/s", wakeupsPerSecond)
 }
 
 private enum ByteFormatters {
@@ -753,12 +814,30 @@ private func diskTrendSummary(_ entity: EntitySnapshot) -> String {
     "\(trendLabel(samples: entity.trend.diskActivityBps.map(Double.init), stableText: "recent throughput")) · \(trendWindowLabel(sampleCount: entity.trend.diskActivityBps.count))"
 }
 
+private func networkTrendSummary(_ entity: EntitySnapshot) -> String {
+    "\(trendLabel(samples: entity.trend.networkActivityBps.map(Double.init), stableText: "recent throughput")) · \(trendWindowLabel(sampleCount: entity.trend.networkActivityBps.count))"
+}
+
+private func wakeupsTrendSummary(_ entity: EntitySnapshot) -> String {
+    "\(trendLabel(samples: entity.trend.wakeupsPerSecond.map(Double.init), stableText: "recent wakeups")) · \(trendWindowLabel(sampleCount: entity.trend.wakeupsPerSecond.count))"
+}
+
 private func machineFrictionScore(for host: HostSnapshot) -> Double {
     let cpuScore = min(Double(host.cpuPercent), 100.0) * 0.5
     let memoryRatio = host.memoryTotalBytes == 0 ? 0.0 : Double(host.memoryUsedBytes) / Double(host.memoryTotalBytes)
     let memoryScore = min(memoryRatio, 1.0) * 35.0
     let swapScore = host.swapUsedBytes == 0 ? 0.0 : (min(Double(host.swapUsedBytes) / 1_073_741_824.0, 8.0) / 8.0) * 15.0
-    return min(cpuScore + memoryScore + swapScore, 100.0)
+    let compressedScore = host.memoryTotalBytes == 0 ? 0.0 : min(Double(host.compressedMemoryBytes) / Double(host.memoryTotalBytes), 1.0) * 12.0
+    let networkScore = min(Double(host.networkReceiveBps + host.networkSendBps) / 8_388_608.0, 1.0) * 10.0
+    let wakeupsScore = min(Double(host.wakeupsPerSecond) / 500.0, 1.0) * 8.0
+    return min(cpuScore + memoryScore + swapScore + compressedScore + networkScore + wakeupsScore, 100.0)
+}
+
+private func hostCompressedSummary(_ host: HostSnapshot) -> String {
+    if host.compressedMemoryBytes > 0 {
+        return "compressed \(formatBytes(host.compressedMemoryBytes))"
+    }
+    return "memory pressure nominal"
 }
 
 private func memoryLoadPercent(bytes: UInt64, totalBytes: UInt64) -> Double {
@@ -791,6 +870,8 @@ private func compareEntities(_ left: EntitySnapshot, _ right: EntitySnapshot, by
         return left.metrics.memoryResidentBytes > right.metrics.memoryResidentBytes
     case .disk:
         return (left.metrics.diskReadBps + left.metrics.diskWriteBps) > (right.metrics.diskReadBps + right.metrics.diskWriteBps)
+    case .network:
+        return (left.metrics.networkReceiveBps + left.metrics.networkSendBps) > (right.metrics.networkReceiveBps + right.metrics.networkSendBps)
     case .alphabeticalAsc:
         return left.displayName.localizedCaseInsensitiveCompare(right.displayName) == .orderedAscending
     case .alphabeticalDesc:
