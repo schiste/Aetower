@@ -5,7 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+aetower-attribution = { path = "../aetower-attribution" }
 aetower-collector = { path = "../aetower-collector" }
+aetower-friction = { path = "../aetower-friction" }
 aetower-history = { path = "../aetower-history" }
 aetower-identity = { path = "../aetower-identity" }
 aetower-model = { path = "../aetower-model" }

@@ -1,0 +1,10 @@
+[package]
+name = "aetower-attribution"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aetower-collector = { path = "../aetower-collector" }
+aetower-identity = { path = "../aetower-identity" }
+aetower-model = { path = "../aetower-model" }

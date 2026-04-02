@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "aetower-attribution"
+version = "0.1.0"
+dependencies = [
+ "aetower-collector",
+ "aetower-identity",
+ "aetower-model",
+]
+
+[[package]]
 name = "aetower-bench"
 version = "0.1.0"
 dependencies = [
@@ -23,7 +32,9 @@ dependencies = [
 name = "aetower-core"
 version = "0.1.0"
 dependencies = [
+ "aetower-attribution",
  "aetower-collector",
+ "aetower-friction",
  "aetower-history",
  "aetower-identity",
  "aetower-model",
@@ -45,6 +56,13 @@ dependencies = [
  "aetower-core",
  "aetower-model",
  "uniffi",
+]
+
+[[package]]
+name = "aetower-friction"
+version = "0.1.0"
+dependencies = [
+ "aetower-model",
 ]
 
 [[package]]

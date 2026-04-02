@@ -4,6 +4,8 @@ members = [
   "crates/aetower-model",
   "crates/aetower-collector",
   "crates/aetower-identity",
+  "crates/aetower-attribution",
+  "crates/aetower-friction",
   "crates/aetower-history",
   "crates/aetower-core",
   "crates/aetower-ffi",

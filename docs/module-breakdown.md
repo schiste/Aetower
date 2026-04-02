@@ -2,6 +2,10 @@
 
 This document defines a concrete initial repository layout and module ownership plan for Aetower.
 
+Current status: `aetower-collector`, `aetower-identity`, `aetower-attribution`,
+`aetower-friction`, and `aetower-history` are split into dedicated workspace crates, while
+`aetower-core` remains the composition layer for engine, adapters, pipeline, and benchmarks.
+
 The design target is:
 
 - deterministic execution

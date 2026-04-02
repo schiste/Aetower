@@ -9,7 +9,9 @@ mod history;
 mod identity;
 mod pipeline;
 
+pub use aetower_attribution::build_entities;
 pub use aetower_collector::{Collector, RawHostSample, RawProcessSample, RawSnapshot};
+pub use aetower_friction::apply as apply_friction;
 pub use aetower_history::History;
 pub use aetower_identity::{resolve as resolve_identity, EntitySeed, IdentityMap};
 pub use bench::{run_benchmark, BenchmarkConfig, BenchmarkReport, BenchmarkStats};
