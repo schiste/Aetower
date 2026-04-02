@@ -49,6 +49,16 @@ fn xpc_service_fixture_matches_expected_pipeline_output() {
     assert_fixture("xpc_service.json");
 }
 
+#[test]
+fn safari_webkit_fixture_matches_expected_pipeline_output() {
+    assert_fixture("safari_webkit.json");
+}
+
+#[test]
+fn login_item_fixture_matches_expected_pipeline_output() {
+    assert_fixture("login_item.json");
+}
+
 fn assert_fixture(file_name: &str) {
     let fixture = load_fixture(file_name);
     let output = run_entity_pipeline(

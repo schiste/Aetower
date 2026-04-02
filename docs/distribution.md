@@ -63,3 +63,9 @@ export AETOWER_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export AETOWER_NOTARY_PROFILE="aetower-notary"
 sh scripts/release-macos.sh
 ```
+
+You can check the local machine before packaging:
+
+```sh
+sh scripts/release-preflight.sh
+```

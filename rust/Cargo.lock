@@ -24,6 +24,7 @@ name = "aetower-core"
 version = "0.1.0"
 dependencies = [
  "aetower-collector",
+ "aetower-history",
  "aetower-identity",
  "aetower-model",
  "aetower-time",
@@ -53,6 +54,13 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "aetower-history"
+version = "0.1.0"
+dependencies = [
+ "aetower-model",
 ]
 
 [[package]]

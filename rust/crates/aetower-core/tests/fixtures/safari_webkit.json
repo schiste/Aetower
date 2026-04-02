@@ -1,0 +1,91 @@
+{
+  "host": {
+    "cpu_percent": 9.0,
+    "memory_used_bytes": 3758096384,
+    "memory_total_bytes": 17179869184,
+    "swap_used_bytes": 0,
+    "disk_read_bps": 0,
+    "disk_write_bps": 0,
+    "network_receive_bps": 0,
+    "network_send_bps": 0,
+    "thermal_state": "nominal",
+    "on_battery": false,
+    "battery_charge_percent": null,
+    "low_power_mode": false,
+    "frontmost_app_name": null,
+    "frontmost_window_title": null
+  },
+  "processes": [
+    {
+      "pid": 1,
+      "parent_pid": null,
+      "start_time_millis": 1000,
+      "name": "launchd",
+      "exe": "/sbin/launchd",
+      "cmd": ["/sbin/launchd"],
+      "cpu_percent": 0.0,
+      "memory_bytes": 0,
+      "virtual_memory_bytes": 0,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 2,
+      "parent_pid": 1,
+      "start_time_millis": 2000,
+      "name": "Dock",
+      "exe": "/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock",
+      "cmd": ["Dock"],
+      "cpu_percent": 0.0,
+      "memory_bytes": 0,
+      "virtual_memory_bytes": 0,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 100,
+      "parent_pid": 2,
+      "start_time_millis": 3000,
+      "name": "Safari",
+      "exe": "/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app/Contents/MacOS/Safari",
+      "cmd": ["Safari"],
+      "cpu_percent": 1.2,
+      "memory_bytes": 67108864,
+      "virtual_memory_bytes": 134217728,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 101,
+      "parent_pid": 100,
+      "start_time_millis": 4000,
+      "name": "com.apple.WebKit.WebContent",
+      "exe": "/System/Volumes/Preboot/Cryptexes/App/System/Library/StagedFrameworks/Safari/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent",
+      "cmd": ["com.apple.WebKit.WebContent"],
+      "cpu_percent": 4.0,
+      "memory_bytes": 157286400,
+      "virtual_memory_bytes": 314572800,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    }
+  ],
+  "expected_entities": [
+    {
+      "display_name": "Safari",
+      "entity_kind": "browser",
+      "primary_provenance": "user-launch"
+    },
+    {
+      "display_name": "com.apple.WebKit.WebContent",
+      "entity_kind": "service",
+      "primary_provenance": "xpc-service",
+      "component_expectations": [
+        {
+          "title": "com.apple.WebKit.WebContent",
+          "provenance": "xpc-service",
+          "launched_by_contains": "launchd"
+        }
+      ]
+    }
+  ]
+}

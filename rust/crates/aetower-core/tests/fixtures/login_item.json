@@ -1,0 +1,86 @@
+{
+  "host": {
+    "cpu_percent": 4.0,
+    "memory_used_bytes": 2147483648,
+    "memory_total_bytes": 17179869184,
+    "swap_used_bytes": 0,
+    "disk_read_bps": 0,
+    "disk_write_bps": 0,
+    "network_receive_bps": 0,
+    "network_send_bps": 0,
+    "thermal_state": "nominal",
+    "on_battery": false,
+    "battery_charge_percent": null,
+    "low_power_mode": false,
+    "frontmost_app_name": null,
+    "frontmost_window_title": null
+  },
+  "processes": [
+    {
+      "pid": 1,
+      "parent_pid": null,
+      "start_time_millis": 1000,
+      "name": "launchd",
+      "exe": "/sbin/launchd",
+      "cmd": ["/sbin/launchd"],
+      "cpu_percent": 0.0,
+      "memory_bytes": 0,
+      "virtual_memory_bytes": 0,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 2,
+      "parent_pid": 1,
+      "start_time_millis": 2000,
+      "name": "loginwindow",
+      "exe": "/System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow",
+      "cmd": ["loginwindow"],
+      "cpu_percent": 0.0,
+      "memory_bytes": 0,
+      "virtual_memory_bytes": 0,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 3,
+      "parent_pid": 2,
+      "start_time_millis": 3000,
+      "name": "xpcproxy",
+      "exe": "/usr/libexec/xpcproxy",
+      "cmd": ["/usr/libexec/xpcproxy"],
+      "cpu_percent": 0.0,
+      "memory_bytes": 0,
+      "virtual_memory_bytes": 0,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    },
+    {
+      "pid": 4,
+      "parent_pid": 3,
+      "start_time_millis": 4000,
+      "name": "MenuBarExtra",
+      "exe": "/Users/test/Library/Application Support/Foo/MenuBarExtra",
+      "cmd": ["MenuBarExtra"],
+      "cpu_percent": 0.8,
+      "memory_bytes": 16777216,
+      "virtual_memory_bytes": 33554432,
+      "disk_read_bytes": 0,
+      "disk_write_bytes": 0
+    }
+  ],
+  "expected_entities": [
+    {
+      "display_name": "MenuBarExtra",
+      "entity_kind": "service",
+      "primary_provenance": "login-item",
+      "component_expectations": [
+        {
+          "title": "MenuBarExtra",
+          "provenance": "login-item",
+          "launched_by_contains": "xpcproxy"
+        }
+      ]
+    }
+  ]
+}

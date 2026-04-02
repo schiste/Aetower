@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 aetower-collector = { path = "../aetower-collector" }
+aetower-history = { path = "../aetower-history" }
 aetower-identity = { path = "../aetower-identity" }
 aetower-model = { path = "../aetower-model" }
 aetower-time = { path = "../aetower-time" }
