@@ -25,6 +25,12 @@ public final class SettingsStore: ObservableObject {
     @Published public var chau7Endpoint: String {
         didSet { persist() }
     }
+    @Published public var notificationsEnabled: Bool {
+        didSet { persist() }
+    }
+    @Published public var frictionNotificationThreshold: Double {
+        didSet { persist() }
+    }
     @Published public private(set) var launchAtLoginEnabled: Bool
     @Published public private(set) var launchAtLoginError: String?
 
@@ -40,6 +46,8 @@ public final class SettingsStore: ObservableObject {
             ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/aetower-helper").path
         self.privilegedHelperEnabled = defaults.object(forKey: Self.privilegedHelperEnabledKey) as? Bool ?? false
         self.chau7Endpoint = defaults.string(forKey: Self.chau7EndpointKey) ?? ""
+        self.notificationsEnabled = defaults.object(forKey: Self.notificationsEnabledKey) as? Bool ?? false
+        self.frictionNotificationThreshold = defaults.object(forKey: Self.frictionNotificationThresholdKey) as? Double ?? 60.0
         self.launchAtLoginEnabled = false
         self.launchAtLoginError = nil
         syncLaunchAtLoginState()
@@ -76,6 +84,8 @@ public final class SettingsStore: ObservableObject {
     private static let privilegedHelperPathKey = "settings.privilegedHelperPath"
     private static let privilegedHelperEnabledKey = "settings.privilegedHelperEnabled"
     private static let chau7EndpointKey = "settings.chau7Endpoint"
+    private static let notificationsEnabledKey = "settings.notificationsEnabled"
+    private static let frictionNotificationThresholdKey = "settings.frictionNotificationThreshold"
 }
 
 extension SettingsStore {
@@ -87,5 +97,7 @@ extension SettingsStore {
         defaults.set(privilegedHelperPath, forKey: Self.privilegedHelperPathKey)
         defaults.set(privilegedHelperEnabled, forKey: Self.privilegedHelperEnabledKey)
         defaults.set(chau7Endpoint, forKey: Self.chau7EndpointKey)
+        defaults.set(notificationsEnabled, forKey: Self.notificationsEnabledKey)
+        defaults.set(frictionNotificationThreshold, forKey: Self.frictionNotificationThresholdKey)
     }
 }

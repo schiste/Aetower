@@ -44,6 +44,25 @@ public struct SettingsView: View {
                     }
                 }
 
+                GroupBox("Notifications") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Enable notifications", isOn: $settings.notificationsEnabled)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Friction notification threshold")
+                                .font(.headline)
+                            HStack {
+                                Slider(value: $settings.frictionNotificationThreshold, in: 10...100, step: 5)
+                                Text(String(format: "%.0f", settings.frictionNotificationThreshold))
+                                    .font(.caption.monospacedDigit())
+                                    .frame(width: 30, alignment: .trailing)
+                            }
+                            Text("Notify when an app's friction score exceeds this threshold.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 GroupBox("Integrations") {
                     VStack(alignment: .leading, spacing: 12) {
                         TextField("Chromium endpoint", text: $settings.chromiumEndpoint)

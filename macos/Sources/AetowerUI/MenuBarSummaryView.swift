@@ -79,6 +79,11 @@ public struct MenuBarSummaryView: View {
             }
             .buttonStyle(.borderedProminent)
 
+            Button("Export Snapshot") {
+                state.exportSnapshot()
+            }
+            .buttonStyle(.bordered)
+
             Button("Open Settings") {
                 NSApp.activate(ignoringOtherApps: true)
             }

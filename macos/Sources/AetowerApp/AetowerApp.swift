@@ -49,6 +49,7 @@ struct AetowerApp: App {
             .frame(minWidth: 1180, minHeight: 760)
             .task {
                 menuBarExtraInserted = settings.showMenuBarExtra
+                state.requestNotificationPermission()
                 Task { @MainActor in
                     state.applyIntegrationSettings(settings)
                 }
