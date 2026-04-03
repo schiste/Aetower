@@ -295,7 +295,9 @@ public struct DiagnosticsView: View {
 
     private var lastHistoryLoadFailure: String? {
         state.diagnosticsEvents.first(where: {
-            $0.eventType == "history-load-failed" || $0.eventType == "history-loaded-with-quarantine"
+            $0.eventType == "history-load-failed"
+                || $0.eventType == "history-loaded-with-quarantine"
+                || $0.eventType == "history-row-quarantined"
         }).map { event in
             if let errorField = event.fields.first(where: { $0.key == "error" })?.value,
                !errorField.isEmpty {

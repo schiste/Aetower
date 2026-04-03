@@ -98,7 +98,9 @@ public final class AppState {
     @ObservationIgnored
     private let anomalyNotificationCooldown: TimeInterval = 300.0
     @ObservationIgnored
-    private let suppressedAnomalySummaryInterval: TimeInterval = 30.0
+    private let suppressedAnomalySummaryInterval: TimeInterval = 300.0
+    @ObservationIgnored
+    private let suppressedAnomalySummaryMinimumCount = 10
 
     public init(
         bridge: EngineBridge = EngineBridge(),
@@ -624,6 +626,9 @@ public final class AppState {
         }
         let now = Date()
         if !force && now.timeIntervalSince(lastSuppressedAnomalySummaryDate) < suppressedAnomalySummaryInterval {
+            return
+        }
+        if !force && suppressedAnomalyNotificationCount < suppressedAnomalySummaryMinimumCount {
             return
         }
         let entities = suppressedAnomalyEntityKeys.sorted().prefix(5).joined(separator: ", ")

@@ -36,6 +36,9 @@ enum SessionLogAnalyzer {
         var nonActiveWindowWarnings = 0
 
         for case let entry as OSLogEntryLog in entries {
+            if isBenignFrameworkNoise(entry) {
+                continue
+            }
             let message = entry.composedMessage
             if entry.subsystem == "com.apple.UserNotifications"
                 && entry.category == "Connections"
@@ -60,5 +63,9 @@ enum SessionLogAnalyzer {
             metalLoadFailures: metalLoadFailures,
             nonActiveWindowWarnings: nonActiveWindowWarnings
         )
+    }
+
+    private static func isBenignFrameworkNoise(_ entry: OSLogEntryLog) -> Bool {
+        entry.subsystem == "com.apple.TextInputUI" && entry.category == "CursorUI"
     }
 }
