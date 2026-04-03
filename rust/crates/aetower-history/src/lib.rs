@@ -6,6 +6,7 @@ use aetower_model::{
 
 pub struct History {
     previous_scores: BTreeMap<String, f32>,
+    previous_anomaly: BTreeMap<String, bool>,
     metric_history: BTreeMap<String, MetricTrendState>,
     host_history: HostTrendState,
     timeline: VecDeque<TimelineEvent>,
@@ -28,6 +29,7 @@ struct HostTrendState {
     network_activity_bps: VecDeque<u64>,
     wakeups_per_second: VecDeque<f32>,
     compressed_memory_bytes: VecDeque<u64>,
+    ai_agent_friction: VecDeque<f32>,
 }
 
 const MAX_TREND_POINTS: usize = 30;
@@ -36,6 +38,7 @@ impl History {
     pub fn new() -> Self {
         Self {
             previous_scores: BTreeMap::new(),
+            previous_anomaly: BTreeMap::new(),
             metric_history: BTreeMap::new(),
             host_history: HostTrendState::default(),
             timeline: VecDeque::with_capacity(256),
@@ -63,12 +66,48 @@ impl History {
             entity.trend = trend_state.snapshot();
         }
 
+        // Anomaly detection: flag entities whose current friction exceeds
+        // mean + 2*stddev of their recent trend (z-score > 2).
+        for entity in entities.iter_mut() {
+            let is_anomaly = self
+                .metric_history
+                .get(&entity.entity_id)
+                .map(|trend| detect_anomaly(&trend.friction, entity.friction.total_score))
+                .unwrap_or(false);
+            entity.anomaly_detected = is_anomaly;
+
+            let was_anomaly = self
+                .previous_anomaly
+                .get(&entity.entity_id)
+                .copied()
+                .unwrap_or(false);
+            if is_anomaly && !was_anomaly {
+                self.push_event(
+                    captured_at_millis,
+                    TimelineSeverity::Warning,
+                    Some(entity.entity_id.clone()),
+                    format!("{} anomaly detected", entity.display_name),
+                    format!(
+                        "Friction {:.1} is unusually high for this entity",
+                        entity.friction.total_score
+                    ),
+                );
+            }
+            self.previous_anomaly
+                .insert(entity.entity_id.clone(), is_anomaly);
+        }
+
         self.metric_history.retain(|entity_id, _| {
             active_entity_ids
                 .iter()
                 .any(|active_id| active_id == entity_id)
         });
         self.previous_scores.retain(|entity_id, _| {
+            active_entity_ids
+                .iter()
+                .any(|active_id| active_id == entity_id)
+        });
+        self.previous_anomaly.retain(|entity_id, _| {
             active_entity_ids
                 .iter()
                 .any(|active_id| active_id == entity_id)
@@ -204,6 +243,7 @@ impl Default for HostTrendState {
             network_activity_bps: VecDeque::with_capacity(MAX_TREND_POINTS),
             wakeups_per_second: VecDeque::with_capacity(MAX_TREND_POINTS),
             compressed_memory_bytes: VecDeque::with_capacity(MAX_TREND_POINTS),
+            ai_agent_friction: VecDeque::with_capacity(MAX_TREND_POINTS),
         }
     }
 }
@@ -227,6 +267,7 @@ impl HostTrendState {
             &mut self.compressed_memory_bytes,
             host.compressed_memory_bytes,
         );
+        push_point(&mut self.ai_agent_friction, host.ai_agent_friction);
     }
 
     fn snapshot(&self) -> HostTrend {
@@ -238,6 +279,7 @@ impl HostTrendState {
             network_activity_bps: self.network_activity_bps.iter().copied().collect(),
             wakeups_per_second: self.wakeups_per_second.iter().copied().collect(),
             compressed_memory_bytes: self.compressed_memory_bytes.iter().copied().collect(),
+            ai_agent_friction: self.ai_agent_friction.iter().copied().collect(),
         }
     }
 }
@@ -276,4 +318,21 @@ fn machine_friction_score(host: &HostSnapshot) -> f32 {
     let wakeups_score = (host.wakeups_per_second / 500.0).min(1.0) * 8.0;
     (cpu_score + memory_score + swap_score + compressed_score + network_score + wakeups_score)
         .min(100.0)
+}
+
+/// Z-score anomaly detection: returns true if `current` is more than 2
+/// standard deviations above the mean of `series`.  Requires at least 5
+/// samples to avoid false positives during warmup.
+fn detect_anomaly(series: &VecDeque<f32>, current: f32) -> bool {
+    if series.len() < 5 {
+        return false;
+    }
+    let n = series.len() as f32;
+    let mean = series.iter().sum::<f32>() / n;
+    let variance = series.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / n;
+    let stddev = variance.sqrt();
+    if stddev < 1.0 {
+        return false; // not enough variance to be meaningful
+    }
+    (current - mean) / stddev > 2.0
 }

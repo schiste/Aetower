@@ -5,6 +5,7 @@ enum TrendMetricStyle {
     case cpu
     case memory
     case disk
+    case energy
 
     var color: Color {
         switch self {
@@ -16,6 +17,8 @@ enum TrendMetricStyle {
             return .green
         case .disk:
             return .pink
+        case .energy:
+            return .yellow
         }
     }
 }

@@ -91,6 +91,11 @@ pub fn run_benchmark(config: BenchmarkConfig) -> BenchmarkReport {
             low_power_mode: raw.host.low_power_mode,
             frontmost_app_name: None,
             frontmost_window_title: None,
+            ai_agent_friction: 0.0,
+            ai_agent_count: 0,
+            gpu_percent: 0.0,
+            ane_percent: 0.0,
+            gpu_memory_bytes: 0,
         };
         let identity = identity::resolve(&raw.processes);
         let mut entities = attribution::build_entities(&raw.processes, &identity, None);
@@ -121,6 +126,11 @@ pub fn run_benchmark(config: BenchmarkConfig) -> BenchmarkReport {
             low_power_mode: raw.host.low_power_mode,
             frontmost_app_name: None,
             frontmost_window_title: None,
+            ai_agent_friction: 0.0,
+            ai_agent_count: 0,
+            gpu_percent: 0.0,
+            ane_percent: 0.0,
+            gpu_memory_bytes: 0,
         };
         let identity_started_at = Instant::now();
         let identity = identity::resolve(&raw.processes);

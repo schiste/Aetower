@@ -128,6 +128,7 @@ private enum SortKey: String, CaseIterable, Identifiable {
     case memory
     case disk
     case network
+    case energy
     case alphabeticalAsc
     case alphabeticalDesc
     case oldestFirst
@@ -142,6 +143,7 @@ private enum SortKey: String, CaseIterable, Identifiable {
         case .memory: return "Memory"
         case .disk: return "Disk"
         case .network: return "Network"
+        case .energy: return "Energy"
         case .alphabeticalAsc: return "A - Z"
         case .alphabeticalDesc: return "Z - A"
         case .oldestFirst: return "Oldest first"
@@ -156,6 +158,7 @@ private enum SortKey: String, CaseIterable, Identifiable {
         case .memory: return .green
         case .disk: return .pink
         case .network: return .teal
+        case .energy: return .yellow
         case .alphabeticalAsc, .alphabeticalDesc, .oldestFirst, .newestFirst:
             return .gray
         }
@@ -163,7 +166,7 @@ private enum SortKey: String, CaseIterable, Identifiable {
 
     var usesMetricValue: Bool {
         switch self {
-        case .friction, .cpu, .memory, .disk, .network:
+        case .friction, .cpu, .memory, .disk, .network, .energy:
             return true
         case .alphabeticalAsc, .alphabeticalDesc, .oldestFirst, .newestFirst:
             return false
@@ -277,6 +280,12 @@ private struct EntityRow: View {
                         .background(aiAgentDotColor.opacity(0.12), in: Capsule())
                         .help("AI agent managed by Chau7")
                     }
+                    if entity.anomalyDetected {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption)
+                            .help("Anomaly: friction is unusually high for this entity")
+                    }
                     RowSignalBadge(
                         valueText: badgeValueText,
                         title: entity.displayName,
@@ -327,6 +336,32 @@ private struct EntityRow: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(isSelected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
         )
+        .contextMenu {
+            Button("Copy Process IDs") {
+                let pids = entity.components.compactMap(\.processId).map(String.init).joined(separator: ", ")
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(pids, forType: .string)
+            }
+            if entity.executablePath?.contains(".app/") == true {
+                Button("Show in Finder") {
+                    if let path = entity.executablePath {
+                        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+                    }
+                }
+            }
+            Button("Copy Name") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(entity.displayName, forType: .string)
+            }
+            Divider()
+            Button("Terminate Processes", role: .destructive) {
+                for component in entity.components {
+                    if let pid = component.processId {
+                        kill(Int32(pid), SIGTERM)
+                    }
+                }
+            }
+        }
     }
 
     private var rowBackground: Color {
@@ -363,6 +398,8 @@ private struct EntityRow: View {
             return formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps)
         case .network:
             return formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps)
+        case .energy:
+            return String(format: "%.1f", entity.friction.energyImpactScore)
         case .alphabeticalAsc, .alphabeticalDesc:
             return nil
         case .oldestFirst:
@@ -393,6 +430,7 @@ public struct MainListView: View {
     @State private var selectedEntityID: String?
     @State private var searchText = ""
     @State private var sortKey: SortKey = .friction
+    @State private var focusedIndex: Int = 0
 
     public init(state: AppState) {
         self.state = state
@@ -410,6 +448,13 @@ public struct MainListView: View {
             }
         }
         .navigationTitle("Aetower")
+        .modifier(KeyboardNavigationModifier(
+            focusedIndex: $focusedIndex,
+            selectedEntityID: $selectedEntityID,
+            sortKey: $sortKey,
+            entityCount: filteredEntities.count,
+            entityIdAt: { index in filteredEntities[index].entityId }
+        ))
     }
 
     private var summaryHeader: some View {
@@ -417,6 +462,13 @@ public struct MainListView: View {
             HStack(alignment: .center) {
                 SectionEyebrow(text: "Machine")
                 Spacer()
+                Button {
+                    state.exportSnapshot()
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
                 if selectedEntity != nil {
                     Button("Back to ranking") {
                         selectedEntityID = nil
@@ -540,7 +592,7 @@ public struct MainListView: View {
 
             Divider()
 
-            EntityDetailView(entity: entity)
+            EntityDetailView(entity: entity, state: state)
         }
     }
 
@@ -593,6 +645,28 @@ public struct MainListView: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Copy Process IDs") {
+                                let pids = entity.components.compactMap { $0.processId }.map(String.init).joined(separator: ", ")
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(pids, forType: .string)
+                            }
+                            if entity.executablePath?.contains(".app/") == true {
+                                Button("Show in Finder") {
+                                    if let path = entity.executablePath {
+                                        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+                                    }
+                                }
+                            }
+                            Divider()
+                            Button("Terminate Processes", role: .destructive) {
+                                for component in entity.components {
+                                    if let pid = component.processId {
+                                        kill(Int32(pid), SIGTERM)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -655,6 +729,8 @@ public struct MainListView: View {
             return "\(entity.displayName) is currently highest by disk activity at \(formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))."
         case .network:
             return "\(entity.displayName) is currently highest by network activity at \(formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps))."
+        case .energy:
+            return "\(entity.displayName) is currently highest by energy impact at \(String(format: "%.1f", entity.friction.energyImpactScore))."
         case .alphabeticalAsc:
             return "\(entity.displayName) is first in the current alphabetical A-Z sort."
         case .alphabeticalDesc:
@@ -678,6 +754,8 @@ public struct MainListView: View {
             return formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps)
         case .network:
             return formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps)
+        case .energy:
+            return String(format: "%.1f", entity.friction.energyImpactScore)
         case .alphabeticalAsc, .alphabeticalDesc:
             return nil
         case .oldestFirst:
@@ -872,6 +950,8 @@ private func compareEntities(_ left: EntitySnapshot, _ right: EntitySnapshot, by
         return (left.metrics.diskReadBps + left.metrics.diskWriteBps) > (right.metrics.diskReadBps + right.metrics.diskWriteBps)
     case .network:
         return (left.metrics.networkReceiveBps + left.metrics.networkSendBps) > (right.metrics.networkReceiveBps + right.metrics.networkSendBps)
+    case .energy:
+        return Double(left.friction.energyImpactScore) > Double(right.friction.energyImpactScore)
     case .alphabeticalAsc:
         return left.displayName.localizedCaseInsensitiveCompare(right.displayName) == .orderedAscending
     case .alphabeticalDesc:
@@ -901,4 +981,40 @@ private func ageLabel(from startMillis: UInt64, now capturedAtMillis: UInt64) ->
         return "\(elapsedSeconds / 3_600)h"
     }
     return "\(elapsedSeconds / 86_400)d"
+}
+
+private struct KeyboardNavigationModifier: ViewModifier {
+    @Binding var focusedIndex: Int
+    @Binding var selectedEntityID: String?
+    @Binding var sortKey: SortKey
+    let entityCount: Int
+    let entityIdAt: (Int) -> String
+
+    func body(content: Content) -> some View {
+        content
+            .onKeyPress("j") { moveDown() }
+            .onKeyPress("k") { moveUp() }
+            .onKeyPress(.return) { selectCurrent() }
+            .onKeyPress(.escape) { selectedEntityID = nil; return .handled }
+    }
+
+    private func moveDown() -> KeyPress.Result {
+        guard entityCount > 0 else { return .ignored }
+        focusedIndex = min(focusedIndex + 1, entityCount - 1)
+        selectedEntityID = entityIdAt(focusedIndex)
+        return .handled
+    }
+
+    private func moveUp() -> KeyPress.Result {
+        guard entityCount > 0 else { return .ignored }
+        focusedIndex = max(focusedIndex - 1, 0)
+        selectedEntityID = entityIdAt(focusedIndex)
+        return .handled
+    }
+
+    private func selectCurrent() -> KeyPress.Result {
+        guard selectedEntityID == nil, entityCount > 0 else { return .handled }
+        selectedEntityID = entityIdAt(focusedIndex)
+        return .handled
+    }
 }

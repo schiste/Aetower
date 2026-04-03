@@ -108,6 +108,16 @@ pub struct HostSnapshot {
     pub low_power_mode: bool,
     pub frontmost_app_name: Option<String>,
     pub frontmost_window_title: Option<String>,
+    #[serde(default)]
+    pub ai_agent_friction: f32,
+    #[serde(default)]
+    pub ai_agent_count: u32,
+    #[serde(default)]
+    pub gpu_percent: f32,
+    #[serde(default)]
+    pub ane_percent: f32,
+    #[serde(default)]
+    pub gpu_memory_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -122,6 +132,8 @@ pub struct HostTrend {
     pub wakeups_per_second: Vec<f32>,
     #[serde(default)]
     pub compressed_memory_bytes: Vec<u64>,
+    #[serde(default)]
+    pub ai_agent_friction: Vec<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -152,6 +164,8 @@ pub struct FrictionBreakdown {
     #[serde(default)]
     pub pressure_score: f32,
     pub foreground_bonus: f32,
+    #[serde(default)]
+    pub energy_impact_score: f32,
     pub reasons: Vec<String>,
 }
 
@@ -168,6 +182,8 @@ pub struct ComponentSnapshot {
     pub launched_by: Option<String>,
     pub cpu_percent: f32,
     pub memory_bytes: u64,
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -189,6 +205,29 @@ pub struct Recommendation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentCostSummary {
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub cost_usd: f32,
+    pub total_runs: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionMarkerKind {
+    #[default]
+    RunStart,
+    RunEnd,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SessionMarker {
+    pub timestamp_millis: u64,
+    pub kind: SessionMarkerKind,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EntitySnapshot {
     pub entity_id: String,
     pub display_name: String,
@@ -204,6 +243,16 @@ pub struct EntitySnapshot {
     pub trend: MetricTrend,
     pub badges: Vec<String>,
     pub active_window_title: Option<String>,
+    #[serde(default)]
+    pub anomaly_detected: bool,
+    #[serde(default)]
+    pub thermal_contribution: Option<String>,
+    #[serde(default)]
+    pub grouping_suggestion: Option<String>,
+    #[serde(default)]
+    pub agent_cost: Option<AgentCostSummary>,
+    #[serde(default)]
+    pub session_markers: Vec<SessionMarker>,
     #[serde(default)]
     pub recommendations: Vec<Recommendation>,
 }

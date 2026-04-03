@@ -377,6 +377,7 @@ mod tests {
             disk_read_bytes: 0,
             disk_write_bytes: 0,
             wakeups_per_second: 0.0,
+            cwd: None,
         }
     }
 

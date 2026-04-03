@@ -97,6 +97,11 @@ pub struct HostSnapshot {
     pub low_power_mode: bool,
     pub frontmost_app_name: Option<String>,
     pub frontmost_window_title: Option<String>,
+    pub ai_agent_friction: f32,
+    pub ai_agent_count: u32,
+    pub gpu_percent: f32,
+    pub ane_percent: f32,
+    pub gpu_memory_bytes: u64,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -108,6 +113,7 @@ pub struct HostTrend {
     pub network_activity_bps: Vec<u64>,
     pub wakeups_per_second: Vec<f32>,
     pub compressed_memory_bytes: Vec<u64>,
+    pub ai_agent_friction: Vec<f32>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -134,6 +140,7 @@ pub struct FrictionBreakdown {
     pub wakeups_score: f32,
     pub pressure_score: f32,
     pub foreground_bonus: f32,
+    pub energy_impact_score: f32,
     pub reasons: Vec<String>,
 }
 
@@ -150,6 +157,7 @@ pub struct ComponentSnapshot {
     pub launched_by: Option<String>,
     pub cpu_percent: f32,
     pub memory_bytes: u64,
+    pub cwd: Option<String>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -169,6 +177,27 @@ pub struct Recommendation {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct AgentCostSummary {
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub cost_usd: f32,
+    pub total_runs: u32,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum SessionMarkerKind {
+    RunStart,
+    RunEnd,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct SessionMarker {
+    pub timestamp_millis: u64,
+    pub kind: SessionMarkerKind,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct EntitySnapshot {
     pub entity_id: String,
     pub display_name: String,
@@ -184,6 +213,11 @@ pub struct EntitySnapshot {
     pub trend: MetricTrend,
     pub badges: Vec<String>,
     pub active_window_title: Option<String>,
+    pub anomaly_detected: bool,
+    pub thermal_contribution: Option<String>,
+    pub grouping_suggestion: Option<String>,
+    pub agent_cost: Option<AgentCostSummary>,
+    pub session_markers: Vec<SessionMarker>,
     pub recommendations: Vec<Recommendation>,
 }
 
@@ -317,6 +351,37 @@ impl MonitorEngine {
             .lock()
             .expect("engine lock poisoned")
             .configure_chau7_endpoint(socket_path);
+    }
+
+    pub fn stop_agent_session(&self, session_id: String, force: bool) -> String {
+        match self
+            .inner
+            .lock()
+            .expect("engine lock poisoned")
+            .stop_agent_session(session_id, force)
+        {
+            Ok(()) => String::new(),
+            Err(error) => error,
+        }
+    }
+
+    pub fn load_history_range(&self, start_millis: u64, end_millis: u64) -> Vec<SystemSnapshot> {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .load_history_range(start_millis, end_millis)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    pub fn export_snapshot_json(&self) -> String {
+        let snapshot = self
+            .inner
+            .lock()
+            .expect("engine lock poisoned")
+            .latest_snapshot();
+        serde_json::to_string_pretty(&snapshot).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
     }
 }
 
@@ -462,6 +527,11 @@ impl From<model::HostSnapshot> for HostSnapshot {
             low_power_mode: value.low_power_mode,
             frontmost_app_name: value.frontmost_app_name,
             frontmost_window_title: value.frontmost_window_title,
+            ai_agent_friction: value.ai_agent_friction,
+            ai_agent_count: value.ai_agent_count,
+            gpu_percent: value.gpu_percent,
+            ane_percent: value.ane_percent,
+            gpu_memory_bytes: value.gpu_memory_bytes,
         }
     }
 }
@@ -476,6 +546,7 @@ impl From<model::HostTrend> for HostTrend {
             network_activity_bps: value.network_activity_bps,
             wakeups_per_second: value.wakeups_per_second,
             compressed_memory_bytes: value.compressed_memory_bytes,
+            ai_agent_friction: value.ai_agent_friction,
         }
     }
 }
@@ -508,6 +579,7 @@ impl From<model::FrictionBreakdown> for FrictionBreakdown {
             wakeups_score: value.wakeups_score,
             pressure_score: value.pressure_score,
             foreground_bonus: value.foreground_bonus,
+            energy_impact_score: value.energy_impact_score,
             reasons: value.reasons,
         }
     }
@@ -536,6 +608,7 @@ impl From<model::ComponentSnapshot> for ComponentSnapshot {
             launched_by: value.launched_by,
             cpu_percent: value.cpu_percent,
             memory_bytes: value.memory_bytes,
+            cwd: value.cwd,
         }
     }
 }
@@ -579,7 +652,42 @@ impl From<model::EntitySnapshot> for EntitySnapshot {
             trend: value.trend.into(),
             badges: value.badges,
             active_window_title: value.active_window_title,
+            anomaly_detected: value.anomaly_detected,
+            thermal_contribution: value.thermal_contribution,
+            grouping_suggestion: value.grouping_suggestion,
+            agent_cost: value.agent_cost.map(Into::into),
+            session_markers: value.session_markers.into_iter().map(Into::into).collect(),
             recommendations: value.recommendations.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<model::AgentCostSummary> for AgentCostSummary {
+    fn from(value: model::AgentCostSummary) -> Self {
+        Self {
+            total_input_tokens: value.total_input_tokens,
+            total_output_tokens: value.total_output_tokens,
+            cost_usd: value.cost_usd,
+            total_runs: value.total_runs,
+        }
+    }
+}
+
+impl From<model::SessionMarkerKind> for SessionMarkerKind {
+    fn from(value: model::SessionMarkerKind) -> Self {
+        match value {
+            model::SessionMarkerKind::RunStart => Self::RunStart,
+            model::SessionMarkerKind::RunEnd => Self::RunEnd,
+        }
+    }
+}
+
+impl From<model::SessionMarker> for SessionMarker {
+    fn from(value: model::SessionMarker) -> Self {
+        Self {
+            timestamp_millis: value.timestamp_millis,
+            kind: value.kind.into(),
+            label: value.label,
         }
     }
 }

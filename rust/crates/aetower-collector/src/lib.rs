@@ -21,6 +21,8 @@ pub struct RawProcessSample {
     pub disk_write_bytes: u64,
     #[serde(default)]
     pub wakeups_per_second: f32,
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -41,6 +43,12 @@ pub struct RawHostSample {
     pub on_battery: bool,
     pub battery_charge_percent: Option<u8>,
     pub low_power_mode: bool,
+    #[serde(default)]
+    pub gpu_percent: f32,
+    #[serde(default)]
+    pub ane_percent: f32,
+    #[serde(default)]
+    pub gpu_memory_bytes: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -68,6 +76,7 @@ pub struct Collector {
     process_metadata_tick: u8,
     host_environment_refresh_tick: u8,
     cached_host_environment: HostEnvironment,
+    cached_gpu_sample: aetower_gpu::GpuSample,
     previous_process_counters: HashMap<u32, ProcessCounterSample>,
 }
 
@@ -86,6 +95,7 @@ impl Collector {
             process_metadata_tick: 0,
             host_environment_refresh_tick: 0,
             cached_host_environment: HostEnvironment::default(),
+            cached_gpu_sample: aetower_gpu::GpuSample::default(),
             previous_process_counters: HashMap::new(),
         }
     }
@@ -99,6 +109,7 @@ impl Collector {
         self.process_metadata_tick = self.process_metadata_tick.wrapping_add(1);
         if self.host_environment_refresh_tick == 0 {
             self.cached_host_environment = read_environment();
+            self.cached_gpu_sample = aetower_gpu::sample_gpu().unwrap_or_default();
         }
         self.host_environment_refresh_tick = (self.host_environment_refresh_tick + 1) % 5;
 
@@ -151,6 +162,11 @@ impl Collector {
                     disk_read_bytes: process.disk_usage().read_bytes,
                     disk_write_bytes: process.disk_usage().written_bytes,
                     wakeups_per_second,
+                    cwd: if self.process_metadata_tick.is_multiple_of(2) {
+                        platform::process_cwd(pid)
+                    } else {
+                        None
+                    },
                 }
             })
             .collect();
@@ -187,6 +203,9 @@ impl Collector {
             on_battery: self.cached_host_environment.on_battery,
             battery_charge_percent: self.cached_host_environment.battery_charge_percent,
             low_power_mode: self.cached_host_environment.low_power_mode,
+            gpu_percent: self.cached_gpu_sample.gpu_percent,
+            ane_percent: self.cached_gpu_sample.ane_percent,
+            gpu_memory_bytes: self.cached_gpu_sample.gpu_memory_bytes,
         };
         self.previous_network_totals = network_totals;
 
@@ -290,6 +309,13 @@ mod platform {
             host_info_out_cnt: *mut u32,
         ) -> i32;
         fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut c_void) -> i32;
+        fn proc_pidinfo(
+            pid: i32,
+            flavor: i32,
+            arg: u64,
+            buffer: *mut c_void,
+            buffersize: i32,
+        ) -> i32;
     }
 
     #[link(name = "objc")]
@@ -325,6 +351,45 @@ mod platform {
             info.ri_interrupt_wkups
                 .saturating_add(info.ri_pkg_idle_wkups),
         )
+    }
+
+    const PROC_PIDVNODEPATHINFO: i32 = 9;
+    const MAXPATHLEN: usize = 1024;
+
+    #[repr(C)]
+    struct VnodeInfoPath {
+        _vip_vi: [u8; 152],
+        vip_path: [u8; MAXPATHLEN],
+    }
+
+    #[repr(C)]
+    struct ProcVnodePathInfo {
+        pvi_cdir: VnodeInfoPath,
+        _pvi_rdir: VnodeInfoPath,
+    }
+
+    pub fn process_cwd(pid: u32) -> Option<String> {
+        unsafe {
+            let mut info: ProcVnodePathInfo = mem::zeroed();
+            let size = mem::size_of::<ProcVnodePathInfo>() as i32;
+            let result = proc_pidinfo(
+                pid as i32,
+                PROC_PIDVNODEPATHINFO,
+                0,
+                &mut info as *mut _ as *mut c_void,
+                size,
+            );
+            if result <= 0 {
+                return None;
+            }
+            let cstr = CStr::from_ptr(info.pvi_cdir.vip_path.as_ptr() as *const c_char);
+            let path = cstr.to_str().ok()?.to_owned();
+            if path.is_empty() {
+                None
+            } else {
+                Some(path)
+            }
+        }
     }
 
     pub fn compressed_memory_bytes() -> Option<u64> {
@@ -576,6 +641,10 @@ mod platform {
     }
 
     pub fn process_wakeups(_pid: u32) -> Option<u64> {
+        None
+    }
+
+    pub fn process_cwd(_pid: u32) -> Option<String> {
         None
     }
 

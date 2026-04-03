@@ -81,6 +81,17 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
             reasons.push("background baseline activity".to_owned());
         }
 
+        // Energy impact: weighted combination of power-hungry components.
+        // Scale: 0-100 where 100 = maximum single-entity battery drain.
+        let thermal_penalty = (thermal_multiplier - 1.0) * 200.0; // 0 to ~36
+        let battery_penalty = if host.on_battery { 10.0 } else { 0.0 };
+        let energy_impact_score = (cpu_score * 0.45
+            + wakeups_score * 0.25
+            + disk_score * 0.15
+            + thermal_penalty * 0.10
+            + battery_penalty * 0.05)
+            .min(100.0);
+
         entity.friction.total_score = total_score;
         entity.friction.cpu_score = cpu_score;
         entity.friction.memory_score = memory_score;
@@ -89,6 +100,7 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
         entity.friction.wakeups_score = wakeups_score;
         entity.friction.pressure_score = pressure_score;
         entity.friction.foreground_bonus = foreground_bonus;
+        entity.friction.energy_impact_score = energy_impact_score;
         entity.friction.reasons = reasons;
         entity.recommendations = recommendations_for_entity(entity, host, network_mib);
     }
@@ -214,6 +226,11 @@ mod tests {
             trend: MetricTrend::default(),
             badges: Vec::new(),
             active_window_title: None,
+            anomaly_detected: false,
+            thermal_contribution: None,
+            grouping_suggestion: None,
+            agent_cost: None,
+            session_markers: Vec::new(),
             recommendations: Vec::new(),
         }
     }

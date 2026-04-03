@@ -1,6 +1,8 @@
 import AppKit
 import Combine
 import Foundation
+import UniformTypeIdentifiers
+import UserNotifications
 import AetowerBridge
 
 @MainActor
@@ -19,6 +21,7 @@ public final class AppState: ObservableObject {
     private var lastPublishedWindowTitle: String?
     private var lastFrontmostProbeDate = Date.distantPast
     private var lastWindowTitleProbeDate = Date.distantPast
+    private var previousAnomalyStates: [String: Bool] = [:]
 
     private let frontmostProbeInterval: TimeInterval = 1.0
     private let windowTitleProbeInterval: TimeInterval = 5.0
@@ -46,7 +49,12 @@ public final class AppState: ObservableObject {
                 batteryChargePercent: nil,
                 lowPowerMode: false,
                 frontmostAppName: nil,
-                frontmostWindowTitle: nil
+                frontmostWindowTitle: nil,
+                aiAgentFriction: 0,
+                aiAgentCount: 0,
+                gpuPercent: 0,
+                anePercent: 0,
+                gpuMemoryBytes: 0
             ),
             hostTrend: HostTrend(
                 machineFriction: [],
@@ -55,7 +63,8 @@ public final class AppState: ObservableObject {
                 diskActivityBps: [],
                 networkActivityBps: [],
                 wakeupsPerSecond: [],
-                compressedMemoryBytes: []
+                compressedMemoryBytes: [],
+                aiAgentFriction: []
             ),
             capabilities: [],
             entities: [],
@@ -97,6 +106,27 @@ public final class AppState: ObservableObject {
         refresh(force: true)
     }
 
+    public func stopAgentSession(sessionId: String, force: Bool) {
+        if let error = bridge.stopAgentSession(sessionId: sessionId, force: force) {
+            lastError = error
+        }
+        refresh(force: true)
+    }
+
+    public func exportSnapshot() {
+        let json = bridge.exportSnapshotJSON()
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "aetower-snapshot.json"
+        if panel.runModal() == .OK, let url = panel.url {
+            try? json.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    public func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
     public func applyIntegrationSettings(_ settings: SettingsStore) {
         let chromiumEndpoint = settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let dockerSocketPath = settings.dockerSocketPath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -133,6 +163,7 @@ public final class AppState: ObservableObject {
                 appName: lastPublishedFrontmostAppName,
                 windowTitle: lastPublishedWindowTitle
             )
+            diffAnomalyStates()
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -212,5 +243,30 @@ public final class AppState: ObservableObject {
     private func applyLocalFrontmostState(appName: String?, windowTitle: String?) {
         snapshot.host.frontmostAppName = appName
         snapshot.host.frontmostWindowTitle = windowTitle
+    }
+
+    private func diffAnomalyStates() {
+        var newStates: [String: Bool] = [:]
+        for entity in snapshot.entities {
+            newStates[entity.entityId] = entity.anomalyDetected
+            let wasAnomaly = previousAnomalyStates[entity.entityId] ?? false
+            if entity.anomalyDetected && !wasAnomaly {
+                fireAnomalyNotification(for: entity)
+            }
+        }
+        previousAnomalyStates = newStates
+    }
+
+    private func fireAnomalyNotification(for entity: EntitySnapshot) {
+        let content = UNMutableNotificationContent()
+        content.title = "Anomaly Detected"
+        content.body = "\(entity.displayName) friction is unusually high (\(String(format: "%.1f", entity.friction.totalScore)))."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "anomaly-\(entity.entityId)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 }

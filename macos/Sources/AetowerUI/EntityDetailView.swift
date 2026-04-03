@@ -122,6 +122,9 @@ private struct ComponentCard: View {
                     if let commandLine = component.commandLine {
                         ComponentMetadataLine(title: "Command", value: commandLine)
                     }
+                    if let cwd = component.cwd {
+                        ComponentMetadataLine(title: "Working Directory", value: cwd)
+                    }
                 }
             }
         }
@@ -146,19 +149,32 @@ private struct ComponentCard: View {
             || component.launchedBy != nil
             || component.executablePath != nil
             || component.commandLine != nil
+            || component.cwd != nil
     }
 }
 
 public struct EntityDetailView: View {
     let entity: EntitySnapshot
+    @ObservedObject private var state: AppState
 
-    public init(entity: EntitySnapshot) {
+    public init(entity: EntitySnapshot, state: AppState) {
         self.entity = entity
+        self.state = state
     }
 
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                if entity.anomalyDetected {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text("Anomaly detected — friction is unusually high for this entity right now.")
+                            .font(.callout)
+                    }
+                    .padding(12)
+                    .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                }
                 hero
                 if entity.entityKind == .aiAgent { aiAgentSession }
                 whyItMatters
@@ -202,6 +218,13 @@ public struct EntityDetailView: View {
                     subtitle: "read + write throughput · \(trendWindowLabel(sampleCount: entity.trend.diskActivityBps.count))",
                     samples: entity.trend.diskActivityBps.map(Double.init),
                     style: .disk
+                )
+                TrendMetricCard(
+                    title: "Energy Impact",
+                    value: String(format: "%.1f", entity.friction.energyImpactScore),
+                    subtitle: "estimated battery drain",
+                    samples: [],
+                    style: .energy
                 )
                 TrendMetricCard(
                     title: "Network",
@@ -293,10 +316,31 @@ public struct EntityDetailView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    HStack(spacing: 12) {
+                        Button("Stop Session") {
+                            if let sessionId = extractSessionId() {
+                                state.stopAgentSession(sessionId: sessionId, force: false)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+
+                        Button("Force Stop") {
+                            if let sessionId = extractSessionId() {
+                                state.stopAgentSession(sessionId: sessionId, force: true)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.red)
+                    }
                 }
                 .padding(.top, 4)
             }
         }
+    }
+
+    private func extractSessionId() -> String? {
+        entity.badges.first(where: { $0.hasPrefix("ai-session:") })?.replacingOccurrences(of: "ai-session:", with: "")
     }
 
     private var whatAetowerSees: some View {
