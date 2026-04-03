@@ -76,6 +76,7 @@ pub fn build_entities(
             cpu_percent: process.cpu_percent,
             memory_bytes: process.memory_bytes,
             cwd: process.cwd.clone(),
+            user: process.user.clone(),
         });
     }
 
@@ -405,6 +406,7 @@ mod tests {
                 disk_write_bytes: 200,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
             RawProcessSample {
                 pid: 2,
@@ -420,6 +422,7 @@ mod tests {
                 disk_write_bytes: 400,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
         ];
         let entity_id = "bundle:test".to_owned();
@@ -490,6 +493,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
             RawProcessSample {
                 pid: 11,
@@ -508,6 +512,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
             RawProcessSample {
                 pid: 1,
@@ -523,6 +528,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
         ];
         let identity = IdentityMap {
@@ -601,6 +607,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
             RawProcessSample {
                 pid: 21,
@@ -616,6 +623,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
             RawProcessSample {
                 pid: 10,
@@ -634,6 +642,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
         ];
         let identity = IdentityMap {
@@ -678,6 +687,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
             RawProcessSample {
                 pid: 1,
@@ -693,6 +703,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
         ];
         let identity = IdentityMap {
@@ -738,6 +749,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
             RawProcessSample {
                 pid: 3,
@@ -753,6 +765,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
             RawProcessSample {
                 pid: 2,
@@ -771,6 +784,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
             RawProcessSample {
                 pid: 1,
@@ -786,6 +800,7 @@ mod tests {
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
                 cwd: None,
+                user: None,
             },
         ];
         let identity = IdentityMap {

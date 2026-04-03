@@ -306,6 +306,20 @@ private struct EntityRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 52, alignment: .trailing)
 
+            // User — from first component
+            Text(entityUser)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .frame(width: 60, alignment: .trailing)
+
+            // Parent — from first component
+            Text(entityParent)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .frame(width: 80, alignment: .trailing)
+
             // Friction score — bold, colored
             HStack(spacing: 2) {
                 let trend = AetowerDesign.trendArrow(entity.trend.friction)
@@ -387,6 +401,14 @@ private struct EntityRow: View {
         if entity.badges.contains("codex") { return "Codex" }
         if entity.badges.contains("chatgpt") { return "ChatGPT" }
         return "AI"
+    }
+
+    private var entityUser: String {
+        entity.components.first?.user ?? ""
+    }
+
+    private var entityParent: String {
+        entity.components.first?.parentSummary ?? ""
     }
 
     private var entityIcon: String {
@@ -631,6 +653,10 @@ public struct MainListView: View {
                     .frame(width: 48, alignment: .trailing)
                 Text("MEM")
                     .frame(width: 52, alignment: .trailing)
+                Text("User")
+                    .frame(width: 60, alignment: .trailing)
+                Text("Parent")
+                    .frame(width: 80, alignment: .trailing)
                 Text("Friction")
                     .frame(width: 50, alignment: .trailing)
             }

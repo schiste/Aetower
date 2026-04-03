@@ -230,6 +230,7 @@ pub struct ComponentSnapshot {
     pub cpu_percent: f32,
     pub memory_bytes: u64,
     pub cwd: Option<String>,
+    pub user: Option<String>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -955,6 +956,7 @@ impl From<model::ComponentSnapshot> for ComponentSnapshot {
             cpu_percent: value.cpu_percent,
             memory_bytes: value.memory_bytes,
             cwd: value.cwd,
+            user: value.user,
         }
     }
 }

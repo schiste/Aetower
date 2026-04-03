@@ -750,6 +750,7 @@ impl AdapterManager {
                             cpu_percent: target.cpu_percent,
                             memory_bytes: target.js_heap_used_bytes,
                             cwd: None,
+                            user: None,
                         });
                     }
                     if !targets.is_empty()
@@ -815,6 +816,7 @@ impl AdapterManager {
                             cpu_percent: container.cpu_percent,
                             memory_bytes: container.memory_usage_bytes,
                             cwd: None,
+                            user: None,
                         });
                     }
                     if !containers.is_empty()
@@ -871,6 +873,7 @@ impl AdapterManager {
                         cpu_percent: 0.0,
                         memory_bytes: 0,
                         cwd: None,
+                        user: None,
                     });
                     if !entity
                         .badges
@@ -982,6 +985,7 @@ impl AdapterManager {
                         cpu_percent: 0.0,
                         memory_bytes: 0,
                         cwd: None,
+                        user: None,
                     });
 
                     if tab.is_ai_agent() {
@@ -1992,6 +1996,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             cpu_percent: 0.0,
             memory_bytes: 0,
             cwd: None,
+            user: None,
         });
     }
 
@@ -2030,6 +2035,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             cpu_percent: 0.0,
             memory_bytes: 0,
             cwd: None,
+            user: None,
         });
         push_unique_badge(entity, "vscode-extension-host");
     }
@@ -2082,6 +2088,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             cpu_percent: 0.0,
             memory_bytes: 0,
             cwd: None,
+            user: None,
         });
     }
 
@@ -2408,6 +2415,7 @@ mod tests {
                     cpu_percent: 0.0,
                     memory_bytes: 0,
                     cwd: None,
+                    user: None,
                 },
                 ComponentSnapshot {
                     kind: ComponentKind::Process,
@@ -2425,6 +2433,7 @@ mod tests {
                     cpu_percent: 0.0,
                     memory_bytes: 0,
                     cwd: None,
+                    user: None,
                 },
             ],
             trend: MetricTrend::default(),

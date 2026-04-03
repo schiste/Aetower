@@ -1346,10 +1346,11 @@ public struct ComponentSnapshot {
     public var cpuPercent: Float
     public var memoryBytes: UInt64
     public var cwd: String?
+    public var user: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: ComponentKind, title: String, detail: String, adapterContext: AdapterContextSnapshot?, provenance: ProvenanceSnapshot?, processId: UInt32?, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, cwd: String?) {
+    public init(kind: ComponentKind, title: String, detail: String, adapterContext: AdapterContextSnapshot?, provenance: ProvenanceSnapshot?, processId: UInt32?, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, cwd: String?, user: String?) {
         self.kind = kind
         self.title = title
         self.detail = detail
@@ -1363,6 +1364,7 @@ public struct ComponentSnapshot {
         self.cpuPercent = cpuPercent
         self.memoryBytes = memoryBytes
         self.cwd = cwd
+        self.user = user
     }
 }
 
@@ -1412,6 +1414,9 @@ extension ComponentSnapshot: Equatable, Hashable {
         if lhs.cwd != rhs.cwd {
             return false
         }
+        if lhs.user != rhs.user {
+            return false
+        }
         return true
     }
 
@@ -1429,6 +1434,7 @@ extension ComponentSnapshot: Equatable, Hashable {
         hasher.combine(cpuPercent)
         hasher.combine(memoryBytes)
         hasher.combine(cwd)
+        hasher.combine(user)
     }
 }
 
@@ -1453,7 +1459,8 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
                 launchedBy: FfiConverterOptionString.read(from: &buf), 
                 cpuPercent: FfiConverterFloat.read(from: &buf), 
                 memoryBytes: FfiConverterUInt64.read(from: &buf), 
-                cwd: FfiConverterOptionString.read(from: &buf)
+                cwd: FfiConverterOptionString.read(from: &buf), 
+                user: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -1471,6 +1478,7 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
         FfiConverterFloat.write(value.cpuPercent, into: &buf)
         FfiConverterUInt64.write(value.memoryBytes, into: &buf)
         FfiConverterOptionString.write(value.cwd, into: &buf)
+        FfiConverterOptionString.write(value.user, into: &buf)
     }
 }
 

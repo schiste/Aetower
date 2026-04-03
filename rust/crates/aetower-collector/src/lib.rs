@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use aetower_model::ThermalState;
 use serde::{Deserialize, Serialize};
-use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System};
+use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System, Users};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawProcessSample {
@@ -20,6 +20,8 @@ pub struct RawProcessSample {
     pub wakeups_per_second: f32,
     #[serde(default)]
     pub cwd: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -70,6 +72,7 @@ pub struct Collector {
     process_metadata_tick: u8,
     host_environment_refresh_tick: u8,
     cached_host_environment: HostEnvironment,
+    users: Users,
     previous_process_counters: HashMap<u32, ProcessCounterSample>,
     known_pids: Vec<sysinfo::Pid>,
     cwd_cache: HashMap<u32, String>,
@@ -89,6 +92,7 @@ impl Collector {
             process_metadata_tick: 0,
             host_environment_refresh_tick: 0,
             cached_host_environment: HostEnvironment::default(),
+            users: Users::new_with_refreshed_list(),
             previous_process_counters: HashMap::new(),
             known_pids: Vec::new(),
             cwd_cache: HashMap::new(),
@@ -197,6 +201,10 @@ impl Collector {
                     } else {
                         self.cwd_cache.get(&pid).cloned()
                     },
+                    user: process
+                        .user_id()
+                        .and_then(|uid| self.users.get_user_by_id(uid))
+                        .map(|u| u.name().to_owned()),
                 }
             })
             .collect();

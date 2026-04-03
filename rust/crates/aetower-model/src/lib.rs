@@ -261,6 +261,8 @@ pub struct ComponentSnapshot {
     pub memory_bytes: u64,
     #[serde(default)]
     pub cwd: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
