@@ -852,7 +852,7 @@ func formatWakeups(_ wakeupsPerSecond: Float) -> String {
 }
 
 private enum ByteFormatters {
-    static let binary: ByteCountFormatter = {
+    nonisolated(unsafe) static let binary: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useMB, .useGB]
         formatter.countStyle = .binary

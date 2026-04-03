@@ -1,4 +1,4 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 import PackageDescription
 import Foundation
 
@@ -43,7 +43,7 @@ ensureRustBridgeLibrary()
 let package = Package(
     name: "AetowerMac",
     platforms: [
-        .macOS(.v14)
+        .macOS(.v15)
     ],
     products: [
         .executable(name: "AetowerApp", targets: ["AetowerApp"])
