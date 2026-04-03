@@ -323,19 +323,27 @@ impl PersistedDiagnostics {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         let mut events = VecDeque::with_capacity(preload_limit.max(1));
-        let mut event_count = 0usize;
+        let mut retained = VecDeque::new();
+        let mut needs_rewrite = false;
 
         for line in reader.lines() {
             let Ok(line) = line else { continue };
             let Ok(event) = serde_json::from_str::<DiagnosticsEvent>(&line) else {
+                needs_rewrite = true;
                 continue;
             };
-            event_count = event_count.saturating_add(1);
+            if !should_persist_event(&event) {
+                needs_rewrite = true;
+                continue;
+            }
+            retained.push_back(event.clone());
             if events.len() >= preload_limit.max(1) {
                 events.pop_front();
             }
             events.push_back(event);
         }
+
+        let event_count = retained.len();
 
         let mut persistence = Self {
             path: path.to_path_buf(),
@@ -344,6 +352,9 @@ impl PersistedDiagnostics {
             compact_at: max_events.saturating_add((max_events / 4).max(1)),
             last_error: None,
         };
+        if needs_rewrite {
+            persistence.rewrite_from_events(&retained)?;
+        }
         persistence.compact_if_needed();
         Ok((events, persistence))
     }
@@ -406,6 +417,16 @@ impl PersistedDiagnostics {
         Ok(())
     }
 
+    fn rewrite_from_events(&mut self, events: &VecDeque<DiagnosticsEvent>) -> std::io::Result<()> {
+        let mut file = File::create(&self.path)?;
+        for event in events {
+            serde_json::to_writer(&mut file, event).map_err(io::Error::other)?;
+            file.write_all(b"\n")?;
+        }
+        self.event_count = events.len();
+        Ok(())
+    }
+
     fn file_bytes(&self) -> u64 {
         std::fs::metadata(&self.path)
             .map(|metadata| metadata.len())
@@ -434,7 +455,6 @@ fn should_persist_event(event: &DiagnosticsEvent) -> bool {
                 | "session-log-window-noise"
                 | "session-log-metal-error"
                 | "session-log-analysis-failed"
-                | "anomaly-notifications-suppressed"
         ),
         DiagnosticsLevel::Trace | DiagnosticsLevel::Debug => false,
     }
@@ -546,6 +566,35 @@ mod tests {
 
         let persisted = std::fs::read_to_string(&path).expect("persisted file");
         assert!(!persisted.contains("tick-completed"));
+        assert!(persisted.contains("history-load-failed"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn persistence_open_rewrites_events_that_no_longer_match_policy() {
+        let path = std::env::temp_dir().join(format!(
+            "aetower-diag-rewrite-{}.ndjson",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"id\":\"1\",\"timestamp_millis\":1,\"level\":\"info\",\"subsystem\":\"ui\",\"event_type\":\"anomaly-notifications-suppressed\",\"sequence\":null,\"entity_id\":null,\"adapter\":null,\"capability\":null,\"message\":\"old noise\",\"fields\":[],\"sensitive\":false}\n",
+                "{\"id\":\"2\",\"timestamp_millis\":2,\"level\":\"warn\",\"subsystem\":\"persistence\",\"event_type\":\"history-load-failed\",\"sequence\":null,\"entity_id\":null,\"adapter\":null,\"capability\":null,\"message\":\"kept\",\"fields\":[],\"sensitive\":false}\n"
+            ),
+        )
+        .expect("seed persisted file");
+
+        let store = DiagnosticsStore::with_persistence(8, &path, 16).expect("store");
+        let events = store.recent(10);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "history-load-failed");
+
+        let persisted = std::fs::read_to_string(&path).expect("persisted file");
+        assert!(!persisted.contains("anomaly-notifications-suppressed"));
         assert!(persisted.contains("history-load-failed"));
 
         let _ = std::fs::remove_file(&path);
