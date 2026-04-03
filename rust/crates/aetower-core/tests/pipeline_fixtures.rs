@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use aetower_core::{run_entity_pipeline, RawProcessSample};
+use aetower_core::{RawProcessSample, run_entity_pipeline};
 use aetower_model::{EntityKind, FrontmostAppState, HostSnapshot, ProvenanceKind};
 use serde::Deserialize;
 

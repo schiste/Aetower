@@ -1,10 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
-use sysinfo::{
-    CpuExt, CpuRefreshKind, NetworkExt, PidExt, ProcessExt, ProcessRefreshKind, RefreshKind,
-    System, SystemExt,
-};
+use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawProcessSample {
@@ -66,6 +63,7 @@ struct ProcessCounterSample {
 
 pub struct Collector {
     system: System,
+    networks: Networks,
     previous_network_totals: NetworkTotals,
     self_pid: u32,
     process_metadata_tick: u8,
@@ -76,14 +74,13 @@ pub struct Collector {
 
 impl Collector {
     pub fn new() -> Self {
-        let refresh = RefreshKind::new()
-            .with_cpu(CpuRefreshKind::everything())
-            .with_memory()
-            .with_processes(ProcessRefreshKind::everything());
-        let mut system = System::new_with_specifics(refresh);
+        let mut system = System::new();
         system.refresh_all();
+        let mut networks = Networks::new_with_refreshed_list();
+        networks.refresh(true);
         Self {
             system,
+            networks,
             previous_network_totals: NetworkTotals::default(),
             self_pid: std::process::id(),
             process_metadata_tick: 0,
@@ -94,11 +91,15 @@ impl Collector {
     }
 
     pub fn collect(&mut self) -> RawSnapshot {
-        self.system.refresh_cpu();
+        self.system.refresh_cpu_all();
         self.system.refresh_memory();
-        self.system.refresh_networks();
-        self.system
-            .refresh_processes_specifics(process_refresh_kind(self.process_metadata_tick));
+        self.networks.refresh(true);
+        let update_process_list = self.process_metadata_tick == 0;
+        self.system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            update_process_list,
+            process_refresh_kind(self.process_metadata_tick),
+        );
         self.process_metadata_tick = self.process_metadata_tick.wrapping_add(1);
         if self.host_environment_refresh_tick == 0 {
             self.cached_host_environment = read_environment();
@@ -106,7 +107,7 @@ impl Collector {
         self.host_environment_refresh_tick = (self.host_environment_refresh_tick + 1) % 5;
 
         let mut network_totals = NetworkTotals::default();
-        for (_name, data) in self.system.networks() {
+        for (_name, data) in &self.networks {
             network_totals.received = network_totals.received.saturating_add(data.received());
             network_totals.transmitted = network_totals
                 .transmitted
@@ -126,8 +127,7 @@ impl Collector {
                 let disk_read_total = process.disk_usage().read_bytes;
                 let disk_write_total = process.disk_usage().written_bytes;
 
-                // Compute deltas from previous sample (same process by start time).
-                let tick_seconds = 2.0_f32; // FAST_TICK = 2000ms
+                let tick_seconds = 2.0_f32;
                 let previous = self
                     .previous_process_counters
                     .get(&pid)
@@ -156,12 +156,12 @@ impl Collector {
                     pid,
                     parent_pid: process.parent().map(|parent| parent.as_u32()),
                     start_time_millis,
-                    name: process.name().to_owned(),
-                    exe: path_to_string(process.exe()),
+                    name: process.name().to_string_lossy().into_owned(),
+                    exe: process.exe().and_then(path_to_string),
                     cmd: process
                         .cmd()
                         .iter()
-                        .map(|segment| segment.to_string())
+                        .map(|segment| segment.to_string_lossy().into_owned())
                         .collect(),
                     cpu_percent: process.cpu_usage(),
                     memory_bytes: process.memory(),
@@ -191,7 +191,7 @@ impl Collector {
             .fold(0.0f32, |total, process| total + process.wakeups_per_second);
 
         let host = RawHostSample {
-            cpu_percent: self.system.global_cpu_info().cpu_usage(),
+            cpu_percent: self.system.global_cpu_usage(),
             memory_used_bytes: self.system.used_memory(),
             memory_total_bytes: self.system.total_memory(),
             swap_used_bytes: self.system.used_swap(),
@@ -226,7 +226,7 @@ fn process_refresh_kind(metadata_tick: u8) -> ProcessRefreshKind {
     if metadata_tick == 0 {
         ProcessRefreshKind::everything()
     } else {
-        ProcessRefreshKind::new().with_cpu().with_disk_usage()
+        ProcessRefreshKind::nothing().with_cpu().with_disk_usage()
     }
 }
 
@@ -271,19 +271,19 @@ pub fn read_environment() -> HostEnvironment {
 #[cfg(target_os = "macos")]
 mod platform {
     use std::{
-        ffi::{c_char, c_void, CStr},
+        ffi::{CStr, c_char, c_void},
         mem, ptr,
     };
 
     use core_foundation_sys::{
         array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef},
-        base::{kCFAllocatorDefault, CFRelease, CFTypeRef},
+        base::{CFRelease, CFTypeRef, kCFAllocatorDefault},
         dictionary::{CFDictionaryGetValueIfPresent, CFDictionaryRef},
         number::{
-            kCFNumberSInt32Type, CFBooleanGetValue, CFBooleanRef, CFNumberGetValue, CFNumberRef,
+            CFBooleanGetValue, CFBooleanRef, CFNumberGetValue, CFNumberRef, kCFNumberSInt32Type,
         },
         string::{
-            kCFStringEncodingUTF8, CFStringCreateWithCString, CFStringGetCString, CFStringRef,
+            CFStringCreateWithCString, CFStringGetCString, CFStringRef, kCFStringEncodingUTF8,
         },
     };
 
@@ -387,11 +387,7 @@ mod platform {
             }
             let cstr = CStr::from_ptr(info.pvi_cdir.vip_path.as_ptr() as *const c_char);
             let path = cstr.to_str().ok()?.to_owned();
-            if path.is_empty() {
-                None
-            } else {
-                Some(path)
-            }
+            if path.is_empty() { None } else { Some(path) }
         }
     }
 
@@ -514,14 +510,13 @@ mod platform {
                     let max_capacity = cf_dictionary_i32(description, K_IOPS_MAX_CAPACITY_KEY);
                     if let (Some(current_capacity), Some(max_capacity)) =
                         (current_capacity, max_capacity)
+                        && max_capacity > 0
                     {
-                        if max_capacity > 0 {
-                            let percent = ((current_capacity as f32 / max_capacity as f32) * 100.0)
-                                .round()
-                                .clamp(0.0, 100.0) as u8;
-                            battery_charge_percent = Some(percent);
-                            break;
-                        }
+                        let percent = ((current_capacity as f32 / max_capacity as f32) * 100.0)
+                            .round()
+                            .clamp(0.0, 100.0) as u8;
+                        battery_charge_percent = Some(percent);
+                        break;
                     }
                 }
                 CFRelease(list.cast());
@@ -533,27 +528,33 @@ mod platform {
     }
 
     unsafe fn ns_process_info_thermal_state() -> isize {
-        let process_info = ns_process_info();
-        let selector = sel_registerName(c"thermalState".as_ptr().cast());
-        let send: unsafe extern "C" fn(*mut c_void, *mut c_void) -> isize =
-            mem::transmute(objc_msgSend as *const ());
-        send(process_info, selector)
+        unsafe {
+            let process_info = ns_process_info();
+            let selector = sel_registerName(c"thermalState".as_ptr().cast());
+            let send: unsafe extern "C" fn(*mut c_void, *mut c_void) -> isize =
+                mem::transmute(objc_msgSend as *const ());
+            send(process_info, selector)
+        }
     }
 
     unsafe fn ns_process_info_low_power_mode_enabled() -> bool {
-        let process_info = ns_process_info();
-        let selector = sel_registerName(c"isLowPowerModeEnabled".as_ptr().cast());
-        let send: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i8 =
-            mem::transmute(objc_msgSend as *const ());
-        send(process_info, selector) != 0
+        unsafe {
+            let process_info = ns_process_info();
+            let selector = sel_registerName(c"isLowPowerModeEnabled".as_ptr().cast());
+            let send: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i8 =
+                mem::transmute(objc_msgSend as *const ());
+            send(process_info, selector) != 0
+        }
     }
 
     unsafe fn ns_process_info() -> *mut c_void {
-        let cls = objc_getClass(c"NSProcessInfo".as_ptr().cast());
-        let selector = sel_registerName(c"processInfo".as_ptr().cast());
-        let send: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
-            mem::transmute(objc_msgSend as *const ());
-        send(cls, selector)
+        unsafe {
+            let cls = objc_getClass(c"NSProcessInfo".as_ptr().cast());
+            let selector = sel_registerName(c"processInfo".as_ptr().cast());
+            let send: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                mem::transmute(objc_msgSend as *const ());
+            send(cls, selector)
+        }
     }
 
     fn cf_dictionary_bool(dictionary: CFDictionaryRef, key: &str) -> bool {

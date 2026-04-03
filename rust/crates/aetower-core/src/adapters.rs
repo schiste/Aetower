@@ -17,8 +17,8 @@ use aetower_model::{
 use aetower_time as time;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use serde_json::{json, Value};
-use tungstenite::{connect, Message};
+use serde_json::{Value, json};
+use tungstenite::{Message, connect};
 use url::Url;
 
 const CHROMIUM_TIMEOUT: Duration = Duration::from_millis(300);
@@ -502,6 +502,7 @@ impl AdapterManager {
         }
     }
 
+    #[allow(clippy::collapsible_if)]
     pub fn enrich_entities(
         &self,
         entities: &mut [EntitySnapshot],
@@ -1219,12 +1220,12 @@ fn docker_socket_path() -> String {
 }
 
 fn chau7_socket_path() -> Option<String> {
-    if let Ok(value) = env::var("AETOWER_CHAU7_SOCKET") {
-        if !value.trim().is_empty() {
-            return Some(value);
-        }
+    if let Ok(value) = env::var("AETOWER_CHAU7_SOCKET")
+        && !value.trim().is_empty()
+    {
+        return Some(value);
     }
-    let default = dirs::home_dir()
+    dirs::home_dir()
         .map(|home| home.join(".chau7").join("mcp.sock"))
         .and_then(|path| {
             if path.exists() {
@@ -1232,8 +1233,7 @@ fn chau7_socket_path() -> Option<String> {
             } else {
                 None
             }
-        });
-    default
+        })
 }
 
 fn chau7_tab_detail(
@@ -1250,10 +1250,10 @@ fn chau7_tab_detail(
         parts.push(branch.to_owned());
     }
     // Attach run count from matching session.
-    if let Some(sid) = tab.ai_session_id.as_deref() {
-        if let Some(session) = snapshot.sessions.iter().find(|s| s.session_id == sid) {
-            parts.push(format!("{} runs", session.run_count));
-        }
+    if let Some(sid) = tab.ai_session_id.as_deref()
+        && let Some(session) = snapshot.sessions.iter().find(|s| s.session_id == sid)
+    {
+        parts.push(format!("{} runs", session.run_count));
     }
     parts.join(" · ")
 }
@@ -1301,37 +1301,36 @@ fn fetch_chromium_targets(
             break;
         }
 
-        if let Some(debug_socket) = target.debug_socket.as_deref() {
-            if let Ok(metrics) = fetch_chromium_metrics(debug_socket) {
-                target.js_heap_used_bytes = metrics.js_heap_used_bytes;
-                target.js_heap_total_bytes = metrics.js_heap_total_bytes;
-                target.dom_nodes = metrics.dom_nodes;
-                target.documents = metrics.documents;
-                target.frames = metrics.frames;
+        if let Some(debug_socket) = target.debug_socket.as_deref()
+            && let Ok(metrics) = fetch_chromium_metrics(debug_socket)
+        {
+            target.js_heap_used_bytes = metrics.js_heap_used_bytes;
+            target.js_heap_total_bytes = metrics.js_heap_total_bytes;
+            target.dom_nodes = metrics.dom_nodes;
+            target.documents = metrics.documents;
+            target.frames = metrics.frames;
 
-                if let Some(previous) = samples.insert(
-                    target.id.clone(),
-                    ChromiumRuntimeSample {
-                        captured_at_millis,
-                        task_duration_seconds: metrics.task_duration_seconds,
-                        network_bytes: metrics.network_bytes,
-                    },
-                ) {
-                    let elapsed_seconds =
-                        ((captured_at_millis.saturating_sub(previous.captured_at_millis)) as f64
-                            / 1000.0)
-                            .max(0.001);
-                    let task_delta =
-                        if metrics.task_duration_seconds >= previous.task_duration_seconds {
-                            metrics.task_duration_seconds - previous.task_duration_seconds
-                        } else {
-                            0.0
-                        };
-                    let network_delta =
-                        metrics.network_bytes.saturating_sub(previous.network_bytes);
-                    target.cpu_percent = ((task_delta / elapsed_seconds) * 100.0) as f32;
-                    target.network_bps = ((network_delta as f64) / elapsed_seconds) as u64;
-                }
+            if let Some(previous) = samples.insert(
+                target.id.clone(),
+                ChromiumRuntimeSample {
+                    captured_at_millis,
+                    task_duration_seconds: metrics.task_duration_seconds,
+                    network_bytes: metrics.network_bytes,
+                },
+            ) {
+                let elapsed_seconds =
+                    ((captured_at_millis.saturating_sub(previous.captured_at_millis)) as f64
+                        / 1000.0)
+                        .max(0.001);
+                let task_delta = if metrics.task_duration_seconds >= previous.task_duration_seconds
+                {
+                    metrics.task_duration_seconds - previous.task_duration_seconds
+                } else {
+                    0.0
+                };
+                let network_delta = metrics.network_bytes.saturating_sub(previous.network_bytes);
+                target.cpu_percent = ((task_delta / elapsed_seconds) * 100.0) as f32;
+                target.network_bps = ((network_delta as f64) / elapsed_seconds) as u64;
             }
         }
     }
@@ -1472,13 +1471,13 @@ fn fetch_chromium_metrics(debug_socket: &str) -> Result<ChromiumMetrics, String>
 
     let enable_command = json!({ "id": 1, "method": "Performance.enable" });
     socket
-        .send(Message::Text(enable_command.to_string()))
+        .send(Message::Text(enable_command.to_string().into()))
         .map_err(|error| format!("websocket enable failed: {error}"))?;
     let _ = read_cdp_response(&mut socket, 1)?;
 
     let metrics_command = json!({ "id": 2, "method": "Performance.getMetrics" });
     socket
-        .send(Message::Text(metrics_command.to_string()))
+        .send(Message::Text(metrics_command.to_string().into()))
         .map_err(|error| format!("websocket metrics failed: {error}"))?;
     let payload = read_cdp_response(&mut socket, 2)?;
     let metrics = payload
@@ -1496,7 +1495,7 @@ fn fetch_chromium_metrics(debug_socket: &str) -> Result<ChromiumMetrics, String>
         }
     });
     socket
-        .send(Message::Text(runtime_command.to_string()))
+        .send(Message::Text(runtime_command.to_string().into()))
         .map_err(|error| format!("websocket runtime evaluate failed: {error}"))?;
     let runtime_payload = read_cdp_response(&mut socket, 3)?;
 
@@ -1908,11 +1907,10 @@ mod tests {
     };
 
     use super::{
-        adapter_runtime_detail, capability_status, docker_block_io_totals, docker_cpu_percent,
-        docker_network_totals, enrich_vscode_entity, parse_http_endpoint,
-        workspace_hint_from_command_line, AdapterState, CapabilityKind, CapabilityState,
-        ChromiumTarget, DockerBlkioEntry, DockerContainerStats, DockerContainerSummary,
-        DockerNetworkStats,
+        AdapterState, CapabilityKind, CapabilityState, ChromiumTarget, DockerBlkioEntry,
+        DockerContainerStats, DockerContainerSummary, DockerNetworkStats, adapter_runtime_detail,
+        capability_status, docker_block_io_totals, docker_cpu_percent, docker_network_totals,
+        enrich_vscode_entity, parse_http_endpoint, workspace_hint_from_command_line,
     };
 
     #[test]
@@ -2112,17 +2110,23 @@ mod tests {
         enrich_vscode_entity(&mut entity);
 
         assert!(entity.badges.iter().any(|badge| badge == "vscode-live"));
-        assert!(entity
-            .badges
-            .iter()
-            .any(|badge| badge == "vscode-extension-host"));
-        assert!(entity
-            .components
-            .iter()
-            .any(|component| component.title == "Workspace"));
-        assert!(entity
-            .components
-            .iter()
-            .any(|component| component.title == "Extension Host"));
+        assert!(
+            entity
+                .badges
+                .iter()
+                .any(|badge| badge == "vscode-extension-host")
+        );
+        assert!(
+            entity
+                .components
+                .iter()
+                .any(|component| component.title == "Workspace")
+        );
+        assert!(
+            entity
+                .components
+                .iter()
+                .any(|component| component.title == "Extension Host")
+        );
     }
 }

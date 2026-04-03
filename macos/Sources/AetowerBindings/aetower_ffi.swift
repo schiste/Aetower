@@ -281,7 +281,7 @@ private func makeRustCall<T, E: Swift.Error>(
     _ callback: (UnsafeMutablePointer<RustCallStatus>) -> T,
     errorHandler: ((RustBuffer) throws -> E)?
 ) throws -> T {
-    uniffiEnsureInitialized()
+    uniffiEnsureAetowerFfiInitialized()
     var callStatus = RustCallStatus.init()
     let returnedVal = callback(&callStatus)
     try uniffiCheckCallStatus(callStatus: callStatus, errorHandler: errorHandler)
@@ -352,9 +352,10 @@ private func uniffiTraitInterfaceCallWithError<T, E>(
         callStatus.pointee.errorBuf = FfiConverterString.lower(String(describing: error))
     }
 }
-fileprivate class UniffiHandleMap<T> {
-    private var map: [UInt64: T] = [:]
+fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
+    // All mutation happens with this lock held, which is why we implement @unchecked Sendable.
     private let lock = NSLock()
+    private var map: [UInt64: T] = [:]
     private var currentHandle: UInt64 = 1
 
     func insert(obj: T) -> UInt64 {
@@ -528,7 +529,7 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 
-public protocol MonitorEngineProtocol : AnyObject {
+public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func clearFrontmostAppState() 
     
@@ -557,9 +558,7 @@ public protocol MonitorEngineProtocol : AnyObject {
     func updateFrontmostAppState(state: FrontmostAppState) 
     
 }
-
-open class MonitorEngine:
-    MonitorEngineProtocol {
+open class MonitorEngine: MonitorEngineProtocol, @unchecked Sendable {
     fileprivate let pointer: UnsafeMutableRawPointer!
 
     /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
@@ -573,6 +572,9 @@ open class MonitorEngine:
     // TODO: We'd like this to be `private` but for Swifty reasons,
     // we can't implement `FfiConverter` without making this `required` and we can't
     // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
     required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
         self.pointer = pointer
     }
@@ -615,34 +617,34 @@ public convenience init() {
     
 
     
-open func clearFrontmostAppState() {try! rustCall() {
+open func clearFrontmostAppState()  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_clear_frontmost_app_state(self.uniffiClonePointer(),$0
     )
 }
 }
     
-open func configureChau7Endpoint(socketPath: String?) {try! rustCall() {
+open func configureChau7Endpoint(socketPath: String?)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_configure_chau7_endpoint(self.uniffiClonePointer(),
         FfiConverterOptionString.lower(socketPath),$0
     )
 }
 }
     
-open func configureChromiumEndpoint(endpoint: String?) {try! rustCall() {
+open func configureChromiumEndpoint(endpoint: String?)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_configure_chromium_endpoint(self.uniffiClonePointer(),
         FfiConverterOptionString.lower(endpoint),$0
     )
 }
 }
     
-open func configureDockerSocketPath(socketPath: String) {try! rustCall() {
+open func configureDockerSocketPath(socketPath: String)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_configure_docker_socket_path(self.uniffiClonePointer(),
         FfiConverterString.lower(socketPath),$0
     )
 }
 }
     
-open func configurePrivilegedHelper(helperPath: String?, enabled: Bool) {try! rustCall() {
+open func configurePrivilegedHelper(helperPath: String?, enabled: Bool)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_configure_privileged_helper(self.uniffiClonePointer(),
         FfiConverterOptionString.lower(helperPath),
         FfiConverterBool.lower(enabled),$0
@@ -650,28 +652,28 @@ open func configurePrivilegedHelper(helperPath: String?, enabled: Bool) {try! ru
 }
 }
     
-open func exportSnapshotJson() -> String {
+open func exportSnapshotJson() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_export_snapshot_json(self.uniffiClonePointer(),$0
     )
 })
 }
     
-open func latestSequence() -> UInt64 {
+open func latestSequence() -> UInt64  {
     return try!  FfiConverterUInt64.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_sequence(self.uniffiClonePointer(),$0
     )
 })
 }
     
-open func latestSnapshot() -> SystemSnapshot {
-    return try!  FfiConverterTypeSystemSnapshot.lift(try! rustCall() {
+open func latestSnapshot() -> SystemSnapshot  {
+    return try!  FfiConverterTypeSystemSnapshot_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_snapshot(self.uniffiClonePointer(),$0
     )
 })
 }
     
-open func latestSnapshotIfNewer(lastSequence: UInt64) -> SystemSnapshot? {
+open func latestSnapshotIfNewer(lastSequence: UInt64) -> SystemSnapshot?  {
     return try!  FfiConverterOptionTypeSystemSnapshot.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_snapshot_if_newer(self.uniffiClonePointer(),
         FfiConverterUInt64.lower(lastSequence),$0
@@ -679,7 +681,7 @@ open func latestSnapshotIfNewer(lastSequence: UInt64) -> SystemSnapshot? {
 })
 }
     
-open func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSnapshot] {
+open func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSnapshot]  {
     return try!  FfiConverterSequenceTypeSystemSnapshot.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_load_history_range(self.uniffiClonePointer(),
         FfiConverterUInt64.lower(startMillis),
@@ -688,16 +690,16 @@ open func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSna
 })
 }
     
-open func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?) {try! rustCall() {
+open func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_set_capability_state(self.uniffiClonePointer(),
-        FfiConverterTypeCapabilityKind.lower(kind),
-        FfiConverterTypeCapabilityState.lower(state),
+        FfiConverterTypeCapabilityKind_lower(kind),
+        FfiConverterTypeCapabilityState_lower(state),
         FfiConverterOptionString.lower(detailOverride),$0
     )
 }
 }
     
-open func stopAgentSession(sessionId: String, force: Bool) -> String {
+open func stopAgentSession(sessionId: String, force: Bool) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_stop_agent_session(self.uniffiClonePointer(),
         FfiConverterString.lower(sessionId),
@@ -706,15 +708,16 @@ open func stopAgentSession(sessionId: String, force: Bool) -> String {
 })
 }
     
-open func updateFrontmostAppState(state: FrontmostAppState) {try! rustCall() {
+open func updateFrontmostAppState(state: FrontmostAppState)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_update_frontmost_app_state(self.uniffiClonePointer(),
-        FfiConverterTypeFrontmostAppState.lower(state),$0
+        FfiConverterTypeFrontmostAppState_lower(state),$0
     )
 }
 }
     
 
 }
+
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -751,8 +754,6 @@ public struct FfiConverterTypeMonitorEngine: FfiConverter {
 }
 
 
-
-
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -766,6 +767,8 @@ public func FfiConverterTypeMonitorEngine_lift(_ pointer: UnsafeMutableRawPointe
 public func FfiConverterTypeMonitorEngine_lower(_ value: MonitorEngine) -> UnsafeMutableRawPointer {
     return FfiConverterTypeMonitorEngine.lower(value)
 }
+
+
 
 
 public struct AgentCostSummary {
@@ -784,6 +787,9 @@ public struct AgentCostSummary {
     }
 }
 
+#if compiler(>=6)
+extension AgentCostSummary: Sendable {}
+#endif
 
 
 extension AgentCostSummary: Equatable, Hashable {
@@ -810,6 +816,7 @@ extension AgentCostSummary: Equatable, Hashable {
         hasher.combine(totalRuns)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -853,7 +860,6 @@ public func FfiConverterTypeAgentCostSummary_lower(_ value: AgentCostSummary) ->
 public struct AggregateMetrics {
     public var cpuPercent: Float
     public var memoryResidentBytes: UInt64
-    public var virtualMemoryBytes: UInt64
     public var diskReadBps: UInt64
     public var diskWriteBps: UInt64
     public var networkReceiveBps: UInt64
@@ -864,10 +870,9 @@ public struct AggregateMetrics {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryResidentBytes: UInt64, virtualMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, processCount: UInt32, isForeground: Bool) {
+    public init(cpuPercent: Float, memoryResidentBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, processCount: UInt32, isForeground: Bool) {
         self.cpuPercent = cpuPercent
         self.memoryResidentBytes = memoryResidentBytes
-        self.virtualMemoryBytes = virtualMemoryBytes
         self.diskReadBps = diskReadBps
         self.diskWriteBps = diskWriteBps
         self.networkReceiveBps = networkReceiveBps
@@ -878,6 +883,9 @@ public struct AggregateMetrics {
     }
 }
 
+#if compiler(>=6)
+extension AggregateMetrics: Sendable {}
+#endif
 
 
 extension AggregateMetrics: Equatable, Hashable {
@@ -886,9 +894,6 @@ extension AggregateMetrics: Equatable, Hashable {
             return false
         }
         if lhs.memoryResidentBytes != rhs.memoryResidentBytes {
-            return false
-        }
-        if lhs.virtualMemoryBytes != rhs.virtualMemoryBytes {
             return false
         }
         if lhs.diskReadBps != rhs.diskReadBps {
@@ -918,7 +923,6 @@ extension AggregateMetrics: Equatable, Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(cpuPercent)
         hasher.combine(memoryResidentBytes)
-        hasher.combine(virtualMemoryBytes)
         hasher.combine(diskReadBps)
         hasher.combine(diskWriteBps)
         hasher.combine(networkReceiveBps)
@@ -930,6 +934,7 @@ extension AggregateMetrics: Equatable, Hashable {
 }
 
 
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -939,7 +944,6 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
             try AggregateMetrics(
                 cpuPercent: FfiConverterFloat.read(from: &buf), 
                 memoryResidentBytes: FfiConverterUInt64.read(from: &buf), 
-                virtualMemoryBytes: FfiConverterUInt64.read(from: &buf), 
                 diskReadBps: FfiConverterUInt64.read(from: &buf), 
                 diskWriteBps: FfiConverterUInt64.read(from: &buf), 
                 networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
@@ -953,7 +957,6 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
     public static func write(_ value: AggregateMetrics, into buf: inout [UInt8]) {
         FfiConverterFloat.write(value.cpuPercent, into: &buf)
         FfiConverterUInt64.write(value.memoryResidentBytes, into: &buf)
-        FfiConverterUInt64.write(value.virtualMemoryBytes, into: &buf)
         FfiConverterUInt64.write(value.diskReadBps, into: &buf)
         FfiConverterUInt64.write(value.diskWriteBps, into: &buf)
         FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)
@@ -998,6 +1001,9 @@ public struct CapabilitySnapshot {
     }
 }
 
+#if compiler(>=6)
+extension CapabilitySnapshot: Sendable {}
+#endif
 
 
 extension CapabilitySnapshot: Equatable, Hashable {
@@ -1028,6 +1034,7 @@ extension CapabilitySnapshot: Equatable, Hashable {
         hasher.combine(lastUpdatedMillis)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1102,6 +1109,9 @@ public struct ComponentSnapshot {
     }
 }
 
+#if compiler(>=6)
+extension ComponentSnapshot: Sendable {}
+#endif
 
 
 extension ComponentSnapshot: Equatable, Hashable {
@@ -1160,6 +1170,7 @@ extension ComponentSnapshot: Equatable, Hashable {
         hasher.combine(cwd)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1264,6 +1275,9 @@ public struct EntitySnapshot {
     }
 }
 
+#if compiler(>=6)
+extension EntitySnapshot: Sendable {}
+#endif
 
 
 extension EntitySnapshot: Equatable, Hashable {
@@ -1354,6 +1368,7 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(recommendations)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1454,6 +1469,9 @@ public struct FrictionBreakdown {
     }
 }
 
+#if compiler(>=6)
+extension FrictionBreakdown: Sendable {}
+#endif
 
 
 extension FrictionBreakdown: Equatable, Hashable {
@@ -1504,6 +1522,7 @@ extension FrictionBreakdown: Equatable, Hashable {
         hasher.combine(reasons)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1574,6 +1593,9 @@ public struct FrontmostAppState {
     }
 }
 
+#if compiler(>=6)
+extension FrontmostAppState: Sendable {}
+#endif
 
 
 extension FrontmostAppState: Equatable, Hashable {
@@ -1604,6 +1626,7 @@ extension FrontmostAppState: Equatable, Hashable {
         hasher.combine(capturedAtMillis)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1696,6 +1719,9 @@ public struct HostSnapshot {
     }
 }
 
+#if compiler(>=6)
+extension HostSnapshot: Sendable {}
+#endif
 
 
 extension HostSnapshot: Equatable, Hashable {
@@ -1790,6 +1816,7 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(gpuMemoryBytes)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1888,6 +1915,9 @@ public struct HostTrend {
     }
 }
 
+#if compiler(>=6)
+extension HostTrend: Sendable {}
+#endif
 
 
 extension HostTrend: Equatable, Hashable {
@@ -1930,6 +1960,7 @@ extension HostTrend: Equatable, Hashable {
         hasher.combine(aiAgentFriction)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1998,6 +2029,9 @@ public struct MetricTrend {
     }
 }
 
+#if compiler(>=6)
+extension MetricTrend: Sendable {}
+#endif
 
 
 extension MetricTrend: Equatable, Hashable {
@@ -2032,6 +2066,7 @@ extension MetricTrend: Equatable, Hashable {
         hasher.combine(wakeupsPerSecond)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -2088,6 +2123,9 @@ public struct ProvenanceSnapshot {
     }
 }
 
+#if compiler(>=6)
+extension ProvenanceSnapshot: Sendable {}
+#endif
 
 
 extension ProvenanceSnapshot: Equatable, Hashable {
@@ -2106,6 +2144,7 @@ extension ProvenanceSnapshot: Equatable, Hashable {
         hasher.combine(label)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -2154,6 +2193,9 @@ public struct Recommendation {
     }
 }
 
+#if compiler(>=6)
+extension Recommendation: Sendable {}
+#endif
 
 
 extension Recommendation: Equatable, Hashable {
@@ -2172,6 +2214,7 @@ extension Recommendation: Equatable, Hashable {
         hasher.combine(detail)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -2222,6 +2265,9 @@ public struct SessionMarker {
     }
 }
 
+#if compiler(>=6)
+extension SessionMarker: Sendable {}
+#endif
 
 
 extension SessionMarker: Equatable, Hashable {
@@ -2244,6 +2290,7 @@ extension SessionMarker: Equatable, Hashable {
         hasher.combine(label)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -2304,6 +2351,9 @@ public struct SystemSnapshot {
     }
 }
 
+#if compiler(>=6)
+extension SystemSnapshot: Sendable {}
+#endif
 
 
 extension SystemSnapshot: Equatable, Hashable {
@@ -2342,6 +2392,7 @@ extension SystemSnapshot: Equatable, Hashable {
         hasher.combine(timeline)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -2408,6 +2459,9 @@ public struct TimelineEvent {
     }
 }
 
+#if compiler(>=6)
+extension TimelineEvent: Sendable {}
+#endif
 
 
 extension TimelineEvent: Equatable, Hashable {
@@ -2442,6 +2496,7 @@ extension TimelineEvent: Equatable, Hashable {
         hasher.combine(detail)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -2496,6 +2551,10 @@ public enum CapabilityHealth {
     case degraded
 }
 
+
+#if compiler(>=6)
+extension CapabilityHealth: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -2558,8 +2617,10 @@ public func FfiConverterTypeCapabilityHealth_lower(_ value: CapabilityHealth) ->
 }
 
 
-
 extension CapabilityHealth: Equatable, Hashable {}
+
+
+
 
 
 
@@ -2577,6 +2638,10 @@ public enum CapabilityKind {
     case chau7
 }
 
+
+#if compiler(>=6)
+extension CapabilityKind: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -2657,8 +2722,10 @@ public func FfiConverterTypeCapabilityKind_lower(_ value: CapabilityKind) -> Rus
 }
 
 
-
 extension CapabilityKind: Equatable, Hashable {}
+
+
+
 
 
 
@@ -2674,6 +2741,10 @@ public enum CapabilityState {
     case unavailable
 }
 
+
+#if compiler(>=6)
+extension CapabilityState: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -2742,8 +2813,10 @@ public func FfiConverterTypeCapabilityState_lower(_ value: CapabilityState) -> R
 }
 
 
-
 extension CapabilityState: Equatable, Hashable {}
+
+
+
 
 
 
@@ -2757,6 +2830,10 @@ public enum ComponentKind {
     case adapterContext
 }
 
+
+#if compiler(>=6)
+extension ComponentKind: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -2813,8 +2890,10 @@ public func FfiConverterTypeComponentKind_lower(_ value: ComponentKind) -> RustB
 }
 
 
-
 extension ComponentKind: Equatable, Hashable {}
+
+
+
 
 
 
@@ -2832,6 +2911,10 @@ public enum EntityKind {
     case unknown
 }
 
+
+#if compiler(>=6)
+extension EntityKind: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -2912,8 +2995,10 @@ public func FfiConverterTypeEntityKind_lower(_ value: EntityKind) -> RustBuffer 
 }
 
 
-
 extension EntityKind: Equatable, Hashable {}
+
+
+
 
 
 
@@ -2935,6 +3020,10 @@ public enum ProvenanceKind {
     case unknown
 }
 
+
+#if compiler(>=6)
+extension ProvenanceKind: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -3039,8 +3128,10 @@ public func FfiConverterTypeProvenanceKind_lower(_ value: ProvenanceKind) -> Rus
 }
 
 
-
 extension ProvenanceKind: Equatable, Hashable {}
+
+
+
 
 
 
@@ -3053,6 +3144,10 @@ public enum SessionMarkerKind {
     case runEnd
 }
 
+
+#if compiler(>=6)
+extension SessionMarkerKind: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -3103,8 +3198,10 @@ public func FfiConverterTypeSessionMarkerKind_lower(_ value: SessionMarkerKind) 
 }
 
 
-
 extension SessionMarkerKind: Equatable, Hashable {}
+
+
+
 
 
 
@@ -3118,6 +3215,10 @@ public enum TimelineSeverity {
     case critical
 }
 
+
+#if compiler(>=6)
+extension TimelineSeverity: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -3174,8 +3275,10 @@ public func FfiConverterTypeTimelineSeverity_lower(_ value: TimelineSeverity) ->
 }
 
 
-
 extension TimelineSeverity: Equatable, Hashable {}
+
+
+
 
 
 
@@ -3580,9 +3683,9 @@ private enum InitializationResult {
 }
 // Use a global variable to perform the versioning checks. Swift ensures that
 // the code inside is only computed once.
-private var initializationResult: InitializationResult = {
+private let initializationResult: InitializationResult = {
     // Get the bindings contract version from our ComponentInterface
-    let bindings_contract_version = 26
+    let bindings_contract_version = 29
     // Get the scaffolding contract version by calling the into the dylib
     let scaffolding_contract_version = ffi_aetower_ffi_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
@@ -3634,7 +3737,9 @@ private var initializationResult: InitializationResult = {
     return InitializationResult.ok
 }()
 
-private func uniffiEnsureInitialized() {
+// Make the ensure init function public so that other modules which have external type references to
+// our types can call it.
+public func uniffiEnsureAetowerFfiInitialized() {
     switch initializationResult {
     case .ok:
         break

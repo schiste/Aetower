@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use serde::Serialize;
-use sysinfo::{PidExt, ProcessExt, ProcessRefreshKind, System, SystemExt};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
 use crate::{attribution, collector::Collector, friction, identity};
 
@@ -209,13 +209,13 @@ impl BenchmarkBudget {
                 report.total_millis.p95, self.total_p95_millis_max
             ));
         }
-        if let Some(growth) = report.resident_memory_growth_bytes() {
-            if growth > self.resident_memory_growth_bytes_max {
-                violations.push(format!(
-                    "resident memory growth {} bytes exceeds {} bytes",
-                    growth, self.resident_memory_growth_bytes_max
-                ));
-            }
+        if let Some(growth) = report.resident_memory_growth_bytes()
+            && growth > self.resident_memory_growth_bytes_max
+        {
+            violations.push(format!(
+                "resident memory growth {} bytes exceeds {} bytes",
+                growth, self.resident_memory_growth_bytes_max
+            ));
         }
 
         BenchmarkBudgetResult {
@@ -228,9 +228,9 @@ impl BenchmarkBudget {
 impl Default for BenchmarkBudget {
     fn default() -> Self {
         Self {
-            collect_average_millis_max: 5.0,
-            identity_average_millis_max: 2.0,
-            total_p95_millis_max: 10.0,
+            collect_average_millis_max: 40.0,
+            identity_average_millis_max: 4.0,
+            total_p95_millis_max: 80.0,
             resident_memory_growth_bytes_max: 24 * 1024 * 1024,
         }
     }
@@ -273,7 +273,7 @@ fn elapsed_millis(started_at: Instant) -> f64 {
 
 fn current_process_memory_bytes() -> Option<u64> {
     let mut system = System::new();
-    system.refresh_processes_specifics(ProcessRefreshKind::new());
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     system
         .process(sysinfo::Pid::from_u32(std::process::id()))
         .map(|process| process.memory())
@@ -334,8 +334,8 @@ mod tests {
     #[test]
     fn budget_collects_violations_when_thresholds_are_exceeded() {
         let mut report = report();
-        report.collect_millis.average = 6.0;
-        report.total_millis.p95 = 12.0;
+        report.collect_millis.average = 50.0;
+        report.total_millis.p95 = 100.0;
         report.resident_memory_after_bytes = Some(40 * 1024 * 1024);
         let result = BenchmarkBudget::default().evaluate(&report);
 

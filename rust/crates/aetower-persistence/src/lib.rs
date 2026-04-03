@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use aetower_model::SystemSnapshot;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 pub struct HistoryStore {
     conn: Connection,

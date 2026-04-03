@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use aetower_collector::{index_processes, RawProcessSample};
+use aetower_collector::{RawProcessSample, index_processes};
 use aetower_model::EntityKind;
 
 #[derive(Debug, Clone)]
@@ -383,7 +383,13 @@ mod tests {
     #[test]
     fn groups_nested_helper_into_root_app_bundle() {
         let processes = vec![
-            sample(1, None, "launchd", Some("/sbin/launchd"), &["/sbin/launchd"]),
+            sample(
+                1,
+                None,
+                "launchd",
+                Some("/sbin/launchd"),
+                &["/sbin/launchd"],
+            ),
             sample(
                 2,
                 Some(1),
@@ -555,7 +561,13 @@ mod tests {
     #[test]
     fn xpc_service_gets_xpc_badge() {
         let processes = vec![
-            sample(1, None, "launchd", Some("/sbin/launchd"), &["/sbin/launchd"]),
+            sample(
+                1,
+                None,
+                "launchd",
+                Some("/sbin/launchd"),
+                &["/sbin/launchd"],
+            ),
             sample(
                 2,
                 Some(1),
@@ -567,7 +579,9 @@ mod tests {
                 3,
                 Some(2),
                 "com.apple.foo",
-                Some("/System/Library/Foo.framework/XPCServices/com.apple.foo.xpc/Contents/MacOS/com.apple.foo"),
+                Some(
+                    "/System/Library/Foo.framework/XPCServices/com.apple.foo.xpc/Contents/MacOS/com.apple.foo",
+                ),
                 &["com.apple.foo"],
             ),
         ];

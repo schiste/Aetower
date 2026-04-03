@@ -1,4 +1,4 @@
-use aetower_core::{run_benchmark, BenchmarkConfig};
+use aetower_core::{BenchmarkConfig, run_benchmark};
 
 fn main() -> Result<(), String> {
     let config = parse_config(std::env::args().skip(1))?;

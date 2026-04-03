@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use aetower_collector::{index_processes, RawProcessSample};
+use aetower_collector::{RawProcessSample, index_processes};
 use aetower_identity::{EntitySeed, IdentityMap};
 use aetower_model::{
     AggregateMetrics, ComponentKind, ComponentSnapshot, EntityKind, EntitySnapshot,
@@ -364,19 +364,17 @@ fn is_foreground_match(seed: &EntitySeed, frontmost: Option<&FrontmostAppState>)
 
     if let (Some(seed_bundle), Some(frontmost_bundle)) =
         (seed.bundle_id.as_deref(), frontmost.bundle_id.as_deref())
+        && seed_bundle == frontmost_bundle
     {
-        if seed_bundle == frontmost_bundle {
-            return true;
-        }
+        return true;
     }
 
     if let (Some(seed_path), Some(frontmost_path)) = (
         seed.executable_path.as_deref(),
         frontmost.executable_path.as_deref(),
-    ) {
-        if seed_path == frontmost_path {
-            return true;
-        }
+    ) && seed_path == frontmost_path
+    {
+        return true;
     }
 
     seed.display_name == frontmost.app_name

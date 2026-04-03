@@ -6,7 +6,7 @@ use std::{
 };
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const SOCKET_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -153,12 +153,10 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
                 next_id,
                 "repo_get_metadata",
                 json!({ "repo_path": repo }),
-            ) {
-                if let Some(stats) = raw.get("stats") {
-                    if let Ok(parsed) = serde_json::from_value::<Chau7RepoStats>(stats.clone()) {
-                        repo_stats.insert(repo.to_owned(), parsed);
-                    }
-                }
+            ) && let Some(stats) = raw.get("stats")
+                && let Ok(parsed) = serde_json::from_value::<Chau7RepoStats>(stats.clone())
+            {
+                repo_stats.insert(repo.to_owned(), parsed);
             }
             next_id += 1;
         }

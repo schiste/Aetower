@@ -281,36 +281,48 @@ mod tests {
 
         apply(&host, &mut entities);
 
-        assert!(entities[0]
-            .friction
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("high CPU")));
-        assert!(entities[0]
-            .friction
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("high memory")));
-        assert!(entities[0]
-            .friction
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("memory pressure")));
-        assert!(entities[0]
-            .friction
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("heavy disk")));
-        assert!(entities[0]
-            .friction
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("heavy network")));
-        assert!(entities[0]
-            .friction
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("wakeups")));
+        assert!(
+            entities[0]
+                .friction
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("high CPU"))
+        );
+        assert!(
+            entities[0]
+                .friction
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("high memory"))
+        );
+        assert!(
+            entities[0]
+                .friction
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("memory pressure"))
+        );
+        assert!(
+            entities[0]
+                .friction
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("heavy disk"))
+        );
+        assert!(
+            entities[0]
+                .friction
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("heavy network"))
+        );
+        assert!(
+            entities[0]
+                .friction
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("wakeups"))
+        );
         assert!(!entities[0].recommendations.is_empty());
     }
 }
