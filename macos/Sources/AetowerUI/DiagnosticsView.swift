@@ -141,8 +141,19 @@ public struct DiagnosticsView: View {
                     value: "\(state.diagnosticsOverview.errorCount)",
                     subtitle: state.diagnosticsOverview.lastErrorMessage ?? "no recent errors"
                 )
+                diagnosticsMetric(
+                    title: "Persisted events",
+                    value: "\(state.diagnosticsOverview.persistedEvents)",
+                    subtitle: state.diagnosticsOverview.persistedPath ?? "persistence disabled"
+                )
             }
             .padding(.top, 4)
+            if let persistenceError = state.diagnosticsOverview.persistenceError {
+                Text(persistenceError)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .padding(.top, 8)
+            }
         }
     }
 

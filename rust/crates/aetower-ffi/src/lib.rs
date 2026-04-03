@@ -363,6 +363,9 @@ pub struct DiagnosticsOverview {
     pub warn_count: u32,
     pub last_event_millis: Option<u64>,
     pub last_error_message: Option<String>,
+    pub persisted_events: u64,
+    pub persisted_path: Option<String>,
+    pub persistence_error: Option<String>,
 }
 
 #[derive(uniffi::Object)]
@@ -515,6 +518,13 @@ impl MonitorEngine {
             .lock()
             .expect("engine lock poisoned")
             .export_diagnostics_json(limit as usize)
+    }
+
+    pub fn record_diagnostics_event(&self, event: DiagnosticsEvent) {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .record_diagnostics_event(event.into());
     }
 
     pub fn export_snapshot_json(&self) -> String {
@@ -748,6 +758,72 @@ impl From<diagnostics::DiagnosticsOverview> for DiagnosticsOverview {
             warn_count: value.warn_count,
             last_event_millis: value.last_event_millis,
             last_error_message: value.last_error_message,
+            persisted_events: value.persisted_events,
+            persisted_path: value.persisted_path,
+            persistence_error: value.persistence_error,
+        }
+    }
+}
+
+impl From<DiagnosticsLevel> for diagnostics::DiagnosticsLevel {
+    fn from(value: DiagnosticsLevel) -> Self {
+        match value {
+            DiagnosticsLevel::Trace => Self::Trace,
+            DiagnosticsLevel::Debug => Self::Debug,
+            DiagnosticsLevel::Info => Self::Info,
+            DiagnosticsLevel::Warn => Self::Warn,
+            DiagnosticsLevel::Error => Self::Error,
+        }
+    }
+}
+
+impl From<DiagnosticsSubsystem> for diagnostics::DiagnosticsSubsystem {
+    fn from(value: DiagnosticsSubsystem) -> Self {
+        match value {
+            DiagnosticsSubsystem::Engine => Self::Engine,
+            DiagnosticsSubsystem::Collector => Self::Collector,
+            DiagnosticsSubsystem::Identity => Self::Identity,
+            DiagnosticsSubsystem::Attribution => Self::Attribution,
+            DiagnosticsSubsystem::Friction => Self::Friction,
+            DiagnosticsSubsystem::History => Self::History,
+            DiagnosticsSubsystem::Persistence => Self::Persistence,
+            DiagnosticsSubsystem::Telemetry => Self::Telemetry,
+            DiagnosticsSubsystem::Gpu => Self::Gpu,
+            DiagnosticsSubsystem::Ffi => Self::Ffi,
+            DiagnosticsSubsystem::Ui => Self::Ui,
+            DiagnosticsSubsystem::AdapterChromium => Self::AdapterChromium,
+            DiagnosticsSubsystem::AdapterDocker => Self::AdapterDocker,
+            DiagnosticsSubsystem::AdapterHelper => Self::AdapterHelper,
+            DiagnosticsSubsystem::AdapterChau7 => Self::AdapterChau7,
+            DiagnosticsSubsystem::AdapterVsCode => Self::AdapterVsCode,
+        }
+    }
+}
+
+impl From<DiagnosticsField> for diagnostics::DiagnosticsField {
+    fn from(value: DiagnosticsField) -> Self {
+        Self {
+            key: value.key,
+            value: value.value,
+        }
+    }
+}
+
+impl From<DiagnosticsEvent> for diagnostics::DiagnosticsEvent {
+    fn from(value: DiagnosticsEvent) -> Self {
+        Self {
+            id: value.id,
+            timestamp_millis: value.timestamp_millis,
+            level: value.level.into(),
+            subsystem: value.subsystem.into(),
+            event_type: value.event_type,
+            sequence: value.sequence,
+            entity_id: value.entity_id,
+            adapter: value.adapter,
+            capability: value.capability,
+            message: value.message,
+            fields: value.fields.into_iter().map(Into::into).collect(),
+            sensitive: value.sensitive,
         }
     }
 }

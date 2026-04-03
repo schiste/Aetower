@@ -1,4 +1,10 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::VecDeque,
+    fs::{self, File, OpenOptions},
+    io::{self, BufRead, BufReader, Write},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -141,6 +147,9 @@ pub struct DiagnosticsOverview {
     pub warn_count: u32,
     pub last_event_millis: Option<u64>,
     pub last_error_message: Option<String>,
+    pub persisted_events: u64,
+    pub persisted_path: Option<String>,
+    pub persistence_error: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -154,6 +163,16 @@ struct DiagnosticsState {
     capacity: usize,
     next_id: u64,
     dropped_events: u64,
+    persistence: Option<PersistedDiagnostics>,
+}
+
+#[derive(Debug)]
+struct PersistedDiagnostics {
+    path: PathBuf,
+    max_events: usize,
+    event_count: usize,
+    compact_at: usize,
+    last_error: Option<String>,
 }
 
 impl DiagnosticsStore {
@@ -164,8 +183,35 @@ impl DiagnosticsStore {
                 capacity: capacity.max(1),
                 next_id: 1,
                 dropped_events: 0,
+                persistence: None,
             })),
         }
+    }
+
+    pub fn with_persistence(
+        capacity: usize,
+        path: impl AsRef<Path>,
+        max_persisted_events: usize,
+    ) -> std::io::Result<Self> {
+        let capacity = capacity.max(1);
+        let max_persisted_events = max_persisted_events.max(capacity);
+        let (events, persistence) =
+            PersistedDiagnostics::open(path.as_ref(), max_persisted_events, capacity)?;
+        let next_id = events
+            .iter()
+            .filter_map(|event| event.id.strip_prefix("diag-")?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        Ok(Self {
+            inner: Arc::new(Mutex::new(DiagnosticsState {
+                events,
+                capacity,
+                next_id,
+                dropped_events: 0,
+                persistence: Some(persistence),
+            })),
+        })
     }
 
     pub fn emit(&self, mut event: DiagnosticsEvent) {
@@ -175,6 +221,10 @@ impl DiagnosticsStore {
         }
         event.id = format!("diag-{}", guard.next_id);
         guard.next_id = guard.next_id.saturating_add(1);
+
+        if let Some(persistence) = guard.persistence.as_mut() {
+            persistence.append(&event);
+        }
 
         if guard.events.len() >= guard.capacity {
             guard.events.pop_front();
@@ -223,6 +273,19 @@ impl DiagnosticsStore {
             warn_count,
             last_event_millis: guard.events.back().map(|event| event.timestamp_millis),
             last_error_message,
+            persisted_events: guard
+                .persistence
+                .as_ref()
+                .map(|persistence| persistence.event_count.min(u64::MAX as usize) as u64)
+                .unwrap_or(0),
+            persisted_path: guard
+                .persistence
+                .as_ref()
+                .map(|persistence| persistence.path.display().to_string()),
+            persistence_error: guard
+                .persistence
+                .as_ref()
+                .and_then(|persistence| persistence.last_error.clone()),
         }
     }
 
@@ -235,6 +298,103 @@ impl DiagnosticsStore {
 impl Default for DiagnosticsStore {
     fn default() -> Self {
         Self::new(2_000)
+    }
+}
+
+impl PersistedDiagnostics {
+    fn open(
+        path: &Path,
+        max_events: usize,
+        preload_limit: usize,
+    ) -> std::io::Result<(VecDeque<DiagnosticsEvent>, Self)> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if !path.exists() {
+            File::create(path)?;
+        }
+
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let mut events = VecDeque::with_capacity(preload_limit.max(1));
+        let mut event_count = 0usize;
+
+        for line in reader.lines() {
+            let Ok(line) = line else { continue };
+            let Ok(event) = serde_json::from_str::<DiagnosticsEvent>(&line) else {
+                continue;
+            };
+            event_count = event_count.saturating_add(1);
+            if events.len() >= preload_limit.max(1) {
+                events.pop_front();
+            }
+            events.push_back(event);
+        }
+
+        let mut persistence = Self {
+            path: path.to_path_buf(),
+            max_events,
+            event_count,
+            compact_at: max_events.saturating_add((max_events / 4).max(1)),
+            last_error: None,
+        };
+        persistence.compact_if_needed();
+        Ok((events, persistence))
+    }
+
+    fn append(&mut self, event: &DiagnosticsEvent) {
+        match self.try_append(event) {
+            Ok(()) => {
+                self.last_error = None;
+                self.compact_if_needed();
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
+        }
+    }
+
+    fn try_append(&mut self, event: &DiagnosticsEvent) -> std::io::Result<()> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        serde_json::to_writer(&mut file, event).map_err(io::Error::other)?;
+        file.write_all(b"\n")?;
+        self.event_count = self.event_count.saturating_add(1);
+        Ok(())
+    }
+
+    fn compact_if_needed(&mut self) {
+        if self.event_count <= self.compact_at {
+            return;
+        }
+        match self.compact_to_last(self.max_events) {
+            Ok(()) => self.last_error = None,
+            Err(error) => self.last_error = Some(error.to_string()),
+        }
+    }
+
+    fn compact_to_last(&mut self, keep: usize) -> std::io::Result<()> {
+        let file = File::open(&self.path)?;
+        let reader = BufReader::new(file);
+        let mut retained = VecDeque::with_capacity(keep.max(1));
+
+        for line in reader.lines() {
+            let line = line?;
+            if retained.len() >= keep.max(1) {
+                retained.pop_front();
+            }
+            retained.push_back(line);
+        }
+
+        let mut file = File::create(&self.path)?;
+        for line in &retained {
+            file.write_all(line.as_bytes())?;
+            file.write_all(b"\n")?;
+        }
+        self.event_count = retained.len();
+        Ok(())
     }
 }
 
@@ -285,5 +445,34 @@ mod tests {
         assert_eq!(events[0].message, "third");
         assert_eq!(events[1].message, "second");
         assert_eq!(store.overview().dropped_events, 1);
+    }
+
+    #[test]
+    fn persistence_reloads_recent_events() {
+        let path =
+            std::env::temp_dir().join(format!("aetower-diagnostics-{}.ndjson", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let store = DiagnosticsStore::with_persistence(3, &path, 6).expect("store");
+        for idx in 0..5 {
+            store.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Info,
+                    DiagnosticsSubsystem::Engine,
+                    "tick",
+                    format!("event-{idx}"),
+                )
+                .build(),
+            );
+        }
+
+        let reloaded = DiagnosticsStore::with_persistence(3, &path, 6).expect("reloaded");
+        let events = reloaded.recent(10);
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].message, "event-4");
+        assert_eq!(events[2].message, "event-2");
+        assert_eq!(reloaded.overview().persisted_events, 5);
+
+        let _ = std::fs::remove_file(&path);
     }
 }

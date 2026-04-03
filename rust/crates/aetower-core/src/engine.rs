@@ -52,7 +52,12 @@ pub struct Engine {
 
 impl Engine {
     pub fn new() -> Self {
-        let diagnostics = DiagnosticsStore::default();
+        let app_support_dir = dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("Aetower");
+        let diagnostics_path = app_support_dir.join("diagnostics.ndjson");
+        let diagnostics = DiagnosticsStore::with_persistence(2_000, &diagnostics_path, 10_000)
+            .unwrap_or_default();
         let adapters = AdapterManager::default();
         adapters.set_diagnostics(diagnostics.clone());
         let capabilities = adapters.initial_capabilities();
@@ -73,10 +78,7 @@ impl Engine {
         };
 
         // Open persistence database (best-effort — app works without it).
-        let db_path = dirs::data_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("Aetower")
-            .join("history.db");
+        let db_path = app_support_dir.join("history.db");
         let persistence = std::fs::create_dir_all(db_path.parent().unwrap())
             .ok()
             .and_then(|_| aetower_persistence::HistoryStore::open(&db_path, 5).ok())
@@ -383,6 +385,10 @@ impl Engine {
 
     pub fn export_diagnostics_json(&self, limit: usize) -> String {
         self.diagnostics.export_json(limit)
+    }
+
+    pub fn record_diagnostics_event(&self, event: DiagnosticsEvent) {
+        self.diagnostics.emit(event);
     }
 
     pub fn set_capability_state(

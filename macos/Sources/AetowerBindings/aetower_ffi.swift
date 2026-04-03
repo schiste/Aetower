@@ -559,6 +559,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func loadHistoryRange(startMillis: UInt64, endMillis: UInt64)  -> [SystemSnapshot]
     
+    func recordDiagnosticsEvent(event: DiagnosticsEvent) 
+    
     func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?) 
     
     func stopAgentSession(sessionId: String, force: Bool)  -> String
@@ -728,6 +730,13 @@ open func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSna
         FfiConverterUInt64.lower(endMillis),$0
     )
 })
+}
+    
+open func recordDiagnosticsEvent(event: DiagnosticsEvent)  {try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_record_diagnostics_event(self.uniffiClonePointer(),
+        FfiConverterTypeDiagnosticsEvent_lower(event),$0
+    )
+}
 }
     
 open func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?)  {try! rustCall() {
@@ -1709,10 +1718,13 @@ public struct DiagnosticsOverview {
     public var warnCount: UInt32
     public var lastEventMillis: UInt64?
     public var lastErrorMessage: String?
+    public var persistedEvents: UInt64
+    public var persistedPath: String?
+    public var persistenceError: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(ringCapacity: UInt32, currentSize: UInt32, droppedEvents: UInt64, errorCount: UInt32, warnCount: UInt32, lastEventMillis: UInt64?, lastErrorMessage: String?) {
+    public init(ringCapacity: UInt32, currentSize: UInt32, droppedEvents: UInt64, errorCount: UInt32, warnCount: UInt32, lastEventMillis: UInt64?, lastErrorMessage: String?, persistedEvents: UInt64, persistedPath: String?, persistenceError: String?) {
         self.ringCapacity = ringCapacity
         self.currentSize = currentSize
         self.droppedEvents = droppedEvents
@@ -1720,6 +1732,9 @@ public struct DiagnosticsOverview {
         self.warnCount = warnCount
         self.lastEventMillis = lastEventMillis
         self.lastErrorMessage = lastErrorMessage
+        self.persistedEvents = persistedEvents
+        self.persistedPath = persistedPath
+        self.persistenceError = persistenceError
     }
 }
 
@@ -1751,6 +1766,15 @@ extension DiagnosticsOverview: Equatable, Hashable {
         if lhs.lastErrorMessage != rhs.lastErrorMessage {
             return false
         }
+        if lhs.persistedEvents != rhs.persistedEvents {
+            return false
+        }
+        if lhs.persistedPath != rhs.persistedPath {
+            return false
+        }
+        if lhs.persistenceError != rhs.persistenceError {
+            return false
+        }
         return true
     }
 
@@ -1762,6 +1786,9 @@ extension DiagnosticsOverview: Equatable, Hashable {
         hasher.combine(warnCount)
         hasher.combine(lastEventMillis)
         hasher.combine(lastErrorMessage)
+        hasher.combine(persistedEvents)
+        hasher.combine(persistedPath)
+        hasher.combine(persistenceError)
     }
 }
 
@@ -1780,7 +1807,10 @@ public struct FfiConverterTypeDiagnosticsOverview: FfiConverterRustBuffer {
                 errorCount: FfiConverterUInt32.read(from: &buf), 
                 warnCount: FfiConverterUInt32.read(from: &buf), 
                 lastEventMillis: FfiConverterOptionUInt64.read(from: &buf), 
-                lastErrorMessage: FfiConverterOptionString.read(from: &buf)
+                lastErrorMessage: FfiConverterOptionString.read(from: &buf), 
+                persistedEvents: FfiConverterUInt64.read(from: &buf), 
+                persistedPath: FfiConverterOptionString.read(from: &buf), 
+                persistenceError: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -1792,6 +1822,9 @@ public struct FfiConverterTypeDiagnosticsOverview: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.warnCount, into: &buf)
         FfiConverterOptionUInt64.write(value.lastEventMillis, into: &buf)
         FfiConverterOptionString.write(value.lastErrorMessage, into: &buf)
+        FfiConverterUInt64.write(value.persistedEvents, into: &buf)
+        FfiConverterOptionString.write(value.persistedPath, into: &buf)
+        FfiConverterOptionString.write(value.persistenceError, into: &buf)
     }
 }
 
@@ -4861,6 +4894,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_load_history_range() != 25480) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_record_diagnostics_event() != 15141) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_set_capability_state() != 11556) {
