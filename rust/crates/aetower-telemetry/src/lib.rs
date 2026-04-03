@@ -7,7 +7,7 @@ use std::{
 use aetower_diagnostics::{
     DiagnosticsEvent, DiagnosticsLevel, DiagnosticsStore, DiagnosticsSubsystem,
 };
-use aetower_model::{EntitySnapshot, SystemSnapshot, ThermalState};
+use aetower_model::{EntitySnapshot, RuntimeLagMetrics, SystemSnapshot, ThermalState};
 use serde::Serialize;
 use url::Url;
 
@@ -44,6 +44,25 @@ pub mod metric_names {
     pub const ENTITY_ENERGY: &str = "aetower.entity.energy_impact";
     pub const ENTITY_NETWORK: &str = "aetower.entity.network_bps";
     pub const ENTITY_WAKEUPS: &str = "aetower.entity.wakeups_per_second";
+    pub const HOST_ENGINE_TICK_LATENCY: &str = "aetower.host.engine_tick_millis";
+    pub const HOST_COLLECT_LATENCY: &str = "aetower.host.collect_millis";
+    pub const HOST_IDENTITY_LATENCY: &str = "aetower.host.identity_millis";
+    pub const HOST_ATTRIBUTION_LATENCY: &str = "aetower.host.attribution_millis";
+    pub const HOST_FRICTION_LATENCY: &str = "aetower.host.friction_millis";
+    pub const HOST_ENRICH_LATENCY: &str = "aetower.host.enrich_millis";
+    pub const HOST_HISTORY_LATENCY: &str = "aetower.host.history_millis";
+    pub const HOST_PERSIST_LATENCY: &str = "aetower.host.persist_millis";
+    pub const HOST_BRIDGE_FETCH_LATENCY: &str = "aetower.host.bridge_fetch_millis";
+    pub const HOST_UI_REFRESH_LATENCY: &str = "aetower.host.ui_refresh_millis";
+    pub const HOST_SNAPSHOT_TO_UI_LATENCY: &str = "aetower.host.snapshot_to_ui_millis";
+    pub const HOST_SNAPSHOT_TO_RENDER_LATENCY: &str = "aetower.host.snapshot_to_render_millis";
+    pub const HOST_RENDER_COMMIT_LATENCY: &str = "aetower.host.render_commit_millis";
+    pub const HOST_DISPLAY_FRAME_INTERVAL: &str = "aetower.host.display_frame_interval_millis";
+    pub const HOST_DISPLAY_REFRESH_HZ: &str = "aetower.host.display_refresh_hz";
+    pub const HOST_DISPLAY_DROPPED_FRAMES: &str = "aetower.host.display_dropped_frames";
+    pub const HOST_INPUT_AVG_LATENCY: &str = "aetower.host.input_avg_latency_millis";
+    pub const HOST_INPUT_MAX_LATENCY: &str = "aetower.host.input_max_latency_millis";
+    pub const HOST_INPUT_SAMPLE_COUNT: &str = "aetower.host.input_sample_count";
 }
 
 pub struct TelemetryExporter {
@@ -75,7 +94,11 @@ impl TelemetryExporter {
         self.diagnostics = Some(diagnostics);
     }
 
-    pub fn export(&self, snapshot: &SystemSnapshot) -> Result<(), String> {
+    pub fn export(
+        &self,
+        snapshot: &SystemSnapshot,
+        lag_metrics: &RuntimeLagMetrics,
+    ) -> Result<(), String> {
         if !self.config.enabled {
             return Ok(());
         }
@@ -101,7 +124,7 @@ impl TelemetryExporter {
             return Err("only http OTLP endpoints are supported".to_owned());
         }
 
-        let payload = build_resource_metrics(snapshot);
+        let payload = build_resource_metrics(snapshot, lag_metrics);
         let body =
             serde_json::to_vec(&payload).map_err(|error| format!("telemetry encode: {error}"))?;
         let result = post_json(&endpoint, &body);
@@ -221,7 +244,10 @@ struct AnyValue {
     bool_value: Option<bool>,
 }
 
-fn build_resource_metrics(snapshot: &SystemSnapshot) -> ResourceMetricsEnvelope {
+fn build_resource_metrics(
+    snapshot: &SystemSnapshot,
+    lag_metrics: &RuntimeLagMetrics,
+) -> ResourceMetricsEnvelope {
     let timestamp = snapshot_time_nanos(snapshot.captured_at_millis);
     let mut metrics = vec![
         host_double_metric(
@@ -272,6 +298,139 @@ fn build_resource_metrics(snapshot: &SystemSnapshot) -> ResourceMetricsEnvelope 
             snapshot.host.ai_agent_friction as f64,
             timestamp.clone(),
             &[kv_int("count", snapshot.host.ai_agent_count as i64)],
+        ),
+        host_double_metric(
+            metric_names::HOST_ENGINE_TICK_LATENCY,
+            "ms",
+            lag_metrics.engine_tick_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_COLLECT_LATENCY,
+            "ms",
+            lag_metrics.collect_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_IDENTITY_LATENCY,
+            "ms",
+            lag_metrics.identity_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_ATTRIBUTION_LATENCY,
+            "ms",
+            lag_metrics.attribution_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_FRICTION_LATENCY,
+            "ms",
+            lag_metrics.friction_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_ENRICH_LATENCY,
+            "ms",
+            lag_metrics.enrich_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_HISTORY_LATENCY,
+            "ms",
+            lag_metrics.history_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_PERSIST_LATENCY,
+            "ms",
+            lag_metrics.persist_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_BRIDGE_FETCH_LATENCY,
+            "ms",
+            lag_metrics.bridge_fetch_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_UI_REFRESH_LATENCY,
+            "ms",
+            lag_metrics.ui_refresh_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_SNAPSHOT_TO_UI_LATENCY,
+            "ms",
+            lag_metrics.snapshot_to_ui_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_SNAPSHOT_TO_RENDER_LATENCY,
+            "ms",
+            lag_metrics.snapshot_to_render_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_RENDER_COMMIT_LATENCY,
+            "ms",
+            lag_metrics.render_commit_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_DISPLAY_FRAME_INTERVAL,
+            "ms",
+            lag_metrics.display_frame_interval_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_DISPLAY_REFRESH_HZ,
+            "Hz",
+            lag_metrics.display_refresh_hz as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_int_metric(
+            metric_names::HOST_DISPLAY_DROPPED_FRAMES,
+            "1",
+            lag_metrics.display_dropped_frames as i64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_INPUT_AVG_LATENCY,
+            "ms",
+            lag_metrics.input_avg_latency_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_INPUT_MAX_LATENCY,
+            "ms",
+            lag_metrics.input_max_latency_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_int_metric(
+            metric_names::HOST_INPUT_SAMPLE_COUNT,
+            "1",
+            lag_metrics.input_sample_count as i64,
+            timestamp.clone(),
+            &[],
         ),
     ];
 
@@ -360,7 +519,7 @@ fn entity_metrics(entity: &EntitySnapshot, timestamp: &str) -> Vec<Metric> {
 }
 
 fn count_metrics(snapshot: &SystemSnapshot) -> usize {
-    7 + snapshot.entities.len() * 6
+    26 + snapshot.entities.len() * 6
 }
 
 fn host_double_metric(
@@ -519,7 +678,9 @@ fn post_json(endpoint: &Url, body: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{OtlpConfig, TelemetryExporter, build_resource_metrics, metric_names};
-    use aetower_model::{EntitySnapshot, HostSnapshot, SystemSnapshot, ThermalState};
+    use aetower_model::{
+        EntitySnapshot, HostSnapshot, RuntimeLagMetrics, SystemSnapshot, ThermalState,
+    };
 
     #[test]
     fn default_otlp_endpoint_uses_http_metrics_path() {
@@ -556,7 +717,14 @@ mod tests {
             ..Default::default()
         };
 
-        let payload = serde_json::to_value(build_resource_metrics(&snapshot)).unwrap();
+        let lag_metrics = RuntimeLagMetrics {
+            engine_tick_millis: 9.5,
+            display_refresh_hz: 120.0,
+            input_avg_latency_millis: 2.5,
+            ..RuntimeLagMetrics::default()
+        };
+        let payload =
+            serde_json::to_value(build_resource_metrics(&snapshot, &lag_metrics)).unwrap();
         let metrics = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
             .as_array()
             .unwrap();
@@ -570,11 +738,25 @@ mod tests {
                 .iter()
                 .any(|metric| metric["name"] == metric_names::ENTITY_FRICTION)
         );
+        assert!(
+            metrics
+                .iter()
+                .any(|metric| metric["name"] == metric_names::HOST_ENGINE_TICK_LATENCY)
+        );
+        assert!(
+            metrics
+                .iter()
+                .any(|metric| metric["name"] == metric_names::HOST_INPUT_AVG_LATENCY)
+        );
     }
 
     #[test]
     fn disabled_exporter_is_noop() {
         let exporter = TelemetryExporter::new(OtlpConfig::default());
-        assert!(exporter.export(&SystemSnapshot::default()).is_ok());
+        assert!(
+            exporter
+                .export(&SystemSnapshot::default(), &RuntimeLagMetrics::default())
+                .is_ok()
+        );
     }
 }

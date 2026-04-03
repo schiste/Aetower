@@ -567,6 +567,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func updateFrontmostAppState(state: FrontmostAppState) 
     
+    func updateUiLagMetrics(metrics: UiLagMetrics) 
+    
 }
 open class MonitorEngine: MonitorEngineProtocol, @unchecked Sendable {
     fileprivate let pointer: UnsafeMutableRawPointer!
@@ -760,6 +762,13 @@ open func stopAgentSession(sessionId: String, force: Bool) -> String  {
 open func updateFrontmostAppState(state: FrontmostAppState)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_update_frontmost_app_state(self.uniffiClonePointer(),
         FfiConverterTypeFrontmostAppState_lower(state),$0
+    )
+}
+}
+    
+open func updateUiLagMetrics(metrics: UiLagMetrics)  {try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_update_ui_lag_metrics(self.uniffiClonePointer(),
+        FfiConverterTypeUiLagMetrics_lower(metrics),$0
     )
 }
 }
@@ -3173,6 +3182,156 @@ public func FfiConverterTypeTimelineEvent_lower(_ value: TimelineEvent) -> RustB
     return FfiConverterTypeTimelineEvent.lower(value)
 }
 
+
+public struct UiLagMetrics {
+    public var updatedAtMillis: UInt64
+    public var bridgeFetchMillis: Float
+    public var uiRefreshMillis: Float
+    public var snapshotToUiMillis: Float
+    public var snapshotToRenderMillis: Float
+    public var renderCommitMillis: Float
+    public var displayFrameIntervalMillis: Float
+    public var displayRefreshHz: Float
+    public var displayDroppedFrames: UInt64
+    public var inputAvgLatencyMillis: Float
+    public var inputMaxLatencyMillis: Float
+    public var inputSampleCount: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(updatedAtMillis: UInt64, bridgeFetchMillis: Float, uiRefreshMillis: Float, snapshotToUiMillis: Float, snapshotToRenderMillis: Float, renderCommitMillis: Float, displayFrameIntervalMillis: Float, displayRefreshHz: Float, displayDroppedFrames: UInt64, inputAvgLatencyMillis: Float, inputMaxLatencyMillis: Float, inputSampleCount: UInt32) {
+        self.updatedAtMillis = updatedAtMillis
+        self.bridgeFetchMillis = bridgeFetchMillis
+        self.uiRefreshMillis = uiRefreshMillis
+        self.snapshotToUiMillis = snapshotToUiMillis
+        self.snapshotToRenderMillis = snapshotToRenderMillis
+        self.renderCommitMillis = renderCommitMillis
+        self.displayFrameIntervalMillis = displayFrameIntervalMillis
+        self.displayRefreshHz = displayRefreshHz
+        self.displayDroppedFrames = displayDroppedFrames
+        self.inputAvgLatencyMillis = inputAvgLatencyMillis
+        self.inputMaxLatencyMillis = inputMaxLatencyMillis
+        self.inputSampleCount = inputSampleCount
+    }
+}
+
+#if compiler(>=6)
+extension UiLagMetrics: Sendable {}
+#endif
+
+
+extension UiLagMetrics: Equatable, Hashable {
+    public static func ==(lhs: UiLagMetrics, rhs: UiLagMetrics) -> Bool {
+        if lhs.updatedAtMillis != rhs.updatedAtMillis {
+            return false
+        }
+        if lhs.bridgeFetchMillis != rhs.bridgeFetchMillis {
+            return false
+        }
+        if lhs.uiRefreshMillis != rhs.uiRefreshMillis {
+            return false
+        }
+        if lhs.snapshotToUiMillis != rhs.snapshotToUiMillis {
+            return false
+        }
+        if lhs.snapshotToRenderMillis != rhs.snapshotToRenderMillis {
+            return false
+        }
+        if lhs.renderCommitMillis != rhs.renderCommitMillis {
+            return false
+        }
+        if lhs.displayFrameIntervalMillis != rhs.displayFrameIntervalMillis {
+            return false
+        }
+        if lhs.displayRefreshHz != rhs.displayRefreshHz {
+            return false
+        }
+        if lhs.displayDroppedFrames != rhs.displayDroppedFrames {
+            return false
+        }
+        if lhs.inputAvgLatencyMillis != rhs.inputAvgLatencyMillis {
+            return false
+        }
+        if lhs.inputMaxLatencyMillis != rhs.inputMaxLatencyMillis {
+            return false
+        }
+        if lhs.inputSampleCount != rhs.inputSampleCount {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(updatedAtMillis)
+        hasher.combine(bridgeFetchMillis)
+        hasher.combine(uiRefreshMillis)
+        hasher.combine(snapshotToUiMillis)
+        hasher.combine(snapshotToRenderMillis)
+        hasher.combine(renderCommitMillis)
+        hasher.combine(displayFrameIntervalMillis)
+        hasher.combine(displayRefreshHz)
+        hasher.combine(displayDroppedFrames)
+        hasher.combine(inputAvgLatencyMillis)
+        hasher.combine(inputMaxLatencyMillis)
+        hasher.combine(inputSampleCount)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUiLagMetrics: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UiLagMetrics {
+        return
+            try UiLagMetrics(
+                updatedAtMillis: FfiConverterUInt64.read(from: &buf), 
+                bridgeFetchMillis: FfiConverterFloat.read(from: &buf), 
+                uiRefreshMillis: FfiConverterFloat.read(from: &buf), 
+                snapshotToUiMillis: FfiConverterFloat.read(from: &buf), 
+                snapshotToRenderMillis: FfiConverterFloat.read(from: &buf), 
+                renderCommitMillis: FfiConverterFloat.read(from: &buf), 
+                displayFrameIntervalMillis: FfiConverterFloat.read(from: &buf), 
+                displayRefreshHz: FfiConverterFloat.read(from: &buf), 
+                displayDroppedFrames: FfiConverterUInt64.read(from: &buf), 
+                inputAvgLatencyMillis: FfiConverterFloat.read(from: &buf), 
+                inputMaxLatencyMillis: FfiConverterFloat.read(from: &buf), 
+                inputSampleCount: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UiLagMetrics, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.updatedAtMillis, into: &buf)
+        FfiConverterFloat.write(value.bridgeFetchMillis, into: &buf)
+        FfiConverterFloat.write(value.uiRefreshMillis, into: &buf)
+        FfiConverterFloat.write(value.snapshotToUiMillis, into: &buf)
+        FfiConverterFloat.write(value.snapshotToRenderMillis, into: &buf)
+        FfiConverterFloat.write(value.renderCommitMillis, into: &buf)
+        FfiConverterFloat.write(value.displayFrameIntervalMillis, into: &buf)
+        FfiConverterFloat.write(value.displayRefreshHz, into: &buf)
+        FfiConverterUInt64.write(value.displayDroppedFrames, into: &buf)
+        FfiConverterFloat.write(value.inputAvgLatencyMillis, into: &buf)
+        FfiConverterFloat.write(value.inputMaxLatencyMillis, into: &buf)
+        FfiConverterUInt32.write(value.inputSampleCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiLagMetrics_lift(_ buf: RustBuffer) throws -> UiLagMetrics {
+    return try FfiConverterTypeUiLagMetrics.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiLagMetrics_lower(_ value: UiLagMetrics) -> RustBuffer {
+    return FfiConverterTypeUiLagMetrics.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
@@ -4922,6 +5081,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_update_frontmost_app_state() != 57149) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_update_ui_lag_metrics() != 2474) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_constructor_monitorengine_new() != 50482) {

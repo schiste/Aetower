@@ -189,6 +189,22 @@ pub struct HostTrend {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct UiLagMetrics {
+    pub updated_at_millis: u64,
+    pub bridge_fetch_millis: f32,
+    pub ui_refresh_millis: f32,
+    pub snapshot_to_ui_millis: f32,
+    pub snapshot_to_render_millis: f32,
+    pub render_commit_millis: f32,
+    pub display_frame_interval_millis: f32,
+    pub display_refresh_hz: f32,
+    pub display_dropped_frames: u64,
+    pub input_avg_latency_millis: f32,
+    pub input_max_latency_millis: f32,
+    pub input_sample_count: u32,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct AggregateMetrics {
     pub cpu_percent: f32,
     pub memory_resident_bytes: u64,
@@ -529,6 +545,13 @@ impl MonitorEngine {
             .record_diagnostics_event(event.into());
     }
 
+    pub fn update_ui_lag_metrics(&self, metrics: UiLagMetrics) {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .update_ui_lag_metrics(metrics.into());
+    }
+
     pub fn export_snapshot_json(&self) -> String {
         let snapshot = self
             .inner
@@ -764,6 +787,26 @@ impl From<diagnostics::DiagnosticsOverview> for DiagnosticsOverview {
             persisted_path: value.persisted_path,
             persisted_bytes: value.persisted_bytes,
             persistence_error: value.persistence_error,
+        }
+    }
+}
+
+impl From<UiLagMetrics> for model::RuntimeLagMetrics {
+    fn from(value: UiLagMetrics) -> Self {
+        Self {
+            updated_at_millis: value.updated_at_millis,
+            bridge_fetch_millis: value.bridge_fetch_millis,
+            ui_refresh_millis: value.ui_refresh_millis,
+            snapshot_to_ui_millis: value.snapshot_to_ui_millis,
+            snapshot_to_render_millis: value.snapshot_to_render_millis,
+            render_commit_millis: value.render_commit_millis,
+            display_frame_interval_millis: value.display_frame_interval_millis,
+            display_refresh_hz: value.display_refresh_hz,
+            display_dropped_frames: value.display_dropped_frames,
+            input_avg_latency_millis: value.input_avg_latency_millis,
+            input_max_latency_millis: value.input_max_latency_millis,
+            input_sample_count: value.input_sample_count,
+            ..model::RuntimeLagMetrics::default()
         }
     }
 }

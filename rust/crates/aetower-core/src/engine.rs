@@ -13,7 +13,7 @@ use aetower_diagnostics::{
 };
 use aetower_model::{
     CapabilityKind, CapabilitySnapshot, CapabilityState, FrontmostAppState, HostSnapshot,
-    HostTrend, SystemSnapshot, ThermalState,
+    HostTrend, RuntimeLagMetrics, SystemSnapshot, ThermalState,
 };
 use aetower_telemetry::{OtlpConfig, TelemetryExporter};
 use aetower_time::{self as time, ADAPTER_TICK, FAST_TICK};
@@ -29,6 +29,7 @@ struct EngineState {
     capabilities: BTreeMap<CapabilityKind, CapabilitySnapshot>,
     frontmost_app_state: Option<FrontmostAppState>,
     history: History,
+    runtime_lag_metrics: RuntimeLagMetrics,
 }
 
 impl EngineState {
@@ -111,6 +112,7 @@ impl Engine {
                 capabilities,
                 frontmost_app_state: None,
                 history: History::new(),
+                runtime_lag_metrics: RuntimeLagMetrics::default(),
             })),
             adapters,
             persistence: Arc::new(Mutex::new(persistence)),
@@ -174,12 +176,13 @@ impl Engine {
                     );
                 }
                 gpu_sample_tick = gpu_sample_tick.wrapping_add(1);
-                let (frontmost_app_state, capabilities) = {
+                let (frontmost_app_state, capabilities, runtime_lag_metrics) = {
                     let mut guard = state.lock();
                     refresh_adapter_capabilities(&mut guard, &adapters, captured_at_millis);
                     (
                         guard.frontmost_app_state.clone(),
                         guard.capabilities.clone(),
+                        guard.runtime_lag_metrics.clone(),
                     )
                 };
                 // Single HostSnapshot construction — passed to pipeline
@@ -234,11 +237,19 @@ impl Engine {
 
                 let history_started = Instant::now();
                 let mut guard = state.lock();
+                let mut runtime_lag_metrics = runtime_lag_metrics;
+                runtime_lag_metrics.updated_at_millis = captured_at_millis;
+                runtime_lag_metrics.collect_millis = collect_millis as f32;
+                runtime_lag_metrics.identity_millis = pipeline_timings.identity_millis as f32;
+                runtime_lag_metrics.attribution_millis = pipeline_timings.attribution_millis as f32;
+                runtime_lag_metrics.friction_millis = pipeline_timings.friction_millis as f32;
+                runtime_lag_metrics.enrich_millis = enrich_millis as f32;
                 let (timeline, host_trend) =
                     guard
                         .history
                         .update(captured_at_millis, &host, &mut entities);
                 let history_millis = history_started.elapsed().as_secs_f64() * 1000.0;
+                runtime_lag_metrics.history_millis = history_millis as f32;
                 guard.sequence += 1;
                 guard.latest_snapshot = SystemSnapshot {
                     sequence: guard.sequence,
@@ -255,6 +266,7 @@ impl Engine {
                     store.maybe_store(&guard.latest_snapshot);
                 }
                 let persist_millis = persist_started.elapsed().as_secs_f64() * 1000.0;
+                runtime_lag_metrics.persist_millis = persist_millis as f32;
                 let sequence = guard.latest_snapshot.sequence;
                 let entity_count = guard.latest_snapshot.entities.len();
                 diagnostics.emit(
@@ -286,8 +298,10 @@ impl Engine {
                     .field("persist_millis", format!("{persist_millis:.3}"))
                     .build(),
                 );
-                drop(guard);
                 let tick_millis = tick_started.elapsed().as_millis();
+                runtime_lag_metrics.engine_tick_millis = tick_millis as f32;
+                guard.runtime_lag_metrics = runtime_lag_metrics;
+                drop(guard);
                 let is_over_budget = tick_millis > FAST_TICK.as_millis();
                 let level = if is_over_budget {
                     DiagnosticsLevel::Warn
@@ -379,8 +393,14 @@ impl Engine {
                 };
 
                 if enabled {
-                    let snapshot = state.lock().latest_snapshot.clone();
-                    let _ = telemetry.lock().export(&snapshot);
+                    let (snapshot, lag_metrics) = {
+                        let guard = state.lock();
+                        (
+                            guard.latest_snapshot.clone(),
+                            guard.runtime_lag_metrics.clone(),
+                        )
+                    };
+                    let _ = telemetry.lock().export(&snapshot, &lag_metrics);
                 }
 
                 let sleep_for = if enabled {
@@ -433,6 +453,23 @@ impl Engine {
 
     pub fn record_diagnostics_event(&self, event: DiagnosticsEvent) {
         self.diagnostics.emit(event);
+    }
+
+    pub fn update_ui_lag_metrics(&self, metrics: RuntimeLagMetrics) {
+        let mut guard = self.state.lock();
+        guard.runtime_lag_metrics.updated_at_millis = metrics.updated_at_millis;
+        guard.runtime_lag_metrics.bridge_fetch_millis = metrics.bridge_fetch_millis;
+        guard.runtime_lag_metrics.ui_refresh_millis = metrics.ui_refresh_millis;
+        guard.runtime_lag_metrics.snapshot_to_ui_millis = metrics.snapshot_to_ui_millis;
+        guard.runtime_lag_metrics.snapshot_to_render_millis = metrics.snapshot_to_render_millis;
+        guard.runtime_lag_metrics.render_commit_millis = metrics.render_commit_millis;
+        guard.runtime_lag_metrics.display_frame_interval_millis =
+            metrics.display_frame_interval_millis;
+        guard.runtime_lag_metrics.display_refresh_hz = metrics.display_refresh_hz;
+        guard.runtime_lag_metrics.display_dropped_frames = metrics.display_dropped_frames;
+        guard.runtime_lag_metrics.input_avg_latency_millis = metrics.input_avg_latency_millis;
+        guard.runtime_lag_metrics.input_max_latency_millis = metrics.input_max_latency_millis;
+        guard.runtime_lag_metrics.input_sample_count = metrics.input_sample_count;
     }
 
     pub fn set_capability_state(

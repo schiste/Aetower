@@ -213,6 +213,50 @@ pub struct HostTrend {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RuntimeLagMetrics {
+    #[serde(default)]
+    pub updated_at_millis: u64,
+    #[serde(default)]
+    pub engine_tick_millis: f32,
+    #[serde(default)]
+    pub collect_millis: f32,
+    #[serde(default)]
+    pub identity_millis: f32,
+    #[serde(default)]
+    pub attribution_millis: f32,
+    #[serde(default)]
+    pub friction_millis: f32,
+    #[serde(default)]
+    pub enrich_millis: f32,
+    #[serde(default)]
+    pub history_millis: f32,
+    #[serde(default)]
+    pub persist_millis: f32,
+    #[serde(default)]
+    pub bridge_fetch_millis: f32,
+    #[serde(default)]
+    pub ui_refresh_millis: f32,
+    #[serde(default)]
+    pub snapshot_to_ui_millis: f32,
+    #[serde(default)]
+    pub snapshot_to_render_millis: f32,
+    #[serde(default)]
+    pub render_commit_millis: f32,
+    #[serde(default)]
+    pub display_frame_interval_millis: f32,
+    #[serde(default)]
+    pub display_refresh_hz: f32,
+    #[serde(default)]
+    pub display_dropped_frames: u64,
+    #[serde(default)]
+    pub input_avg_latency_millis: f32,
+    #[serde(default)]
+    pub input_max_latency_millis: f32,
+    #[serde(default)]
+    pub input_sample_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AggregateMetrics {
     pub cpu_percent: f32,
     pub memory_resident_bytes: u64,
