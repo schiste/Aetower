@@ -58,6 +58,9 @@ public struct SettingsView: View {
                 GroupBox("Notifications") {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle("Enable notifications", isOn: $settings.notificationsEnabled)
+                        Text("Authorization: \(state.notificationAuthorizationStatus)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Friction notification threshold")
                                 .font(.headline)
@@ -71,6 +74,10 @@ public struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+                        Button("Re-check notification permission") {
+                            state.applyNotificationSettings(settings)
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
 

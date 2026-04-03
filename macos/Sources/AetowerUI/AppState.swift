@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import OSLog
 import UniformTypeIdentifiers
 import UserNotifications
 import AetowerBridge
@@ -18,9 +19,13 @@ public final class AppState: ObservableObject {
         errorCount: 0,
         warnCount: 0,
         lastEventMillis: nil,
-        lastErrorMessage: nil
+        lastErrorMessage: nil,
+        persistedEvents: 0,
+        persistedPath: nil,
+        persistenceError: nil
     )
     @Published public private(set) var diagnosticsLoadError: String?
+    @Published public private(set) var notificationAuthorizationStatus = "unknown"
     @Published public var lastError: String?
 
     private let bridge: EngineBridge
@@ -35,14 +40,22 @@ public final class AppState: ObservableObject {
     private var lastFrontmostProbeDate = Date.distantPast
     private var lastWindowTitleProbeDate = Date.distantPast
     private var previousAnomalyStates: [String: Bool] = [:]
+    private var lastAnomalyNotificationDates: [String: Date] = [:]
+    private var notificationsEnabled = false
+    private var frictionNotificationThreshold = 60.0
+    private var mirroredDiagnosticsSignatures = Set<String>()
     private var historyWindowSeconds: TimeInterval = 3600
     private var lastHistoryLoadDate = Date.distantPast
     private var lastDiagnosticsLoadDate = Date.distantPast
+    private var lastSessionLogAnalysisDate = Date.distantPast
+    private var lastSessionLogFingerprint: String?
 
     private let frontmostProbeInterval: TimeInterval = 1.0
     private let windowTitleProbeInterval: TimeInterval = 5.0
     private let historyReloadInterval: TimeInterval = 20.0
     private let diagnosticsReloadInterval: TimeInterval = 2.0
+    private let sessionLogAnalysisInterval: TimeInterval = 45.0
+    private let anomalyNotificationCooldown: TimeInterval = 300.0
 
     public init(
         bridge: EngineBridge = EngineBridge(),
@@ -152,9 +165,20 @@ public final class AppState: ObservableObject {
         }
     }
 
-    public func requestNotificationPermission() {
-        guard Bundle.main.bundleIdentifier != nil else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    public func applyNotificationSettings(_ settings: SettingsStore) {
+        notificationsEnabled = settings.notificationsEnabled
+        frictionNotificationThreshold = settings.frictionNotificationThreshold
+        if settings.notificationsEnabled {
+            requestNotificationPermissionIfNeeded(trigger: "notifications-enabled")
+        } else {
+            notificationAuthorizationStatus = "disabled"
+            recordLocalDiagnosticsEvent(
+                level: .info,
+                subsystem: .ui,
+                eventType: "notification-settings-disabled",
+                message: "Notifications are disabled in settings."
+            )
+        }
     }
 
     public func applyIntegrationSettings(_ settings: SettingsStore) {
@@ -244,14 +268,23 @@ public final class AppState: ObservableObject {
         }
         lastDiagnosticsLoadDate = now
         let bridge = self.bridge
+        let shouldAnalyzeSessionLogs = force || now.timeIntervalSince(lastSessionLogAnalysisDate) >= sessionLogAnalysisInterval
+        if shouldAnalyzeSessionLogs {
+            lastSessionLogAnalysisDate = now
+        }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let events = bridge.latestDiagnostics(limit: limit)
             let overview = bridge.diagnosticsOverview()
+            let sessionLogSummary = shouldAnalyzeSessionLogs ? Result { try SessionLogAnalyzer.analyzeCurrentProcess(lastMinutes: 6) } : nil
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.diagnosticsEvents = events
                 self.diagnosticsOverview = overview
                 self.diagnosticsLoadError = nil
+                self.mirrorDiagnosticsToUnifiedLog(events)
+                if let sessionLogSummary {
+                    self.applySessionLogSummary(sessionLogSummary)
+                }
             }
         }
     }
@@ -334,8 +367,9 @@ public final class AppState: ObservableObject {
     private func diffAnomalyStates() {
         var newStates: [String: Bool] = [:]
         for entity in snapshot.entities {
-            newStates[entity.entityId] = entity.anomalyDetected
-            let wasAnomaly = previousAnomalyStates[entity.entityId] ?? false
+            let notificationKey = anomalyNotificationKey(for: entity)
+            newStates[notificationKey] = entity.anomalyDetected
+            let wasAnomaly = previousAnomalyStates[notificationKey] ?? false
             if entity.anomalyDetected && !wasAnomaly {
                 fireAnomalyNotification(for: entity)
             }
@@ -344,16 +378,374 @@ public final class AppState: ObservableObject {
     }
 
     private func fireAnomalyNotification(for entity: EntitySnapshot) {
+        let notificationKey = anomalyNotificationKey(for: entity)
+        guard notificationsEnabled else {
+            recordLocalDiagnosticsEvent(
+                level: .debug,
+                subsystem: .ui,
+                eventType: "anomaly-notification-skipped",
+                message: "Skipped anomaly notification because notifications are disabled.",
+                entityId: entity.entityId,
+                fields: [
+                    DiagnosticsField(key: "notification_key", value: notificationKey),
+                    DiagnosticsField(key: "friction", value: String(format: "%.1f", entity.friction.totalScore)),
+                ]
+            )
+            return
+        }
+        guard entity.friction.totalScore >= Float(frictionNotificationThreshold) else {
+            return
+        }
         guard Bundle.main.bundleIdentifier != nil else { return }
+        let now = Date()
+        if let lastFire = lastAnomalyNotificationDates[notificationKey],
+           now.timeIntervalSince(lastFire) < anomalyNotificationCooldown {
+            recordLocalDiagnosticsEvent(
+                level: .info,
+                subsystem: .ui,
+                eventType: "anomaly-notification-suppressed",
+                message: "Suppressed a repeated anomaly notification within the cooldown window.",
+                entityId: entity.entityId,
+                fields: [
+                    DiagnosticsField(key: "notification_key", value: notificationKey),
+                    DiagnosticsField(key: "cooldown_seconds", value: String(Int(anomalyNotificationCooldown))),
+                    DiagnosticsField(key: "friction", value: String(format: "%.1f", entity.friction.totalScore)),
+                ]
+            )
+            return
+        }
         let content = UNMutableNotificationContent()
         content.title = "Anomaly Detected"
         content.body = "\(entity.displayName) friction is unusually high (\(String(format: "%.1f", entity.friction.totalScore)))."
         content.sound = .default
         let request = UNNotificationRequest(
-            identifier: "anomaly-\(entity.entityId)",
+            identifier: "anomaly-\(notificationKey)",
             content: content,
             trigger: nil
         )
-        UNUserNotificationCenter.current().add(request)
+        lastAnomalyNotificationDates[notificationKey] = now
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "anomaly-notification-enqueued",
+            message: "Enqueued an anomaly notification.",
+            entityId: entity.entityId,
+            fields: [
+                DiagnosticsField(key: "notification_key", value: notificationKey),
+                DiagnosticsField(key: "friction", value: String(format: "%.1f", entity.friction.totalScore)),
+                DiagnosticsField(key: "threshold", value: String(format: "%.1f", frictionNotificationThreshold)),
+            ]
+        )
+        UNUserNotificationCenter.current().add(request) { [weak self] error in
+            guard let self else { return }
+            Task { @MainActor in
+                if let error {
+                    self.recordLocalDiagnosticsEvent(
+                        level: .error,
+                        subsystem: .ui,
+                        eventType: "anomaly-notification-failed",
+                        message: "Failed to enqueue an anomaly notification.",
+                        entityId: entity.entityId,
+                        fields: [
+                            DiagnosticsField(key: "notification_key", value: notificationKey),
+                            DiagnosticsField(key: "error", value: error.localizedDescription),
+                        ]
+                    )
+                }
+            }
+        }
+    }
+
+    private func requestNotificationPermissionIfNeeded(trigger: String) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { [weak self] settings in
+            guard let self else { return }
+            let authorizationStatus = settings.authorizationStatus
+            Task { @MainActor in
+                switch authorizationStatus {
+                case .authorized, .provisional, .ephemeral:
+                    notificationAuthorizationStatus = "authorized"
+                    recordLocalDiagnosticsEvent(
+                        level: .info,
+                        subsystem: .ui,
+                        eventType: "notification-permission-ready",
+                        message: "Notification permission is already available.",
+                        fields: [
+                            DiagnosticsField(key: "trigger", value: trigger),
+                            DiagnosticsField(key: "status", value: authorizationStatusLabel(authorizationStatus)),
+                        ]
+                    )
+                case .denied:
+                    notificationAuthorizationStatus = "denied"
+                    recordLocalDiagnosticsEvent(
+                        level: .warn,
+                        subsystem: .ui,
+                        eventType: "notification-permission-denied",
+                        message: "Notification permission is denied for this app.",
+                        fields: [
+                            DiagnosticsField(key: "trigger", value: trigger),
+                            DiagnosticsField(key: "status", value: authorizationStatusLabel(authorizationStatus)),
+                        ]
+                    )
+                case .notDetermined:
+                    Task { @MainActor in
+                        do {
+                            let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+                            self.notificationAuthorizationStatus = granted ? "authorized" : "denied"
+                            self.recordLocalDiagnosticsEvent(
+                                level: granted ? .info : .warn,
+                                subsystem: .ui,
+                                eventType: "notification-permission-requested",
+                                message: granted
+                                    ? "Notification permission granted."
+                                    : "Notification permission was not granted.",
+                                fields: [
+                                    DiagnosticsField(key: "trigger", value: trigger),
+                                    DiagnosticsField(key: "granted", value: granted ? "true" : "false"),
+                                ]
+                            )
+                        } catch {
+                            self.notificationAuthorizationStatus = "error"
+                            self.recordLocalDiagnosticsEvent(
+                                level: .warn,
+                                subsystem: .ui,
+                                eventType: "notification-permission-request-failed",
+                                message: "Notification permission request failed.",
+                                fields: [
+                                    DiagnosticsField(key: "trigger", value: trigger),
+                                    DiagnosticsField(key: "error", value: error.localizedDescription),
+                                ]
+                            )
+                        }
+                    }
+                @unknown default:
+                    notificationAuthorizationStatus = "unknown"
+                    recordLocalDiagnosticsEvent(
+                        level: .warn,
+                        subsystem: .ui,
+                        eventType: "notification-permission-unknown",
+                        message: "Notification permission returned an unknown authorization state.",
+                        fields: [
+                            DiagnosticsField(key: "trigger", value: trigger),
+                        ]
+                    )
+                }
+            }
+        }
+    }
+
+    private func anomalyNotificationKey(for entity: EntitySnapshot) -> String {
+        let normalizedName = entity.displayName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalizedName.isEmpty ? entity.entityId : normalizedName
+    }
+
+    private func applySessionLogSummary(_ result: Result<SessionLogSummary, Error>) {
+        switch result {
+        case let .success(summary):
+            guard summary.fingerprint != lastSessionLogFingerprint else {
+                return
+            }
+            lastSessionLogFingerprint = summary.fingerprint
+            if summary.notificationLogEntries >= 60 {
+                recordLocalDiagnosticsEvent(
+                    level: .warn,
+                    subsystem: .ui,
+                    eventType: "session-log-notification-churn",
+                    message: "Session logs show repeated notification scheduling chatter.",
+                    fields: [
+                        DiagnosticsField(key: "window_minutes", value: String(summary.windowMinutes)),
+                        DiagnosticsField(key: "notification_log_entries", value: String(summary.notificationLogEntries)),
+                    ]
+                )
+            }
+            if summary.notificationAuthorizationFailures > 0 {
+                recordLocalDiagnosticsEvent(
+                    level: .warn,
+                    subsystem: .ui,
+                    eventType: "session-log-notification-permission-failure",
+                    message: "Unified logs recorded a notification authorization failure in this session.",
+                    fields: [
+                        DiagnosticsField(key: "count", value: String(summary.notificationAuthorizationFailures)),
+                    ]
+                )
+            }
+            if summary.metalLoadFailures > 0 {
+                recordLocalDiagnosticsEvent(
+                    level: .error,
+                    subsystem: .ui,
+                    eventType: "session-log-metal-error",
+                    message: "Unified logs recorded a Metal-side load failure in this session.",
+                    fields: [
+                        DiagnosticsField(key: "count", value: String(summary.metalLoadFailures)),
+                    ]
+                )
+            }
+            if summary.nonActiveWindowWarnings > 0 {
+                recordLocalDiagnosticsEvent(
+                    level: .info,
+                    subsystem: .ui,
+                    eventType: "session-log-window-noise",
+                    message: "Unified logs recorded non-active window ordering noise in this session.",
+                    fields: [
+                        DiagnosticsField(key: "count", value: String(summary.nonActiveWindowWarnings)),
+                    ]
+                )
+            }
+        case let .failure(error):
+            recordLocalDiagnosticsEvent(
+                level: .warn,
+                subsystem: .ui,
+                eventType: "session-log-analysis-failed",
+                message: "Failed to inspect unified logs for the current app session.",
+                fields: [
+                    DiagnosticsField(key: "error", value: error.localizedDescription),
+                ]
+            )
+        }
+    }
+
+    private func recordLocalDiagnosticsEvent(
+        level: DiagnosticsLevel,
+        subsystem: DiagnosticsSubsystem,
+        eventType: String,
+        message: String,
+        sequence: UInt64? = nil,
+        entityId: String? = nil,
+        adapter: String? = nil,
+        capability: String? = nil,
+        fields: [DiagnosticsField] = [],
+        sensitive: Bool = false
+    ) {
+        let event = DiagnosticsEvent(
+            id: "ui-\(UUID().uuidString)",
+            timestampMillis: UInt64(Date().timeIntervalSince1970 * 1000),
+            level: level,
+            subsystem: subsystem,
+            eventType: eventType,
+            sequence: sequence,
+            entityId: entityId,
+            adapter: adapter,
+            capability: capability,
+            message: message,
+            fields: fields,
+            sensitive: sensitive
+        )
+        bridge.recordDiagnosticsEvent(event)
+        mirrorDiagnosticsToUnifiedLog([event])
+    }
+
+    private func mirrorDiagnosticsToUnifiedLog(_ events: [DiagnosticsEvent]) {
+        let orderedEvents = events.reversed()
+        for event in orderedEvents {
+            let signature = diagnosticsMirrorSignature(for: event)
+            guard mirroredDiagnosticsSignatures.insert(signature).inserted else {
+                continue
+            }
+            logDiagnosticsEvent(event)
+        }
+        if mirroredDiagnosticsSignatures.count > 4_000 {
+            let retained = Set(events.prefix(2_000).map(diagnosticsMirrorSignature))
+            mirroredDiagnosticsSignatures = retained
+        }
+    }
+
+    private func logDiagnosticsEvent(_ event: DiagnosticsEvent) {
+        let logger = Logger(
+            subsystem: Bundle.main.bundleIdentifier ?? "com.aetower.app",
+            category: "diag.\(diagnosticsSubsystemCategory(event.subsystem))"
+        )
+        let fieldSummary = event.fields.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+        if event.sensitive {
+            switch event.level {
+            case .trace, .debug:
+                logger.debug("\(event.eventType, privacy: .public) \(event.message, privacy: .public) \(fieldSummary, privacy: .private)")
+            case .info:
+                logger.info("\(event.eventType, privacy: .public) \(event.message, privacy: .public) \(fieldSummary, privacy: .private)")
+            case .warn:
+                logger.warning("\(event.eventType, privacy: .public) \(event.message, privacy: .public) \(fieldSummary, privacy: .private)")
+            case .error:
+                logger.error("\(event.eventType, privacy: .public) \(event.message, privacy: .public) \(fieldSummary, privacy: .private)")
+            }
+        } else {
+            switch event.level {
+            case .trace, .debug:
+                logger.debug("\(event.eventType, privacy: .public) \(event.message, privacy: .public) \(fieldSummary, privacy: .public)")
+            case .info:
+                logger.info("\(event.eventType, privacy: .public) \(event.message, privacy: .public) \(fieldSummary, privacy: .public)")
+            case .warn:
+                logger.warning("\(event.eventType, privacy: .public) \(event.message, privacy: .public) \(fieldSummary, privacy: .public)")
+            case .error:
+                logger.error("\(event.eventType, privacy: .public) \(event.message, privacy: .public) \(fieldSummary, privacy: .public)")
+            }
+        }
+    }
+
+    private func diagnosticsMirrorSignature(for event: DiagnosticsEvent) -> String {
+        [
+            String(event.timestampMillis),
+            event.eventType,
+            event.message,
+            event.entityId ?? "",
+            event.adapter ?? "",
+            event.capability ?? "",
+            event.fields.map { "\($0.key)=\($0.value)" }.joined(separator: "|"),
+        ].joined(separator: "\u{1f}")
+    }
+
+    private func diagnosticsSubsystemCategory(_ subsystem: DiagnosticsSubsystem) -> String {
+        switch subsystem {
+        case .engine:
+            return "engine"
+        case .collector:
+            return "collector"
+        case .identity:
+            return "identity"
+        case .attribution:
+            return "attribution"
+        case .friction:
+            return "friction"
+        case .history:
+            return "history"
+        case .persistence:
+            return "persistence"
+        case .telemetry:
+            return "telemetry"
+        case .gpu:
+            return "gpu"
+        case .ffi:
+            return "ffi"
+        case .ui:
+            return "ui"
+        case .adapterChromium:
+            return "adapter-chromium"
+        case .adapterDocker:
+            return "adapter-docker"
+        case .adapterHelper:
+            return "adapter-helper"
+        case .adapterChau7:
+            return "adapter-chau7"
+        case .adapterVsCode:
+            return "adapter-vscode"
+        }
+    }
+
+    private func authorizationStatusLabel(_ status: UNAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined:
+            return "not-determined"
+        case .denied:
+            return "denied"
+        case .authorized:
+            return "authorized"
+        case .provisional:
+            return "provisional"
+        case .ephemeral:
+            return "ephemeral"
+        @unknown default:
+            return "unknown"
+        }
     }
 }

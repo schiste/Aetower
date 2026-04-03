@@ -92,4 +92,8 @@ public final class EngineBridge: @unchecked Sendable {
     public func exportDiagnosticsJSON(limit: UInt32 = 1000) -> String {
         engine.exportDiagnosticsJson(limit: limit)
     }
+
+    public func recordDiagnosticsEvent(_ event: DiagnosticsEvent) {
+        engine.recordDiagnosticsEvent(event: event)
+    }
 }

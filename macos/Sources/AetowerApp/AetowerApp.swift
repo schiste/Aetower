@@ -75,7 +75,7 @@ struct AetowerApp: App {
             .preferredColorScheme(resolvedColorScheme)
             .task {
                 menuBarExtraInserted = settings.showMenuBarExtra
-                state.requestNotificationPermission()
+                state.applyNotificationSettings(settings)
                 Task { @MainActor in
                     state.applyIntegrationSettings(settings)
                 }
@@ -92,6 +92,12 @@ struct AetowerApp: App {
                 if menuBarExtraInserted != newValue {
                     menuBarExtraInserted = newValue
                 }
+            }
+            .onChange(of: settings.notificationsEnabled) { _, _ in
+                state.applyNotificationSettings(settings)
+            }
+            .onChange(of: settings.frictionNotificationThreshold) { _, _ in
+                state.applyNotificationSettings(settings)
             }
             .onDisappear {
                 state.stop()
