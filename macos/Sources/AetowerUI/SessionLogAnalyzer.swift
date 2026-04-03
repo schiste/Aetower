@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 struct SessionLogSummary {
     let windowMinutes: Int
@@ -20,56 +21,44 @@ struct SessionLogSummary {
 
 enum SessionLogAnalyzer {
     static func analyzeCurrentProcess(lastMinutes: Int) throws -> SessionLogSummary {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/log")
-        process.arguments = [
-            "show",
-            "--last",
-            "\(max(lastMinutes, 1))m",
-            "--style",
-            "compact",
-            "--predicate",
-            "processIdentifier == \(ProcessInfo.processInfo.processIdentifier)",
-        ]
+        let windowMinutes = max(lastMinutes, 1)
+        let store = try OSLogStore(scope: .currentProcessIdentifier)
+        let position = store.position(date: Date().addingTimeInterval(TimeInterval(-windowMinutes * 60)))
+        let predicate = NSPredicate(
+            format: "processIdentifier == %d",
+            ProcessInfo.processInfo.processIdentifier
+        )
+        let entries = try store.getEntries(at: position, matching: predicate)
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
+        var notificationLogEntries = 0
+        var notificationAuthorizationFailures = 0
+        var metalLoadFailures = 0
+        var nonActiveWindowWarnings = 0
 
-        try process.run()
-        process.waitUntilExit()
-
-        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
-        guard process.terminationStatus == 0 else {
-            let errorMessage = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw NSError(
-                domain: "Aetower.SessionLogAnalyzer",
-                code: Int(process.terminationStatus),
-                userInfo: [
-                    NSLocalizedDescriptionKey: errorMessage?.isEmpty == false ? errorMessage! : "log show failed",
-                ]
-            )
+        for case let entry as OSLogEntryLog in entries {
+            let message = entry.composedMessage
+            if entry.subsystem == "com.apple.UserNotifications"
+                && entry.category == "Connections"
+            {
+                notificationLogEntries += 1
+            }
+            if message.contains("Requested authorization [ didGrant: 0 hasError: 1") {
+                notificationAuthorizationFailures += 1
+            }
+            if message.contains("Unable to open mach-O at path") {
+                metalLoadFailures += 1
+            }
+            if message.contains("ordered front from a non-active application") {
+                nonActiveWindowWarnings += 1
+            }
         }
 
-        let output = String(decoding: outputData, as: UTF8.self)
-        let lines = output.split(separator: "\n", omittingEmptySubsequences: true)
-
         return SessionLogSummary(
-            windowMinutes: max(lastMinutes, 1),
-            notificationLogEntries: lines.filter {
-                $0.contains("[com.apple.UserNotifications:Connections]")
-            }.count,
-            notificationAuthorizationFailures: lines.filter {
-                $0.contains("Requested authorization [ didGrant: 0 hasError: 1")
-            }.count,
-            metalLoadFailures: lines.filter {
-                $0.contains("Unable to open mach-O at path")
-            }.count,
-            nonActiveWindowWarnings: lines.filter {
-                $0.contains("ordered front from a non-active application")
-            }.count
+            windowMinutes: windowMinutes,
+            notificationLogEntries: notificationLogEntries,
+            notificationAuthorizationFailures: notificationAuthorizationFailures,
+            metalLoadFailures: metalLoadFailures,
+            nonActiveWindowWarnings: nonActiveWindowWarnings
         )
     }
 }
