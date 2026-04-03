@@ -578,7 +578,7 @@ impl From<model::FrictionBreakdown> for FrictionBreakdown {
             pressure_score: value.pressure_score,
             foreground_bonus: value.foreground_bonus,
             energy_impact_score: value.energy_impact_score,
-            reasons: value.reasons,
+            reasons: value.reasons.into_vec(),
         }
     }
 }

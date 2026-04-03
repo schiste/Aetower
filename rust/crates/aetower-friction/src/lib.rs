@@ -1,4 +1,5 @@
 use aetower_model::{EntitySnapshot, HostSnapshot, Recommendation, ThermalState};
+use smallvec::SmallVec;
 
 pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
     let total_memory = host.memory_total_bytes.max(1) as f32;
@@ -46,7 +47,7 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
             * thermal_multiplier
             * battery_multiplier;
 
-        let mut reasons = Vec::new();
+        let mut reasons = SmallVec::<[String; 3]>::new();
         if cpu_score > 14.0 {
             reasons.push(format!("high CPU {:.1}%", entity.metrics.cpu_percent));
         }
@@ -249,8 +250,8 @@ mod tests {
         apply(&host, &mut entities);
 
         assert_eq!(
-            entities[0].friction.reasons,
-            vec!["background baseline activity".to_owned()]
+            entities[0].friction.reasons.as_slice(),
+            ["background baseline activity".to_owned()]
         );
         assert!(entities[0].recommendations.is_empty());
     }

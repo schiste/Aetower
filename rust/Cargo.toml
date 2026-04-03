@@ -32,3 +32,4 @@ anyhow = "1"
 parking_lot = "0.12"
 uniffi = { version = "0.29", features = ["cli"] }
 core-foundation-sys = "0.8.7"
+smallvec = { version = "1", features = ["serde"] }

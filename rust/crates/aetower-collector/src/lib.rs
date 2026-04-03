@@ -71,6 +71,7 @@ pub struct Collector {
     host_environment_refresh_tick: u8,
     cached_host_environment: HostEnvironment,
     previous_process_counters: HashMap<u32, ProcessCounterSample>,
+    known_pids: Vec<sysinfo::Pid>,
     cwd_cache: HashMap<u32, String>,
 }
 
@@ -89,6 +90,7 @@ impl Collector {
             host_environment_refresh_tick: 0,
             cached_host_environment: HostEnvironment::default(),
             previous_process_counters: HashMap::new(),
+            known_pids: Vec::new(),
             cwd_cache: HashMap::new(),
         }
     }
@@ -97,12 +99,22 @@ impl Collector {
         self.system.refresh_cpu_all();
         self.system.refresh_memory();
         self.networks.refresh(true);
-        let update_process_list = self.process_metadata_tick == 0;
-        self.system.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            update_process_list,
-            process_refresh_kind(self.process_metadata_tick),
-        );
+        // Full PID scan every 10th tick (~20s); selective refresh in between.
+        let full_scan = self.process_metadata_tick.is_multiple_of(10);
+        if full_scan || self.known_pids.is_empty() {
+            self.system.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                process_refresh_kind(self.process_metadata_tick),
+            );
+            self.known_pids = self.system.processes().keys().copied().collect();
+        } else {
+            self.system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&self.known_pids),
+                false,
+                process_refresh_kind(self.process_metadata_tick),
+            );
+        }
         self.process_metadata_tick = self.process_metadata_tick.wrapping_add(1);
         if self.host_environment_refresh_tick == 0 {
             self.cached_host_environment = read_environment();
@@ -506,6 +518,7 @@ mod platform {
         unsafe { ns_process_info_low_power_mode_enabled() }
     }
 
+    #[allow(clippy::collapsible_if)]
     fn power_state() -> (bool, Option<u8>) {
         unsafe {
             let snapshot = IOPSCopyPowerSourcesInfo();

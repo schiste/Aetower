@@ -6,3 +6,4 @@ license.workspace = true
 
 [dependencies]
 aetower-model = { path = "../aetower-model" }
+smallvec.workspace = true

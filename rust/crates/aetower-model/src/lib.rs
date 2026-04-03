@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -186,7 +187,7 @@ pub struct FrictionBreakdown {
     pub foreground_bonus: f32,
     #[serde(default)]
     pub energy_impact_score: f32,
-    pub reasons: Vec<String>,
+    pub reasons: SmallVec<[String; 3]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

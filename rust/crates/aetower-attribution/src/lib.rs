@@ -357,6 +357,7 @@ fn provenance(kind: ProvenanceKind, label: &str) -> ProvenanceSnapshot {
     }
 }
 
+#[allow(clippy::collapsible_if)]
 fn is_foreground_match(seed: &EntitySeed, frontmost: Option<&FrontmostAppState>) -> bool {
     let Some(frontmost) = frontmost else {
         return false;
