@@ -31,6 +31,7 @@ public final class AppState: ObservableObject {
 
     private let bridge: EngineBridge
     private let permissionCoordinator: PermissionCoordinator
+    private let lagMonitor = LagMonitor()
     private var timerCancellable: AnyCancellable?
     private var workspaceActivationCancellable: AnyCancellable?
     private var lastObservedSequence: UInt64
@@ -118,6 +119,7 @@ public final class AppState: ObservableObject {
 
     public func start(refreshInterval: Double) {
         stop()
+        lagMonitor.start()
         observeWorkspaceActivation()
         publishFrontmostState(force: true)
         refresh(force: true)
@@ -135,6 +137,7 @@ public final class AppState: ObservableObject {
         timerCancellable = nil
         workspaceActivationCancellable?.cancel()
         workspaceActivationCancellable = nil
+        lagMonitor.stop()
     }
 
     public func requestCapability(_ capability: CapabilitySnapshot) {
@@ -214,14 +217,22 @@ public final class AppState: ObservableObject {
     }
 
     public func refresh(force: Bool = false) {
+        let refreshStartedAt = CFAbsoluteTimeGetCurrent()
+        let fetchStartedAt = CFAbsoluteTimeGetCurrent()
         do {
+            var bridgeFetchMillis = 0.0
+            var updatedSnapshotValue: SystemSnapshot?
             if let updatedSnapshot = try bridge.latestSnapshotIfNewer(since: lastObservedSequence) {
+                bridgeFetchMillis = (CFAbsoluteTimeGetCurrent() - fetchStartedAt) * 1000.0
                 snapshot = updatedSnapshot
                 lastObservedSequence = updatedSnapshot.sequence
+                updatedSnapshotValue = updatedSnapshot
             } else if force {
                 let latestSnapshot = try bridge.latestSnapshot()
+                bridgeFetchMillis = (CFAbsoluteTimeGetCurrent() - fetchStartedAt) * 1000.0
                 snapshot = latestSnapshot
                 lastObservedSequence = latestSnapshot.sequence
+                updatedSnapshotValue = latestSnapshot
             } else {
                 return
             }
@@ -229,6 +240,14 @@ public final class AppState: ObservableObject {
                 appName: lastPublishedFrontmostAppName,
                 windowTitle: lastPublishedWindowTitle
             )
+            if let updatedSnapshotValue {
+                publishUiLagMetrics(
+                    snapshot: updatedSnapshotValue,
+                    bridgeFetchMillis: bridgeFetchMillis,
+                    uiRefreshMillis: (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1000.0,
+                    refreshStartedAt: refreshStartedAt
+                )
+            }
             loadHistory(force: force)
             diffAnomalyStates()
             flushSuppressedAnomalySummaryIfNeeded()
@@ -771,6 +790,61 @@ public final class AppState: ObservableObject {
             return "ephemeral"
         @unknown default:
             return "unknown"
+        }
+    }
+
+    private func publishUiLagMetrics(
+        snapshot: SystemSnapshot,
+        bridgeFetchMillis: Double,
+        uiRefreshMillis: Double,
+        refreshStartedAt: CFAbsoluteTime
+    ) {
+        let sampledAtMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        let snapshotToUiMillis = sampledAtMillis >= snapshot.capturedAtMillis
+            ? Double(sampledAtMillis - snapshot.capturedAtMillis)
+            : 0
+        let sample = lagMonitor.sample()
+        bridge.updateUiLagMetrics(
+            UiLagMetrics(
+                updatedAtMillis: sampledAtMillis,
+                bridgeFetchMillis: Float(bridgeFetchMillis),
+                uiRefreshMillis: Float(uiRefreshMillis),
+                snapshotToUiMillis: Float(snapshotToUiMillis),
+                snapshotToRenderMillis: 0,
+                renderCommitMillis: 0,
+                displayFrameIntervalMillis: Float(sample.displayFrameIntervalMillis),
+                displayRefreshHz: Float(sample.displayRefreshHz),
+                displayDroppedFrames: sample.displayDroppedFrames,
+                inputAvgLatencyMillis: Float(sample.inputAvgLatencyMillis),
+                inputMaxLatencyMillis: Float(sample.inputMaxLatencyMillis),
+                inputSampleCount: sample.inputSampleCount
+            )
+        )
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let renderSampledAtMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+            let renderCommitMillis = (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1000.0
+            let snapshotToRenderMillis = renderSampledAtMillis >= snapshot.capturedAtMillis
+                ? Double(renderSampledAtMillis - snapshot.capturedAtMillis)
+                : 0
+            let renderSample = self.lagMonitor.sample()
+            self.bridge.updateUiLagMetrics(
+                UiLagMetrics(
+                    updatedAtMillis: renderSampledAtMillis,
+                    bridgeFetchMillis: Float(bridgeFetchMillis),
+                    uiRefreshMillis: Float(uiRefreshMillis),
+                    snapshotToUiMillis: Float(snapshotToUiMillis),
+                    snapshotToRenderMillis: Float(snapshotToRenderMillis),
+                    renderCommitMillis: Float(renderCommitMillis),
+                    displayFrameIntervalMillis: Float(renderSample.displayFrameIntervalMillis),
+                    displayRefreshHz: Float(renderSample.displayRefreshHz),
+                    displayDroppedFrames: renderSample.displayDroppedFrames,
+                    inputAvgLatencyMillis: Float(renderSample.inputAvgLatencyMillis),
+                    inputMaxLatencyMillis: Float(renderSample.inputMaxLatencyMillis),
+                    inputSampleCount: renderSample.inputSampleCount
+                )
+            )
         }
     }
 }

@@ -96,4 +96,8 @@ public final class EngineBridge: @unchecked Sendable {
     public func recordDiagnosticsEvent(_ event: DiagnosticsEvent) {
         engine.recordDiagnosticsEvent(event: event)
     }
+
+    public func updateUiLagMetrics(_ metrics: UiLagMetrics) {
+        engine.updateUiLagMetrics(metrics: metrics)
+    }
 }
