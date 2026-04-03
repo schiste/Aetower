@@ -6,5 +6,6 @@ license.workspace = true
 
 [dependencies]
 aetower-model = { path = "../aetower-model" }
+bincode = "1"
 rusqlite = { version = "0.34", features = ["bundled"] }
 serde_json.workspace = true

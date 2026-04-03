@@ -25,7 +25,8 @@ impl HistoryStore {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 captured_at_millis INTEGER NOT NULL,
                 sequence INTEGER NOT NULL,
-                json_blob TEXT NOT NULL
+                json_blob TEXT,
+                bincode_blob BLOB
             );
             CREATE INDEX IF NOT EXISTS idx_snapshots_time
                 ON snapshots(captured_at_millis);",
@@ -50,12 +51,11 @@ impl HistoryStore {
     }
 
     fn store(&self, snapshot: &SystemSnapshot) -> Result<(), String> {
-        let json =
-            serde_json::to_string(snapshot).map_err(|e| format!("serialize snapshot: {e}"))?;
+        let blob = bincode::serialize(snapshot).map_err(|e| format!("serialize snapshot: {e}"))?;
         self.conn
             .execute(
-                "INSERT INTO snapshots (captured_at_millis, sequence, json_blob) VALUES (?1, ?2, ?3)",
-                params![snapshot.captured_at_millis as i64, snapshot.sequence as i64, json],
+                "INSERT INTO snapshots (captured_at_millis, sequence, bincode_blob) VALUES (?1, ?2, ?3)",
+                params![snapshot.captured_at_millis as i64, snapshot.sequence as i64, blob],
             )
             .map_err(|e| format!("insert: {e}"))?;
         Ok(())
@@ -70,7 +70,7 @@ impl HistoryStore {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT json_blob FROM snapshots
+                "SELECT bincode_blob, json_blob FROM snapshots
                  WHERE captured_at_millis >= ?1 AND captured_at_millis <= ?2
                  ORDER BY captured_at_millis ASC
                  LIMIT 500",
@@ -79,16 +79,22 @@ impl HistoryStore {
 
         let rows = stmt
             .query_map(params![start_millis as i64, end_millis as i64], |row| {
-                let json: String = row.get(0)?;
-                Ok(json)
+                let bincode_blob: Option<Vec<u8>> = row.get(0)?;
+                let json_blob: Option<String> = row.get(1)?;
+                Ok((bincode_blob, json_blob))
             })
             .map_err(|e| format!("query: {e}"))?;
 
         let mut snapshots = Vec::new();
         for row in rows {
-            let json = row.map_err(|e| format!("row: {e}"))?;
-            let snapshot: SystemSnapshot =
-                serde_json::from_str(&json).map_err(|e| format!("deserialize: {e}"))?;
+            let (bincode_blob, json_blob) = row.map_err(|e| format!("row: {e}"))?;
+            let snapshot = if let Some(blob) = bincode_blob {
+                bincode::deserialize(&blob).map_err(|e| format!("bincode deserialize: {e}"))?
+            } else if let Some(json) = json_blob {
+                serde_json::from_str(&json).map_err(|e| format!("json deserialize: {e}"))?
+            } else {
+                continue;
+            };
             snapshots.push(snapshot);
         }
         Ok(snapshots)

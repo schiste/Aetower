@@ -432,74 +432,86 @@ impl AdapterManager {
             )
         };
 
-        if let Some((config, mut chromium_samples)) = chromium_fetch_plan {
-            match fetch_chromium_targets(&config, &mut chromium_samples) {
-                Ok(fetched) => {
-                    let mut guard = self.state.lock();
-                    guard.chromium_samples = chromium_samples;
-                    guard.cached_chromium_targets = fetched;
-                    guard.last_chromium_fetch_millis = now;
-                    guard.last_chromium_success_millis = now;
-                    guard.chromium_last_error = None;
-                }
-                Err(error) => {
-                    let mut guard = self.state.lock();
-                    guard.last_chromium_fetch_millis = now;
-                    guard.chromium_last_error = Some(error);
-                }
-            }
-        }
+        // Fetch all adapters in parallel using scoped threads.
+        std::thread::scope(|s| {
+            let chromium_handle = chromium_fetch_plan.map(|(config, mut samples)| {
+                s.spawn(move || {
+                    fetch_chromium_targets(&config, &mut samples).map(|targets| (targets, samples))
+                })
+            });
+            let docker_handle =
+                docker_fetch_plan.map(|config| s.spawn(move || fetch_docker_containers(&config)));
+            let helper_handle = privileged_helper_fetch_path
+                .map(|path| s.spawn(move || fetch_privileged_helper_sample(&path)));
+            let chau7_handle =
+                chau7_fetch_path.map(|path| s.spawn(move || crate::chau7::fetch_snapshot(&path)));
 
-        if let Some(config) = docker_fetch_plan {
-            match fetch_docker_containers(&config) {
-                Ok(fetched) => {
-                    let mut guard = self.state.lock();
-                    guard.cached_docker_containers = fetched;
-                    guard.last_docker_fetch_millis = now;
-                    guard.last_docker_success_millis = now;
-                    guard.docker_last_error = None;
-                }
-                Err(error) => {
-                    let mut guard = self.state.lock();
-                    guard.last_docker_fetch_millis = now;
-                    guard.docker_last_error = Some(error);
-                }
-            }
-        }
-
-        if let Some(path) = privileged_helper_fetch_path {
-            match fetch_privileged_helper_sample(&path) {
-                Ok(fetched) => {
-                    let mut guard = self.state.lock();
-                    guard.cached_privileged_helper_sample = Some(fetched);
-                    guard.last_privileged_helper_fetch_millis = now;
-                    guard.last_privileged_helper_success_millis = now;
-                    guard.privileged_helper_last_error = None;
-                }
-                Err(error) => {
-                    let mut guard = self.state.lock();
-                    guard.last_privileged_helper_fetch_millis = now;
-                    guard.privileged_helper_last_error = Some(error);
+            if let Some(handle) = chromium_handle {
+                match handle.join().expect("chromium thread panicked") {
+                    Ok((fetched, samples)) => {
+                        let mut guard = self.state.lock();
+                        guard.chromium_samples = samples;
+                        guard.cached_chromium_targets = fetched;
+                        guard.last_chromium_fetch_millis = now;
+                        guard.last_chromium_success_millis = now;
+                        guard.chromium_last_error = None;
+                    }
+                    Err(error) => {
+                        let mut guard = self.state.lock();
+                        guard.last_chromium_fetch_millis = now;
+                        guard.chromium_last_error = Some(error);
+                    }
                 }
             }
-        }
-
-        if let Some(path) = chau7_fetch_path {
-            match crate::chau7::fetch_snapshot(&path) {
-                Ok(fetched) => {
-                    let mut guard = self.state.lock();
-                    guard.cached_chau7_snapshot = Some(fetched);
-                    guard.last_chau7_fetch_millis = now;
-                    guard.last_chau7_success_millis = now;
-                    guard.chau7_last_error = None;
-                }
-                Err(error) => {
-                    let mut guard = self.state.lock();
-                    guard.last_chau7_fetch_millis = now;
-                    guard.chau7_last_error = Some(error);
+            if let Some(handle) = docker_handle {
+                match handle.join().expect("docker thread panicked") {
+                    Ok(fetched) => {
+                        let mut guard = self.state.lock();
+                        guard.cached_docker_containers = fetched;
+                        guard.last_docker_fetch_millis = now;
+                        guard.last_docker_success_millis = now;
+                        guard.docker_last_error = None;
+                    }
+                    Err(error) => {
+                        let mut guard = self.state.lock();
+                        guard.last_docker_fetch_millis = now;
+                        guard.docker_last_error = Some(error);
+                    }
                 }
             }
-        }
+            if let Some(handle) = helper_handle {
+                match handle.join().expect("helper thread panicked") {
+                    Ok(fetched) => {
+                        let mut guard = self.state.lock();
+                        guard.cached_privileged_helper_sample = Some(fetched);
+                        guard.last_privileged_helper_fetch_millis = now;
+                        guard.last_privileged_helper_success_millis = now;
+                        guard.privileged_helper_last_error = None;
+                    }
+                    Err(error) => {
+                        let mut guard = self.state.lock();
+                        guard.last_privileged_helper_fetch_millis = now;
+                        guard.privileged_helper_last_error = Some(error);
+                    }
+                }
+            }
+            if let Some(handle) = chau7_handle {
+                match handle.join().expect("chau7 thread panicked") {
+                    Ok(fetched) => {
+                        let mut guard = self.state.lock();
+                        guard.cached_chau7_snapshot = Some(fetched);
+                        guard.last_chau7_fetch_millis = now;
+                        guard.last_chau7_success_millis = now;
+                        guard.chau7_last_error = None;
+                    }
+                    Err(error) => {
+                        let mut guard = self.state.lock();
+                        guard.last_chau7_fetch_millis = now;
+                        guard.chau7_last_error = Some(error);
+                    }
+                }
+            }
+        });
     }
 
     #[allow(clippy::collapsible_if)]

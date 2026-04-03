@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use aetower_model::{
     EntitySnapshot, HostSnapshot, HostTrend, MetricTrend, ThermalState, TimelineEvent,
@@ -10,7 +10,10 @@ pub struct History {
     previous_anomaly: BTreeMap<String, bool>,
     previous_thermal_state: ThermalState,
     thermal_contributors: Vec<String>,
-    cooccurrence: BTreeMap<(String, String), u32>,
+    entity_index: HashMap<String, u16>,
+    entity_reverse_index: Vec<String>,
+    next_entity_idx: u16,
+    cooccurrence: BTreeMap<(u16, u16), u32>,
     cooccurrence_tick: u32,
     metric_history: BTreeMap<String, MetricTrendState>,
     host_history: HostTrendState,
@@ -46,12 +49,30 @@ impl History {
             previous_anomaly: BTreeMap::new(),
             previous_thermal_state: ThermalState::Nominal,
             thermal_contributors: Vec::new(),
+            entity_index: HashMap::new(),
+            entity_reverse_index: Vec::new(),
+            next_entity_idx: 0,
             cooccurrence: BTreeMap::new(),
             cooccurrence_tick: 0,
             metric_history: BTreeMap::new(),
             host_history: HostTrendState::default(),
             timeline: VecDeque::with_capacity(256),
         }
+    }
+
+    fn intern_entity_id(&mut self, entity_id: &str) -> u16 {
+        if let Some(&idx) = self.entity_index.get(entity_id) {
+            return idx;
+        }
+        let idx = self.next_entity_idx;
+        self.next_entity_idx = self.next_entity_idx.wrapping_add(1);
+        self.entity_index.insert(entity_id.to_owned(), idx);
+        if self.entity_reverse_index.len() <= idx as usize {
+            self.entity_reverse_index
+                .resize(idx as usize + 1, String::new());
+        }
+        self.entity_reverse_index[idx as usize] = entity_id.to_owned();
+        idx
     }
 
     /// Entity IDs currently blamed for thermal throttling.
@@ -156,19 +177,18 @@ impl History {
             }
         }
 
-        // Feature 6: Co-occurrence tracking for grouping suggestions.
+        // Feature 6: Co-occurrence tracking with compact u16 indices.
         self.cooccurrence_tick += 1;
-        for (i, a) in active_entity_ids.iter().enumerate() {
-            for b in active_entity_ids.iter().skip(i + 1) {
-                let key = if a < b {
-                    (a.clone(), b.clone())
-                } else {
-                    (b.clone(), a.clone())
-                };
+        let active_indices: Vec<u16> = active_entity_ids
+            .iter()
+            .map(|id| self.intern_entity_id(id))
+            .collect();
+        for (i, &a) in active_indices.iter().enumerate() {
+            for &b in active_indices.iter().skip(i + 1) {
+                let key = if a < b { (a, b) } else { (b, a) };
                 *self.cooccurrence.entry(key).or_insert(0) += 1;
             }
         }
-        // Generate grouping suggestions for pairs co-occurring >80% of ticks.
         if self.cooccurrence_tick >= 15 {
             let threshold = (self.cooccurrence_tick as f32 * 0.8) as u32;
             let names: BTreeMap<String, String> = entities
@@ -176,10 +196,12 @@ impl History {
                 .map(|e| (e.entity_id.clone(), e.display_name.clone()))
                 .collect();
             let mut suggestions: BTreeMap<String, String> = BTreeMap::new();
-            for ((a, b), count) in &self.cooccurrence {
+            for (&(a_idx, b_idx), count) in &self.cooccurrence {
                 if *count < threshold {
                     continue;
                 }
+                let a = &self.entity_reverse_index[a_idx as usize];
+                let b = &self.entity_reverse_index[b_idx as usize];
                 if let Some(b_name) = names.get(b) {
                     suggestions.entry(a.clone()).or_insert_with(|| {
                         format!("Often runs alongside {b_name} — consider grouping")
@@ -213,9 +235,9 @@ impl History {
                 .iter()
                 .any(|active_id| active_id == entity_id)
         });
-        self.cooccurrence.retain(|(a, b), _| {
-            active_entity_ids.iter().any(|id| id == a) && active_entity_ids.iter().any(|id| id == b)
-        });
+        let active_idx_set: HashSet<u16> = active_indices.iter().copied().collect();
+        self.cooccurrence
+            .retain(|(a, b), _| active_idx_set.contains(a) && active_idx_set.contains(b));
 
         for entity in entities.iter().take(5) {
             let previous = self
