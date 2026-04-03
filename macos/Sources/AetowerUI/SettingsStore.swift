@@ -25,6 +25,15 @@ public final class SettingsStore: ObservableObject {
     @Published public var chau7Endpoint: String {
         didSet { persist() }
     }
+    @Published public var telemetryEnabled: Bool {
+        didSet { persist() }
+    }
+    @Published public var telemetryEndpoint: String {
+        didSet { persist() }
+    }
+    @Published public var telemetryExportIntervalSeconds: Double {
+        didSet { persist() }
+    }
     @Published public var notificationsEnabled: Bool {
         didSet { persist() }
     }
@@ -46,6 +55,9 @@ public final class SettingsStore: ObservableObject {
             ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/aetower-helper").path
         self.privilegedHelperEnabled = defaults.object(forKey: Self.privilegedHelperEnabledKey) as? Bool ?? false
         self.chau7Endpoint = defaults.string(forKey: Self.chau7EndpointKey) ?? ""
+        self.telemetryEnabled = defaults.object(forKey: Self.telemetryEnabledKey) as? Bool ?? false
+        self.telemetryEndpoint = defaults.string(forKey: Self.telemetryEndpointKey) ?? "http://localhost:4318/v1/metrics"
+        self.telemetryExportIntervalSeconds = defaults.object(forKey: Self.telemetryExportIntervalKey) as? Double ?? 30.0
         self.notificationsEnabled = defaults.object(forKey: Self.notificationsEnabledKey) as? Bool ?? false
         self.frictionNotificationThreshold = defaults.object(forKey: Self.frictionNotificationThresholdKey) as? Double ?? 60.0
         self.launchAtLoginEnabled = false
@@ -84,6 +96,9 @@ public final class SettingsStore: ObservableObject {
     private static let privilegedHelperPathKey = "settings.privilegedHelperPath"
     private static let privilegedHelperEnabledKey = "settings.privilegedHelperEnabled"
     private static let chau7EndpointKey = "settings.chau7Endpoint"
+    private static let telemetryEnabledKey = "settings.telemetryEnabled"
+    private static let telemetryEndpointKey = "settings.telemetryEndpoint"
+    private static let telemetryExportIntervalKey = "settings.telemetryExportIntervalSeconds"
     private static let notificationsEnabledKey = "settings.notificationsEnabled"
     private static let frictionNotificationThresholdKey = "settings.frictionNotificationThreshold"
 }
@@ -97,6 +112,9 @@ extension SettingsStore {
         defaults.set(privilegedHelperPath, forKey: Self.privilegedHelperPathKey)
         defaults.set(privilegedHelperEnabled, forKey: Self.privilegedHelperEnabledKey)
         defaults.set(chau7Endpoint, forKey: Self.chau7EndpointKey)
+        defaults.set(telemetryEnabled, forKey: Self.telemetryEnabledKey)
+        defaults.set(telemetryEndpoint, forKey: Self.telemetryEndpointKey)
+        defaults.set(telemetryExportIntervalSeconds, forKey: Self.telemetryExportIntervalKey)
         defaults.set(notificationsEnabled, forKey: Self.notificationsEnabledKey)
         defaults.set(frictionNotificationThreshold, forKey: Self.frictionNotificationThresholdKey)
     }

@@ -8,9 +8,11 @@ license.workspace = true
 aetower-attribution = { path = "../aetower-attribution" }
 aetower-collector = { path = "../aetower-collector" }
 aetower-friction = { path = "../aetower-friction" }
+aetower-gpu = { path = "../aetower-gpu" }
 aetower-history = { path = "../aetower-history" }
 aetower-identity = { path = "../aetower-identity" }
 aetower-model = { path = "../aetower-model" }
+aetower-telemetry = { path = "../aetower-telemetry" }
 aetower-time = { path = "../aetower-time" }
 anyhow.workspace = true
 parking_lot.workspace = true

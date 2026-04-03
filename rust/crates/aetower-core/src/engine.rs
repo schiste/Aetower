@@ -5,13 +5,14 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use aetower_model::{
     CapabilityKind, CapabilitySnapshot, CapabilityState, FrontmostAppState, HostSnapshot,
     HostTrend, SystemSnapshot, ThermalState,
 };
+use aetower_telemetry::{OtlpConfig, TelemetryExporter};
 use aetower_time::{self as time, ADAPTER_TICK, FAST_TICK};
 use parking_lot::Mutex;
 
@@ -38,9 +39,11 @@ pub struct Engine {
     state: Arc<Mutex<EngineState>>,
     adapters: AdapterManager,
     persistence: Arc<Mutex<Option<aetower_persistence::HistoryStore>>>,
+    telemetry: Arc<Mutex<TelemetryExporter>>,
     running: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     adapter_worker: Option<JoinHandle<()>>,
+    telemetry_worker: Option<JoinHandle<()>>,
 }
 
 impl Engine {
@@ -87,9 +90,13 @@ impl Engine {
             })),
             adapters,
             persistence: Arc::new(Mutex::new(persistence)),
+            telemetry: Arc::new(Mutex::new(TelemetryExporter::new(
+                telemetry_config_from_env(),
+            ))),
             running: Arc::new(AtomicBool::new(false)),
             worker: None,
             adapter_worker: None,
+            telemetry_worker: None,
         }
     }
 
@@ -105,10 +112,18 @@ impl Engine {
         self.worker = Some(thread::spawn(move || {
             let mut collector = Collector::new();
             let mut next_tick = Instant::now();
+            let mut gpu_sample = aetower_gpu::GpuSample::default();
+            let mut gpu_sample_tick: u8 = 0;
 
             while running.load(Ordering::SeqCst) {
                 let captured_at_millis = time::now_millis();
                 let raw = collector.collect();
+                if gpu_sample_tick.is_multiple_of(3)
+                    && let Some(sample) = aetower_gpu::sample_gpu()
+                {
+                    gpu_sample = sample;
+                }
+                gpu_sample_tick = gpu_sample_tick.wrapping_add(1);
                 let (frontmost_app_state, capabilities) = {
                     let mut guard = state.lock();
                     refresh_adapter_capabilities(&mut guard, &adapters, captured_at_millis);
@@ -142,9 +157,9 @@ impl Engine {
                         .and_then(|state| state.window_title.clone()),
                     ai_agent_friction: 0.0,
                     ai_agent_count: 0,
-                    gpu_percent: 0.0,
-                    ane_percent: 0.0,
-                    gpu_memory_bytes: 0,
+                    gpu_percent: gpu_sample.gpu_percent,
+                    ane_percent: gpu_sample.ane_percent,
+                    gpu_memory_bytes: gpu_sample.gpu_memory_bytes,
                 };
                 let pipeline_output =
                     run_entity_pipeline(&raw.processes, &host, frontmost_app_state.as_ref());
@@ -181,7 +196,6 @@ impl Engine {
                     store.maybe_store(&guard.latest_snapshot);
                 }
                 drop(guard);
-
                 next_tick += FAST_TICK;
                 let now = Instant::now();
                 if now < next_tick {
@@ -214,6 +228,33 @@ impl Engine {
                 }
             }
         }));
+
+        let state = Arc::clone(&self.state);
+        let telemetry = Arc::clone(&self.telemetry);
+        let running = Arc::clone(&self.running);
+        self.telemetry_worker = Some(thread::spawn(move || {
+            while running.load(Ordering::SeqCst) {
+                let (enabled, interval_secs) = {
+                    let exporter = telemetry.lock();
+                    (
+                        exporter.is_enabled(),
+                        exporter.config().export_interval_secs.max(5),
+                    )
+                };
+
+                if enabled {
+                    let snapshot = state.lock().latest_snapshot.clone();
+                    let _ = telemetry.lock().export(&snapshot);
+                }
+
+                let sleep_for = if enabled {
+                    Duration::from_secs(interval_secs as u64)
+                } else {
+                    Duration::from_secs(2)
+                };
+                sleep_with_stop(&running, sleep_for);
+            }
+        }));
     }
 
     pub fn stop(&mut self) {
@@ -222,6 +263,9 @@ impl Engine {
             let _ = worker.join();
         }
         if let Some(worker) = self.adapter_worker.take() {
+            let _ = worker.join();
+        }
+        if let Some(worker) = self.telemetry_worker.take() {
             let _ = worker.join();
         }
     }
@@ -289,6 +333,22 @@ impl Engine {
         self.refresh_capability(CapabilityKind::Chau7);
     }
 
+    pub fn configure_telemetry(
+        &self,
+        endpoint: Option<String>,
+        enabled: bool,
+        export_interval_secs: u32,
+    ) {
+        let mut guard = self.telemetry.lock();
+        let mut config = guard.config().clone();
+        if let Some(endpoint) = endpoint {
+            config.endpoint = endpoint;
+        }
+        config.enabled = enabled;
+        config.export_interval_secs = export_interval_secs.max(5);
+        guard.update_config(config);
+    }
+
     pub fn load_history_range(&self, start_millis: u64, end_millis: u64) -> Vec<SystemSnapshot> {
         self.persistence
             .lock()
@@ -338,5 +398,29 @@ fn refresh_adapter_capabilities(
 impl Drop for Engine {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+fn telemetry_config_from_env() -> OtlpConfig {
+    let mut config = OtlpConfig::default();
+    if let Ok(endpoint) = std::env::var("AETOWER_OTLP_ENDPOINT") {
+        config.endpoint = endpoint;
+    }
+    if let Ok(interval) = std::env::var("AETOWER_OTLP_INTERVAL_SECS")
+        && let Ok(interval_secs) = interval.parse::<u32>()
+    {
+        config.export_interval_secs = interval_secs.max(5);
+    }
+    if let Ok(enabled) = std::env::var("AETOWER_OTLP_ENABLED") {
+        config.enabled = matches!(enabled.as_str(), "1" | "true" | "TRUE" | "yes" | "YES");
+    }
+    config
+}
+
+fn sleep_with_stop(running: &AtomicBool, duration: Duration) {
+    let started_at = Instant::now();
+    while running.load(Ordering::SeqCst) && started_at.elapsed() < duration {
+        let remaining = duration.saturating_sub(started_at.elapsed());
+        thread::sleep(remaining.min(Duration::from_millis(250)));
     }
 }

@@ -60,6 +60,14 @@ public final class EngineBridge {
         engine.configureChau7Endpoint(socketPath: socketPath)
     }
 
+    public func configureTelemetry(endpoint: String?, enabled: Bool, exportIntervalSeconds: UInt32) {
+        engine.configureTelemetry(
+            endpoint: endpoint,
+            enabled: enabled,
+            exportIntervalSecs: exportIntervalSeconds
+        )
+    }
+
     public func stopAgentSession(sessionId: String, force: Bool) -> String? {
         let result = engine.stopAgentSession(sessionId: sessionId, force: force)
         return result.isEmpty ? nil : result

@@ -66,6 +66,7 @@ pub fn build_entities(
             },
             title: process.name.clone(),
             detail: summarize_process(process),
+            adapter_context: None,
             provenance: component_provenance(process, &seed.entity_id, &process_index, identity),
             process_id: Some(process.pid),
             executable_path: process.exe.clone(),

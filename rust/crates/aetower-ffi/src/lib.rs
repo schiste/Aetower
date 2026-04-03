@@ -52,6 +52,14 @@ pub enum CapabilityHealth {
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
+pub enum ThermalState {
+    Nominal,
+    Fair,
+    Serious,
+    Critical,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
 pub enum TimelineSeverity {
     Info,
     Warning,
@@ -79,6 +87,40 @@ pub struct ProvenanceSnapshot {
     pub label: String,
 }
 
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum AdapterContextKind {
+    ChromiumTab,
+    DockerContainer,
+    PrivilegedSocket,
+    Chau7Session,
+    VsCodeWorkspace,
+    VsCodeRuntime,
+    Unknown,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct AdapterContextSnapshot {
+    pub kind: AdapterContextKind,
+    pub status: Option<String>,
+    pub url: Option<String>,
+    pub workspace_path: Option<String>,
+    pub repo_root: Option<String>,
+    pub image_name: Option<String>,
+    pub session_id: Option<String>,
+    pub network_receive_bps: u64,
+    pub network_send_bps: u64,
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
+    pub memory_limit_bytes: u64,
+    pub js_heap_total_bytes: u64,
+    pub dom_nodes: u64,
+    pub documents: u64,
+    pub frames: u64,
+    pub process_count: Option<u32>,
+    pub connection_count: Option<u32>,
+    pub ports: Vec<String>,
+}
+
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct HostSnapshot {
     pub cpu_percent: f32,
@@ -91,7 +133,7 @@ pub struct HostSnapshot {
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
     pub wakeups_per_second: f32,
-    pub thermal_state: String,
+    pub thermal_state: ThermalState,
     pub on_battery: bool,
     pub battery_charge_percent: Option<u8>,
     pub low_power_mode: bool,
@@ -148,6 +190,7 @@ pub struct ComponentSnapshot {
     pub kind: ComponentKind,
     pub title: String,
     pub detail: String,
+    pub adapter_context: Option<AdapterContextSnapshot>,
     pub provenance: Option<ProvenanceSnapshot>,
     pub process_id: Option<u32>,
     pub executable_path: Option<String>,
@@ -352,6 +395,18 @@ impl MonitorEngine {
             .configure_chau7_endpoint(socket_path);
     }
 
+    pub fn configure_telemetry(
+        &self,
+        endpoint: Option<String>,
+        enabled: bool,
+        export_interval_secs: u32,
+    ) {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .configure_telemetry(endpoint, enabled, export_interval_secs);
+    }
+
     pub fn stop_agent_session(&self, session_id: String, force: bool) -> String {
         match self
             .inner
@@ -479,6 +534,17 @@ impl From<model::CapabilityHealth> for CapabilityHealth {
     }
 }
 
+impl From<model::ThermalState> for ThermalState {
+    fn from(value: model::ThermalState) -> Self {
+        match value {
+            model::ThermalState::Nominal => Self::Nominal,
+            model::ThermalState::Fair => Self::Fair,
+            model::ThermalState::Serious => Self::Serious,
+            model::ThermalState::Critical => Self::Critical,
+        }
+    }
+}
+
 impl From<model::ProvenanceKind> for ProvenanceKind {
     fn from(value: model::ProvenanceKind) -> Self {
         match value {
@@ -493,6 +559,20 @@ impl From<model::ProvenanceKind> for ProvenanceKind {
             model::ProvenanceKind::ContainerWorkload => Self::ContainerWorkload,
             model::ProvenanceKind::ParentProcess => Self::ParentProcess,
             model::ProvenanceKind::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<model::AdapterContextKind> for AdapterContextKind {
+    fn from(value: model::AdapterContextKind) -> Self {
+        match value {
+            model::AdapterContextKind::ChromiumTab => Self::ChromiumTab,
+            model::AdapterContextKind::DockerContainer => Self::DockerContainer,
+            model::AdapterContextKind::PrivilegedSocket => Self::PrivilegedSocket,
+            model::AdapterContextKind::Chau7Session => Self::Chau7Session,
+            model::AdapterContextKind::VsCodeWorkspace => Self::VsCodeWorkspace,
+            model::AdapterContextKind::VsCodeRuntime => Self::VsCodeRuntime,
+            model::AdapterContextKind::Unknown => Self::Unknown,
         }
     }
 }
@@ -520,7 +600,7 @@ impl From<model::HostSnapshot> for HostSnapshot {
             network_receive_bps: value.network_receive_bps,
             network_send_bps: value.network_send_bps,
             wakeups_per_second: value.wakeups_per_second,
-            thermal_state: value.thermal_state.to_string(),
+            thermal_state: value.thermal_state.into(),
             on_battery: value.on_battery,
             battery_charge_percent: value.battery_charge_percent,
             low_power_mode: value.low_power_mode,
@@ -592,12 +672,39 @@ impl From<model::ProvenanceSnapshot> for ProvenanceSnapshot {
     }
 }
 
+impl From<model::AdapterContextSnapshot> for AdapterContextSnapshot {
+    fn from(value: model::AdapterContextSnapshot) -> Self {
+        Self {
+            kind: value.kind.into(),
+            status: value.status,
+            url: value.url,
+            workspace_path: value.workspace_path,
+            repo_root: value.repo_root,
+            image_name: value.image_name,
+            session_id: value.session_id,
+            network_receive_bps: value.network_receive_bps,
+            network_send_bps: value.network_send_bps,
+            disk_read_bps: value.disk_read_bps,
+            disk_write_bps: value.disk_write_bps,
+            memory_limit_bytes: value.memory_limit_bytes,
+            js_heap_total_bytes: value.js_heap_total_bytes,
+            dom_nodes: value.dom_nodes,
+            documents: value.documents,
+            frames: value.frames,
+            process_count: value.process_count,
+            connection_count: value.connection_count,
+            ports: value.ports,
+        }
+    }
+}
+
 impl From<model::ComponentSnapshot> for ComponentSnapshot {
     fn from(value: model::ComponentSnapshot) -> Self {
         Self {
             kind: value.kind.into(),
             title: value.title,
             detail: value.detail,
+            adapter_context: value.adapter_context.map(Into::into),
             provenance: value.provenance.map(Into::into),
             process_id: value.process_id,
             executable_path: value.executable_path,

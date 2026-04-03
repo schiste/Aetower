@@ -29,6 +29,7 @@ struct TrendMetricCard: View {
     let subtitle: String
     let samples: [Double]
     let style: TrendMetricStyle
+    @State private var isHovered = false
 
     var body: some View {
         ZStack {
@@ -52,6 +53,7 @@ struct TrendMetricCard: View {
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
+                    .contentTransition(.numericText())
 
                 Text(subtitle)
                     .font(.caption2)
@@ -62,12 +64,16 @@ struct TrendMetricCard: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(minHeight: 104, maxHeight: 104)
+        .shadow(color: style.color.opacity(isHovered ? 0.2 : 0), radius: 8)
+        .onHover { isHovered = $0 }
+        .animation(AetowerDesign.Motion.quick, value: isHovered)
     }
 }
 
 private struct TrendSparkline: View {
     let samples: [Double]
     let color: Color
+    @State private var drawProgress: CGFloat = 0
 
     var body: some View {
         GeometryReader { geometry in
@@ -75,6 +81,7 @@ private struct TrendSparkline: View {
             ZStack {
                 if samples.count >= 2 {
                     sparklinePath(in: rect)
+                        .trim(from: 0, to: drawProgress)
                         .stroke(color.opacity(0.6), style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round))
 
                     fillPath(in: rect)
@@ -85,6 +92,7 @@ private struct TrendSparkline: View {
                                 endPoint: .bottom
                             )
                         )
+                        .opacity(drawProgress)
                 } else {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(color.opacity(0.06))
@@ -92,6 +100,11 @@ private struct TrendSparkline: View {
             }
         }
         .allowsHitTesting(false)
+        .onAppear {
+            withAnimation(AetowerDesign.Motion.slow) {
+                drawProgress = 1.0
+            }
+        }
     }
 
     private func sparklinePath(in rect: CGRect) -> Path {

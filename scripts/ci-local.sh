@@ -42,8 +42,8 @@ run() {
 cd "$ROOT"
 
 run "cargo fmt --check" cargo fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
-run "cargo clippy" cargo clippy --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
-run "cargo test" cargo test --manifest-path "$ROOT/rust/Cargo.toml"
+run "cargo clippy" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
+run "cargo test" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml"
 run "build Rust bridge" sh "$ROOT/scripts/build-rust.sh"
 run "swift build" swift build --package-path "$ROOT/macos"
 run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce

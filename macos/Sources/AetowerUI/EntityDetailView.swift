@@ -81,6 +81,7 @@ private struct ComponentCard: View {
                 Text(String(format: "%.1f%% CPU", component.cpuPercent))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
             }
 
             LazyVGrid(columns: detailMetricColumns, alignment: .leading, spacing: 12) {
@@ -98,6 +99,26 @@ private struct ComponentCard: View {
                     samples: component.cpuPercent > 0 ? [Double(component.cpuPercent), Double(component.cpuPercent)] : [],
                     style: .cpu
                 )
+                if let adapterContext = component.adapterContext,
+                   adapterContext.networkReceiveBps + adapterContext.networkSendBps > 0 {
+                    TrendMetricCard(
+                        title: "Network",
+                        value: formatRate(adapterContext.networkReceiveBps + adapterContext.networkSendBps),
+                        subtitle: "adapter-attributed traffic",
+                        samples: [Double(adapterContext.networkReceiveBps + adapterContext.networkSendBps)],
+                        style: .disk
+                    )
+                }
+                if let adapterContext = component.adapterContext,
+                   adapterContext.diskReadBps + adapterContext.diskWriteBps > 0 {
+                    TrendMetricCard(
+                        title: "Disk",
+                        value: formatRate(adapterContext.diskReadBps + adapterContext.diskWriteBps),
+                        subtitle: "adapter-attributed throughput",
+                        samples: [Double(adapterContext.diskReadBps + adapterContext.diskWriteBps)],
+                        style: .disk
+                    )
+                }
             }
 
             if hasMetadata {
@@ -106,6 +127,49 @@ private struct ComponentCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     if let provenance = component.provenance {
                         ComponentMetadataLine(title: "Provenance", value: detailProvenanceLabel(provenance))
+                    }
+                    if let adapterContext = component.adapterContext {
+                        if let status = adapterContext.status {
+                            ComponentMetadataLine(title: "Status", value: status)
+                        }
+                        if let url = adapterContext.url {
+                            ComponentMetadataLine(title: "URL", value: url)
+                        }
+                        if let workspacePath = adapterContext.workspacePath {
+                            ComponentMetadataLine(title: "Workspace", value: workspacePath)
+                        }
+                        if let repoRoot = adapterContext.repoRoot {
+                            ComponentMetadataLine(title: "Repo Root", value: repoRoot)
+                        }
+                        if let imageName = adapterContext.imageName {
+                            ComponentMetadataLine(title: "Image", value: imageName)
+                        }
+                        if let sessionId = adapterContext.sessionId {
+                            ComponentMetadataLine(title: "Session", value: sessionId)
+                        }
+                        if adapterContext.processCount != nil || adapterContext.connectionCount != nil {
+                            let processText = adapterContext.processCount.map { "\($0) processes" }
+                            let connectionText = adapterContext.connectionCount.map { "\($0) connections" }
+                            let summary = [processText, connectionText].compactMap { $0 }.joined(separator: " · ")
+                            if !summary.isEmpty {
+                                ComponentMetadataLine(title: "Counts", value: summary)
+                            }
+                        }
+                        if !adapterContext.ports.isEmpty {
+                            ComponentMetadataLine(title: "Ports / Connections", value: adapterContext.ports.joined(separator: " · "))
+                        }
+                        if adapterContext.memoryLimitBytes > 0 {
+                            ComponentMetadataLine(title: "Memory Limit", value: formatBytes(adapterContext.memoryLimitBytes))
+                        }
+                        if adapterContext.jsHeapTotalBytes > 0 {
+                            ComponentMetadataLine(title: "JS Heap Capacity", value: formatBytes(adapterContext.jsHeapTotalBytes))
+                        }
+                        if adapterContext.domNodes > 0 || adapterContext.documents > 0 || adapterContext.frames > 0 {
+                            ComponentMetadataLine(
+                                title: "DOM Footprint",
+                                value: "\(adapterContext.domNodes) nodes · \(adapterContext.documents) docs · \(adapterContext.frames) frames"
+                            )
+                        }
                     }
                     if let processId = component.processId {
                         ComponentMetadataLine(title: "PID", value: "\(processId)")
@@ -144,6 +208,7 @@ private struct ComponentCard: View {
 
     private var hasMetadata: Bool {
         component.provenance != nil
+            || component.adapterContext != nil
             || component.processId != nil
             || component.parentSummary != nil
             || component.launchedBy != nil
@@ -174,6 +239,7 @@ public struct EntityDetailView: View {
                     }
                     .padding(12)
                     .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .transition(.push(from: .top))
                 }
                 if let thermal = entity.thermalContribution {
                     HStack(spacing: 8) {
@@ -184,6 +250,7 @@ public struct EntityDetailView: View {
                     }
                     .padding(12)
                     .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .transition(.push(from: .top))
                 }
                 if let grouping = entity.groupingSuggestion {
                     HStack(spacing: 8) {
@@ -194,6 +261,7 @@ public struct EntityDetailView: View {
                     }
                     .padding(12)
                     .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .transition(.push(from: .top))
                 }
                 hero
                 if let cost = entity.agentCost {
@@ -333,7 +401,7 @@ public struct EntityDetailView: View {
                                 Text(component.title)
                                     .font(.headline)
                                 Spacer()
-                                if let status = component.detail.split(separator: " · ").first.map(String.init) {
+                                if let status = component.adapterContext?.status {
                                     Text(status)
                                         .font(.caption.monospaced())
                                         .padding(.horizontal, 8)
@@ -344,6 +412,11 @@ public struct EntityDetailView: View {
                             Text(component.detail)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            if let repoRoot = component.adapterContext?.repoRoot {
+                                Text(repoRoot)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
                     }
                     HStack(spacing: 12) {

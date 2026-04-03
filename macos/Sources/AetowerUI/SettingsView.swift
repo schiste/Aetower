@@ -80,6 +80,23 @@ public struct SettingsView: View {
                         Text("Optional. Auto-detected when Chau7 is running. Enriches terminal sessions with AI agent context.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        Divider()
+                        Toggle("Enable OTLP telemetry export", isOn: $settings.telemetryEnabled)
+                        TextField("Telemetry endpoint", text: $settings.telemetryEndpoint)
+                            .textFieldStyle(.roundedBorder)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Telemetry export interval")
+                                .font(.headline)
+                            HStack {
+                                Slider(value: $settings.telemetryExportIntervalSeconds, in: 5...120, step: 5)
+                                Text(String(format: "%.0fs", settings.telemetryExportIntervalSeconds))
+                                    .font(.caption.monospacedDigit())
+                                    .frame(width: 44, alignment: .trailing)
+                            }
+                            Text("Exports host and entity gauges to an OTLP/HTTP collector. Useful when you want to correlate Aetower with the rest of your observability stack.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         Button("Apply integration settings") {
                             state.applyIntegrationSettings(settings)
                         }

@@ -68,7 +68,7 @@ notarize_app() {
 
 sh "$ROOT/scripts/build-rust.sh"
 cargo build --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper --release
-swift build --package-path "$ROOT/macos" -c release
+/usr/bin/swift build --package-path "$ROOT/macos" -c release
 
 rm -rf "$APP_DIR"
 mkdir -p "$BIN_DIR" "$FRAMEWORK_DIR" "$HELPER_DIR" "$PLIST_DIR/Resources"

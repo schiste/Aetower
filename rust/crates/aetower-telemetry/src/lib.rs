@@ -1,4 +1,12 @@
-use aetower_model::SystemSnapshot;
+use std::{
+    io::{Read, Write},
+    net::TcpStream,
+    time::Duration,
+};
+
+use aetower_model::{EntitySnapshot, SystemSnapshot, ThermalState};
+use serde::Serialize;
+use url::Url;
 
 /// Configuration for the OpenTelemetry exporter.
 #[derive(Debug, Clone)]
@@ -11,7 +19,7 @@ pub struct OtlpConfig {
 impl Default for OtlpConfig {
     fn default() -> Self {
         Self {
-            endpoint: "http://localhost:4317".to_owned(),
+            endpoint: "http://localhost:4318/v1/metrics".to_owned(),
             export_interval_secs: 30,
             enabled: false,
         }
@@ -31,15 +39,10 @@ pub mod metric_names {
     pub const ENTITY_CPU: &str = "aetower.entity.cpu_percent";
     pub const ENTITY_MEMORY: &str = "aetower.entity.memory_bytes";
     pub const ENTITY_ENERGY: &str = "aetower.entity.energy_impact";
+    pub const ENTITY_NETWORK: &str = "aetower.entity.network_bps";
+    pub const ENTITY_WAKEUPS: &str = "aetower.entity.wakeups_per_second";
 }
 
-/// OpenTelemetry metrics exporter.
-///
-/// Architecture (when fully implemented):
-/// - Uses `opentelemetry` + `opentelemetry-otlp` crates
-/// - Maps SystemSnapshot fields to OTLP gauge metrics
-/// - Runs on a background thread with configurable export interval
-/// - Supports gRPC (port 4317) and HTTP (port 4318) endpoints
 pub struct TelemetryExporter {
     config: OtlpConfig,
 }
@@ -53,10 +56,460 @@ impl TelemetryExporter {
         self.config.enabled
     }
 
-    /// Export the current snapshot as OTLP metrics.
-    /// Placeholder — requires opentelemetry + opentelemetry-otlp dependency.
-    pub fn export(&self, _snapshot: &SystemSnapshot) {
-        if !self.config.enabled {}
-        // TODO: map snapshot fields to OTLP gauge metrics and push
+    pub fn config(&self) -> &OtlpConfig {
+        &self.config
+    }
+
+    pub fn update_config(&mut self, config: OtlpConfig) {
+        self.config = config;
+    }
+
+    pub fn export(&self, snapshot: &SystemSnapshot) -> Result<(), String> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+
+        let endpoint = Url::parse(&self.config.endpoint)
+            .map_err(|error| format!("invalid telemetry endpoint: {error}"))?;
+        if endpoint.scheme() != "http" {
+            return Err("only http OTLP endpoints are supported".to_owned());
+        }
+
+        let payload = build_resource_metrics(snapshot);
+        let body =
+            serde_json::to_vec(&payload).map_err(|error| format!("telemetry encode: {error}"))?;
+        post_json(&endpoint, &body)
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceMetricsEnvelope {
+    resource_metrics: Vec<ResourceMetrics>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceMetrics {
+    resource: Resource,
+    scope_metrics: Vec<ScopeMetrics>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Resource {
+    attributes: Vec<KeyValue>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScopeMetrics {
+    scope: InstrumentationScope,
+    metrics: Vec<Metric>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentationScope {
+    name: String,
+    version: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Metric {
+    name: String,
+    unit: String,
+    gauge: Gauge,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Gauge {
+    data_points: Vec<NumberDataPoint>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NumberDataPoint {
+    attributes: Vec<KeyValue>,
+    time_unix_nano: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    as_double: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    as_int: Option<i64>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KeyValue {
+    key: String,
+    value: AnyValue,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnyValue {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    string_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    int_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    double_value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bool_value: Option<bool>,
+}
+
+fn build_resource_metrics(snapshot: &SystemSnapshot) -> ResourceMetricsEnvelope {
+    let timestamp = snapshot_time_nanos(snapshot.captured_at_millis);
+    let mut metrics = vec![
+        host_double_metric(
+            metric_names::HOST_CPU,
+            "percent",
+            snapshot.host.cpu_percent as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_int_metric(
+            metric_names::HOST_MEMORY,
+            "By",
+            snapshot.host.memory_used_bytes as i64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_FRICTION,
+            "score",
+            machine_friction_score(snapshot),
+            timestamp.clone(),
+            &[],
+        ),
+        host_int_metric(
+            metric_names::HOST_THERMAL,
+            "state",
+            thermal_state_value(snapshot.host.thermal_state) as i64,
+            timestamp.clone(),
+            &[kv_string("state", snapshot.host.thermal_state.to_string())],
+        ),
+        host_double_metric(
+            metric_names::HOST_GPU,
+            "percent",
+            snapshot.host.gpu_percent as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_ANE,
+            "percent",
+            snapshot.host.ane_percent as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_AI_FRICTION,
+            "score",
+            snapshot.host.ai_agent_friction as f64,
+            timestamp.clone(),
+            &[kv_int("count", snapshot.host.ai_agent_count as i64)],
+        ),
+    ];
+
+    for entity in &snapshot.entities {
+        metrics.extend(entity_metrics(entity, &timestamp));
+    }
+
+    ResourceMetricsEnvelope {
+        resource_metrics: vec![ResourceMetrics {
+            resource: Resource {
+                attributes: vec![
+                    kv_string("service.name", "aetower".to_owned()),
+                    kv_string("service.version", env!("CARGO_PKG_VERSION").to_owned()),
+                ],
+            },
+            scope_metrics: vec![ScopeMetrics {
+                scope: InstrumentationScope {
+                    name: "aetower.telemetry".to_owned(),
+                    version: env!("CARGO_PKG_VERSION").to_owned(),
+                },
+                metrics,
+            }],
+        }],
+    }
+}
+
+fn entity_metrics(entity: &EntitySnapshot, timestamp: &str) -> Vec<Metric> {
+    let attributes = vec![
+        kv_string("entity.id", entity.entity_id.clone()),
+        kv_string("entity.name", entity.display_name.clone()),
+        kv_string(
+            "entity.kind",
+            serde_json::to_string(&entity.entity_kind)
+                .unwrap_or_else(|_| "\"unknown\"".to_owned())
+                .trim_matches('"')
+                .to_owned(),
+        ),
+    ];
+    vec![
+        host_double_metric(
+            metric_names::ENTITY_FRICTION,
+            "score",
+            entity.friction.total_score as f64,
+            timestamp.to_owned(),
+            &attributes,
+        ),
+        host_double_metric(
+            metric_names::ENTITY_CPU,
+            "percent",
+            entity.metrics.cpu_percent as f64,
+            timestamp.to_owned(),
+            &attributes,
+        ),
+        host_int_metric(
+            metric_names::ENTITY_MEMORY,
+            "By",
+            entity.metrics.memory_resident_bytes as i64,
+            timestamp.to_owned(),
+            &attributes,
+        ),
+        host_double_metric(
+            metric_names::ENTITY_ENERGY,
+            "score",
+            entity.friction.energy_impact_score as f64,
+            timestamp.to_owned(),
+            &attributes,
+        ),
+        host_int_metric(
+            metric_names::ENTITY_NETWORK,
+            "By/s",
+            entity
+                .metrics
+                .network_receive_bps
+                .saturating_add(entity.metrics.network_send_bps) as i64,
+            timestamp.to_owned(),
+            &attributes,
+        ),
+        host_double_metric(
+            metric_names::ENTITY_WAKEUPS,
+            "wakeups/s",
+            entity.metrics.wakeups_per_second as f64,
+            timestamp.to_owned(),
+            &attributes,
+        ),
+    ]
+}
+
+fn host_double_metric(
+    name: &str,
+    unit: &str,
+    value: f64,
+    timestamp: String,
+    attributes: &[KeyValue],
+) -> Metric {
+    Metric {
+        name: name.to_owned(),
+        unit: unit.to_owned(),
+        gauge: Gauge {
+            data_points: vec![NumberDataPoint {
+                attributes: attributes.to_vec(),
+                time_unix_nano: timestamp,
+                as_double: Some(value),
+                as_int: None,
+            }],
+        },
+    }
+}
+
+fn host_int_metric(
+    name: &str,
+    unit: &str,
+    value: i64,
+    timestamp: String,
+    attributes: &[KeyValue],
+) -> Metric {
+    Metric {
+        name: name.to_owned(),
+        unit: unit.to_owned(),
+        gauge: Gauge {
+            data_points: vec![NumberDataPoint {
+                attributes: attributes.to_vec(),
+                time_unix_nano: timestamp,
+                as_double: None,
+                as_int: Some(value),
+            }],
+        },
+    }
+}
+
+fn kv_string(key: &str, value: String) -> KeyValue {
+    KeyValue {
+        key: key.to_owned(),
+        value: AnyValue {
+            string_value: Some(value),
+            int_value: None,
+            double_value: None,
+            bool_value: None,
+        },
+    }
+}
+
+fn kv_int(key: &str, value: i64) -> KeyValue {
+    KeyValue {
+        key: key.to_owned(),
+        value: AnyValue {
+            string_value: None,
+            int_value: Some(value.to_string()),
+            double_value: None,
+            bool_value: None,
+        },
+    }
+}
+
+fn machine_friction_score(snapshot: &SystemSnapshot) -> f64 {
+    let host = &snapshot.host;
+    let cpu_score = host.cpu_percent.min(100.0) as f64 * 0.5;
+    let memory_ratio = if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        host.memory_used_bytes as f64 / host.memory_total_bytes as f64
+    };
+    let memory_score = memory_ratio.min(1.0) * 35.0;
+    let swap_score = if host.swap_used_bytes == 0 {
+        0.0
+    } else {
+        ((host.swap_used_bytes as f64 / 1_073_741_824.0).min(8.0) / 8.0) * 15.0
+    };
+    let compressed_score = if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        (host.compressed_memory_bytes as f64 / host.memory_total_bytes as f64).min(1.0) * 12.0
+    };
+    let network_score = ((host
+        .network_receive_bps
+        .saturating_add(host.network_send_bps)) as f64
+        / 8_388_608.0)
+        .min(1.0)
+        * 10.0;
+    let wakeups_score = (host.wakeups_per_second as f64 / 500.0).min(1.0) * 8.0;
+    (cpu_score + memory_score + swap_score + compressed_score + network_score + wakeups_score)
+        .min(100.0)
+}
+
+fn thermal_state_value(state: ThermalState) -> u8 {
+    match state {
+        ThermalState::Nominal => 0,
+        ThermalState::Fair => 1,
+        ThermalState::Serious => 2,
+        ThermalState::Critical => 3,
+    }
+}
+
+fn snapshot_time_nanos(captured_at_millis: u64) -> String {
+    captured_at_millis.saturating_mul(1_000_000).to_string()
+}
+
+fn post_json(endpoint: &Url, body: &[u8]) -> Result<(), String> {
+    let host = endpoint
+        .host_str()
+        .ok_or_else(|| "telemetry endpoint host missing".to_owned())?;
+    let port = endpoint.port_or_known_default().unwrap_or(4318);
+    let mut path = endpoint.path().to_owned();
+    if path.is_empty() {
+        path = "/v1/metrics".to_owned();
+    }
+    if let Some(query) = endpoint.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+
+    let mut stream =
+        TcpStream::connect((host, port)).map_err(|error| format!("telemetry connect: {error}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| format!("telemetry set_read_timeout: {error}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| format!("telemetry set_write_timeout: {error}"))?;
+
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(request.as_bytes())
+        .and_then(|_| stream.write_all(body))
+        .map_err(|error| format!("telemetry write: {error}"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|error| format!("telemetry read: {error}"))?;
+    let status = response.lines().next().unwrap_or_default();
+    if status.contains(" 200 ") || status.contains(" 202 ") || status.contains(" 204 ") {
+        return Ok(());
+    }
+
+    Err(format!("telemetry endpoint rejected export: {status}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OtlpConfig, TelemetryExporter, build_resource_metrics, metric_names};
+    use aetower_model::{EntitySnapshot, HostSnapshot, SystemSnapshot, ThermalState};
+
+    #[test]
+    fn default_otlp_endpoint_uses_http_metrics_path() {
+        let config = OtlpConfig::default();
+        assert_eq!(config.endpoint, "http://localhost:4318/v1/metrics");
+    }
+
+    #[test]
+    fn export_payload_contains_host_and_entity_metrics() {
+        let snapshot = SystemSnapshot {
+            captured_at_millis: 1_000,
+            host: HostSnapshot {
+                cpu_percent: 12.5,
+                memory_used_bytes: 1024,
+                thermal_state: ThermalState::Fair,
+                gpu_percent: 33.0,
+                ..HostSnapshot::default()
+            },
+            entities: vec![EntitySnapshot {
+                entity_id: "entity".to_owned(),
+                display_name: "Entity".to_owned(),
+                friction: aetower_model::FrictionBreakdown {
+                    total_score: 44.0,
+                    energy_impact_score: 9.0,
+                    ..Default::default()
+                },
+                metrics: aetower_model::AggregateMetrics {
+                    cpu_percent: 11.0,
+                    memory_resident_bytes: 4096,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let payload = serde_json::to_value(build_resource_metrics(&snapshot)).unwrap();
+        let metrics = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
+            .as_array()
+            .unwrap();
+        assert!(
+            metrics
+                .iter()
+                .any(|metric| metric["name"] == metric_names::HOST_GPU)
+        );
+        assert!(
+            metrics
+                .iter()
+                .any(|metric| metric["name"] == metric_names::ENTITY_FRICTION)
+        );
+    }
+
+    #[test]
+    fn disabled_exporter_is_noop() {
+        let exporter = TelemetryExporter::new(OtlpConfig::default());
+        assert!(exporter.export(&SystemSnapshot::default()).is_ok());
     }
 }

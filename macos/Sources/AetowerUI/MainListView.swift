@@ -261,6 +261,7 @@ private struct EntityRow: View {
     let hostMemoryTotalBytes: UInt64
     let sortKey: SortKey
     let snapshotCapturedAtMillis: UInt64
+    @State private var isHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -284,6 +285,7 @@ private struct EntityRow: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                             .font(.caption)
+                            .symbolEffect(.pulse.wholeSymbol, isActive: true)
                             .help("Anomaly: friction is unusually high for this entity")
                     }
                     RowSignalBadge(
@@ -336,6 +338,9 @@ private struct EntityRow: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(isSelected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
         )
+        .scaleEffect(isHovered ? 1.005 : 1.0)
+        .onHover { isHovered = $0 }
+        .animation(AetowerDesign.Motion.quick, value: isHovered)
         .contextMenu {
             Button("Copy Process IDs") {
                 let pids = entity.components.compactMap(\.processId).map(String.init).joined(separator: ", ")
@@ -365,7 +370,9 @@ private struct EntityRow: View {
     }
 
     private var rowBackground: Color {
-        isSelected ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.04)
+        if isSelected { return AetowerDesign.Surface.rowSelected }
+        if isHovered { return AetowerDesign.Surface.rowHover }
+        return AetowerDesign.Surface.rowIdle
     }
 
     private var aiAgentDotColor: Color {
@@ -443,8 +450,10 @@ public struct MainListView: View {
 
             if let entity = selectedEntity {
                 detailPanel(for: entity)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             } else {
                 rankingPanel
+                    .transition(.opacity)
             }
         }
         .navigationTitle("Aetower")
@@ -471,7 +480,9 @@ public struct MainListView: View {
                 .buttonStyle(.plain)
                 if selectedEntity != nil {
                     Button("Back to ranking") {
-                        selectedEntityID = nil
+                        withAnimation(AetowerDesign.Motion.standard) {
+                            selectedEntityID = nil
+                        }
                     }
                     .buttonStyle(.plain)
                     .font(.caption.weight(.semibold))
@@ -509,6 +520,12 @@ public struct MainListView: View {
                         value: formatRate(state.snapshot.host.networkReceiveBps + state.snapshot.host.networkSendBps),
                         tone: .teal,
                         subtitle: trendWindowLabel(sampleCount: state.snapshot.hostTrend.networkActivityBps.count)
+                    )
+                    MachineBandMetric(
+                        title: "GPU",
+                        value: String(format: "%.1f%%", state.snapshot.host.gpuPercent),
+                        tone: .yellow,
+                        subtitle: hostGPUSummary(state.snapshot.host)
                     )
                     MachineBandMetric(
                         title: "Wakeups",
@@ -559,7 +576,9 @@ public struct MainListView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .center, spacing: 12) {
                     Button {
-                        selectedEntityID = nil
+                        withAnimation(AetowerDesign.Motion.standard) {
+                            selectedEntityID = nil
+                        }
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "chevron.left")
@@ -634,7 +653,9 @@ public struct MainListView: View {
                 LazyVStack(spacing: 8) {
                     ForEach(filteredEntities, id: \.entityId) { entity in
                         Button {
-                            selectedEntityID = entity.entityId
+                            withAnimation(AetowerDesign.Motion.standard) {
+                                selectedEntityID = entity.entityId
+                            }
                         } label: {
                             EntityRow(
                                 entity: entity,
@@ -669,6 +690,7 @@ public struct MainListView: View {
                         }
                     }
                 }
+                .animation(AetowerDesign.Motion.standard, value: sortKey)
             }
         }
     }
@@ -684,6 +706,17 @@ public struct MainListView: View {
                 entity.displayName.localizedLowercase.contains(loweredQuery)
                     || entity.badges.joined(separator: " ").localizedLowercase.contains(loweredQuery)
                     || entity.friction.reasons.joined(separator: " ").localizedLowercase.contains(loweredQuery)
+                    || entity.components.contains(where: { component in
+                        component.title.localizedLowercase.contains(loweredQuery)
+                            || component.detail.localizedLowercase.contains(loweredQuery)
+                            || component.adapterContext?.status?.localizedLowercase.contains(loweredQuery) == true
+                            || component.adapterContext?.url?.localizedLowercase.contains(loweredQuery) == true
+                            || component.adapterContext?.workspacePath?.localizedLowercase.contains(loweredQuery) == true
+                            || component.adapterContext?.repoRoot?.localizedLowercase.contains(loweredQuery) == true
+                            || component.adapterContext?.imageName?.localizedLowercase.contains(loweredQuery) == true
+                            || component.adapterContext?.sessionId?.localizedLowercase.contains(loweredQuery) == true
+                            || component.adapterContext?.ports.joined(separator: " ").localizedLowercase.contains(loweredQuery) == true
+                    })
             }
         }
 
@@ -813,9 +846,12 @@ private func provenanceSummaryLabel(_ provenance: ProvenanceSnapshot) -> String 
 
 private func hostStatusSummary(_ host: HostSnapshot) -> String {
     var parts = [powerStatusSummary(host)]
-    parts.append("thermal \(host.thermalState)")
+    parts.append("thermal \(thermalStateLabel(host.thermalState))")
     if host.compressedMemoryBytes > 0 {
         parts.append("compressed \(formatBytes(host.compressedMemoryBytes))")
+    }
+    if host.gpuPercent > 0 || host.anePercent > 0 {
+        parts.append(hostGPUSummary(host))
     }
     if host.wakeupsPerSecond > 0 {
         parts.append("\(formatWakeups(host.wakeupsPerSecond)) wakeups")
@@ -834,6 +870,29 @@ private func powerStatusSummary(_ host: HostSnapshot) -> String {
         return "battery power"
     }
     return "AC power"
+}
+
+private func hostGPUSummary(_ host: HostSnapshot) -> String {
+    if host.anePercent > 0 {
+        return "ANE \(String(format: "%.1f%%", host.anePercent)) · \(formatBytes(host.gpuMemoryBytes)) GPU memory"
+    }
+    if host.gpuMemoryBytes > 0 {
+        return "\(formatBytes(host.gpuMemoryBytes)) GPU memory"
+    }
+    return "render/compute activity"
+}
+
+private func thermalStateLabel(_ state: ThermalState) -> String {
+    switch state {
+    case .nominal:
+        return "nominal"
+    case .fair:
+        return "fair"
+    case .serious:
+        return "serious"
+    case .critical:
+        return "critical"
+    }
 }
 
 func formatBytes(_ bytes: UInt64) -> String {
@@ -995,26 +1054,26 @@ private struct KeyboardNavigationModifier: ViewModifier {
             .onKeyPress("j") { moveDown() }
             .onKeyPress("k") { moveUp() }
             .onKeyPress(.return) { selectCurrent() }
-            .onKeyPress(.escape) { selectedEntityID = nil; return .handled }
+            .onKeyPress(.escape) { withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = nil }; return .handled }
     }
 
     private func moveDown() -> KeyPress.Result {
         guard entityCount > 0 else { return .ignored }
         focusedIndex = min(focusedIndex + 1, entityCount - 1)
-        selectedEntityID = entityIdAt(focusedIndex)
+        withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = entityIdAt(focusedIndex) }
         return .handled
     }
 
     private func moveUp() -> KeyPress.Result {
         guard entityCount > 0 else { return .ignored }
         focusedIndex = max(focusedIndex - 1, 0)
-        selectedEntityID = entityIdAt(focusedIndex)
+        withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = entityIdAt(focusedIndex) }
         return .handled
     }
 
     private func selectCurrent() -> KeyPress.Result {
         guard selectedEntityID == nil, entityCount > 0 else { return .handled }
-        selectedEntityID = entityIdAt(focusedIndex)
+        withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = entityIdAt(focusedIndex) }
         return .handled
     }
 }

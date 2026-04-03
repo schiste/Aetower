@@ -8,6 +8,8 @@ import AetowerBridge
 @MainActor
 public final class AppState: ObservableObject {
     @Published public private(set) var snapshot: SystemSnapshot
+    @Published public private(set) var historySnapshots: [SystemSnapshot] = []
+    @Published public private(set) var historyLoadError: String?
     @Published public var lastError: String?
 
     private let bridge: EngineBridge
@@ -22,9 +24,12 @@ public final class AppState: ObservableObject {
     private var lastFrontmostProbeDate = Date.distantPast
     private var lastWindowTitleProbeDate = Date.distantPast
     private var previousAnomalyStates: [String: Bool] = [:]
+    private var historyWindowSeconds: TimeInterval = 3600
+    private var lastHistoryLoadDate = Date.distantPast
 
     private let frontmostProbeInterval: TimeInterval = 1.0
     private let windowTitleProbeInterval: TimeInterval = 5.0
+    private let historyReloadInterval: TimeInterval = 20.0
 
     public init(
         bridge: EngineBridge = EngineBridge(),
@@ -44,7 +49,7 @@ public final class AppState: ObservableObject {
                 networkReceiveBps: 0,
                 networkSendBps: 0,
                 wakeupsPerSecond: 0,
-                thermalState: "nominal",
+                thermalState: .nominal,
                 onBattery: false,
                 batteryChargePercent: nil,
                 lowPowerMode: false,
@@ -85,6 +90,7 @@ public final class AppState: ObservableObject {
         observeWorkspaceActivation()
         publishFrontmostState(force: true)
         refresh(force: true)
+        loadHistory(force: true)
         timerCancellable = Timer.publish(every: max(1.0, refreshInterval), on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
@@ -143,6 +149,12 @@ public final class AppState: ObservableObject {
 
         let chau7Endpoint = settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         bridge.configureChau7Endpoint(chau7Endpoint.isEmpty ? nil : chau7Endpoint)
+        let telemetryEndpoint = settings.telemetryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        bridge.configureTelemetry(
+            endpoint: telemetryEndpoint.isEmpty ? nil : telemetryEndpoint,
+            enabled: settings.telemetryEnabled,
+            exportIntervalSeconds: UInt32(max(5, Int(settings.telemetryExportIntervalSeconds.rounded())))
+        )
 
         refresh(force: true)
     }
@@ -163,10 +175,41 @@ public final class AppState: ObservableObject {
                 appName: lastPublishedFrontmostAppName,
                 windowTitle: lastPublishedWindowTitle
             )
+            loadHistory(force: force)
             diffAnomalyStates()
             lastError = nil
         } catch {
             lastError = error.localizedDescription
+        }
+    }
+
+    public func setHistoryWindow(seconds: TimeInterval) {
+        historyWindowSeconds = max(seconds, 300)
+        loadHistory(force: true)
+    }
+
+    public func loadHistory(force: Bool = false) {
+        let now = Date()
+        if !force && now.timeIntervalSince(lastHistoryLoadDate) < historyReloadInterval {
+            return
+        }
+        lastHistoryLoadDate = now
+
+        let endMillis = max(
+            snapshot.capturedAtMillis,
+            UInt64(Date().timeIntervalSince1970 * 1000)
+        )
+        let rangeMillis = UInt64(historyWindowSeconds * 1000)
+        let startMillis = endMillis >= rangeMillis ? endMillis - rangeMillis : 0
+        let bridge = self.bridge
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let snapshots = bridge.loadHistoryRange(startMillis: startMillis, endMillis: endMillis)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.historySnapshots = snapshots
+                self.historyLoadError = snapshots.isEmpty ? "No persisted history in the selected range yet." : nil
+            }
         }
     }
 

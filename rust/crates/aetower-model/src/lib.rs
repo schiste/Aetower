@@ -110,6 +110,60 @@ pub struct ProvenanceSnapshot {
     pub label: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AdapterContextKind {
+    ChromiumTab,
+    DockerContainer,
+    PrivilegedSocket,
+    Chau7Session,
+    VsCodeWorkspace,
+    VsCodeRuntime,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AdapterContextSnapshot {
+    pub kind: AdapterContextKind,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+    #[serde(default)]
+    pub repo_root: Option<String>,
+    #[serde(default)]
+    pub image_name: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub network_receive_bps: u64,
+    #[serde(default)]
+    pub network_send_bps: u64,
+    #[serde(default)]
+    pub disk_read_bps: u64,
+    #[serde(default)]
+    pub disk_write_bps: u64,
+    #[serde(default)]
+    pub memory_limit_bytes: u64,
+    #[serde(default)]
+    pub js_heap_total_bytes: u64,
+    #[serde(default)]
+    pub dom_nodes: u64,
+    #[serde(default)]
+    pub documents: u64,
+    #[serde(default)]
+    pub frames: u64,
+    #[serde(default)]
+    pub process_count: Option<u32>,
+    #[serde(default)]
+    pub connection_count: Option<u32>,
+    #[serde(default)]
+    pub ports: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HostSnapshot {
     pub cpu_percent: f32,
@@ -195,6 +249,8 @@ pub struct ComponentSnapshot {
     pub kind: ComponentKind,
     pub title: String,
     pub detail: String,
+    #[serde(default)]
+    pub adapter_context: Option<AdapterContextSnapshot>,
     pub provenance: Option<ProvenanceSnapshot>,
     pub process_id: Option<u32>,
     pub executable_path: Option<String>,

@@ -35,6 +35,11 @@ struct AetowerApp: App {
                         Label("Monitor", systemImage: "gauge.with.needle")
                     }
 
+                HistoryView(state: state)
+                    .tabItem {
+                        Label("History", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+                    }
+
                 TimelineView(events: state.snapshot.timeline)
                     .padding()
                     .tabItem {

@@ -6,8 +6,26 @@ public struct CompactHUDView: View {
 
     public init(state: AppState) { self.state = state }
 
+    private var machineFriction: Float {
+        let entities = state.snapshot.entities
+        guard !entities.isEmpty else { return 0 }
+        return entities.prefix(5).map(\.friction.totalScore).reduce(0, +) / Float(min(entities.count, 5))
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Machine Friction")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(String(format: "%.1f", machineFriction))
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundStyle(AetowerDesign.frictionColor(machineFriction))
+            }
+
+            Divider()
+
             Text("Top Friction")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -19,7 +37,7 @@ public struct CompactHUDView: View {
                     Spacer()
                     Text(String(format: "%.1f", entity.friction.totalScore))
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AetowerDesign.frictionColor(entity.friction.totalScore))
                 }
             }
         }

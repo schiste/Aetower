@@ -541,6 +541,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func configurePrivilegedHelper(helperPath: String?, enabled: Bool) 
     
+    func configureTelemetry(endpoint: String?, enabled: Bool, exportIntervalSecs: UInt32) 
+    
     func exportSnapshotJson()  -> String
     
     func latestSequence()  -> UInt64
@@ -648,6 +650,15 @@ open func configurePrivilegedHelper(helperPath: String?, enabled: Bool)  {try! r
     uniffi_aetower_ffi_fn_method_monitorengine_configure_privileged_helper(self.uniffiClonePointer(),
         FfiConverterOptionString.lower(helperPath),
         FfiConverterBool.lower(enabled),$0
+    )
+}
+}
+    
+open func configureTelemetry(endpoint: String?, enabled: Bool, exportIntervalSecs: UInt32)  {try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_configure_telemetry(self.uniffiClonePointer(),
+        FfiConverterOptionString.lower(endpoint),
+        FfiConverterBool.lower(enabled),
+        FfiConverterUInt32.lower(exportIntervalSecs),$0
     )
 }
 }
@@ -769,6 +780,212 @@ public func FfiConverterTypeMonitorEngine_lower(_ value: MonitorEngine) -> Unsaf
 }
 
 
+
+
+public struct AdapterContextSnapshot {
+    public var kind: AdapterContextKind
+    public var status: String?
+    public var url: String?
+    public var workspacePath: String?
+    public var repoRoot: String?
+    public var imageName: String?
+    public var sessionId: String?
+    public var networkReceiveBps: UInt64
+    public var networkSendBps: UInt64
+    public var diskReadBps: UInt64
+    public var diskWriteBps: UInt64
+    public var memoryLimitBytes: UInt64
+    public var jsHeapTotalBytes: UInt64
+    public var domNodes: UInt64
+    public var documents: UInt64
+    public var frames: UInt64
+    public var processCount: UInt32?
+    public var connectionCount: UInt32?
+    public var ports: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: AdapterContextKind, status: String?, url: String?, workspacePath: String?, repoRoot: String?, imageName: String?, sessionId: String?, networkReceiveBps: UInt64, networkSendBps: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, memoryLimitBytes: UInt64, jsHeapTotalBytes: UInt64, domNodes: UInt64, documents: UInt64, frames: UInt64, processCount: UInt32?, connectionCount: UInt32?, ports: [String]) {
+        self.kind = kind
+        self.status = status
+        self.url = url
+        self.workspacePath = workspacePath
+        self.repoRoot = repoRoot
+        self.imageName = imageName
+        self.sessionId = sessionId
+        self.networkReceiveBps = networkReceiveBps
+        self.networkSendBps = networkSendBps
+        self.diskReadBps = diskReadBps
+        self.diskWriteBps = diskWriteBps
+        self.memoryLimitBytes = memoryLimitBytes
+        self.jsHeapTotalBytes = jsHeapTotalBytes
+        self.domNodes = domNodes
+        self.documents = documents
+        self.frames = frames
+        self.processCount = processCount
+        self.connectionCount = connectionCount
+        self.ports = ports
+    }
+}
+
+#if compiler(>=6)
+extension AdapterContextSnapshot: Sendable {}
+#endif
+
+
+extension AdapterContextSnapshot: Equatable, Hashable {
+    public static func ==(lhs: AdapterContextSnapshot, rhs: AdapterContextSnapshot) -> Bool {
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.status != rhs.status {
+            return false
+        }
+        if lhs.url != rhs.url {
+            return false
+        }
+        if lhs.workspacePath != rhs.workspacePath {
+            return false
+        }
+        if lhs.repoRoot != rhs.repoRoot {
+            return false
+        }
+        if lhs.imageName != rhs.imageName {
+            return false
+        }
+        if lhs.sessionId != rhs.sessionId {
+            return false
+        }
+        if lhs.networkReceiveBps != rhs.networkReceiveBps {
+            return false
+        }
+        if lhs.networkSendBps != rhs.networkSendBps {
+            return false
+        }
+        if lhs.diskReadBps != rhs.diskReadBps {
+            return false
+        }
+        if lhs.diskWriteBps != rhs.diskWriteBps {
+            return false
+        }
+        if lhs.memoryLimitBytes != rhs.memoryLimitBytes {
+            return false
+        }
+        if lhs.jsHeapTotalBytes != rhs.jsHeapTotalBytes {
+            return false
+        }
+        if lhs.domNodes != rhs.domNodes {
+            return false
+        }
+        if lhs.documents != rhs.documents {
+            return false
+        }
+        if lhs.frames != rhs.frames {
+            return false
+        }
+        if lhs.processCount != rhs.processCount {
+            return false
+        }
+        if lhs.connectionCount != rhs.connectionCount {
+            return false
+        }
+        if lhs.ports != rhs.ports {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(status)
+        hasher.combine(url)
+        hasher.combine(workspacePath)
+        hasher.combine(repoRoot)
+        hasher.combine(imageName)
+        hasher.combine(sessionId)
+        hasher.combine(networkReceiveBps)
+        hasher.combine(networkSendBps)
+        hasher.combine(diskReadBps)
+        hasher.combine(diskWriteBps)
+        hasher.combine(memoryLimitBytes)
+        hasher.combine(jsHeapTotalBytes)
+        hasher.combine(domNodes)
+        hasher.combine(documents)
+        hasher.combine(frames)
+        hasher.combine(processCount)
+        hasher.combine(connectionCount)
+        hasher.combine(ports)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAdapterContextSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AdapterContextSnapshot {
+        return
+            try AdapterContextSnapshot(
+                kind: FfiConverterTypeAdapterContextKind.read(from: &buf), 
+                status: FfiConverterOptionString.read(from: &buf), 
+                url: FfiConverterOptionString.read(from: &buf), 
+                workspacePath: FfiConverterOptionString.read(from: &buf), 
+                repoRoot: FfiConverterOptionString.read(from: &buf), 
+                imageName: FfiConverterOptionString.read(from: &buf), 
+                sessionId: FfiConverterOptionString.read(from: &buf), 
+                networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
+                networkSendBps: FfiConverterUInt64.read(from: &buf), 
+                diskReadBps: FfiConverterUInt64.read(from: &buf), 
+                diskWriteBps: FfiConverterUInt64.read(from: &buf), 
+                memoryLimitBytes: FfiConverterUInt64.read(from: &buf), 
+                jsHeapTotalBytes: FfiConverterUInt64.read(from: &buf), 
+                domNodes: FfiConverterUInt64.read(from: &buf), 
+                documents: FfiConverterUInt64.read(from: &buf), 
+                frames: FfiConverterUInt64.read(from: &buf), 
+                processCount: FfiConverterOptionUInt32.read(from: &buf), 
+                connectionCount: FfiConverterOptionUInt32.read(from: &buf), 
+                ports: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AdapterContextSnapshot, into buf: inout [UInt8]) {
+        FfiConverterTypeAdapterContextKind.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.status, into: &buf)
+        FfiConverterOptionString.write(value.url, into: &buf)
+        FfiConverterOptionString.write(value.workspacePath, into: &buf)
+        FfiConverterOptionString.write(value.repoRoot, into: &buf)
+        FfiConverterOptionString.write(value.imageName, into: &buf)
+        FfiConverterOptionString.write(value.sessionId, into: &buf)
+        FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)
+        FfiConverterUInt64.write(value.networkSendBps, into: &buf)
+        FfiConverterUInt64.write(value.diskReadBps, into: &buf)
+        FfiConverterUInt64.write(value.diskWriteBps, into: &buf)
+        FfiConverterUInt64.write(value.memoryLimitBytes, into: &buf)
+        FfiConverterUInt64.write(value.jsHeapTotalBytes, into: &buf)
+        FfiConverterUInt64.write(value.domNodes, into: &buf)
+        FfiConverterUInt64.write(value.documents, into: &buf)
+        FfiConverterUInt64.write(value.frames, into: &buf)
+        FfiConverterOptionUInt32.write(value.processCount, into: &buf)
+        FfiConverterOptionUInt32.write(value.connectionCount, into: &buf)
+        FfiConverterSequenceString.write(value.ports, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAdapterContextSnapshot_lift(_ buf: RustBuffer) throws -> AdapterContextSnapshot {
+    return try FfiConverterTypeAdapterContextSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAdapterContextSnapshot_lower(_ value: AdapterContextSnapshot) -> RustBuffer {
+    return FfiConverterTypeAdapterContextSnapshot.lower(value)
+}
 
 
 public struct AgentCostSummary {
@@ -1081,6 +1298,7 @@ public struct ComponentSnapshot {
     public var kind: ComponentKind
     public var title: String
     public var detail: String
+    public var adapterContext: AdapterContextSnapshot?
     public var provenance: ProvenanceSnapshot?
     public var processId: UInt32?
     public var executablePath: String?
@@ -1093,10 +1311,11 @@ public struct ComponentSnapshot {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: ComponentKind, title: String, detail: String, provenance: ProvenanceSnapshot?, processId: UInt32?, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, cwd: String?) {
+    public init(kind: ComponentKind, title: String, detail: String, adapterContext: AdapterContextSnapshot?, provenance: ProvenanceSnapshot?, processId: UInt32?, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, cwd: String?) {
         self.kind = kind
         self.title = title
         self.detail = detail
+        self.adapterContext = adapterContext
         self.provenance = provenance
         self.processId = processId
         self.executablePath = executablePath
@@ -1123,6 +1342,9 @@ extension ComponentSnapshot: Equatable, Hashable {
             return false
         }
         if lhs.detail != rhs.detail {
+            return false
+        }
+        if lhs.adapterContext != rhs.adapterContext {
             return false
         }
         if lhs.provenance != rhs.provenance {
@@ -1159,6 +1381,7 @@ extension ComponentSnapshot: Equatable, Hashable {
         hasher.combine(kind)
         hasher.combine(title)
         hasher.combine(detail)
+        hasher.combine(adapterContext)
         hasher.combine(provenance)
         hasher.combine(processId)
         hasher.combine(executablePath)
@@ -1183,6 +1406,7 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
                 kind: FfiConverterTypeComponentKind.read(from: &buf), 
                 title: FfiConverterString.read(from: &buf), 
                 detail: FfiConverterString.read(from: &buf), 
+                adapterContext: FfiConverterOptionTypeAdapterContextSnapshot.read(from: &buf), 
                 provenance: FfiConverterOptionTypeProvenanceSnapshot.read(from: &buf), 
                 processId: FfiConverterOptionUInt32.read(from: &buf), 
                 executablePath: FfiConverterOptionString.read(from: &buf), 
@@ -1199,6 +1423,7 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
         FfiConverterTypeComponentKind.write(value.kind, into: &buf)
         FfiConverterString.write(value.title, into: &buf)
         FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterOptionTypeAdapterContextSnapshot.write(value.adapterContext, into: &buf)
         FfiConverterOptionTypeProvenanceSnapshot.write(value.provenance, into: &buf)
         FfiConverterOptionUInt32.write(value.processId, into: &buf)
         FfiConverterOptionString.write(value.executablePath, into: &buf)
@@ -1680,7 +1905,7 @@ public struct HostSnapshot {
     public var networkReceiveBps: UInt64
     public var networkSendBps: UInt64
     public var wakeupsPerSecond: Float
-    public var thermalState: String
+    public var thermalState: ThermalState
     public var onBattery: Bool
     public var batteryChargePercent: UInt8?
     public var lowPowerMode: Bool
@@ -1694,7 +1919,7 @@ public struct HostSnapshot {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: String, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
@@ -1836,7 +2061,7 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
                 networkSendBps: FfiConverterUInt64.read(from: &buf), 
                 wakeupsPerSecond: FfiConverterFloat.read(from: &buf), 
-                thermalState: FfiConverterString.read(from: &buf), 
+                thermalState: FfiConverterTypeThermalState.read(from: &buf), 
                 onBattery: FfiConverterBool.read(from: &buf), 
                 batteryChargePercent: FfiConverterOptionUInt8.read(from: &buf), 
                 lowPowerMode: FfiConverterBool.read(from: &buf), 
@@ -1861,7 +2086,7 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)
         FfiConverterUInt64.write(value.networkSendBps, into: &buf)
         FfiConverterFloat.write(value.wakeupsPerSecond, into: &buf)
-        FfiConverterString.write(value.thermalState, into: &buf)
+        FfiConverterTypeThermalState.write(value.thermalState, into: &buf)
         FfiConverterBool.write(value.onBattery, into: &buf)
         FfiConverterOptionUInt8.write(value.batteryChargePercent, into: &buf)
         FfiConverterBool.write(value.lowPowerMode, into: &buf)
@@ -2543,6 +2768,111 @@ public func FfiConverterTypeTimelineEvent_lower(_ value: TimelineEvent) -> RustB
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum AdapterContextKind {
+    
+    case chromiumTab
+    case dockerContainer
+    case privilegedSocket
+    case chau7Session
+    case vsCodeWorkspace
+    case vsCodeRuntime
+    case unknown
+}
+
+
+#if compiler(>=6)
+extension AdapterContextKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAdapterContextKind: FfiConverterRustBuffer {
+    typealias SwiftType = AdapterContextKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AdapterContextKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .chromiumTab
+        
+        case 2: return .dockerContainer
+        
+        case 3: return .privilegedSocket
+        
+        case 4: return .chau7Session
+        
+        case 5: return .vsCodeWorkspace
+        
+        case 6: return .vsCodeRuntime
+        
+        case 7: return .unknown
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AdapterContextKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .chromiumTab:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .dockerContainer:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .privilegedSocket:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .chau7Session:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .vsCodeWorkspace:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .vsCodeRuntime:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .unknown:
+            writeInt(&buf, Int32(7))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAdapterContextKind_lift(_ buf: RustBuffer) throws -> AdapterContextKind {
+    return try FfiConverterTypeAdapterContextKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAdapterContextKind_lower(_ value: AdapterContextKind) -> RustBuffer {
+    return FfiConverterTypeAdapterContextKind.lower(value)
+}
+
+
+extension AdapterContextKind: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum CapabilityHealth {
     
     case configured
@@ -3208,6 +3538,90 @@ extension SessionMarkerKind: Equatable, Hashable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum ThermalState {
+    
+    case nominal
+    case fair
+    case serious
+    case critical
+}
+
+
+#if compiler(>=6)
+extension ThermalState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeThermalState: FfiConverterRustBuffer {
+    typealias SwiftType = ThermalState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ThermalState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .nominal
+        
+        case 2: return .fair
+        
+        case 3: return .serious
+        
+        case 4: return .critical
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ThermalState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .nominal:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .fair:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .serious:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .critical:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeThermalState_lift(_ buf: RustBuffer) throws -> ThermalState {
+    return try FfiConverterTypeThermalState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeThermalState_lower(_ value: ThermalState) -> RustBuffer {
+    return FfiConverterTypeThermalState.lower(value)
+}
+
+
+extension ThermalState: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum TimelineSeverity {
     
     case info
@@ -3349,6 +3763,30 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAdapterContextSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = AdapterContextSnapshot?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAdapterContextSnapshot.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAdapterContextSnapshot.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -3704,6 +4142,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_privileged_helper() != 57500) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_telemetry() != 34639) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_export_snapshot_json() != 44531) {
