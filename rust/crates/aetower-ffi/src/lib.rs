@@ -491,6 +491,18 @@ impl MonitorEngine {
             .configure_telemetry(endpoint, enabled, export_interval_secs);
     }
 
+    pub fn verify_telemetry_export(&self) -> String {
+        match self
+            .inner
+            .lock()
+            .expect("engine lock poisoned")
+            .verify_telemetry_export()
+        {
+            Ok(()) => String::new(),
+            Err(error) => error,
+        }
+    }
+
     pub fn stop_agent_session(&self, session_id: String, force: bool) -> String {
         match self
             .inner

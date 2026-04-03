@@ -569,6 +569,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func updateUiLagMetrics(metrics: UiLagMetrics) 
     
+    func verifyTelemetryExport()  -> String
+    
 }
 open class MonitorEngine: MonitorEngineProtocol, @unchecked Sendable {
     fileprivate let pointer: UnsafeMutableRawPointer!
@@ -771,6 +773,13 @@ open func updateUiLagMetrics(metrics: UiLagMetrics)  {try! rustCall() {
         FfiConverterTypeUiLagMetrics_lower(metrics),$0
     )
 }
+}
+    
+open func verifyTelemetryExport() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_verify_telemetry_export(self.uniffiClonePointer(),$0
+    )
+})
 }
     
 
@@ -5084,6 +5093,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_update_ui_lag_metrics() != 2474) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_verify_telemetry_export() != 6522) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_constructor_monitorengine_new() != 50482) {

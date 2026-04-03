@@ -102,17 +102,46 @@ impl TelemetryExporter {
         snapshot: &SystemSnapshot,
         lag_metrics: &RuntimeLagMetrics,
     ) -> Result<(), String> {
-        if !self.config.enabled {
+        self.export_with_mode(snapshot, lag_metrics, false)
+    }
+
+    pub fn verify_export(
+        &self,
+        snapshot: &SystemSnapshot,
+        lag_metrics: &RuntimeLagMetrics,
+    ) -> Result<(), String> {
+        self.export_with_mode(snapshot, lag_metrics, true)
+    }
+
+    fn export_with_mode(
+        &self,
+        snapshot: &SystemSnapshot,
+        lag_metrics: &RuntimeLagMetrics,
+        force: bool,
+    ) -> Result<(), String> {
+        if !force && !self.config.enabled {
             return Ok(());
         }
         let started_at = std::time::Instant::now();
         if let Some(diagnostics) = self.diagnostics.as_ref() {
             diagnostics.emit(
                 DiagnosticsEvent::builder(
-                    DiagnosticsLevel::Debug,
+                    if force {
+                        DiagnosticsLevel::Info
+                    } else {
+                        DiagnosticsLevel::Debug
+                    },
                     DiagnosticsSubsystem::Telemetry,
-                    "telemetry-export-started",
-                    "Starting OTLP telemetry export.",
+                    if force {
+                        "telemetry-verification-started"
+                    } else {
+                        "telemetry-export-started"
+                    },
+                    if force {
+                        "Starting one-shot OTLP telemetry verification."
+                    } else {
+                        "Starting OTLP telemetry export."
+                    },
                 )
                 .sequence(snapshot.sequence)
                 .field("endpoint", &self.config.endpoint)
@@ -132,8 +161,16 @@ impl TelemetryExporter {
                     DiagnosticsEvent::builder(
                         DiagnosticsLevel::Info,
                         DiagnosticsSubsystem::Telemetry,
-                        "telemetry-export-succeeded",
-                        "OTLP telemetry export succeeded.",
+                        if force {
+                            "telemetry-verification-succeeded"
+                        } else {
+                            "telemetry-export-succeeded"
+                        },
+                        if force {
+                            "One-shot OTLP telemetry verification succeeded."
+                        } else {
+                            "OTLP telemetry export succeeded."
+                        },
                     )
                     .sequence(snapshot.sequence)
                     .field("endpoint", &self.config.endpoint)
@@ -146,8 +183,16 @@ impl TelemetryExporter {
                     DiagnosticsEvent::builder(
                         DiagnosticsLevel::Error,
                         DiagnosticsSubsystem::Telemetry,
-                        "telemetry-export-failed",
-                        "OTLP telemetry export failed.",
+                        if force {
+                            "telemetry-verification-failed"
+                        } else {
+                            "telemetry-export-failed"
+                        },
+                        if force {
+                            "One-shot OTLP telemetry verification failed."
+                        } else {
+                            "OTLP telemetry export failed."
+                        },
                     )
                     .sequence(snapshot.sequence)
                     .field("endpoint", &self.config.endpoint)

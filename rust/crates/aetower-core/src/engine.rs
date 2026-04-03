@@ -561,6 +561,17 @@ impl Engine {
         );
     }
 
+    pub fn verify_telemetry_export(&self) -> Result<(), String> {
+        let (snapshot, lag_metrics) = {
+            let guard = self.state.lock();
+            (
+                guard.latest_snapshot.clone(),
+                guard.runtime_lag_metrics.clone(),
+            )
+        };
+        self.telemetry.lock().verify_export(&snapshot, &lag_metrics)
+    }
+
     pub fn load_history_range(&self, start_millis: u64, end_millis: u64) -> Vec<SystemSnapshot> {
         self.persistence
             .lock()

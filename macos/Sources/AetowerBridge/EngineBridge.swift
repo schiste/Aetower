@@ -68,6 +68,11 @@ public final class EngineBridge: @unchecked Sendable {
         )
     }
 
+    public func verifyTelemetryExport() -> String? {
+        let result = engine.verifyTelemetryExport()
+        return result.isEmpty ? nil : result
+    }
+
     public func stopAgentSession(sessionId: String, force: Bool) -> String? {
         let result = engine.stopAgentSession(sessionId: sessionId, force: force)
         return result.isEmpty ? nil : result

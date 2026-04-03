@@ -87,16 +87,20 @@ public struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         TextField("Chromium endpoint", text: $settings.chromiumEndpoint)
                             .textFieldStyle(.roundedBorder)
+                            .aetowerUtilityTextInput()
                         TextField("Docker socket path", text: $settings.dockerSocketPath)
                             .textFieldStyle(.roundedBorder)
+                            .aetowerUtilityTextInput()
                         Toggle("Enable privileged helper", isOn: $settings.privilegedHelperEnabled)
                         TextField("Privileged helper path", text: $settings.privilegedHelperPath)
                             .textFieldStyle(.roundedBorder)
+                            .aetowerUtilityTextInput()
                         Text("The privileged helper is optional. It is intended to run with elevated rights when you want deeper socket attribution.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         TextField("Chau7 socket path", text: $settings.chau7Endpoint, prompt: Text("~/.chau7/mcp.sock"))
                             .textFieldStyle(.roundedBorder)
+                            .aetowerUtilityTextInput()
                         Text("Optional. Auto-detected when Chau7 is running. Enriches terminal sessions with AI agent context.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -104,6 +108,7 @@ public struct SettingsView: View {
                         Toggle("Enable OTLP telemetry export", isOn: $settings.telemetryEnabled)
                         TextField("Telemetry endpoint", text: $settings.telemetryEndpoint)
                             .textFieldStyle(.roundedBorder)
+                            .aetowerUtilityTextInput()
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Telemetry export interval")
                                 .font(.headline)
@@ -121,6 +126,17 @@ public struct SettingsView: View {
                             state.applyIntegrationSettings(settings)
                         }
                         .buttonStyle(.borderedProminent)
+
+                        Button("Verify telemetry export") {
+                            state.verifyTelemetryExport(settings)
+                        }
+                        .buttonStyle(.bordered)
+
+                        if let telemetryVerificationStatus = state.telemetryVerificationStatus {
+                            Text(telemetryVerificationStatus)
+                                .font(.caption)
+                                .foregroundStyle(telemetryVerificationStatus.contains("failed") ? .orange : .secondary)
+                        }
                     }
                 }
 
