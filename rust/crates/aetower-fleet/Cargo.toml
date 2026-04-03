@@ -1,0 +1,9 @@
+[package]
+name = "aetower-fleet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aetower-model = { path = "../aetower-model" }
+serde_json.workspace = true
