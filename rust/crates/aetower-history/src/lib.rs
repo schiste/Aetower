@@ -7,6 +7,10 @@ use aetower_model::{
 pub struct History {
     previous_scores: BTreeMap<String, f32>,
     previous_anomaly: BTreeMap<String, bool>,
+    previous_thermal_state: String,
+    thermal_contributors: Vec<String>,
+    cooccurrence: BTreeMap<(String, String), u32>,
+    cooccurrence_tick: u32,
     metric_history: BTreeMap<String, MetricTrendState>,
     host_history: HostTrendState,
     timeline: VecDeque<TimelineEvent>,
@@ -39,10 +43,19 @@ impl History {
         Self {
             previous_scores: BTreeMap::new(),
             previous_anomaly: BTreeMap::new(),
+            previous_thermal_state: "nominal".to_owned(),
+            thermal_contributors: Vec::new(),
+            cooccurrence: BTreeMap::new(),
+            cooccurrence_tick: 0,
             metric_history: BTreeMap::new(),
             host_history: HostTrendState::default(),
             timeline: VecDeque::with_capacity(256),
         }
+    }
+
+    /// Entity IDs currently blamed for thermal throttling.
+    pub fn thermal_contributors(&self) -> &[String] {
+        &self.thermal_contributors
     }
 
     pub fn update(
@@ -95,6 +108,93 @@ impl History {
             }
             self.previous_anomaly
                 .insert(entity.entity_id.clone(), is_anomaly);
+        }
+
+        // Feature 5: Thermal contribution tracking.
+        // When thermal state degrades, snapshot top-3 CPU consumers.
+        let thermal_degraded = host.thermal_state != "nominal"
+            && (self.previous_thermal_state == "nominal"
+                || thermal_severity(&host.thermal_state)
+                    > thermal_severity(&self.previous_thermal_state));
+        if thermal_degraded {
+            self.thermal_contributors = entities
+                .iter()
+                .take(3)
+                .map(|e| e.entity_id.clone())
+                .collect();
+            self.push_event(
+                captured_at_millis,
+                TimelineSeverity::Warning,
+                None,
+                format!("Thermal state: {}", host.thermal_state),
+                format!(
+                    "Top contributors: {}",
+                    entities
+                        .iter()
+                        .take(3)
+                        .map(|e| e.display_name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+        }
+        if host.thermal_state == "nominal" {
+            self.thermal_contributors.clear();
+        }
+        self.previous_thermal_state = host.thermal_state.clone();
+
+        // Set thermal_contribution on blamed entities.
+        for entity in entities.iter_mut() {
+            if self.thermal_contributors.contains(&entity.entity_id)
+                && host.thermal_state != "nominal"
+            {
+                entity.thermal_contribution = Some(format!(
+                    "Likely contributing to {} thermal state",
+                    host.thermal_state
+                ));
+            }
+        }
+
+        // Feature 6: Co-occurrence tracking for grouping suggestions.
+        self.cooccurrence_tick += 1;
+        for (i, a) in active_entity_ids.iter().enumerate() {
+            for b in active_entity_ids.iter().skip(i + 1) {
+                let key = if a < b {
+                    (a.clone(), b.clone())
+                } else {
+                    (b.clone(), a.clone())
+                };
+                *self.cooccurrence.entry(key).or_insert(0) += 1;
+            }
+        }
+        // Generate grouping suggestions for pairs co-occurring >80% of ticks.
+        if self.cooccurrence_tick >= 15 {
+            let threshold = (self.cooccurrence_tick as f32 * 0.8) as u32;
+            let names: BTreeMap<String, String> = entities
+                .iter()
+                .map(|e| (e.entity_id.clone(), e.display_name.clone()))
+                .collect();
+            let mut suggestions: BTreeMap<String, String> = BTreeMap::new();
+            for ((a, b), count) in &self.cooccurrence {
+                if *count < threshold {
+                    continue;
+                }
+                if let Some(b_name) = names.get(b) {
+                    suggestions.entry(a.clone()).or_insert_with(|| {
+                        format!("Often runs alongside {b_name} — consider grouping")
+                    });
+                }
+                if let Some(a_name) = names.get(a) {
+                    suggestions.entry(b.clone()).or_insert_with(|| {
+                        format!("Often runs alongside {a_name} — consider grouping")
+                    });
+                }
+            }
+            for entity in entities.iter_mut() {
+                if entity.grouping_suggestion.is_none() {
+                    entity.grouping_suggestion = suggestions.remove(&entity.entity_id);
+                }
+            }
         }
 
         self.metric_history.retain(|entity_id, _| {
@@ -335,4 +435,13 @@ fn detect_anomaly(series: &VecDeque<f32>, current: f32) -> bool {
         return false; // not enough variance to be meaningful
     }
     (current - mean) / stddev > 2.0
+}
+
+fn thermal_severity(state: &str) -> u8 {
+    match state {
+        "critical" => 3,
+        "serious" => 2,
+        "fair" => 1,
+        _ => 0,
+    }
 }

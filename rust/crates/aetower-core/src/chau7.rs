@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
     time::Duration,
@@ -44,11 +45,41 @@ pub struct Chau7Session {
     pub last_active: String,
 }
 
+/// Per-repo cost stats from Chau7's `repo_get_metadata` tool.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Chau7RepoStats {
+    #[serde(default)]
+    pub total_runs: u32,
+    #[serde(default)]
+    pub total_tokens: u64,
+    #[serde(default)]
+    pub total_cost: f32,
+}
+
+/// A run from Chau7's `run_list` tool response.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct Chau7Run {
+    pub id: String,
+    #[serde(default, rename = "startedAt")]
+    pub started_at: String,
+    #[serde(default, rename = "endedAt")]
+    pub ended_at: Option<String>,
+    #[serde(default, rename = "sessionID")]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default, rename = "durationMs")]
+    pub duration_ms: Option<u64>,
+}
+
 /// Combined snapshot cached by the adapter on each refresh cycle.
 #[derive(Debug, Clone, Default)]
 pub struct Chau7Snapshot {
     pub tabs: Vec<Chau7Tab>,
     pub sessions: Vec<Chau7Session>,
+    pub repo_stats: BTreeMap<String, Chau7RepoStats>,
+    pub recent_runs: Vec<Chau7Run>,
 }
 
 impl Chau7Tab {
@@ -107,7 +138,50 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
     let sessions: Vec<Chau7Session> =
         serde_json::from_value(sessions_raw).map_err(|e| format!("parse sessions: {e}"))?;
 
-    Ok(Chau7Snapshot { tabs, sessions })
+    // Fetch repo stats for active repos (best-effort, limit 3 repos).
+    let mut repo_stats = BTreeMap::new();
+    let mut seen_repos = std::collections::BTreeSet::new();
+    let mut next_id: u64 = 4;
+    for tab in tabs.iter().filter(|t| t.is_ai_agent()) {
+        if let Some(repo) = tab.repo_root.as_deref() {
+            if !seen_repos.insert(repo.to_owned()) || seen_repos.len() > 3 {
+                continue;
+            }
+            if let Ok(raw) = rpc_tool_call(
+                &mut writer,
+                &mut reader,
+                next_id,
+                "repo_get_metadata",
+                json!({ "repo_path": repo }),
+            ) {
+                if let Some(stats) = raw.get("stats") {
+                    if let Ok(parsed) = serde_json::from_value::<Chau7RepoStats>(stats.clone()) {
+                        repo_stats.insert(repo.to_owned(), parsed);
+                    }
+                }
+            }
+            next_id += 1;
+        }
+    }
+
+    // Fetch recent runs for session markers (best-effort, limit 10).
+    let recent_runs = rpc_tool_call(
+        &mut writer,
+        &mut reader,
+        next_id,
+        "run_list",
+        json!({ "limit": 10 }),
+    )
+    .ok()
+    .and_then(|v| serde_json::from_value::<Vec<Chau7Run>>(v).ok())
+    .unwrap_or_default();
+
+    Ok(Chau7Snapshot {
+        tabs,
+        sessions,
+        repo_stats,
+        recent_runs,
+    })
 }
 
 /// Stop a Chau7 runtime session via the `runtime_session_stop` MCP tool.

@@ -540,13 +540,19 @@ public protocol MonitorEngineProtocol : AnyObject {
     
     func configurePrivilegedHelper(helperPath: String?, enabled: Bool) 
     
+    func exportSnapshotJson()  -> String
+    
     func latestSequence()  -> UInt64
     
     func latestSnapshot()  -> SystemSnapshot
     
     func latestSnapshotIfNewer(lastSequence: UInt64)  -> SystemSnapshot?
     
+    func loadHistoryRange(startMillis: UInt64, endMillis: UInt64)  -> [SystemSnapshot]
+    
     func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?) 
+    
+    func stopAgentSession(sessionId: String, force: Bool)  -> String
     
     func updateFrontmostAppState(state: FrontmostAppState) 
     
@@ -644,6 +650,13 @@ open func configurePrivilegedHelper(helperPath: String?, enabled: Bool) {try! ru
 }
 }
     
+open func exportSnapshotJson() -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_export_snapshot_json(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
 open func latestSequence() -> UInt64 {
     return try!  FfiConverterUInt64.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_sequence(self.uniffiClonePointer(),$0
@@ -666,6 +679,15 @@ open func latestSnapshotIfNewer(lastSequence: UInt64) -> SystemSnapshot? {
 })
 }
     
+open func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSnapshot] {
+    return try!  FfiConverterSequenceTypeSystemSnapshot.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_load_history_range(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(startMillis),
+        FfiConverterUInt64.lower(endMillis),$0
+    )
+})
+}
+    
 open func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?) {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_set_capability_state(self.uniffiClonePointer(),
         FfiConverterTypeCapabilityKind.lower(kind),
@@ -673,6 +695,15 @@ open func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detai
         FfiConverterOptionString.lower(detailOverride),$0
     )
 }
+}
+    
+open func stopAgentSession(sessionId: String, force: Bool) -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_stop_agent_session(self.uniffiClonePointer(),
+        FfiConverterString.lower(sessionId),
+        FfiConverterBool.lower(force),$0
+    )
+})
 }
     
 open func updateFrontmostAppState(state: FrontmostAppState) {try! rustCall() {
@@ -734,6 +765,88 @@ public func FfiConverterTypeMonitorEngine_lift(_ pointer: UnsafeMutableRawPointe
 #endif
 public func FfiConverterTypeMonitorEngine_lower(_ value: MonitorEngine) -> UnsafeMutableRawPointer {
     return FfiConverterTypeMonitorEngine.lower(value)
+}
+
+
+public struct AgentCostSummary {
+    public var totalInputTokens: UInt64
+    public var totalOutputTokens: UInt64
+    public var costUsd: Float
+    public var totalRuns: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(totalInputTokens: UInt64, totalOutputTokens: UInt64, costUsd: Float, totalRuns: UInt32) {
+        self.totalInputTokens = totalInputTokens
+        self.totalOutputTokens = totalOutputTokens
+        self.costUsd = costUsd
+        self.totalRuns = totalRuns
+    }
+}
+
+
+
+extension AgentCostSummary: Equatable, Hashable {
+    public static func ==(lhs: AgentCostSummary, rhs: AgentCostSummary) -> Bool {
+        if lhs.totalInputTokens != rhs.totalInputTokens {
+            return false
+        }
+        if lhs.totalOutputTokens != rhs.totalOutputTokens {
+            return false
+        }
+        if lhs.costUsd != rhs.costUsd {
+            return false
+        }
+        if lhs.totalRuns != rhs.totalRuns {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(totalInputTokens)
+        hasher.combine(totalOutputTokens)
+        hasher.combine(costUsd)
+        hasher.combine(totalRuns)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAgentCostSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AgentCostSummary {
+        return
+            try AgentCostSummary(
+                totalInputTokens: FfiConverterUInt64.read(from: &buf), 
+                totalOutputTokens: FfiConverterUInt64.read(from: &buf), 
+                costUsd: FfiConverterFloat.read(from: &buf), 
+                totalRuns: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AgentCostSummary, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.totalInputTokens, into: &buf)
+        FfiConverterUInt64.write(value.totalOutputTokens, into: &buf)
+        FfiConverterFloat.write(value.costUsd, into: &buf)
+        FfiConverterUInt32.write(value.totalRuns, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentCostSummary_lift(_ buf: RustBuffer) throws -> AgentCostSummary {
+    return try FfiConverterTypeAgentCostSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentCostSummary_lower(_ value: AgentCostSummary) -> RustBuffer {
+    return FfiConverterTypeAgentCostSummary.lower(value)
 }
 
 
@@ -969,10 +1082,11 @@ public struct ComponentSnapshot {
     public var launchedBy: String?
     public var cpuPercent: Float
     public var memoryBytes: UInt64
+    public var cwd: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: ComponentKind, title: String, detail: String, provenance: ProvenanceSnapshot?, processId: UInt32?, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64) {
+    public init(kind: ComponentKind, title: String, detail: String, provenance: ProvenanceSnapshot?, processId: UInt32?, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, cwd: String?) {
         self.kind = kind
         self.title = title
         self.detail = detail
@@ -984,6 +1098,7 @@ public struct ComponentSnapshot {
         self.launchedBy = launchedBy
         self.cpuPercent = cpuPercent
         self.memoryBytes = memoryBytes
+        self.cwd = cwd
     }
 }
 
@@ -1024,6 +1139,9 @@ extension ComponentSnapshot: Equatable, Hashable {
         if lhs.memoryBytes != rhs.memoryBytes {
             return false
         }
+        if lhs.cwd != rhs.cwd {
+            return false
+        }
         return true
     }
 
@@ -1039,6 +1157,7 @@ extension ComponentSnapshot: Equatable, Hashable {
         hasher.combine(launchedBy)
         hasher.combine(cpuPercent)
         hasher.combine(memoryBytes)
+        hasher.combine(cwd)
     }
 }
 
@@ -1060,7 +1179,8 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
                 parentSummary: FfiConverterOptionString.read(from: &buf), 
                 launchedBy: FfiConverterOptionString.read(from: &buf), 
                 cpuPercent: FfiConverterFloat.read(from: &buf), 
-                memoryBytes: FfiConverterUInt64.read(from: &buf)
+                memoryBytes: FfiConverterUInt64.read(from: &buf), 
+                cwd: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -1076,6 +1196,7 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.launchedBy, into: &buf)
         FfiConverterFloat.write(value.cpuPercent, into: &buf)
         FfiConverterUInt64.write(value.memoryBytes, into: &buf)
+        FfiConverterOptionString.write(value.cwd, into: &buf)
     }
 }
 
@@ -1110,11 +1231,16 @@ public struct EntitySnapshot {
     public var trend: MetricTrend
     public var badges: [String]
     public var activeWindowTitle: String?
+    public var anomalyDetected: Bool
+    public var thermalContribution: String?
+    public var groupingSuggestion: String?
+    public var agentCost: AgentCostSummary?
+    public var sessionMarkers: [SessionMarker]
     public var recommendations: [Recommendation]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recommendations: [Recommendation]) {
+    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation]) {
         self.entityId = entityId
         self.displayName = displayName
         self.primaryProvenance = primaryProvenance
@@ -1129,6 +1255,11 @@ public struct EntitySnapshot {
         self.trend = trend
         self.badges = badges
         self.activeWindowTitle = activeWindowTitle
+        self.anomalyDetected = anomalyDetected
+        self.thermalContribution = thermalContribution
+        self.groupingSuggestion = groupingSuggestion
+        self.agentCost = agentCost
+        self.sessionMarkers = sessionMarkers
         self.recommendations = recommendations
     }
 }
@@ -1179,6 +1310,21 @@ extension EntitySnapshot: Equatable, Hashable {
         if lhs.activeWindowTitle != rhs.activeWindowTitle {
             return false
         }
+        if lhs.anomalyDetected != rhs.anomalyDetected {
+            return false
+        }
+        if lhs.thermalContribution != rhs.thermalContribution {
+            return false
+        }
+        if lhs.groupingSuggestion != rhs.groupingSuggestion {
+            return false
+        }
+        if lhs.agentCost != rhs.agentCost {
+            return false
+        }
+        if lhs.sessionMarkers != rhs.sessionMarkers {
+            return false
+        }
         if lhs.recommendations != rhs.recommendations {
             return false
         }
@@ -1200,6 +1346,11 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(trend)
         hasher.combine(badges)
         hasher.combine(activeWindowTitle)
+        hasher.combine(anomalyDetected)
+        hasher.combine(thermalContribution)
+        hasher.combine(groupingSuggestion)
+        hasher.combine(agentCost)
+        hasher.combine(sessionMarkers)
         hasher.combine(recommendations)
     }
 }
@@ -1226,6 +1377,11 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
                 trend: FfiConverterTypeMetricTrend.read(from: &buf), 
                 badges: FfiConverterSequenceString.read(from: &buf), 
                 activeWindowTitle: FfiConverterOptionString.read(from: &buf), 
+                anomalyDetected: FfiConverterBool.read(from: &buf), 
+                thermalContribution: FfiConverterOptionString.read(from: &buf), 
+                groupingSuggestion: FfiConverterOptionString.read(from: &buf), 
+                agentCost: FfiConverterOptionTypeAgentCostSummary.read(from: &buf), 
+                sessionMarkers: FfiConverterSequenceTypeSessionMarker.read(from: &buf), 
                 recommendations: FfiConverterSequenceTypeRecommendation.read(from: &buf)
         )
     }
@@ -1245,6 +1401,11 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
         FfiConverterTypeMetricTrend.write(value.trend, into: &buf)
         FfiConverterSequenceString.write(value.badges, into: &buf)
         FfiConverterOptionString.write(value.activeWindowTitle, into: &buf)
+        FfiConverterBool.write(value.anomalyDetected, into: &buf)
+        FfiConverterOptionString.write(value.thermalContribution, into: &buf)
+        FfiConverterOptionString.write(value.groupingSuggestion, into: &buf)
+        FfiConverterOptionTypeAgentCostSummary.write(value.agentCost, into: &buf)
+        FfiConverterSequenceTypeSessionMarker.write(value.sessionMarkers, into: &buf)
         FfiConverterSequenceTypeRecommendation.write(value.recommendations, into: &buf)
     }
 }
@@ -1274,11 +1435,12 @@ public struct FrictionBreakdown {
     public var wakeupsScore: Float
     public var pressureScore: Float
     public var foregroundBonus: Float
+    public var energyImpactScore: Float
     public var reasons: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(totalScore: Float, cpuScore: Float, memoryScore: Float, diskScore: Float, networkScore: Float, wakeupsScore: Float, pressureScore: Float, foregroundBonus: Float, reasons: [String]) {
+    public init(totalScore: Float, cpuScore: Float, memoryScore: Float, diskScore: Float, networkScore: Float, wakeupsScore: Float, pressureScore: Float, foregroundBonus: Float, energyImpactScore: Float, reasons: [String]) {
         self.totalScore = totalScore
         self.cpuScore = cpuScore
         self.memoryScore = memoryScore
@@ -1287,6 +1449,7 @@ public struct FrictionBreakdown {
         self.wakeupsScore = wakeupsScore
         self.pressureScore = pressureScore
         self.foregroundBonus = foregroundBonus
+        self.energyImpactScore = energyImpactScore
         self.reasons = reasons
     }
 }
@@ -1319,6 +1482,9 @@ extension FrictionBreakdown: Equatable, Hashable {
         if lhs.foregroundBonus != rhs.foregroundBonus {
             return false
         }
+        if lhs.energyImpactScore != rhs.energyImpactScore {
+            return false
+        }
         if lhs.reasons != rhs.reasons {
             return false
         }
@@ -1334,6 +1500,7 @@ extension FrictionBreakdown: Equatable, Hashable {
         hasher.combine(wakeupsScore)
         hasher.combine(pressureScore)
         hasher.combine(foregroundBonus)
+        hasher.combine(energyImpactScore)
         hasher.combine(reasons)
     }
 }
@@ -1354,6 +1521,7 @@ public struct FfiConverterTypeFrictionBreakdown: FfiConverterRustBuffer {
                 wakeupsScore: FfiConverterFloat.read(from: &buf), 
                 pressureScore: FfiConverterFloat.read(from: &buf), 
                 foregroundBonus: FfiConverterFloat.read(from: &buf), 
+                energyImpactScore: FfiConverterFloat.read(from: &buf), 
                 reasons: FfiConverterSequenceString.read(from: &buf)
         )
     }
@@ -1367,6 +1535,7 @@ public struct FfiConverterTypeFrictionBreakdown: FfiConverterRustBuffer {
         FfiConverterFloat.write(value.wakeupsScore, into: &buf)
         FfiConverterFloat.write(value.pressureScore, into: &buf)
         FfiConverterFloat.write(value.foregroundBonus, into: &buf)
+        FfiConverterFloat.write(value.energyImpactScore, into: &buf)
         FfiConverterSequenceString.write(value.reasons, into: &buf)
     }
 }
@@ -1494,10 +1663,15 @@ public struct HostSnapshot {
     public var lowPowerMode: Bool
     public var frontmostAppName: String?
     public var frontmostWindowTitle: String?
+    public var aiAgentFriction: Float
+    public var aiAgentCount: UInt32
+    public var gpuPercent: Float
+    public var anePercent: Float
+    public var gpuMemoryBytes: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: String, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: String, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
@@ -1514,6 +1688,11 @@ public struct HostSnapshot {
         self.lowPowerMode = lowPowerMode
         self.frontmostAppName = frontmostAppName
         self.frontmostWindowTitle = frontmostWindowTitle
+        self.aiAgentFriction = aiAgentFriction
+        self.aiAgentCount = aiAgentCount
+        self.gpuPercent = gpuPercent
+        self.anePercent = anePercent
+        self.gpuMemoryBytes = gpuMemoryBytes
     }
 }
 
@@ -1569,6 +1748,21 @@ extension HostSnapshot: Equatable, Hashable {
         if lhs.frontmostWindowTitle != rhs.frontmostWindowTitle {
             return false
         }
+        if lhs.aiAgentFriction != rhs.aiAgentFriction {
+            return false
+        }
+        if lhs.aiAgentCount != rhs.aiAgentCount {
+            return false
+        }
+        if lhs.gpuPercent != rhs.gpuPercent {
+            return false
+        }
+        if lhs.anePercent != rhs.anePercent {
+            return false
+        }
+        if lhs.gpuMemoryBytes != rhs.gpuMemoryBytes {
+            return false
+        }
         return true
     }
 
@@ -1589,6 +1783,11 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(lowPowerMode)
         hasher.combine(frontmostAppName)
         hasher.combine(frontmostWindowTitle)
+        hasher.combine(aiAgentFriction)
+        hasher.combine(aiAgentCount)
+        hasher.combine(gpuPercent)
+        hasher.combine(anePercent)
+        hasher.combine(gpuMemoryBytes)
     }
 }
 
@@ -1615,7 +1814,12 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 batteryChargePercent: FfiConverterOptionUInt8.read(from: &buf), 
                 lowPowerMode: FfiConverterBool.read(from: &buf), 
                 frontmostAppName: FfiConverterOptionString.read(from: &buf), 
-                frontmostWindowTitle: FfiConverterOptionString.read(from: &buf)
+                frontmostWindowTitle: FfiConverterOptionString.read(from: &buf), 
+                aiAgentFriction: FfiConverterFloat.read(from: &buf), 
+                aiAgentCount: FfiConverterUInt32.read(from: &buf), 
+                gpuPercent: FfiConverterFloat.read(from: &buf), 
+                anePercent: FfiConverterFloat.read(from: &buf), 
+                gpuMemoryBytes: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -1636,6 +1840,11 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterBool.write(value.lowPowerMode, into: &buf)
         FfiConverterOptionString.write(value.frontmostAppName, into: &buf)
         FfiConverterOptionString.write(value.frontmostWindowTitle, into: &buf)
+        FfiConverterFloat.write(value.aiAgentFriction, into: &buf)
+        FfiConverterUInt32.write(value.aiAgentCount, into: &buf)
+        FfiConverterFloat.write(value.gpuPercent, into: &buf)
+        FfiConverterFloat.write(value.anePercent, into: &buf)
+        FfiConverterUInt64.write(value.gpuMemoryBytes, into: &buf)
     }
 }
 
@@ -1663,10 +1872,11 @@ public struct HostTrend {
     public var networkActivityBps: [UInt64]
     public var wakeupsPerSecond: [Float]
     public var compressedMemoryBytes: [UInt64]
+    public var aiAgentFriction: [Float]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(machineFriction: [Float], cpuPercent: [Float], memoryUsedBytes: [UInt64], diskActivityBps: [UInt64], networkActivityBps: [UInt64], wakeupsPerSecond: [Float], compressedMemoryBytes: [UInt64]) {
+    public init(machineFriction: [Float], cpuPercent: [Float], memoryUsedBytes: [UInt64], diskActivityBps: [UInt64], networkActivityBps: [UInt64], wakeupsPerSecond: [Float], compressedMemoryBytes: [UInt64], aiAgentFriction: [Float]) {
         self.machineFriction = machineFriction
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
@@ -1674,6 +1884,7 @@ public struct HostTrend {
         self.networkActivityBps = networkActivityBps
         self.wakeupsPerSecond = wakeupsPerSecond
         self.compressedMemoryBytes = compressedMemoryBytes
+        self.aiAgentFriction = aiAgentFriction
     }
 }
 
@@ -1702,6 +1913,9 @@ extension HostTrend: Equatable, Hashable {
         if lhs.compressedMemoryBytes != rhs.compressedMemoryBytes {
             return false
         }
+        if lhs.aiAgentFriction != rhs.aiAgentFriction {
+            return false
+        }
         return true
     }
 
@@ -1713,6 +1927,7 @@ extension HostTrend: Equatable, Hashable {
         hasher.combine(networkActivityBps)
         hasher.combine(wakeupsPerSecond)
         hasher.combine(compressedMemoryBytes)
+        hasher.combine(aiAgentFriction)
     }
 }
 
@@ -1730,7 +1945,8 @@ public struct FfiConverterTypeHostTrend: FfiConverterRustBuffer {
                 diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
                 networkActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
                 wakeupsPerSecond: FfiConverterSequenceFloat.read(from: &buf), 
-                compressedMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf)
+                compressedMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf), 
+                aiAgentFriction: FfiConverterSequenceFloat.read(from: &buf)
         )
     }
 
@@ -1742,6 +1958,7 @@ public struct FfiConverterTypeHostTrend: FfiConverterRustBuffer {
         FfiConverterSequenceUInt64.write(value.networkActivityBps, into: &buf)
         FfiConverterSequenceFloat.write(value.wakeupsPerSecond, into: &buf)
         FfiConverterSequenceUInt64.write(value.compressedMemoryBytes, into: &buf)
+        FfiConverterSequenceFloat.write(value.aiAgentFriction, into: &buf)
     }
 }
 
@@ -1988,6 +2205,80 @@ public func FfiConverterTypeRecommendation_lift(_ buf: RustBuffer) throws -> Rec
 #endif
 public func FfiConverterTypeRecommendation_lower(_ value: Recommendation) -> RustBuffer {
     return FfiConverterTypeRecommendation.lower(value)
+}
+
+
+public struct SessionMarker {
+    public var timestampMillis: UInt64
+    public var kind: SessionMarkerKind
+    public var label: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(timestampMillis: UInt64, kind: SessionMarkerKind, label: String) {
+        self.timestampMillis = timestampMillis
+        self.kind = kind
+        self.label = label
+    }
+}
+
+
+
+extension SessionMarker: Equatable, Hashable {
+    public static func ==(lhs: SessionMarker, rhs: SessionMarker) -> Bool {
+        if lhs.timestampMillis != rhs.timestampMillis {
+            return false
+        }
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(timestampMillis)
+        hasher.combine(kind)
+        hasher.combine(label)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSessionMarker: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SessionMarker {
+        return
+            try SessionMarker(
+                timestampMillis: FfiConverterUInt64.read(from: &buf), 
+                kind: FfiConverterTypeSessionMarkerKind.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SessionMarker, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.timestampMillis, into: &buf)
+        FfiConverterTypeSessionMarkerKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSessionMarker_lift(_ buf: RustBuffer) throws -> SessionMarker {
+    return try FfiConverterTypeSessionMarker.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSessionMarker_lower(_ value: SessionMarker) -> RustBuffer {
+    return FfiConverterTypeSessionMarker.lower(value)
 }
 
 
@@ -2756,6 +3047,70 @@ extension ProvenanceKind: Equatable, Hashable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum SessionMarkerKind {
+    
+    case runStart
+    case runEnd
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSessionMarkerKind: FfiConverterRustBuffer {
+    typealias SwiftType = SessionMarkerKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SessionMarkerKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .runStart
+        
+        case 2: return .runEnd
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SessionMarkerKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .runStart:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .runEnd:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSessionMarkerKind_lift(_ buf: RustBuffer) throws -> SessionMarkerKind {
+    return try FfiConverterTypeSessionMarkerKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSessionMarkerKind_lower(_ value: SessionMarkerKind) -> RustBuffer {
+    return FfiConverterTypeSessionMarkerKind.lower(value)
+}
+
+
+
+extension SessionMarkerKind: Equatable, Hashable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum TimelineSeverity {
     
     case info
@@ -2891,6 +3246,30 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAgentCostSummary: FfiConverterRustBuffer {
+    typealias SwiftType = AgentCostSummary?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAgentCostSummary.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAgentCostSummary.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -3122,6 +3501,56 @@ fileprivate struct FfiConverterSequenceTypeRecommendation: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeSessionMarker: FfiConverterRustBuffer {
+    typealias SwiftType = [SessionMarker]
+
+    public static func write(_ value: [SessionMarker], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSessionMarker.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SessionMarker] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SessionMarker]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSessionMarker.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSystemSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = [SystemSnapshot]
+
+    public static func write(_ value: [SystemSnapshot], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSystemSnapshot.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SystemSnapshot] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SystemSnapshot]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSystemSnapshot.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeTimelineEvent: FfiConverterRustBuffer {
     typealias SwiftType = [TimelineEvent]
 
@@ -3174,6 +3603,9 @@ private var initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_privileged_helper() != 57500) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_export_snapshot_json() != 44531) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_sequence() != 61139) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3183,7 +3615,13 @@ private var initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_snapshot_if_newer() != 34622) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_load_history_range() != 25480) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_set_capability_state() != 11556) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_stop_agent_session() != 46014) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_update_frontmost_app_state() != 57149) {

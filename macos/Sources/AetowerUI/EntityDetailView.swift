@@ -175,7 +175,37 @@ public struct EntityDetailView: View {
                     .padding(12)
                     .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
                 }
+                if let thermal = entity.thermalContribution {
+                    HStack(spacing: 8) {
+                        Image(systemName: "flame.fill")
+                            .foregroundStyle(.red)
+                        Text(thermal)
+                            .font(.callout)
+                    }
+                    .padding(12)
+                    .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                }
+                if let grouping = entity.groupingSuggestion {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.triangle.merge")
+                            .foregroundStyle(.blue)
+                        Text(grouping)
+                            .font(.callout)
+                    }
+                    .padding(12)
+                    .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                }
                 hero
+                if let cost = entity.agentCost {
+                    GroupBox("AI Agent Cost") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            LabeledContent("Total tokens", value: "\(cost.totalInputTokens + cost.totalOutputTokens)")
+                            LabeledContent("Estimated cost", value: String(format: "$%.2f", cost.costUsd))
+                            LabeledContent("Total runs", value: "\(cost.totalRuns)")
+                        }
+                        .padding(.top, 4)
+                    }
+                }
                 if entity.entityKind == .aiAgent { aiAgentSession }
                 whyItMatters
                 recommendedNextActions

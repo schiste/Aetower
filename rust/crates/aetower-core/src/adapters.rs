@@ -757,11 +757,80 @@ impl AdapterManager {
                         entity.badges.push("chau7-live".to_owned());
                     }
 
+                    // Feature 9: Populate agent cost from repo stats.
+                    if let Some(repo) = tab.repo_root.as_deref() {
+                        if let Some(stats) = snapshot.repo_stats.get(repo) {
+                            entity.agent_cost = Some(aetower_model::AgentCostSummary {
+                                total_input_tokens: stats.total_tokens,
+                                total_output_tokens: 0,
+                                cost_usd: stats.total_cost,
+                                total_runs: stats.total_runs,
+                            });
+                        }
+                    }
+
+                    // Feature 12: Populate session markers from recent runs.
+                    if let Some(sid) = tab.ai_session_id.as_deref() {
+                        for run in &snapshot.recent_runs {
+                            if run.session_id.as_deref() != Some(sid) {
+                                continue;
+                            }
+                            if let Ok(ts) = parse_iso_millis(&run.started_at) {
+                                entity.session_markers.push(aetower_model::SessionMarker {
+                                    timestamp_millis: ts,
+                                    kind: aetower_model::SessionMarkerKind::RunStart,
+                                    label: format!("{} run", run.provider),
+                                });
+                            }
+                            if let Some(ended) = run.ended_at.as_deref() {
+                                if let Ok(ts) = parse_iso_millis(ended) {
+                                    entity.session_markers.push(aetower_model::SessionMarker {
+                                        timestamp_millis: ts,
+                                        kind: aetower_model::SessionMarkerKind::RunEnd,
+                                        label: format!("{} done", run.provider),
+                                    });
+                                }
+                            }
+                        }
+                    }
+
                     break; // one tab match per entity
                 }
             }
         }
     }
+}
+
+fn parse_iso_millis(iso: &str) -> Result<u64, String> {
+    // Parse "2026-04-02T15:59:57.303Z" → millis since epoch.
+    // Minimal parser: split on 'T', parse date+time.
+    let iso = iso.trim_end_matches('Z');
+    let (date_part, time_part) = iso.split_once('T').ok_or("no T separator")?;
+    let date_segs: Vec<&str> = date_part.split('-').collect();
+    let time_segs: Vec<&str> = time_part.split(':').collect();
+    if date_segs.len() != 3 || time_segs.len() != 3 {
+        return Err("bad format".to_owned());
+    }
+    let year: i64 = date_segs[0].parse().map_err(|_| "year")?;
+    let month: i64 = date_segs[1].parse().map_err(|_| "month")?;
+    let day: i64 = date_segs[2].parse().map_err(|_| "day")?;
+    let hour: i64 = time_segs[0].parse().map_err(|_| "hour")?;
+    let min: i64 = time_segs[1].parse().map_err(|_| "min")?;
+    let sec_frac: f64 = time_segs[2].parse().map_err(|_| "sec")?;
+
+    // Days from epoch (simplified, no leap second handling).
+    let days = (year - 1970) * 365 + (year - 1969) / 4 - (year - 1901) / 100
+        + (year - 1601) / 400
+        + [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334][(month - 1) as usize]
+        + day
+        - 1
+        + if month > 2 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) {
+            1
+        } else {
+            0
+        };
+    let secs = days * 86400 + hour * 3600 + min * 60 + sec_frac as i64;
+    Ok((secs as f64 * 1000.0 + (sec_frac.fract() * 1000.0)) as u64)
 }
 
 #[derive(Debug, Clone)]
