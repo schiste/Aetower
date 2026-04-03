@@ -9,6 +9,7 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 aetower-core = { path = "../aetower-core" }
+aetower-diagnostics = { path = "../aetower-diagnostics" }
 aetower-model = { path = "../aetower-model" }
 serde_json.workspace = true
 uniffi.workspace = true

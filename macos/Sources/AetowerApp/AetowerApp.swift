@@ -22,6 +22,14 @@ struct AetowerApp: App {
     @StateObject private var settings = SettingsStore()
     @State private var menuBarExtraInserted = false
 
+    private var resolvedColorScheme: ColorScheme? {
+        switch settings.appearanceMode {
+        case "light": return .light
+        case "dark": return .dark
+        default: return nil
+        }
+    }
+
     private var menuBarTitle: String {
         let entities = state.snapshot.entities
         if entities.isEmpty { return "Aetower" }
@@ -53,12 +61,18 @@ struct AetowerApp: App {
                         Label("Timeline", systemImage: "timeline.selection")
                     }
 
+                DiagnosticsView(state: state)
+                    .tabItem {
+                        Label("Diagnostics", systemImage: "waveform.path.ecg.rectangle")
+                    }
+
                 SettingsView(state: state, settings: settings)
                     .tabItem {
                         Label("Settings", systemImage: "slider.horizontal.3")
                     }
             }
             .frame(minWidth: 1180, minHeight: 760)
+            .preferredColorScheme(resolvedColorScheme)
             .task {
                 menuBarExtraInserted = settings.showMenuBarExtra
                 state.requestNotificationPermission()

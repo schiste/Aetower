@@ -15,6 +15,17 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 GroupBox("Behavior") {
                     VStack(alignment: .leading, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Appearance")
+                                .font(.headline)
+                            Picker("Appearance", selection: $settings.appearanceMode) {
+                                Text("System").tag("system")
+                                Text("Light").tag("light")
+                                Text("Dark").tag("dark")
+                            }
+                            .pickerStyle(.segmented)
+                        }
+
                         Toggle("Show menu bar extra", isOn: $settings.showMenuBarExtra)
 
                         VStack(alignment: .leading, spacing: 8) {

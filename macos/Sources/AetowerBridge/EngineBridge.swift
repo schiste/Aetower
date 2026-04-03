@@ -1,7 +1,7 @@
 @_exported import AetowerBindings
 import Foundation
 
-public final class EngineBridge {
+public final class EngineBridge: @unchecked Sendable {
     private let engine: MonitorEngine
 
     public init() {
@@ -79,5 +79,17 @@ public final class EngineBridge {
 
     public func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSnapshot] {
         engine.loadHistoryRange(startMillis: startMillis, endMillis: endMillis)
+    }
+
+    public func latestDiagnostics(limit: UInt32 = 500) -> [DiagnosticsEvent] {
+        engine.latestDiagnostics(limit: limit)
+    }
+
+    public func diagnosticsOverview() -> DiagnosticsOverview {
+        engine.diagnosticsOverview()
+    }
+
+    public func exportDiagnosticsJSON(limit: UInt32 = 1000) -> String {
+        engine.exportDiagnosticsJson(limit: limit)
     }
 }

@@ -10,6 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use aetower_diagnostics::{
+    DiagnosticsEvent, DiagnosticsLevel, DiagnosticsStore, DiagnosticsSubsystem,
+};
 use aetower_model::{
     AdapterContextKind, AdapterContextSnapshot, CapabilityHealth, CapabilityKind,
     CapabilitySnapshot, CapabilityState, ComponentKind, ComponentSnapshot, EntitySnapshot,
@@ -41,6 +44,7 @@ pub struct AdapterManager {
 
 #[derive(Debug, Default)]
 struct AdapterState {
+    diagnostics: Option<DiagnosticsStore>,
     chromium_endpoint: Option<String>,
     docker_socket_path: String,
     privileged_helper_path: Option<String>,
@@ -200,6 +204,7 @@ impl Default for AdapterManager {
     fn default() -> Self {
         Self {
             state: Arc::new(Mutex::new(AdapterState {
+                diagnostics: None,
                 chromium_endpoint: env::var("AETOWER_CHROMIUM_ENDPOINT").ok(),
                 docker_socket_path: docker_socket_path(),
                 privileged_helper_path: env::var("AETOWER_PRIVILEGED_HELPER").ok(),
@@ -231,6 +236,10 @@ impl Default for AdapterManager {
 }
 
 impl AdapterManager {
+    pub fn set_diagnostics(&self, diagnostics: DiagnosticsStore) {
+        self.state.lock().diagnostics = Some(diagnostics);
+    }
+
     pub fn initial_capabilities(&self) -> BTreeMap<CapabilityKind, CapabilitySnapshot> {
         let now = time::now_millis();
         BTreeMap::from([
@@ -448,6 +457,15 @@ impl AdapterManager {
                 chau7_fetch_path.map(|path| s.spawn(move || crate::chau7::fetch_snapshot(&path)));
 
             if let Some(handle) = chromium_handle {
+                emit_adapter_refresh_event(
+                    &self.state,
+                    DiagnosticsLevel::Debug,
+                    DiagnosticsSubsystem::AdapterChromium,
+                    "adapter-refresh-started",
+                    "Starting Chromium adapter refresh.",
+                    now,
+                    |builder| builder.adapter("chromium"),
+                );
                 match handle.join().expect("chromium thread panicked") {
                     Ok((fetched, samples)) => {
                         let mut guard = self.state.lock();
@@ -456,15 +474,46 @@ impl AdapterManager {
                         guard.last_chromium_fetch_millis = now;
                         guard.last_chromium_success_millis = now;
                         guard.chromium_last_error = None;
+                        let item_count = guard.cached_chromium_targets.len();
+                        drop(guard);
+                        emit_adapter_refresh_event(
+                            &self.state,
+                            DiagnosticsLevel::Info,
+                            DiagnosticsSubsystem::AdapterChromium,
+                            "adapter-refresh-succeeded",
+                            "Chromium adapter refresh succeeded.",
+                            now,
+                            |builder| builder.adapter("chromium").field("item_count", item_count),
+                        );
                     }
                     Err(error) => {
                         let mut guard = self.state.lock();
                         guard.last_chromium_fetch_millis = now;
                         guard.chromium_last_error = Some(error);
+                        let error = guard.chromium_last_error.clone().unwrap_or_default();
+                        drop(guard);
+                        emit_adapter_refresh_event(
+                            &self.state,
+                            DiagnosticsLevel::Error,
+                            DiagnosticsSubsystem::AdapterChromium,
+                            "adapter-refresh-failed",
+                            "Chromium adapter refresh failed.",
+                            now,
+                            |builder| builder.adapter("chromium").field("error", error),
+                        );
                     }
                 }
             }
             if let Some(handle) = docker_handle {
+                emit_adapter_refresh_event(
+                    &self.state,
+                    DiagnosticsLevel::Debug,
+                    DiagnosticsSubsystem::AdapterDocker,
+                    "adapter-refresh-started",
+                    "Starting Docker adapter refresh.",
+                    now,
+                    |builder| builder.adapter("docker"),
+                );
                 match handle.join().expect("docker thread panicked") {
                     Ok(fetched) => {
                         let mut guard = self.state.lock();
@@ -472,15 +521,46 @@ impl AdapterManager {
                         guard.last_docker_fetch_millis = now;
                         guard.last_docker_success_millis = now;
                         guard.docker_last_error = None;
+                        let item_count = guard.cached_docker_containers.len();
+                        drop(guard);
+                        emit_adapter_refresh_event(
+                            &self.state,
+                            DiagnosticsLevel::Info,
+                            DiagnosticsSubsystem::AdapterDocker,
+                            "adapter-refresh-succeeded",
+                            "Docker adapter refresh succeeded.",
+                            now,
+                            |builder| builder.adapter("docker").field("item_count", item_count),
+                        );
                     }
                     Err(error) => {
                         let mut guard = self.state.lock();
                         guard.last_docker_fetch_millis = now;
                         guard.docker_last_error = Some(error);
+                        let error = guard.docker_last_error.clone().unwrap_or_default();
+                        drop(guard);
+                        emit_adapter_refresh_event(
+                            &self.state,
+                            DiagnosticsLevel::Error,
+                            DiagnosticsSubsystem::AdapterDocker,
+                            "adapter-refresh-failed",
+                            "Docker adapter refresh failed.",
+                            now,
+                            |builder| builder.adapter("docker").field("error", error),
+                        );
                     }
                 }
             }
             if let Some(handle) = helper_handle {
+                emit_adapter_refresh_event(
+                    &self.state,
+                    DiagnosticsLevel::Debug,
+                    DiagnosticsSubsystem::AdapterHelper,
+                    "adapter-refresh-started",
+                    "Starting privileged helper refresh.",
+                    now,
+                    |builder| builder.adapter("helper"),
+                );
                 match handle.join().expect("helper thread panicked") {
                     Ok(fetched) => {
                         let mut guard = self.state.lock();
@@ -488,15 +568,53 @@ impl AdapterManager {
                         guard.last_privileged_helper_fetch_millis = now;
                         guard.last_privileged_helper_success_millis = now;
                         guard.privileged_helper_last_error = None;
+                        let item_count = guard
+                            .cached_privileged_helper_sample
+                            .as_ref()
+                            .map(|sample| sample.processes.len())
+                            .unwrap_or(0);
+                        drop(guard);
+                        emit_adapter_refresh_event(
+                            &self.state,
+                            DiagnosticsLevel::Info,
+                            DiagnosticsSubsystem::AdapterHelper,
+                            "adapter-refresh-succeeded",
+                            "Privileged helper refresh succeeded.",
+                            now,
+                            |builder| builder.adapter("helper").field("item_count", item_count),
+                        );
                     }
                     Err(error) => {
                         let mut guard = self.state.lock();
                         guard.last_privileged_helper_fetch_millis = now;
                         guard.privileged_helper_last_error = Some(error);
+                        let error = guard
+                            .privileged_helper_last_error
+                            .clone()
+                            .unwrap_or_default();
+                        drop(guard);
+                        emit_adapter_refresh_event(
+                            &self.state,
+                            DiagnosticsLevel::Error,
+                            DiagnosticsSubsystem::AdapterHelper,
+                            "adapter-refresh-failed",
+                            "Privileged helper refresh failed.",
+                            now,
+                            |builder| builder.adapter("helper").field("error", error),
+                        );
                     }
                 }
             }
             if let Some(handle) = chau7_handle {
+                emit_adapter_refresh_event(
+                    &self.state,
+                    DiagnosticsLevel::Debug,
+                    DiagnosticsSubsystem::AdapterChau7,
+                    "adapter-refresh-started",
+                    "Starting Chau7 adapter refresh.",
+                    now,
+                    |builder| builder.adapter("chau7"),
+                );
                 match handle.join().expect("chau7 thread panicked") {
                     Ok(fetched) => {
                         let mut guard = self.state.lock();
@@ -504,11 +622,37 @@ impl AdapterManager {
                         guard.last_chau7_fetch_millis = now;
                         guard.last_chau7_success_millis = now;
                         guard.chau7_last_error = None;
+                        let item_count = guard
+                            .cached_chau7_snapshot
+                            .as_ref()
+                            .map(|snapshot| snapshot.tabs.len())
+                            .unwrap_or(0);
+                        drop(guard);
+                        emit_adapter_refresh_event(
+                            &self.state,
+                            DiagnosticsLevel::Info,
+                            DiagnosticsSubsystem::AdapterChau7,
+                            "adapter-refresh-succeeded",
+                            "Chau7 adapter refresh succeeded.",
+                            now,
+                            |builder| builder.adapter("chau7").field("item_count", item_count),
+                        );
                     }
                     Err(error) => {
                         let mut guard = self.state.lock();
                         guard.last_chau7_fetch_millis = now;
                         guard.chau7_last_error = Some(error);
+                        let error = guard.chau7_last_error.clone().unwrap_or_default();
+                        drop(guard);
+                        emit_adapter_refresh_event(
+                            &self.state,
+                            DiagnosticsLevel::Error,
+                            DiagnosticsSubsystem::AdapterChau7,
+                            "adapter-refresh-failed",
+                            "Chau7 adapter refresh failed.",
+                            now,
+                            |builder| builder.adapter("chau7").field("error", error),
+                        );
                     }
                 }
             }
@@ -998,6 +1142,28 @@ impl AdapterState {
             None
         }
     }
+}
+
+fn emit_adapter_refresh_event<F>(
+    state: &Arc<Mutex<AdapterState>>,
+    level: DiagnosticsLevel,
+    subsystem: DiagnosticsSubsystem,
+    event_type: &str,
+    message: &str,
+    timestamp_millis: u64,
+    decorate: F,
+) where
+    F: FnOnce(
+        aetower_diagnostics::DiagnosticsEventBuilder,
+    ) -> aetower_diagnostics::DiagnosticsEventBuilder,
+{
+    let diagnostics = state.lock().diagnostics.clone();
+    let Some(diagnostics) = diagnostics else {
+        return;
+    };
+    let builder = DiagnosticsEvent::builder(level, subsystem, event_type, message)
+        .timestamp_millis(timestamp_millis);
+    diagnostics.emit(decorate(builder).build());
 }
 
 fn capability_status(state: &AdapterState, kind: &CapabilityKind) -> (CapabilityState, String) {

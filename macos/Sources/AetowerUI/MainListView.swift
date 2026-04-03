@@ -261,87 +261,79 @@ private struct EntityRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Left friction accent bar
-            RoundedRectangle(cornerRadius: 2)
-                .fill(AetowerDesign.frictionColor(entity.friction.totalScore))
-                .frame(width: 4)
-                .padding(.vertical, 4)
+        HStack(spacing: 6) {
+            // Entity type icon
+            Image(systemName: entityIcon)
+                .font(.system(size: 11))
+                .foregroundStyle(AetowerDesign.frictionColor(entity.friction.totalScore).opacity(0.8))
+                .frame(width: 16)
 
-            VStack(alignment: .leading, spacing: 3) {
-                // Top line: name + badges + friction
-                HStack(spacing: 8) {
-                    if entity.entityKind == .aiAgent {
-                        HStack(spacing: 3) {
-                            Circle()
-                                .fill(aiAgentDotColor)
-                                .frame(width: 7, height: 7)
-                            Text(aiAgentProviderLabel)
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(aiAgentDotColor)
-                        }
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(aiAgentDotColor.opacity(0.15), in: Capsule())
-                    }
+            // Entity name (compact)
+            Text(entity.displayName)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text(entity.displayName)
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(1)
-
-                    if entity.anomalyDetected {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                            .symbolEffect(.pulse.wholeSymbol, isActive: true)
-                    }
-
-                    Spacer()
-
-                    // Friction score with trend arrow
-                    HStack(spacing: 3) {
-                        let trend = AetowerDesign.trendArrow(entity.trend.friction)
-                        Image(systemName: trend.symbol)
-                            .font(.caption2)
-                            .foregroundStyle(trend.color)
-                        Text(String(format: "%.1f", entity.friction.totalScore))
-                            .font(.system(.subheadline, design: .rounded, weight: .bold))
-                            .foregroundStyle(AetowerDesign.frictionColor(entity.friction.totalScore))
-                            .contentTransition(.numericText())
-                    }
-                }
-
-                // Bottom line: key metrics
-                HStack(spacing: 12) {
-                    metricPill("CPU", String(format: "%.1f%%", entity.metrics.cpuPercent))
-                    metricPill("MEM", formatBytes(entity.metrics.memoryResidentBytes))
-                    if entity.metrics.diskReadBps + entity.metrics.diskWriteBps > 0 {
-                        metricPill("DISK", formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))
-                    }
-                    if entity.metrics.isForeground {
-                        Text("FRONT")
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(.blue.opacity(0.7), in: Capsule())
-                    }
-                }
+            // Badges
+            if entity.entityKind == .aiAgent {
+                Text(aiAgentProviderLabel)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(aiAgentDotColor)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(aiAgentDotColor.opacity(0.15), in: Capsule())
             }
-            .padding(.leading, 10)
-            .padding(.vertical, 8)
-            .padding(.trailing, 12)
+
+            if entity.metrics.isForeground {
+                Circle().fill(.blue).frame(width: 5, height: 5)
+            }
+
+            if entity.anomalyDetected {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.orange)
+                    .symbolEffect(.pulse.wholeSymbol, isActive: true)
+            }
+
+            // Metrics — right aligned, fixed width columns
+            Text(String(format: "%.1f%%", entity.metrics.cpuPercent))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 48, alignment: .trailing)
+
+            Text(formatBytes(entity.metrics.memoryResidentBytes))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 52, alignment: .trailing)
+
+            // Friction score — bold, colored
+            HStack(spacing: 2) {
+                let trend = AetowerDesign.trendArrow(entity.trend.friction)
+                Image(systemName: trend.symbol)
+                    .font(.system(size: 8))
+                    .foregroundStyle(trend.color)
+                Text(String(format: "%.1f", entity.friction.totalScore))
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(AetowerDesign.frictionColor(entity.friction.totalScore))
+                    .contentTransition(.numericText())
+            }
+            .frame(width: 50, alignment: .trailing)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity)
         .background(
-            AetowerDesign.frictionColor(entity.friction.totalScore).opacity(isSelected ? 0.08 : (isHovered ? 0.04 : 0.02)),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            AetowerDesign.frictionColor(entity.friction.totalScore)
+                .opacity(frictionBackgroundOpacity),
+            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(isSelected ? Color.accentColor.opacity(0.4) : AetowerDesign.frictionColor(entity.friction.totalScore).opacity(0.1), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(
+                    isSelected ? Color.accentColor.opacity(0.5) : .clear,
+                    lineWidth: 1
+                )
         )
-        .scaleEffect(isHovered ? 1.005 : 1.0)
         .onHover { isHovered = $0 }
         .animation(AetowerDesign.Motion.quick, value: isHovered)
         .contextMenu {
@@ -395,6 +387,25 @@ private struct EntityRow: View {
         if entity.badges.contains("codex") { return "Codex" }
         if entity.badges.contains("chatgpt") { return "ChatGPT" }
         return "AI"
+    }
+
+    private var entityIcon: String {
+        switch entity.entityKind {
+        case .app: return "app.fill"
+        case .browser: return "globe"
+        case .daemon: return "gearshape.2.fill"
+        case .terminalSession: return "terminal.fill"
+        case .aiAgent: return "cpu.fill"
+        case .service: return "server.rack"
+        case .unknown: return "questionmark.circle"
+        }
+    }
+
+    private var frictionBackgroundOpacity: Double {
+        let base = min(Double(entity.friction.totalScore) / 100.0, 1.0)
+        if isSelected { return base * 0.12 + 0.04 }
+        if isHovered { return base * 0.08 + 0.02 }
+        return base * 0.05
     }
 }
 
@@ -584,11 +595,9 @@ public struct MainListView: View {
     }
 
     private var rankedEntitiesSection: some View {
-            VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 8) {
-                Text("Apps sorted by")
-                    .font(.headline)
-
+        VStack(alignment: .leading, spacing: 4) {
+            // Compact sort + search on one line
+            HStack(spacing: 6) {
                 Menu {
                     ForEach(SortKey.allCases) { key in
                         Button {
@@ -604,12 +613,28 @@ public struct MainListView: View {
                         }
                     }
                 } label: {
-                    SortChip(title: sortKey.title, tone: sortKey.tone)
+                    HStack(spacing: 4) {
+                        Text(sortKey.title)
+                            .font(.caption.weight(.medium))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.08), in: Capsule())
                 }
-            }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
 
-            TextField("Search apps, reasons, or badges", text: $searchText)
-                .textFieldStyle(.roundedBorder)
+                TextField("Search...", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+            }
+            .padding(.horizontal, 8)
 
             if filteredEntities.isEmpty {
                 ContentUnavailableView(
@@ -618,7 +643,7 @@ public struct MainListView: View {
                     description: Text("Try a broader query.")
                 )
             } else {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 2) {
                     ForEach(filteredEntities, id: \.entityId) { entity in
                         Button {
                             withAnimation(AetowerDesign.Motion.standard) {

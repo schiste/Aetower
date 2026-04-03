@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 aetower-attribution = { path = "../aetower-attribution" }
 aetower-collector = { path = "../aetower-collector" }
+aetower-diagnostics = { path = "../aetower-diagnostics" }
 aetower-friction = { path = "../aetower-friction" }
 aetower-gpu = { path = "../aetower-gpu" }
 aetower-history = { path = "../aetower-history" }

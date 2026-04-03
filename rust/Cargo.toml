@@ -9,6 +9,7 @@ members = [
   "crates/aetower-history",
   "crates/aetower-gpu",
   "crates/aetower-persistence",
+  "crates/aetower-diagnostics",
   "crates/aetower-fleet",
   "crates/aetower-telemetry",
   "crates/aetower-core",

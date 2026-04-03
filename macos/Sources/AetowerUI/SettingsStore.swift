@@ -40,6 +40,9 @@ public final class SettingsStore: ObservableObject {
     @Published public var frictionNotificationThreshold: Double {
         didSet { persist() }
     }
+    @Published public var appearanceMode: String {
+        didSet { persist() }
+    }
     @Published public private(set) var launchAtLoginEnabled: Bool
     @Published public private(set) var launchAtLoginError: String?
 
@@ -60,6 +63,7 @@ public final class SettingsStore: ObservableObject {
         self.telemetryExportIntervalSeconds = defaults.object(forKey: Self.telemetryExportIntervalKey) as? Double ?? 30.0
         self.notificationsEnabled = defaults.object(forKey: Self.notificationsEnabledKey) as? Bool ?? false
         self.frictionNotificationThreshold = defaults.object(forKey: Self.frictionNotificationThresholdKey) as? Double ?? 60.0
+        self.appearanceMode = defaults.string(forKey: Self.appearanceModeKey) ?? "system"
         self.launchAtLoginEnabled = false
         self.launchAtLoginError = nil
         syncLaunchAtLoginState()
@@ -101,6 +105,7 @@ public final class SettingsStore: ObservableObject {
     private static let telemetryExportIntervalKey = "settings.telemetryExportIntervalSeconds"
     private static let notificationsEnabledKey = "settings.notificationsEnabled"
     private static let frictionNotificationThresholdKey = "settings.frictionNotificationThreshold"
+    private static let appearanceModeKey = "settings.appearanceMode"
 }
 
 extension SettingsStore {
@@ -117,5 +122,6 @@ extension SettingsStore {
         defaults.set(telemetryExportIntervalSeconds, forKey: Self.telemetryExportIntervalKey)
         defaults.set(notificationsEnabled, forKey: Self.notificationsEnabledKey)
         defaults.set(frictionNotificationThreshold, forKey: Self.frictionNotificationThresholdKey)
+        defaults.set(appearanceMode, forKey: Self.appearanceModeKey)
     }
 }

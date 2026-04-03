@@ -543,7 +543,13 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func configureTelemetry(endpoint: String?, enabled: Bool, exportIntervalSecs: UInt32) 
     
+    func diagnosticsOverview()  -> DiagnosticsOverview
+    
+    func exportDiagnosticsJson(limit: UInt32)  -> String
+    
     func exportSnapshotJson()  -> String
+    
+    func latestDiagnostics(limit: UInt32)  -> [DiagnosticsEvent]
     
     func latestSequence()  -> UInt64
     
@@ -663,9 +669,32 @@ open func configureTelemetry(endpoint: String?, enabled: Bool, exportIntervalSec
 }
 }
     
+open func diagnosticsOverview() -> DiagnosticsOverview  {
+    return try!  FfiConverterTypeDiagnosticsOverview_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_diagnostics_overview(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func exportDiagnosticsJson(limit: UInt32) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_export_diagnostics_json(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+    
 open func exportSnapshotJson() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_export_snapshot_json(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func latestDiagnostics(limit: UInt32) -> [DiagnosticsEvent]  {
+    return try!  FfiConverterSequenceTypeDiagnosticsEvent.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_latest_diagnostics(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(limit),$0
     )
 })
 }
@@ -1449,6 +1478,336 @@ public func FfiConverterTypeComponentSnapshot_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeComponentSnapshot_lower(_ value: ComponentSnapshot) -> RustBuffer {
     return FfiConverterTypeComponentSnapshot.lower(value)
+}
+
+
+public struct DiagnosticsEvent {
+    public var id: String
+    public var timestampMillis: UInt64
+    public var level: DiagnosticsLevel
+    public var subsystem: DiagnosticsSubsystem
+    public var eventType: String
+    public var sequence: UInt64?
+    public var entityId: String?
+    public var adapter: String?
+    public var capability: String?
+    public var message: String
+    public var fields: [DiagnosticsField]
+    public var sensitive: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, timestampMillis: UInt64, level: DiagnosticsLevel, subsystem: DiagnosticsSubsystem, eventType: String, sequence: UInt64?, entityId: String?, adapter: String?, capability: String?, message: String, fields: [DiagnosticsField], sensitive: Bool) {
+        self.id = id
+        self.timestampMillis = timestampMillis
+        self.level = level
+        self.subsystem = subsystem
+        self.eventType = eventType
+        self.sequence = sequence
+        self.entityId = entityId
+        self.adapter = adapter
+        self.capability = capability
+        self.message = message
+        self.fields = fields
+        self.sensitive = sensitive
+    }
+}
+
+#if compiler(>=6)
+extension DiagnosticsEvent: Sendable {}
+#endif
+
+
+extension DiagnosticsEvent: Equatable, Hashable {
+    public static func ==(lhs: DiagnosticsEvent, rhs: DiagnosticsEvent) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.timestampMillis != rhs.timestampMillis {
+            return false
+        }
+        if lhs.level != rhs.level {
+            return false
+        }
+        if lhs.subsystem != rhs.subsystem {
+            return false
+        }
+        if lhs.eventType != rhs.eventType {
+            return false
+        }
+        if lhs.sequence != rhs.sequence {
+            return false
+        }
+        if lhs.entityId != rhs.entityId {
+            return false
+        }
+        if lhs.adapter != rhs.adapter {
+            return false
+        }
+        if lhs.capability != rhs.capability {
+            return false
+        }
+        if lhs.message != rhs.message {
+            return false
+        }
+        if lhs.fields != rhs.fields {
+            return false
+        }
+        if lhs.sensitive != rhs.sensitive {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(timestampMillis)
+        hasher.combine(level)
+        hasher.combine(subsystem)
+        hasher.combine(eventType)
+        hasher.combine(sequence)
+        hasher.combine(entityId)
+        hasher.combine(adapter)
+        hasher.combine(capability)
+        hasher.combine(message)
+        hasher.combine(fields)
+        hasher.combine(sensitive)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiagnosticsEvent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsEvent {
+        return
+            try DiagnosticsEvent(
+                id: FfiConverterString.read(from: &buf), 
+                timestampMillis: FfiConverterUInt64.read(from: &buf), 
+                level: FfiConverterTypeDiagnosticsLevel.read(from: &buf), 
+                subsystem: FfiConverterTypeDiagnosticsSubsystem.read(from: &buf), 
+                eventType: FfiConverterString.read(from: &buf), 
+                sequence: FfiConverterOptionUInt64.read(from: &buf), 
+                entityId: FfiConverterOptionString.read(from: &buf), 
+                adapter: FfiConverterOptionString.read(from: &buf), 
+                capability: FfiConverterOptionString.read(from: &buf), 
+                message: FfiConverterString.read(from: &buf), 
+                fields: FfiConverterSequenceTypeDiagnosticsField.read(from: &buf), 
+                sensitive: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DiagnosticsEvent, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterUInt64.write(value.timestampMillis, into: &buf)
+        FfiConverterTypeDiagnosticsLevel.write(value.level, into: &buf)
+        FfiConverterTypeDiagnosticsSubsystem.write(value.subsystem, into: &buf)
+        FfiConverterString.write(value.eventType, into: &buf)
+        FfiConverterOptionUInt64.write(value.sequence, into: &buf)
+        FfiConverterOptionString.write(value.entityId, into: &buf)
+        FfiConverterOptionString.write(value.adapter, into: &buf)
+        FfiConverterOptionString.write(value.capability, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+        FfiConverterSequenceTypeDiagnosticsField.write(value.fields, into: &buf)
+        FfiConverterBool.write(value.sensitive, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsEvent_lift(_ buf: RustBuffer) throws -> DiagnosticsEvent {
+    return try FfiConverterTypeDiagnosticsEvent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsEvent_lower(_ value: DiagnosticsEvent) -> RustBuffer {
+    return FfiConverterTypeDiagnosticsEvent.lower(value)
+}
+
+
+public struct DiagnosticsField {
+    public var key: String
+    public var value: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(key: String, value: String) {
+        self.key = key
+        self.value = value
+    }
+}
+
+#if compiler(>=6)
+extension DiagnosticsField: Sendable {}
+#endif
+
+
+extension DiagnosticsField: Equatable, Hashable {
+    public static func ==(lhs: DiagnosticsField, rhs: DiagnosticsField) -> Bool {
+        if lhs.key != rhs.key {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(key)
+        hasher.combine(value)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiagnosticsField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsField {
+        return
+            try DiagnosticsField(
+                key: FfiConverterString.read(from: &buf), 
+                value: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DiagnosticsField, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsField_lift(_ buf: RustBuffer) throws -> DiagnosticsField {
+    return try FfiConverterTypeDiagnosticsField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsField_lower(_ value: DiagnosticsField) -> RustBuffer {
+    return FfiConverterTypeDiagnosticsField.lower(value)
+}
+
+
+public struct DiagnosticsOverview {
+    public var ringCapacity: UInt32
+    public var currentSize: UInt32
+    public var droppedEvents: UInt64
+    public var errorCount: UInt32
+    public var warnCount: UInt32
+    public var lastEventMillis: UInt64?
+    public var lastErrorMessage: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(ringCapacity: UInt32, currentSize: UInt32, droppedEvents: UInt64, errorCount: UInt32, warnCount: UInt32, lastEventMillis: UInt64?, lastErrorMessage: String?) {
+        self.ringCapacity = ringCapacity
+        self.currentSize = currentSize
+        self.droppedEvents = droppedEvents
+        self.errorCount = errorCount
+        self.warnCount = warnCount
+        self.lastEventMillis = lastEventMillis
+        self.lastErrorMessage = lastErrorMessage
+    }
+}
+
+#if compiler(>=6)
+extension DiagnosticsOverview: Sendable {}
+#endif
+
+
+extension DiagnosticsOverview: Equatable, Hashable {
+    public static func ==(lhs: DiagnosticsOverview, rhs: DiagnosticsOverview) -> Bool {
+        if lhs.ringCapacity != rhs.ringCapacity {
+            return false
+        }
+        if lhs.currentSize != rhs.currentSize {
+            return false
+        }
+        if lhs.droppedEvents != rhs.droppedEvents {
+            return false
+        }
+        if lhs.errorCount != rhs.errorCount {
+            return false
+        }
+        if lhs.warnCount != rhs.warnCount {
+            return false
+        }
+        if lhs.lastEventMillis != rhs.lastEventMillis {
+            return false
+        }
+        if lhs.lastErrorMessage != rhs.lastErrorMessage {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(ringCapacity)
+        hasher.combine(currentSize)
+        hasher.combine(droppedEvents)
+        hasher.combine(errorCount)
+        hasher.combine(warnCount)
+        hasher.combine(lastEventMillis)
+        hasher.combine(lastErrorMessage)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiagnosticsOverview: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsOverview {
+        return
+            try DiagnosticsOverview(
+                ringCapacity: FfiConverterUInt32.read(from: &buf), 
+                currentSize: FfiConverterUInt32.read(from: &buf), 
+                droppedEvents: FfiConverterUInt64.read(from: &buf), 
+                errorCount: FfiConverterUInt32.read(from: &buf), 
+                warnCount: FfiConverterUInt32.read(from: &buf), 
+                lastEventMillis: FfiConverterOptionUInt64.read(from: &buf), 
+                lastErrorMessage: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DiagnosticsOverview, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.ringCapacity, into: &buf)
+        FfiConverterUInt32.write(value.currentSize, into: &buf)
+        FfiConverterUInt64.write(value.droppedEvents, into: &buf)
+        FfiConverterUInt32.write(value.errorCount, into: &buf)
+        FfiConverterUInt32.write(value.warnCount, into: &buf)
+        FfiConverterOptionUInt64.write(value.lastEventMillis, into: &buf)
+        FfiConverterOptionString.write(value.lastErrorMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsOverview_lift(_ buf: RustBuffer) throws -> DiagnosticsOverview {
+    return try FfiConverterTypeDiagnosticsOverview.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsOverview_lower(_ value: DiagnosticsOverview) -> RustBuffer {
+    return FfiConverterTypeDiagnosticsOverview.lower(value)
 }
 
 
@@ -3230,6 +3589,265 @@ extension ComponentKind: Equatable, Hashable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum DiagnosticsLevel {
+    
+    case trace
+    case debug
+    case info
+    case warn
+    case error
+}
+
+
+#if compiler(>=6)
+extension DiagnosticsLevel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiagnosticsLevel: FfiConverterRustBuffer {
+    typealias SwiftType = DiagnosticsLevel
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsLevel {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .trace
+        
+        case 2: return .debug
+        
+        case 3: return .info
+        
+        case 4: return .warn
+        
+        case 5: return .error
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DiagnosticsLevel, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .trace:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .debug:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .info:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .warn:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .error:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsLevel_lift(_ buf: RustBuffer) throws -> DiagnosticsLevel {
+    return try FfiConverterTypeDiagnosticsLevel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsLevel_lower(_ value: DiagnosticsLevel) -> RustBuffer {
+    return FfiConverterTypeDiagnosticsLevel.lower(value)
+}
+
+
+extension DiagnosticsLevel: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum DiagnosticsSubsystem {
+    
+    case engine
+    case collector
+    case identity
+    case attribution
+    case friction
+    case history
+    case persistence
+    case telemetry
+    case gpu
+    case ffi
+    case ui
+    case adapterChromium
+    case adapterDocker
+    case adapterHelper
+    case adapterChau7
+    case adapterVsCode
+}
+
+
+#if compiler(>=6)
+extension DiagnosticsSubsystem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiagnosticsSubsystem: FfiConverterRustBuffer {
+    typealias SwiftType = DiagnosticsSubsystem
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsSubsystem {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .engine
+        
+        case 2: return .collector
+        
+        case 3: return .identity
+        
+        case 4: return .attribution
+        
+        case 5: return .friction
+        
+        case 6: return .history
+        
+        case 7: return .persistence
+        
+        case 8: return .telemetry
+        
+        case 9: return .gpu
+        
+        case 10: return .ffi
+        
+        case 11: return .ui
+        
+        case 12: return .adapterChromium
+        
+        case 13: return .adapterDocker
+        
+        case 14: return .adapterHelper
+        
+        case 15: return .adapterChau7
+        
+        case 16: return .adapterVsCode
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DiagnosticsSubsystem, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .engine:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .collector:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .identity:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .attribution:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .friction:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .history:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .persistence:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .telemetry:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .gpu:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .ffi:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .ui:
+            writeInt(&buf, Int32(11))
+        
+        
+        case .adapterChromium:
+            writeInt(&buf, Int32(12))
+        
+        
+        case .adapterDocker:
+            writeInt(&buf, Int32(13))
+        
+        
+        case .adapterHelper:
+            writeInt(&buf, Int32(14))
+        
+        
+        case .adapterChau7:
+            writeInt(&buf, Int32(15))
+        
+        
+        case .adapterVsCode:
+            writeInt(&buf, Int32(16))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsSubsystem_lift(_ buf: RustBuffer) throws -> DiagnosticsSubsystem {
+    return try FfiConverterTypeDiagnosticsSubsystem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsSubsystem_lower(_ value: DiagnosticsSubsystem) -> RustBuffer {
+    return FfiConverterTypeDiagnosticsSubsystem.lower(value)
+}
+
+
+extension DiagnosticsSubsystem: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum EntityKind {
     
     case app
@@ -3747,6 +4365,30 @@ fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
+    typealias SwiftType = UInt64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     typealias SwiftType = String?
 
@@ -3992,6 +4634,56 @@ fileprivate struct FfiConverterSequenceTypeComponentSnapshot: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeDiagnosticsEvent: FfiConverterRustBuffer {
+    typealias SwiftType = [DiagnosticsEvent]
+
+    public static func write(_ value: [DiagnosticsEvent], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDiagnosticsEvent.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DiagnosticsEvent] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DiagnosticsEvent]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDiagnosticsEvent.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDiagnosticsField: FfiConverterRustBuffer {
+    typealias SwiftType = [DiagnosticsField]
+
+    public static func write(_ value: [DiagnosticsField], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDiagnosticsField.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DiagnosticsField] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DiagnosticsField]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDiagnosticsField.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeEntitySnapshot: FfiConverterRustBuffer {
     typealias SwiftType = [EntitySnapshot]
 
@@ -4147,7 +4839,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_telemetry() != 34639) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_diagnostics_overview() != 6234) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_export_diagnostics_json() != 20988) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_export_snapshot_json() != 44531) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_diagnostics() != 5182) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_sequence() != 61139) {

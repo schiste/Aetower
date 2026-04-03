@@ -4,6 +4,9 @@ use std::{
     time::Duration,
 };
 
+use aetower_diagnostics::{
+    DiagnosticsEvent, DiagnosticsLevel, DiagnosticsStore, DiagnosticsSubsystem,
+};
 use aetower_model::{EntitySnapshot, SystemSnapshot, ThermalState};
 use serde::Serialize;
 use url::Url;
@@ -45,11 +48,15 @@ pub mod metric_names {
 
 pub struct TelemetryExporter {
     config: OtlpConfig,
+    diagnostics: Option<DiagnosticsStore>,
 }
 
 impl TelemetryExporter {
     pub fn new(config: OtlpConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            diagnostics: None,
+        }
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -64,9 +71,28 @@ impl TelemetryExporter {
         self.config = config;
     }
 
+    pub fn set_diagnostics(&mut self, diagnostics: DiagnosticsStore) {
+        self.diagnostics = Some(diagnostics);
+    }
+
     pub fn export(&self, snapshot: &SystemSnapshot) -> Result<(), String> {
         if !self.config.enabled {
             return Ok(());
+        }
+        let started_at = std::time::Instant::now();
+        if let Some(diagnostics) = self.diagnostics.as_ref() {
+            diagnostics.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Debug,
+                    DiagnosticsSubsystem::Telemetry,
+                    "telemetry-export-started",
+                    "Starting OTLP telemetry export.",
+                )
+                .sequence(snapshot.sequence)
+                .field("endpoint", &self.config.endpoint)
+                .field("entity_count", snapshot.entities.len())
+                .build(),
+            );
         }
 
         let endpoint = Url::parse(&self.config.endpoint)
@@ -78,7 +104,42 @@ impl TelemetryExporter {
         let payload = build_resource_metrics(snapshot);
         let body =
             serde_json::to_vec(&payload).map_err(|error| format!("telemetry encode: {error}"))?;
-        post_json(&endpoint, &body)
+        let result = post_json(&endpoint, &body);
+        if let Some(diagnostics) = self.diagnostics.as_ref() {
+            let latency_millis = started_at.elapsed().as_millis();
+            match &result {
+                Ok(()) => diagnostics.emit(
+                    DiagnosticsEvent::builder(
+                        DiagnosticsLevel::Info,
+                        DiagnosticsSubsystem::Telemetry,
+                        "telemetry-export-succeeded",
+                        "OTLP telemetry export succeeded.",
+                    )
+                    .sequence(snapshot.sequence)
+                    .field("endpoint", &self.config.endpoint)
+                    .field("payload_bytes", body.len())
+                    .field("metric_count", count_metrics(snapshot))
+                    .field("latency_millis", latency_millis)
+                    .build(),
+                ),
+                Err(error) => diagnostics.emit(
+                    DiagnosticsEvent::builder(
+                        DiagnosticsLevel::Error,
+                        DiagnosticsSubsystem::Telemetry,
+                        "telemetry-export-failed",
+                        "OTLP telemetry export failed.",
+                    )
+                    .sequence(snapshot.sequence)
+                    .field("endpoint", &self.config.endpoint)
+                    .field("payload_bytes", body.len())
+                    .field("metric_count", count_metrics(snapshot))
+                    .field("latency_millis", latency_millis)
+                    .field("error", error)
+                    .build(),
+                ),
+            }
+        }
+        result
     }
 }
 
@@ -296,6 +357,10 @@ fn entity_metrics(entity: &EntitySnapshot, timestamp: &str) -> Vec<Metric> {
             &attributes,
         ),
     ]
+}
+
+fn count_metrics(snapshot: &SystemSnapshot) -> usize {
+    7 + snapshot.entities.len() * 6
 }
 
 fn host_double_metric(

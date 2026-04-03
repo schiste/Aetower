@@ -10,6 +10,17 @@ public final class AppState: ObservableObject {
     @Published public private(set) var snapshot: SystemSnapshot
     @Published public private(set) var historySnapshots: [SystemSnapshot] = []
     @Published public private(set) var historyLoadError: String?
+    @Published public private(set) var diagnosticsEvents: [DiagnosticsEvent] = []
+    @Published public private(set) var diagnosticsOverview = DiagnosticsOverview(
+        ringCapacity: 0,
+        currentSize: 0,
+        droppedEvents: 0,
+        errorCount: 0,
+        warnCount: 0,
+        lastEventMillis: nil,
+        lastErrorMessage: nil
+    )
+    @Published public private(set) var diagnosticsLoadError: String?
     @Published public var lastError: String?
 
     private let bridge: EngineBridge
@@ -26,10 +37,12 @@ public final class AppState: ObservableObject {
     private var previousAnomalyStates: [String: Bool] = [:]
     private var historyWindowSeconds: TimeInterval = 3600
     private var lastHistoryLoadDate = Date.distantPast
+    private var lastDiagnosticsLoadDate = Date.distantPast
 
     private let frontmostProbeInterval: TimeInterval = 1.0
     private let windowTitleProbeInterval: TimeInterval = 5.0
     private let historyReloadInterval: TimeInterval = 20.0
+    private let diagnosticsReloadInterval: TimeInterval = 2.0
 
     public init(
         bridge: EngineBridge = EngineBridge(),
@@ -129,7 +142,18 @@ public final class AppState: ObservableObject {
         }
     }
 
+    public func exportDiagnostics(limit: UInt32 = 1000) {
+        let json = bridge.exportDiagnosticsJSON(limit: limit)
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "aetower-diagnostics.json"
+        if panel.runModal() == .OK, let url = panel.url {
+            try? json.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
     public func requestNotificationPermission() {
+        guard Bundle.main.bundleIdentifier != nil else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
@@ -209,6 +233,25 @@ public final class AppState: ObservableObject {
                 guard let self else { return }
                 self.historySnapshots = snapshots
                 self.historyLoadError = snapshots.isEmpty ? "No persisted history in the selected range yet." : nil
+            }
+        }
+    }
+
+    public func loadDiagnostics(force: Bool = false, limit: UInt32 = 500) {
+        let now = Date()
+        if !force && now.timeIntervalSince(lastDiagnosticsLoadDate) < diagnosticsReloadInterval {
+            return
+        }
+        lastDiagnosticsLoadDate = now
+        let bridge = self.bridge
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let events = bridge.latestDiagnostics(limit: limit)
+            let overview = bridge.diagnosticsOverview()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.diagnosticsEvents = events
+                self.diagnosticsOverview = overview
+                self.diagnosticsLoadError = nil
             }
         }
     }
@@ -301,6 +344,7 @@ public final class AppState: ObservableObject {
     }
 
     private func fireAnomalyNotification(for entity: EntitySnapshot) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = "Anomaly Detected"
         content.body = "\(entity.displayName) friction is unusually high (\(String(format: "%.1f", entity.friction.totalScore)))."

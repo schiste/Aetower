@@ -35,6 +35,7 @@ version = "0.1.0"
 dependencies = [
  "aetower-attribution",
  "aetower-collector",
+ "aetower-diagnostics",
  "aetower-friction",
  "aetower-gpu",
  "aetower-history",
@@ -54,10 +55,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "aetower-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aetower-ffi"
 version = "0.1.0"
 dependencies = [
  "aetower-core",
+ "aetower-diagnostics",
  "aetower-model",
  "serde_json",
  "uniffi",
@@ -122,6 +133,7 @@ dependencies = [
 name = "aetower-persistence"
 version = "0.1.0"
 dependencies = [
+ "aetower-diagnostics",
  "aetower-model",
  "bincode",
  "rusqlite",
@@ -132,6 +144,7 @@ dependencies = [
 name = "aetower-telemetry"
 version = "0.1.0"
 dependencies = [
+ "aetower-diagnostics",
  "aetower-model",
  "serde",
  "serde_json",

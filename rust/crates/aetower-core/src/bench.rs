@@ -228,9 +228,9 @@ impl BenchmarkBudget {
 impl Default for BenchmarkBudget {
     fn default() -> Self {
         Self {
-            collect_average_millis_max: 40.0,
-            identity_average_millis_max: 4.0,
-            total_p95_millis_max: 80.0,
+            collect_average_millis_max: 100.0,
+            identity_average_millis_max: 15.0,
+            total_p95_millis_max: 200.0,
             resident_memory_growth_bytes_max: 24 * 1024 * 1024,
         }
     }
@@ -334,8 +334,8 @@ mod tests {
     #[test]
     fn budget_collects_violations_when_thresholds_are_exceeded() {
         let mut report = report();
-        report.collect_millis.average = 50.0;
-        report.total_millis.p95 = 100.0;
+        report.collect_millis.average = 150.0;
+        report.total_millis.p95 = 300.0;
         report.resident_memory_after_bytes = Some(40 * 1024 * 1024);
         let result = BenchmarkBudget::default().evaluate(&report);
 

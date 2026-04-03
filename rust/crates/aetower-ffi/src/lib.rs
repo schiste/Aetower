@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use aetower_core::Engine;
+use aetower_diagnostics as diagnostics;
 use aetower_model as model;
 
 uniffi::setup_scaffolding!();
@@ -49,6 +50,35 @@ pub enum CapabilityHealth {
     Live,
     Cached,
     Degraded,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum DiagnosticsLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum DiagnosticsSubsystem {
+    Engine,
+    Collector,
+    Identity,
+    Attribution,
+    Friction,
+    History,
+    Persistence,
+    Telemetry,
+    Gpu,
+    Ffi,
+    Ui,
+    AdapterChromium,
+    AdapterDocker,
+    AdapterHelper,
+    AdapterChau7,
+    AdapterVsCode,
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -302,6 +332,39 @@ pub struct FrontmostAppState {
     pub captured_at_millis: u64,
 }
 
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct DiagnosticsField {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct DiagnosticsEvent {
+    pub id: String,
+    pub timestamp_millis: u64,
+    pub level: DiagnosticsLevel,
+    pub subsystem: DiagnosticsSubsystem,
+    pub event_type: String,
+    pub sequence: Option<u64>,
+    pub entity_id: Option<String>,
+    pub adapter: Option<String>,
+    pub capability: Option<String>,
+    pub message: String,
+    pub fields: Vec<DiagnosticsField>,
+    pub sensitive: bool,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct DiagnosticsOverview {
+    pub ring_capacity: u32,
+    pub current_size: u32,
+    pub dropped_events: u64,
+    pub error_count: u32,
+    pub warn_count: u32,
+    pub last_event_millis: Option<u64>,
+    pub last_error_message: Option<String>,
+}
+
 #[derive(uniffi::Object)]
 pub struct MonitorEngine {
     inner: std::sync::Mutex<Engine>,
@@ -429,6 +492,31 @@ impl MonitorEngine {
             .collect()
     }
 
+    pub fn latest_diagnostics(&self, limit: u32) -> Vec<DiagnosticsEvent> {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .latest_diagnostics(limit as usize)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    pub fn diagnostics_overview(&self) -> DiagnosticsOverview {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .diagnostics_overview()
+            .into()
+    }
+
+    pub fn export_diagnostics_json(&self, limit: u32) -> String {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .export_diagnostics_json(limit as usize)
+    }
+
     pub fn export_snapshot_json(&self) -> String {
         let snapshot = self
             .inner
@@ -534,6 +622,41 @@ impl From<model::CapabilityHealth> for CapabilityHealth {
     }
 }
 
+impl From<diagnostics::DiagnosticsLevel> for DiagnosticsLevel {
+    fn from(value: diagnostics::DiagnosticsLevel) -> Self {
+        match value {
+            diagnostics::DiagnosticsLevel::Trace => Self::Trace,
+            diagnostics::DiagnosticsLevel::Debug => Self::Debug,
+            diagnostics::DiagnosticsLevel::Info => Self::Info,
+            diagnostics::DiagnosticsLevel::Warn => Self::Warn,
+            diagnostics::DiagnosticsLevel::Error => Self::Error,
+        }
+    }
+}
+
+impl From<diagnostics::DiagnosticsSubsystem> for DiagnosticsSubsystem {
+    fn from(value: diagnostics::DiagnosticsSubsystem) -> Self {
+        match value {
+            diagnostics::DiagnosticsSubsystem::Engine => Self::Engine,
+            diagnostics::DiagnosticsSubsystem::Collector => Self::Collector,
+            diagnostics::DiagnosticsSubsystem::Identity => Self::Identity,
+            diagnostics::DiagnosticsSubsystem::Attribution => Self::Attribution,
+            diagnostics::DiagnosticsSubsystem::Friction => Self::Friction,
+            diagnostics::DiagnosticsSubsystem::History => Self::History,
+            diagnostics::DiagnosticsSubsystem::Persistence => Self::Persistence,
+            diagnostics::DiagnosticsSubsystem::Telemetry => Self::Telemetry,
+            diagnostics::DiagnosticsSubsystem::Gpu => Self::Gpu,
+            diagnostics::DiagnosticsSubsystem::Ffi => Self::Ffi,
+            diagnostics::DiagnosticsSubsystem::Ui => Self::Ui,
+            diagnostics::DiagnosticsSubsystem::AdapterChromium => Self::AdapterChromium,
+            diagnostics::DiagnosticsSubsystem::AdapterDocker => Self::AdapterDocker,
+            diagnostics::DiagnosticsSubsystem::AdapterHelper => Self::AdapterHelper,
+            diagnostics::DiagnosticsSubsystem::AdapterChau7 => Self::AdapterChau7,
+            diagnostics::DiagnosticsSubsystem::AdapterVsCode => Self::AdapterVsCode,
+        }
+    }
+}
+
 impl From<model::ThermalState> for ThermalState {
     fn from(value: model::ThermalState) -> Self {
         match value {
@@ -583,6 +706,48 @@ impl From<model::TimelineSeverity> for TimelineSeverity {
             model::TimelineSeverity::Info => Self::Info,
             model::TimelineSeverity::Warning => Self::Warning,
             model::TimelineSeverity::Critical => Self::Critical,
+        }
+    }
+}
+
+impl From<diagnostics::DiagnosticsField> for DiagnosticsField {
+    fn from(value: diagnostics::DiagnosticsField) -> Self {
+        Self {
+            key: value.key,
+            value: value.value,
+        }
+    }
+}
+
+impl From<diagnostics::DiagnosticsEvent> for DiagnosticsEvent {
+    fn from(value: diagnostics::DiagnosticsEvent) -> Self {
+        Self {
+            id: value.id,
+            timestamp_millis: value.timestamp_millis,
+            level: value.level.into(),
+            subsystem: value.subsystem.into(),
+            event_type: value.event_type,
+            sequence: value.sequence,
+            entity_id: value.entity_id,
+            adapter: value.adapter,
+            capability: value.capability,
+            message: value.message,
+            fields: value.fields.into_iter().map(Into::into).collect(),
+            sensitive: value.sensitive,
+        }
+    }
+}
+
+impl From<diagnostics::DiagnosticsOverview> for DiagnosticsOverview {
+    fn from(value: diagnostics::DiagnosticsOverview) -> Self {
+        Self {
+            ring_capacity: value.ring_capacity,
+            current_size: value.current_size,
+            dropped_events: value.dropped_events,
+            error_count: value.error_count,
+            warn_count: value.warn_count,
+            last_event_millis: value.last_event_millis,
+            last_error_message: value.last_error_message,
         }
     }
 }

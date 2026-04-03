@@ -1,12 +1,10 @@
 [package]
-name = "aetower-telemetry"
+name = "aetower-diagnostics"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-aetower-diagnostics = { path = "../aetower-diagnostics" }
-aetower-model = { path = "../aetower-model" }
+parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-url = "2"

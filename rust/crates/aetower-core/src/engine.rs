@@ -8,6 +8,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use aetower_diagnostics::{
+    DiagnosticsEvent, DiagnosticsLevel, DiagnosticsOverview, DiagnosticsStore, DiagnosticsSubsystem,
+};
 use aetower_model::{
     CapabilityKind, CapabilitySnapshot, CapabilityState, FrontmostAppState, HostSnapshot,
     HostTrend, SystemSnapshot, ThermalState,
@@ -40,6 +43,7 @@ pub struct Engine {
     adapters: AdapterManager,
     persistence: Arc<Mutex<Option<aetower_persistence::HistoryStore>>>,
     telemetry: Arc<Mutex<TelemetryExporter>>,
+    diagnostics: DiagnosticsStore,
     running: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     adapter_worker: Option<JoinHandle<()>>,
@@ -48,7 +52,9 @@ pub struct Engine {
 
 impl Engine {
     pub fn new() -> Self {
+        let diagnostics = DiagnosticsStore::default();
         let adapters = AdapterManager::default();
+        adapters.set_diagnostics(diagnostics.clone());
         let capabilities = adapters.initial_capabilities();
         let snapshot = SystemSnapshot {
             sequence: 0,
@@ -73,12 +79,28 @@ impl Engine {
             .join("history.db");
         let persistence = std::fs::create_dir_all(db_path.parent().unwrap())
             .ok()
-            .and_then(|_| aetower_persistence::HistoryStore::open(&db_path, 5).ok());
+            .and_then(|_| aetower_persistence::HistoryStore::open(&db_path, 5).ok())
+            .map(|mut store| {
+                store.set_diagnostics(diagnostics.clone());
+                store
+            });
         if let Some(store) = persistence.as_ref() {
             // Prune entries older than 7 days on startup.
             let seven_days_ago = time::now_millis().saturating_sub(7 * 24 * 60 * 60 * 1000);
             let _ = store.prune(seven_days_ago);
         }
+        let mut telemetry_exporter = TelemetryExporter::new(telemetry_config_from_env());
+        telemetry_exporter.set_diagnostics(diagnostics.clone());
+        diagnostics.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Engine,
+                "engine-initialized",
+                "Aetower engine initialized.",
+            )
+            .field("history_path", db_path.display())
+            .build(),
+        );
 
         Self {
             state: Arc::new(Mutex::new(EngineState {
@@ -90,9 +112,8 @@ impl Engine {
             })),
             adapters,
             persistence: Arc::new(Mutex::new(persistence)),
-            telemetry: Arc::new(Mutex::new(TelemetryExporter::new(
-                telemetry_config_from_env(),
-            ))),
+            telemetry: Arc::new(Mutex::new(telemetry_exporter)),
+            diagnostics,
             running: Arc::new(AtomicBool::new(false)),
             worker: None,
             adapter_worker: None,
@@ -109,6 +130,7 @@ impl Engine {
         let adapters = self.adapters.clone();
         let persistence = Arc::clone(&self.persistence);
         let running = Arc::clone(&self.running);
+        let diagnostics = self.diagnostics.clone();
         self.worker = Some(thread::spawn(move || {
             let mut collector = Collector::new();
             let mut next_tick = Instant::now();
@@ -116,12 +138,36 @@ impl Engine {
             let mut gpu_sample_tick: u8 = 0;
 
             while running.load(Ordering::SeqCst) {
+                let tick_started = Instant::now();
                 let captured_at_millis = time::now_millis();
+                diagnostics.emit(
+                    DiagnosticsEvent::builder(
+                        DiagnosticsLevel::Debug,
+                        DiagnosticsSubsystem::Engine,
+                        "tick-started",
+                        "Engine tick started.",
+                    )
+                    .timestamp_millis(captured_at_millis)
+                    .build(),
+                );
                 let raw = collector.collect();
                 if gpu_sample_tick.is_multiple_of(3)
                     && let Some(sample) = aetower_gpu::sample_gpu()
                 {
-                    gpu_sample = sample;
+                    gpu_sample = sample.clone();
+                    diagnostics.emit(
+                        DiagnosticsEvent::builder(
+                            DiagnosticsLevel::Debug,
+                            DiagnosticsSubsystem::Gpu,
+                            "gpu-sample-read",
+                            "Read a GPU sample.",
+                        )
+                        .timestamp_millis(captured_at_millis)
+                        .field("gpu_percent", sample.gpu_percent)
+                        .field("ane_percent", sample.ane_percent)
+                        .field("gpu_memory_bytes", sample.gpu_memory_bytes)
+                        .build(),
+                    );
                 }
                 gpu_sample_tick = gpu_sample_tick.wrapping_add(1);
                 let (frontmost_app_state, capabilities) = {
@@ -195,7 +241,51 @@ impl Engine {
                 if let Some(store) = persistence.lock().as_mut() {
                     store.maybe_store(&guard.latest_snapshot);
                 }
+                let sequence = guard.latest_snapshot.sequence;
+                let entity_count = guard.latest_snapshot.entities.len();
+                diagnostics.emit(
+                    DiagnosticsEvent::builder(
+                        DiagnosticsLevel::Info,
+                        DiagnosticsSubsystem::Engine,
+                        "snapshot-published",
+                        "Published a new system snapshot.",
+                    )
+                    .timestamp_millis(captured_at_millis)
+                    .sequence(sequence)
+                    .field("entity_count", entity_count)
+                    .field("process_count", raw.processes.len())
+                    .build(),
+                );
                 drop(guard);
+                let tick_millis = tick_started.elapsed().as_millis();
+                let is_over_budget = tick_millis > FAST_TICK.as_millis();
+                let level = if is_over_budget {
+                    DiagnosticsLevel::Warn
+                } else {
+                    DiagnosticsLevel::Debug
+                };
+                diagnostics.emit(
+                    DiagnosticsEvent::builder(
+                        level,
+                        DiagnosticsSubsystem::Engine,
+                        if is_over_budget {
+                            "tick-over-budget"
+                        } else {
+                            "tick-completed"
+                        },
+                        if is_over_budget {
+                            "Engine tick exceeded the fast-path budget."
+                        } else {
+                            "Engine tick completed."
+                        },
+                    )
+                    .timestamp_millis(captured_at_millis)
+                    .sequence(sequence)
+                    .field("tick_millis", tick_millis)
+                    .field("entity_count", entity_count)
+                    .field("process_count", raw.processes.len())
+                    .build(),
+                );
                 next_tick += FAST_TICK;
                 let now = Instant::now();
                 if now < next_tick {
@@ -283,12 +373,35 @@ impl Engine {
         self.state.lock().latest_snapshot.sequence
     }
 
+    pub fn latest_diagnostics(&self, limit: usize) -> Vec<DiagnosticsEvent> {
+        self.diagnostics.recent(limit)
+    }
+
+    pub fn diagnostics_overview(&self) -> DiagnosticsOverview {
+        self.diagnostics.overview()
+    }
+
+    pub fn export_diagnostics_json(&self, limit: usize) -> String {
+        self.diagnostics.export_json(limit)
+    }
+
     pub fn set_capability_state(
         &self,
         kind: CapabilityKind,
         state: CapabilityState,
         detail_override: Option<String>,
     ) {
+        self.diagnostics.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Engine,
+                "capability-state-changed",
+                "Capability state updated.",
+            )
+            .capability(format!("{kind:?}"))
+            .field("state", format!("{state:?}"))
+            .build(),
+        );
         let mut guard = self.state.lock();
         let now = time::now_millis();
         if let Some(capability) = guard.capabilities.get_mut(&kind) {
@@ -347,6 +460,18 @@ impl Engine {
         config.enabled = enabled;
         config.export_interval_secs = export_interval_secs.max(5);
         guard.update_config(config);
+        self.diagnostics.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Telemetry,
+                "telemetry-config-updated",
+                "Telemetry configuration updated.",
+            )
+            .field("enabled", enabled)
+            .field("export_interval_secs", export_interval_secs.max(5))
+            .field("endpoint", guard.config().endpoint.clone())
+            .build(),
+        );
     }
 
     pub fn load_history_range(&self, start_millis: u64, end_millis: u64) -> Vec<SystemSnapshot> {
