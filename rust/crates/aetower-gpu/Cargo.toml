@@ -1,0 +1,8 @@
+[package]
+name = "aetower-gpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+core-foundation-sys.workspace = true

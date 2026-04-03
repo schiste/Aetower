@@ -1,0 +1,10 @@
+[package]
+name = "aetower-persistence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aetower-model = { path = "../aetower-model" }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde_json.workspace = true

@@ -1,3 +1,4 @@
+pub mod adapter_trait;
 mod adapters;
 mod attribution;
 mod bench;
