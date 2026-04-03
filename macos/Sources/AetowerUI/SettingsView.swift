@@ -1,9 +1,10 @@
+import Observation
 import SwiftUI
 import AetowerBridge
 
 public struct SettingsView: View {
-    @ObservedObject private var state: AppState
-    @ObservedObject private var settings: SettingsStore
+    let state: AppState
+    let settings: SettingsStore
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
@@ -11,6 +12,7 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
+        @Bindable var settings = settings
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 GroupBox("Behavior") {

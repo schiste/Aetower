@@ -1,51 +1,53 @@
-import Combine
 import Foundation
+import Observation
 import ServiceManagement
 
 @MainActor
-public final class SettingsStore: ObservableObject {
-    @Published public var showMenuBarExtra: Bool {
+@Observable
+public final class SettingsStore {
+    public var showMenuBarExtra: Bool {
         didSet { persist() }
     }
-    @Published public var refreshIntervalSeconds: Double {
+    public var refreshIntervalSeconds: Double {
         didSet { persist() }
     }
-    @Published public var chromiumEndpoint: String {
+    public var chromiumEndpoint: String {
         didSet { persist() }
     }
-    @Published public var dockerSocketPath: String {
+    public var dockerSocketPath: String {
         didSet { persist() }
     }
-    @Published public var privilegedHelperPath: String {
+    public var privilegedHelperPath: String {
         didSet { persist() }
     }
-    @Published public var privilegedHelperEnabled: Bool {
+    public var privilegedHelperEnabled: Bool {
         didSet { persist() }
     }
-    @Published public var chau7Endpoint: String {
+    public var chau7Endpoint: String {
         didSet { persist() }
     }
-    @Published public var telemetryEnabled: Bool {
+    public var telemetryEnabled: Bool {
         didSet { persist() }
     }
-    @Published public var telemetryEndpoint: String {
+    public var telemetryEndpoint: String {
         didSet { persist() }
     }
-    @Published public var telemetryExportIntervalSeconds: Double {
+    public var telemetryExportIntervalSeconds: Double {
         didSet { persist() }
     }
-    @Published public var notificationsEnabled: Bool {
+    public var notificationsEnabled: Bool {
         didSet { persist() }
     }
-    @Published public var frictionNotificationThreshold: Double {
+    public var frictionNotificationThreshold: Double {
         didSet { persist() }
     }
-    @Published public var appearanceMode: String {
+    public var appearanceMode: String {
         didSet { persist() }
     }
-    @Published public private(set) var launchAtLoginEnabled: Bool
-    @Published public private(set) var launchAtLoginError: String?
+    public private(set) var launchAtLoginEnabled: Bool
+    public private(set) var launchAtLoginError: String?
 
+    @ObservationIgnored
     private let defaults: UserDefaults
 
     public init(defaults: UserDefaults = .standard) {

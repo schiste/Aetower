@@ -1,4 +1,3 @@
-import Combine
 import SwiftUI
 import AetowerBridge
 
@@ -11,14 +10,13 @@ private enum DiagnosticsLevelFilter: String, CaseIterable, Identifiable {
 }
 
 public struct DiagnosticsView: View {
-    @ObservedObject private var state: AppState
+    let state: AppState
     @State private var searchText = ""
     @State private var subsystemFilter: DiagnosticsSubsystem?
     @State private var levelFilter: DiagnosticsLevelFilter = .all
     @State private var isLive = true
     @State private var isVisible = false
 
-    private let refreshTimer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()
     private let overviewColumns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
 
     public init(state: AppState) {
@@ -49,8 +47,11 @@ public struct DiagnosticsView: View {
         .onDisappear {
             isVisible = false
         }
-        .onReceive(refreshTimer) { _ in
-            if isVisible && isLive {
+        .task(id: "\(isVisible)-\(isLive)") {
+            guard isVisible && isLive else { return }
+            while !Task.isCancelled && isVisible && isLive {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled && isVisible && isLive else { break }
                 state.loadDiagnostics()
             }
         }

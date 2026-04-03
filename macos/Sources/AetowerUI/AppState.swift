@@ -1,18 +1,19 @@
 import AppKit
-import Combine
 import Foundation
+import Observation
 import OSLog
 import UniformTypeIdentifiers
 import UserNotifications
 import AetowerBridge
 
 @MainActor
-public final class AppState: ObservableObject {
-    @Published public private(set) var snapshot: SystemSnapshot
-    @Published public private(set) var historySnapshots: [SystemSnapshot] = []
-    @Published public private(set) var historyLoadError: String?
-    @Published public private(set) var diagnosticsEvents: [DiagnosticsEvent] = []
-    @Published public private(set) var diagnosticsOverview = DiagnosticsOverview(
+@Observable
+public final class AppState {
+    public private(set) var snapshot: SystemSnapshot
+    public private(set) var historySnapshots: [SystemSnapshot] = []
+    public private(set) var historyLoadError: String?
+    public private(set) var diagnosticsEvents: [DiagnosticsEvent] = []
+    public private(set) var diagnosticsOverview = DiagnosticsOverview(
         ringCapacity: 0,
         currentSize: 0,
         droppedEvents: 0,
@@ -25,42 +26,78 @@ public final class AppState: ObservableObject {
         persistedBytes: 0,
         persistenceError: nil
     )
-    @Published public private(set) var diagnosticsLoadError: String?
-    @Published public private(set) var notificationAuthorizationStatus = "unknown"
-    @Published public var lastError: String?
+    public private(set) var diagnosticsLoadError: String?
+    public private(set) var notificationAuthorizationStatus = "unknown"
+    public var lastError: String?
 
+    @ObservationIgnored
     private let bridge: EngineBridge
+    @ObservationIgnored
     private let permissionCoordinator: PermissionCoordinator
+    @ObservationIgnored
     private let lagMonitor = LagMonitor()
-    private var timerCancellable: AnyCancellable?
-    private var workspaceActivationCancellable: AnyCancellable?
+    @ObservationIgnored
+    private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var workspaceActivationTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var historyLoadTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var diagnosticsLoadTask: Task<Void, Never>?
+    @ObservationIgnored
     private var lastObservedSequence: UInt64
+    @ObservationIgnored
     private var lastPublishedFrontmostBaseSignature: String?
+    @ObservationIgnored
     private var lastPublishedFrontmostSignature: String?
+    @ObservationIgnored
     private var lastPublishedFrontmostAppName: String?
+    @ObservationIgnored
     private var lastPublishedWindowTitle: String?
+    @ObservationIgnored
     private var lastFrontmostProbeDate = Date.distantPast
+    @ObservationIgnored
     private var lastWindowTitleProbeDate = Date.distantPast
+    @ObservationIgnored
     private var previousAnomalyStates: [String: Bool] = [:]
+    @ObservationIgnored
     private var lastAnomalyNotificationDates: [String: Date] = [:]
+    @ObservationIgnored
     private var suppressedAnomalyNotificationCount = 0
+    @ObservationIgnored
     private var suppressedAnomalyEntityKeys = Set<String>()
+    @ObservationIgnored
     private var notificationsEnabled = false
+    @ObservationIgnored
     private var frictionNotificationThreshold = 60.0
+    @ObservationIgnored
     private var mirroredDiagnosticsSignatures = Set<String>()
+    @ObservationIgnored
     private var historyWindowSeconds: TimeInterval = 3600
+    @ObservationIgnored
     private var lastHistoryLoadDate = Date.distantPast
+    @ObservationIgnored
     private var lastDiagnosticsLoadDate = Date.distantPast
+    @ObservationIgnored
     private var lastSessionLogAnalysisDate = Date.distantPast
+    @ObservationIgnored
     private var lastSessionLogFingerprint: String?
+    @ObservationIgnored
     private var lastSuppressedAnomalySummaryDate = Date.distantPast
 
+    @ObservationIgnored
     private let frontmostProbeInterval: TimeInterval = 1.0
+    @ObservationIgnored
     private let windowTitleProbeInterval: TimeInterval = 5.0
+    @ObservationIgnored
     private let historyReloadInterval: TimeInterval = 20.0
+    @ObservationIgnored
     private let diagnosticsReloadInterval: TimeInterval = 2.0
+    @ObservationIgnored
     private let sessionLogAnalysisInterval: TimeInterval = 45.0
+    @ObservationIgnored
     private let anomalyNotificationCooldown: TimeInterval = 300.0
+    @ObservationIgnored
     private let suppressedAnomalySummaryInterval: TimeInterval = 30.0
 
     public init(
@@ -124,19 +161,29 @@ public final class AppState: ObservableObject {
         publishFrontmostState(force: true)
         refresh(force: true)
         loadHistory(force: true)
-        timerCancellable = Timer.publish(every: max(1.0, refreshInterval), on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                self?.publishFrontmostState()
-                self?.refresh()
+        let intervalNanos = UInt64(max(1.0, refreshInterval) * 1_000_000_000)
+        refreshTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: intervalNanos)
+                guard !Task.isCancelled else { break }
+                await MainActor.run {
+                    self.publishFrontmostState()
+                    self.refresh()
+                }
             }
+        }
     }
 
     public func stop() {
-        timerCancellable?.cancel()
-        timerCancellable = nil
-        workspaceActivationCancellable?.cancel()
-        workspaceActivationCancellable = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+        workspaceActivationTask?.cancel()
+        workspaceActivationTask = nil
+        historyLoadTask?.cancel()
+        historyLoadTask = nil
+        diagnosticsLoadTask?.cancel()
+        diagnosticsLoadTask = nil
         lagMonitor.stop()
     }
 
@@ -277,9 +324,11 @@ public final class AppState: ObservableObject {
         let startMillis = endMillis >= rangeMillis ? endMillis - rangeMillis : 0
         let bridge = self.bridge
 
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        historyLoadTask?.cancel()
+        historyLoadTask = Task(priority: .utility) { [weak self] in
             let snapshots = bridge.loadHistoryRange(startMillis: startMillis, endMillis: endMillis)
-            DispatchQueue.main.async {
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
                 guard let self else { return }
                 self.historySnapshots = snapshots
                 self.historyLoadError = snapshots.isEmpty ? "No persisted history in the selected range yet." : nil
@@ -298,11 +347,13 @@ public final class AppState: ObservableObject {
         if shouldAnalyzeSessionLogs {
             lastSessionLogAnalysisDate = now
         }
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        diagnosticsLoadTask?.cancel()
+        diagnosticsLoadTask = Task(priority: .utility) { [weak self] in
             let events = bridge.latestDiagnostics(limit: limit)
             let overview = bridge.diagnosticsOverview()
             let sessionLogSummary = shouldAnalyzeSessionLogs ? Result { try SessionLogAnalyzer.analyzeCurrentProcess(lastMinutes: 6) } : nil
-            DispatchQueue.main.async {
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
                 guard let self else { return }
                 self.diagnosticsEvents = events
                 self.diagnosticsOverview = overview
@@ -317,12 +368,18 @@ public final class AppState: ObservableObject {
     }
 
     private func observeWorkspaceActivation() {
-        workspaceActivationCancellable = NSWorkspace.shared.notificationCenter
-            .publisher(for: NSWorkspace.didActivateApplicationNotification)
-            .sink { [weak self] _ in
-                self?.publishFrontmostState(force: true)
-                self?.refresh()
+        workspaceActivationTask = Task { [weak self] in
+            guard let self else { return }
+            for await _ in NSWorkspace.shared.notificationCenter.notifications(
+                named: NSWorkspace.didActivateApplicationNotification
+            ) {
+                guard !Task.isCancelled else { break }
+                await MainActor.run {
+                    self.publishFrontmostState(force: true)
+                    self.refresh()
+                }
             }
+        }
     }
 
     private func publishFrontmostState(force: Bool = false) {
@@ -821,8 +878,8 @@ public final class AppState: ObservableObject {
             )
         )
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+        Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled else { return }
             let renderSampledAtMillis = UInt64(Date().timeIntervalSince1970 * 1000)
             let renderCommitMillis = (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1000.0
             let snapshotToRenderMillis = renderSampledAtMillis >= snapshot.capturedAtMillis

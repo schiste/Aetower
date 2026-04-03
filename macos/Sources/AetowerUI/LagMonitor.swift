@@ -1,6 +1,6 @@
 import AppKit
-import CoreVideo
 import Foundation
+import QuartzCore
 
 struct LocalLagSample {
     var displayFrameIntervalMillis: Double = 0
@@ -11,9 +11,9 @@ struct LocalLagSample {
     var inputSampleCount: UInt32 = 0
 }
 
-final class LagMonitor {
+final class LagMonitor: NSObject {
     private let lock = NSLock()
-    private var displayLink: CVDisplayLink?
+    private var displayLink: CADisplayLink?
     private var localMonitors: [Any] = []
     private var lastDisplaySeconds: Double?
     private var nominalFrameIntervalMillis: Double = 0
@@ -56,30 +56,17 @@ final class LagMonitor {
 
     private func startDisplayLink() {
         guard displayLink == nil else { return }
-        var candidate: CVDisplayLink?
-        guard CVDisplayLinkCreateWithActiveCGDisplays(&candidate) == kCVReturnSuccess,
-              let candidate else {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
             return
         }
-        let callback: CVDisplayLinkOutputCallback = { _, _, outputTime, _, _, userInfo in
-            guard let userInfo else { return kCVReturnSuccess }
-            let monitor = Unmanaged<LagMonitor>.fromOpaque(userInfo).takeUnretainedValue()
-            monitor.recordDisplay(outputTime.pointee)
-            return kCVReturnSuccess
-        }
-        CVDisplayLinkSetOutputCallback(
-            candidate,
-            callback,
-            UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-        )
-        if CVDisplayLinkStart(candidate) == kCVReturnSuccess {
-            displayLink = candidate
-        }
+        let displayLink = screen.displayLink(target: self, selector: #selector(handleDisplayLink(_:)))
+        displayLink.add(to: .main, forMode: .common)
+        self.displayLink = displayLink
     }
 
     private func stopDisplayLink() {
         guard let displayLink else { return }
-        CVDisplayLinkStop(displayLink)
+        displayLink.invalidate()
         self.displayLink = nil
     }
 
@@ -105,13 +92,11 @@ final class LagMonitor {
         localMonitors.removeAll(keepingCapacity: false)
     }
 
-    private func recordDisplay(_ timestamp: CVTimeStamp) {
-        let scale = Double(timestamp.videoTimeScale)
-        guard scale > 0 else { return }
-        let displaySeconds = Double(timestamp.videoTime) / scale
-        let refreshPeriodSeconds = timestamp.videoRefreshPeriod > 0
-            ? Double(timestamp.videoRefreshPeriod) / scale
-            : 0
+    @objc private func handleDisplayLink(_ displayLink: CADisplayLink) {
+        let displaySeconds = displayLink.targetTimestamp > 0
+            ? displayLink.targetTimestamp
+            : displayLink.timestamp
+        let refreshPeriodSeconds = max(0, displayLink.duration)
 
         lock.lock()
         defer { lock.unlock() }

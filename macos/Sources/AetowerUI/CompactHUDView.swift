@@ -2,7 +2,7 @@ import SwiftUI
 import AetowerBridge
 
 public struct CompactHUDView: View {
-    @ObservedObject private var state: AppState
+    let state: AppState
 
     public init(state: AppState) { self.state = state }
 

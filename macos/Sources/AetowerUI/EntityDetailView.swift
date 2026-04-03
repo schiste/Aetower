@@ -220,7 +220,7 @@ private struct ComponentCard: View {
 
 public struct EntityDetailView: View {
     let entity: EntitySnapshot
-    @ObservedObject private var state: AppState
+    let state: AppState
 
     public init(entity: EntitySnapshot, state: AppState) {
         self.entity = entity

@@ -432,7 +432,7 @@ private struct EntityRow: View {
 }
 
 public struct MainListView: View {
-    @ObservedObject private var state: AppState
+    let state: AppState
     @State private var selectedEntityID: String?
     @State private var searchText = ""
     @State private var sortKey: SortKey = .friction

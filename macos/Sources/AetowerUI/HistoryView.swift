@@ -40,7 +40,7 @@ private struct HistoricalEntitySummary: Identifiable {
 }
 
 public struct HistoryView: View {
-    @ObservedObject private var state: AppState
+    let state: AppState
     @State private var range: HistoryRangePreset = .lastHour
 
     private let columns = [GridItem(.adaptive(minimum: 180), spacing: 12)]

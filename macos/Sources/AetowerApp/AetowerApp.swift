@@ -18,8 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct AetowerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var state = AppState()
-    @StateObject private var settings = SettingsStore()
+    @State private var state = AppState()
+    @State private var settings = SettingsStore()
     @State private var menuBarExtraInserted = false
 
     private var resolvedColorScheme: ColorScheme? {
@@ -76,17 +76,12 @@ struct AetowerApp: App {
             .task {
                 menuBarExtraInserted = settings.showMenuBarExtra
                 state.applyNotificationSettings(settings)
-                Task { @MainActor in
-                    state.applyIntegrationSettings(settings)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    state.start(refreshInterval: settings.refreshIntervalSeconds)
-                }
+                state.applyIntegrationSettings(settings)
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                state.start(refreshInterval: settings.refreshIntervalSeconds)
             }
             .onChange(of: settings.refreshIntervalSeconds) { _, newValue in
-                DispatchQueue.main.async {
-                    state.start(refreshInterval: newValue)
-                }
+                state.start(refreshInterval: newValue)
             }
             .onChange(of: settings.showMenuBarExtra) { _, newValue in
                 if menuBarExtraInserted != newValue {
