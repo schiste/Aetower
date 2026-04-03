@@ -1,15 +1,12 @@
-use std::{
-    io::{Read, Write},
-    net::TcpStream,
-    time::Duration,
-};
+use std::time::Duration;
 
 use aetower_diagnostics::{
     DiagnosticsEvent, DiagnosticsLevel, DiagnosticsStore, DiagnosticsSubsystem,
 };
 use aetower_model::{EntitySnapshot, RuntimeLagMetrics, SystemSnapshot, ThermalState};
+use reqwest::blocking::Client;
+use reqwest::header::CONTENT_TYPE;
 use serde::Serialize;
-use url::Url;
 
 /// Configuration for the OpenTelemetry exporter.
 #[derive(Debug, Clone)]
@@ -67,6 +64,7 @@ pub mod metric_names {
 
 pub struct TelemetryExporter {
     config: OtlpConfig,
+    client: Client,
     diagnostics: Option<DiagnosticsStore>,
 }
 
@@ -74,6 +72,11 @@ impl TelemetryExporter {
     pub fn new(config: OtlpConfig) -> Self {
         Self {
             config,
+            client: Client::builder()
+                .connect_timeout(Duration::from_secs(2))
+                .timeout(Duration::from_secs(4))
+                .build()
+                .expect("telemetry HTTP client should build"),
             diagnostics: None,
         }
     }
@@ -118,16 +121,10 @@ impl TelemetryExporter {
             );
         }
 
-        let endpoint = Url::parse(&self.config.endpoint)
-            .map_err(|error| format!("invalid telemetry endpoint: {error}"))?;
-        if endpoint.scheme() != "http" {
-            return Err("only http OTLP endpoints are supported".to_owned());
-        }
-
         let payload = build_resource_metrics(snapshot, lag_metrics);
         let body =
             serde_json::to_vec(&payload).map_err(|error| format!("telemetry encode: {error}"))?;
-        let result = post_json(&endpoint, &body);
+        let result = self.post_json(&body);
         if let Some(diagnostics) = self.diagnostics.as_ref() {
             let latency_millis = started_at.elapsed().as_millis();
             match &result {
@@ -631,48 +628,23 @@ fn snapshot_time_nanos(captured_at_millis: u64) -> String {
     captured_at_millis.saturating_mul(1_000_000).to_string()
 }
 
-fn post_json(endpoint: &Url, body: &[u8]) -> Result<(), String> {
-    let host = endpoint
-        .host_str()
-        .ok_or_else(|| "telemetry endpoint host missing".to_owned())?;
-    let port = endpoint.port_or_known_default().unwrap_or(4318);
-    let mut path = endpoint.path().to_owned();
-    if path.is_empty() {
-        path = "/v1/metrics".to_owned();
+impl TelemetryExporter {
+    fn post_json(&self, body: &[u8]) -> Result<(), String> {
+        let response = self
+            .client
+            .post(&self.config.endpoint)
+            .header(CONTENT_TYPE, "application/json")
+            .body(body.to_vec())
+            .send()
+            .map_err(|error| format!("telemetry request: {error}"))?;
+
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+
+        Err(format!("telemetry endpoint rejected export: {status}"))
     }
-    if let Some(query) = endpoint.query() {
-        path.push('?');
-        path.push_str(query);
-    }
-
-    let mut stream =
-        TcpStream::connect((host, port)).map_err(|error| format!("telemetry connect: {error}"))?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .map_err(|error| format!("telemetry set_read_timeout: {error}"))?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(2)))
-        .map_err(|error| format!("telemetry set_write_timeout: {error}"))?;
-
-    let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    stream
-        .write_all(request.as_bytes())
-        .and_then(|_| stream.write_all(body))
-        .map_err(|error| format!("telemetry write: {error}"))?;
-
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .map_err(|error| format!("telemetry read: {error}"))?;
-    let status = response.lines().next().unwrap_or_default();
-    if status.contains(" 200 ") || status.contains(" 202 ") || status.contains(" 204 ") {
-        return Ok(());
-    }
-
-    Err(format!("telemetry endpoint rejected export: {status}"))
 }
 
 #[cfg(test)]
