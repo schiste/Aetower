@@ -152,7 +152,9 @@ impl Engine {
                     .timestamp_millis(captured_at_millis)
                     .build(),
                 );
+                let collect_started = Instant::now();
                 let raw = collector.collect();
+                let collect_millis = collect_started.elapsed().as_secs_f64() * 1000.0;
                 if gpu_sample_tick.is_multiple_of(3)
                     && let Some(sample) = aetower_gpu::sample_gpu()
                 {
@@ -211,8 +213,14 @@ impl Engine {
                 };
                 let pipeline_output =
                     run_entity_pipeline(&raw.processes, &host, frontmost_app_state.as_ref());
-                let mut entities = pipeline_output.entities;
+                let crate::pipeline::EntityPipelineOutput {
+                    identity: _identity,
+                    mut entities,
+                    timings: pipeline_timings,
+                } = pipeline_output;
+                let enrich_started = Instant::now();
                 adapters.enrich_entities(&mut entities, &capabilities);
+                let enrich_millis = enrich_started.elapsed().as_secs_f64() * 1000.0;
 
                 // Aggregate AI agent friction (mutate in place, no second host).
                 let (ai_friction, ai_count) = entities
@@ -224,11 +232,13 @@ impl Engine {
                 host.ai_agent_friction = ai_friction;
                 host.ai_agent_count = ai_count;
 
+                let history_started = Instant::now();
                 let mut guard = state.lock();
                 let (timeline, host_trend) =
                     guard
                         .history
                         .update(captured_at_millis, &host, &mut entities);
+                let history_millis = history_started.elapsed().as_secs_f64() * 1000.0;
                 guard.sequence += 1;
                 guard.latest_snapshot = SystemSnapshot {
                     sequence: guard.sequence,
@@ -240,9 +250,11 @@ impl Engine {
                     timeline,
                 };
                 // Persist snapshot (best-effort, throttled by write_interval).
+                let persist_started = Instant::now();
                 if let Some(store) = persistence.lock().as_mut() {
                     store.maybe_store(&guard.latest_snapshot);
                 }
+                let persist_millis = persist_started.elapsed().as_secs_f64() * 1000.0;
                 let sequence = guard.latest_snapshot.sequence;
                 let entity_count = guard.latest_snapshot.entities.len();
                 diagnostics.emit(
@@ -256,6 +268,22 @@ impl Engine {
                     .sequence(sequence)
                     .field("entity_count", entity_count)
                     .field("process_count", raw.processes.len())
+                    .field("collect_millis", format!("{collect_millis:.3}"))
+                    .field(
+                        "identity_millis",
+                        format!("{:.3}", pipeline_timings.identity_millis),
+                    )
+                    .field(
+                        "attribution_millis",
+                        format!("{:.3}", pipeline_timings.attribution_millis),
+                    )
+                    .field(
+                        "friction_millis",
+                        format!("{:.3}", pipeline_timings.friction_millis),
+                    )
+                    .field("enrich_millis", format!("{enrich_millis:.3}"))
+                    .field("history_millis", format!("{history_millis:.3}"))
+                    .field("persist_millis", format!("{persist_millis:.3}"))
                     .build(),
                 );
                 drop(guard);
@@ -286,6 +314,22 @@ impl Engine {
                     .field("tick_millis", tick_millis)
                     .field("entity_count", entity_count)
                     .field("process_count", raw.processes.len())
+                    .field("collect_millis", format!("{collect_millis:.3}"))
+                    .field(
+                        "identity_millis",
+                        format!("{:.3}", pipeline_timings.identity_millis),
+                    )
+                    .field(
+                        "attribution_millis",
+                        format!("{:.3}", pipeline_timings.attribution_millis),
+                    )
+                    .field(
+                        "friction_millis",
+                        format!("{:.3}", pipeline_timings.friction_millis),
+                    )
+                    .field("enrich_millis", format!("{enrich_millis:.3}"))
+                    .field("history_millis", format!("{history_millis:.3}"))
+                    .field("persist_millis", format!("{persist_millis:.3}"))
                     .build(),
                 );
                 next_tick += FAST_TICK;

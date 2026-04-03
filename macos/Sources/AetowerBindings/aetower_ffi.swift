@@ -1728,11 +1728,12 @@ public struct DiagnosticsOverview {
     public var lastErrorMessage: String?
     public var persistedEvents: UInt64
     public var persistedPath: String?
+    public var persistedBytes: UInt64
     public var persistenceError: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(ringCapacity: UInt32, currentSize: UInt32, droppedEvents: UInt64, errorCount: UInt32, warnCount: UInt32, lastEventMillis: UInt64?, lastErrorMessage: String?, persistedEvents: UInt64, persistedPath: String?, persistenceError: String?) {
+    public init(ringCapacity: UInt32, currentSize: UInt32, droppedEvents: UInt64, errorCount: UInt32, warnCount: UInt32, lastEventMillis: UInt64?, lastErrorMessage: String?, persistedEvents: UInt64, persistedPath: String?, persistedBytes: UInt64, persistenceError: String?) {
         self.ringCapacity = ringCapacity
         self.currentSize = currentSize
         self.droppedEvents = droppedEvents
@@ -1742,6 +1743,7 @@ public struct DiagnosticsOverview {
         self.lastErrorMessage = lastErrorMessage
         self.persistedEvents = persistedEvents
         self.persistedPath = persistedPath
+        self.persistedBytes = persistedBytes
         self.persistenceError = persistenceError
     }
 }
@@ -1780,6 +1782,9 @@ extension DiagnosticsOverview: Equatable, Hashable {
         if lhs.persistedPath != rhs.persistedPath {
             return false
         }
+        if lhs.persistedBytes != rhs.persistedBytes {
+            return false
+        }
         if lhs.persistenceError != rhs.persistenceError {
             return false
         }
@@ -1796,6 +1801,7 @@ extension DiagnosticsOverview: Equatable, Hashable {
         hasher.combine(lastErrorMessage)
         hasher.combine(persistedEvents)
         hasher.combine(persistedPath)
+        hasher.combine(persistedBytes)
         hasher.combine(persistenceError)
     }
 }
@@ -1818,6 +1824,7 @@ public struct FfiConverterTypeDiagnosticsOverview: FfiConverterRustBuffer {
                 lastErrorMessage: FfiConverterOptionString.read(from: &buf), 
                 persistedEvents: FfiConverterUInt64.read(from: &buf), 
                 persistedPath: FfiConverterOptionString.read(from: &buf), 
+                persistedBytes: FfiConverterUInt64.read(from: &buf), 
                 persistenceError: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -1832,6 +1839,7 @@ public struct FfiConverterTypeDiagnosticsOverview: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.lastErrorMessage, into: &buf)
         FfiConverterUInt64.write(value.persistedEvents, into: &buf)
         FfiConverterOptionString.write(value.persistedPath, into: &buf)
+        FfiConverterUInt64.write(value.persistedBytes, into: &buf)
         FfiConverterOptionString.write(value.persistenceError, into: &buf)
     }
 }

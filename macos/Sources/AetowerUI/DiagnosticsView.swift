@@ -146,8 +146,22 @@ public struct DiagnosticsView: View {
                     value: "\(state.diagnosticsOverview.persistedEvents)",
                     subtitle: state.diagnosticsOverview.persistedPath ?? "persistence disabled"
                 )
+                diagnosticsMetric(
+                    title: "Persisted size",
+                    value: byteCount(state.diagnosticsOverview.persistedBytes),
+                    subtitle: "diagnostics store"
+                )
             }
             .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 6) {
+                if let persistedPath = state.diagnosticsOverview.persistedPath {
+                    labeledPersistenceDetail("Diagnostics file", persistedPath)
+                }
+                if let lastHistoryLoadFailure {
+                    labeledPersistenceDetail("Last history issue", lastHistoryLoadFailure)
+                }
+            }
+            .padding(.top, 8)
             if let persistenceError = state.diagnosticsOverview.persistenceError {
                 Text(persistenceError)
                     .font(.caption)
@@ -277,6 +291,22 @@ public struct DiagnosticsView: View {
         }
         return Array(seen).sorted { subsystemLabel($0) < subsystemLabel($1) }
     }
+
+    private var lastHistoryLoadFailure: String? {
+        state.diagnosticsEvents.first(where: {
+            $0.eventType == "history-load-failed" || $0.eventType == "history-loaded-with-quarantine"
+        }).map { event in
+            if let errorField = event.fields.first(where: { $0.key == "error" })?.value,
+               !errorField.isEmpty {
+                return errorField
+            }
+            if let quarantinedRows = event.fields.first(where: { $0.key == "quarantined_rows" })?.value,
+               quarantinedRows != "0" {
+                return "quarantined \(quarantinedRows) incompatible row(s)"
+            }
+            return event.message
+        }
+    }
 }
 
 private func diagnosticsMetric(title: String, value: String, subtitle: String) -> some View {
@@ -294,6 +324,18 @@ private func diagnosticsMetric(title: String, value: String, subtitle: String) -
     .padding(10)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+}
+
+private func labeledPersistenceDetail(_ title: String, _ value: String) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+        Text(title)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+        Text(value)
+            .font(.caption.monospaced())
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+    }
 }
 
 private func subsystemLabel(_ subsystem: DiagnosticsSubsystem) -> String {
@@ -333,4 +375,8 @@ private func levelColor(_ level: DiagnosticsLevel) -> Color {
 private func formattedTimestamp(_ millis: UInt64) -> String {
     Date(timeIntervalSince1970: TimeInterval(millis) / 1000)
         .formatted(date: .omitted, time: .standard)
+}
+
+private func byteCount(_ bytes: UInt64) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
 }

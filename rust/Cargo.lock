@@ -135,8 +135,10 @@ version = "0.1.0"
 dependencies = [
  "aetower-diagnostics",
  "aetower-model",
+ "aetower-time",
  "bincode",
  "rusqlite",
+ "serde",
  "serde_json",
 ]
 

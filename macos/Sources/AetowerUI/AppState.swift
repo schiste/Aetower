@@ -22,6 +22,7 @@ public final class AppState: ObservableObject {
         lastErrorMessage: nil,
         persistedEvents: 0,
         persistedPath: nil,
+        persistedBytes: 0,
         persistenceError: nil
     )
     @Published public private(set) var diagnosticsLoadError: String?
@@ -41,6 +42,8 @@ public final class AppState: ObservableObject {
     private var lastWindowTitleProbeDate = Date.distantPast
     private var previousAnomalyStates: [String: Bool] = [:]
     private var lastAnomalyNotificationDates: [String: Date] = [:]
+    private var suppressedAnomalyNotificationCount = 0
+    private var suppressedAnomalyEntityKeys = Set<String>()
     private var notificationsEnabled = false
     private var frictionNotificationThreshold = 60.0
     private var mirroredDiagnosticsSignatures = Set<String>()
@@ -49,6 +52,7 @@ public final class AppState: ObservableObject {
     private var lastDiagnosticsLoadDate = Date.distantPast
     private var lastSessionLogAnalysisDate = Date.distantPast
     private var lastSessionLogFingerprint: String?
+    private var lastSuppressedAnomalySummaryDate = Date.distantPast
 
     private let frontmostProbeInterval: TimeInterval = 1.0
     private let windowTitleProbeInterval: TimeInterval = 5.0
@@ -56,6 +60,7 @@ public final class AppState: ObservableObject {
     private let diagnosticsReloadInterval: TimeInterval = 2.0
     private let sessionLogAnalysisInterval: TimeInterval = 45.0
     private let anomalyNotificationCooldown: TimeInterval = 300.0
+    private let suppressedAnomalySummaryInterval: TimeInterval = 30.0
 
     public init(
         bridge: EngineBridge = EngineBridge(),
@@ -169,6 +174,7 @@ public final class AppState: ObservableObject {
         notificationsEnabled = settings.notificationsEnabled
         frictionNotificationThreshold = settings.frictionNotificationThreshold
         if settings.notificationsEnabled {
+            flushSuppressedAnomalySummaryIfNeeded(force: true)
             requestNotificationPermissionIfNeeded(trigger: "notifications-enabled")
         } else {
             notificationAuthorizationStatus = "disabled"
@@ -225,6 +231,7 @@ public final class AppState: ObservableObject {
             )
             loadHistory(force: force)
             diffAnomalyStates()
+            flushSuppressedAnomalySummaryIfNeeded()
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -285,6 +292,7 @@ public final class AppState: ObservableObject {
                 if let sessionLogSummary {
                     self.applySessionLogSummary(sessionLogSummary)
                 }
+                self.flushSuppressedAnomalySummaryIfNeeded()
             }
         }
     }
@@ -380,17 +388,9 @@ public final class AppState: ObservableObject {
     private func fireAnomalyNotification(for entity: EntitySnapshot) {
         let notificationKey = anomalyNotificationKey(for: entity)
         guard notificationsEnabled else {
-            recordLocalDiagnosticsEvent(
-                level: .debug,
-                subsystem: .ui,
-                eventType: "anomaly-notification-skipped",
-                message: "Skipped anomaly notification because notifications are disabled.",
-                entityId: entity.entityId,
-                fields: [
-                    DiagnosticsField(key: "notification_key", value: notificationKey),
-                    DiagnosticsField(key: "friction", value: String(format: "%.1f", entity.friction.totalScore)),
-                ]
-            )
+            suppressedAnomalyNotificationCount += 1
+            suppressedAnomalyEntityKeys.insert(notificationKey)
+            flushSuppressedAnomalySummaryIfNeeded()
             return
         }
         guard entity.friction.totalScore >= Float(frictionNotificationThreshold) else {
@@ -540,6 +540,31 @@ public final class AppState: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         return normalizedName.isEmpty ? entity.entityId : normalizedName
+    }
+
+    private func flushSuppressedAnomalySummaryIfNeeded(force: Bool = false) {
+        guard suppressedAnomalyNotificationCount > 0 else {
+            return
+        }
+        let now = Date()
+        if !force && now.timeIntervalSince(lastSuppressedAnomalySummaryDate) < suppressedAnomalySummaryInterval {
+            return
+        }
+        let entities = suppressedAnomalyEntityKeys.sorted().prefix(5).joined(separator: ", ")
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "anomaly-notifications-suppressed",
+            message: "Suppressed anomaly notifications while notifications are disabled.",
+            fields: [
+                DiagnosticsField(key: "suppressed_count", value: String(suppressedAnomalyNotificationCount)),
+                DiagnosticsField(key: "unique_entity_count", value: String(suppressedAnomalyEntityKeys.count)),
+                DiagnosticsField(key: "entities_preview", value: entities),
+            ]
+        )
+        suppressedAnomalyNotificationCount = 0
+        suppressedAnomalyEntityKeys.removeAll(keepingCapacity: true)
+        lastSuppressedAnomalySummaryDate = now
     }
 
     private func applySessionLogSummary(_ result: Result<SessionLogSummary, Error>) {

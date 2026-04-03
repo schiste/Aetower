@@ -366,6 +366,7 @@ pub struct DiagnosticsOverview {
     pub last_error_message: Option<String>,
     pub persisted_events: u64,
     pub persisted_path: Option<String>,
+    pub persisted_bytes: u64,
     pub persistence_error: Option<String>,
 }
 
@@ -761,6 +762,7 @@ impl From<diagnostics::DiagnosticsOverview> for DiagnosticsOverview {
             last_error_message: value.last_error_message,
             persisted_events: value.persisted_events,
             persisted_path: value.persisted_path,
+            persisted_bytes: value.persisted_bytes,
             persistence_error: value.persistence_error,
         }
     }

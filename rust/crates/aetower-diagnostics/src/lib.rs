@@ -149,6 +149,7 @@ pub struct DiagnosticsOverview {
     pub last_error_message: Option<String>,
     pub persisted_events: u64,
     pub persisted_path: Option<String>,
+    pub persisted_bytes: u64,
     pub persistence_error: Option<String>,
 }
 
@@ -282,6 +283,11 @@ impl DiagnosticsStore {
                 .persistence
                 .as_ref()
                 .map(|persistence| persistence.path.display().to_string()),
+            persisted_bytes: guard
+                .persistence
+                .as_ref()
+                .map(|persistence| persistence.file_bytes())
+                .unwrap_or(0),
             persistence_error: guard
                 .persistence
                 .as_ref()
@@ -343,6 +349,9 @@ impl PersistedDiagnostics {
     }
 
     fn append(&mut self, event: &DiagnosticsEvent) {
+        if !should_persist_event(event) {
+            return;
+        }
         match self.try_append(event) {
             Ok(()) => {
                 self.last_error = None;
@@ -395,6 +404,39 @@ impl PersistedDiagnostics {
         }
         self.event_count = retained.len();
         Ok(())
+    }
+
+    fn file_bytes(&self) -> u64 {
+        std::fs::metadata(&self.path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+    }
+}
+
+fn should_persist_event(event: &DiagnosticsEvent) -> bool {
+    match event.level {
+        DiagnosticsLevel::Warn | DiagnosticsLevel::Error => true,
+        DiagnosticsLevel::Info => matches!(
+            event.event_type.as_str(),
+            "engine-initialized"
+                | "capability-state-changed"
+                | "telemetry-config-updated"
+                | "history-pruned"
+                | "history-row-quarantined"
+                | "notification-settings-disabled"
+                | "notification-permission-ready"
+                | "notification-permission-denied"
+                | "notification-permission-requested"
+                | "notification-permission-request-failed"
+                | "notification-permission-unknown"
+                | "session-log-notification-churn"
+                | "session-log-notification-permission-failure"
+                | "session-log-window-noise"
+                | "session-log-metal-error"
+                | "session-log-analysis-failed"
+                | "anomaly-notifications-suppressed"
+        ),
+        DiagnosticsLevel::Trace | DiagnosticsLevel::Debug => false,
     }
 }
 
@@ -457,9 +499,9 @@ mod tests {
         for idx in 0..5 {
             store.emit(
                 DiagnosticsEvent::builder(
-                    DiagnosticsLevel::Info,
+                    DiagnosticsLevel::Warn,
                     DiagnosticsSubsystem::Engine,
-                    "tick",
+                    "session-log-notification-churn",
                     format!("event-{idx}"),
                 )
                 .build(),
@@ -472,6 +514,39 @@ mod tests {
         assert_eq!(events[0].message, "event-4");
         assert_eq!(events[2].message, "event-2");
         assert_eq!(reloaded.overview().persisted_events, 5);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn debug_events_do_not_persist() {
+        let path =
+            std::env::temp_dir().join(format!("aetower-diag-policy-{}.ndjson", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let store = DiagnosticsStore::with_persistence(8, &path, 16).expect("store");
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Debug,
+                DiagnosticsSubsystem::Engine,
+                "tick-completed",
+                "debug tick",
+            )
+            .build(),
+        );
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Warn,
+                DiagnosticsSubsystem::Persistence,
+                "history-load-failed",
+                "warn event",
+            )
+            .build(),
+        );
+
+        let persisted = std::fs::read_to_string(&path).expect("persisted file");
+        assert!(!persisted.contains("tick-completed"));
+        assert!(persisted.contains("history-load-failed"));
 
         let _ = std::fs::remove_file(&path);
     }
