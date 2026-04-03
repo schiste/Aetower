@@ -525,28 +525,9 @@ public struct MainListView: View {
 
     private var rankingPanel: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                if let topConcern {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 8) {
-                            RowSignalBadge(
-                                valueText: badgeValueText(for: topConcern),
-                                title: topConcern.displayName,
-                                tone: sortKey.tone,
-                                showsForegroundDot: topConcern.metrics.isForeground,
-                                isHighlighted: frictionHighlights(for: topConcern).title
-                            )
-                            Text(topConcernSummary(for: topConcern, sortKey: sortKey))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
-                }
-
-                rankedEntitiesSection
-            }
-            .padding(16)
+            rankedEntitiesSection
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
         }
     }
 
@@ -595,8 +576,8 @@ public struct MainListView: View {
     }
 
     private var rankedEntitiesSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // Compact sort + search on one line
+        VStack(alignment: .leading, spacing: 2) {
+            // Compact sort + search bar
             HStack(spacing: 6) {
                 Menu {
                     ForEach(SortKey.allCases) { key in
@@ -621,7 +602,7 @@ public struct MainListView: View {
                     }
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 3)
                     .background(Color.secondary.opacity(0.08), in: Capsule())
                 }
                 .menuStyle(.borderlessButton)
@@ -630,11 +611,33 @@ public struct MainListView: View {
                 TextField("Search...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                    .frame(maxWidth: 160)
+
+                Spacer()
             }
             .padding(.horizontal, 8)
+            .padding(.bottom, 2)
+
+            // Column headers
+            HStack(spacing: 6) {
+                Text("")
+                    .frame(width: 16)
+                Text("Name")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("CPU")
+                    .frame(width: 48, alignment: .trailing)
+                Text("MEM")
+                    .frame(width: 52, alignment: .trailing)
+                Text("Friction")
+                    .frame(width: 50, alignment: .trailing)
+            }
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
 
             if filteredEntities.isEmpty {
                 ContentUnavailableView(
