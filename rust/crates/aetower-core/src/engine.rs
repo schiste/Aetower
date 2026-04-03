@@ -142,9 +142,9 @@ impl Engine {
                             .and_then(|state| state.window_title.clone()),
                         ai_agent_friction: 0.0,
                         ai_agent_count: 0,
-                        gpu_percent: raw.host.gpu_percent,
-                        ane_percent: raw.host.ane_percent,
-                        gpu_memory_bytes: raw.host.gpu_memory_bytes,
+                        gpu_percent: 0.0,
+                        ane_percent: 0.0,
+                        gpu_memory_bytes: 0,
                     },
                     frontmost_app_state.as_ref(),
                 );
@@ -174,9 +174,9 @@ impl Engine {
                         .and_then(|state| state.window_title.clone()),
                     ai_agent_friction: 0.0,
                     ai_agent_count: 0,
-                    gpu_percent: raw.host.gpu_percent,
-                    ane_percent: raw.host.ane_percent,
-                    gpu_memory_bytes: raw.host.gpu_memory_bytes,
+                    gpu_percent: 0.0,
+                    ane_percent: 0.0,
+                    gpu_memory_bytes: 0,
                 };
                 friction::apply(&host, &mut entities);
 

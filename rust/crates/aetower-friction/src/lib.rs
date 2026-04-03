@@ -26,7 +26,7 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
         let network_share = (network_bps as f32 / host_network_bps).min(1.0);
         let network_score = ((network_mib / 8.0).min(1.0) * 10.0) + (network_share * 8.0);
 
-        let wakeups_score = (entity.metrics.wakeups_per_second / 150.0).min(1.0) * 12.0;
+        let wakeups_score = (entity.metrics.wakeups_per_second / 500.0).min(1.0) * 8.0;
         let pressure_score = host_pressure_factor
             * (entity.metrics.memory_resident_bytes as f32 / total_memory)
             * 20.0;
@@ -68,7 +68,7 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
         if network_score > 7.0 {
             reasons.push(format!("heavy network {:.1} MiB/s", network_mib));
         }
-        if wakeups_score > 4.0 {
+        if wakeups_score > 3.0 {
             reasons.push(format!(
                 "wakeups {:.0}/s",
                 entity.metrics.wakeups_per_second
@@ -83,11 +83,14 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
 
         // Energy impact: weighted combination of power-hungry components.
         // Scale: 0-100 where 100 = maximum single-entity battery drain.
-        let thermal_penalty = (thermal_multiplier - 1.0) * 200.0; // 0 to ~36
+        // Memory contributes via compressor/swap I/O; network via radio activity.
+        let thermal_penalty = (thermal_multiplier - 1.0) * 200.0;
         let battery_penalty = if host.on_battery { 10.0 } else { 0.0 };
-        let energy_impact_score = (cpu_score * 0.45
-            + wakeups_score * 0.25
-            + disk_score * 0.15
+        let energy_impact_score = (cpu_score * 0.40
+            + memory_score * 0.10
+            + wakeups_score * 0.15
+            + disk_score * 0.10
+            + network_score * 0.10
             + thermal_penalty * 0.10
             + battery_penalty * 0.05)
             .min(100.0);

@@ -42,10 +42,6 @@ pub fn build_entities(
             .metrics
             .memory_resident_bytes
             .saturating_add(process.memory_bytes);
-        entry.metrics.virtual_memory_bytes = entry
-            .metrics
-            .virtual_memory_bytes
-            .saturating_add(process.virtual_memory_bytes);
         entry.metrics.disk_read_bps = entry
             .metrics
             .disk_read_bps
@@ -404,7 +400,7 @@ mod tests {
                 cmd: Vec::new(),
                 cpu_percent: 10.0,
                 memory_bytes: 128,
-                virtual_memory_bytes: 512,
+
                 disk_read_bytes: 100,
                 disk_write_bytes: 200,
                 wakeups_per_second: 0.0,
@@ -419,7 +415,7 @@ mod tests {
                 cmd: Vec::new(),
                 cpu_percent: 5.0,
                 memory_bytes: 256,
-                virtual_memory_bytes: 1024,
+
                 disk_read_bytes: 300,
                 disk_write_bytes: 400,
                 wakeups_per_second: 0.0,
@@ -449,7 +445,6 @@ mod tests {
         let entity = &entities[0];
 
         assert_eq!(entity.metrics.memory_resident_bytes, 384);
-        assert_eq!(entity.metrics.virtual_memory_bytes, 1536);
         assert_eq!(entity.metrics.disk_read_bps, 400);
         assert_eq!(entity.metrics.disk_write_bps, 600);
     }
@@ -490,7 +485,7 @@ mod tests {
                 cmd: vec!["/Applications/Test.app/Contents/MacOS/Test".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 128,
-                virtual_memory_bytes: 256,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -508,7 +503,7 @@ mod tests {
                 ],
                 cpu_percent: 5.0,
                 memory_bytes: 256,
-                virtual_memory_bytes: 512,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -523,7 +518,7 @@ mod tests {
                 cmd: vec!["/sbin/launchd".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
-                virtual_memory_bytes: 0,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -601,7 +596,7 @@ mod tests {
                 cmd: vec!["-zsh".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
-                virtual_memory_bytes: 0,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -616,7 +611,7 @@ mod tests {
                 cmd: vec!["python3".to_owned(), "server.py".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
-                virtual_memory_bytes: 128,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -634,7 +629,7 @@ mod tests {
                 cmd: vec!["Terminal".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
-                virtual_memory_bytes: 0,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -678,7 +673,7 @@ mod tests {
                 cmd: vec!["/usr/libexec/sync-agent".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
-                virtual_memory_bytes: 128,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -693,7 +688,7 @@ mod tests {
                 cmd: vec!["/sbin/launchd".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
-                virtual_memory_bytes: 0,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -738,7 +733,7 @@ mod tests {
                 cmd: vec!["MenuBarExtra".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
-                virtual_memory_bytes: 128,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -753,7 +748,7 @@ mod tests {
                 cmd: vec!["/usr/libexec/xpcproxy".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
-                virtual_memory_bytes: 0,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -771,7 +766,7 @@ mod tests {
                 cmd: vec!["loginwindow".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
-                virtual_memory_bytes: 0,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -786,7 +781,7 @@ mod tests {
                 cmd: vec!["/sbin/launchd".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
-                virtual_memory_bytes: 0,
+
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,

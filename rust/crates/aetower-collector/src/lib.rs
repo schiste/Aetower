@@ -16,7 +16,6 @@ pub struct RawProcessSample {
     pub cmd: Vec<String>,
     pub cpu_percent: f32,
     pub memory_bytes: u64,
-    pub virtual_memory_bytes: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
     #[serde(default)]
@@ -43,12 +42,6 @@ pub struct RawHostSample {
     pub on_battery: bool,
     pub battery_charge_percent: Option<u8>,
     pub low_power_mode: bool,
-    #[serde(default)]
-    pub gpu_percent: f32,
-    #[serde(default)]
-    pub ane_percent: f32,
-    #[serde(default)]
-    pub gpu_memory_bytes: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -67,6 +60,8 @@ struct NetworkTotals {
 struct ProcessCounterSample {
     start_time_millis: u64,
     wakeups: u64,
+    disk_read_bytes: u64,
+    disk_write_bytes: u64,
 }
 
 pub struct Collector {
@@ -76,7 +71,6 @@ pub struct Collector {
     process_metadata_tick: u8,
     host_environment_refresh_tick: u8,
     cached_host_environment: HostEnvironment,
-    cached_gpu_sample: aetower_gpu::GpuSample,
     previous_process_counters: HashMap<u32, ProcessCounterSample>,
 }
 
@@ -95,7 +89,6 @@ impl Collector {
             process_metadata_tick: 0,
             host_environment_refresh_tick: 0,
             cached_host_environment: HostEnvironment::default(),
-            cached_gpu_sample: aetower_gpu::GpuSample::default(),
             previous_process_counters: HashMap::new(),
         }
     }
@@ -109,7 +102,6 @@ impl Collector {
         self.process_metadata_tick = self.process_metadata_tick.wrapping_add(1);
         if self.host_environment_refresh_tick == 0 {
             self.cached_host_environment = read_environment();
-            self.cached_gpu_sample = aetower_gpu::sample_gpu().unwrap_or_default();
         }
         self.host_environment_refresh_tick = (self.host_environment_refresh_tick + 1) % 5;
 
@@ -131,17 +123,32 @@ impl Collector {
                 let pid = process.pid().as_u32();
                 let start_time_millis = process.start_time().saturating_mul(1_000);
                 let wakeups = platform::process_wakeups(pid).unwrap_or(0);
-                let wakeups_per_second = self
+                let disk_read_total = process.disk_usage().read_bytes;
+                let disk_write_total = process.disk_usage().written_bytes;
+
+                // Compute deltas from previous sample (same process by start time).
+                let tick_seconds = 2.0_f32; // FAST_TICK = 2000ms
+                let previous = self
                     .previous_process_counters
                     .get(&pid)
-                    .filter(|previous| previous.start_time_millis == start_time_millis)
-                    .map(|previous| wakeups.saturating_sub(previous.wakeups) as f32)
+                    .filter(|prev| prev.start_time_millis == start_time_millis);
+                let wakeups_per_second = previous
+                    .map(|prev| wakeups.saturating_sub(prev.wakeups) as f32 / tick_seconds)
                     .unwrap_or(0.0);
+                let disk_read_delta = previous
+                    .map(|prev| disk_read_total.saturating_sub(prev.disk_read_bytes))
+                    .unwrap_or(0);
+                let disk_write_delta = previous
+                    .map(|prev| disk_write_total.saturating_sub(prev.disk_write_bytes))
+                    .unwrap_or(0);
+
                 next_process_counters.insert(
                     pid,
                     ProcessCounterSample {
                         start_time_millis,
                         wakeups,
+                        disk_read_bytes: disk_read_total,
+                        disk_write_bytes: disk_write_total,
                     },
                 );
 
@@ -158,9 +165,8 @@ impl Collector {
                         .collect(),
                     cpu_percent: process.cpu_usage(),
                     memory_bytes: process.memory(),
-                    virtual_memory_bytes: process.virtual_memory(),
-                    disk_read_bytes: process.disk_usage().read_bytes,
-                    disk_write_bytes: process.disk_usage().written_bytes,
+                    disk_read_bytes: disk_read_delta,
+                    disk_write_bytes: disk_write_delta,
                     wakeups_per_second,
                     cwd: if self.process_metadata_tick.is_multiple_of(2) {
                         platform::process_cwd(pid)
@@ -203,9 +209,6 @@ impl Collector {
             on_battery: self.cached_host_environment.on_battery,
             battery_charge_percent: self.cached_host_environment.battery_charge_percent,
             low_power_mode: self.cached_host_environment.low_power_mode,
-            gpu_percent: self.cached_gpu_sample.gpu_percent,
-            ane_percent: self.cached_gpu_sample.ane_percent,
-            gpu_memory_bytes: self.cached_gpu_sample.gpu_memory_bytes,
         };
         self.previous_network_totals = network_totals;
 

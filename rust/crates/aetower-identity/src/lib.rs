@@ -373,7 +373,6 @@ mod tests {
             cmd: cmd.iter().map(|value| (*value).to_owned()).collect(),
             cpu_percent: 0.0,
             memory_bytes: 0,
-            virtual_memory_bytes: 0,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
             wakeups_per_second: 0.0,

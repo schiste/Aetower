@@ -212,6 +212,9 @@ impl History {
                 .iter()
                 .any(|active_id| active_id == entity_id)
         });
+        self.cooccurrence.retain(|(a, b), _| {
+            active_entity_ids.iter().any(|id| id == a) && active_entity_ids.iter().any(|id| id == b)
+        });
 
         for entity in entities.iter().take(5) {
             let previous = self

@@ -140,7 +140,6 @@ pub struct HostTrend {
 pub struct AggregateMetrics {
     pub cpu_percent: f32,
     pub memory_resident_bytes: u64,
-    pub virtual_memory_bytes: u64,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
     pub network_receive_bps: u64,

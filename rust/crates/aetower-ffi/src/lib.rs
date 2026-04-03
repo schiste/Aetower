@@ -120,7 +120,6 @@ pub struct HostTrend {
 pub struct AggregateMetrics {
     pub cpu_percent: f32,
     pub memory_resident_bytes: u64,
-    pub virtual_memory_bytes: u64,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
     pub network_receive_bps: u64,
@@ -556,7 +555,6 @@ impl From<model::AggregateMetrics> for AggregateMetrics {
         Self {
             cpu_percent: value.cpu_percent,
             memory_resident_bytes: value.memory_resident_bytes,
-            virtual_memory_bytes: value.virtual_memory_bytes,
             disk_read_bps: value.disk_read_bps,
             disk_write_bps: value.disk_write_bps,
             network_receive_bps: value.network_receive_bps,
