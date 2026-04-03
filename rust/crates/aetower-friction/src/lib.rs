@@ -1,4 +1,4 @@
-use aetower_model::{EntitySnapshot, HostSnapshot, Recommendation};
+use aetower_model::{EntitySnapshot, HostSnapshot, Recommendation, ThermalState};
 
 pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
     let total_memory = host.memory_total_bytes.max(1) as f32;
@@ -7,7 +7,7 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
         .saturating_add(host.network_send_bps)
         .max(1) as f32;
     let host_pressure_factor = pressure_factor(host);
-    let thermal_multiplier = thermal_multiplier(host.thermal_state.as_str());
+    let thermal_multiplier = thermal_multiplier(host.thermal_state);
     let battery_multiplier = if host.on_battery { 1.08 } else { 1.0 };
 
     for entity in entities.iter_mut() {
@@ -134,12 +134,12 @@ fn pressure_factor(host: &HostSnapshot) -> f32 {
     (compressed_ratio * 1.5 + swap_ratio * 2.0).min(1.0)
 }
 
-fn thermal_multiplier(state: &str) -> f32 {
+fn thermal_multiplier(state: ThermalState) -> f32 {
     match state {
-        "critical" => 1.18,
-        "serious" => 1.12,
-        "fair" => 1.05,
-        _ => 1.0,
+        ThermalState::Critical => 1.18,
+        ThermalState::Serious => 1.12,
+        ThermalState::Fair => 1.05,
+        ThermalState::Nominal => 1.0,
     }
 }
 

@@ -1,13 +1,14 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use aetower_model::{
-    EntitySnapshot, HostSnapshot, HostTrend, MetricTrend, TimelineEvent, TimelineSeverity,
+    EntitySnapshot, HostSnapshot, HostTrend, MetricTrend, ThermalState, TimelineEvent,
+    TimelineSeverity,
 };
 
 pub struct History {
     previous_scores: BTreeMap<String, f32>,
     previous_anomaly: BTreeMap<String, bool>,
-    previous_thermal_state: String,
+    previous_thermal_state: ThermalState,
     thermal_contributors: Vec<String>,
     cooccurrence: BTreeMap<(String, String), u32>,
     cooccurrence_tick: u32,
@@ -43,7 +44,7 @@ impl History {
         Self {
             previous_scores: BTreeMap::new(),
             previous_anomaly: BTreeMap::new(),
-            previous_thermal_state: "nominal".to_owned(),
+            previous_thermal_state: ThermalState::Nominal,
             thermal_contributors: Vec::new(),
             cooccurrence: BTreeMap::new(),
             cooccurrence_tick: 0,
@@ -112,10 +113,10 @@ impl History {
 
         // Feature 5: Thermal contribution tracking.
         // When thermal state degrades, snapshot top-3 CPU consumers.
-        let thermal_degraded = host.thermal_state != "nominal"
-            && (self.previous_thermal_state == "nominal"
-                || thermal_severity(&host.thermal_state)
-                    > thermal_severity(&self.previous_thermal_state));
+        let thermal_degraded = host.thermal_state != ThermalState::Nominal
+            && (self.previous_thermal_state == ThermalState::Nominal
+                || thermal_severity(host.thermal_state)
+                    > thermal_severity(self.previous_thermal_state));
         if thermal_degraded {
             self.thermal_contributors = entities
                 .iter()
@@ -138,15 +139,15 @@ impl History {
                 ),
             );
         }
-        if host.thermal_state == "nominal" {
+        if host.thermal_state == ThermalState::Nominal {
             self.thermal_contributors.clear();
         }
-        self.previous_thermal_state = host.thermal_state.clone();
+        self.previous_thermal_state = host.thermal_state;
 
         // Set thermal_contribution on blamed entities.
         for entity in entities.iter_mut() {
             if self.thermal_contributors.contains(&entity.entity_id)
-                && host.thermal_state != "nominal"
+                && host.thermal_state != ThermalState::Nominal
             {
                 entity.thermal_contribution = Some(format!(
                     "Likely contributing to {} thermal state",
@@ -440,11 +441,11 @@ fn detect_anomaly(series: &VecDeque<f32>, current: f32) -> bool {
     (current - mean) / stddev > 2.0
 }
 
-fn thermal_severity(state: &str) -> u8 {
+fn thermal_severity(state: ThermalState) -> u8 {
     match state {
-        "critical" => 3,
-        "serious" => 2,
-        "fair" => 1,
-        _ => 0,
+        ThermalState::Critical => 3,
+        ThermalState::Serious => 2,
+        ThermalState::Fair => 1,
+        ThermalState::Nominal => 0,
     }
 }

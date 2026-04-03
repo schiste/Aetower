@@ -520,7 +520,7 @@ impl From<model::HostSnapshot> for HostSnapshot {
             network_receive_bps: value.network_receive_bps,
             network_send_bps: value.network_send_bps,
             wakeups_per_second: value.wakeups_per_second,
-            thermal_state: value.thermal_state,
+            thermal_state: value.thermal_state.to_string(),
             on_battery: value.on_battery,
             battery_charge_percent: value.battery_charge_percent,
             low_power_mode: value.low_power_mode,

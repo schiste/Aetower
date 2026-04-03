@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
+use aetower_model::ThermalState;
 use serde::{Deserialize, Serialize};
 use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System};
 
@@ -35,7 +36,7 @@ pub struct RawHostSample {
     pub network_send_bps: u64,
     #[serde(default)]
     pub wakeups_per_second: f32,
-    pub thermal_state: String,
+    pub thermal_state: ThermalState,
     pub on_battery: bool,
     pub battery_charge_percent: Option<u8>,
     pub low_power_mode: bool,
@@ -70,6 +71,7 @@ pub struct Collector {
     host_environment_refresh_tick: u8,
     cached_host_environment: HostEnvironment,
     previous_process_counters: HashMap<u32, ProcessCounterSample>,
+    cwd_cache: HashMap<u32, String>,
 }
 
 impl Collector {
@@ -87,6 +89,7 @@ impl Collector {
             host_environment_refresh_tick: 0,
             cached_host_environment: HostEnvironment::default(),
             previous_process_counters: HashMap::new(),
+            cwd_cache: HashMap::new(),
         }
     }
 
@@ -169,14 +172,34 @@ impl Collector {
                     disk_write_bytes: disk_write_delta,
                     wakeups_per_second,
                     cwd: if self.process_metadata_tick.is_multiple_of(2) {
-                        platform::process_cwd(pid)
+                        // Only probe new PIDs; return cached cwd for known ones.
+                        let is_new = self
+                            .previous_process_counters
+                            .get(&pid)
+                            .is_none_or(|prev| prev.start_time_millis != start_time_millis);
+                        if is_new {
+                            platform::process_cwd(pid)
+                        } else {
+                            self.cwd_cache.get(&pid).cloned()
+                        }
                     } else {
-                        None
+                        self.cwd_cache.get(&pid).cloned()
                     },
                 }
             })
             .collect();
         self.previous_process_counters = next_process_counters;
+
+        // Update CWD cache: insert fresh values, prune dead PIDs.
+        if self.process_metadata_tick.is_multiple_of(2) {
+            let alive: std::collections::HashSet<u32> = processes.iter().map(|p| p.pid).collect();
+            self.cwd_cache.retain(|pid, _| alive.contains(pid));
+            for process in &processes {
+                if let Some(ref cwd) = process.cwd {
+                    self.cwd_cache.insert(process.pid, cwd.clone());
+                }
+            }
+        }
 
         let host_disk_read_bps = processes.iter().fold(0u64, |total, process| {
             total.saturating_add(process.disk_read_bytes)
@@ -205,7 +228,7 @@ impl Collector {
                 .transmitted
                 .saturating_sub(self.previous_network_totals.transmitted),
             wakeups_per_second: host_wakeups_per_second,
-            thermal_state: self.cached_host_environment.thermal_state.clone(),
+            thermal_state: self.cached_host_environment.thermal_state,
             on_battery: self.cached_host_environment.on_battery,
             battery_charge_percent: self.cached_host_environment.battery_charge_percent,
             low_power_mode: self.cached_host_environment.low_power_mode,
@@ -247,7 +270,7 @@ pub fn index_processes(processes: &[RawProcessSample]) -> BTreeMap<u32, &RawProc
 
 #[derive(Debug, Clone)]
 pub struct HostEnvironment {
-    pub thermal_state: String,
+    pub thermal_state: ThermalState,
     pub on_battery: bool,
     pub battery_charge_percent: Option<u8>,
     pub low_power_mode: bool,
@@ -256,7 +279,7 @@ pub struct HostEnvironment {
 impl Default for HostEnvironment {
     fn default() -> Self {
         Self {
-            thermal_state: "nominal".to_owned(),
+            thermal_state: ThermalState::Nominal,
             on_battery: false,
             battery_charge_percent: None,
             low_power_mode: false,
@@ -270,6 +293,7 @@ pub fn read_environment() -> HostEnvironment {
 
 #[cfg(target_os = "macos")]
 mod platform {
+    use aetower_model::ThermalState;
     use std::{
         ffi::{CStr, c_char, c_void},
         mem, ptr,
@@ -469,12 +493,12 @@ mod platform {
         total_uncompressed_pages_in_compressor: u64,
     }
 
-    fn thermal_state() -> String {
+    fn thermal_state() -> ThermalState {
         match unsafe { ns_process_info_thermal_state() } {
-            1 => "fair".to_owned(),
-            2 => "serious".to_owned(),
-            3 => "critical".to_owned(),
-            _ => "nominal".to_owned(),
+            1 => ThermalState::Fair,
+            2 => ThermalState::Serious,
+            3 => ThermalState::Critical,
+            _ => ThermalState::Nominal,
         }
     }
 

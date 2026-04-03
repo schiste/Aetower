@@ -120,7 +120,7 @@ pub fn run_benchmark(config: BenchmarkConfig) -> BenchmarkReport {
             network_receive_bps: raw.host.network_receive_bps,
             network_send_bps: raw.host.network_send_bps,
             wakeups_per_second: raw.host.wakeups_per_second,
-            thermal_state: raw.host.thermal_state.clone(),
+            thermal_state: raw.host.thermal_state,
             on_battery: raw.host.on_battery,
             battery_charge_percent: raw.host.battery_charge_percent,
             low_power_mode: raw.host.low_power_mode,

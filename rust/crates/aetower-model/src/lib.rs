@@ -56,6 +56,27 @@ pub enum CapabilityHealth {
     Degraded,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThermalState {
+    #[default]
+    Nominal,
+    Fair,
+    Serious,
+    Critical,
+}
+
+impl std::fmt::Display for ThermalState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Nominal => "nominal",
+            Self::Fair => "fair",
+            Self::Serious => "serious",
+            Self::Critical => "critical",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum TimelineSeverity {
@@ -102,7 +123,7 @@ pub struct HostSnapshot {
     pub network_send_bps: u64,
     #[serde(default)]
     pub wakeups_per_second: f32,
-    pub thermal_state: String,
+    pub thermal_state: ThermalState,
     pub on_battery: bool,
     pub battery_charge_percent: Option<u8>,
     pub low_power_mode: bool,

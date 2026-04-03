@@ -10,13 +10,13 @@ use std::{
 
 use aetower_model::{
     CapabilityKind, CapabilitySnapshot, CapabilityState, FrontmostAppState, HostSnapshot,
-    HostTrend, SystemSnapshot,
+    HostTrend, SystemSnapshot, ThermalState,
 };
 use aetower_time::{self as time, ADAPTER_TICK, FAST_TICK};
 use parking_lot::Mutex;
 
 use crate::{
-    adapters::AdapterManager, collector::Collector, friction, history::History, run_entity_pipeline,
+    adapters::AdapterManager, collector::Collector, history::History, run_entity_pipeline,
 };
 
 struct EngineState {
@@ -51,7 +51,7 @@ impl Engine {
             sequence: 0,
             captured_at_millis: time::now_millis(),
             host: HostSnapshot {
-                thermal_state: "nominal".to_owned(),
+                thermal_state: ThermalState::Nominal,
                 on_battery: false,
                 battery_charge_percent: None,
                 low_power_mode: false,
@@ -117,41 +117,9 @@ impl Engine {
                         guard.capabilities.clone(),
                     )
                 };
-                let pipeline_output = run_entity_pipeline(
-                    &raw.processes,
-                    &HostSnapshot {
-                        cpu_percent: raw.host.cpu_percent,
-                        memory_used_bytes: raw.host.memory_used_bytes,
-                        memory_total_bytes: raw.host.memory_total_bytes,
-                        swap_used_bytes: raw.host.swap_used_bytes,
-                        compressed_memory_bytes: raw.host.compressed_memory_bytes,
-                        disk_read_bps: raw.host.disk_read_bps,
-                        disk_write_bps: raw.host.disk_write_bps,
-                        network_receive_bps: raw.host.network_receive_bps,
-                        network_send_bps: raw.host.network_send_bps,
-                        wakeups_per_second: raw.host.wakeups_per_second,
-                        thermal_state: raw.host.thermal_state.clone(),
-                        on_battery: raw.host.on_battery,
-                        battery_charge_percent: raw.host.battery_charge_percent,
-                        low_power_mode: raw.host.low_power_mode,
-                        frontmost_app_name: frontmost_app_state
-                            .as_ref()
-                            .map(|state| state.app_name.clone()),
-                        frontmost_window_title: frontmost_app_state
-                            .as_ref()
-                            .and_then(|state| state.window_title.clone()),
-                        ai_agent_friction: 0.0,
-                        ai_agent_count: 0,
-                        gpu_percent: 0.0,
-                        ane_percent: 0.0,
-                        gpu_memory_bytes: 0,
-                    },
-                    frontmost_app_state.as_ref(),
-                );
-                let mut entities = pipeline_output.entities;
-                adapters.enrich_entities(&mut entities, &capabilities);
-
-                let host = HostSnapshot {
+                // Single HostSnapshot construction — passed to pipeline
+                // (which runs identity + attribution + friction internally).
+                let mut host = HostSnapshot {
                     cpu_percent: raw.host.cpu_percent,
                     memory_used_bytes: raw.host.memory_used_bytes,
                     memory_total_bytes: raw.host.memory_total_bytes,
@@ -178,20 +146,20 @@ impl Engine {
                     ane_percent: 0.0,
                     gpu_memory_bytes: 0,
                 };
-                friction::apply(&host, &mut entities);
+                let pipeline_output =
+                    run_entity_pipeline(&raw.processes, &host, frontmost_app_state.as_ref());
+                let mut entities = pipeline_output.entities;
+                adapters.enrich_entities(&mut entities, &capabilities);
 
-                // Aggregate AI agent friction from AiAgent entities.
-                let (ai_agent_friction, ai_agent_count) = entities
+                // Aggregate AI agent friction (mutate in place, no second host).
+                let (ai_friction, ai_count) = entities
                     .iter()
                     .filter(|e| matches!(e.entity_kind, aetower_model::EntityKind::AiAgent))
-                    .fold((0.0f32, 0u32), |(friction, count), e| {
-                        (friction + e.friction.total_score, count + 1)
+                    .fold((0.0f32, 0u32), |(f, c), e| {
+                        (f + e.friction.total_score, c + 1)
                     });
-                let host = HostSnapshot {
-                    ai_agent_friction,
-                    ai_agent_count,
-                    ..host
-                };
+                host.ai_agent_friction = ai_friction;
+                host.ai_agent_count = ai_count;
 
                 let mut guard = state.lock();
                 let (timeline, host_trend) =

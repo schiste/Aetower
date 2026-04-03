@@ -23,7 +23,7 @@ dependencies = [
 name = "aetower-collector"
 version = "0.1.0"
 dependencies = [
- "aetower-gpu",
+ "aetower-model",
  "core-foundation-sys",
  "serde",
  "sysinfo",
