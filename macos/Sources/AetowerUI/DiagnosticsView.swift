@@ -34,6 +34,7 @@ public struct DiagnosticsView: View {
                 }
 
                 controls
+                sessionHealth
                 overview
                 eventStream
             }
@@ -108,6 +109,7 @@ public struct DiagnosticsView: View {
 
                 TextField("Search messages, fields, entity ids, adapters, or capabilities", text: $searchText)
                     .textFieldStyle(.roundedBorder)
+                    .aetowerUtilityTextInput()
 
                 if let diagnosticsLoadError = state.diagnosticsLoadError {
                     Text(diagnosticsLoadError)
@@ -169,6 +171,34 @@ public struct DiagnosticsView: View {
                     .foregroundStyle(.orange)
                     .padding(.top, 8)
             }
+        }
+    }
+
+    private var sessionHealth: some View {
+        GroupBox("Session health") {
+            LazyVGrid(columns: overviewColumns, alignment: .leading, spacing: 12) {
+                diagnosticsMetric(
+                    title: "Diagnostics",
+                    value: diagnosticsHealthTitle,
+                    subtitle: diagnosticsHealthSubtitle
+                )
+                diagnosticsMetric(
+                    title: "Unified logs",
+                    value: unifiedLogHealthTitle,
+                    subtitle: unifiedLogHealthSubtitle
+                )
+                diagnosticsMetric(
+                    title: "Permissions",
+                    value: permissionHealthTitle,
+                    subtitle: permissionHealthSubtitle
+                )
+                diagnosticsMetric(
+                    title: "Telemetry",
+                    value: telemetryHealthTitle,
+                    subtitle: telemetryHealthSubtitle
+                )
+            }
+            .padding(.top, 4)
         }
     }
 
@@ -309,6 +339,80 @@ public struct DiagnosticsView: View {
             }
             return event.message
         }
+    }
+
+    private var diagnosticsHealthTitle: String {
+        if state.diagnosticsOverview.errorCount > 0 {
+            return "Degraded"
+        }
+        if state.diagnosticsOverview.warnCount > 0 {
+            return "Watch"
+        }
+        return "Clean"
+    }
+
+    private var diagnosticsHealthSubtitle: String {
+        if let historyIssue = lastHistoryLoadFailure {
+            return historyIssue
+        }
+        if let lastErrorMessage = state.diagnosticsOverview.lastErrorMessage {
+            return lastErrorMessage
+        }
+        return "No recent diagnostics errors"
+    }
+
+    private var unifiedLogHealthTitle: String {
+        guard let summary = state.sessionLogSummary else {
+            return "Pending"
+        }
+        if summary.metalLoadFailures > 0 {
+            return "Investigate"
+        }
+        if summary.cursorUiEntries >= 120 || summary.viewBridgeCancellationCount > 0 {
+            return "Noisy"
+        }
+        return "Quiet"
+    }
+
+    private var unifiedLogHealthSubtitle: String {
+        guard let summary = state.sessionLogSummary else {
+            return "Open Diagnostics to analyze the current session"
+        }
+        return "\(summary.cursorUiEntries) cursor updates, \(summary.metalLoadFailures) Metal errors, \(summary.viewBridgeCancellationCount) view bridge cancellations"
+    }
+
+    private var permissionHealthTitle: String {
+        guard let summary = state.sessionLogSummary else {
+            return "Pending"
+        }
+        if summary.notificationAuthorizationFailures > 0 {
+            return "Denied"
+        }
+        if summary.tccAccessRequests > 2 {
+            return "Chatty"
+        }
+        return "Stable"
+    }
+
+    private var permissionHealthSubtitle: String {
+        guard let summary = state.sessionLogSummary else {
+            return "Session log analysis not loaded yet"
+        }
+        return "\(summary.tccAccessRequests) TCC checks, \(summary.notificationAuthorizationFailures) notification failures"
+    }
+
+    private var telemetryHealthTitle: String {
+        if let status = state.telemetryVerificationStatus {
+            return status.contains("failed") ? "Failed" : "Verified"
+        }
+        return state.telemetryEnabled ? "Enabled" : "Disabled"
+    }
+
+    private var telemetryHealthSubtitle: String {
+        if let status = state.telemetryVerificationStatus {
+            return status
+        }
+        return state.telemetryEnabled ? state.telemetryEndpoint : "Run verification from Settings"
     }
 }
 

@@ -632,6 +632,7 @@ public struct MainListView: View {
 
                 TextField("Search...", text: $searchText)
                     .textFieldStyle(.plain)
+                    .aetowerUtilityTextInput()
                     .font(.caption)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)

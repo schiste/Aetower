@@ -15,6 +15,11 @@ public struct PermissionResult {
 }
 
 public final class PermissionCoordinator {
+    private var accessibilityTrustCache: (checkedAt: Date, trusted: Bool)?
+    private var cachedWindowTitle: (checkedAt: Date, processIdentifier: pid_t, title: String?)?
+    private let accessibilityTrustCacheInterval: TimeInterval = 15
+    private let windowTitleCacheInterval: TimeInterval = 5
+
     public init() {}
 
     public func request(_ capability: CapabilityKind) -> PermissionResult {
@@ -76,6 +81,7 @@ public final class PermissionCoordinator {
         let promptKey = kAXTrustedCheckOptionPrompt.takeRetainedValue() as String
         let options = [promptKey: true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(options)
+        accessibilityTrustCache = (Date(), trusted)
         return PermissionResult(
             state: trusted ? .granted : .requested,
             detail: trusted
@@ -120,7 +126,15 @@ public final class PermissionCoordinator {
     }
 
     private func currentFocusedWindowTitle(for app: NSRunningApplication) -> String? {
-        guard AXIsProcessTrusted() else {
+        let now = Date()
+        if let cachedWindowTitle,
+           cachedWindowTitle.processIdentifier == app.processIdentifier,
+           now.timeIntervalSince(cachedWindowTitle.checkedAt) < windowTitleCacheInterval
+        {
+            return cachedWindowTitle.title
+        }
+
+        guard isAccessibilityTrusted(now: now) else {
             return nil
         }
 
@@ -143,8 +157,22 @@ public final class PermissionCoordinator {
             &title
         )
         guard titleResult == .success else {
+            cachedWindowTitle = (now, app.processIdentifier, nil)
             return nil
         }
-        return title as? String
+        let stringTitle = title as? String
+        cachedWindowTitle = (now, app.processIdentifier, stringTitle)
+        return stringTitle
+    }
+
+    private func isAccessibilityTrusted(now: Date = Date()) -> Bool {
+        if let accessibilityTrustCache,
+           now.timeIntervalSince(accessibilityTrustCache.checkedAt) < accessibilityTrustCacheInterval
+        {
+            return accessibilityTrustCache.trusted
+        }
+        let trusted = AXIsProcessTrusted()
+        accessibilityTrustCache = (now, trusted)
+        return trusted
     }
 }

@@ -1,12 +1,15 @@
 import Foundation
 import OSLog
 
-struct SessionLogSummary {
-    let windowMinutes: Int
-    let notificationLogEntries: Int
-    let notificationAuthorizationFailures: Int
-    let metalLoadFailures: Int
-    let nonActiveWindowWarnings: Int
+public struct SessionLogSummary {
+    public let windowMinutes: Int
+    public let notificationLogEntries: Int
+    public let notificationAuthorizationFailures: Int
+    public let metalLoadFailures: Int
+    public let nonActiveWindowWarnings: Int
+    public let cursorUiEntries: Int
+    public let tccAccessRequests: Int
+    public let viewBridgeCancellationCount: Int
 
     var fingerprint: String {
         [
@@ -15,6 +18,9 @@ struct SessionLogSummary {
             String(notificationAuthorizationFailures),
             String(metalLoadFailures),
             String(nonActiveWindowWarnings),
+            String(cursorUiEntries),
+            String(tccAccessRequests),
+            String(viewBridgeCancellationCount),
         ].joined(separator: ":")
     }
 }
@@ -34,9 +40,13 @@ enum SessionLogAnalyzer {
         var notificationAuthorizationFailures = 0
         var metalLoadFailures = 0
         var nonActiveWindowWarnings = 0
+        var cursorUiEntries = 0
+        var tccAccessRequests = 0
+        var viewBridgeCancellationCount = 0
 
         for case let entry as OSLogEntryLog in entries {
-            if isBenignFrameworkNoise(entry) {
+            if entry.subsystem == "com.apple.TextInputUI" && entry.category == "CursorUI" {
+                cursorUiEntries += 1
                 continue
             }
             let message = entry.composedMessage
@@ -54,6 +64,12 @@ enum SessionLogAnalyzer {
             if message.contains("ordered front from a non-active application") {
                 nonActiveWindowWarnings += 1
             }
+            if message.contains("TCCAccessRequest() IPC") {
+                tccAccessRequests += 1
+            }
+            if message.contains("NSViewBridgeErrorCanceled") {
+                viewBridgeCancellationCount += 1
+            }
         }
 
         return SessionLogSummary(
@@ -61,11 +77,10 @@ enum SessionLogAnalyzer {
             notificationLogEntries: notificationLogEntries,
             notificationAuthorizationFailures: notificationAuthorizationFailures,
             metalLoadFailures: metalLoadFailures,
-            nonActiveWindowWarnings: nonActiveWindowWarnings
+            nonActiveWindowWarnings: nonActiveWindowWarnings,
+            cursorUiEntries: cursorUiEntries,
+            tccAccessRequests: tccAccessRequests,
+            viewBridgeCancellationCount: viewBridgeCancellationCount
         )
-    }
-
-    private static func isBenignFrameworkNoise(_ entry: OSLogEntryLog) -> Bool {
-        entry.subsystem == "com.apple.TextInputUI" && entry.category == "CursorUI"
     }
 }

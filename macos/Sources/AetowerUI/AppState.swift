@@ -13,6 +13,7 @@ public final class AppState {
     public private(set) var historySnapshots: [SystemSnapshot] = []
     public private(set) var historyLoadError: String?
     public private(set) var diagnosticsEvents: [DiagnosticsEvent] = []
+    public private(set) var sessionLogSummary: SessionLogSummary?
     public private(set) var diagnosticsOverview = DiagnosticsOverview(
         ringCapacity: 0,
         currentSize: 0,
@@ -28,6 +29,9 @@ public final class AppState {
     )
     public private(set) var diagnosticsLoadError: String?
     public private(set) var notificationAuthorizationStatus = "unknown"
+    public private(set) var telemetryEnabled = false
+    public private(set) var telemetryEndpoint = "http://localhost:4318/v1/metrics"
+    public private(set) var telemetryVerificationStatus: String?
     public var lastError: String?
 
     @ObservationIgnored
@@ -256,6 +260,9 @@ public final class AppState {
         let chau7Endpoint = settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         bridge.configureChau7Endpoint(chau7Endpoint.isEmpty ? nil : chau7Endpoint)
         let telemetryEndpoint = settings.telemetryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.telemetryEnabled = settings.telemetryEnabled
+        self.telemetryEndpoint = telemetryEndpoint.isEmpty ? "http://localhost:4318/v1/metrics" : telemetryEndpoint
+        telemetryVerificationStatus = nil
         bridge.configureTelemetry(
             endpoint: telemetryEndpoint.isEmpty ? nil : telemetryEndpoint,
             enabled: settings.telemetryEnabled,
@@ -263,6 +270,25 @@ public final class AppState {
         )
 
         refresh(force: true)
+    }
+
+    public func verifyTelemetryExport(_ settings: SettingsStore) {
+        applyIntegrationSettings(settings)
+        telemetryVerificationStatus = "Verifying..."
+        let bridge = self.bridge
+        Task(priority: .utility) { [weak self] in
+            let result = bridge.verifyTelemetryExport()
+            await MainActor.run {
+                guard let self else { return }
+                if let result, !result.isEmpty {
+                    self.telemetryVerificationStatus = "Verification failed: \(result)"
+                    self.lastError = result
+                } else {
+                    self.telemetryVerificationStatus = "Verification succeeded."
+                }
+                self.loadDiagnostics(force: true)
+            }
+        }
     }
 
     public func refresh(force: Bool = false) {
@@ -362,6 +388,7 @@ public final class AppState {
                 self.diagnosticsLoadError = nil
                 self.mirrorDiagnosticsToUnifiedLog(events)
                 if let sessionLogSummary {
+                    self.sessionLogSummary = try? sessionLogSummary.get()
                     self.applySessionLogSummary(sessionLogSummary)
                 }
                 self.flushSuppressedAnomalySummaryIfNeeded()
@@ -678,14 +705,49 @@ public final class AppState {
                     ]
                 )
             }
+            if summary.tccAccessRequests > 2 {
+                recordLocalDiagnosticsEvent(
+                    level: .info,
+                    subsystem: .ui,
+                    eventType: "session-log-tcc-churn",
+                    message: "Unified logs recorded repeated TCC access requests in this session.",
+                    fields: [
+                        DiagnosticsField(key: "count", value: String(summary.tccAccessRequests)),
+                    ]
+                )
+            }
+            if summary.cursorUiEntries >= 120 {
+                recordLocalDiagnosticsEvent(
+                    level: .info,
+                    subsystem: .ui,
+                    eventType: "session-log-cursor-noise",
+                    message: "Unified logs recorded heavy TextInputUI cursor noise in this session.",
+                    fields: [
+                        DiagnosticsField(key: "count", value: String(summary.cursorUiEntries)),
+                    ]
+                )
+            }
             if summary.metalLoadFailures > 0 {
                 recordLocalDiagnosticsEvent(
-                    level: .error,
+                    level: summary.cursorUiEntries > 0 ? .warn : .error,
                     subsystem: .ui,
                     eventType: "session-log-metal-error",
-                    message: "Unified logs recorded a Metal-side load failure in this session.",
+                    message: summary.cursorUiEntries > 0
+                        ? "Unified logs recorded a Metal-side load failure while text-input services were active."
+                        : "Unified logs recorded a Metal-side load failure in this session.",
                     fields: [
                         DiagnosticsField(key: "count", value: String(summary.metalLoadFailures)),
+                    ]
+                )
+            }
+            if summary.viewBridgeCancellationCount > 0 {
+                recordLocalDiagnosticsEvent(
+                    level: .info,
+                    subsystem: .ui,
+                    eventType: "session-log-view-bridge-cancelled",
+                    message: "Unified logs recorded cancelled TextInputUI view-bridge connections in this session.",
+                    fields: [
+                        DiagnosticsField(key: "count", value: String(summary.viewBridgeCancellationCount)),
                     ]
                 )
             }
