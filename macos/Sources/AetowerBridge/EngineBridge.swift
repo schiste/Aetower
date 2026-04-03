@@ -59,4 +59,17 @@ public final class EngineBridge {
     public func configureChau7Endpoint(_ socketPath: String?) {
         engine.configureChau7Endpoint(socketPath: socketPath)
     }
+
+    public func stopAgentSession(sessionId: String, force: Bool) -> String? {
+        let result = engine.stopAgentSession(sessionId: sessionId, force: force)
+        return result.isEmpty ? nil : result
+    }
+
+    public func exportSnapshotJSON() -> String {
+        engine.exportSnapshotJson()
+    }
+
+    public func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSnapshot] {
+        engine.loadHistoryRange(startMillis: startMillis, endMillis: endMillis)
+    }
 }

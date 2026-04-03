@@ -110,6 +110,45 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
     Ok(Chau7Snapshot { tabs, sessions })
 }
 
+/// Stop a Chau7 runtime session via the `runtime_session_stop` MCP tool.
+pub fn stop_session(socket_path: &str, session_id: &str, force: bool) -> Result<(), String> {
+    let stream =
+        UnixStream::connect(socket_path).map_err(|e| format!("connect {socket_path}: {e}"))?;
+    stream
+        .set_read_timeout(Some(SOCKET_TIMEOUT))
+        .map_err(|e| format!("set_read_timeout: {e}"))?;
+    stream
+        .set_write_timeout(Some(SOCKET_TIMEOUT))
+        .map_err(|e| format!("set_write_timeout: {e}"))?;
+
+    let mut reader = BufReader::new(stream.try_clone().map_err(|e| format!("clone: {e}"))?);
+    let mut writer = stream;
+
+    let _init = rpc_call(
+        &mut writer,
+        &mut reader,
+        1,
+        "initialize",
+        json!({
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "aetower", "version": "0.1.0" }
+        }),
+    )?;
+
+    send_notification(&mut writer, "notifications/initialized", json!({}))?;
+
+    let _result = rpc_tool_call(
+        &mut writer,
+        &mut reader,
+        2,
+        "runtime_session_stop",
+        json!({ "session_id": session_id, "force": force }),
+    )?;
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // JSON-RPC helpers
 // ---------------------------------------------------------------------------

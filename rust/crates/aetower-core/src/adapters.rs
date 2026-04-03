@@ -347,6 +347,17 @@ impl AdapterManager {
         guard.chau7_last_error = None;
     }
 
+    pub fn stop_chau7_session(&self, session_id: &str, force: bool) -> Result<(), String> {
+        let guard = self.state.lock();
+        let socket_path = guard
+            .chau7_socket_path
+            .as_deref()
+            .ok_or_else(|| "no Chau7 socket configured".to_owned())?
+            .to_owned();
+        drop(guard);
+        crate::chau7::stop_session(&socket_path, session_id, force)
+    }
+
     pub fn refresh_caches(&self, capabilities: &BTreeMap<CapabilityKind, CapabilitySnapshot>) {
         let now = time::now_millis();
         let (
@@ -559,6 +570,7 @@ impl AdapterManager {
                             launched_by: None,
                             cpu_percent: target.cpu_percent,
                             memory_bytes: target.js_heap_used_bytes,
+                            cwd: None,
                         });
                     }
                     if !targets.is_empty()
@@ -602,6 +614,7 @@ impl AdapterManager {
                             launched_by: None,
                             cpu_percent: container.cpu_percent,
                             memory_bytes: container.memory_usage_bytes,
+                            cwd: None,
                         });
                     }
                     if !containers.is_empty()
@@ -636,6 +649,7 @@ impl AdapterManager {
                         launched_by: None,
                         cpu_percent: 0.0,
                         memory_bytes: 0,
+                        cwd: None,
                     });
                     if !entity
                         .badges
@@ -725,6 +739,7 @@ impl AdapterManager {
                         launched_by: None,
                         cpu_percent: 0.0,
                         memory_bytes: 0,
+                        cwd: None,
                     });
 
                     if tab.is_ai_agent() {
@@ -1624,6 +1639,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             launched_by: None,
             cpu_percent: 0.0,
             memory_bytes: 0,
+            cwd: None,
         });
     }
 
@@ -1640,6 +1656,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             launched_by: None,
             cpu_percent: 0.0,
             memory_bytes: 0,
+            cwd: None,
         });
         push_unique_badge(entity, "vscode-extension-host");
     }
@@ -1667,6 +1684,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             launched_by: None,
             cpu_percent: 0.0,
             memory_bytes: 0,
+            cwd: None,
         });
     }
 
@@ -1992,6 +2010,7 @@ mod tests {
                     launched_by: None,
                     cpu_percent: 0.0,
                     memory_bytes: 0,
+                    cwd: None,
                 },
                 ComponentSnapshot {
                     kind: ComponentKind::Process,
@@ -2007,11 +2026,17 @@ mod tests {
                     launched_by: None,
                     cpu_percent: 0.0,
                     memory_bytes: 0,
+                    cwd: None,
                 },
             ],
             trend: MetricTrend::default(),
             badges: Vec::new(),
             active_window_title: None,
+            anomaly_detected: false,
+            thermal_contribution: None,
+            grouping_suggestion: None,
+            agent_cost: None,
+            session_markers: Vec::new(),
             recommendations: Vec::new(),
         };
 

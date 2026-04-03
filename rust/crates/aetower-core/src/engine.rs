@@ -37,6 +37,7 @@ impl EngineState {
 pub struct Engine {
     state: Arc<Mutex<EngineState>>,
     adapters: AdapterManager,
+    persistence: Arc<Mutex<Option<aetower_persistence::HistoryStore>>>,
     running: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     adapter_worker: Option<JoinHandle<()>>,
@@ -62,6 +63,20 @@ impl Engine {
             timeline: Vec::new(),
         };
 
+        // Open persistence database (best-effort — app works without it).
+        let db_path = dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("Aetower")
+            .join("history.db");
+        let persistence = std::fs::create_dir_all(db_path.parent().unwrap())
+            .ok()
+            .and_then(|_| aetower_persistence::HistoryStore::open(&db_path, 5).ok());
+        if let Some(store) = persistence.as_ref() {
+            // Prune entries older than 7 days on startup.
+            let seven_days_ago = time::now_millis().saturating_sub(7 * 24 * 60 * 60 * 1000);
+            let _ = store.prune(seven_days_ago);
+        }
+
         Self {
             state: Arc::new(Mutex::new(EngineState {
                 sequence: 0,
@@ -71,6 +86,7 @@ impl Engine {
                 history: History::new(),
             })),
             adapters,
+            persistence: Arc::new(Mutex::new(persistence)),
             running: Arc::new(AtomicBool::new(false)),
             worker: None,
             adapter_worker: None,
@@ -84,6 +100,7 @@ impl Engine {
 
         let state = Arc::clone(&self.state);
         let adapters = self.adapters.clone();
+        let persistence = Arc::clone(&self.persistence);
         let running = Arc::clone(&self.running);
         self.worker = Some(thread::spawn(move || {
             let mut collector = Collector::new();
@@ -123,6 +140,11 @@ impl Engine {
                         frontmost_window_title: frontmost_app_state
                             .as_ref()
                             .and_then(|state| state.window_title.clone()),
+                        ai_agent_friction: 0.0,
+                        ai_agent_count: 0,
+                        gpu_percent: raw.host.gpu_percent,
+                        ane_percent: raw.host.ane_percent,
+                        gpu_memory_bytes: raw.host.gpu_memory_bytes,
                     },
                     frontmost_app_state.as_ref(),
                 );
@@ -150,8 +172,26 @@ impl Engine {
                     frontmost_window_title: frontmost_app_state
                         .as_ref()
                         .and_then(|state| state.window_title.clone()),
+                    ai_agent_friction: 0.0,
+                    ai_agent_count: 0,
+                    gpu_percent: raw.host.gpu_percent,
+                    ane_percent: raw.host.ane_percent,
+                    gpu_memory_bytes: raw.host.gpu_memory_bytes,
                 };
                 friction::apply(&host, &mut entities);
+
+                // Aggregate AI agent friction from AiAgent entities.
+                let (ai_agent_friction, ai_agent_count) = entities
+                    .iter()
+                    .filter(|e| matches!(e.entity_kind, aetower_model::EntityKind::AiAgent))
+                    .fold((0.0f32, 0u32), |(friction, count), e| {
+                        (friction + e.friction.total_score, count + 1)
+                    });
+                let host = HostSnapshot {
+                    ai_agent_friction,
+                    ai_agent_count,
+                    ..host
+                };
 
                 let mut guard = state.lock();
                 let (timeline, host_trend) =
@@ -168,6 +208,10 @@ impl Engine {
                     entities,
                     timeline,
                 };
+                // Persist snapshot (best-effort, throttled by write_interval).
+                if let Some(store) = persistence.lock().as_mut() {
+                    store.maybe_store(&guard.latest_snapshot);
+                }
                 drop(guard);
 
                 next_tick += FAST_TICK;
@@ -275,6 +319,18 @@ impl Engine {
     pub fn configure_chau7_endpoint(&self, socket_path: Option<String>) {
         self.adapters.configure_chau7_endpoint(socket_path);
         self.refresh_capability(CapabilityKind::Chau7);
+    }
+
+    pub fn load_history_range(&self, start_millis: u64, end_millis: u64) -> Vec<SystemSnapshot> {
+        self.persistence
+            .lock()
+            .as_ref()
+            .and_then(|store| store.load_range(start_millis, end_millis).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn stop_agent_session(&self, session_id: String, force: bool) -> Result<(), String> {
+        self.adapters.stop_chau7_session(&session_id, force)
     }
 
     fn refresh_capability(&self, kind: CapabilityKind) {
