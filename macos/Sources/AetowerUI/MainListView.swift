@@ -258,85 +258,88 @@ private struct RowFrictionHighlights {
 private struct EntityRow: View {
     let entity: EntitySnapshot
     let isSelected: Bool
-    let hostMemoryTotalBytes: UInt64
-    let sortKey: SortKey
-    let snapshotCapturedAtMillis: UInt64
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .center, spacing: 6) {
+        HStack(spacing: 0) {
+            // Left friction accent bar
+            RoundedRectangle(cornerRadius: 2)
+                .fill(AetowerDesign.frictionColor(entity.friction.totalScore))
+                .frame(width: 4)
+                .padding(.vertical, 4)
+
+            VStack(alignment: .leading, spacing: 3) {
+                // Top line: name + badges + friction
+                HStack(spacing: 8) {
                     if entity.entityKind == .aiAgent {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3) {
                             Circle()
                                 .fill(aiAgentDotColor)
-                                .frame(width: 8, height: 8)
+                                .frame(width: 7, height: 7)
                             Text(aiAgentProviderLabel)
-                                .font(.caption2.weight(.semibold))
+                                .font(.caption2.weight(.bold))
                                 .foregroundStyle(aiAgentDotColor)
                         }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(aiAgentDotColor.opacity(0.12), in: Capsule())
-                        .help("AI agent managed by Chau7")
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(aiAgentDotColor.opacity(0.15), in: Capsule())
                     }
+
+                    Text(entity.displayName)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+
                     if entity.anomalyDetected {
                         Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
                             .foregroundStyle(.orange)
-                            .font(.caption)
                             .symbolEffect(.pulse.wholeSymbol, isActive: true)
-                            .help("Anomaly: friction is unusually high for this entity")
                     }
-                    RowSignalBadge(
-                        valueText: badgeValueText,
-                        title: entity.displayName,
-                        tone: sortKey.tone,
-                        showsForegroundDot: entity.metrics.isForeground,
-                        isHighlighted: rowFrictionHighlights.title
-                    )
-                    InlineMetric(
-                        title: "CPU",
-                        value: String(format: "%.1f%%", entity.metrics.cpuPercent),
-                        isHighlighted: rowFrictionHighlights.cpu
-                    )
-                    InlineMetric(
-                        title: "Mem",
-                        value: String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes)),
-                        isHighlighted: rowFrictionHighlights.memory
-                    )
-                    InlineMetric(
-                        title: "Disk",
-                        value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
-                        isHighlighted: rowFrictionHighlights.disk
-                    )
-                    InlineMetric(
-                        title: "Net",
-                        value: formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps),
-                        isHighlighted: rowFrictionHighlights.network
-                    )
-                    InlineMetric(
-                        title: "Wake",
-                        value: formatWakeups(entity.metrics.wakeupsPerSecond),
-                        isHighlighted: rowFrictionHighlights.wakeups
-                    )
+
+                    Spacer()
+
+                    // Friction score with trend arrow
+                    HStack(spacing: 3) {
+                        let trend = AetowerDesign.trendArrow(entity.trend.friction)
+                        Image(systemName: trend.symbol)
+                            .font(.caption2)
+                            .foregroundStyle(trend.color)
+                        Text(String(format: "%.1f", entity.friction.totalScore))
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundStyle(AetowerDesign.frictionColor(entity.friction.totalScore))
+                            .contentTransition(.numericText())
+                    }
+                }
+
+                // Bottom line: key metrics
+                HStack(spacing: 12) {
+                    metricPill("CPU", String(format: "%.1f%%", entity.metrics.cpuPercent))
+                    metricPill("MEM", formatBytes(entity.metrics.memoryResidentBytes))
+                    if entity.metrics.diskReadBps + entity.metrics.diskWriteBps > 0 {
+                        metricPill("DISK", formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))
+                    }
+                    if entity.metrics.isForeground {
+                        Text("FRONT")
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.blue.opacity(0.7), in: Capsule())
+                    }
                 }
             }
-            if let provenanceSummary {
-                Text(provenanceSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.leading, 2)
-            }
+            .padding(.leading, 10)
+            .padding(.vertical, 8)
+            .padding(.trailing, 12)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(rowBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(
+            AetowerDesign.frictionColor(entity.friction.totalScore).opacity(isSelected ? 0.08 : (isHovered ? 0.04 : 0.02)),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(isSelected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(isSelected ? Color.accentColor.opacity(0.4) : AetowerDesign.frictionColor(entity.friction.totalScore).opacity(0.1), lineWidth: 1)
         )
         .scaleEffect(isHovered ? 1.005 : 1.0)
         .onHover { isHovered = $0 }
@@ -369,10 +372,15 @@ private struct EntityRow: View {
         }
     }
 
-    private var rowBackground: Color {
-        if isSelected { return AetowerDesign.Surface.rowSelected }
-        if isHovered { return AetowerDesign.Surface.rowHover }
-        return AetowerDesign.Surface.rowIdle
+    private func metricPill(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 2) {
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.tertiary)
+            Text(value)
+                .font(.caption2.monospacedDigit().weight(.medium))
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var aiAgentDotColor: Color {
@@ -387,48 +395,6 @@ private struct EntityRow: View {
         if entity.badges.contains("codex") { return "Codex" }
         if entity.badges.contains("chatgpt") { return "ChatGPT" }
         return "AI"
-    }
-
-    private var rowFrictionHighlights: RowFrictionHighlights {
-        frictionHighlights(for: entity)
-    }
-
-    private var badgeValueText: String? {
-        switch sortKey {
-        case .friction:
-            return String(format: "%.1f", entity.friction.totalScore)
-        case .cpu:
-            return String(format: "%.1f%%", entity.metrics.cpuPercent)
-        case .memory:
-            return String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: hostMemoryTotalBytes))
-        case .disk:
-            return formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps)
-        case .network:
-            return formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps)
-        case .energy:
-            return String(format: "%.1f", entity.friction.energyImpactScore)
-        case .alphabeticalAsc, .alphabeticalDesc:
-            return nil
-        case .oldestFirst:
-            return ageLabel(from: entity.oldestProcessStartMillis, now: snapshotCapturedAtMillis)
-        case .newestFirst:
-            return ageLabel(from: entity.newestProcessStartMillis, now: snapshotCapturedAtMillis)
-        }
-    }
-
-    private var provenanceSummary: String? {
-        if let provenance = entity.primaryProvenance {
-            let summary = "Provenance: \(provenanceSummaryLabel(provenance))"
-            if provenance.kind == .parentProcess,
-               let launcher = entity.components.first(where: { $0.launchedBy != nil })?.launchedBy {
-                return "\(summary) via \(launcher)"
-            }
-            return summary
-        }
-        if let launcher = entity.components.first(where: { $0.launchedBy != nil })?.launchedBy {
-            return "Provenance: launched by \(launcher)"
-        }
-        return nil
     }
 }
 
@@ -467,81 +433,83 @@ public struct MainListView: View {
     }
 
     private var summaryHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center) {
-                SectionEyebrow(text: "Machine")
-                Spacer()
+        HStack(spacing: 0) {
+            // Friction score — large, colored
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.fill")
+                    .foregroundStyle(AetowerDesign.frictionColor(Float(machineFrictionScore(for: state.snapshot.host))))
+                Text(String(format: "%.0f", machineFrictionScore(for: state.snapshot.host)))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundStyle(AetowerDesign.frictionColor(Float(machineFrictionScore(for: state.snapshot.host))))
+                    .contentTransition(.numericText())
+            }
+            .padding(.horizontal, 16)
+
+            Divider().frame(height: 24)
+
+            // Compact metric pills
+            ribbonMetric("CPU", String(format: "%.0f%%", state.snapshot.host.cpuPercent), AetowerDesign.Tone.cpu)
+            ribbonMetric("MEM", formatBytes(state.snapshot.host.memoryUsedBytes), AetowerDesign.Tone.memory)
+            ribbonMetric("DISK", formatRate(state.snapshot.host.diskReadBps + state.snapshot.host.diskWriteBps), AetowerDesign.Tone.disk)
+            ribbonMetric("NET", formatRate(state.snapshot.host.networkReceiveBps + state.snapshot.host.networkSendBps), AetowerDesign.Tone.network)
+
+            if state.snapshot.host.gpuPercent > 0 {
+                ribbonMetric("GPU", String(format: "%.0f%%", state.snapshot.host.gpuPercent), AetowerDesign.Tone.gpu)
+            }
+
+            Spacer()
+
+            // AI agent count (if any)
+            let agentCount = state.snapshot.host.aiAgentCount
+            if agentCount > 0 {
+                HStack(spacing: 4) {
+                    Circle().fill(.blue).frame(width: 6, height: 6)
+                    Text("\(agentCount) agent\(agentCount == 1 ? "" : "s")")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+            }
+
+            // Export + back buttons from old header
+            Button {
+                state.exportSnapshot()
+            } label: {
+                Label("Export", systemImage: "square.and.arrow.up")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 8)
+
+            if selectedEntity != nil {
                 Button {
-                    state.exportSnapshot()
+                    withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = nil }
                 } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                        .font(.caption.weight(.semibold))
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                        Text("Back")
+                    }
+                    .font(.caption.weight(.medium))
                 }
                 .buttonStyle(.plain)
-                if selectedEntity != nil {
-                    Button("Back to ranking") {
-                        withAnimation(AetowerDesign.Motion.standard) {
-                            selectedEntityID = nil
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .font(.caption.weight(.semibold))
-                }
+                .padding(.trailing, 12)
             }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    MachineBandMetric(
-                        title: "Friction",
-                        value: String(format: "%.1f", machineFrictionScore(for: state.snapshot.host)),
-                        tone: .orange,
-                        subtitle: trendWindowLabel(sampleCount: state.snapshot.hostTrend.machineFriction.count)
-                    )
-                    MachineBandMetric(
-                        title: "CPU",
-                        value: String(format: "%.1f%%", state.snapshot.host.cpuPercent),
-                        tone: .blue,
-                        subtitle: trendWindowLabel(sampleCount: state.snapshot.hostTrend.cpuPercent.count)
-                    )
-                    MachineBandMetric(
-                        title: "Memory",
-                        value: String(format: "%.1f%%", hostMemoryLoadPercent),
-                        tone: .green,
-                        subtitle: "\(formatBytes(state.snapshot.host.memoryUsedBytes)) used"
-                    )
-                    MachineBandMetric(
-                        title: "Disk",
-                        value: formatRate(state.snapshot.host.diskReadBps + state.snapshot.host.diskWriteBps),
-                        tone: .pink,
-                        subtitle: trendWindowLabel(sampleCount: state.snapshot.hostTrend.diskActivityBps.count)
-                    )
-                    MachineBandMetric(
-                        title: "Network",
-                        value: formatRate(state.snapshot.host.networkReceiveBps + state.snapshot.host.networkSendBps),
-                        tone: .teal,
-                        subtitle: trendWindowLabel(sampleCount: state.snapshot.hostTrend.networkActivityBps.count)
-                    )
-                    MachineBandMetric(
-                        title: "GPU",
-                        value: String(format: "%.1f%%", state.snapshot.host.gpuPercent),
-                        tone: .yellow,
-                        subtitle: hostGPUSummary(state.snapshot.host)
-                    )
-                    MachineBandMetric(
-                        title: "Wakeups",
-                        value: formatWakeups(state.snapshot.host.wakeupsPerSecond),
-                        tone: .orange,
-                        subtitle: hostCompressedSummary(state.snapshot.host)
-                    )
-                }
-            }
-
-            Text(hostStatusSummary(state.snapshot.host))
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .background(.ultraThinMaterial)
+    }
+
+    private func ribbonMetric(_ label: String, _ value: String, _ color: Color) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.tertiary)
+            Text(value)
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 10)
     }
 
     private var rankingPanel: some View {
@@ -659,10 +627,7 @@ public struct MainListView: View {
                         } label: {
                             EntityRow(
                                 entity: entity,
-                                isSelected: selectedEntityID == entity.entityId,
-                                hostMemoryTotalBytes: state.snapshot.host.memoryTotalBytes,
-                                sortKey: sortKey,
-                                snapshotCapturedAtMillis: state.snapshot.capturedAtMillis
+                                isSelected: selectedEntityID == entity.entityId
                             )
                         }
                         .buttonStyle(.plain)

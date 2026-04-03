@@ -80,6 +80,26 @@ enum AetowerDesign {
         static let alertInfo = Color.blue.opacity(0.10)
     }
 
+    // MARK: - Trend Direction
+
+    static func trendArrow(_ samples: [Float]) -> (symbol: String, color: Color) {
+        guard samples.count >= 3 else { return ("minus", .secondary) }
+        let recent = samples.suffix(3)
+        let first = recent.first ?? 0
+        let last = recent.last ?? 0
+        let delta = last - first
+        if delta > 2 { return ("arrow.up", .red) }
+        if delta < -2 { return ("arrow.down", .green) }
+        return ("minus", .secondary)
+    }
+
+    // MARK: - Friction Bar Width
+
+    static func frictionBarWidth(_ score: Float, maxWidth: CGFloat) -> CGFloat {
+        let normalized = min(max(Double(score) / 100.0, 0), 1)
+        return CGFloat(normalized) * maxWidth
+    }
+
     // MARK: - Agent Status
 
     static func agentColor(_ provider: String) -> Color {

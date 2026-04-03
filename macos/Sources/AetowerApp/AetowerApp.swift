@@ -22,6 +22,13 @@ struct AetowerApp: App {
     @StateObject private var settings = SettingsStore()
     @State private var menuBarExtraInserted = false
 
+    private var menuBarTitle: String {
+        let entities = state.snapshot.entities
+        if entities.isEmpty { return "Aetower" }
+        let topFriction = entities.first?.friction.totalScore ?? 0
+        return String(format: "%.0f", topFriction)
+    }
+
     init() {
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
         UserDefaults.standard.set(true, forKey: "ApplePersistenceIgnoreState")
@@ -76,7 +83,7 @@ struct AetowerApp: App {
                 state.stop()
             }
         }
-        MenuBarExtra("Aetower", systemImage: "gauge.with.needle", isInserted: $menuBarExtraInserted) {
+        MenuBarExtra(menuBarTitle, systemImage: "bolt.fill", isInserted: $menuBarExtraInserted) {
             MenuBarSummaryView(state: state)
         }
         .onChange(of: menuBarExtraInserted) { _, newValue in
