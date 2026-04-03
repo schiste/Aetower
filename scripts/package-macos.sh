@@ -8,6 +8,7 @@ BIN_DIR="$APP_DIR/Contents/MacOS"
 FRAMEWORK_DIR="$APP_DIR/Contents/Frameworks"
 HELPER_DIR="$APP_DIR/Contents/Helpers"
 PLIST_DIR="$APP_DIR/Contents"
+SWIFTPM_PLUGIN_DIR="$ROOT/macos/.build/plugins/outputs/macos/AetowerBindings/destination/BuildRustBridgePlugin"
 
 BUNDLE_ID="${AETOWER_BUNDLE_ID:-com.aetower.app}"
 VERSION="${AETOWER_VERSION:-0.1.0}"
@@ -109,6 +110,8 @@ install_name_tool -change "$ROOT/rust/target/debug/deps/libaetower_ffi.dylib" "@
 install_name_tool -change "$ROOT/rust/target/debug/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
 install_name_tool -change "$ROOT/rust/target/release/deps/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
 install_name_tool -change "$ROOT/rust/target/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
+install_name_tool -change "$SWIFTPM_PLUGIN_DIR/debug/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
+install_name_tool -change "$SWIFTPM_PLUGIN_DIR/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
 
 sign_target "$FRAMEWORK_DIR/libaetower_ffi.dylib" plain
 sign_target "$HELPER_DIR/aetower-helper" runtime
