@@ -1366,6 +1366,7 @@ public struct ComponentSnapshot {
     public var adapterContext: AdapterContextSnapshot?
     public var provenance: ProvenanceSnapshot?
     public var processId: UInt32?
+    public var startTimeMillis: UInt64
     public var executablePath: String?
     public var commandLine: String?
     public var parentSummary: String?
@@ -1377,13 +1378,14 @@ public struct ComponentSnapshot {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: ComponentKind, title: String, detail: String, adapterContext: AdapterContextSnapshot?, provenance: ProvenanceSnapshot?, processId: UInt32?, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, cwd: String?, user: String?) {
+    public init(kind: ComponentKind, title: String, detail: String, adapterContext: AdapterContextSnapshot?, provenance: ProvenanceSnapshot?, processId: UInt32?, startTimeMillis: UInt64, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, cwd: String?, user: String?) {
         self.kind = kind
         self.title = title
         self.detail = detail
         self.adapterContext = adapterContext
         self.provenance = provenance
         self.processId = processId
+        self.startTimeMillis = startTimeMillis
         self.executablePath = executablePath
         self.commandLine = commandLine
         self.parentSummary = parentSummary
@@ -1420,6 +1422,9 @@ extension ComponentSnapshot: Equatable, Hashable {
         if lhs.processId != rhs.processId {
             return false
         }
+        if lhs.startTimeMillis != rhs.startTimeMillis {
+            return false
+        }
         if lhs.executablePath != rhs.executablePath {
             return false
         }
@@ -1454,6 +1459,7 @@ extension ComponentSnapshot: Equatable, Hashable {
         hasher.combine(adapterContext)
         hasher.combine(provenance)
         hasher.combine(processId)
+        hasher.combine(startTimeMillis)
         hasher.combine(executablePath)
         hasher.combine(commandLine)
         hasher.combine(parentSummary)
@@ -1480,6 +1486,7 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
                 adapterContext: FfiConverterOptionTypeAdapterContextSnapshot.read(from: &buf), 
                 provenance: FfiConverterOptionTypeProvenanceSnapshot.read(from: &buf), 
                 processId: FfiConverterOptionUInt32.read(from: &buf), 
+                startTimeMillis: FfiConverterUInt64.read(from: &buf), 
                 executablePath: FfiConverterOptionString.read(from: &buf), 
                 commandLine: FfiConverterOptionString.read(from: &buf), 
                 parentSummary: FfiConverterOptionString.read(from: &buf), 
@@ -1498,6 +1505,7 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
         FfiConverterOptionTypeAdapterContextSnapshot.write(value.adapterContext, into: &buf)
         FfiConverterOptionTypeProvenanceSnapshot.write(value.provenance, into: &buf)
         FfiConverterOptionUInt32.write(value.processId, into: &buf)
+        FfiConverterUInt64.write(value.startTimeMillis, into: &buf)
         FfiConverterOptionString.write(value.executablePath, into: &buf)
         FfiConverterOptionString.write(value.commandLine, into: &buf)
         FfiConverterOptionString.write(value.parentSummary, into: &buf)

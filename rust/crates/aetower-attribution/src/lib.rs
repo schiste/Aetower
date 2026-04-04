@@ -69,6 +69,7 @@ pub fn build_entities(
             adapter_context: None,
             provenance: component_provenance(process, &seed.entity_id, &process_index, identity),
             process_id: Some(process.pid),
+            start_time_millis: process.start_time_millis,
             executable_path: process.exe.clone(),
             command_line: command_line(process),
             parent_summary: parent_summary(process, &process_index),

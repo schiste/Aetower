@@ -321,6 +321,8 @@ pub struct ComponentSnapshot {
     pub adapter_context: Option<AdapterContextSnapshot>,
     pub provenance: Option<ProvenanceSnapshot>,
     pub process_id: Option<u32>,
+    #[serde(default)]
+    pub start_time_millis: u64,
     pub executable_path: Option<String>,
     pub command_line: Option<String>,
     pub parent_summary: Option<String>,
