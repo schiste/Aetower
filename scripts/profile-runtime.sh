@@ -4,6 +4,7 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_BIN="$ROOT/dist/Aetower.app/Contents/MacOS/Aetower"
 OUT_DIR="${AETOWER_PROFILE_OUT_DIR:-$ROOT/tmp/runtime-profile}"
+SUPPORT_DIR="${HOME}/Library/Application Support/Aetower"
 DURATION_SECONDS=30
 INTERVAL_SECONDS=2
 SAMPLE_SECONDS=5
@@ -50,6 +51,8 @@ mkdir -p "$RUN_DIR"
 METRICS_CSV="$RUN_DIR/metrics.csv"
 SAMPLE_TXT="$RUN_DIR/sample.txt"
 SUMMARY_TXT="$RUN_DIR/summary.txt"
+STORE_TXT="$RUN_DIR/store-summary.txt"
+SESSION_LOG_TXT="$RUN_DIR/session-log-summary.txt"
 
 APP_PID=""
 cleanup() {
@@ -105,6 +108,50 @@ END {
     printf "rss avg: %.0f KB\n", rss_sum / count
     printf "rss max: %.0f KB\n", rss_max
 }' pid="$APP_PID" "$METRICS_CSV" >"$SUMMARY_TXT"
+
+DIAGNOSTICS_FILE="$SUPPORT_DIR/diagnostics.ndjson"
+HISTORY_DB="$SUPPORT_DIR/history.db"
+DIAGNOSTICS_LINES=0
+DIAGNOSTICS_WARN=0
+DIAGNOSTICS_ERROR=0
+DIAGNOSTICS_BYTES=0
+if [ -f "$DIAGNOSTICS_FILE" ]; then
+    DIAGNOSTICS_LINES="$(wc -l <"$DIAGNOSTICS_FILE" | tr -d ' ')"
+    DIAGNOSTICS_BYTES="$(wc -c <"$DIAGNOSTICS_FILE" | tr -d ' ')"
+    DIAGNOSTICS_WARN="$(grep -c '"level":"warn"' "$DIAGNOSTICS_FILE" || true)"
+    DIAGNOSTICS_ERROR="$(grep -c '"level":"error"' "$DIAGNOSTICS_FILE" || true)"
+fi
+HISTORY_BYTES=0
+if [ -f "$HISTORY_DB" ]; then
+    HISTORY_BYTES="$(wc -c <"$HISTORY_DB" | tr -d ' ')"
+fi
+
+{
+    printf 'diagnostics file: %s\n' "$DIAGNOSTICS_FILE"
+    printf 'diagnostics bytes: %s\n' "$DIAGNOSTICS_BYTES"
+    printf 'diagnostics lines: %s\n' "$DIAGNOSTICS_LINES"
+    printf 'diagnostics warn entries: %s\n' "$DIAGNOSTICS_WARN"
+    printf 'diagnostics error entries: %s\n' "$DIAGNOSTICS_ERROR"
+    printf 'history db: %s\n' "$HISTORY_DB"
+    printf 'history db bytes: %s\n' "$HISTORY_BYTES"
+} >"$STORE_TXT"
+
+if command -v /usr/bin/log >/dev/null 2>&1; then
+    /usr/bin/log show --style compact --last "${DURATION_SECONDS}s" --predicate "processIdentifier == $APP_PID" 2>/dev/null | awk '
+        /TextInputUI.*CursorUI/ { cursor += 1 }
+        /TCCAccessRequest\(\) IPC/ { tcc += 1 }
+        /Unable to open mach-O at path/ { metal += 1 }
+        /NSViewBridgeErrorCanceled/ { bridge += 1 }
+        /ordered front from a non-active application/ { window += 1 }
+        END {
+            printf "cursor_ui_entries: %d\n", cursor + 0
+            printf "tcc_access_requests: %d\n", tcc + 0
+            printf "metal_load_failures: %d\n", metal + 0
+            printf "view_bridge_cancellations: %d\n", bridge + 0
+            printf "non_active_window_warnings: %d\n", window + 0
+        }
+    ' >"$SESSION_LOG_TXT" || true
+fi
 
 cat "$SUMMARY_TXT"
 printf 'artifacts: %s\n' "$RUN_DIR"
