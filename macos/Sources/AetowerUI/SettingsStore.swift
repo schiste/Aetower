@@ -2,6 +2,14 @@ import Foundation
 import Observation
 import ServiceManagement
 
+public enum ExportPrivacyTier: String, CaseIterable, Identifiable {
+    case redacted
+    case operatorMode = "operator"
+    case full
+
+    public var id: String { rawValue }
+}
+
 @MainActor
 @Observable
 public final class SettingsStore {
@@ -44,7 +52,7 @@ public final class SettingsStore {
     public var appearanceMode: String {
         didSet { persist() }
     }
-    public var includeSensitiveExports: Bool {
+    public var exportPrivacyTier: ExportPrivacyTier {
         didSet { persist() }
     }
     public private(set) var launchAtLoginEnabled: Bool
@@ -69,7 +77,10 @@ public final class SettingsStore {
         self.notificationsEnabled = defaults.object(forKey: Self.notificationsEnabledKey) as? Bool ?? false
         self.frictionNotificationThreshold = defaults.object(forKey: Self.frictionNotificationThresholdKey) as? Double ?? 60.0
         self.appearanceMode = defaults.string(forKey: Self.appearanceModeKey) ?? "system"
-        self.includeSensitiveExports = defaults.object(forKey: Self.includeSensitiveExportsKey) as? Bool ?? false
+        let persistedTier = defaults.string(forKey: Self.exportPrivacyTierKey)
+        let legacySensitive = defaults.object(forKey: Self.includeSensitiveExportsKey) as? Bool ?? false
+        self.exportPrivacyTier = ExportPrivacyTier(rawValue: persistedTier ?? "")
+            ?? (legacySensitive ? .full : .redacted)
         self.launchAtLoginEnabled = false
         self.launchAtLoginError = nil
         syncLaunchAtLoginState()
@@ -112,6 +123,7 @@ public final class SettingsStore {
     private static let notificationsEnabledKey = "settings.notificationsEnabled"
     private static let frictionNotificationThresholdKey = "settings.frictionNotificationThreshold"
     private static let appearanceModeKey = "settings.appearanceMode"
+    static let exportPrivacyTierKey = "settings.exportPrivacyTier"
     static let includeSensitiveExportsKey = "settings.includeSensitiveExports"
 }
 
@@ -130,6 +142,7 @@ extension SettingsStore {
         defaults.set(notificationsEnabled, forKey: Self.notificationsEnabledKey)
         defaults.set(frictionNotificationThreshold, forKey: Self.frictionNotificationThresholdKey)
         defaults.set(appearanceMode, forKey: Self.appearanceModeKey)
-        defaults.set(includeSensitiveExports, forKey: Self.includeSensitiveExportsKey)
+        defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
+        defaults.set(exportPrivacyTier == .full, forKey: Self.includeSensitiveExportsKey)
     }
 }

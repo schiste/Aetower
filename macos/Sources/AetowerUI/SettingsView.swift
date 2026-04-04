@@ -85,8 +85,17 @@ public struct SettingsView: View {
 
                 GroupBox("Privacy") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Toggle("Include sensitive data in exports", isOn: $settings.includeSensitiveExports)
-                        Text("Disabled by default. Support bundles, snapshot exports, and diagnostics exports will redact window titles, command lines, paths, URLs, workspace roots, endpoints, and other sensitive fields unless you explicitly allow them.")
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Export privacy tier")
+                                .font(.headline)
+                            Picker("Export privacy tier", selection: $settings.exportPrivacyTier) {
+                                Text("Redacted").tag(ExportPrivacyTier.redacted)
+                                Text("Operator").tag(ExportPrivacyTier.operatorMode)
+                                Text("Full").tag(ExportPrivacyTier.full)
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                        Text("Redacted strips sensitive titles, paths, URLs, and commands. Operator keeps structural context like executable basenames and hostnames while still hiding secrets. Full exports everything and is intended only for explicit troubleshooting.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -104,7 +113,7 @@ public struct SettingsView: View {
                         TextField("Privileged helper path", text: $settings.privilegedHelperPath)
                             .textFieldStyle(.roundedBorder)
                             .aetowerUtilityTextInput()
-                        Text("The privileged helper is optional. It is intended to run with elevated rights when you want deeper socket attribution.")
+                        Text("The privileged helper is optional. It is intended to run with elevated rights when you want deeper socket attribution today and higher-confidence Endpoint Security lineage in enterprise builds.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         TextField("Chau7 socket path", text: $settings.chau7Endpoint, prompt: Text("~/.chau7/mcp.sock"))

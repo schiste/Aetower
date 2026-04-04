@@ -17,6 +17,7 @@ public struct DiagnosticsView: View {
     @State private var levelFilter: DiagnosticsLevelFilter = .all
     @State private var isLive = true
     @State private var isVisible = false
+    @State private var includePersisted = true
     @State private var showClearDiagnosticsConfirmation = false
 
     private let overviewColumns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
@@ -46,17 +47,18 @@ public struct DiagnosticsView: View {
         .navigationTitle("Diagnostics")
         .onAppear {
             isVisible = true
-            state.loadDiagnostics(force: true)
+            state.loadDiagnosticsQuery(currentQuery, force: true)
         }
         .onDisappear {
             isVisible = false
         }
-        .task(id: "\(isVisible)-\(isLive)") {
+        .task(id: "\(isVisible)-\(isLive)-\(includePersisted)-\(searchText)-\(levelFilter.rawValue)-\(subsystemFilter.map(subsystemLabel) ?? "all")") {
             guard isVisible && isLive else { return }
+            state.loadDiagnosticsQuery(currentQuery, force: true)
             while !Task.isCancelled && isVisible && isLive {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 guard !Task.isCancelled && isVisible && isLive else { break }
-                state.loadDiagnostics()
+                state.loadDiagnosticsQuery(currentQuery)
             }
         }
         .alert("Clear diagnostics?", isPresented: $showClearDiagnosticsConfirmation) {
@@ -105,10 +107,13 @@ public struct DiagnosticsView: View {
                     Toggle("Live", isOn: $isLive)
                         .toggleStyle(.switch)
 
+                    Toggle("Persisted", isOn: $includePersisted)
+                        .toggleStyle(.switch)
+
                     Spacer()
 
                     Button("Reload") {
-                        state.loadDiagnostics(force: true)
+                        state.loadDiagnosticsQuery(currentQuery, force: true)
                     }
                     .buttonStyle(.bordered)
 
@@ -321,39 +326,28 @@ public struct DiagnosticsView: View {
     }
 
     private var filteredEvents: [DiagnosticsEvent] {
-        let loweredQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return state.diagnosticsEvents.filter { event in
-            let levelMatches: Bool = switch levelFilter {
-            case .all:
-                true
-            case .warn:
-                event.level == .warn || event.level == .error
-            case .error:
-                event.level == .error
-            }
+        state.diagnosticsEvents
+    }
 
-            let subsystemMatches = subsystemFilter.map { $0 == event.subsystem } ?? true
-            let searchMatches: Bool
-            if loweredQuery.isEmpty {
-                searchMatches = true
-            } else {
-                let haystack = [
-                    event.message,
-                    event.eventType,
-                    event.entityId,
-                    event.adapter,
-                    event.capability,
-                    subsystemLabel(event.subsystem),
-                    event.fields.map(\.key).joined(separator: " "),
-                    event.fields.map(\.value).joined(separator: " "),
-                ]
-                .compactMap { $0 }
-                .joined(separator: " ")
-                .lowercased()
-                searchMatches = haystack.contains(loweredQuery)
-            }
+    private var currentQuery: DiagnosticsQuery {
+        DiagnosticsQuery(
+            limit: 500,
+            minimumLevel: minimumLevel,
+            subsystem: subsystemFilter,
+            search: searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : searchText,
+            sinceMillis: nil,
+            includePersisted: includePersisted
+        )
+    }
 
-            return levelMatches && subsystemMatches && searchMatches
+    private var minimumLevel: DiagnosticsLevel? {
+        switch levelFilter {
+        case .all:
+            return nil
+        case .warn:
+            return .warn
+        case .error:
+            return .error
         }
     }
 

@@ -231,7 +231,7 @@ public final class AppState {
     public func exportSnapshot() {
         let json = exportControlledJson(
             bridge.exportSnapshotJSON(),
-            includeSensitive: exportIncludesSensitiveData
+            privacyTier: exportPrivacyTier
         )
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
@@ -243,8 +243,17 @@ public final class AppState {
 
     public func exportDiagnostics(limit: UInt32 = 1000) {
         let json = exportControlledJson(
-            bridge.exportDiagnosticsJSON(limit: limit),
-            includeSensitive: exportIncludesSensitiveData
+            bridge.exportDiagnosticsQueryJSON(
+                DiagnosticsQuery(
+                    limit: limit,
+                    minimumLevel: nil,
+                    subsystem: nil,
+                    search: nil,
+                    sinceMillis: nil,
+                    includePersisted: true
+                )
+            ),
+            privacyTier: exportPrivacyTier
         )
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
@@ -276,26 +285,25 @@ public final class AppState {
 
     public func exportSupportBundle(_ settings: SettingsStore, diagnosticsLimit: UInt32 = 1_500) {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = supportBundleFilename()
+        panel.nameFieldStringValue = supportBundleDirectoryName()
         guard panel.runModal() == .OK, let url = panel.url else {
             return
         }
 
         do {
-            let payload = try supportBundlePayload(settings, diagnosticsLimit: diagnosticsLimit)
-            let data = try JSONSerialization.data(
-                withJSONObject: payload,
-                options: [.prettyPrinted, .sortedKeys]
+            let packageURL = normalizedSupportBundleURL(url)
+            try writeSupportBundlePackage(
+                to: packageURL,
+                settings: settings,
+                diagnosticsLimit: diagnosticsLimit
             )
-            try data.write(to: url, options: .atomic)
             recordLocalDiagnosticsEvent(
                 level: .info,
                 subsystem: .ui,
                 eventType: "support-bundle-exported",
                 message: "Exported a support bundle.",
                 fields: [
-                    DiagnosticsField(key: "path", value: url.path),
+                    DiagnosticsField(key: "path", value: packageURL.path),
                     DiagnosticsField(key: "history_snapshot_count", value: String(historySnapshots.count)),
                     DiagnosticsField(key: "diagnostics_event_count", value: String(diagnosticsEvents.count)),
                 ]
@@ -456,6 +464,20 @@ public final class AppState {
     }
 
     public func loadDiagnostics(force: Bool = false, limit: UInt32 = 500) {
+        loadDiagnosticsQuery(
+            DiagnosticsQuery(
+                limit: limit,
+                minimumLevel: nil,
+                subsystem: nil,
+                search: nil,
+                sinceMillis: nil,
+                includePersisted: false
+            ),
+            force: force
+        )
+    }
+
+    public func loadDiagnosticsQuery(_ query: DiagnosticsQuery, force: Bool = false) {
         let now = Date()
         if !force && now.timeIntervalSince(lastDiagnosticsLoadDate) < diagnosticsReloadInterval {
             return
@@ -468,7 +490,7 @@ public final class AppState {
         }
         diagnosticsLoadTask?.cancel()
         diagnosticsLoadTask = Task(priority: .utility) { [weak self] in
-            let events = bridge.latestDiagnostics(limit: limit)
+            let events = bridge.queryDiagnostics(query)
             let overview = bridge.diagnosticsOverview()
             let runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
             let sessionLogSummary = shouldAnalyzeSessionLogs ? Result { try SessionLogAnalyzer.analyzeCurrentProcess(lastMinutes: 6) } : nil
@@ -966,19 +988,29 @@ public final class AppState {
         _ settings: SettingsStore,
         diagnosticsLimit: UInt32
     ) throws -> [String: Any] {
-        let includeSensitive = settings.includeSensitiveExports
+        let privacyTier = settings.exportPrivacyTier
         let snapshotJson = exportControlledJson(
             bridge.exportSnapshotJSON(),
-            includeSensitive: includeSensitive
+            privacyTier: privacyTier
         )
         let diagnosticsJson = exportControlledJson(
-            bridge.exportDiagnosticsJSON(limit: diagnosticsLimit),
-            includeSensitive: includeSensitive
+            bridge.exportDiagnosticsQueryJSON(
+                DiagnosticsQuery(
+                    limit: diagnosticsLimit,
+                    minimumLevel: nil,
+                    subsystem: nil,
+                    search: nil,
+                    sinceMillis: nil,
+                    includePersisted: true
+                )
+            ),
+            privacyTier: privacyTier
         )
 
         return [
             "generatedAtMillis": UInt64(Date().timeIntervalSince1970 * 1000),
-            "redacted": !includeSensitive,
+            "privacyTier": privacyTier.rawValue,
+            "redacted": privacyTier != .full,
             "app": appMetadata(),
             "settings": settingsSummary(settings),
             "diagnosticsOverview": diagnosticsOverviewSummary(),
@@ -1002,7 +1034,7 @@ public final class AppState {
     }
 
     private func settingsSummary(_ settings: SettingsStore) -> [String: Any] {
-        let includeSensitive = settings.includeSensitiveExports
+        let privacyTier = settings.exportPrivacyTier
         return [
             "refreshIntervalSeconds": settings.refreshIntervalSeconds,
             "showMenuBarExtra": settings.showMenuBarExtra,
@@ -1010,15 +1042,23 @@ public final class AppState {
             "frictionNotificationThreshold": settings.frictionNotificationThreshold,
             "appearanceMode": settings.appearanceMode,
             "chromiumEndpointConfigured": !settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            "dockerSocketPath": includeSensitive ? settings.dockerSocketPath : "<redacted>",
+            "dockerSocketPath": exportControlledValue(
+                settings.dockerSocketPath,
+                privacyTier: privacyTier,
+                key: "dockerSocketPath"
+            ),
             "privilegedHelperEnabled": settings.privilegedHelperEnabled,
             "privilegedHelperPathConfigured": !settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "chau7EndpointConfigured": !settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "telemetryEnabled": settings.telemetryEnabled,
-            "telemetryEndpoint": includeSensitive ? settings.telemetryEndpoint : "<redacted>",
+            "telemetryEndpoint": exportControlledValue(
+                settings.telemetryEndpoint,
+                privacyTier: privacyTier,
+                key: "telemetryEndpoint"
+            ),
             "telemetryExportIntervalSeconds": settings.telemetryExportIntervalSeconds,
             "telemetryVerificationStatus": telemetryVerificationStatus ?? "not-run",
-            "includeSensitiveExports": settings.includeSensitiveExports,
+            "exportPrivacyTier": settings.exportPrivacyTier.rawValue,
         ]
     }
 
@@ -1118,18 +1158,24 @@ public final class AppState {
         try JSONSerialization.jsonObject(with: Data(json.utf8))
     }
 
-    private var exportIncludesSensitiveData: Bool {
-        UserDefaults.standard.object(forKey: SettingsStore.includeSensitiveExportsKey) as? Bool ?? false
+    private var exportPrivacyTier: ExportPrivacyTier {
+        let defaults = UserDefaults.standard
+        if let raw = defaults.string(forKey: SettingsStore.exportPrivacyTierKey),
+           let tier = ExportPrivacyTier(rawValue: raw) {
+            return tier
+        }
+        let legacySensitive = defaults.object(forKey: SettingsStore.includeSensitiveExportsKey) as? Bool ?? false
+        return legacySensitive ? .full : .redacted
     }
 
-    private func exportControlledJson(_ json: String, includeSensitive: Bool) -> String {
-        guard !includeSensitive else {
+    private func exportControlledJson(_ json: String, privacyTier: ExportPrivacyTier) -> String {
+        guard privacyTier != .full else {
             return json
         }
         guard let value = try? parseJsonValue(json) else {
             return json
         }
-        let redacted = redactExportValue(value)
+        let redacted = exportControlledValue(value, privacyTier: privacyTier)
         guard let data = try? JSONSerialization.data(
             withJSONObject: redacted,
             options: [.prettyPrinted, .sortedKeys]
@@ -1141,9 +1187,13 @@ public final class AppState {
         return encoded
     }
 
-    private func redactExportValue(_ value: Any, key: String? = nil) -> Any {
+    private func exportControlledValue(
+        _ value: Any,
+        privacyTier: ExportPrivacyTier,
+        key: String? = nil
+    ) -> Any {
         let normalizedKey = key?.lowercased() ?? ""
-        if isSensitiveExportKey(normalizedKey) {
+        if privacyTier == .redacted && isSensitiveExportKey(normalizedKey) {
             return "<redacted>"
         }
 
@@ -1152,26 +1202,45 @@ public final class AppState {
             let eventIsSensitive = (dictionary["sensitive"] as? Bool) ?? false
             for (childKey, childValue) in dictionary {
                 if eventIsSensitive, childKey == "message" {
-                    redacted[childKey] = "<redacted sensitive event>"
+                    redacted[childKey] = privacyTier == .operatorMode
+                        ? "<sensitive event>"
+                        : "<redacted sensitive event>"
                     continue
                 }
                 if eventIsSensitive, childKey == "fields" {
-                    redacted[childKey] = []
+                    redacted[childKey] = privacyTier == .operatorMode
+                        ? redactSensitiveFieldsOperatorMode(dictionary["fields"])
+                        : []
                     continue
                 }
-                redacted[childKey] = redactExportValue(childValue, key: childKey)
+                redacted[childKey] = exportControlledValue(
+                    childValue,
+                    privacyTier: privacyTier,
+                    key: childKey
+                )
             }
             return redacted
         }
 
         if let array = value as? [Any] {
             return array.map { child in
-                redactExportValue(child, key: key)
+                exportControlledValue(child, privacyTier: privacyTier, key: key)
             }
         }
 
-        if let string = value as? String, shouldRedactStringValue(string, key: normalizedKey) {
-            return "<redacted>"
+        if let string = value as? String {
+            switch privacyTier {
+            case .full:
+                return string
+            case .redacted:
+                if shouldRedactStringValue(string, key: normalizedKey) {
+                    return "<redacted>"
+                }
+            case .operatorMode:
+                if isSensitiveExportKey(normalizedKey) || shouldRedactStringValue(string, key: normalizedKey) {
+                    return sanitizedOperatorStringValue(string, key: normalizedKey)
+                }
+            }
         }
 
         return value
@@ -1225,13 +1294,144 @@ public final class AppState {
         return false
     }
 
-    private func supportBundleFilename() -> String {
+    private func redactSensitiveFieldsOperatorMode(_ value: Any?) -> Any {
+        guard let fields = value as? [[String: Any]] else {
+            return []
+        }
+        return fields.map { field in
+            let key = (field["key"] as? String) ?? "field"
+            let rawValue = (field["value"] as? String) ?? ""
+            return [
+                "key": key,
+                "value": sanitizedOperatorStringValue(rawValue, key: key.lowercased()),
+            ]
+        }
+    }
+
+    private func sanitizedOperatorStringValue(_ value: String, key: String) -> String {
+        if value.isEmpty {
+            return value
+        }
+        if key.contains("windowtitle") || key == "message" {
+            return "<redacted>"
+        }
+        if key.contains("command") {
+            let executable = value
+                .split(separator: " ")
+                .first
+                .map(String.init)
+                .map { URL(fileURLWithPath: $0).lastPathComponent }
+                ?? "command"
+            return executable
+        }
+        if key.contains("url") || key.contains("endpoint") {
+            return sanitizedHostString(value)
+        }
+        if key.contains("path") || key.contains("cwd") || key.contains("workspace") || key.contains("repo") {
+            return sanitizedPathString(value)
+        }
+        if key == "ports" || key == "sessionid" {
+            return "<redacted>"
+        }
+        if value.hasPrefix("http://") || value.hasPrefix("https://") {
+            return sanitizedHostString(value)
+        }
+        if value.hasPrefix("/") || value.hasPrefix("file://") || value.contains("/Users/") {
+            return sanitizedPathString(value)
+        }
+        return value
+    }
+
+    private func sanitizedHostString(_ value: String) -> String {
+        guard let components = URLComponents(string: value), let host = components.host else {
+            return "<redacted host>"
+        }
+        let scheme = components.scheme ?? "https"
+        return "\(scheme)://\(host)"
+    }
+
+    private func sanitizedPathString(_ value: String) -> String {
+        let cleaned = value.replacingOccurrences(of: "file://", with: "")
+        let lastPath = URL(fileURLWithPath: cleaned).lastPathComponent
+        return lastPath.isEmpty ? "<redacted path>" : "…/\(lastPath)"
+    }
+
+    private func normalizedSupportBundleURL(_ url: URL) -> URL {
+        if url.pathExtension == "aetower-supportbundle" {
+            return url
+        }
+        return url.appendingPathExtension("aetower-supportbundle")
+    }
+
+    private func writeSupportBundlePackage(
+        to packageURL: URL,
+        settings: SettingsStore,
+        diagnosticsLimit: UInt32
+    ) throws {
+        let payload = try supportBundlePayload(settings, diagnosticsLimit: diagnosticsLimit)
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: packageURL.path) {
+            try fileManager.removeItem(at: packageURL)
+        }
+        try fileManager.createDirectory(at: packageURL, withIntermediateDirectories: true)
+
+        let snapshotJson = exportControlledJson(
+            bridge.exportSnapshotJSON(),
+            privacyTier: settings.exportPrivacyTier
+        )
+        let diagnosticsJson = exportControlledJson(
+            bridge.exportDiagnosticsQueryJSON(
+                DiagnosticsQuery(
+                    limit: diagnosticsLimit,
+                    minimumLevel: nil,
+                    subsystem: nil,
+                    search: nil,
+                    sinceMillis: nil,
+                    includePersisted: true
+                )
+            ),
+            privacyTier: settings.exportPrivacyTier
+        )
+        let manifest: [String: Any] = [
+            "format": "aetower-supportbundle/v2",
+            "generatedAtMillis": UInt64(Date().timeIntervalSince1970 * 1000),
+            "privacyTier": settings.exportPrivacyTier.rawValue,
+            "files": [
+                "bundle.json",
+                "snapshot.json",
+                "diagnostics.json",
+            ],
+        ]
+
+        try writeJsonObject(payload, to: packageURL.appendingPathComponent("bundle.json"))
+        try snapshotJson.write(
+            to: packageURL.appendingPathComponent("snapshot.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try diagnosticsJson.write(
+            to: packageURL.appendingPathComponent("diagnostics.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try writeJsonObject(manifest, to: packageURL.appendingPathComponent("manifest.json"))
+    }
+
+    private func writeJsonObject(_ value: Any, to url: URL) throws {
+        let data = try JSONSerialization.data(
+            withJSONObject: value,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try data.write(to: url, options: .atomic)
+    }
+
+    private func supportBundleDirectoryName() -> String {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone.current
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        return "aetower-support-bundle-\(formatter.string(from: Date())).json"
+        return "aetower-support-bundle-\(formatter.string(from: Date())).aetower-supportbundle"
     }
 
     private func diagnosticsSubsystemCategory(_ subsystem: DiagnosticsSubsystem) -> String {

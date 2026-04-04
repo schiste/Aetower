@@ -94,6 +94,10 @@ public final class EngineBridge: @unchecked Sendable {
         engine.latestDiagnostics(limit: limit)
     }
 
+    public func queryDiagnostics(_ query: DiagnosticsQuery) -> [DiagnosticsEvent] {
+        engine.queryDiagnostics(query: query)
+    }
+
     public func diagnosticsOverview() -> DiagnosticsOverview {
         engine.diagnosticsOverview()
     }
@@ -110,6 +114,10 @@ public final class EngineBridge: @unchecked Sendable {
 
     public func exportDiagnosticsJSON(limit: UInt32 = 1000) -> String {
         engine.exportDiagnosticsJson(limit: limit)
+    }
+
+    public func exportDiagnosticsQueryJSON(_ query: DiagnosticsQuery) -> String {
+        engine.exportDiagnosticsQueryJson(query: query)
     }
 
     public func recordDiagnosticsEvent(_ event: DiagnosticsEvent) {

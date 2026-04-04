@@ -349,6 +349,7 @@ private struct EntityRow: View {
                 )
         )
         .onHover { isHovered = $0 }
+        .help(rowHelpText)
         .animation(AetowerDesign.Motion.quick, value: isHovered)
         .contextMenu {
             Button("Copy Process IDs") {
@@ -405,6 +406,16 @@ private struct EntityRow: View {
 
     private var entityUser: String {
         entity.components.first?.user ?? ""
+    }
+
+    private var rowHelpText: String {
+        [
+            entity.recentChangeSummary,
+            entity.launcherSummary.map { "Launch lineage: \($0)" },
+            entity.attributionNotes.first,
+        ]
+        .compactMap { $0 }
+        .joined(separator: "\n")
     }
 
     private var entityParent: String {
