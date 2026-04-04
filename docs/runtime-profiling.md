@@ -16,6 +16,12 @@ Launch the packaged app just for the profiling run:
 sh scripts/profile-runtime.sh --rebuild --launch --duration 30 --interval 2 --sample-seconds 5
 ```
 
+Enforce default local runtime budgets during the profile:
+
+```sh
+sh scripts/profile-runtime.sh --duration 60 --interval 5 --sample-seconds 5 --enforce
+```
+
 ## What it captures
 
 Each run writes artifacts under `tmp/runtime-profile/<timestamp>/`:
@@ -51,3 +57,12 @@ After a soak, check:
 - `summary.txt` for CPU / RSS drift
 - `store-summary.txt` for diagnostics growth and unexpected warn/error persistence
 - `session-log-summary.txt` for CursorUI, TCC, Metal, or window-ordering noise
+
+With `--enforce`, the profiler will fail when default limits are exceeded for:
+
+- average CPU
+- peak CPU
+- peak RSS
+- persisted diagnostics error count
+- CursorUI noise
+- TCC request churn

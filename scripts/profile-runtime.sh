@@ -10,6 +10,13 @@ INTERVAL_SECONDS=2
 SAMPLE_SECONDS=5
 REBUILD=0
 LAUNCH=0
+ENFORCE=0
+CPU_AVG_MAX="${AETOWER_PROFILE_CPU_AVG_MAX:-5.0}"
+CPU_MAX_MAX="${AETOWER_PROFILE_CPU_MAX_MAX:-20.0}"
+RSS_MAX_KB_MAX="${AETOWER_PROFILE_RSS_MAX_KB_MAX:-262144}"
+DIAGNOSTICS_ERROR_MAX="${AETOWER_PROFILE_DIAGNOSTICS_ERROR_MAX:-0}"
+CURSOR_UI_MAX="${AETOWER_PROFILE_CURSOR_UI_MAX:-80}"
+TCC_REQUEST_MAX="${AETOWER_PROFILE_TCC_REQUEST_MAX:-6}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -31,6 +38,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --launch)
             LAUNCH=1
+            shift
+            ;;
+        --enforce)
+            ENFORCE=1
             shift
             ;;
         *)
@@ -155,3 +166,38 @@ fi
 
 cat "$SUMMARY_TXT"
 printf 'artifacts: %s\n' "$RUN_DIR"
+
+if [ "$ENFORCE" -eq 1 ]; then
+    CPU_AVG="$(awk -F': ' '/^cpu avg:/ {gsub(/%/, "", $2); print $2}' "$SUMMARY_TXT")"
+    CPU_MAX="$(awk -F': ' '/^cpu max:/ {gsub(/%/, "", $2); print $2}' "$SUMMARY_TXT")"
+    RSS_MAX="$(awk -F': ' '/^rss max:/ {gsub(/ KB/, "", $2); print $2}' "$SUMMARY_TXT")"
+    DIAGNOSTICS_ERRORS="$(awk -F': ' '/^diagnostics error entries:/ {print $2}' "$STORE_TXT")"
+    CURSOR_UI="$(awk -F': ' '/^cursor_ui_entries:/ {print $2}' "$SESSION_LOG_TXT" 2>/dev/null || printf '0')"
+    TCC_REQUESTS="$(awk -F': ' '/^tcc_access_requests:/ {print $2}' "$SESSION_LOG_TXT" 2>/dev/null || printf '0')"
+
+    awk -v value="$CPU_AVG" -v limit="$CPU_AVG_MAX" 'BEGIN { exit !(value <= limit) }' || {
+        echo "runtime profile enforcement failed: cpu avg $CPU_AVG > $CPU_AVG_MAX" >&2
+        exit 1
+    }
+    awk -v value="$CPU_MAX" -v limit="$CPU_MAX_MAX" 'BEGIN { exit !(value <= limit) }' || {
+        echo "runtime profile enforcement failed: cpu max $CPU_MAX > $CPU_MAX_MAX" >&2
+        exit 1
+    }
+    awk -v value="$RSS_MAX" -v limit="$RSS_MAX_KB_MAX" 'BEGIN { exit !(value <= limit) }' || {
+        echo "runtime profile enforcement failed: rss max $RSS_MAX KB > $RSS_MAX_KB_MAX KB" >&2
+        exit 1
+    }
+    awk -v value="$DIAGNOSTICS_ERRORS" -v limit="$DIAGNOSTICS_ERROR_MAX" 'BEGIN { exit !(value <= limit) }' || {
+        echo "runtime profile enforcement failed: diagnostics errors $DIAGNOSTICS_ERRORS > $DIAGNOSTICS_ERROR_MAX" >&2
+        exit 1
+    }
+    awk -v value="$CURSOR_UI" -v limit="$CURSOR_UI_MAX" 'BEGIN { exit !(value <= limit) }' || {
+        echo "runtime profile enforcement failed: CursorUI noise $CURSOR_UI > $CURSOR_UI_MAX" >&2
+        exit 1
+    }
+    awk -v value="$TCC_REQUESTS" -v limit="$TCC_REQUEST_MAX" 'BEGIN { exit !(value <= limit) }' || {
+        echo "runtime profile enforcement failed: TCC requests $TCC_REQUESTS > $TCC_REQUEST_MAX" >&2
+        exit 1
+    }
+    printf '✓ runtime profile enforcement passed\n'
+fi
