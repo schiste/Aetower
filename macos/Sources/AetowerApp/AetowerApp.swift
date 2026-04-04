@@ -66,6 +66,17 @@ struct AetowerApp: App {
                         Label("Diagnostics", systemImage: "waveform.path.ecg.rectangle")
                     }
 
+                ContentUnavailableView(
+                    "Fleet monitoring is not available yet.",
+                    systemImage: "network",
+                    description: Text("Local peer discovery and shared monitoring are not live in this build.")
+                )
+                .padding()
+                .tabItem {
+                    Label("Fleet monitoring", systemImage: "network")
+                }
+                .disabled(true)
+
                 SettingsView(state: state, settings: settings)
                     .tabItem {
                         Label("Settings", systemImage: "slider.horizontal.3")
