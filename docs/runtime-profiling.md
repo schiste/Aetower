@@ -52,6 +52,18 @@ For a stronger local soak run, use a longer duration and keep the app doing norm
 sh scripts/profile-runtime.sh --duration 1800 --interval 10 --sample-seconds 10
 ```
 
+For a stricter enterprise-style local soak that also exercises telemetry smoke and optionally release preflight:
+
+```sh
+sh scripts/soak-local.sh --rebuild --launch
+```
+
+Or with release credentials expected:
+
+```sh
+AETOWER_REQUIRE_ENDPOINT_SECURITY=1 sh scripts/soak-local.sh --release-preflight --rebuild --launch
+```
+
 After a soak, check:
 
 - `summary.txt` for CPU / RSS drift

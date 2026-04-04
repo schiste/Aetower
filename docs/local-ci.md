@@ -67,6 +67,12 @@ For Developer ID signing and optional notarization, see [distribution.md](distri
 
 For live packaged-app CPU / memory profiling outside the synthetic harness, see [runtime-profiling.md](runtime-profiling.md).
 
+For a long-running enforced soak with telemetry smoke and optional release preflight:
+
+```sh
+sh scripts/soak-local.sh --rebuild --launch
+```
+
 ## Telemetry smoke
 
 To exercise OTLP export against a real local loopback collector:
