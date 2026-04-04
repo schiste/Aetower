@@ -83,6 +83,15 @@ public struct SettingsView: View {
                     }
                 }
 
+                GroupBox("Privacy") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Include sensitive data in exports", isOn: $settings.includeSensitiveExports)
+                        Text("Disabled by default. Support bundles, snapshot exports, and diagnostics exports will redact window titles, command lines, paths, URLs, workspace roots, endpoints, and other sensitive fields unless you explicitly allow them.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 GroupBox("Integrations") {
                     VStack(alignment: .leading, spacing: 12) {
                         TextField("Chromium endpoint", text: $settings.chromiumEndpoint)

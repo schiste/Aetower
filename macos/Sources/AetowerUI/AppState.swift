@@ -229,7 +229,10 @@ public final class AppState {
     }
 
     public func exportSnapshot() {
-        let json = bridge.exportSnapshotJSON()
+        let json = exportControlledJson(
+            bridge.exportSnapshotJSON(),
+            includeSensitive: exportIncludesSensitiveData
+        )
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "aetower-snapshot.json"
@@ -239,7 +242,10 @@ public final class AppState {
     }
 
     public func exportDiagnostics(limit: UInt32 = 1000) {
-        let json = bridge.exportDiagnosticsJSON(limit: limit)
+        let json = exportControlledJson(
+            bridge.exportDiagnosticsJSON(limit: limit),
+            includeSensitive: exportIncludesSensitiveData
+        )
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "aetower-diagnostics.json"
@@ -273,6 +279,8 @@ public final class AppState {
                     DiagnosticsField(key: "history_snapshot_count", value: String(historySnapshots.count)),
                     DiagnosticsField(key: "diagnostics_event_count", value: String(diagnosticsEvents.count)),
                 ]
+                ,
+                sensitive: true
             )
         } catch {
             let message = "Support bundle export failed: \(error.localizedDescription)"
@@ -938,11 +946,19 @@ public final class AppState {
         _ settings: SettingsStore,
         diagnosticsLimit: UInt32
     ) throws -> [String: Any] {
-        let snapshotJson = bridge.exportSnapshotJSON()
-        let diagnosticsJson = bridge.exportDiagnosticsJSON(limit: diagnosticsLimit)
+        let includeSensitive = settings.includeSensitiveExports
+        let snapshotJson = exportControlledJson(
+            bridge.exportSnapshotJSON(),
+            includeSensitive: includeSensitive
+        )
+        let diagnosticsJson = exportControlledJson(
+            bridge.exportDiagnosticsJSON(limit: diagnosticsLimit),
+            includeSensitive: includeSensitive
+        )
 
         return [
             "generatedAtMillis": UInt64(Date().timeIntervalSince1970 * 1000),
+            "redacted": !includeSensitive,
             "app": appMetadata(),
             "settings": settingsSummary(settings),
             "diagnosticsOverview": diagnosticsOverviewSummary(),
@@ -966,7 +982,8 @@ public final class AppState {
     }
 
     private func settingsSummary(_ settings: SettingsStore) -> [String: Any] {
-        [
+        let includeSensitive = settings.includeSensitiveExports
+        return [
             "refreshIntervalSeconds": settings.refreshIntervalSeconds,
             "showMenuBarExtra": settings.showMenuBarExtra,
             "notificationsEnabled": settings.notificationsEnabled,
@@ -978,9 +995,10 @@ public final class AppState {
             "privilegedHelperPathConfigured": !settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "chau7EndpointConfigured": !settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "telemetryEnabled": settings.telemetryEnabled,
-            "telemetryEndpoint": settings.telemetryEndpoint,
+            "telemetryEndpoint": includeSensitive ? settings.telemetryEndpoint : "<redacted>",
             "telemetryExportIntervalSeconds": settings.telemetryExportIntervalSeconds,
             "telemetryVerificationStatus": telemetryVerificationStatus ?? "not-run",
+            "includeSensitiveExports": settings.includeSensitiveExports,
         ]
     }
 
@@ -1078,6 +1096,92 @@ public final class AppState {
 
     private func parseJsonValue(_ json: String) throws -> Any {
         try JSONSerialization.jsonObject(with: Data(json.utf8))
+    }
+
+    private var exportIncludesSensitiveData: Bool {
+        UserDefaults.standard.object(forKey: SettingsStore.includeSensitiveExportsKey) as? Bool ?? false
+    }
+
+    private func exportControlledJson(_ json: String, includeSensitive: Bool) -> String {
+        guard !includeSensitive else {
+            return json
+        }
+        guard let value = try? parseJsonValue(json) else {
+            return json
+        }
+        let redacted = redactExportValue(value)
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: redacted,
+            options: [.prettyPrinted, .sortedKeys]
+        ),
+              let encoded = String(data: data, encoding: .utf8)
+        else {
+            return json
+        }
+        return encoded
+    }
+
+    private func redactExportValue(_ value: Any, key: String? = nil) -> Any {
+        let normalizedKey = key?.lowercased() ?? ""
+        if isSensitiveExportKey(normalizedKey) {
+            return "<redacted>"
+        }
+
+        if let dictionary = value as? [String: Any] {
+            var redacted = [String: Any](minimumCapacity: dictionary.count)
+            let eventIsSensitive = (dictionary["sensitive"] as? Bool) ?? false
+            for (childKey, childValue) in dictionary {
+                if eventIsSensitive, childKey == "message" {
+                    redacted[childKey] = "<redacted sensitive event>"
+                    continue
+                }
+                if eventIsSensitive, childKey == "fields" {
+                    redacted[childKey] = []
+                    continue
+                }
+                redacted[childKey] = redactExportValue(childValue, key: childKey)
+            }
+            return redacted
+        }
+
+        if let array = value as? [Any] {
+            return array.map { child in
+                redactExportValue(child, key: key)
+            }
+        }
+
+        return value
+    }
+
+    private func isSensitiveExportKey(_ key: String) -> Bool {
+        if key.isEmpty {
+            return false
+        }
+        let exactMatches: Set<String> = [
+            "commandline",
+            "cwd",
+            "executablepath",
+            "frontmostwindowtitle",
+            "activewindowtitle",
+            "windowtitle",
+            "workspacepath",
+            "reporoot",
+            "sessionid",
+            "telemetryendpoint",
+            "path",
+            "url",
+            "ports",
+            "entities_preview",
+        ]
+        if exactMatches.contains(key) {
+            return true
+        }
+        return key.contains("command")
+            || key.contains("windowtitle")
+            || key.contains("workspace")
+            || key.contains("repo")
+            || key.contains("endpoint")
+            || key.contains("executable")
     }
 
     private func supportBundleFilename() -> String {
