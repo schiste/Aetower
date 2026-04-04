@@ -2103,10 +2103,11 @@ public struct FrictionBreakdown {
     public var foregroundBonus: Float
     public var energyImpactScore: Float
     public var reasons: [String]
+    public var contributors: [FrictionContributor]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(totalScore: Float, cpuScore: Float, memoryScore: Float, diskScore: Float, networkScore: Float, wakeupsScore: Float, pressureScore: Float, foregroundBonus: Float, energyImpactScore: Float, reasons: [String]) {
+    public init(totalScore: Float, cpuScore: Float, memoryScore: Float, diskScore: Float, networkScore: Float, wakeupsScore: Float, pressureScore: Float, foregroundBonus: Float, energyImpactScore: Float, reasons: [String], contributors: [FrictionContributor]) {
         self.totalScore = totalScore
         self.cpuScore = cpuScore
         self.memoryScore = memoryScore
@@ -2117,6 +2118,7 @@ public struct FrictionBreakdown {
         self.foregroundBonus = foregroundBonus
         self.energyImpactScore = energyImpactScore
         self.reasons = reasons
+        self.contributors = contributors
     }
 }
 
@@ -2157,6 +2159,9 @@ extension FrictionBreakdown: Equatable, Hashable {
         if lhs.reasons != rhs.reasons {
             return false
         }
+        if lhs.contributors != rhs.contributors {
+            return false
+        }
         return true
     }
 
@@ -2171,6 +2176,7 @@ extension FrictionBreakdown: Equatable, Hashable {
         hasher.combine(foregroundBonus)
         hasher.combine(energyImpactScore)
         hasher.combine(reasons)
+        hasher.combine(contributors)
     }
 }
 
@@ -2192,7 +2198,8 @@ public struct FfiConverterTypeFrictionBreakdown: FfiConverterRustBuffer {
                 pressureScore: FfiConverterFloat.read(from: &buf), 
                 foregroundBonus: FfiConverterFloat.read(from: &buf), 
                 energyImpactScore: FfiConverterFloat.read(from: &buf), 
-                reasons: FfiConverterSequenceString.read(from: &buf)
+                reasons: FfiConverterSequenceString.read(from: &buf), 
+                contributors: FfiConverterSequenceTypeFrictionContributor.read(from: &buf)
         )
     }
 
@@ -2207,6 +2214,7 @@ public struct FfiConverterTypeFrictionBreakdown: FfiConverterRustBuffer {
         FfiConverterFloat.write(value.foregroundBonus, into: &buf)
         FfiConverterFloat.write(value.energyImpactScore, into: &buf)
         FfiConverterSequenceString.write(value.reasons, into: &buf)
+        FfiConverterSequenceTypeFrictionContributor.write(value.contributors, into: &buf)
     }
 }
 
@@ -2223,6 +2231,92 @@ public func FfiConverterTypeFrictionBreakdown_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeFrictionBreakdown_lower(_ value: FrictionBreakdown) -> RustBuffer {
     return FfiConverterTypeFrictionBreakdown.lower(value)
+}
+
+
+public struct FrictionContributor {
+    public var key: String
+    public var label: String
+    public var score: Float
+    public var detail: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(key: String, label: String, score: Float, detail: String) {
+        self.key = key
+        self.label = label
+        self.score = score
+        self.detail = detail
+    }
+}
+
+#if compiler(>=6)
+extension FrictionContributor: Sendable {}
+#endif
+
+
+extension FrictionContributor: Equatable, Hashable {
+    public static func ==(lhs: FrictionContributor, rhs: FrictionContributor) -> Bool {
+        if lhs.key != rhs.key {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.score != rhs.score {
+            return false
+        }
+        if lhs.detail != rhs.detail {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(key)
+        hasher.combine(label)
+        hasher.combine(score)
+        hasher.combine(detail)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFrictionContributor: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FrictionContributor {
+        return
+            try FrictionContributor(
+                key: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                score: FfiConverterFloat.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FrictionContributor, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterFloat.write(value.score, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFrictionContributor_lift(_ buf: RustBuffer) throws -> FrictionContributor {
+    return try FfiConverterTypeFrictionContributor.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFrictionContributor_lower(_ value: FrictionContributor) -> RustBuffer {
+    return FfiConverterTypeFrictionContributor.lower(value)
 }
 
 
@@ -4918,6 +5012,31 @@ fileprivate struct FfiConverterSequenceTypeEntitySnapshot: FfiConverterRustBuffe
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeEntitySnapshot.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFrictionContributor: FfiConverterRustBuffer {
+    typealias SwiftType = [FrictionContributor]
+
+    public static func write(_ value: [FrictionContributor], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFrictionContributor.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FrictionContributor] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FrictionContributor]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFrictionContributor.read(from: &buf))
         }
         return seq
     }

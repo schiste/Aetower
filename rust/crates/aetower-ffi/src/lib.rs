@@ -218,6 +218,14 @@ pub struct AggregateMetrics {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct FrictionContributor {
+    pub key: String,
+    pub label: String,
+    pub score: f32,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct FrictionBreakdown {
     pub total_score: f32,
     pub cpu_score: f32,
@@ -229,6 +237,7 @@ pub struct FrictionBreakdown {
     pub foreground_bonus: f32,
     pub energy_impact_score: f32,
     pub reasons: Vec<String>,
+    pub contributors: Vec<FrictionContributor>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -945,6 +954,17 @@ impl From<model::AggregateMetrics> for AggregateMetrics {
     }
 }
 
+impl From<model::FrictionContributor> for FrictionContributor {
+    fn from(value: model::FrictionContributor) -> Self {
+        Self {
+            key: value.key,
+            label: value.label,
+            score: value.score,
+            detail: value.detail,
+        }
+    }
+}
+
 impl From<model::FrictionBreakdown> for FrictionBreakdown {
     fn from(value: model::FrictionBreakdown) -> Self {
         Self {
@@ -958,6 +978,7 @@ impl From<model::FrictionBreakdown> for FrictionBreakdown {
             foreground_bonus: value.foreground_bonus,
             energy_impact_score: value.energy_impact_score,
             reasons: value.reasons.into_vec(),
+            contributors: value.contributors.into_iter().map(Into::into).collect(),
         }
     }
 }

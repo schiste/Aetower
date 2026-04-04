@@ -60,6 +60,76 @@ private struct ComponentMetadataLine: View {
     }
 }
 
+private struct ContributorRow: View {
+    let contributor: FrictionContributor
+    let totalScore: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(contributor.label)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(String(format: "%.1f", contributor.score))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Text(shareLabel)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.tertiary)
+            }
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.10))
+                    Capsule()
+                        .fill(contributorColor.opacity(0.85))
+                        .frame(width: max(6, geometry.size.width * CGFloat(share)))
+                }
+            }
+            .frame(height: 8)
+            if !contributor.detail.isEmpty {
+                Text(contributor.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var share: Double {
+        guard totalScore > 0 else { return 0 }
+        return min(1.0, max(0.0, Double(contributor.score) / totalScore))
+    }
+
+    private var shareLabel: String {
+        guard totalScore > 0 else { return "0%" }
+        return String(format: "%.0f%% of score", share * 100.0)
+    }
+
+    private var contributorColor: Color {
+        switch contributor.key {
+        case "cpu":
+            return .blue
+        case "memory":
+            return .green
+        case "pressure":
+            return .orange
+        case "disk":
+            return .pink
+        case "network":
+            return .teal
+        case "wakeups":
+            return .red
+        case "foreground":
+            return .purple
+        default:
+            return .secondary
+        }
+    }
+}
+
 private struct ComponentCard: View {
     let component: ComponentSnapshot
 
@@ -357,6 +427,20 @@ public struct EntityDetailView: View {
                                 .padding(.top, 6)
                             Text(reason)
                                 .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
+                if !entity.friction.contributors.isEmpty {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Top score contributors")
+                            .font(.headline)
+                        ForEach(Array(entity.friction.contributors.enumerated()), id: \.offset) { _, contributor in
+                            ContributorRow(
+                                contributor: contributor,
+                                totalScore: Double(entity.friction.totalScore)
+                            )
                         }
                     }
                 }

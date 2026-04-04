@@ -1,4 +1,6 @@
-use aetower_model::{EntitySnapshot, HostSnapshot, Recommendation, ThermalState};
+use aetower_model::{
+    EntitySnapshot, FrictionContributor, HostSnapshot, Recommendation, ThermalState,
+};
 use smallvec::SmallVec;
 
 pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
@@ -106,6 +108,19 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
         entity.friction.foreground_bonus = foreground_bonus;
         entity.friction.energy_impact_score = energy_impact_score;
         entity.friction.reasons = reasons;
+        entity.friction.contributors = friction_contributors(
+            entity,
+            host,
+            cpu_score,
+            memory_score,
+            disk_score,
+            network_score,
+            wakeups_score,
+            pressure_score,
+            foreground_bonus,
+            disk_mib,
+            network_mib,
+        );
         entity.recommendations = recommendations_for_entity(entity, host, network_mib);
     }
 
@@ -119,6 +134,108 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
             .then_with(|| left.display_name.cmp(&right.display_name))
             .then_with(|| left.entity_id.cmp(&right.entity_id))
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn friction_contributors(
+    entity: &EntitySnapshot,
+    host: &HostSnapshot,
+    cpu_score: f32,
+    memory_score: f32,
+    disk_score: f32,
+    network_score: f32,
+    wakeups_score: f32,
+    pressure_score: f32,
+    foreground_bonus: f32,
+    disk_mib: f32,
+    network_mib: f32,
+) -> Vec<FrictionContributor> {
+    let mut contributors = Vec::with_capacity(6);
+    if cpu_score > 0.0 {
+        contributors.push(FrictionContributor {
+            key: "cpu".to_owned(),
+            label: "CPU load".to_owned(),
+            score: cpu_score,
+            detail: format!(
+                "{:.1}% active CPU across grouped processes",
+                entity.metrics.cpu_percent
+            ),
+        });
+    }
+    if memory_score > 0.0 {
+        contributors.push(FrictionContributor {
+            key: "memory".to_owned(),
+            label: "Memory footprint".to_owned(),
+            score: memory_score,
+            detail: format!(
+                "{:.1} MB resident, {:.1}% of host memory",
+                entity.metrics.memory_resident_bytes as f32 / 1_048_576.0,
+                if host.memory_total_bytes == 0 {
+                    0.0
+                } else {
+                    (entity.metrics.memory_resident_bytes as f32 / host.memory_total_bytes as f32)
+                        * 100.0
+                }
+            ),
+        });
+    }
+    if pressure_score > 0.0 {
+        contributors.push(FrictionContributor {
+            key: "pressure".to_owned(),
+            label: "Memory pressure".to_owned(),
+            score: pressure_score,
+            detail: format!(
+                "{:.1} GB compressed, {:.1} GB swap in use on the host",
+                host.compressed_memory_bytes as f32 / 1_073_741_824.0,
+                host.swap_used_bytes as f32 / 1_073_741_824.0
+            ),
+        });
+    }
+    if disk_score > 0.0 {
+        contributors.push(FrictionContributor {
+            key: "disk".to_owned(),
+            label: "Disk activity".to_owned(),
+            score: disk_score,
+            detail: format!("{disk_mib:.1} MiB/s read + write throughput"),
+        });
+    }
+    if network_score > 0.0 {
+        contributors.push(FrictionContributor {
+            key: "network".to_owned(),
+            label: "Network activity".to_owned(),
+            score: network_score,
+            detail: format!("{network_mib:.1} MiB/s receive + send throughput"),
+        });
+    }
+    if wakeups_score > 0.0 {
+        contributors.push(FrictionContributor {
+            key: "wakeups".to_owned(),
+            label: "Wakeups".to_owned(),
+            score: wakeups_score,
+            detail: format!(
+                "{:.0} wakeups per second",
+                entity.metrics.wakeups_per_second
+            ),
+        });
+    }
+    if foreground_bonus > 0.0 {
+        contributors.push(FrictionContributor {
+            key: "foreground".to_owned(),
+            label: "Foreground priority".to_owned(),
+            score: foreground_bonus,
+            detail: "This entity is frontmost, so Aetower biases it upward as the likely cause of visible friction.".to_owned(),
+        });
+    }
+
+    contributors.sort_by(|left, right| {
+        right
+            .score
+            .partial_cmp(&left.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    contributors.truncate(5);
+    contributors
 }
 
 fn pressure_factor(host: &HostSnapshot) -> f32 {
@@ -253,6 +370,7 @@ mod tests {
             entities[0].friction.reasons.as_slice(),
             ["background baseline activity".to_owned()]
         );
+        assert!(entities[0].friction.contributors.is_empty());
         assert!(entities[0].recommendations.is_empty());
     }
 
@@ -323,6 +441,22 @@ mod tests {
                 .reasons
                 .iter()
                 .any(|reason| reason.contains("wakeups"))
+        );
+        assert_eq!(entities[0].friction.contributors[0].key, "cpu");
+        assert!(entities[0].friction.contributors.len() <= 5);
+        assert!(
+            entities[0]
+                .friction
+                .contributors
+                .iter()
+                .any(|contributor| contributor.key == "disk")
+        );
+        assert!(
+            entities[0]
+                .friction
+                .contributors
+                .iter()
+                .any(|contributor| contributor.key == "network")
         );
         assert!(!entities[0].recommendations.is_empty());
     }

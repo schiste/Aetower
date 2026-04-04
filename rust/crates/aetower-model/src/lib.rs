@@ -271,6 +271,15 @@ pub struct AggregateMetrics {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FrictionContributor {
+    pub key: String,
+    pub label: String,
+    pub score: f32,
+    #[serde(default)]
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FrictionBreakdown {
     pub total_score: f32,
     pub cpu_score: f32,
@@ -286,6 +295,8 @@ pub struct FrictionBreakdown {
     #[serde(default)]
     pub energy_impact_score: f32,
     pub reasons: SmallVec<[String; 3]>,
+    #[serde(default)]
+    pub contributors: Vec<FrictionContributor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
