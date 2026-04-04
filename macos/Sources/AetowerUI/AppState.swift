@@ -14,6 +14,28 @@ public final class AppState {
     public private(set) var historyLoadError: String?
     public private(set) var diagnosticsEvents: [DiagnosticsEvent] = []
     public private(set) var sessionLogSummary: SessionLogSummary?
+    public private(set) var runtimeLagMetrics = RuntimeLagMetrics(
+        updatedAtMillis: 0,
+        engineTickMillis: 0,
+        collectMillis: 0,
+        identityMillis: 0,
+        attributionMillis: 0,
+        frictionMillis: 0,
+        enrichMillis: 0,
+        historyMillis: 0,
+        persistMillis: 0,
+        bridgeFetchMillis: 0,
+        uiRefreshMillis: 0,
+        snapshotToUiMillis: 0,
+        snapshotToRenderMillis: 0,
+        renderCommitMillis: 0,
+        displayFrameIntervalMillis: 0,
+        displayRefreshHz: 0,
+        displayDroppedFrames: 0,
+        inputAvgLatencyMillis: 0,
+        inputMaxLatencyMillis: 0,
+        inputSampleCount: 0
+    )
     public private(set) var diagnosticsOverview = DiagnosticsOverview(
         ringCapacity: 0,
         currentSize: 0,
@@ -420,12 +442,14 @@ public final class AppState {
         diagnosticsLoadTask = Task(priority: .utility) { [weak self] in
             let events = bridge.latestDiagnostics(limit: limit)
             let overview = bridge.diagnosticsOverview()
+            let runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
             let sessionLogSummary = shouldAnalyzeSessionLogs ? Result { try SessionLogAnalyzer.analyzeCurrentProcess(lastMinutes: 6) } : nil
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self else { return }
                 self.diagnosticsEvents = events
                 self.diagnosticsOverview = overview
+                self.runtimeLagMetrics = runtimeLagMetrics
                 self.diagnosticsLoadError = nil
                 self.mirrorDiagnosticsToUnifiedLog(events)
                 if let sessionLogSummary {
@@ -922,6 +946,7 @@ public final class AppState {
             "app": appMetadata(),
             "settings": settingsSummary(settings),
             "diagnosticsOverview": diagnosticsOverviewSummary(),
+            "runtimeLagMetrics": runtimeLagSummary(),
             "sessionHealth": sessionHealthSummary(),
             "historySummary": historySummary(),
             "snapshot": try parseJsonObject(snapshotJson),
@@ -972,6 +997,31 @@ public final class AppState {
             "persistedPath": jsonOptional(diagnosticsOverview.persistedPath),
             "persistedBytes": diagnosticsOverview.persistedBytes,
             "persistenceError": jsonOptional(diagnosticsOverview.persistenceError),
+        ]
+    }
+
+    private func runtimeLagSummary() -> [String: Any] {
+        [
+            "updatedAtMillis": runtimeLagMetrics.updatedAtMillis,
+            "engineTickMillis": runtimeLagMetrics.engineTickMillis,
+            "collectMillis": runtimeLagMetrics.collectMillis,
+            "identityMillis": runtimeLagMetrics.identityMillis,
+            "attributionMillis": runtimeLagMetrics.attributionMillis,
+            "frictionMillis": runtimeLagMetrics.frictionMillis,
+            "enrichMillis": runtimeLagMetrics.enrichMillis,
+            "historyMillis": runtimeLagMetrics.historyMillis,
+            "persistMillis": runtimeLagMetrics.persistMillis,
+            "bridgeFetchMillis": runtimeLagMetrics.bridgeFetchMillis,
+            "uiRefreshMillis": runtimeLagMetrics.uiRefreshMillis,
+            "snapshotToUiMillis": runtimeLagMetrics.snapshotToUiMillis,
+            "snapshotToRenderMillis": runtimeLagMetrics.snapshotToRenderMillis,
+            "renderCommitMillis": runtimeLagMetrics.renderCommitMillis,
+            "displayFrameIntervalMillis": runtimeLagMetrics.displayFrameIntervalMillis,
+            "displayRefreshHz": runtimeLagMetrics.displayRefreshHz,
+            "displayDroppedFrames": runtimeLagMetrics.displayDroppedFrames,
+            "inputAvgLatencyMillis": runtimeLagMetrics.inputAvgLatencyMillis,
+            "inputMaxLatencyMillis": runtimeLagMetrics.inputMaxLatencyMillis,
+            "inputSampleCount": runtimeLagMetrics.inputSampleCount,
         ]
     }
 

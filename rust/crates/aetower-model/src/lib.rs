@@ -104,10 +104,23 @@ pub enum ProvenanceKind {
     Unknown,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AttributionConfidence {
+    High,
+    Medium,
+    #[default]
+    Low,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProvenanceSnapshot {
     pub kind: ProvenanceKind,
     pub label: String,
+    #[serde(default)]
+    pub rule: String,
+    #[serde(default)]
+    pub confidence: AttributionConfidence,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]

@@ -197,6 +197,10 @@ private struct ComponentCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     if let provenance = component.provenance {
                         ComponentMetadataLine(title: "Provenance", value: detailProvenanceLabel(provenance))
+                        ComponentMetadataLine(title: "Attribution Confidence", value: attributionConfidenceLabel(provenance.confidence))
+                        if !provenance.rule.isEmpty {
+                            ComponentMetadataLine(title: "Attribution Rule", value: provenance.rule)
+                        }
                     }
                     if let adapterContext = component.adapterContext {
                         if let status = adapterContext.status {
@@ -538,6 +542,13 @@ public struct EntityDetailView: View {
                     "Provenance",
                     value: entity.primaryProvenance.map(detailProvenanceLabel) ?? "Unknown"
                 )
+                LabeledContent(
+                    "Attribution confidence",
+                    value: entity.primaryProvenance.map { attributionConfidenceLabel($0.confidence) } ?? "Unknown"
+                )
+                if let provenance = entity.primaryProvenance, !provenance.rule.isEmpty {
+                    LabeledContent("Attribution rule", value: provenance.rule)
+                }
                 LabeledContent("Executable", value: entity.executablePath ?? "Unknown")
                 LabeledContent("Frontmost", value: entity.metrics.isForeground ? "Yes" : "No")
                 LabeledContent("Active window", value: entity.activeWindowTitle ?? "None detected")
@@ -635,5 +646,16 @@ private func detailProvenanceLabel(_ provenance: ProvenanceSnapshot) -> String {
         return provenance.label.isEmpty ? "Parent process" : provenance.label
     case .unknown:
         return provenance.label.isEmpty ? "Unknown" : provenance.label
+    }
+}
+
+private func attributionConfidenceLabel(_ confidence: AttributionConfidence) -> String {
+    switch confidence {
+    case .high:
+        return "High"
+    case .medium:
+        return "Medium"
+    case .low:
+        return "Low"
     }
 }

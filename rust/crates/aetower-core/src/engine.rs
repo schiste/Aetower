@@ -439,6 +439,10 @@ impl Engine {
         self.state.lock().latest_snapshot.sequence
     }
 
+    pub fn latest_runtime_lag_metrics(&self) -> RuntimeLagMetrics {
+        self.state.lock().runtime_lag_metrics.clone()
+    }
+
     pub fn latest_diagnostics(&self, limit: usize) -> Vec<DiagnosticsEvent> {
         self.diagnostics.recent(limit)
     }

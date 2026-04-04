@@ -14,9 +14,9 @@ use aetower_diagnostics::{
     DiagnosticsEvent, DiagnosticsLevel, DiagnosticsStore, DiagnosticsSubsystem,
 };
 use aetower_model::{
-    AdapterContextKind, AdapterContextSnapshot, CapabilityHealth, CapabilityKind,
-    CapabilitySnapshot, CapabilityState, ComponentKind, ComponentSnapshot, EntitySnapshot,
-    ProvenanceKind, ProvenanceSnapshot,
+    AdapterContextKind, AdapterContextSnapshot, AttributionConfidence, CapabilityHealth,
+    CapabilityKind, CapabilitySnapshot, CapabilityState, ComponentKind, ComponentSnapshot,
+    EntitySnapshot, ProvenanceKind, ProvenanceSnapshot,
 };
 use aetower_time as time;
 use parking_lot::Mutex;
@@ -741,6 +741,8 @@ impl AdapterManager {
                             provenance: Some(ProvenanceSnapshot {
                                 kind: ProvenanceKind::BrowserContext,
                                 label: "Browser tab context".to_owned(),
+                                rule: "chromium remote debugging target".to_owned(),
+                                confidence: AttributionConfidence::Medium,
                             }),
                             process_id: None,
                             executable_path: None,
@@ -807,6 +809,8 @@ impl AdapterManager {
                             provenance: Some(ProvenanceSnapshot {
                                 kind: ProvenanceKind::ContainerWorkload,
                                 label: "Container workload".to_owned(),
+                                rule: "docker stats container mapping".to_owned(),
+                                confidence: AttributionConfidence::Medium,
                             }),
                             process_id: None,
                             executable_path: None,
@@ -1987,6 +1991,8 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             provenance: Some(ProvenanceSnapshot {
                 kind: ProvenanceKind::ParentProcess,
                 label: "VS Code workspace context".to_owned(),
+                rule: "workspace path heuristic".to_owned(),
+                confidence: AttributionConfidence::Low,
             }),
             process_id: None,
             executable_path: None,

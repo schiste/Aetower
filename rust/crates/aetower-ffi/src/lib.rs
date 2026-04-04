@@ -90,6 +90,13 @@ pub enum ThermalState {
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
+pub enum AttributionConfidence {
+    High,
+    Medium,
+    Low,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
 pub enum TimelineSeverity {
     Info,
     Warning,
@@ -115,6 +122,8 @@ pub enum ProvenanceKind {
 pub struct ProvenanceSnapshot {
     pub kind: ProvenanceKind,
     pub label: String,
+    pub rule: String,
+    pub confidence: AttributionConfidence,
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -191,6 +200,30 @@ pub struct HostTrend {
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct UiLagMetrics {
     pub updated_at_millis: u64,
+    pub bridge_fetch_millis: f32,
+    pub ui_refresh_millis: f32,
+    pub snapshot_to_ui_millis: f32,
+    pub snapshot_to_render_millis: f32,
+    pub render_commit_millis: f32,
+    pub display_frame_interval_millis: f32,
+    pub display_refresh_hz: f32,
+    pub display_dropped_frames: u64,
+    pub input_avg_latency_millis: f32,
+    pub input_max_latency_millis: f32,
+    pub input_sample_count: u32,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct RuntimeLagMetrics {
+    pub updated_at_millis: u64,
+    pub engine_tick_millis: f32,
+    pub collect_millis: f32,
+    pub identity_millis: f32,
+    pub attribution_millis: f32,
+    pub friction_millis: f32,
+    pub enrich_millis: f32,
+    pub history_millis: f32,
+    pub persist_millis: f32,
     pub bridge_fetch_millis: f32,
     pub ui_refresh_millis: f32,
     pub snapshot_to_ui_millis: f32,
@@ -432,6 +465,14 @@ impl MonitorEngine {
             .lock()
             .expect("engine lock poisoned")
             .latest_sequence()
+    }
+
+    pub fn latest_runtime_lag_metrics(&self) -> RuntimeLagMetrics {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .latest_runtime_lag_metrics()
+            .into()
     }
 
     pub fn set_capability_state(
@@ -724,6 +765,16 @@ impl From<model::ThermalState> for ThermalState {
     }
 }
 
+impl From<model::AttributionConfidence> for AttributionConfidence {
+    fn from(value: model::AttributionConfidence) -> Self {
+        match value {
+            model::AttributionConfidence::High => Self::High,
+            model::AttributionConfidence::Medium => Self::Medium,
+            model::AttributionConfidence::Low => Self::Low,
+        }
+    }
+}
+
 impl From<model::ProvenanceKind> for ProvenanceKind {
     fn from(value: model::ProvenanceKind) -> Self {
         match value {
@@ -988,6 +1039,35 @@ impl From<model::ProvenanceSnapshot> for ProvenanceSnapshot {
         Self {
             kind: value.kind.into(),
             label: value.label,
+            rule: value.rule,
+            confidence: value.confidence.into(),
+        }
+    }
+}
+
+impl From<model::RuntimeLagMetrics> for RuntimeLagMetrics {
+    fn from(value: model::RuntimeLagMetrics) -> Self {
+        Self {
+            updated_at_millis: value.updated_at_millis,
+            engine_tick_millis: value.engine_tick_millis,
+            collect_millis: value.collect_millis,
+            identity_millis: value.identity_millis,
+            attribution_millis: value.attribution_millis,
+            friction_millis: value.friction_millis,
+            enrich_millis: value.enrich_millis,
+            history_millis: value.history_millis,
+            persist_millis: value.persist_millis,
+            bridge_fetch_millis: value.bridge_fetch_millis,
+            ui_refresh_millis: value.ui_refresh_millis,
+            snapshot_to_ui_millis: value.snapshot_to_ui_millis,
+            snapshot_to_render_millis: value.snapshot_to_render_millis,
+            render_commit_millis: value.render_commit_millis,
+            display_frame_interval_millis: value.display_frame_interval_millis,
+            display_refresh_hz: value.display_refresh_hz,
+            display_dropped_frames: value.display_dropped_frames,
+            input_avg_latency_millis: value.input_avg_latency_millis,
+            input_max_latency_millis: value.input_max_latency_millis,
+            input_sample_count: value.input_sample_count,
         }
     }
 }

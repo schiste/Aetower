@@ -161,6 +161,25 @@ public struct DiagnosticsView: View {
                     value: byteCount(state.diagnosticsOverview.persistedBytes),
                     subtitle: "diagnostics store"
                 )
+                diagnosticsMetric(
+                    title: "Engine tick",
+                    value: String(format: "%.1f ms", state.runtimeLagMetrics.engineTickMillis),
+                    subtitle: "current self-observed pipeline latency"
+                )
+                diagnosticsMetric(
+                    title: "UI render",
+                    value: String(format: "%.1f ms", state.runtimeLagMetrics.snapshotToRenderMillis),
+                    subtitle: "snapshot to visible render"
+                )
+                diagnosticsMetric(
+                    title: "Display / Input",
+                    value: String(
+                        format: "%.0f Hz / %.1f ms",
+                        state.runtimeLagMetrics.displayRefreshHz,
+                        state.runtimeLagMetrics.inputAvgLatencyMillis
+                    ),
+                    subtitle: "refresh and avg input latency"
+                )
             }
             .padding(.top, 4)
             VStack(alignment: .leading, spacing: 6) {
@@ -203,6 +222,11 @@ public struct DiagnosticsView: View {
                     title: "Telemetry",
                     value: telemetryHealthTitle,
                     subtitle: telemetryHealthSubtitle
+                )
+                diagnosticsMetric(
+                    title: "Aetower overhead",
+                    value: aetowerOverheadTitle,
+                    subtitle: aetowerOverheadSubtitle
                 )
             }
             .padding(.top, 4)
@@ -420,6 +444,25 @@ public struct DiagnosticsView: View {
             return status
         }
         return state.telemetryEnabled ? state.telemetryEndpoint : "Run verification from Settings"
+    }
+
+    private var aetowerOverheadTitle: String {
+        if state.runtimeLagMetrics.engineTickMillis >= 100 || state.runtimeLagMetrics.snapshotToRenderMillis >= 120 {
+            return "Hot"
+        }
+        if state.runtimeLagMetrics.engineTickMillis >= 40 || state.runtimeLagMetrics.snapshotToRenderMillis >= 60 {
+            return "Watch"
+        }
+        return "Bounded"
+    }
+
+    private var aetowerOverheadSubtitle: String {
+        String(
+            format: "tick %.1f ms · collect %.1f ms · render %.1f ms",
+            state.runtimeLagMetrics.engineTickMillis,
+            state.runtimeLagMetrics.collectMillis,
+            state.runtimeLagMetrics.snapshotToRenderMillis
+        )
     }
 }
 

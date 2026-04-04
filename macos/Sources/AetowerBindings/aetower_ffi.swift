@@ -551,6 +551,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func latestDiagnostics(limit: UInt32)  -> [DiagnosticsEvent]
     
+    func latestRuntimeLagMetrics()  -> RuntimeLagMetrics
+    
     func latestSequence()  -> UInt64
     
     func latestSnapshot()  -> SystemSnapshot
@@ -701,6 +703,13 @@ open func latestDiagnostics(limit: UInt32) -> [DiagnosticsEvent]  {
     return try!  FfiConverterSequenceTypeDiagnosticsEvent.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_diagnostics(self.uniffiClonePointer(),
         FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+    
+open func latestRuntimeLagMetrics() -> RuntimeLagMetrics  {
+    return try!  FfiConverterTypeRuntimeLagMetrics_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_latest_runtime_lag_metrics(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -2859,12 +2868,16 @@ public func FfiConverterTypeMetricTrend_lower(_ value: MetricTrend) -> RustBuffe
 public struct ProvenanceSnapshot {
     public var kind: ProvenanceKind
     public var label: String
+    public var rule: String
+    public var confidence: AttributionConfidence
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: ProvenanceKind, label: String) {
+    public init(kind: ProvenanceKind, label: String, rule: String, confidence: AttributionConfidence) {
         self.kind = kind
         self.label = label
+        self.rule = rule
+        self.confidence = confidence
     }
 }
 
@@ -2881,12 +2894,20 @@ extension ProvenanceSnapshot: Equatable, Hashable {
         if lhs.label != rhs.label {
             return false
         }
+        if lhs.rule != rhs.rule {
+            return false
+        }
+        if lhs.confidence != rhs.confidence {
+            return false
+        }
         return true
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(kind)
         hasher.combine(label)
+        hasher.combine(rule)
+        hasher.combine(confidence)
     }
 }
 
@@ -2900,13 +2921,17 @@ public struct FfiConverterTypeProvenanceSnapshot: FfiConverterRustBuffer {
         return
             try ProvenanceSnapshot(
                 kind: FfiConverterTypeProvenanceKind.read(from: &buf), 
-                label: FfiConverterString.read(from: &buf)
+                label: FfiConverterString.read(from: &buf), 
+                rule: FfiConverterString.read(from: &buf), 
+                confidence: FfiConverterTypeAttributionConfidence.read(from: &buf)
         )
     }
 
     public static func write(_ value: ProvenanceSnapshot, into buf: inout [UInt8]) {
         FfiConverterTypeProvenanceKind.write(value.kind, into: &buf)
         FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.rule, into: &buf)
+        FfiConverterTypeAttributionConfidence.write(value.confidence, into: &buf)
     }
 }
 
@@ -2993,6 +3018,220 @@ public func FfiConverterTypeRecommendation_lift(_ buf: RustBuffer) throws -> Rec
 #endif
 public func FfiConverterTypeRecommendation_lower(_ value: Recommendation) -> RustBuffer {
     return FfiConverterTypeRecommendation.lower(value)
+}
+
+
+public struct RuntimeLagMetrics {
+    public var updatedAtMillis: UInt64
+    public var engineTickMillis: Float
+    public var collectMillis: Float
+    public var identityMillis: Float
+    public var attributionMillis: Float
+    public var frictionMillis: Float
+    public var enrichMillis: Float
+    public var historyMillis: Float
+    public var persistMillis: Float
+    public var bridgeFetchMillis: Float
+    public var uiRefreshMillis: Float
+    public var snapshotToUiMillis: Float
+    public var snapshotToRenderMillis: Float
+    public var renderCommitMillis: Float
+    public var displayFrameIntervalMillis: Float
+    public var displayRefreshHz: Float
+    public var displayDroppedFrames: UInt64
+    public var inputAvgLatencyMillis: Float
+    public var inputMaxLatencyMillis: Float
+    public var inputSampleCount: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(updatedAtMillis: UInt64, engineTickMillis: Float, collectMillis: Float, identityMillis: Float, attributionMillis: Float, frictionMillis: Float, enrichMillis: Float, historyMillis: Float, persistMillis: Float, bridgeFetchMillis: Float, uiRefreshMillis: Float, snapshotToUiMillis: Float, snapshotToRenderMillis: Float, renderCommitMillis: Float, displayFrameIntervalMillis: Float, displayRefreshHz: Float, displayDroppedFrames: UInt64, inputAvgLatencyMillis: Float, inputMaxLatencyMillis: Float, inputSampleCount: UInt32) {
+        self.updatedAtMillis = updatedAtMillis
+        self.engineTickMillis = engineTickMillis
+        self.collectMillis = collectMillis
+        self.identityMillis = identityMillis
+        self.attributionMillis = attributionMillis
+        self.frictionMillis = frictionMillis
+        self.enrichMillis = enrichMillis
+        self.historyMillis = historyMillis
+        self.persistMillis = persistMillis
+        self.bridgeFetchMillis = bridgeFetchMillis
+        self.uiRefreshMillis = uiRefreshMillis
+        self.snapshotToUiMillis = snapshotToUiMillis
+        self.snapshotToRenderMillis = snapshotToRenderMillis
+        self.renderCommitMillis = renderCommitMillis
+        self.displayFrameIntervalMillis = displayFrameIntervalMillis
+        self.displayRefreshHz = displayRefreshHz
+        self.displayDroppedFrames = displayDroppedFrames
+        self.inputAvgLatencyMillis = inputAvgLatencyMillis
+        self.inputMaxLatencyMillis = inputMaxLatencyMillis
+        self.inputSampleCount = inputSampleCount
+    }
+}
+
+#if compiler(>=6)
+extension RuntimeLagMetrics: Sendable {}
+#endif
+
+
+extension RuntimeLagMetrics: Equatable, Hashable {
+    public static func ==(lhs: RuntimeLagMetrics, rhs: RuntimeLagMetrics) -> Bool {
+        if lhs.updatedAtMillis != rhs.updatedAtMillis {
+            return false
+        }
+        if lhs.engineTickMillis != rhs.engineTickMillis {
+            return false
+        }
+        if lhs.collectMillis != rhs.collectMillis {
+            return false
+        }
+        if lhs.identityMillis != rhs.identityMillis {
+            return false
+        }
+        if lhs.attributionMillis != rhs.attributionMillis {
+            return false
+        }
+        if lhs.frictionMillis != rhs.frictionMillis {
+            return false
+        }
+        if lhs.enrichMillis != rhs.enrichMillis {
+            return false
+        }
+        if lhs.historyMillis != rhs.historyMillis {
+            return false
+        }
+        if lhs.persistMillis != rhs.persistMillis {
+            return false
+        }
+        if lhs.bridgeFetchMillis != rhs.bridgeFetchMillis {
+            return false
+        }
+        if lhs.uiRefreshMillis != rhs.uiRefreshMillis {
+            return false
+        }
+        if lhs.snapshotToUiMillis != rhs.snapshotToUiMillis {
+            return false
+        }
+        if lhs.snapshotToRenderMillis != rhs.snapshotToRenderMillis {
+            return false
+        }
+        if lhs.renderCommitMillis != rhs.renderCommitMillis {
+            return false
+        }
+        if lhs.displayFrameIntervalMillis != rhs.displayFrameIntervalMillis {
+            return false
+        }
+        if lhs.displayRefreshHz != rhs.displayRefreshHz {
+            return false
+        }
+        if lhs.displayDroppedFrames != rhs.displayDroppedFrames {
+            return false
+        }
+        if lhs.inputAvgLatencyMillis != rhs.inputAvgLatencyMillis {
+            return false
+        }
+        if lhs.inputMaxLatencyMillis != rhs.inputMaxLatencyMillis {
+            return false
+        }
+        if lhs.inputSampleCount != rhs.inputSampleCount {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(updatedAtMillis)
+        hasher.combine(engineTickMillis)
+        hasher.combine(collectMillis)
+        hasher.combine(identityMillis)
+        hasher.combine(attributionMillis)
+        hasher.combine(frictionMillis)
+        hasher.combine(enrichMillis)
+        hasher.combine(historyMillis)
+        hasher.combine(persistMillis)
+        hasher.combine(bridgeFetchMillis)
+        hasher.combine(uiRefreshMillis)
+        hasher.combine(snapshotToUiMillis)
+        hasher.combine(snapshotToRenderMillis)
+        hasher.combine(renderCommitMillis)
+        hasher.combine(displayFrameIntervalMillis)
+        hasher.combine(displayRefreshHz)
+        hasher.combine(displayDroppedFrames)
+        hasher.combine(inputAvgLatencyMillis)
+        hasher.combine(inputMaxLatencyMillis)
+        hasher.combine(inputSampleCount)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRuntimeLagMetrics: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RuntimeLagMetrics {
+        return
+            try RuntimeLagMetrics(
+                updatedAtMillis: FfiConverterUInt64.read(from: &buf), 
+                engineTickMillis: FfiConverterFloat.read(from: &buf), 
+                collectMillis: FfiConverterFloat.read(from: &buf), 
+                identityMillis: FfiConverterFloat.read(from: &buf), 
+                attributionMillis: FfiConverterFloat.read(from: &buf), 
+                frictionMillis: FfiConverterFloat.read(from: &buf), 
+                enrichMillis: FfiConverterFloat.read(from: &buf), 
+                historyMillis: FfiConverterFloat.read(from: &buf), 
+                persistMillis: FfiConverterFloat.read(from: &buf), 
+                bridgeFetchMillis: FfiConverterFloat.read(from: &buf), 
+                uiRefreshMillis: FfiConverterFloat.read(from: &buf), 
+                snapshotToUiMillis: FfiConverterFloat.read(from: &buf), 
+                snapshotToRenderMillis: FfiConverterFloat.read(from: &buf), 
+                renderCommitMillis: FfiConverterFloat.read(from: &buf), 
+                displayFrameIntervalMillis: FfiConverterFloat.read(from: &buf), 
+                displayRefreshHz: FfiConverterFloat.read(from: &buf), 
+                displayDroppedFrames: FfiConverterUInt64.read(from: &buf), 
+                inputAvgLatencyMillis: FfiConverterFloat.read(from: &buf), 
+                inputMaxLatencyMillis: FfiConverterFloat.read(from: &buf), 
+                inputSampleCount: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RuntimeLagMetrics, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.updatedAtMillis, into: &buf)
+        FfiConverterFloat.write(value.engineTickMillis, into: &buf)
+        FfiConverterFloat.write(value.collectMillis, into: &buf)
+        FfiConverterFloat.write(value.identityMillis, into: &buf)
+        FfiConverterFloat.write(value.attributionMillis, into: &buf)
+        FfiConverterFloat.write(value.frictionMillis, into: &buf)
+        FfiConverterFloat.write(value.enrichMillis, into: &buf)
+        FfiConverterFloat.write(value.historyMillis, into: &buf)
+        FfiConverterFloat.write(value.persistMillis, into: &buf)
+        FfiConverterFloat.write(value.bridgeFetchMillis, into: &buf)
+        FfiConverterFloat.write(value.uiRefreshMillis, into: &buf)
+        FfiConverterFloat.write(value.snapshotToUiMillis, into: &buf)
+        FfiConverterFloat.write(value.snapshotToRenderMillis, into: &buf)
+        FfiConverterFloat.write(value.renderCommitMillis, into: &buf)
+        FfiConverterFloat.write(value.displayFrameIntervalMillis, into: &buf)
+        FfiConverterFloat.write(value.displayRefreshHz, into: &buf)
+        FfiConverterUInt64.write(value.displayDroppedFrames, into: &buf)
+        FfiConverterFloat.write(value.inputAvgLatencyMillis, into: &buf)
+        FfiConverterFloat.write(value.inputMaxLatencyMillis, into: &buf)
+        FfiConverterUInt32.write(value.inputSampleCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeLagMetrics_lift(_ buf: RustBuffer) throws -> RuntimeLagMetrics {
+    return try FfiConverterTypeRuntimeLagMetrics.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeLagMetrics_lower(_ value: RuntimeLagMetrics) -> RustBuffer {
+    return FfiConverterTypeRuntimeLagMetrics.lower(value)
 }
 
 
@@ -3534,6 +3773,83 @@ public func FfiConverterTypeAdapterContextKind_lower(_ value: AdapterContextKind
 
 
 extension AdapterContextKind: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AttributionConfidence {
+    
+    case high
+    case medium
+    case low
+}
+
+
+#if compiler(>=6)
+extension AttributionConfidence: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAttributionConfidence: FfiConverterRustBuffer {
+    typealias SwiftType = AttributionConfidence
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AttributionConfidence {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .high
+        
+        case 2: return .medium
+        
+        case 3: return .low
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AttributionConfidence, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .high:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .medium:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .low:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttributionConfidence_lift(_ buf: RustBuffer) throws -> AttributionConfidence {
+    return try FfiConverterTypeAttributionConfidence.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttributionConfidence_lower(_ value: AttributionConfidence) -> RustBuffer {
+    return FfiConverterTypeAttributionConfidence.lower(value)
+}
+
+
+extension AttributionConfidence: Equatable, Hashable {}
 
 
 
@@ -5185,6 +5501,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_diagnostics() != 5182) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_runtime_lag_metrics() != 43705) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_sequence() != 61139) {

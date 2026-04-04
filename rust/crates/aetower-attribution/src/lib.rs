@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use aetower_collector::{RawProcessSample, index_processes};
 use aetower_identity::{EntitySeed, IdentityMap};
 use aetower_model::{
-    AggregateMetrics, ComponentKind, ComponentSnapshot, EntityKind, EntitySnapshot,
-    FrontmostAppState, ProvenanceKind, ProvenanceSnapshot,
+    AggregateMetrics, AttributionConfidence, ComponentKind, ComponentSnapshot, EntityKind,
+    EntitySnapshot, FrontmostAppState, ProvenanceKind, ProvenanceSnapshot,
 };
 
 pub fn build_entities(
@@ -122,34 +122,60 @@ fn entity_from_seed(seed: &EntitySeed) -> EntitySnapshot {
 
 fn entity_provenance(seed: &EntitySeed) -> Option<ProvenanceSnapshot> {
     if seed.badges.iter().any(|badge| badge == "user-launch") {
-        return Some(provenance(ProvenanceKind::UserLaunch, "User-launched app"));
+        return Some(provenance(
+            ProvenanceKind::UserLaunch,
+            "User-launched app",
+            "bundle-root + user-launch lineage",
+            AttributionConfidence::High,
+        ));
     }
     if seed.badges.iter().any(|badge| badge == "xpc-service") {
-        return Some(provenance(ProvenanceKind::XpcService, "XPC service"));
+        return Some(provenance(
+            ProvenanceKind::XpcService,
+            "XPC service",
+            "xpc-service executable path",
+            AttributionConfidence::High,
+        ));
     }
     if seed.entity_kind == EntityKind::TerminalSession {
         return Some(provenance(
             ProvenanceKind::ShellSession,
             "Interactive shell session",
+            "shell lineage",
+            AttributionConfidence::High,
         ));
     }
     if seed.badges.iter().any(|badge| badge == "login-item") {
-        return Some(provenance(ProvenanceKind::LoginItem, "Login item"));
+        return Some(provenance(
+            ProvenanceKind::LoginItem,
+            "Login item",
+            "loginwindow/xpcproxy lineage",
+            AttributionConfidence::Medium,
+        ));
     }
     if seed.badges.iter().any(|badge| badge == "launchd-managed") {
         return Some(provenance(
             ProvenanceKind::ServiceManager,
             "launchd-managed service",
+            "launchd lineage",
+            AttributionConfidence::High,
         ));
     }
     if seed.badges.iter().any(|badge| badge == "helper-group") {
         return Some(provenance(
             ProvenanceKind::HelperTree,
             "Grouped app helper tree",
+            "bundle helper lineage",
+            AttributionConfidence::Medium,
         ));
     }
     if seed.bundle_id.is_some() || seed.entity_kind == EntityKind::App {
-        return Some(provenance(ProvenanceKind::AppBundle, "Application bundle"));
+        return Some(provenance(
+            ProvenanceKind::AppBundle,
+            "Application bundle",
+            "bundle executable path",
+            AttributionConfidence::High,
+        ));
     }
     None
 }
@@ -236,6 +262,8 @@ fn component_provenance(
         return Some(provenance(
             ProvenanceKind::XpcService,
             "XPC service process",
+            "xpc-service executable path",
+            AttributionConfidence::High,
         ));
     }
 
@@ -276,27 +304,37 @@ fn component_provenance(
         Some(provenance(
             ProvenanceKind::ShellSession,
             &format!("Shell session via {}", process_display_name(shell)),
+            "shell lineage",
+            AttributionConfidence::High,
         ))
     } else if top_same_entity_ancestor.is_some() {
         Some(provenance(
             ProvenanceKind::HelperTree,
             "App helper subprocess",
+            "same-entity ancestor lineage",
+            AttributionConfidence::Medium,
         ))
     } else if let Some(login_item) = login_item_ancestor {
         Some(provenance(
             ProvenanceKind::LoginItem,
             &format!("Login item via {}", process_display_name(login_item)),
+            "loginwindow/xpcproxy lineage",
+            AttributionConfidence::Medium,
         ))
     } else if service_manager_ancestor.is_some() {
         Some(provenance(
             ProvenanceKind::ServiceManager,
             "launchd service manager",
+            "launchd lineage",
+            AttributionConfidence::High,
         ))
     } else {
         immediate_parent.map(|parent| {
             provenance(
                 ProvenanceKind::ParentProcess,
                 &format!("Parent process {}", process_display_name(parent)),
+                "immediate parent fallback",
+                AttributionConfidence::Low,
             )
         })
     }
@@ -352,10 +390,17 @@ fn format_service_manager_label(process: &RawProcessSample) -> String {
     format!("launchd service manager (pid {})", process.pid)
 }
 
-fn provenance(kind: ProvenanceKind, label: &str) -> ProvenanceSnapshot {
+fn provenance(
+    kind: ProvenanceKind,
+    label: &str,
+    rule: &str,
+    confidence: AttributionConfidence,
+) -> ProvenanceSnapshot {
     ProvenanceSnapshot {
         kind,
         label: label.to_owned(),
+        rule: rule.to_owned(),
+        confidence,
     }
 }
 
@@ -450,6 +495,13 @@ mod tests {
         assert_eq!(entity.metrics.memory_resident_bytes, 384);
         assert_eq!(entity.metrics.disk_read_bps, 400);
         assert_eq!(entity.metrics.disk_write_bps, 600);
+        assert_eq!(
+            entity
+                .primary_provenance
+                .as_ref()
+                .map(|value| value.rule.as_str()),
+            Some("bundle executable path")
+        );
     }
 
     #[test]
@@ -587,6 +639,13 @@ mod tests {
         assert_eq!(
             helper_component.command_line.as_deref(),
             Some("/Applications/Test.app/Contents/MacOS/Test Helper --type=renderer")
+        );
+        assert_eq!(
+            helper_component
+                .provenance
+                .as_ref()
+                .map(|value| value.rule.as_str()),
+            Some("same-entity ancestor lineage")
         );
     }
 

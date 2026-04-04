@@ -20,6 +20,10 @@ public final class EngineBridge: @unchecked Sendable {
         engine.latestSequence()
     }
 
+    public func latestRuntimeLagMetrics() -> RuntimeLagMetrics {
+        engine.latestRuntimeLagMetrics()
+    }
+
     public func setCapability(_ kind: CapabilityKind, state: CapabilityState, detail: String? = nil) {
         engine.setCapabilityState(kind: kind, state: state, detailOverride: detail)
     }
