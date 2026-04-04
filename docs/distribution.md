@@ -30,9 +30,19 @@ export AETOWER_BUNDLE_ID="com.yourcompany.aetower"
 export AETOWER_VERSION="1.0.0"
 export AETOWER_BUILD_NUMBER="42"
 export AETOWER_ENTITLEMENTS_PATH="$PWD/macos/Aetower.entitlements"
+export AETOWER_HELPER_ENTITLEMENTS_PATH="$PWD/macos/AetowerHelper.entitlements"
 ```
 
-A default entitlements file now lives at `macos/Aetower.entitlements`.
+Default entitlements files now live at:
+
+- `macos/Aetower.entitlements` for the app bundle
+- `macos/AetowerHelper.entitlements` for the optional helper
+
+If you want Endpoint Security-backed lineage in enterprise builds, you must:
+
+- obtain Apple approval for the `com.apple.developer.endpoint-security.client` entitlement
+- sign the helper with that entitlement
+- export `AETOWER_REQUIRE_ENDPOINT_SECURITY=1` before running `scripts/release-preflight.sh`
 
 ## Notarization
 

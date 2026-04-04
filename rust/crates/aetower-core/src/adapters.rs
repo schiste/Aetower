@@ -33,6 +33,7 @@ const PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
 const CHROMIUM_FETCH_BUDGET: Duration = Duration::from_millis(750);
 const DOCKER_FETCH_BUDGET: Duration = Duration::from_millis(750);
 const CHAU7_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
+const ENDPOINT_SECURITY_REFRESH_INTERVAL_MILLIS: u64 = 30_000;
 const MAX_CHROMIUM_TARGETS: usize = 5;
 const MAX_DOCKER_CONTAINERS: usize = 5;
 const MAX_CHAU7_TABS: usize = 30;
@@ -62,6 +63,11 @@ struct AdapterState {
     last_privileged_helper_success_millis: u64,
     privileged_helper_last_error: Option<String>,
     cached_privileged_helper_sample: Option<PrivilegedHelperSnapshot>,
+    last_endpoint_security_fetch_millis: u64,
+    last_endpoint_security_success_millis: u64,
+    endpoint_security_last_error: Option<String>,
+    cached_endpoint_security_status: Option<EndpointSecurityStatusSnapshot>,
+    cached_endpoint_security_sample: Option<EndpointSecuritySample>,
     chau7_socket_path: Option<String>,
     last_chau7_fetch_millis: u64,
     last_chau7_success_millis: u64,
@@ -200,6 +206,35 @@ struct PrivilegedProcessSample {
     connections: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct EndpointSecurityStatusSnapshot {
+    supported: bool,
+    helper_entitled: bool,
+    running_as_root: bool,
+    can_stream_events: bool,
+    eslogger_path: Option<String>,
+    detail: String,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EndpointSecuritySample {
+    status: EndpointSecurityStatusSnapshot,
+    events: Vec<EndpointSecurityLifecycleEvent>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EndpointSecurityLifecycleEvent {
+    event_type: String,
+    timestamp_millis: u64,
+    process_path: Option<String>,
+    pid: Option<u32>,
+    parent_pid: Option<u32>,
+    child_pid: Option<u32>,
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+}
+
 impl Default for AdapterManager {
     fn default() -> Self {
         Self {
@@ -225,6 +260,11 @@ impl Default for AdapterManager {
                 last_privileged_helper_success_millis: 0,
                 privileged_helper_last_error: None,
                 cached_privileged_helper_sample: None,
+                last_endpoint_security_fetch_millis: 0,
+                last_endpoint_security_success_millis: 0,
+                endpoint_security_last_error: None,
+                cached_endpoint_security_status: None,
+                cached_endpoint_security_sample: None,
                 chau7_socket_path: chau7_socket_path(),
                 last_chau7_fetch_millis: 0,
                 last_chau7_success_millis: 0,
@@ -288,6 +328,10 @@ impl AdapterManager {
             (
                 CapabilityKind::PrivilegedHelper,
                 self.capability_snapshot(CapabilityKind::PrivilegedHelper, now),
+            ),
+            (
+                CapabilityKind::EndpointSecurity,
+                self.capability_snapshot(CapabilityKind::EndpointSecurity, now),
             ),
             (
                 CapabilityKind::Chau7,
@@ -374,6 +418,7 @@ impl AdapterManager {
             chromium_fetch_plan,
             docker_fetch_plan,
             privileged_helper_fetch_path,
+            endpoint_security_fetch_path,
             chau7_fetch_path,
         ) = {
             let guard = self.state.lock();
@@ -421,6 +466,12 @@ impl AdapterManager {
                     }
                 });
 
+            let endpoint_security_fetch_path = guard.privileged_helper_path().filter(|path| {
+                now.saturating_sub(guard.last_endpoint_security_fetch_millis)
+                    >= ENDPOINT_SECURITY_REFRESH_INTERVAL_MILLIS
+                    && Path::new(path).exists()
+            });
+
             let chau7_fetch_path = capabilities
                 .get(&CapabilityKind::Chau7)
                 .filter(|capability| capability.state == CapabilityState::Granted)
@@ -438,6 +489,7 @@ impl AdapterManager {
                 chromium_fetch_plan,
                 docker_fetch_plan,
                 privileged_helper_fetch_path,
+                endpoint_security_fetch_path,
                 chau7_fetch_path,
             )
         };
@@ -453,6 +505,8 @@ impl AdapterManager {
                 docker_fetch_plan.map(|config| s.spawn(move || fetch_docker_containers(&config)));
             let helper_handle = privileged_helper_fetch_path
                 .map(|path| s.spawn(move || fetch_privileged_helper_sample(&path)));
+            let endpoint_security_handle = endpoint_security_fetch_path
+                .map(|path| s.spawn(move || fetch_endpoint_security_sample(&path)));
             let chau7_handle =
                 chau7_fetch_path.map(|path| s.spawn(move || crate::chau7::fetch_snapshot(&path)));
 
@@ -605,6 +659,75 @@ impl AdapterManager {
                     }
                 }
             }
+            if let Some(handle) = endpoint_security_handle {
+                emit_adapter_refresh_event(
+                    &self.state,
+                    DiagnosticsLevel::Debug,
+                    DiagnosticsSubsystem::AdapterHelper,
+                    "adapter-refresh-started",
+                    "Starting Endpoint Security helper refresh.",
+                    now,
+                    |builder| builder.adapter("endpoint-security"),
+                );
+                match handle.join().expect("endpoint security thread panicked") {
+                    Ok(fetched) => {
+                        let mut guard = self.state.lock();
+                        guard.cached_endpoint_security_status = Some(fetched.status.clone());
+                        guard.cached_endpoint_security_sample = Some(fetched.clone());
+                        guard.last_endpoint_security_fetch_millis = now;
+                        guard.last_endpoint_security_success_millis = now;
+                        guard.endpoint_security_last_error = fetched.status.last_error.clone();
+                        let item_count = fetched.events.len();
+                        let live = fetched.status.can_stream_events;
+                        drop(guard);
+                        emit_adapter_refresh_event(
+                            &self.state,
+                            if live {
+                                DiagnosticsLevel::Info
+                            } else {
+                                DiagnosticsLevel::Warn
+                            },
+                            DiagnosticsSubsystem::AdapterHelper,
+                            if live {
+                                "adapter-refresh-succeeded"
+                            } else {
+                                "adapter-refresh-degraded"
+                            },
+                            if live {
+                                "Endpoint Security helper refresh succeeded."
+                            } else {
+                                "Endpoint Security helper is configured but not yet able to stream events."
+                            },
+                            now,
+                            |builder| {
+                                builder
+                                    .adapter("endpoint-security")
+                                    .field("item_count", item_count)
+                                    .field("live", live)
+                            },
+                        );
+                    }
+                    Err(error) => {
+                        let mut guard = self.state.lock();
+                        guard.last_endpoint_security_fetch_millis = now;
+                        guard.endpoint_security_last_error = Some(error);
+                        let error = guard
+                            .endpoint_security_last_error
+                            .clone()
+                            .unwrap_or_default();
+                        drop(guard);
+                        emit_adapter_refresh_event(
+                            &self.state,
+                            DiagnosticsLevel::Error,
+                            DiagnosticsSubsystem::AdapterHelper,
+                            "adapter-refresh-failed",
+                            "Endpoint Security helper refresh failed.",
+                            now,
+                            |builder| builder.adapter("endpoint-security").field("error", error),
+                        );
+                    }
+                }
+            }
             if let Some(handle) = chau7_handle {
                 emit_adapter_refresh_event(
                     &self.state,
@@ -665,7 +788,13 @@ impl AdapterManager {
         entities: &mut [EntitySnapshot],
         capabilities: &BTreeMap<CapabilityKind, CapabilitySnapshot>,
     ) {
-        let (chromium_targets, docker_containers, privileged_helper_sample, chau7_snapshot) = {
+        let (
+            chromium_targets,
+            docker_containers,
+            privileged_helper_sample,
+            endpoint_security_sample,
+            chau7_snapshot,
+        ) = {
             let guard = self.state.lock();
             let chromium_targets = capabilities
                 .get(&CapabilityKind::ChromiumDebug)
@@ -679,6 +808,10 @@ impl AdapterManager {
                 .get(&CapabilityKind::PrivilegedHelper)
                 .filter(|capability| capability.state == CapabilityState::Granted)
                 .and_then(|_| guard.cached_privileged_helper_sample.clone());
+            let endpoint_security_sample = capabilities
+                .get(&CapabilityKind::EndpointSecurity)
+                .filter(|capability| capability.state == CapabilityState::Granted)
+                .and_then(|_| guard.cached_endpoint_security_sample.clone());
             let chau7_snapshot = capabilities
                 .get(&CapabilityKind::Chau7)
                 .filter(|capability| capability.state == CapabilityState::Granted)
@@ -687,6 +820,7 @@ impl AdapterManager {
                 chromium_targets,
                 docker_containers,
                 privileged_helper_sample,
+                endpoint_security_sample,
                 chau7_snapshot,
             )
         };
@@ -1051,6 +1185,10 @@ impl AdapterManager {
                     break; // one tab match per entity
                 }
             }
+
+            if let Some(sample) = endpoint_security_sample.as_ref() {
+                enrich_with_endpoint_security(entity, sample);
+            }
         }
     }
 }
@@ -1236,6 +1374,43 @@ fn capability_status(state: &AdapterState, kind: &CapabilityKind) -> (Capability
                 "Privileged helper is disabled. Enable it and provide a helper path for deeper attribution.".to_owned(),
             ),
         },
+        CapabilityKind::EndpointSecurity => {
+            let Some(path) = state.privileged_helper_path.as_deref() else {
+                return (
+                    CapabilityState::Unavailable,
+                    "Endpoint Security requires the optional enterprise helper path to be configured.".to_owned(),
+                );
+            };
+            if !state.privileged_helper_enabled {
+                return (
+                    CapabilityState::Unavailable,
+                    "Endpoint Security is disabled because the enterprise helper is disabled.".to_owned(),
+                );
+            }
+            if !Path::new(path).exists() {
+                return (
+                    CapabilityState::Unavailable,
+                    format!("Endpoint Security helper path is missing at {path}."),
+                );
+            }
+            if let Some(status) = state.cached_endpoint_security_status.as_ref() {
+                let capability_state = if status.can_stream_events {
+                    CapabilityState::Granted
+                } else if status.supported {
+                    CapabilityState::Denied
+                } else {
+                    CapabilityState::Unavailable
+                };
+                let detail = endpoint_security_runtime_detail(state, status, now);
+                (capability_state, detail)
+            } else {
+                (
+                    CapabilityState::Requested,
+                    "Endpoint Security helper is configured. Aetower is waiting for the first readiness probe."
+                        .to_owned(),
+                )
+            }
+        }
         CapabilityKind::Chau7 => match state.chau7_socket_path.as_deref() {
             Some(path) if Path::new(path).exists() => (
                 CapabilityState::Granted,
@@ -1276,6 +1451,12 @@ fn capability_status_timestamp(state: &AdapterState, kind: &CapabilityKind) -> O
             state
                 .last_privileged_helper_fetch_millis
                 .max(state.last_privileged_helper_success_millis),
+        )
+        .filter(|value| *value > 0),
+        CapabilityKind::EndpointSecurity => Some(
+            state
+                .last_endpoint_security_fetch_millis
+                .max(state.last_endpoint_security_success_millis),
         )
         .filter(|value| *value > 0),
         CapabilityKind::Chau7 => Some(
@@ -1325,6 +1506,25 @@ fn capability_health(state: &AdapterState, kind: &CapabilityKind, now: u64) -> C
                     state.last_privileged_helper_fetch_millis,
                     state.privileged_helper_last_error.as_deref(),
                     PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS,
+                    now,
+                )
+            }
+        }
+        CapabilityKind::EndpointSecurity => {
+            if !state.privileged_helper_enabled {
+                CapabilityHealth::Configured
+            } else if state
+                .privileged_helper_path
+                .as_deref()
+                .is_none_or(|path| !Path::new(path).exists())
+            {
+                CapabilityHealth::Degraded
+            } else {
+                adapter_health_kind(
+                    state.last_endpoint_security_success_millis,
+                    state.last_endpoint_security_fetch_millis,
+                    state.endpoint_security_last_error.as_deref(),
+                    ENDPOINT_SECURITY_REFRESH_INTERVAL_MILLIS,
                     now,
                 )
             }
@@ -1389,6 +1589,58 @@ fn privileged_helper_runtime_detail(state: &AdapterState, now: u64) -> String {
         PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS,
         now,
     )
+}
+
+fn endpoint_security_runtime_detail(
+    state: &AdapterState,
+    status: &EndpointSecurityStatusSnapshot,
+    now: u64,
+) -> String {
+    let event_count = state
+        .cached_endpoint_security_sample
+        .as_ref()
+        .map(|sample| sample.events.len())
+        .unwrap_or(0);
+    let mut parts = vec![adapter_health_label(
+        state.last_endpoint_security_success_millis,
+        state.last_endpoint_security_fetch_millis,
+        state.endpoint_security_last_error.as_deref(),
+        ENDPOINT_SECURITY_REFRESH_INTERVAL_MILLIS,
+        now,
+    )];
+    parts.push(if status.supported {
+        "tooling present".to_owned()
+    } else {
+        "tooling unavailable".to_owned()
+    });
+    if status.helper_entitled {
+        parts.push("helper entitled".to_owned());
+    } else {
+        parts.push("helper not entitled".to_owned());
+    }
+    if status.running_as_root {
+        parts.push("running as root".to_owned());
+    }
+    if let Some(path) = status.eslogger_path.as_deref() {
+        parts.push(format!(
+            "source {}",
+            path.rsplit('/').next().unwrap_or(path)
+        ));
+    }
+    if event_count > 0 {
+        parts.push(format!("{event_count} sampled lifecycle events"));
+    }
+    if state.last_endpoint_security_success_millis > 0 {
+        parts.push(format!(
+            "last probe {}s ago",
+            now.saturating_sub(state.last_endpoint_security_success_millis) / 1000
+        ));
+    }
+    parts.push(status.detail.clone());
+    if let Some(error) = status.last_error.as_deref() {
+        parts.push(format!("last error: {error}"));
+    }
+    parts.join(" · ")
 }
 
 fn chau7_runtime_detail(state: &AdapterState, now: u64) -> String {
@@ -1707,6 +1959,18 @@ fn fetch_privileged_helper_sample(helper_path: &str) -> Result<PrivilegedHelperS
         .map_err(|error| format!("invalid privileged helper json: {error}"))
 }
 
+fn fetch_endpoint_security_sample(helper_path: &str) -> Result<EndpointSecuritySample, String> {
+    let output = Command::new(helper_path)
+        .arg("esf-sample")
+        .output()
+        .map_err(|error| format!("helper ESF execution failed: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("helper ESF exited with status {}", output.status));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("invalid endpoint security helper json: {error}"))
+}
+
 fn helper_process_matches(entity: &EntitySnapshot, process: &PrivilegedProcessSample) -> bool {
     let display_name = entity.display_name.to_ascii_lowercase();
     let process_name = process.process_name.to_ascii_lowercase();
@@ -1726,6 +1990,184 @@ fn helper_process_matches(entity: &EntitySnapshot, process: &PrivilegedProcessSa
     display_name.contains(&process_name)
         || process_name.contains(&display_name)
         || (!helper_executable.is_empty() && executable_name == helper_executable)
+}
+
+fn enrich_with_endpoint_security(entity: &mut EntitySnapshot, sample: &EndpointSecuritySample) {
+    if !sample.status.can_stream_events {
+        if !entity
+            .attribution_notes
+            .iter()
+            .any(|note| note.contains("Endpoint Security helper is configured"))
+            && sample.status.supported
+        {
+            entity.attribution_notes.push(format!(
+                "Endpoint Security helper is configured but not live yet: {}.",
+                sample.status.detail
+            ));
+        }
+        return;
+    }
+
+    let pids = entity
+        .components
+        .iter()
+        .filter_map(|component| component.process_id)
+        .collect::<BTreeSet<_>>();
+    if pids.is_empty() {
+        return;
+    }
+
+    let matching = sample
+        .events
+        .iter()
+        .filter(|event| {
+            event.pid.is_some_and(|pid| pids.contains(&pid))
+                || event.parent_pid.is_some_and(|pid| pids.contains(&pid))
+                || event.child_pid.is_some_and(|pid| pids.contains(&pid))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return;
+    }
+
+    let exec_count = matching
+        .iter()
+        .filter(|event| event.event_type.eq_ignore_ascii_case("exec"))
+        .count();
+    let fork_count = matching
+        .iter()
+        .filter(|event| event.event_type.eq_ignore_ascii_case("fork"))
+        .count();
+    let exit_count = matching
+        .iter()
+        .filter(|event| event.event_type.eq_ignore_ascii_case("exit"))
+        .count();
+    let latest_timestamp = matching
+        .iter()
+        .map(|event| event.timestamp_millis)
+        .max()
+        .unwrap_or(0);
+    let latest_process_path = matching
+        .iter()
+        .filter_map(|event| event.process_path.clone())
+        .next();
+    let exit_signals = matching
+        .iter()
+        .filter_map(|event| event.signal)
+        .collect::<Vec<_>>();
+    let exit_codes = matching
+        .iter()
+        .filter_map(|event| event.exit_code)
+        .collect::<Vec<_>>();
+
+    if !entity.badges.iter().any(|badge| badge == "esf-lineage") {
+        entity.badges.push("esf-lineage".to_owned());
+    }
+
+    if let Some(primary) = entity.primary_provenance.as_mut()
+        && primary.confidence != AttributionConfidence::High
+    {
+        primary.confidence = AttributionConfidence::High;
+        if primary.rule.is_empty() {
+            primary.rule = "endpoint security lifecycle corroboration".to_owned();
+        } else if !primary.rule.contains("endpoint security") {
+            primary
+                .rule
+                .push_str("; endpoint security lifecycle corroboration");
+        }
+    }
+
+    let mut upgraded_components = 0usize;
+    for component in &mut entity.components {
+        let Some(pid) = component.process_id else {
+            continue;
+        };
+        let component_matches = matching.iter().any(|event| {
+            event.pid == Some(pid) || event.parent_pid == Some(pid) || event.child_pid == Some(pid)
+        });
+        if !component_matches {
+            continue;
+        }
+        if let Some(provenance) = component.provenance.as_mut()
+            && provenance.confidence != AttributionConfidence::High
+        {
+            provenance.confidence = AttributionConfidence::High;
+            if provenance.rule.is_empty() {
+                provenance.rule = "endpoint security lifecycle event".to_owned();
+            } else if !provenance.rule.contains("endpoint security") {
+                provenance
+                    .rule
+                    .push_str("; endpoint security lifecycle event");
+            }
+            upgraded_components += 1;
+        }
+    }
+
+    if upgraded_components > 0 {
+        entity.attribution_notes.push(format!(
+            "Endpoint Security corroborated {} component lineage match(es) via {} exec, {} fork, and {} exit event(s).",
+            upgraded_components, exec_count, fork_count, exit_count
+        ));
+    } else {
+        entity.attribution_notes.push(format!(
+            "Endpoint Security observed {} lifecycle event(s) tied to this entity ({} exec, {} fork, {} exit).",
+            matching.len(), exec_count, fork_count, exit_count
+        ));
+    }
+
+    if entity.recent_change_summary.is_none() {
+        entity.recent_change_summary = Some(format!(
+            "Endpoint Security observed {} recent lifecycle event(s) for this entity{}{}.",
+            matching.len(),
+            latest_process_path
+                .as_deref()
+                .map(|path| format!(" around {}", path.rsplit('/').next().unwrap_or(path)))
+                .unwrap_or_default(),
+            if latest_timestamp > 0 {
+                format!(" at {} ms", latest_timestamp)
+            } else {
+                String::new()
+            }
+        ));
+    }
+
+    if exit_count >= 2
+        && !entity
+            .recommendations
+            .iter()
+            .any(|recommendation| recommendation.title == "Inspect ESF exit churn")
+    {
+        entity.recommendations.push(aetower_model::Recommendation {
+            title: "Inspect ESF exit churn".to_owned(),
+            detail: format!(
+                "Endpoint Security saw {} recent exit event(s) for this entity. Check helpers, launch agents, or child tasks that may be exiting unexpectedly.",
+                exit_count
+            ),
+        });
+        entity.recommendations.truncate(4);
+    }
+
+    if (!exit_codes.is_empty() || !exit_signals.is_empty())
+        && !entity
+            .attribution_notes
+            .iter()
+            .any(|note| note.contains("recent exit status"))
+    {
+        entity.attribution_notes.push(format!(
+            "Endpoint Security recent exit status: codes [{}], signals [{}].",
+            exit_codes
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            exit_signals
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
 }
 
 fn parse_http_endpoint(raw: &str) -> Option<(String, u16, String)> {
@@ -2251,15 +2693,17 @@ mod tests {
     use std::collections::BTreeMap;
 
     use aetower_model::{
-        AggregateMetrics, ComponentKind, ComponentSnapshot, EntityKind, EntitySnapshot,
-        FrictionBreakdown, MetricTrend,
+        AggregateMetrics, AttributionConfidence, ComponentKind, ComponentSnapshot, EntityKind,
+        EntitySnapshot, FrictionBreakdown, MetricTrend, ProvenanceKind, ProvenanceSnapshot,
     };
 
     use super::{
         AdapterState, CapabilityKind, CapabilityState, ChromiumTarget, DockerBlkioEntry,
-        DockerContainerStats, DockerContainerSummary, DockerNetworkStats, adapter_runtime_detail,
-        capability_status, docker_block_io_totals, docker_cpu_percent, docker_network_totals,
-        enrich_vscode_entity, parse_http_endpoint, workspace_hint_from_command_line,
+        DockerContainerStats, DockerContainerSummary, DockerNetworkStats,
+        EndpointSecurityLifecycleEvent, EndpointSecuritySample, EndpointSecurityStatusSnapshot,
+        adapter_runtime_detail, capability_status, docker_block_io_totals, docker_cpu_percent,
+        docker_network_totals, endpoint_security_runtime_detail, enrich_vscode_entity,
+        enrich_with_endpoint_security, parse_http_endpoint, workspace_hint_from_command_line,
     };
 
     #[test]
@@ -2388,6 +2832,47 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_security_runtime_detail_reports_entitlement_state() {
+        let state = AdapterState {
+            last_endpoint_security_fetch_millis: 20_000,
+            last_endpoint_security_success_millis: 20_000,
+            cached_endpoint_security_sample: Some(EndpointSecuritySample {
+                status: EndpointSecurityStatusSnapshot {
+                    supported: true,
+                    helper_entitled: true,
+                    running_as_root: true,
+                    can_stream_events: true,
+                    eslogger_path: Some("/usr/bin/eslogger".to_owned()),
+                    detail: "Endpoint Security event streaming is available.".to_owned(),
+                    last_error: None,
+                },
+                events: vec![EndpointSecurityLifecycleEvent {
+                    event_type: "exec".to_owned(),
+                    timestamp_millis: 1,
+                    process_path: Some("/bin/zsh".to_owned()),
+                    pid: Some(41),
+                    parent_pid: Some(1),
+                    child_pid: None,
+                    exit_code: None,
+                    signal: None,
+                }],
+            }),
+            ..AdapterState::default()
+        };
+        let detail = endpoint_security_runtime_detail(
+            &state,
+            state
+                .cached_endpoint_security_sample
+                .as_ref()
+                .map(|sample| &sample.status)
+                .expect("status"),
+            25_000,
+        );
+        assert!(detail.contains("helper entitled"));
+        assert!(detail.contains("sampled lifecycle events"));
+    }
+
+    #[test]
     fn workspace_hint_extracts_folder_uri() {
         let command = r#"code --folder-uri=file:///Users/test/src/project --reuse-window"#;
         assert_eq!(
@@ -2486,5 +2971,126 @@ mod tests {
                 .iter()
                 .any(|component| component.title == "Extension Host")
         );
+    }
+
+    #[test]
+    fn endpoint_security_enrichment_upgrades_attribution_confidence() {
+        let mut entity = EntitySnapshot {
+            entity_id: "entity".to_owned(),
+            display_name: "Code".to_owned(),
+            primary_provenance: Some(ProvenanceSnapshot {
+                kind: ProvenanceKind::AppBundle,
+                label: "Application bundle".to_owned(),
+                rule: "bundle".to_owned(),
+                confidence: AttributionConfidence::Medium,
+            }),
+            launcher_summary: None,
+            attribution_notes: Vec::new(),
+            bundle_id: None,
+            executable_path: None,
+            oldest_process_start_millis: 0,
+            newest_process_start_millis: 0,
+            entity_kind: EntityKind::App,
+            metrics: AggregateMetrics::default(),
+            friction: FrictionBreakdown::default(),
+            components: vec![ComponentSnapshot {
+                kind: ComponentKind::Process,
+                title: "Code Helper".to_owned(),
+                detail: String::new(),
+                adapter_context: None,
+                provenance: Some(ProvenanceSnapshot {
+                    kind: ProvenanceKind::ParentProcess,
+                    label: "Parent process".to_owned(),
+                    rule: "heuristic".to_owned(),
+                    confidence: AttributionConfidence::Low,
+                }),
+                process_id: Some(42),
+                start_time_millis: 1,
+                executable_path: None,
+                command_line: None,
+                parent_summary: None,
+                launched_by: None,
+                cpu_percent: 0.0,
+                memory_bytes: 0,
+                cwd: None,
+                user: None,
+            }],
+            trend: MetricTrend::default(),
+            badges: Vec::new(),
+            active_window_title: None,
+            recent_change_summary: None,
+            anomaly_detected: false,
+            thermal_contribution: None,
+            grouping_suggestion: None,
+            agent_cost: None,
+            session_markers: Vec::new(),
+            recommendations: Vec::new(),
+        };
+
+        enrich_with_endpoint_security(
+            &mut entity,
+            &EndpointSecuritySample {
+                status: EndpointSecurityStatusSnapshot {
+                    supported: true,
+                    helper_entitled: true,
+                    running_as_root: true,
+                    can_stream_events: true,
+                    eslogger_path: Some("/usr/bin/eslogger".to_owned()),
+                    detail: "live".to_owned(),
+                    last_error: None,
+                },
+                events: vec![
+                    EndpointSecurityLifecycleEvent {
+                        event_type: "exec".to_owned(),
+                        timestamp_millis: 1,
+                        process_path: Some("/bin/zsh".to_owned()),
+                        pid: Some(42),
+                        parent_pid: Some(1),
+                        child_pid: None,
+                        exit_code: None,
+                        signal: None,
+                    },
+                    EndpointSecurityLifecycleEvent {
+                        event_type: "exit".to_owned(),
+                        timestamp_millis: 2,
+                        process_path: Some("/bin/zsh".to_owned()),
+                        pid: Some(42),
+                        parent_pid: Some(1),
+                        child_pid: None,
+                        exit_code: Some(1),
+                        signal: None,
+                    },
+                    EndpointSecurityLifecycleEvent {
+                        event_type: "exit".to_owned(),
+                        timestamp_millis: 3,
+                        process_path: Some("/bin/zsh".to_owned()),
+                        pid: Some(42),
+                        parent_pid: Some(1),
+                        child_pid: None,
+                        exit_code: Some(9),
+                        signal: Some(9),
+                    },
+                ],
+            },
+        );
+
+        assert!(entity.badges.iter().any(|badge| badge == "esf-lineage"));
+        assert_eq!(
+            entity
+                .primary_provenance
+                .as_ref()
+                .map(|value| value.confidence.clone()),
+            Some(AttributionConfidence::High)
+        );
+        assert!(
+            entity
+                .components
+                .first()
+                .and_then(|component| component.provenance.as_ref())
+                .map(|value| value.confidence == AttributionConfidence::High)
+                .unwrap_or(false)
+        );
+        assert!(!entity.attribution_notes.is_empty());
+        assert!(!entity.recommendations.is_empty());
     }
 }

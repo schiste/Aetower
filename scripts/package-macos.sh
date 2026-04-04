@@ -15,6 +15,7 @@ VERSION="${AETOWER_VERSION:-0.1.0}"
 BUILD_NUMBER="${AETOWER_BUILD_NUMBER:-1}"
 SIGN_IDENTITY="${AETOWER_SIGN_IDENTITY:--}"
 ENTITLEMENTS_PATH="${AETOWER_ENTITLEMENTS_PATH:-}"
+HELPER_ENTITLEMENTS_PATH="${AETOWER_HELPER_ENTITLEMENTS_PATH:-}"
 NOTARIZE="${AETOWER_NOTARIZE:-0}"
 STAPLE="${AETOWER_STAPLE:-0}"
 NOTARY_PROFILE="${AETOWER_NOTARY_PROFILE:-}"
@@ -114,7 +115,7 @@ install_name_tool -change "$SWIFTPM_PLUGIN_DIR/debug/libaetower_ffi.dylib" "@rpa
 install_name_tool -change "$SWIFTPM_PLUGIN_DIR/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
 
 sign_target "$FRAMEWORK_DIR/libaetower_ffi.dylib" plain
-sign_target "$HELPER_DIR/aetower-helper" runtime
+sign_target "$HELPER_DIR/aetower-helper" runtime "$HELPER_ENTITLEMENTS_PATH"
 sign_target "$APP_DIR" runtime "$ENTITLEMENTS_PATH"
 codesign --verify --deep --strict "$APP_DIR"
 notarize_app

@@ -9,7 +9,8 @@ use std::{
 };
 
 use aetower_diagnostics::{
-    DiagnosticsEvent, DiagnosticsLevel, DiagnosticsOverview, DiagnosticsStore, DiagnosticsSubsystem,
+    DiagnosticsEvent, DiagnosticsLevel, DiagnosticsOverview, DiagnosticsQuery, DiagnosticsStore,
+    DiagnosticsSubsystem,
 };
 use aetower_model::{
     CapabilityKind, CapabilitySnapshot, CapabilityState, FrontmostAppState, HostSnapshot,
@@ -447,12 +448,20 @@ impl Engine {
         self.diagnostics.recent(limit)
     }
 
+    pub fn query_diagnostics(&self, query: DiagnosticsQuery) -> Vec<DiagnosticsEvent> {
+        self.diagnostics.query(&query)
+    }
+
     pub fn diagnostics_overview(&self) -> DiagnosticsOverview {
         self.diagnostics.overview()
     }
 
     pub fn export_diagnostics_json(&self, limit: usize) -> String {
         self.diagnostics.export_json(limit)
+    }
+
+    pub fn export_diagnostics_query_json(&self, query: DiagnosticsQuery) -> String {
+        self.diagnostics.query_json(&query)
     }
 
     pub fn clear_diagnostics(&self) -> Result<(), String> {

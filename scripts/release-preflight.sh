@@ -1,9 +1,13 @@
 #!/bin/sh
+#!/bin/sh
 set -eu
 
 SIGN_IDENTITY="${AETOWER_SIGN_IDENTITY:-}"
 NOTARIZE="${AETOWER_NOTARIZE:-1}"
 NOTARY_PROFILE="${AETOWER_NOTARY_PROFILE:-}"
+ENTITLEMENTS_PATH="${AETOWER_ENTITLEMENTS_PATH:-}"
+HELPER_ENTITLEMENTS_PATH="${AETOWER_HELPER_ENTITLEMENTS_PATH:-}"
+REQUIRE_ENDPOINT_SECURITY="${AETOWER_REQUIRE_ENDPOINT_SECURITY:-0}"
 
 STATUS=0
 
@@ -35,6 +39,32 @@ if [ "$NOTARIZE" = "1" ]; then
     fi
 else
     printf '  notarization: disabled\n'
+fi
+
+if [ -n "$ENTITLEMENTS_PATH" ]; then
+    if [ -f "$ENTITLEMENTS_PATH" ]; then
+        printf '  app entitlements: found\n'
+    else
+        printf '  app entitlements: missing at %s\n' "$ENTITLEMENTS_PATH"
+        STATUS=1
+    fi
+fi
+
+if [ "$REQUIRE_ENDPOINT_SECURITY" = "1" ]; then
+    if [ -z "$HELPER_ENTITLEMENTS_PATH" ]; then
+        printf '  endpoint security helper entitlements: missing (set AETOWER_HELPER_ENTITLEMENTS_PATH)\n'
+        STATUS=1
+    elif [ ! -f "$HELPER_ENTITLEMENTS_PATH" ]; then
+        printf '  endpoint security helper entitlements: missing file %s\n' "$HELPER_ENTITLEMENTS_PATH"
+        STATUS=1
+    elif grep -F "com.apple.developer.endpoint-security.client" "$HELPER_ENTITLEMENTS_PATH" >/dev/null 2>&1; then
+        printf '  endpoint security helper entitlements: found\n'
+    else
+        printf '  endpoint security helper entitlements: entitlement key missing\n'
+        STATUS=1
+    fi
+else
+    printf '  endpoint security helper entitlements: optional\n'
 fi
 
 if [ "$STATUS" -eq 0 ]; then

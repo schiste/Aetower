@@ -33,6 +33,7 @@ pub enum CapabilityKind {
     DockerSocket,
     PrivilegedHelper,
     Chau7,
+    EndpointSecurity,
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -442,6 +443,16 @@ pub struct DiagnosticsOverview {
     pub persistence_error: Option<String>,
 }
 
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct DiagnosticsQuery {
+    pub limit: u32,
+    pub minimum_level: Option<DiagnosticsLevel>,
+    pub subsystem: Option<DiagnosticsSubsystem>,
+    pub search: Option<String>,
+    pub since_millis: Option<u64>,
+    pub include_persisted: bool,
+}
+
 #[derive(uniffi::Object)]
 pub struct MonitorEngine {
     inner: std::sync::Mutex<Engine>,
@@ -599,6 +610,16 @@ impl MonitorEngine {
             .collect()
     }
 
+    pub fn query_diagnostics(&self, query: DiagnosticsQuery) -> Vec<DiagnosticsEvent> {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .query_diagnostics(query.into())
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
     pub fn diagnostics_overview(&self) -> DiagnosticsOverview {
         self.inner
             .lock()
@@ -636,6 +657,13 @@ impl MonitorEngine {
             .lock()
             .expect("engine lock poisoned")
             .export_diagnostics_json(limit as usize)
+    }
+
+    pub fn export_diagnostics_query_json(&self, query: DiagnosticsQuery) -> String {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .export_diagnostics_query_json(query.into())
     }
 
     pub fn record_diagnostics_event(&self, event: DiagnosticsEvent) {
@@ -704,6 +732,7 @@ impl From<CapabilityKind> for model::CapabilityKind {
             CapabilityKind::DockerSocket => Self::DockerSocket,
             CapabilityKind::PrivilegedHelper => Self::PrivilegedHelper,
             CapabilityKind::Chau7 => Self::Chau7,
+            CapabilityKind::EndpointSecurity => Self::EndpointSecurity,
         }
     }
 }
@@ -718,6 +747,7 @@ impl From<model::CapabilityKind> for CapabilityKind {
             model::CapabilityKind::DockerSocket => Self::DockerSocket,
             model::CapabilityKind::PrivilegedHelper => Self::PrivilegedHelper,
             model::CapabilityKind::Chau7 => Self::Chau7,
+            model::CapabilityKind::EndpointSecurity => Self::EndpointSecurity,
         }
     }
 }
@@ -1288,6 +1318,19 @@ impl From<model::SystemSnapshot> for SystemSnapshot {
             capabilities: value.capabilities.into_iter().map(Into::into).collect(),
             entities: value.entities.into_iter().map(Into::into).collect(),
             timeline: value.timeline.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<DiagnosticsQuery> for diagnostics::DiagnosticsQuery {
+    fn from(value: DiagnosticsQuery) -> Self {
+        Self {
+            limit: value.limit as usize,
+            minimum_level: value.minimum_level.map(Into::into),
+            subsystem: value.subsystem.map(Into::into),
+            search: value.search,
+            since_millis: value.since_millis,
+            include_persisted: value.include_persisted,
         }
     }
 }

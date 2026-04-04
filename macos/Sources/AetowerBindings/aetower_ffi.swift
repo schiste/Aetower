@@ -551,6 +551,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func exportDiagnosticsJson(limit: UInt32)  -> String
     
+    func exportDiagnosticsQueryJson(query: DiagnosticsQuery)  -> String
+    
     func exportSnapshotJson()  -> String
     
     func latestDiagnostics(limit: UInt32)  -> [DiagnosticsEvent]
@@ -564,6 +566,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     func latestSnapshotIfNewer(lastSequence: UInt64)  -> SystemSnapshot?
     
     func loadHistoryRange(startMillis: UInt64, endMillis: UInt64)  -> [SystemSnapshot]
+    
+    func queryDiagnostics(query: DiagnosticsQuery)  -> [DiagnosticsEvent]
     
     func recordDiagnosticsEvent(event: DiagnosticsEvent) 
     
@@ -710,6 +714,14 @@ open func exportDiagnosticsJson(limit: UInt32) -> String  {
 })
 }
     
+open func exportDiagnosticsQueryJson(query: DiagnosticsQuery) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_export_diagnostics_query_json(self.uniffiClonePointer(),
+        FfiConverterTypeDiagnosticsQuery_lower(query),$0
+    )
+})
+}
+    
 open func exportSnapshotJson() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_export_snapshot_json(self.uniffiClonePointer(),$0
@@ -759,6 +771,14 @@ open func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSna
     uniffi_aetower_ffi_fn_method_monitorengine_load_history_range(self.uniffiClonePointer(),
         FfiConverterUInt64.lower(startMillis),
         FfiConverterUInt64.lower(endMillis),$0
+    )
+})
+}
+    
+open func queryDiagnostics(query: DiagnosticsQuery) -> [DiagnosticsEvent]  {
+    return try!  FfiConverterSequenceTypeDiagnosticsEvent.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_query_diagnostics(self.uniffiClonePointer(),
+        FfiConverterTypeDiagnosticsQuery_lower(query),$0
     )
 })
 }
@@ -1910,6 +1930,108 @@ public func FfiConverterTypeDiagnosticsOverview_lift(_ buf: RustBuffer) throws -
 #endif
 public func FfiConverterTypeDiagnosticsOverview_lower(_ value: DiagnosticsOverview) -> RustBuffer {
     return FfiConverterTypeDiagnosticsOverview.lower(value)
+}
+
+
+public struct DiagnosticsQuery {
+    public var limit: UInt32
+    public var minimumLevel: DiagnosticsLevel?
+    public var subsystem: DiagnosticsSubsystem?
+    public var search: String?
+    public var sinceMillis: UInt64?
+    public var includePersisted: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(limit: UInt32, minimumLevel: DiagnosticsLevel?, subsystem: DiagnosticsSubsystem?, search: String?, sinceMillis: UInt64?, includePersisted: Bool) {
+        self.limit = limit
+        self.minimumLevel = minimumLevel
+        self.subsystem = subsystem
+        self.search = search
+        self.sinceMillis = sinceMillis
+        self.includePersisted = includePersisted
+    }
+}
+
+#if compiler(>=6)
+extension DiagnosticsQuery: Sendable {}
+#endif
+
+
+extension DiagnosticsQuery: Equatable, Hashable {
+    public static func ==(lhs: DiagnosticsQuery, rhs: DiagnosticsQuery) -> Bool {
+        if lhs.limit != rhs.limit {
+            return false
+        }
+        if lhs.minimumLevel != rhs.minimumLevel {
+            return false
+        }
+        if lhs.subsystem != rhs.subsystem {
+            return false
+        }
+        if lhs.search != rhs.search {
+            return false
+        }
+        if lhs.sinceMillis != rhs.sinceMillis {
+            return false
+        }
+        if lhs.includePersisted != rhs.includePersisted {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(limit)
+        hasher.combine(minimumLevel)
+        hasher.combine(subsystem)
+        hasher.combine(search)
+        hasher.combine(sinceMillis)
+        hasher.combine(includePersisted)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiagnosticsQuery: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsQuery {
+        return
+            try DiagnosticsQuery(
+                limit: FfiConverterUInt32.read(from: &buf), 
+                minimumLevel: FfiConverterOptionTypeDiagnosticsLevel.read(from: &buf), 
+                subsystem: FfiConverterOptionTypeDiagnosticsSubsystem.read(from: &buf), 
+                search: FfiConverterOptionString.read(from: &buf), 
+                sinceMillis: FfiConverterOptionUInt64.read(from: &buf), 
+                includePersisted: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DiagnosticsQuery, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.limit, into: &buf)
+        FfiConverterOptionTypeDiagnosticsLevel.write(value.minimumLevel, into: &buf)
+        FfiConverterOptionTypeDiagnosticsSubsystem.write(value.subsystem, into: &buf)
+        FfiConverterOptionString.write(value.search, into: &buf)
+        FfiConverterOptionUInt64.write(value.sinceMillis, into: &buf)
+        FfiConverterBool.write(value.includePersisted, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsQuery_lift(_ buf: RustBuffer) throws -> DiagnosticsQuery {
+    return try FfiConverterTypeDiagnosticsQuery.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticsQuery_lower(_ value: DiagnosticsQuery) -> RustBuffer {
+    return FfiConverterTypeDiagnosticsQuery.lower(value)
 }
 
 
@@ -4010,6 +4132,7 @@ public enum CapabilityKind {
     case dockerSocket
     case privilegedHelper
     case chau7
+    case endpointSecurity
 }
 
 
@@ -4040,6 +4163,8 @@ public struct FfiConverterTypeCapabilityKind: FfiConverterRustBuffer {
         case 6: return .privilegedHelper
         
         case 7: return .chau7
+        
+        case 8: return .endpointSecurity
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -4075,6 +4200,10 @@ public struct FfiConverterTypeCapabilityKind: FfiConverterRustBuffer {
         
         case .chau7:
             writeInt(&buf, Int32(7))
+        
+        
+        case .endpointSecurity:
+            writeInt(&buf, Int32(8))
         
         }
     }
@@ -5285,6 +5414,54 @@ fileprivate struct FfiConverterOptionTypeSystemSnapshot: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeDiagnosticsLevel: FfiConverterRustBuffer {
+    typealias SwiftType = DiagnosticsLevel?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeDiagnosticsLevel.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeDiagnosticsLevel.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeDiagnosticsSubsystem: FfiConverterRustBuffer {
+    typealias SwiftType = DiagnosticsSubsystem?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeDiagnosticsSubsystem.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeDiagnosticsSubsystem.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceUInt64: FfiConverterRustBuffer {
     typealias SwiftType = [UInt64]
 
@@ -5652,6 +5829,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_export_diagnostics_json() != 20988) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_export_diagnostics_query_json() != 33460) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_export_snapshot_json() != 44531) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5671,6 +5851,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_load_history_range() != 25480) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_query_diagnostics() != 28303) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_record_diagnostics_event() != 15141) {

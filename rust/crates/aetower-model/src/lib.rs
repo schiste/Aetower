@@ -34,6 +34,7 @@ pub enum CapabilityKind {
     DockerSocket,
     PrivilegedHelper,
     Chau7,
+    EndpointSecurity,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]

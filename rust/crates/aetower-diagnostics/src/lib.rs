@@ -153,6 +153,22 @@ pub struct DiagnosticsOverview {
     pub persistence_error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DiagnosticsQuery {
+    #[serde(default)]
+    pub limit: usize,
+    #[serde(default)]
+    pub minimum_level: Option<DiagnosticsLevel>,
+    #[serde(default)]
+    pub subsystem: Option<DiagnosticsSubsystem>,
+    #[serde(default)]
+    pub search: Option<String>,
+    #[serde(default)]
+    pub since_millis: Option<u64>,
+    #[serde(default)]
+    pub include_persisted: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct DiagnosticsStore {
     inner: Arc<Mutex<DiagnosticsState>>,
@@ -297,6 +313,52 @@ impl DiagnosticsStore {
 
     pub fn export_json(&self, limit: usize) -> String {
         serde_json::to_string_pretty(&self.recent(limit))
+            .unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"))
+    }
+
+    pub fn query(&self, query: &DiagnosticsQuery) -> Vec<DiagnosticsEvent> {
+        let guard = self.inner.lock();
+        let limit = query.limit.max(1);
+        let mut events = if query.include_persisted {
+            let mut persisted = guard
+                .persistence
+                .as_ref()
+                .map(|persistence| persistence.read_recent(limit.saturating_mul(4)))
+                .unwrap_or_default();
+            persisted.extend(guard.events.iter().cloned());
+            persisted
+        } else {
+            guard.events.iter().cloned().collect::<Vec<_>>()
+        };
+        drop(guard);
+
+        if query.include_persisted {
+            events.sort_by(|left, right| {
+                left.timestamp_millis
+                    .cmp(&right.timestamp_millis)
+                    .then(left.id.cmp(&right.id))
+            });
+            events.dedup_by(|left, right| left.id == right.id);
+        }
+
+        let normalized_search = query
+            .search
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_ascii_lowercase());
+
+        let mut filtered = events
+            .into_iter()
+            .filter(|event| diagnostics_event_matches(event, query, normalized_search.as_deref()))
+            .collect::<Vec<_>>();
+        filtered.sort_by(|left, right| right.timestamp_millis.cmp(&left.timestamp_millis));
+        filtered.truncate(limit);
+        filtered
+    }
+
+    pub fn query_json(&self, query: &DiagnosticsQuery) -> String {
+        serde_json::to_string_pretty(&self.query(query))
             .unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"))
     }
 
@@ -450,6 +512,70 @@ impl PersistedDiagnostics {
         self.last_error = None;
         Ok(())
     }
+
+    fn read_recent(&self, limit: usize) -> Vec<DiagnosticsEvent> {
+        let file = match File::open(&self.path) {
+            Ok(file) => file,
+            Err(_) => return Vec::new(),
+        };
+        let mut retained = VecDeque::with_capacity(limit.max(1));
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
+            let Ok(event) = serde_json::from_str::<DiagnosticsEvent>(&line) else {
+                continue;
+            };
+            if retained.len() >= limit.max(1) {
+                retained.pop_front();
+            }
+            retained.push_back(event);
+        }
+        retained.into_iter().collect()
+    }
+}
+
+fn diagnostics_event_matches(
+    event: &DiagnosticsEvent,
+    query: &DiagnosticsQuery,
+    normalized_search: Option<&str>,
+) -> bool {
+    if let Some(minimum_level) = query.minimum_level.as_ref()
+        && &event.level < minimum_level
+    {
+        return false;
+    }
+    if let Some(subsystem) = query.subsystem.as_ref()
+        && &event.subsystem != subsystem
+    {
+        return false;
+    }
+    if let Some(since_millis) = query.since_millis
+        && event.timestamp_millis < since_millis
+    {
+        return false;
+    }
+    if let Some(search) = normalized_search {
+        let haystack = [
+            Some(event.event_type.as_str()),
+            Some(event.message.as_str()),
+            event.entity_id.as_deref(),
+            event.adapter.as_deref(),
+            event.capability.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .chain(
+            event
+                .fields
+                .iter()
+                .flat_map(|field| [field.key.as_str(), field.value.as_str()]),
+        )
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+        if !haystack.contains(search) {
+            return false;
+        }
+    }
+    true
 }
 
 fn should_persist_event(event: &DiagnosticsEvent) -> bool {
@@ -648,6 +774,75 @@ mod tests {
         assert_eq!(overview.current_size, 0);
         assert_eq!(overview.persisted_events, 0);
         assert_eq!(std::fs::read_to_string(&path).unwrap_or_default(), "");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn query_filters_recent_ring_events() {
+        let store = DiagnosticsStore::new(8);
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Engine,
+                "engine-initialized",
+                "ready",
+            )
+            .field("scope", "startup")
+            .build(),
+        );
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Warn,
+                DiagnosticsSubsystem::Telemetry,
+                "telemetry-verification-failed",
+                "export failed",
+            )
+            .field("endpoint", "localhost")
+            .build(),
+        );
+
+        let results = store.query(&DiagnosticsQuery {
+            limit: 10,
+            minimum_level: Some(DiagnosticsLevel::Warn),
+            subsystem: Some(DiagnosticsSubsystem::Telemetry),
+            search: Some("localhost".to_owned()),
+            since_millis: None,
+            include_persisted: false,
+        });
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].event_type, "telemetry-verification-failed");
+    }
+
+    #[test]
+    fn query_reads_persisted_events() {
+        let path =
+            std::env::temp_dir().join(format!("aetower-diag-query-{}.ndjson", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let store = DiagnosticsStore::with_persistence(4, &path, 16).expect("store");
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Warn,
+                DiagnosticsSubsystem::Persistence,
+                "history-load-failed",
+                "load failed",
+            )
+            .field("error", "decode")
+            .build(),
+        );
+
+        let query = DiagnosticsQuery {
+            limit: 10,
+            minimum_level: Some(DiagnosticsLevel::Warn),
+            subsystem: Some(DiagnosticsSubsystem::Persistence),
+            search: Some("decode".to_owned()),
+            since_millis: None,
+            include_persisted: true,
+        };
+        let results = store.query(&query);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].event_type, "history-load-failed");
 
         let _ = std::fs::remove_file(&path);
     }

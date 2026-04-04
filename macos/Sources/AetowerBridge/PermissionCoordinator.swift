@@ -52,6 +52,11 @@ public final class PermissionCoordinator {
                 state: .requested,
                 detail: "Configure a helper path and run the helper with elevated privileges when deeper attribution is required."
             )
+        case .endpointSecurity:
+            return PermissionResult(
+                state: .requested,
+                detail: "Endpoint Security requires the enterprise helper to be signed with the Endpoint Security entitlement and approved for privileged event streaming."
+            )
         case .chau7:
             let defaultPath = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".chau7/mcp.sock").path
