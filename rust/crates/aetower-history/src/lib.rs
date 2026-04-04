@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use aetower_model::{
     EntitySnapshot, HostSnapshot, HostTrend, MetricTrend, Recommendation, ThermalState,
-    TimelineEvent, TimelineSeverity,
+    TimelineCategory, TimelineEvent, TimelineSeverity,
 };
 
 pub struct History {
@@ -23,6 +23,7 @@ pub struct History {
     last_restart_loop_report: BTreeMap<String, u64>,
     previous_pressure_band: PressureBand,
     previous_wakeup_band: WakeupBand,
+    previous_entity_behaviors: BTreeMap<String, EntityBehaviorFlags>,
 }
 
 struct MetricTrendState {
@@ -88,6 +89,13 @@ enum WakeupBand {
     Severe,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct EntityBehaviorFlags {
+    disk_churn: bool,
+    wakeup_churn: bool,
+    background_network: bool,
+}
+
 const MAX_TREND_POINTS: usize = 30;
 const PROCESS_LAUNCH_BURST_WINDOW_MILLIS: u64 = 15_000;
 const SHORT_LIVED_PROCESS_MILLIS: u64 = 30_000;
@@ -113,6 +121,7 @@ impl History {
             last_restart_loop_report: BTreeMap::new(),
             previous_pressure_band: PressureBand::Nominal,
             previous_wakeup_band: WakeupBand::Nominal,
+            previous_entity_behaviors: BTreeMap::new(),
         }
     }
 
@@ -142,6 +151,9 @@ impl History {
         host: &HostSnapshot,
         entities: &mut [EntitySnapshot],
     ) -> (Vec<TimelineEvent>, HostTrend) {
+        for entity in entities.iter_mut() {
+            entity.recent_change_summary = None;
+        }
         let active_entity_ids: Vec<String> = entities
             .iter()
             .map(|entity| entity.entity_id.clone())
@@ -158,6 +170,8 @@ impl History {
             trend_state.push(entity);
             entity.trend = trend_state.snapshot();
         }
+
+        self.update_entity_behavior_observability(captured_at_millis, entities);
 
         // Anomaly detection: flag entities whose current friction exceeds
         // mean + 2*stddev of their recent trend (z-score > 2).
@@ -177,11 +191,19 @@ impl History {
             if is_anomaly && !was_anomaly {
                 self.push_event(
                     captured_at_millis,
+                    TimelineCategory::Anomaly,
                     TimelineSeverity::Warning,
                     Some(entity.entity_id.clone()),
                     format!("{} anomaly detected", entity.display_name),
                     format!(
                         "Friction {:.1} is unusually high for this entity",
+                        entity.friction.total_score
+                    ),
+                );
+                set_recent_change_summary(
+                    entity,
+                    format!(
+                        "Friction jumped to {:.1}, which is unusual for this entity.",
                         entity.friction.total_score
                     ),
                 );
@@ -204,6 +226,7 @@ impl History {
                 .collect();
             self.push_event(
                 captured_at_millis,
+                TimelineCategory::Thermal,
                 TimelineSeverity::Warning,
                 None,
                 format!("Thermal state: {}", host.thermal_state),
@@ -293,6 +316,11 @@ impl History {
                 .iter()
                 .any(|active_id| active_id == entity_id)
         });
+        self.previous_entity_behaviors.retain(|entity_id, _| {
+            active_entity_ids
+                .iter()
+                .any(|active_id| active_id == entity_id)
+        });
         let active_idx_set: HashSet<u16> = active_indices.iter().copied().collect();
         self.cooccurrence
             .retain(|(a, b), _| active_idx_set.contains(a) && active_idx_set.contains(b));
@@ -307,14 +335,24 @@ impl History {
             if previous == 0.0 && entity.friction.total_score >= 20.0 {
                 self.push_event(
                     captured_at_millis,
+                    TimelineCategory::Lifecycle,
                     TimelineSeverity::Warning,
                     Some(entity.entity_id.clone()),
-                    format!("{} became active", entity.display_name),
+                    if matches!(
+                        entity.entity_kind,
+                        aetower_model::EntityKind::Service | aetower_model::EntityKind::Daemon
+                    ) && !entity.metrics.is_foreground
+                    {
+                        format!("Background agent {} became active", entity.display_name)
+                    } else {
+                        format!("{} became active", entity.display_name)
+                    },
                     entity.friction.reasons.join(", "),
                 );
             } else if delta >= 15.0 {
                 self.push_event(
                     captured_at_millis,
+                    TimelineCategory::Friction,
                     TimelineSeverity::Critical,
                     Some(entity.entity_id.clone()),
                     format!("{} friction spiked", entity.display_name),
@@ -338,6 +376,7 @@ impl History {
     fn push_event(
         &mut self,
         timestamp_millis: u64,
+        category: TimelineCategory,
         severity: TimelineSeverity,
         entity_id: Option<String>,
         title: String,
@@ -350,6 +389,7 @@ impl History {
                 timestamp_millis
             ),
             timestamp_millis,
+            category,
             severity,
             entity_id,
             title,
@@ -361,7 +401,7 @@ impl History {
         &mut self,
         captured_at_millis: u64,
         host: &HostSnapshot,
-        entities: &[EntitySnapshot],
+        entities: &mut [EntitySnapshot],
     ) {
         let pressure_band = pressure_band(host);
         if pressure_band > self.previous_pressure_band {
@@ -373,6 +413,7 @@ impl History {
                 .join(", ");
             self.push_event(
                 captured_at_millis,
+                TimelineCategory::Host,
                 if pressure_band == PressureBand::Severe {
                     TimelineSeverity::Critical
                 } else {
@@ -395,6 +436,17 @@ impl History {
                     }
                 ),
             );
+            for entity in entities
+                .iter_mut()
+                .take(3)
+                .filter(|entity| entity.metrics.memory_resident_bytes > 0)
+            {
+                set_recent_change_summary(
+                    entity,
+                    "Host memory pressure is rising while this entity remains one of the largest residents."
+                        .to_owned(),
+                );
+            }
         }
         self.previous_pressure_band = pressure_band;
 
@@ -414,6 +466,7 @@ impl History {
                 .join(", ");
             self.push_event(
                 captured_at_millis,
+                TimelineCategory::Host,
                 if wakeup_band == WakeupBand::Severe {
                     TimelineSeverity::Critical
                 } else {
@@ -435,6 +488,17 @@ impl History {
                     }
                 ),
             );
+            for entity in entities
+                .iter_mut()
+                .filter(|entity| entity.metrics.wakeups_per_second >= 300.0)
+                .take(3)
+            {
+                set_recent_change_summary(
+                    entity,
+                    "Host wakeups are elevated and this entity is one of the dominant wakeup sources."
+                        .to_owned(),
+                );
+            }
         }
         self.previous_wakeup_band = wakeup_band;
     }
@@ -495,6 +559,7 @@ impl History {
             if let Some(signature) = restarting_signature.clone() {
                 self.push_event(
                     captured_at_millis,
+                    TimelineCategory::Lifecycle,
                     TimelineSeverity::Critical,
                     Some(entity_id.clone()),
                     format!("{entity_name} may be restart-looping"),
@@ -506,6 +571,7 @@ impl History {
             } else {
                 self.push_event(
                     captured_at_millis,
+                    TimelineCategory::Lifecycle,
                     if hot_launch {
                         TimelineSeverity::Warning
                     } else {
@@ -532,12 +598,25 @@ impl History {
                             signature
                         ),
                     );
+                    set_recent_change_summary(
+                        entity,
+                        format!(
+                            "Repeated short-lived relaunches suggest a restart loop for {signature}."
+                        ),
+                    );
                 } else {
                     push_recommendation(
                         entity,
                         "Inspect recent process churn",
                         format!(
                             "Aetower saw {} new process(es) under this entity in the last few seconds. Check helpers, extensions, watchers, or child tasks first.",
+                            launch_count
+                        ),
+                    );
+                    set_recent_change_summary(
+                        entity,
+                        format!(
+                            "A burst of {} new processes appeared under this entity.",
                             launch_count
                         ),
                     );
@@ -586,6 +665,7 @@ impl History {
                         .insert(signature.clone(), captured_at_millis);
                     self.push_event(
                         captured_at_millis,
+                        TimelineCategory::Lifecycle,
                         TimelineSeverity::Critical,
                         Some(previous.entity_id.clone()),
                         format!("{} may be in a restart loop", previous.entity_name),
@@ -606,6 +686,13 @@ impl History {
                                 signature
                             ),
                         );
+                        set_recent_change_summary(
+                            entity,
+                            format!(
+                                "Aetower observed repeated short-lived exits for {} within about a minute.",
+                                signature
+                            ),
+                        );
                     }
                 }
             } else if runtime_millis <= SHORT_LIVED_PROCESS_MILLIS
@@ -613,6 +700,7 @@ impl History {
             {
                 self.push_event(
                     captured_at_millis,
+                    TimelineCategory::Lifecycle,
                     TimelineSeverity::Warning,
                     Some(previous.entity_id.clone()),
                     format!("{} lost a short-lived hot process", previous.entity_name),
@@ -629,6 +717,106 @@ impl History {
         }
 
         self.previous_processes = current;
+    }
+
+    fn update_entity_behavior_observability(
+        &mut self,
+        captured_at_millis: u64,
+        entities: &mut [EntitySnapshot],
+    ) {
+        for entity in entities.iter_mut() {
+            let previous = self
+                .previous_entity_behaviors
+                .get(&entity.entity_id)
+                .copied()
+                .unwrap_or_default();
+            let disk_activity = entity
+                .metrics
+                .disk_read_bps
+                .saturating_add(entity.metrics.disk_write_bps);
+            let network_activity = entity
+                .metrics
+                .network_receive_bps
+                .saturating_add(entity.metrics.network_send_bps);
+            let current = EntityBehaviorFlags {
+                disk_churn: disk_activity >= 32 * 1_048_576,
+                wakeup_churn: entity.metrics.wakeups_per_second >= 1_200.0,
+                background_network: !entity.metrics.is_foreground
+                    && network_activity >= 16 * 1_048_576,
+            };
+
+            if current.disk_churn && !previous.disk_churn {
+                self.push_event(
+                    captured_at_millis,
+                    TimelineCategory::Friction,
+                    TimelineSeverity::Warning,
+                    Some(entity.entity_id.clone()),
+                    format!("{} is causing disk churn", entity.display_name),
+                    format!(
+                        "This entity is driving about {:.1} MiB/s of read + write throughput across {} process(es).",
+                        disk_activity as f32 / 1_048_576.0,
+                        entity.metrics.process_count
+                    ),
+                );
+                push_recommendation(
+                    entity,
+                    "Reduce disk churn",
+                    "Aetower detected sustained local disk throughput from this entity. Pause sync, large file operations, indexers, or cache rebuilds first.".to_owned(),
+                );
+                set_recent_change_summary(
+                    entity,
+                    format!(
+                        "Disk throughput climbed to {:.1} MiB/s across this entity.",
+                        disk_activity as f32 / 1_048_576.0
+                    ),
+                );
+            }
+
+            if current.wakeup_churn && !previous.wakeup_churn {
+                self.push_event(
+                    captured_at_millis,
+                    TimelineCategory::Friction,
+                    TimelineSeverity::Warning,
+                    Some(entity.entity_id.clone()),
+                    format!("{} is generating timer churn", entity.display_name),
+                    format!(
+                        "Wakeups climbed to about {:.0}/s, which is consistent with a noisy watcher, polling loop, extension host, or background refresh cycle.",
+                        entity.metrics.wakeups_per_second
+                    ),
+                );
+                set_recent_change_summary(
+                    entity,
+                    format!(
+                        "Wakeups climbed to about {:.0}/s for this entity.",
+                        entity.metrics.wakeups_per_second
+                    ),
+                );
+            }
+
+            if current.background_network && !previous.background_network {
+                self.push_event(
+                    captured_at_millis,
+                    TimelineCategory::Friction,
+                    TimelineSeverity::Warning,
+                    Some(entity.entity_id.clone()),
+                    format!("{} is busy in the background", entity.display_name),
+                    format!(
+                        "Background network activity reached {:.1} MiB/s. Check sync, downloads, uploads, or remote dev sessions tied to this entity.",
+                        network_activity as f32 / 1_048_576.0
+                    ),
+                );
+                set_recent_change_summary(
+                    entity,
+                    format!(
+                        "Background network activity reached {:.1} MiB/s for this entity.",
+                        network_activity as f32 / 1_048_576.0
+                    ),
+                );
+            }
+
+            self.previous_entity_behaviors
+                .insert(entity.entity_id.clone(), current);
+        }
     }
 }
 
@@ -894,6 +1082,12 @@ fn push_recommendation(entity: &mut EntitySnapshot, title: &str, detail: String)
     }
 }
 
+fn set_recent_change_summary(entity: &mut EntitySnapshot, summary: String) {
+    if entity.recent_change_summary.is_none() {
+        entity.recent_change_summary = Some(summary);
+    }
+}
+
 fn pressure_band(host: &HostSnapshot) -> PressureBand {
     let total_memory = host.memory_total_bytes.max(1) as f32;
     let compressed_ratio = host.compressed_memory_bytes as f32 / total_memory;
@@ -936,6 +1130,8 @@ mod tests {
             entity_id: id.to_owned(),
             display_name: name.to_owned(),
             primary_provenance: Some(ProvenanceSnapshot::default()),
+            launcher_summary: Some(name.to_owned()),
+            attribution_notes: Vec::new(),
             bundle_id: None,
             executable_path: None,
             oldest_process_start_millis: start_time_millis,
@@ -973,6 +1169,7 @@ mod tests {
             trend: MetricTrend::default(),
             badges: Vec::new(),
             active_window_title: None,
+            recent_change_summary: None,
             anomaly_detected: false,
             thermal_contribution: None,
             grouping_suggestion: None,
@@ -1039,6 +1236,13 @@ mod tests {
                 .iter()
                 .any(|recommendation| recommendation.title == "Inspect recent process churn")
         );
+        assert!(
+            entities[0]
+                .recent_change_summary
+                .as_deref()
+                .unwrap_or_default()
+                .contains("new processes")
+        );
     }
 
     #[test]
@@ -1093,6 +1297,32 @@ mod tests {
                 .timeline
                 .iter()
                 .any(|event| event.title.contains("Memory pressure"))
+        );
+        assert!(
+            entities[0]
+                .recent_change_summary
+                .as_deref()
+                .unwrap_or_default()
+                .contains("memory pressure")
+        );
+    }
+
+    #[test]
+    fn emits_disk_churn_recommendation_for_heavy_background_disk_usage() {
+        let mut history = History::new();
+        let host = HostSnapshot::default();
+        let mut entity = entity_with_process("app:test", "Test", 100, 1_000);
+        entity.metrics.disk_read_bps = 28 * 1024 * 1024;
+        entity.metrics.disk_write_bps = 12 * 1024 * 1024;
+        let mut entities = vec![entity];
+
+        history.update(5_000, &host, &mut entities);
+
+        assert!(
+            entities[0]
+                .recommendations
+                .iter()
+                .any(|recommendation| recommendation.title == "Reduce disk churn")
         );
     }
 }

@@ -299,6 +299,17 @@ impl DiagnosticsStore {
         serde_json::to_string_pretty(&self.recent(limit))
             .unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"))
     }
+
+    pub fn clear(&self) -> io::Result<()> {
+        let mut guard = self.inner.lock();
+        guard.events.clear();
+        guard.next_id = 1;
+        guard.dropped_events = 0;
+        if let Some(persistence) = guard.persistence.as_mut() {
+            persistence.clear()?;
+        }
+        Ok(())
+    }
 }
 
 impl Default for DiagnosticsStore {
@@ -431,6 +442,13 @@ impl PersistedDiagnostics {
         std::fs::metadata(&self.path)
             .map(|metadata| metadata.len())
             .unwrap_or(0)
+    }
+
+    fn clear(&mut self) -> io::Result<()> {
+        File::create(&self.path)?;
+        self.event_count = 0;
+        self.last_error = None;
+        Ok(())
     }
 }
 
@@ -601,6 +619,35 @@ mod tests {
         let persisted = std::fs::read_to_string(&path).expect("persisted file");
         assert!(!persisted.contains("anomaly-notifications-suppressed"));
         assert!(persisted.contains("history-load-failed"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn clear_empties_ring_and_persisted_file() {
+        let path =
+            std::env::temp_dir().join(format!("aetower-diag-clear-{}.ndjson", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let store = DiagnosticsStore::with_persistence(8, &path, 16).expect("store");
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Warn,
+                DiagnosticsSubsystem::Engine,
+                "kept",
+                "persist me",
+            )
+            .build(),
+        );
+        assert_eq!(store.recent(10).len(), 1);
+        assert!(store.overview().persisted_events >= 1);
+
+        store.clear().expect("clear");
+
+        let overview = store.overview();
+        assert_eq!(overview.current_size, 0);
+        assert_eq!(overview.persisted_events, 0);
+        assert_eq!(std::fs::read_to_string(&path).unwrap_or_default(), "");
 
         let _ = std::fs::remove_file(&path);
     }

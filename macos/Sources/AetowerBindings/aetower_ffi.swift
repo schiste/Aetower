@@ -531,7 +531,11 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
+    func clearDiagnostics()  -> String
+    
     func clearFrontmostAppState() 
+    
+    func clearHistory()  -> String
     
     func configureChau7Endpoint(socketPath: String?) 
     
@@ -633,10 +637,24 @@ public convenience init() {
     
 
     
+open func clearDiagnostics() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_clear_diagnostics(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
 open func clearFrontmostAppState()  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_clear_frontmost_app_state(self.uniffiClonePointer(),$0
     )
 }
+}
+    
+open func clearHistory() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_clear_history(self.uniffiClonePointer(),$0
+    )
+})
 }
     
 open func configureChau7Endpoint(socketPath: String?)  {try! rustCall() {
@@ -1899,6 +1917,8 @@ public struct EntitySnapshot {
     public var entityId: String
     public var displayName: String
     public var primaryProvenance: ProvenanceSnapshot?
+    public var launcherSummary: String?
+    public var attributionNotes: [String]
     public var bundleId: String?
     public var executablePath: String?
     public var oldestProcessStartMillis: UInt64
@@ -1910,6 +1930,7 @@ public struct EntitySnapshot {
     public var trend: MetricTrend
     public var badges: [String]
     public var activeWindowTitle: String?
+    public var recentChangeSummary: String?
     public var anomalyDetected: Bool
     public var thermalContribution: String?
     public var groupingSuggestion: String?
@@ -1919,10 +1940,12 @@ public struct EntitySnapshot {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation]) {
+    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, launcherSummary: String?, attributionNotes: [String], bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recentChangeSummary: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation]) {
         self.entityId = entityId
         self.displayName = displayName
         self.primaryProvenance = primaryProvenance
+        self.launcherSummary = launcherSummary
+        self.attributionNotes = attributionNotes
         self.bundleId = bundleId
         self.executablePath = executablePath
         self.oldestProcessStartMillis = oldestProcessStartMillis
@@ -1934,6 +1957,7 @@ public struct EntitySnapshot {
         self.trend = trend
         self.badges = badges
         self.activeWindowTitle = activeWindowTitle
+        self.recentChangeSummary = recentChangeSummary
         self.anomalyDetected = anomalyDetected
         self.thermalContribution = thermalContribution
         self.groupingSuggestion = groupingSuggestion
@@ -1957,6 +1981,12 @@ extension EntitySnapshot: Equatable, Hashable {
             return false
         }
         if lhs.primaryProvenance != rhs.primaryProvenance {
+            return false
+        }
+        if lhs.launcherSummary != rhs.launcherSummary {
+            return false
+        }
+        if lhs.attributionNotes != rhs.attributionNotes {
             return false
         }
         if lhs.bundleId != rhs.bundleId {
@@ -1992,6 +2022,9 @@ extension EntitySnapshot: Equatable, Hashable {
         if lhs.activeWindowTitle != rhs.activeWindowTitle {
             return false
         }
+        if lhs.recentChangeSummary != rhs.recentChangeSummary {
+            return false
+        }
         if lhs.anomalyDetected != rhs.anomalyDetected {
             return false
         }
@@ -2017,6 +2050,8 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(entityId)
         hasher.combine(displayName)
         hasher.combine(primaryProvenance)
+        hasher.combine(launcherSummary)
+        hasher.combine(attributionNotes)
         hasher.combine(bundleId)
         hasher.combine(executablePath)
         hasher.combine(oldestProcessStartMillis)
@@ -2028,6 +2063,7 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(trend)
         hasher.combine(badges)
         hasher.combine(activeWindowTitle)
+        hasher.combine(recentChangeSummary)
         hasher.combine(anomalyDetected)
         hasher.combine(thermalContribution)
         hasher.combine(groupingSuggestion)
@@ -2049,6 +2085,8 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
                 entityId: FfiConverterString.read(from: &buf), 
                 displayName: FfiConverterString.read(from: &buf), 
                 primaryProvenance: FfiConverterOptionTypeProvenanceSnapshot.read(from: &buf), 
+                launcherSummary: FfiConverterOptionString.read(from: &buf), 
+                attributionNotes: FfiConverterSequenceString.read(from: &buf), 
                 bundleId: FfiConverterOptionString.read(from: &buf), 
                 executablePath: FfiConverterOptionString.read(from: &buf), 
                 oldestProcessStartMillis: FfiConverterUInt64.read(from: &buf), 
@@ -2060,6 +2098,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
                 trend: FfiConverterTypeMetricTrend.read(from: &buf), 
                 badges: FfiConverterSequenceString.read(from: &buf), 
                 activeWindowTitle: FfiConverterOptionString.read(from: &buf), 
+                recentChangeSummary: FfiConverterOptionString.read(from: &buf), 
                 anomalyDetected: FfiConverterBool.read(from: &buf), 
                 thermalContribution: FfiConverterOptionString.read(from: &buf), 
                 groupingSuggestion: FfiConverterOptionString.read(from: &buf), 
@@ -2073,6 +2112,8 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
         FfiConverterString.write(value.entityId, into: &buf)
         FfiConverterString.write(value.displayName, into: &buf)
         FfiConverterOptionTypeProvenanceSnapshot.write(value.primaryProvenance, into: &buf)
+        FfiConverterOptionString.write(value.launcherSummary, into: &buf)
+        FfiConverterSequenceString.write(value.attributionNotes, into: &buf)
         FfiConverterOptionString.write(value.bundleId, into: &buf)
         FfiConverterOptionString.write(value.executablePath, into: &buf)
         FfiConverterUInt64.write(value.oldestProcessStartMillis, into: &buf)
@@ -2084,6 +2125,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
         FfiConverterTypeMetricTrend.write(value.trend, into: &buf)
         FfiConverterSequenceString.write(value.badges, into: &buf)
         FfiConverterOptionString.write(value.activeWindowTitle, into: &buf)
+        FfiConverterOptionString.write(value.recentChangeSummary, into: &buf)
         FfiConverterBool.write(value.anomalyDetected, into: &buf)
         FfiConverterOptionString.write(value.thermalContribution, into: &buf)
         FfiConverterOptionString.write(value.groupingSuggestion, into: &buf)
@@ -3434,6 +3476,7 @@ public func FfiConverterTypeSystemSnapshot_lower(_ value: SystemSnapshot) -> Rus
 public struct TimelineEvent {
     public var id: String
     public var timestampMillis: UInt64
+    public var category: TimelineCategory
     public var severity: TimelineSeverity
     public var entityId: String?
     public var title: String
@@ -3441,9 +3484,10 @@ public struct TimelineEvent {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, timestampMillis: UInt64, severity: TimelineSeverity, entityId: String?, title: String, detail: String) {
+    public init(id: String, timestampMillis: UInt64, category: TimelineCategory, severity: TimelineSeverity, entityId: String?, title: String, detail: String) {
         self.id = id
         self.timestampMillis = timestampMillis
+        self.category = category
         self.severity = severity
         self.entityId = entityId
         self.title = title
@@ -3464,6 +3508,9 @@ extension TimelineEvent: Equatable, Hashable {
         if lhs.timestampMillis != rhs.timestampMillis {
             return false
         }
+        if lhs.category != rhs.category {
+            return false
+        }
         if lhs.severity != rhs.severity {
             return false
         }
@@ -3482,6 +3529,7 @@ extension TimelineEvent: Equatable, Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(id)
         hasher.combine(timestampMillis)
+        hasher.combine(category)
         hasher.combine(severity)
         hasher.combine(entityId)
         hasher.combine(title)
@@ -3500,6 +3548,7 @@ public struct FfiConverterTypeTimelineEvent: FfiConverterRustBuffer {
             try TimelineEvent(
                 id: FfiConverterString.read(from: &buf), 
                 timestampMillis: FfiConverterUInt64.read(from: &buf), 
+                category: FfiConverterTypeTimelineCategory.read(from: &buf), 
                 severity: FfiConverterTypeTimelineSeverity.read(from: &buf), 
                 entityId: FfiConverterOptionString.read(from: &buf), 
                 title: FfiConverterString.read(from: &buf), 
@@ -3510,6 +3559,7 @@ public struct FfiConverterTypeTimelineEvent: FfiConverterRustBuffer {
     public static func write(_ value: TimelineEvent, into buf: inout [UInt8]) {
         FfiConverterString.write(value.id, into: &buf)
         FfiConverterUInt64.write(value.timestampMillis, into: &buf)
+        FfiConverterTypeTimelineCategory.write(value.category, into: &buf)
         FfiConverterTypeTimelineSeverity.write(value.severity, into: &buf)
         FfiConverterOptionString.write(value.entityId, into: &buf)
         FfiConverterString.write(value.title, into: &buf)
@@ -4875,6 +4925,97 @@ extension ThermalState: Equatable, Hashable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum TimelineCategory {
+    
+    case lifecycle
+    case friction
+    case host
+    case thermal
+    case anomaly
+}
+
+
+#if compiler(>=6)
+extension TimelineCategory: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTimelineCategory: FfiConverterRustBuffer {
+    typealias SwiftType = TimelineCategory
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TimelineCategory {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .lifecycle
+        
+        case 2: return .friction
+        
+        case 3: return .host
+        
+        case 4: return .thermal
+        
+        case 5: return .anomaly
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TimelineCategory, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .lifecycle:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .friction:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .host:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .thermal:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .anomaly:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTimelineCategory_lift(_ buf: RustBuffer) throws -> TimelineCategory {
+    return try FfiConverterTypeTimelineCategory.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTimelineCategory_lower(_ value: TimelineCategory) -> RustBuffer {
+    return FfiConverterTypeTimelineCategory.lower(value)
+}
+
+
+extension TimelineCategory: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum TimelineSeverity {
     
     case info
@@ -5481,7 +5622,13 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_clear_diagnostics() != 12352) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_clear_frontmost_app_state() != 44857) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_clear_history() != 16701) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_chau7_endpoint() != 4030) {

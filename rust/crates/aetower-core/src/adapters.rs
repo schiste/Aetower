@@ -2402,6 +2402,8 @@ mod tests {
             entity_id: "bundle-path:/Applications/Visual Studio Code.app".to_owned(),
             display_name: "Visual Studio Code".to_owned(),
             primary_provenance: None,
+            launcher_summary: None,
+            attribution_notes: Vec::new(),
             bundle_id: Some("com.microsoft.VSCode".to_owned()),
             executable_path: Some(
                 "/Applications/Visual Studio Code.app/Contents/MacOS/Electron".to_owned(),
@@ -2454,6 +2456,7 @@ mod tests {
             trend: MetricTrend::default(),
             badges: Vec::new(),
             active_window_title: None,
+            recent_change_summary: None,
             anomaly_detected: false,
             thermal_contribution: None,
             grouping_suggestion: None,

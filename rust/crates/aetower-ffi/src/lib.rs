@@ -104,6 +104,15 @@ pub enum TimelineSeverity {
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
+pub enum TimelineCategory {
+    Lifecycle,
+    Friction,
+    Host,
+    Thermal,
+    Anomaly,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
 pub enum ProvenanceKind {
     UserLaunch,
     AppBundle,
@@ -334,6 +343,8 @@ pub struct EntitySnapshot {
     pub entity_id: String,
     pub display_name: String,
     pub primary_provenance: Option<ProvenanceSnapshot>,
+    pub launcher_summary: Option<String>,
+    pub attribution_notes: Vec<String>,
     pub bundle_id: Option<String>,
     pub executable_path: Option<String>,
     pub oldest_process_start_millis: u64,
@@ -345,6 +356,7 @@ pub struct EntitySnapshot {
     pub trend: MetricTrend,
     pub badges: Vec<String>,
     pub active_window_title: Option<String>,
+    pub recent_change_summary: Option<String>,
     pub anomaly_detected: bool,
     pub thermal_contribution: Option<String>,
     pub grouping_suggestion: Option<String>,
@@ -366,6 +378,7 @@ pub struct CapabilitySnapshot {
 pub struct TimelineEvent {
     pub id: String,
     pub timestamp_millis: u64,
+    pub category: TimelineCategory,
     pub severity: TimelineSeverity,
     pub entity_id: Option<String>,
     pub title: String,
@@ -594,6 +607,30 @@ impl MonitorEngine {
             .into()
     }
 
+    pub fn clear_diagnostics(&self) -> String {
+        match self
+            .inner
+            .lock()
+            .expect("engine lock poisoned")
+            .clear_diagnostics()
+        {
+            Ok(()) => String::new(),
+            Err(error) => error,
+        }
+    }
+
+    pub fn clear_history(&self) -> String {
+        match self
+            .inner
+            .lock()
+            .expect("engine lock poisoned")
+            .clear_history()
+        {
+            Ok(()) => String::new(),
+            Err(error) => error,
+        }
+    }
+
     pub fn export_diagnostics_json(&self, limit: u32) -> String {
         self.inner
             .lock()
@@ -814,6 +851,18 @@ impl From<model::TimelineSeverity> for TimelineSeverity {
             model::TimelineSeverity::Info => Self::Info,
             model::TimelineSeverity::Warning => Self::Warning,
             model::TimelineSeverity::Critical => Self::Critical,
+        }
+    }
+}
+
+impl From<model::TimelineCategory> for TimelineCategory {
+    fn from(value: model::TimelineCategory) -> Self {
+        match value {
+            model::TimelineCategory::Lifecycle => Self::Lifecycle,
+            model::TimelineCategory::Friction => Self::Friction,
+            model::TimelineCategory::Host => Self::Host,
+            model::TimelineCategory::Thermal => Self::Thermal,
+            model::TimelineCategory::Anomaly => Self::Anomaly,
         }
     }
 }
@@ -1149,6 +1198,8 @@ impl From<model::EntitySnapshot> for EntitySnapshot {
             entity_id: value.entity_id,
             display_name: value.display_name,
             primary_provenance: value.primary_provenance.map(Into::into),
+            launcher_summary: value.launcher_summary,
+            attribution_notes: value.attribution_notes,
             bundle_id: value.bundle_id,
             executable_path: value.executable_path,
             oldest_process_start_millis: value.oldest_process_start_millis,
@@ -1160,6 +1211,7 @@ impl From<model::EntitySnapshot> for EntitySnapshot {
             trend: value.trend.into(),
             badges: value.badges,
             active_window_title: value.active_window_title,
+            recent_change_summary: value.recent_change_summary,
             anomaly_detected: value.anomaly_detected,
             thermal_contribution: value.thermal_contribution,
             grouping_suggestion: value.grouping_suggestion,
@@ -1217,6 +1269,7 @@ impl From<model::TimelineEvent> for TimelineEvent {
         Self {
             id: value.id,
             timestamp_millis: value.timestamp_millis,
+            category: value.category.into(),
             severity: value.severity.into(),
             entity_id: value.entity_id,
             title: value.title,

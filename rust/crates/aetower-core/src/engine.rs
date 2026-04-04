@@ -455,6 +455,19 @@ impl Engine {
         self.diagnostics.export_json(limit)
     }
 
+    pub fn clear_diagnostics(&self) -> Result<(), String> {
+        self.diagnostics
+            .clear()
+            .map_err(|error| format!("clear diagnostics: {error}"))
+    }
+
+    pub fn clear_history(&self) -> Result<(), String> {
+        match self.persistence.lock().as_ref() {
+            Some(store) => store.clear_all(),
+            None => Ok(()),
+        }
+    }
+
     pub fn record_diagnostics_event(&self, event: DiagnosticsEvent) {
         self.diagnostics.emit(event);
     }

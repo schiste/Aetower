@@ -89,6 +89,17 @@ pub enum TimelineSeverity {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(rename_all = "kebab-case")]
+pub enum TimelineCategory {
+    #[default]
+    Lifecycle,
+    Friction,
+    Host,
+    Thermal,
+    Anomaly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
 pub enum ProvenanceKind {
     UserLaunch,
     AppBundle,
@@ -381,6 +392,10 @@ pub struct EntitySnapshot {
     pub entity_id: String,
     pub display_name: String,
     pub primary_provenance: Option<ProvenanceSnapshot>,
+    #[serde(default)]
+    pub launcher_summary: Option<String>,
+    #[serde(default)]
+    pub attribution_notes: Vec<String>,
     pub bundle_id: Option<String>,
     pub executable_path: Option<String>,
     pub oldest_process_start_millis: u64,
@@ -392,6 +407,8 @@ pub struct EntitySnapshot {
     pub trend: MetricTrend,
     pub badges: Vec<String>,
     pub active_window_title: Option<String>,
+    #[serde(default)]
+    pub recent_change_summary: Option<String>,
     #[serde(default)]
     pub anomaly_detected: bool,
     #[serde(default)]
@@ -419,6 +436,8 @@ pub struct CapabilitySnapshot {
 pub struct TimelineEvent {
     pub id: String,
     pub timestamp_millis: u64,
+    #[serde(default)]
+    pub category: TimelineCategory,
     pub severity: TimelineSeverity,
     pub entity_id: Option<String>,
     pub title: String,

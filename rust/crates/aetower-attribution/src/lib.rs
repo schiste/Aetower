@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use aetower_collector::{RawProcessSample, index_processes};
 use aetower_identity::{EntitySeed, IdentityMap};
@@ -92,6 +92,7 @@ pub fn build_entities(
                 .then_with(|| left.title.cmp(&right.title))
         });
         entity.components.truncate(8);
+        summarize_entity_attribution(entity);
     }
     entities
 }
@@ -101,6 +102,8 @@ fn entity_from_seed(seed: &EntitySeed) -> EntitySnapshot {
         entity_id: seed.entity_id.clone(),
         display_name: seed.display_name.clone(),
         primary_provenance: entity_provenance(seed),
+        launcher_summary: None,
+        attribution_notes: Vec::new(),
         bundle_id: seed.bundle_id.clone(),
         executable_path: seed.executable_path.clone(),
         oldest_process_start_millis: 0,
@@ -112,12 +115,92 @@ fn entity_from_seed(seed: &EntitySeed) -> EntitySnapshot {
         trend: Default::default(),
         badges: seed.badges.clone(),
         active_window_title: None,
+        recent_change_summary: None,
         anomaly_detected: false,
         thermal_contribution: None,
         grouping_suggestion: None,
         agent_cost: None,
         session_markers: Vec::new(),
         recommendations: Vec::new(),
+    }
+}
+
+fn summarize_entity_attribution(entity: &mut EntitySnapshot) {
+    let launchers: BTreeSet<String> = entity
+        .components
+        .iter()
+        .filter_map(|component| component.launched_by.clone())
+        .filter(|value| !value.is_empty())
+        .collect();
+    entity.launcher_summary = match launchers.len() {
+        0 => None,
+        1 => launchers.first().cloned(),
+        _ => {
+            let summary = launchers
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(format!("mixed lineage via {summary}"))
+        }
+    };
+
+    let low_confidence_components = entity
+        .components
+        .iter()
+        .filter(|component| {
+            component
+                .provenance
+                .as_ref()
+                .map(|provenance| provenance.confidence == AttributionConfidence::Low)
+                .unwrap_or(false)
+        })
+        .count();
+    if low_confidence_components > 0 {
+        entity.attribution_notes.push(format!(
+            "{} component(s) rely on low-confidence parent fallback attribution.",
+            low_confidence_components
+        ));
+    }
+
+    if launchers.len() > 1 {
+        entity.attribution_notes.push(format!(
+            "Components were launched by more than one parent lineage: {}.",
+            launchers
+                .iter()
+                .take(4)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        if let Some(primary) = entity.primary_provenance.as_mut()
+            && primary.confidence == AttributionConfidence::High
+        {
+            primary.confidence = AttributionConfidence::Medium;
+            if primary.rule.is_empty() {
+                primary.rule = "mixed component launch lineage".to_owned();
+            } else {
+                primary.rule = format!("{}; mixed component launch lineage", primary.rule);
+            }
+        }
+    }
+
+    let missing_exec = entity
+        .components
+        .iter()
+        .filter(|component| {
+            matches!(
+                component.kind,
+                ComponentKind::Process | ComponentKind::Command
+            ) && component.executable_path.is_none()
+        })
+        .count();
+    if missing_exec > 0 {
+        entity.attribution_notes.push(format!(
+            "{} process component(s) are missing an executable path, so attribution is based on process-tree heuristics.",
+            missing_exec
+        ));
     }
 }
 
@@ -888,6 +971,142 @@ mod tests {
         assert_eq!(
             entities[0].components[0].launched_by.as_deref(),
             Some("xpcproxy login item launcher (pid 3)")
+        );
+    }
+
+    #[test]
+    fn mixed_launchers_add_attribution_note_and_downgrade_confidence() {
+        let processes = vec![
+            RawProcessSample {
+                pid: 10,
+                parent_pid: Some(1),
+                start_time_millis: 10,
+                name: "Test Helper".to_owned(),
+                exe: Some("/Applications/Test.app/Contents/MacOS/Test Helper".to_owned()),
+                cmd: vec!["helper-a".to_owned()],
+                cpu_percent: 1.0,
+                memory_bytes: 64,
+                disk_read_bytes: 0,
+                disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
+                cwd: None,
+                user: None,
+            },
+            RawProcessSample {
+                pid: 11,
+                parent_pid: Some(2),
+                start_time_millis: 20,
+                name: "Test Helper".to_owned(),
+                exe: Some("/Applications/Test.app/Contents/MacOS/Test Helper".to_owned()),
+                cmd: vec!["helper-b".to_owned()],
+                cpu_percent: 1.0,
+                memory_bytes: 64,
+                disk_read_bytes: 0,
+                disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
+                cwd: None,
+                user: None,
+            },
+            RawProcessSample {
+                pid: 1,
+                parent_pid: None,
+                start_time_millis: 1,
+                name: "launchd".to_owned(),
+                exe: Some("/sbin/launchd".to_owned()),
+                cmd: vec!["/sbin/launchd".to_owned()],
+                cpu_percent: 0.0,
+                memory_bytes: 0,
+                disk_read_bytes: 0,
+                disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
+                cwd: None,
+                user: None,
+            },
+            RawProcessSample {
+                pid: 2,
+                parent_pid: None,
+                start_time_millis: 2,
+                name: "zsh".to_owned(),
+                exe: Some("/bin/zsh".to_owned()),
+                cmd: vec!["-zsh".to_owned()],
+                cpu_percent: 0.0,
+                memory_bytes: 0,
+                disk_read_bytes: 0,
+                disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
+                cwd: None,
+                user: None,
+            },
+        ];
+        let identity = IdentityMap {
+            entities: [
+                (
+                    "bundle:test".to_owned(),
+                    EntitySeed {
+                        entity_id: "bundle:test".to_owned(),
+                        display_name: "Test".to_owned(),
+                        bundle_id: Some("local.test".to_owned()),
+                        executable_path: Some(
+                            "/Applications/Test.app/Contents/MacOS/Test".to_owned(),
+                        ),
+                        entity_kind: EntityKind::App,
+                        badges: Vec::new(),
+                    },
+                ),
+                (
+                    "process:launchd".to_owned(),
+                    EntitySeed {
+                        entity_id: "process:launchd".to_owned(),
+                        display_name: "launchd".to_owned(),
+                        bundle_id: None,
+                        executable_path: Some("/sbin/launchd".to_owned()),
+                        entity_kind: EntityKind::Service,
+                        badges: Vec::new(),
+                    },
+                ),
+                (
+                    "process:zsh".to_owned(),
+                    EntitySeed {
+                        entity_id: "process:zsh".to_owned(),
+                        display_name: "zsh".to_owned(),
+                        bundle_id: None,
+                        executable_path: Some("/bin/zsh".to_owned()),
+                        entity_kind: EntityKind::TerminalSession,
+                        badges: Vec::new(),
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            pid_to_entity: [
+                (10, "bundle:test".to_owned()),
+                (11, "bundle:test".to_owned()),
+                (1, "process:launchd".to_owned()),
+                (2, "process:zsh".to_owned()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let entities = build_entities(&processes, &identity, None);
+        let entity = entities
+            .iter()
+            .find(|value| value.entity_id == "bundle:test")
+            .expect("test entity");
+
+        assert!(
+            entity
+                .launcher_summary
+                .as_deref()
+                .is_some_and(|summary| summary.contains("mixed lineage"))
+        );
+        assert!(!entity.attribution_notes.is_empty());
+        assert_eq!(
+            entity
+                .primary_provenance
+                .as_ref()
+                .map(|value| &value.confidence),
+            Some(&AttributionConfidence::Medium)
         );
     }
 }

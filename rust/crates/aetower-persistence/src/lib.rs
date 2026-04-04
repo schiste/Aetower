@@ -271,6 +271,27 @@ impl HistoryStore {
         Ok(deleted as u64)
     }
 
+    pub fn clear_all(&self) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM snapshots", [])
+            .map_err(|e| format!("clear snapshots: {e}"))?;
+        self.conn
+            .execute("DELETE FROM snapshot_quarantine", [])
+            .map_err(|e| format!("clear quarantine: {e}"))?;
+        if let Some(diagnostics) = self.diagnostics.as_ref() {
+            diagnostics.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Warn,
+                    DiagnosticsSubsystem::Persistence,
+                    "history-cleared",
+                    "Cleared persisted history and quarantine rows.",
+                )
+                .build(),
+            );
+        }
+        Ok(())
+    }
+
     fn emit_store_event(&self, snapshot: &SystemSnapshot, result: &Result<usize, String>) {
         let Some(diagnostics) = self.diagnostics.as_ref() else {
             return;
@@ -541,6 +562,51 @@ mod tests {
             })
             .unwrap();
         assert_eq!(remaining, 0);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn clear_all_removes_snapshots_and_quarantine_rows() {
+        let path = temp_db();
+        let mut store = HistoryStore::open(&path, 1).unwrap();
+        store.maybe_store(&SystemSnapshot {
+            sequence: 1,
+            captured_at_millis: 1_000,
+            ..Default::default()
+        });
+        store
+            .conn
+            .execute(
+                "INSERT INTO snapshot_quarantine (snapshot_id, captured_at_millis, sequence, format_version, quarantined_at_millis, reason, json_blob, bincode_blob)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    1_i64,
+                    1_000_i64,
+                    1_i64,
+                    1_i64,
+                    2_000_i64,
+                    "test",
+                    Option::<String>::None,
+                    Option::<Vec<u8>>::None
+                ],
+            )
+            .unwrap();
+
+        store.clear_all().unwrap();
+
+        let snapshot_count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM snapshots", [], |row| row.get(0))
+            .unwrap();
+        let quarantine_count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM snapshot_quarantine", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(snapshot_count, 0);
+        assert_eq!(quarantine_count, 0);
 
         std::fs::remove_file(&path).ok();
     }

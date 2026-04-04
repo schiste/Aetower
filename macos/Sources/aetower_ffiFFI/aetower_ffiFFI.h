@@ -267,9 +267,19 @@ void*_Nonnull uniffi_aetower_ffi_fn_constructor_monitorengine_new(RustCallStatus
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_CLEAR_DIAGNOSTICS
+#define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_CLEAR_DIAGNOSTICS
+RustBuffer uniffi_aetower_ffi_fn_method_monitorengine_clear_diagnostics(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_CLEAR_FRONTMOST_APP_STATE
 #define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_CLEAR_FRONTMOST_APP_STATE
 void uniffi_aetower_ffi_fn_method_monitorengine_clear_frontmost_app_state(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_CLEAR_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_CLEAR_HISTORY
+RustBuffer uniffi_aetower_ffi_fn_method_monitorengine_clear_history(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_CONFIGURE_CHAU7_ENDPOINT
@@ -652,9 +662,21 @@ void ffi_aetower_ffi_rust_future_free_void(uint64_t handle
 void ffi_aetower_ffi_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_CLEAR_DIAGNOSTICS
+#define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_CLEAR_DIAGNOSTICS
+uint16_t uniffi_aetower_ffi_checksum_method_monitorengine_clear_diagnostics(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_CLEAR_FRONTMOST_APP_STATE
 #define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_CLEAR_FRONTMOST_APP_STATE
 uint16_t uniffi_aetower_ffi_checksum_method_monitorengine_clear_frontmost_app_state(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_CLEAR_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_CLEAR_HISTORY
+uint16_t uniffi_aetower_ffi_checksum_method_monitorengine_clear_history(void
     
 );
 #endif
