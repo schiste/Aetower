@@ -6,4 +6,6 @@ license.workspace = true
 
 [dependencies]
 aetower-core = { path = "../aetower-core" }
+aetower-model = { path = "../aetower-model" }
+aetower-telemetry = { path = "../aetower-telemetry" }
 serde_json.workspace = true

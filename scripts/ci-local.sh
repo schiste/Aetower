@@ -49,6 +49,7 @@ run "swift build" swift build --package-path "$ROOT/macos"
 run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
 
 if [ "$MODE" = "pre-push" ] || [ "$MODE" = "full" ]; then
+    run "telemetry smoke" sh "$ROOT/scripts/telemetry-smoke.sh"
     run "package smoke" sh "$ROOT/scripts/smoke-package.sh" --rebuild
 fi
 

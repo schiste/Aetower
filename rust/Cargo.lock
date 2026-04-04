@@ -16,6 +16,8 @@ name = "aetower-bench"
 version = "0.1.0"
 dependencies = [
  "aetower-core",
+ "aetower-model",
+ "aetower-telemetry",
  "serde_json",
 ]
 

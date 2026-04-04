@@ -41,6 +41,7 @@ sh scripts/ci-local.sh --mode pre-push
 `pre-push`:
 
 - everything in `pre-commit`
+- loopback OTLP telemetry smoke verification
 - full app packaging
 - package smoke verification
 
@@ -65,3 +66,13 @@ For Developer ID signing and optional notarization, see [distribution.md](distri
 ## Runtime profiling
 
 For live packaged-app CPU / memory profiling outside the synthetic harness, see [runtime-profiling.md](runtime-profiling.md).
+
+## Telemetry smoke
+
+To exercise OTLP export against a real local loopback collector:
+
+```sh
+sh scripts/telemetry-smoke.sh
+```
+
+This starts a temporary in-process HTTP receiver through `aetower-bench`, verifies that Aetower sends a real OTLP/HTTP payload to `/v1/metrics`, and fails if the exporter cannot deliver or the payload is malformed.
