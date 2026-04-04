@@ -98,6 +98,16 @@ public final class EngineBridge: @unchecked Sendable {
         engine.diagnosticsOverview()
     }
 
+    public func clearDiagnostics() -> String? {
+        let result = engine.clearDiagnostics()
+        return result.isEmpty ? nil : result
+    }
+
+    public func clearHistory() -> String? {
+        let result = engine.clearHistory()
+        return result.isEmpty ? nil : result
+    }
+
     public func exportDiagnosticsJSON(limit: UInt32 = 1000) -> String {
         engine.exportDiagnosticsJson(limit: limit)
     }

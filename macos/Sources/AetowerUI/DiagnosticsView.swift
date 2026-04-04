@@ -17,6 +17,7 @@ public struct DiagnosticsView: View {
     @State private var levelFilter: DiagnosticsLevelFilter = .all
     @State private var isLive = true
     @State private var isVisible = false
+    @State private var showClearDiagnosticsConfirmation = false
 
     private let overviewColumns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
 
@@ -57,6 +58,14 @@ public struct DiagnosticsView: View {
                 guard !Task.isCancelled && isVisible && isLive else { break }
                 state.loadDiagnostics()
             }
+        }
+        .alert("Clear diagnostics?", isPresented: $showClearDiagnosticsConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) {
+                state.clearDiagnostics()
+            }
+        } message: {
+            Text("This removes in-memory and persisted diagnostics events from local storage.")
         }
     }
 
@@ -110,6 +119,11 @@ public struct DiagnosticsView: View {
 
                     Button("Export support bundle") {
                         state.exportSupportBundle(settings)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Clear diagnostics", role: .destructive) {
+                        showClearDiagnosticsConfirmation = true
                     }
                     .buttonStyle(.bordered)
                 }

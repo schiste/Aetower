@@ -337,6 +337,17 @@ public struct EntityDetailView: View {
                     .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
                     .transition(.push(from: .top))
                 }
+                if let recentChangeSummary = entity.recentChangeSummary {
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundStyle(.teal)
+                        Text(recentChangeSummary)
+                            .font(.callout)
+                    }
+                    .padding(12)
+                    .background(Color.teal.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .transition(.push(from: .top))
+                }
                 hero
                 if let cost = entity.agentCost {
                     GroupBox("AI Agent Cost") {
@@ -351,6 +362,7 @@ public struct EntityDetailView: View {
                 if entity.entityKind == .aiAgent { aiAgentSession }
                 whyItMatters
                 recommendedNextActions
+                attributionCaveats
                 whatAetowerSees
                 components
             }
@@ -477,6 +489,30 @@ public struct EntityDetailView: View {
         }
     }
 
+    private var attributionCaveats: some View {
+        GroupBox("Attribution caveats") {
+            VStack(alignment: .leading, spacing: 10) {
+                if entity.attributionNotes.isEmpty {
+                    Text("Aetower did not detect attribution caveats for this entity in the current snapshot.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(entity.attributionNotes, id: \.self) { note in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "scope")
+                                .foregroundStyle(.orange)
+                                .padding(.top, 2)
+                            Text(note)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+
     @ViewBuilder
     private var aiAgentSession: some View {
         let agentComponents = entity.components.filter { $0.kind == .adapterContext && $0.title.contains(" · ") }
@@ -548,6 +584,9 @@ public struct EntityDetailView: View {
                 )
                 if let provenance = entity.primaryProvenance, !provenance.rule.isEmpty {
                     LabeledContent("Attribution rule", value: provenance.rule)
+                }
+                if let launcherSummary = entity.launcherSummary {
+                    LabeledContent("Launch lineage", value: launcherSummary)
                 }
                 LabeledContent("Executable", value: entity.executablePath ?? "Unknown")
                 LabeledContent("Frontmost", value: entity.metrics.isForeground ? "Yes" : "No")

@@ -42,6 +42,7 @@ private struct HistoricalEntitySummary: Identifiable {
 public struct HistoryView: View {
     let state: AppState
     @State private var range: HistoryRangePreset = .lastHour
+    @State private var showClearHistoryConfirmation = false
 
     private let columns = [GridItem(.adaptive(minimum: 180), spacing: 12)]
 
@@ -72,6 +73,11 @@ public struct HistoryView: View {
 
                     Button("Reload") {
                         state.loadHistory(force: true)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Clear persisted history", role: .destructive) {
+                        showClearHistoryConfirmation = true
                     }
                     .buttonStyle(.bordered)
                 }
@@ -153,6 +159,33 @@ public struct HistoryView: View {
                         }
                     }
 
+                    GroupBox("Latest notable changes") {
+                        if latestChangeSummaries.isEmpty {
+                            Text("No persisted recent-change summaries are available in this range yet.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(latestChangeSummaries, id: \.id) { item in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack {
+                                            Text(item.name)
+                                                .font(.headline)
+                                            Spacer()
+                                            Text(historyTimestamp(item.capturedAtMillis))
+                                                .font(.caption2)
+                                                .foregroundStyle(.tertiary)
+                                        }
+                                        Text(item.summary)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                            .padding(.top, 4)
+                        }
+                    }
+
                     GroupBox("Store coverage") {
                         VStack(alignment: .leading, spacing: 8) {
                             LabeledContent("Range", value: range.detail)
@@ -172,6 +205,14 @@ public struct HistoryView: View {
         }
         .onChange(of: range) { _, newValue in
             state.setHistoryWindow(seconds: newValue.rawValue)
+        }
+        .alert("Clear persisted history?", isPresented: $showClearHistoryConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) {
+                state.clearHistory()
+            }
+        } message: {
+            Text("This removes persisted history and quarantine rows from local storage. Live monitoring continues.")
         }
     }
 
@@ -264,6 +305,25 @@ public struct HistoryView: View {
             $0.averageFriction > $1.averageFriction
                 || ($0.averageFriction == $1.averageFriction && $0.peakCPU > $1.peakCPU)
         }
+    }
+
+    private var latestChangeSummaries: [(id: String, name: String, summary: String, capturedAtMillis: UInt64)] {
+        guard let latestSnapshot = state.historySnapshots.last else {
+            return []
+        }
+        return latestSnapshot.entities.compactMap { entity in
+            guard let summary = entity.recentChangeSummary, !summary.isEmpty else {
+                return nil
+            }
+            return (
+                id: entity.entityId,
+                name: entity.displayName,
+                summary: summary,
+                capturedAtMillis: latestSnapshot.capturedAtMillis
+            )
+        }
+        .prefix(8)
+        .map { $0 }
     }
 }
 

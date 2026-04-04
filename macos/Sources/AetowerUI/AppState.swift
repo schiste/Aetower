@@ -254,6 +254,26 @@ public final class AppState {
         }
     }
 
+    public func clearDiagnostics() {
+        if let error = bridge.clearDiagnostics() {
+            lastError = error
+            return
+        }
+        diagnosticsEvents = []
+        diagnosticsOverview = bridge.diagnosticsOverview()
+        diagnosticsLoadError = nil
+    }
+
+    public func clearHistory() {
+        if let error = bridge.clearHistory() {
+            lastError = error
+            return
+        }
+        historySnapshots = []
+        historyLoadError = "Persisted history was cleared."
+        loadDiagnostics(force: true)
+    }
+
     public func exportSupportBundle(_ settings: SettingsStore, diagnosticsLimit: UInt32 = 1_500) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
@@ -990,7 +1010,7 @@ public final class AppState {
             "frictionNotificationThreshold": settings.frictionNotificationThreshold,
             "appearanceMode": settings.appearanceMode,
             "chromiumEndpointConfigured": !settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            "dockerSocketPath": settings.dockerSocketPath,
+            "dockerSocketPath": includeSensitive ? settings.dockerSocketPath : "<redacted>",
             "privilegedHelperEnabled": settings.privilegedHelperEnabled,
             "privilegedHelperPathConfigured": !settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "chau7EndpointConfigured": !settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -1150,6 +1170,10 @@ public final class AppState {
             }
         }
 
+        if let string = value as? String, shouldRedactStringValue(string, key: normalizedKey) {
+            return "<redacted>"
+        }
+
         return value
     }
 
@@ -1182,6 +1206,23 @@ public final class AppState {
             || key.contains("repo")
             || key.contains("endpoint")
             || key.contains("executable")
+            || key.contains("path")
+    }
+
+    private func shouldRedactStringValue(_ value: String, key: String) -> Bool {
+        guard !value.isEmpty else {
+            return false
+        }
+        if isSensitiveExportKey(key) {
+            return true
+        }
+        if value.hasPrefix("/") || value.hasPrefix("file://") || value.hasPrefix("http://") || value.hasPrefix("https://") {
+            return true
+        }
+        if value.contains("/Users/") || value.contains("/var/") || value.contains(".sock") {
+            return true
+        }
+        return false
     }
 
     private func supportBundleFilename() -> String {
