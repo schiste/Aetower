@@ -11,6 +11,7 @@ private enum DiagnosticsLevelFilter: String, CaseIterable, Identifiable {
 
 public struct DiagnosticsView: View {
     let state: AppState
+    let settings: SettingsStore
     @State private var searchText = ""
     @State private var subsystemFilter: DiagnosticsSubsystem?
     @State private var levelFilter: DiagnosticsLevelFilter = .all
@@ -19,8 +20,9 @@ public struct DiagnosticsView: View {
 
     private let overviewColumns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
 
-    public init(state: AppState) {
+    public init(state: AppState, settings: SettingsStore) {
         self.state = state
+        self.settings = settings
     }
 
     public var body: some View {
@@ -105,6 +107,11 @@ public struct DiagnosticsView: View {
                         state.exportDiagnostics()
                     }
                     .buttonStyle(.borderedProminent)
+
+                    Button("Export support bundle") {
+                        state.exportSupportBundle(settings)
+                    }
+                    .buttonStyle(.bordered)
                 }
 
                 TextField("Search messages, fields, entity ids, adapters, or capabilities", text: $searchText)
@@ -388,7 +395,7 @@ public struct DiagnosticsView: View {
         if summary.notificationAuthorizationFailures > 0 {
             return "Denied"
         }
-        if summary.tccAccessRequests > 2 {
+        if summary.tccAccessRequests > 4 {
             return "Chatty"
         }
         return "Stable"

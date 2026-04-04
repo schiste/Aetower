@@ -226,6 +226,47 @@ public final class AppState {
         }
     }
 
+    public func exportSupportBundle(_ settings: SettingsStore, diagnosticsLimit: UInt32 = 1_500) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = supportBundleFilename()
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            let payload = try supportBundlePayload(settings, diagnosticsLimit: diagnosticsLimit)
+            let data = try JSONSerialization.data(
+                withJSONObject: payload,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            try data.write(to: url, options: .atomic)
+            recordLocalDiagnosticsEvent(
+                level: .info,
+                subsystem: .ui,
+                eventType: "support-bundle-exported",
+                message: "Exported a support bundle.",
+                fields: [
+                    DiagnosticsField(key: "path", value: url.path),
+                    DiagnosticsField(key: "history_snapshot_count", value: String(historySnapshots.count)),
+                    DiagnosticsField(key: "diagnostics_event_count", value: String(diagnosticsEvents.count)),
+                ]
+            )
+        } catch {
+            let message = "Support bundle export failed: \(error.localizedDescription)"
+            lastError = message
+            recordLocalDiagnosticsEvent(
+                level: .error,
+                subsystem: .ui,
+                eventType: "support-bundle-export-failed",
+                message: "Failed to export a support bundle.",
+                fields: [
+                    DiagnosticsField(key: "error", value: error.localizedDescription),
+                ]
+            )
+        }
+    }
+
     public func applyNotificationSettings(_ settings: SettingsStore) {
         notificationsEnabled = settings.notificationsEnabled
         frictionNotificationThreshold = settings.frictionNotificationThreshold
@@ -441,10 +482,16 @@ public final class AppState {
             || baseSignature != lastPublishedFrontmostBaseSignature
             || now.timeIntervalSince(lastWindowTitleProbeDate) >= windowTitleProbeInterval
         let windowTitle: String?
-        if shouldProbeWindowTitle {
-            windowTitle = permissionCoordinator
-                .currentFrontmostAppObservation(includeWindowTitle: true)?
-                .windowTitle
+        if shouldProbeWindowTitle,
+           permissionCoordinator.canReadFocusedWindowTitle(bundleId: observation.bundleId)
+        {
+            windowTitle = permissionCoordinator.currentFocusedWindowTitle(
+                processIdentifier: observation.processIdentifier,
+                bundleId: observation.bundleId
+            )
+            lastWindowTitleProbeDate = now
+        } else if shouldProbeWindowTitle {
+            windowTitle = nil
             lastWindowTitleProbeDate = now
         } else {
             windowTitle = lastPublishedWindowTitle
@@ -705,7 +752,7 @@ public final class AppState {
                     ]
                 )
             }
-            if summary.tccAccessRequests > 2 {
+            if summary.tccAccessRequests > 4 {
                 recordLocalDiagnosticsEvent(
                     level: .info,
                     subsystem: .ui,
@@ -861,6 +908,135 @@ public final class AppState {
             event.capability ?? "",
             event.fields.map { "\($0.key)=\($0.value)" }.joined(separator: "|"),
         ].joined(separator: "\u{1f}")
+    }
+
+    private func supportBundlePayload(
+        _ settings: SettingsStore,
+        diagnosticsLimit: UInt32
+    ) throws -> [String: Any] {
+        let snapshotJson = bridge.exportSnapshotJSON()
+        let diagnosticsJson = bridge.exportDiagnosticsJSON(limit: diagnosticsLimit)
+
+        return [
+            "generatedAtMillis": UInt64(Date().timeIntervalSince1970 * 1000),
+            "app": appMetadata(),
+            "settings": settingsSummary(settings),
+            "diagnosticsOverview": diagnosticsOverviewSummary(),
+            "sessionHealth": sessionHealthSummary(),
+            "historySummary": historySummary(),
+            "snapshot": try parseJsonObject(snapshotJson),
+            "diagnostics": try parseJsonValue(diagnosticsJson),
+        ]
+    }
+
+    private func appMetadata() -> [String: Any] {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return [
+            "bundleIdentifier": Bundle.main.bundleIdentifier ?? "unknown",
+            "buildVersion": info["CFBundleVersion"] as? String ?? "unknown",
+            "shortVersion": info["CFBundleShortVersionString"] as? String ?? "unknown",
+            "processIdentifier": ProcessInfo.processInfo.processIdentifier,
+            "processName": ProcessInfo.processInfo.processName,
+        ]
+    }
+
+    private func settingsSummary(_ settings: SettingsStore) -> [String: Any] {
+        [
+            "refreshIntervalSeconds": settings.refreshIntervalSeconds,
+            "showMenuBarExtra": settings.showMenuBarExtra,
+            "notificationsEnabled": settings.notificationsEnabled,
+            "frictionNotificationThreshold": settings.frictionNotificationThreshold,
+            "appearanceMode": settings.appearanceMode,
+            "chromiumEndpointConfigured": !settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "dockerSocketPath": settings.dockerSocketPath,
+            "privilegedHelperEnabled": settings.privilegedHelperEnabled,
+            "privilegedHelperPathConfigured": !settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "chau7EndpointConfigured": !settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "telemetryEnabled": settings.telemetryEnabled,
+            "telemetryEndpoint": settings.telemetryEndpoint,
+            "telemetryExportIntervalSeconds": settings.telemetryExportIntervalSeconds,
+            "telemetryVerificationStatus": telemetryVerificationStatus ?? "not-run",
+        ]
+    }
+
+    private func diagnosticsOverviewSummary() -> [String: Any] {
+        [
+            "ringCapacity": diagnosticsOverview.ringCapacity,
+            "currentSize": diagnosticsOverview.currentSize,
+            "droppedEvents": diagnosticsOverview.droppedEvents,
+            "warnCount": diagnosticsOverview.warnCount,
+            "errorCount": diagnosticsOverview.errorCount,
+            "lastEventMillis": jsonOptional(diagnosticsOverview.lastEventMillis),
+            "lastErrorMessage": jsonOptional(diagnosticsOverview.lastErrorMessage),
+            "persistedEvents": diagnosticsOverview.persistedEvents,
+            "persistedPath": jsonOptional(diagnosticsOverview.persistedPath),
+            "persistedBytes": diagnosticsOverview.persistedBytes,
+            "persistenceError": jsonOptional(diagnosticsOverview.persistenceError),
+        ]
+    }
+
+    private func sessionHealthSummary() -> [String: Any] {
+        [
+            "notificationAuthorizationStatus": notificationAuthorizationStatus,
+            "sessionLogSummary": jsonOptional(sessionLogSummary.map { summary in
+                [
+                    "windowMinutes": summary.windowMinutes,
+                    "notificationLogEntries": summary.notificationLogEntries,
+                    "notificationAuthorizationFailures": summary.notificationAuthorizationFailures,
+                    "metalLoadFailures": summary.metalLoadFailures,
+                    "nonActiveWindowWarnings": summary.nonActiveWindowWarnings,
+                    "cursorUiEntries": summary.cursorUiEntries,
+                    "tccAccessRequests": summary.tccAccessRequests,
+                    "viewBridgeCancellationCount": summary.viewBridgeCancellationCount,
+                ]
+            }),
+        ]
+    }
+
+    private func historySummary() -> [String: Any] {
+        let recentSnapshots = historySnapshots.suffix(24).map { snapshot in
+            [
+                "sequence": snapshot.sequence,
+                "capturedAtMillis": snapshot.capturedAtMillis,
+                "entityCount": snapshot.entities.count,
+                "topEntity": jsonOptional(snapshot.entities.first?.displayName),
+                "topFriction": jsonOptional(snapshot.entities.first.map { Double($0.friction.totalScore) }),
+            ]
+        }
+        return [
+            "windowSeconds": historyWindowSeconds,
+            "loadedSnapshots": historySnapshots.count,
+            "historyLoadError": jsonOptional(historyLoadError),
+            "recentSnapshots": recentSnapshots,
+        ]
+    }
+
+    private func jsonOptional(_ value: Any?) -> Any {
+        value ?? NSNull()
+    }
+
+    private func parseJsonObject(_ json: String) throws -> [String: Any] {
+        guard let object = try parseJsonValue(json) as? [String: Any] else {
+            throw NSError(
+                domain: "AetowerSupportBundle",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Expected JSON object while building support bundle."]
+            )
+        }
+        return object
+    }
+
+    private func parseJsonValue(_ json: String) throws -> Any {
+        try JSONSerialization.jsonObject(with: Data(json.utf8))
+    }
+
+    private func supportBundleFilename() -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return "aetower-support-bundle-\(formatter.string(from: Date())).json"
     }
 
     private func diagnosticsSubsystemCategory(_ subsystem: DiagnosticsSubsystem) -> String {

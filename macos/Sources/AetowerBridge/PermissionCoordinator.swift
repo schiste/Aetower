@@ -3,6 +3,7 @@ import AppKit
 import Foundation
 
 public struct FrontmostAppObservation {
+    public let processIdentifier: pid_t
     public let appName: String
     public let bundleId: String?
     public let executablePath: String?
@@ -17,8 +18,8 @@ public struct PermissionResult {
 public final class PermissionCoordinator {
     private var accessibilityTrustCache: (checkedAt: Date, trusted: Bool)?
     private var cachedWindowTitle: (checkedAt: Date, processIdentifier: pid_t, title: String?)?
-    private let accessibilityTrustCacheInterval: TimeInterval = 15
-    private let windowTitleCacheInterval: TimeInterval = 5
+    private let accessibilityTrustCacheInterval: TimeInterval = 60
+    private let windowTitleCacheInterval: TimeInterval = 10
 
     public init() {}
 
@@ -70,10 +71,28 @@ public final class PermissionCoordinator {
         }
 
         return FrontmostAppObservation(
+            processIdentifier: app.processIdentifier,
             appName: app.localizedName ?? app.bundleIdentifier ?? "Unknown App",
             bundleId: app.bundleIdentifier,
             executablePath: app.executableURL?.path,
-            windowTitle: includeWindowTitle ? currentFocusedWindowTitle(for: app) : nil
+            windowTitle: includeWindowTitle
+                ? currentFocusedWindowTitle(
+                    processIdentifier: app.processIdentifier,
+                    bundleId: app.bundleIdentifier
+                )
+                : nil
+        )
+    }
+
+    public func canReadFocusedWindowTitle(bundleId: String?) -> Bool {
+        canReadFocusedWindowTitle(bundleId: bundleId, now: Date())
+    }
+
+    public func currentFocusedWindowTitle(processIdentifier: pid_t, bundleId: String?) -> String? {
+        currentFocusedWindowTitle(
+            processIdentifier: processIdentifier,
+            bundleId: bundleId,
+            now: Date()
         )
     }
 
@@ -125,20 +144,23 @@ public final class PermissionCoordinator {
         NSWorkspace.shared.open(url)
     }
 
-    private func currentFocusedWindowTitle(for app: NSRunningApplication) -> String? {
-        let now = Date()
+    private func currentFocusedWindowTitle(
+        processIdentifier: pid_t,
+        bundleId: String?,
+        now: Date
+    ) -> String? {
         if let cachedWindowTitle,
-           cachedWindowTitle.processIdentifier == app.processIdentifier,
+           cachedWindowTitle.processIdentifier == processIdentifier,
            now.timeIntervalSince(cachedWindowTitle.checkedAt) < windowTitleCacheInterval
         {
             return cachedWindowTitle.title
         }
 
-        guard isAccessibilityTrusted(now: now) else {
+        guard canReadFocusedWindowTitle(bundleId: bundleId, now: now) else {
             return nil
         }
 
-        let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
+        let applicationElement = AXUIElementCreateApplication(processIdentifier)
         var focusedWindow: CFTypeRef?
         let focusedWindowResult = AXUIElementCopyAttributeValue(
             applicationElement,
@@ -157,12 +179,19 @@ public final class PermissionCoordinator {
             &title
         )
         guard titleResult == .success else {
-            cachedWindowTitle = (now, app.processIdentifier, nil)
+            cachedWindowTitle = (now, processIdentifier, nil)
             return nil
         }
         let stringTitle = title as? String
-        cachedWindowTitle = (now, app.processIdentifier, stringTitle)
+        cachedWindowTitle = (now, processIdentifier, stringTitle)
         return stringTitle
+    }
+
+    private func canReadFocusedWindowTitle(bundleId: String?, now: Date) -> Bool {
+        if bundleId == Bundle.main.bundleIdentifier {
+            return false
+        }
+        return isAccessibilityTrusted(now: now)
     }
 
     private func isAccessibilityTrusted(now: Date = Date()) -> Bool {

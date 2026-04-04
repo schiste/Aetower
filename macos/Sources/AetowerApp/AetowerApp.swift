@@ -61,7 +61,7 @@ struct AetowerApp: App {
                         Label("Timeline", systemImage: "timeline.selection")
                     }
 
-                DiagnosticsView(state: state)
+                DiagnosticsView(state: state, settings: settings)
                     .tabItem {
                         Label("Diagnostics", systemImage: "waveform.path.ecg.rectangle")
                     }
