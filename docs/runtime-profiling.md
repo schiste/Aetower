@@ -29,7 +29,7 @@ Each run writes artifacts under `tmp/runtime-profile/<timestamp>/`:
 - `metrics.csv`: sampled `%CPU`, RSS, and VSZ from `ps`
 - `sample.txt`: a macOS `sample` stack capture when `sample` is available
 - `summary.txt`: average and peak CPU / resident memory summary
-- `store-summary.txt`: diagnostics/history store size and persisted warn/error counts
+- `store-summary.txt`: diagnostics/history store size, growth deltas, diagnostics error delta during the run, and `tick-over-budget` delta
 - `session-log-summary.txt`: compact unified-log noise summary for the profiled app PID when available
 
 ## How to use it
@@ -55,7 +55,7 @@ sh scripts/profile-runtime.sh --duration 1800 --interval 10 --sample-seconds 10
 After a soak, check:
 
 - `summary.txt` for CPU / RSS drift
-- `store-summary.txt` for diagnostics growth and unexpected warn/error persistence
+- `store-summary.txt` for diagnostics growth, history growth, `tick-over-budget` delta, and unexpected warn/error persistence
 - `session-log-summary.txt` for CursorUI, TCC, Metal, or window-ordering noise
 
 With `--enforce`, the profiler will fail when default limits are exceeded for:
@@ -63,6 +63,11 @@ With `--enforce`, the profiler will fail when default limits are exceeded for:
 - average CPU
 - peak CPU
 - peak RSS
-- persisted diagnostics error count
+- new diagnostics errors during the run
+- diagnostics store growth
+- history store growth
+- new `tick-over-budget` events during the run
 - CursorUI noise
 - TCC request churn
+
+These defaults are tuned for a short packaged-app verification run, not a 30-minute soak. Use stricter custom environment limits for longer settled-session profiling when you want to ratchet overhead down further.

@@ -2,6 +2,7 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+APP_DIR="$ROOT/dist/Aetower.app"
 APP_BIN="$ROOT/dist/Aetower.app/Contents/MacOS/Aetower"
 OUT_DIR="${AETOWER_PROFILE_OUT_DIR:-$ROOT/tmp/runtime-profile}"
 SUPPORT_DIR="${HOME}/Library/Application Support/Aetower"
@@ -11,12 +12,16 @@ SAMPLE_SECONDS=5
 REBUILD=0
 LAUNCH=0
 ENFORCE=0
-CPU_AVG_MAX="${AETOWER_PROFILE_CPU_AVG_MAX:-5.0}"
-CPU_MAX_MAX="${AETOWER_PROFILE_CPU_MAX_MAX:-20.0}"
-RSS_MAX_KB_MAX="${AETOWER_PROFILE_RSS_MAX_KB_MAX:-262144}"
+SETTLE_SECONDS="${AETOWER_PROFILE_SETTLE_SECONDS:-10}"
+CPU_AVG_MAX="${AETOWER_PROFILE_CPU_AVG_MAX:-12.0}"
+CPU_MAX_MAX="${AETOWER_PROFILE_CPU_MAX_MAX:-35.0}"
+RSS_MAX_KB_MAX="${AETOWER_PROFILE_RSS_MAX_KB_MAX:-524288}"
 DIAGNOSTICS_ERROR_MAX="${AETOWER_PROFILE_DIAGNOSTICS_ERROR_MAX:-0}"
 CURSOR_UI_MAX="${AETOWER_PROFILE_CURSOR_UI_MAX:-80}"
 TCC_REQUEST_MAX="${AETOWER_PROFILE_TCC_REQUEST_MAX:-6}"
+DIAGNOSTICS_GROWTH_MAX_BYTES="${AETOWER_PROFILE_DIAGNOSTICS_GROWTH_MAX_BYTES:-262144}"
+HISTORY_GROWTH_MAX_BYTES="${AETOWER_PROFILE_HISTORY_GROWTH_MAX_BYTES:-10485760}"
+TICK_OVER_BUDGET_MAX="${AETOWER_PROFILE_TICK_OVER_BUDGET_MAX:-0}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -75,9 +80,20 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [ "$LAUNCH" -eq 1 ]; then
-    "$APP_BIN" >/dev/null 2>&1 &
-    APP_PID=$!
-    sleep 3
+    open "$APP_DIR"
+    ATTEMPTS=0
+    while [ "$ATTEMPTS" -lt 20 ]; do
+        APP_PID="$(ps -axo pid=,command= | awk '/Aetower\.app\/Contents\/MacOS\/Aetower/ && !/awk/ {print $1; exit}')"
+        if [ -n "$APP_PID" ]; then
+            break
+        fi
+        ATTEMPTS=$((ATTEMPTS + 1))
+        sleep 1
+    done
+    if [ -z "$APP_PID" ]; then
+        echo "failed to launch packaged Aetower app" >&2
+        exit 1
+    fi
 else
     APP_PID="$(ps -axo pid=,command= | awk '/Aetower\.app\/Contents\/MacOS\/Aetower/ && !/awk/ {print $1; exit}')"
     if [ -z "$APP_PID" ]; then
@@ -85,6 +101,32 @@ else
         exit 1
     fi
 fi
+
+file_bytes() {
+    if [ -f "$1" ]; then
+        wc -c <"$1" | tr -d ' '
+    else
+        printf '0'
+    fi
+}
+
+count_matches() {
+    if [ -f "$1" ]; then
+        grep -c "$2" "$1" || true
+    else
+        printf '0'
+    fi
+}
+
+DIAGNOSTICS_FILE="$SUPPORT_DIR/diagnostics.ndjson"
+HISTORY_DB="$SUPPORT_DIR/history.db"
+if [ "$SETTLE_SECONDS" -gt 0 ]; then
+    sleep "$SETTLE_SECONDS"
+fi
+START_DIAGNOSTICS_BYTES="$(file_bytes "$DIAGNOSTICS_FILE")"
+START_HISTORY_BYTES="$(file_bytes "$HISTORY_DB")"
+START_TICK_OVER_BUDGET="$(count_matches "$DIAGNOSTICS_FILE" '"event_type":"tick-over-budget"')"
+START_DIAGNOSTICS_ERROR="$(count_matches "$DIAGNOSTICS_FILE" '"level":"error"')"
 
 printf 'timestamp,pid,cpu_percent,rss_kb,vsz_kb\n' >"$METRICS_CSV"
 
@@ -120,8 +162,6 @@ END {
     printf "rss max: %.0f KB\n", rss_max
 }' pid="$APP_PID" "$METRICS_CSV" >"$SUMMARY_TXT"
 
-DIAGNOSTICS_FILE="$SUPPORT_DIR/diagnostics.ndjson"
-HISTORY_DB="$SUPPORT_DIR/history.db"
 DIAGNOSTICS_LINES=0
 DIAGNOSTICS_WARN=0
 DIAGNOSTICS_ERROR=0
@@ -136,15 +176,26 @@ HISTORY_BYTES=0
 if [ -f "$HISTORY_DB" ]; then
     HISTORY_BYTES="$(wc -c <"$HISTORY_DB" | tr -d ' ')"
 fi
+DIAGNOSTICS_GROWTH_BYTES="$(awk -v end="$DIAGNOSTICS_BYTES" -v start="$START_DIAGNOSTICS_BYTES" 'BEGIN { print end - start }')"
+HISTORY_GROWTH_BYTES="$(awk -v end="$HISTORY_BYTES" -v start="$START_HISTORY_BYTES" 'BEGIN { print end - start }')"
+END_TICK_OVER_BUDGET="$(count_matches "$DIAGNOSTICS_FILE" '"event_type":"tick-over-budget"')"
+TICK_OVER_BUDGET_DELTA="$(awk -v end="$END_TICK_OVER_BUDGET" -v start="$START_TICK_OVER_BUDGET" 'BEGIN { print end - start }')"
+DIAGNOSTICS_ERROR_DELTA="$(awk -v end="$DIAGNOSTICS_ERROR" -v start="$START_DIAGNOSTICS_ERROR" 'BEGIN { print end - start }')"
 
 {
     printf 'diagnostics file: %s\n' "$DIAGNOSTICS_FILE"
+    printf 'diagnostics start bytes: %s\n' "$START_DIAGNOSTICS_BYTES"
     printf 'diagnostics bytes: %s\n' "$DIAGNOSTICS_BYTES"
+    printf 'diagnostics growth bytes: %s\n' "$DIAGNOSTICS_GROWTH_BYTES"
     printf 'diagnostics lines: %s\n' "$DIAGNOSTICS_LINES"
     printf 'diagnostics warn entries: %s\n' "$DIAGNOSTICS_WARN"
     printf 'diagnostics error entries: %s\n' "$DIAGNOSTICS_ERROR"
+    printf 'diagnostics error delta: %s\n' "$DIAGNOSTICS_ERROR_DELTA"
+    printf 'tick over budget delta: %s\n' "$TICK_OVER_BUDGET_DELTA"
     printf 'history db: %s\n' "$HISTORY_DB"
+    printf 'history start bytes: %s\n' "$START_HISTORY_BYTES"
     printf 'history db bytes: %s\n' "$HISTORY_BYTES"
+    printf 'history growth bytes: %s\n' "$HISTORY_GROWTH_BYTES"
 } >"$STORE_TXT"
 
 if command -v /usr/bin/log >/dev/null 2>&1; then
@@ -171,7 +222,10 @@ if [ "$ENFORCE" -eq 1 ]; then
     CPU_AVG="$(awk -F': ' '/^cpu avg:/ {gsub(/%/, "", $2); print $2}' "$SUMMARY_TXT")"
     CPU_MAX="$(awk -F': ' '/^cpu max:/ {gsub(/%/, "", $2); print $2}' "$SUMMARY_TXT")"
     RSS_MAX="$(awk -F': ' '/^rss max:/ {gsub(/ KB/, "", $2); print $2}' "$SUMMARY_TXT")"
-    DIAGNOSTICS_ERRORS="$(awk -F': ' '/^diagnostics error entries:/ {print $2}' "$STORE_TXT")"
+    DIAGNOSTICS_ERRORS="$(awk -F': ' '/^diagnostics error delta:/ {print $2}' "$STORE_TXT")"
+    DIAGNOSTICS_GROWTH="$(awk -F': ' '/^diagnostics growth bytes:/ {print $2}' "$STORE_TXT")"
+    HISTORY_GROWTH="$(awk -F': ' '/^history growth bytes:/ {print $2}' "$STORE_TXT")"
+    TICK_OVER_BUDGET_DELTA="$(awk -F': ' '/^tick over budget delta:/ {print $2}' "$STORE_TXT")"
     CURSOR_UI="$(awk -F': ' '/^cursor_ui_entries:/ {print $2}' "$SESSION_LOG_TXT" 2>/dev/null || printf '0')"
     TCC_REQUESTS="$(awk -F': ' '/^tcc_access_requests:/ {print $2}' "$SESSION_LOG_TXT" 2>/dev/null || printf '0')"
 
@@ -189,6 +243,18 @@ if [ "$ENFORCE" -eq 1 ]; then
     }
     awk -v value="$DIAGNOSTICS_ERRORS" -v limit="$DIAGNOSTICS_ERROR_MAX" 'BEGIN { exit !(value <= limit) }' || {
         echo "runtime profile enforcement failed: diagnostics errors $DIAGNOSTICS_ERRORS > $DIAGNOSTICS_ERROR_MAX" >&2
+        exit 1
+    }
+    awk -v value="$DIAGNOSTICS_GROWTH" -v limit="$DIAGNOSTICS_GROWTH_MAX_BYTES" 'BEGIN { exit !(value <= limit) }' || {
+        echo "runtime profile enforcement failed: diagnostics growth $DIAGNOSTICS_GROWTH bytes > $DIAGNOSTICS_GROWTH_MAX_BYTES bytes" >&2
+        exit 1
+    }
+    awk -v value="$HISTORY_GROWTH" -v limit="$HISTORY_GROWTH_MAX_BYTES" 'BEGIN { exit !(value <= limit) }' || {
+        echo "runtime profile enforcement failed: history growth $HISTORY_GROWTH bytes > $HISTORY_GROWTH_MAX_BYTES bytes" >&2
+        exit 1
+    }
+    awk -v value="$TICK_OVER_BUDGET_DELTA" -v limit="$TICK_OVER_BUDGET_MAX" 'BEGIN { exit !(value <= limit) }' || {
+        echo "runtime profile enforcement failed: tick-over-budget delta $TICK_OVER_BUDGET_DELTA > $TICK_OVER_BUDGET_MAX" >&2
         exit 1
     }
     awk -v value="$CURSOR_UI" -v limit="$CURSOR_UI_MAX" 'BEGIN { exit !(value <= limit) }' || {
