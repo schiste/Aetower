@@ -365,6 +365,12 @@ public struct EntityDetailView: View {
                 attributionCaveats
                 whatAetowerSees
                 components
+
+                if entity.components.count >= 2 {
+                    GroupBox("Process Tree") {
+                        ProcessTreeView(entity: entity)
+                    }
+                }
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
