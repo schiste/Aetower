@@ -174,6 +174,27 @@ private enum SortKey: String, CaseIterable, Identifiable {
     }
 }
 
+private enum ListMode: String, CaseIterable, Identifiable {
+    case grouped
+    case flat
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .grouped: return "Grouped"
+        case .flat: return "Flat"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .grouped: return "square.grid.2x2"
+        case .flat: return "list.bullet"
+        }
+    }
+}
+
 private struct SortChip: View {
     let title: String
     let tone: Color
@@ -442,12 +463,357 @@ private struct EntityRow: View {
     }
 }
 
+private struct EntityGroup {
+    let root: EntitySnapshot
+    let members: [EntitySnapshot]
+    let cpuPercent: Float
+    let memoryBytes: UInt64
+    let frictionScore: Float
+    let processCount: Int
+
+    var id: String { root.entityId }
+}
+
+private struct GroupingCacheKey: Hashable {
+    let sequence: UInt64
+    let query: String
+    let sortKey: SortKey
+}
+
+private struct GroupedEntityRow: View {
+    let group: EntityGroup
+    let isSelected: Bool
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: entityIcon)
+                .font(.system(size: 11))
+                .foregroundStyle(AetowerDesign.frictionColor(group.frictionScore).opacity(0.8))
+                .frame(width: 16)
+
+            Text(group.root.displayName)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if group.processCount > 1 {
+                Text("\(group.processCount)")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.12), in: Capsule())
+            }
+
+            Text(String(format: "%.1f%%", group.cpuPercent))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 48, alignment: .trailing)
+
+            Text(formatBytes(group.memoryBytes))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 52, alignment: .trailing)
+
+            Text("")
+                .frame(width: 60, alignment: .trailing)
+
+            Text(groupSummaryText)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .frame(width: 80, alignment: .trailing)
+
+            HStack(spacing: 2) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.secondary)
+                Text(String(format: "%.1f", group.frictionScore))
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(AetowerDesign.frictionColor(group.frictionScore))
+                    .contentTransition(.numericText())
+            }
+            .frame(width: 50, alignment: .trailing)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity)
+        .background(
+            AetowerDesign.frictionColor(group.frictionScore)
+                .opacity(frictionBackgroundOpacity),
+            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(
+                    isSelected ? Color.accentColor.opacity(0.5) : .clear,
+                    lineWidth: 1
+                )
+        )
+        .onHover { isHovered = $0 }
+        .help(helpText)
+        .animation(AetowerDesign.Motion.quick, value: isHovered)
+    }
+
+    private var entityIcon: String {
+        switch group.root.entityKind {
+        case .app: return "app.fill"
+        case .browser: return "globe"
+        case .daemon: return "gearshape.2.fill"
+        case .terminalSession: return "terminal.fill"
+        case .aiAgent: return "cpu.fill"
+        case .service: return "server.rack"
+        case .unknown: return "questionmark.circle"
+        }
+    }
+
+    private var helpText: String {
+        let names = group.members.prefix(6).map(\.displayName).joined(separator: ", ")
+        if group.members.count > 6 {
+            return "Grouped entities: \(names), +\(group.members.count - 6) more"
+        }
+        return "Grouped entities: \(names)"
+    }
+
+    private var groupSummaryText: String {
+        let entityText = group.members.count == 1 ? "1 entity" : "\(group.members.count) entities"
+        if group.processCount <= 1 {
+            return entityText
+        }
+        let processText = group.processCount == 1 ? "1 proc" : "\(group.processCount) procs"
+        return "\(processText) · \(entityText)"
+    }
+
+    private var frictionBackgroundOpacity: Double {
+        let base = min(Double(group.frictionScore) / 100.0, 1.0)
+        if isSelected { return base * 0.12 + 0.04 }
+        if isHovered { return base * 0.08 + 0.02 }
+        return base * 0.05
+    }
+}
+
+private func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
+    let entityByID = Dictionary(uniqueKeysWithValues: entities.map { ($0.entityId, $0) })
+    let pidToEntityID = Dictionary(
+        uniqueKeysWithValues: entities.flatMap { entity in
+            entity.components.compactMap { component in
+                component.processId.map { ($0, entity.entityId) }
+            }
+        }
+    )
+
+    func sessionIDs(for entity: EntitySnapshot) -> Set<String> {
+        var ids = Set<String>()
+        for badge in entity.badges where badge.hasPrefix("ai-session:") {
+            ids.insert(String(badge.dropFirst("ai-session:".count)))
+        }
+        for component in entity.components {
+            if let sessionID = component.adapterContext?.sessionId {
+                ids.insert(sessionID)
+            }
+        }
+        return ids
+    }
+
+    func workspaceHints(for entity: EntitySnapshot) -> Set<String> {
+        var hints = Set<String>()
+        for component in entity.components {
+            if let value = component.adapterContext?.repoRoot { hints.insert(value) }
+            if let value = component.adapterContext?.workspacePath { hints.insert(value) }
+            if let value = component.cwd { hints.insert(value) }
+        }
+        if let executablePath = entity.executablePath {
+            hints.insert((executablePath as NSString).deletingLastPathComponent)
+        }
+        return hints
+    }
+
+    func primaryUser(for entity: EntitySnapshot) -> String? {
+        entity.components.first(where: { $0.user != nil })?.user
+    }
+
+    func isGenericSystemRoot(_ entity: EntitySnapshot) -> Bool {
+        let name = entity.displayName.localizedLowercase
+        if [
+            "launchd",
+            "loginwindow",
+            "xpcproxy",
+            "kernel_task",
+            "runningboardd",
+            "distnoted",
+            "cfprefsd"
+        ].contains(name) {
+            return true
+        }
+        return entity.entityKind == .daemon && entity.components.allSatisfy {
+            ($0.parentSummary?.localizedLowercase.contains("launchd") ?? false)
+        }
+    }
+
+    func sharesStrongContext(_ lhs: EntitySnapshot, _ rhs: EntitySnapshot) -> Bool {
+        let sharedSessions = !sessionIDs(for: lhs).isDisjoint(with: sessionIDs(for: rhs))
+        if sharedSessions {
+            return true
+        }
+
+        let lhsHints = workspaceHints(for: lhs)
+        let rhsHints = workspaceHints(for: rhs)
+        let sharedHint = !lhsHints.isDisjoint(with: rhsHints)
+
+        let sameUser = primaryUser(for: lhs) != nil && primaryUser(for: lhs) == primaryUser(for: rhs)
+        let launchDelta = abs(Int64(lhs.oldestProcessStartMillis) - Int64(rhs.oldestProcessStartMillis))
+        let closeLaunch = launchDelta > 0 && launchDelta <= 120_000
+
+        return sharedHint || (sameUser && closeLaunch)
+    }
+
+    let sessionRoots: [String: String] = {
+        var roots: [String: String] = [:]
+        for entity in entities {
+            let ids = sessionIDs(for: entity)
+            guard !ids.isEmpty else { continue }
+            let isChau7Root =
+                entity.displayName.localizedCaseInsensitiveContains("chau7")
+                || (entity.badges.contains("chau7-live") && entity.entityKind != .aiAgent)
+            guard isChau7Root else { continue }
+            for id in ids {
+                roots[id] = entity.entityId
+            }
+        }
+        return roots
+    }()
+
+    func firstParentEntityID(for entity: EntitySnapshot) -> String? {
+        let parentCandidates = entity.components.compactMap { component -> String? in
+            guard
+                let parentSummary = component.parentSummary,
+                let parentPID = extractParentPIDForGrouping(from: parentSummary),
+                let ownerID = pidToEntityID[parentPID],
+                ownerID != entity.entityId
+            else {
+                return nil
+            }
+            return ownerID
+        }
+        for ownerID in parentCandidates {
+            guard let owner = entityByID[ownerID] else { continue }
+            if isGenericSystemRoot(owner) {
+                continue
+            }
+            if sharesStrongContext(entity, owner) {
+                return ownerID
+            }
+        }
+        return nil
+    }
+
+    func rootID(for entity: EntitySnapshot) -> String {
+        let ids = sessionIDs(for: entity)
+        for id in ids {
+            if let root = sessionRoots[id] {
+                return root
+            }
+        }
+
+        var visited = Set<String>()
+        var current = entity.entityId
+        while let currentEntity = entityByID[current],
+              let parentID = firstParentEntityID(for: currentEntity),
+              !visited.contains(parentID) {
+            visited.insert(current)
+            current = parentID
+        }
+        return current
+    }
+
+    let grouped = Dictionary(grouping: entities) { rootID(for: $0) }
+    return grouped.compactMap { rootID, members in
+        guard let root = entityByID[rootID] ?? members.first else { return nil }
+        return EntityGroup(
+            root: root,
+            members: members.sorted { $0.friction.totalScore > $1.friction.totalScore },
+            cpuPercent: members.reduce(0) { $0 + $1.metrics.cpuPercent },
+            memoryBytes: members.reduce(0) { $0 + $1.metrics.memoryResidentBytes },
+            frictionScore: members.reduce(0) { $0 + $1.friction.totalScore },
+            processCount: members.reduce(0) { total, entity in
+                total + entity.components.reduce(0) { componentTotal, component in
+                    componentTotal + (component.kind == .adapterContext ? 0 : 1)
+                }
+            }
+        )
+    }
+}
+
+private func filterEntities(
+    _ entities: [EntitySnapshot],
+    query: String
+) -> [EntitySnapshot] {
+    let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalizedQuery.isEmpty else {
+        return entities
+    }
+
+    let loweredQuery = normalizedQuery.localizedLowercase
+    return entities.filter { entity in
+        entity.displayName.localizedLowercase.contains(loweredQuery)
+            || entity.badges.joined(separator: " ").localizedLowercase.contains(loweredQuery)
+            || entity.friction.reasons.joined(separator: " ").localizedLowercase.contains(loweredQuery)
+            || entity.components.contains(where: { component in
+                component.title.localizedLowercase.contains(loweredQuery)
+                    || component.detail.localizedLowercase.contains(loweredQuery)
+                    || component.adapterContext?.status?.localizedLowercase.contains(loweredQuery) == true
+                    || component.adapterContext?.url?.localizedLowercase.contains(loweredQuery) == true
+                    || component.adapterContext?.workspacePath?.localizedLowercase.contains(loweredQuery) == true
+                    || component.adapterContext?.repoRoot?.localizedLowercase.contains(loweredQuery) == true
+                    || component.adapterContext?.imageName?.localizedLowercase.contains(loweredQuery) == true
+                    || component.adapterContext?.sessionId?.localizedLowercase.contains(loweredQuery) == true
+                    || component.adapterContext?.ports.joined(separator: " ").localizedLowercase.contains(loweredQuery) == true
+            })
+    }
+}
+
+private func sortGroups(_ groups: [EntityGroup], by sortKey: SortKey) -> [EntityGroup] {
+    switch sortKey {
+    case .friction:
+        return groups.sorted { $0.frictionScore > $1.frictionScore }
+    case .cpu:
+        return groups.sorted { $0.cpuPercent > $1.cpuPercent }
+    case .memory:
+        return groups.sorted { $0.memoryBytes > $1.memoryBytes }
+    case .alphabeticalAsc:
+        return groups.sorted { $0.root.displayName.localizedCaseInsensitiveCompare($1.root.displayName) == .orderedAscending }
+    case .alphabeticalDesc:
+        return groups.sorted { $0.root.displayName.localizedCaseInsensitiveCompare($1.root.displayName) == .orderedDescending }
+    default:
+        return groups.sorted { $0.frictionScore > $1.frictionScore }
+    }
+}
+
+private func buildGroupedEntities(
+    from entities: [EntitySnapshot],
+    query: String,
+    sortKey: SortKey
+) -> [EntityGroup] {
+    sortGroups(buildEntityGroups(from: filterEntities(entities, query: query)), by: sortKey)
+}
+
+private func extractParentPIDForGrouping(from parentSummary: String) -> UInt32? {
+    guard let pidRange = parentSummary.range(of: "pid ") else { return nil }
+    let digits = parentSummary[pidRange.upperBound...].prefix(while: \.isNumber)
+    return UInt32(digits)
+}
+
 public struct MainListView: View {
     let state: AppState
     @State private var selectedEntityID: String?
     @State private var searchText = ""
     @State private var sortKey: SortKey = .friction
     @State private var focusedIndex: Int = 0
+    @State private var listMode: ListMode = .grouped
+    @State private var groupedEntitiesCache: [GroupingCacheKey: [EntityGroup]] = [:]
+    @State private var groupingTask: Task<[EntityGroup], Never>?
+    @State private var isGrouping = false
 
     public init(state: AppState) {
         self.state = state
@@ -457,23 +823,23 @@ public struct MainListView: View {
         VStack(spacing: 0) {
             summaryHeader
             Divider()
-
-            if let entity = selectedEntity {
-                detailPanel(for: entity)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else {
-                rankingPanel
-                    .transition(.opacity)
-            }
+            monitorSplitView
         }
         .navigationTitle("Aetower")
         .modifier(KeyboardNavigationModifier(
             focusedIndex: $focusedIndex,
             selectedEntityID: $selectedEntityID,
             sortKey: $sortKey,
-            entityCount: filteredEntities.count,
-            entityIdAt: { index in filteredEntities[index].entityId }
+            entityCount: visibleEntityIDs.count,
+            entityIdAt: { index in visibleEntityIDs[index] }
         ))
+        .task(id: groupingTaskToken) {
+            await refreshGroupingCache()
+        }
+        .onDisappear {
+            groupingTask?.cancel()
+            groupingTask = nil
+        }
     }
 
     private var summaryHeader: some View {
@@ -515,7 +881,7 @@ public struct MainListView: View {
                 .padding(.horizontal, 12)
             }
 
-            // Export + back buttons from old header
+            // Export
             Button {
                 state.exportSnapshot()
             } label: {
@@ -523,21 +889,7 @@ public struct MainListView: View {
                     .font(.caption.weight(.semibold))
             }
             .buttonStyle(.plain)
-            .padding(.trailing, 8)
-
-            if selectedEntity != nil {
-                Button {
-                    withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = nil }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                        Text("Back")
-                    }
-                    .font(.caption.weight(.medium))
-                }
-                .buttonStyle(.plain)
-                .padding(.trailing, 12)
-            }
+            .padding(.trailing, 12)
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 16)
@@ -564,26 +916,29 @@ public struct MainListView: View {
         }
     }
 
+    private var monitorSplitView: some View {
+        HStack(spacing: 0) {
+            rankingPanel
+                .frame(minWidth: 420, idealWidth: 500, maxWidth: 560, maxHeight: .infinity)
+
+            Divider()
+
+            Group {
+                if let entity = selectedEntity {
+                    detailPanel(for: entity)
+                        .transition(.opacity)
+                } else {
+                    detailPlaceholder
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     private func detailPanel(for entity: EntitySnapshot) -> some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .center, spacing: 12) {
-                    Button {
-                        withAnimation(AetowerDesign.Motion.standard) {
-                            selectedEntityID = nil
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left")
-                            Text("Back to ranking")
-                        }
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(Color.secondary.opacity(0.08), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-
                     SectionEyebrow(text: "Detail")
 
                     Text(entity.displayName)
@@ -592,6 +947,17 @@ public struct MainListView: View {
                     StatusBadge(score: Double(entity.friction.totalScore))
 
                     Spacer()
+
+                    Button {
+                        withAnimation(AetowerDesign.Motion.standard) {
+                            selectedEntityID = nil
+                        }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 Text(topConcernSummary(for: entity, sortKey: sortKey))
@@ -608,10 +974,33 @@ public struct MainListView: View {
         }
     }
 
+    private var detailPlaceholder: some View {
+        ContentUnavailableView(
+            "Select an Entity",
+            systemImage: "arrow.triangle.branch",
+            description: Text("Choose an app or process group from the monitor list to inspect its grouped process tree, attribution, and friction drivers.")
+        )
+    }
+
     private var rankedEntitiesSection: some View {
         VStack(alignment: .leading, spacing: 2) {
             // Compact sort + search bar
             HStack(spacing: 6) {
+                Picker("Layout", selection: $listMode) {
+                    ForEach(ListMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.icon)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 150)
+                .onChange(of: listMode) { _, _ in
+                    focusedIndex = 0
+                    if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
+                        self.selectedEntityID = nil
+                    }
+                }
+
                 Menu {
                     ForEach(SortKey.allCases) { key in
                         Button {
@@ -650,6 +1039,17 @@ public struct MainListView: View {
                     .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
                     .frame(maxWidth: 160)
 
+                if isGroupedMode && isGrouping {
+                    HStack(spacing: 5) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text("Grouping…")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .transition(.opacity)
+                }
+
                 Spacer()
             }
             .padding(.horizontal, 8)
@@ -685,36 +1085,52 @@ public struct MainListView: View {
                 )
             } else {
                 LazyVStack(spacing: 2) {
-                    ForEach(filteredEntities, id: \.entityId) { entity in
-                        Button {
-                            withAnimation(AetowerDesign.Motion.standard) {
-                                selectedEntityID = entity.entityId
+                    if isGroupedMode {
+                        ForEach(groupedEntities, id: \.id) { group in
+                            Button {
+                                withAnimation(AetowerDesign.Motion.standard) {
+                                    selectedEntityID = group.root.entityId
+                                }
+                            } label: {
+                                GroupedEntityRow(
+                                    group: group,
+                                    isSelected: selectedEntityID == group.root.entityId
+                                )
                             }
-                        } label: {
-                            EntityRow(
-                                entity: entity,
-                                isSelected: selectedEntityID == entity.entityId
-                            )
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            Button("Copy Process IDs") {
-                                let pids = entity.components.compactMap { $0.processId }.map(String.init).joined(separator: ", ")
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(pids, forType: .string)
+                    } else {
+                        ForEach(filteredEntities, id: \.entityId) { entity in
+                            Button {
+                                withAnimation(AetowerDesign.Motion.standard) {
+                                    selectedEntityID = entity.entityId
+                                }
+                            } label: {
+                                EntityRow(
+                                    entity: entity,
+                                    isSelected: selectedEntityID == entity.entityId
+                                )
                             }
-                            if entity.executablePath?.contains(".app/") == true {
-                                Button("Show in Finder") {
-                                    if let path = entity.executablePath {
-                                        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button("Copy Process IDs") {
+                                    let pids = entity.components.compactMap { $0.processId }.map(String.init).joined(separator: ", ")
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(pids, forType: .string)
+                                }
+                                if entity.executablePath?.contains(".app/") == true {
+                                    Button("Show in Finder") {
+                                        if let path = entity.executablePath {
+                                            NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+                                        }
                                     }
                                 }
-                            }
-                            Divider()
-                            Button("Terminate Processes", role: .destructive) {
-                                for component in entity.components {
-                                    if let pid = component.processId {
-                                        kill(Int32(pid), SIGTERM)
+                                Divider()
+                                Button("Terminate Processes", role: .destructive) {
+                                    for component in entity.components {
+                                        if let pid = component.processId {
+                                            kill(Int32(pid), SIGTERM)
+                                        }
                                     }
                                 }
                             }
@@ -722,36 +1138,13 @@ public struct MainListView: View {
                     }
                 }
                 .animation(AetowerDesign.Motion.standard, value: sortKey)
+                .animation(AetowerDesign.Motion.standard, value: listMode)
             }
         }
     }
 
     private var filteredEntities: [EntitySnapshot] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filtered: [EntitySnapshot]
-        if query.isEmpty {
-            filtered = state.snapshot.entities
-        } else {
-            let loweredQuery = query.localizedLowercase
-            filtered = state.snapshot.entities.filter { entity in
-                entity.displayName.localizedLowercase.contains(loweredQuery)
-                    || entity.badges.joined(separator: " ").localizedLowercase.contains(loweredQuery)
-                    || entity.friction.reasons.joined(separator: " ").localizedLowercase.contains(loweredQuery)
-                    || entity.components.contains(where: { component in
-                        component.title.localizedLowercase.contains(loweredQuery)
-                            || component.detail.localizedLowercase.contains(loweredQuery)
-                            || component.adapterContext?.status?.localizedLowercase.contains(loweredQuery) == true
-                            || component.adapterContext?.url?.localizedLowercase.contains(loweredQuery) == true
-                            || component.adapterContext?.workspacePath?.localizedLowercase.contains(loweredQuery) == true
-                            || component.adapterContext?.repoRoot?.localizedLowercase.contains(loweredQuery) == true
-                            || component.adapterContext?.imageName?.localizedLowercase.contains(loweredQuery) == true
-                            || component.adapterContext?.sessionId?.localizedLowercase.contains(loweredQuery) == true
-                            || component.adapterContext?.ports.joined(separator: " ").localizedLowercase.contains(loweredQuery) == true
-                    })
-            }
-        }
-
-        return filtered.sorted {
+        filterEntities(state.snapshot.entities, query: normalizedSearchQuery).sorted {
             compareEntities($0, $1, by: sortKey)
         }
     }
@@ -776,6 +1169,77 @@ public struct MainListView: View {
                 ?? state.snapshot.entities.first(where: { $0.entityId == selectedEntityID })
         }
         return nil
+    }
+
+    private var visibleEntityIDs: [String] {
+        isGroupedMode ? groupedEntities.map(\.root.entityId) : filteredEntities.map(\.entityId)
+    }
+
+    private var groupedEntities: [EntityGroup] {
+        guard let key = currentGroupingCacheKey else { return [] }
+        return groupedEntitiesCache[key] ?? []
+    }
+
+    private var normalizedSearchQuery: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var currentGroupingCacheKey: GroupingCacheKey? {
+        guard isGroupedMode else { return nil }
+        return GroupingCacheKey(
+            sequence: state.snapshot.sequence,
+            query: normalizedSearchQuery,
+            sortKey: sortKey
+        )
+    }
+
+    private var isGroupedMode: Bool {
+        listMode == .grouped
+    }
+
+    private var groupingTaskToken: String {
+        guard let key = currentGroupingCacheKey else { return "flat" }
+        return "\(key.sequence)|\(key.query)|\(key.sortKey.rawValue)"
+    }
+
+    @MainActor
+    private func refreshGroupingCache() async {
+        guard let key = currentGroupingCacheKey else {
+            groupingTask?.cancel()
+            groupingTask = nil
+            isGrouping = false
+            return
+        }
+
+        if groupedEntitiesCache[key] != nil {
+            isGrouping = false
+            return
+        }
+
+        groupingTask?.cancel()
+
+        let entities = state.snapshot.entities
+        let query = key.query
+        let sortKey = key.sortKey
+        isGrouping = true
+
+        let task = Task.detached(priority: .utility) {
+            buildGroupedEntities(from: entities, query: query, sortKey: sortKey)
+        }
+        groupingTask = task
+
+        let groups = await task.value
+        guard !Task.isCancelled else { return }
+        guard currentGroupingCacheKey == key else { return }
+
+        groupedEntitiesCache = groupedEntitiesCache
+            .filter { $0.key.sequence == key.sequence }
+        groupedEntitiesCache[key] = groups
+        isGrouping = false
+
+        if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
+            self.selectedEntityID = nil
+        }
     }
 
     private func topConcernSummary(for entity: EntitySnapshot, sortKey: SortKey) -> String {
