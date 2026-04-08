@@ -1091,14 +1091,26 @@ impl AdapterManager {
                     }
 
                     let provider = tab.provider_label().unwrap_or("shell");
-                    let session_detail = chau7_tab_detail(tab, snapshot);
+                    let tab_status = snapshot.tab_statuses.get(&tab.tab_id);
+                    let session_state = tab
+                        .ai_session_id
+                        .as_deref()
+                        .and_then(|session_id| snapshot.runtime_sessions.get(session_id));
+                    let repo_events = tab
+                        .repo_root
+                        .as_deref()
+                        .and_then(|repo_root| snapshot.repo_events.get(repo_root));
+                    let session_status =
+                        chau7_session_status(tab, tab_status, session_state, repo_events);
+                    let session_detail =
+                        chau7_tab_detail(tab, tab_status, session_state, snapshot, repo_events);
                     entity.components.push(ComponentSnapshot {
                         kind: ComponentKind::AdapterContext,
                         title: format!("{} · {}", provider, tab.title),
                         detail: session_detail,
                         adapter_context: Some(AdapterContextSnapshot {
                             kind: AdapterContextKind::Chau7Session,
-                            status: (!tab.status.is_empty()).then(|| tab.status.clone()),
+                            status: Some(session_status),
                             url: None,
                             workspace_path: (!tab.cwd.is_empty()).then(|| tab.cwd.clone()),
                             repo_root: tab.repo_root.clone(),
@@ -1132,17 +1144,14 @@ impl AdapterManager {
 
                     if tab.is_ai_agent() {
                         if let Some(label) = tab.provider_label() {
-                            if !entity.badges.iter().any(|b| b == label) {
-                                entity.badges.push(label.to_owned());
-                            }
+                            push_unique_badge(entity, label);
                         }
-                        if !entity.badges.iter().any(|b| b == "ai-agent") {
-                            entity.badges.push("ai-agent".to_owned());
-                        }
+                        push_unique_badge(entity, "ai-agent");
                     }
 
-                    if !entity.badges.iter().any(|b| b == "chau7-live") {
-                        entity.badges.push("chau7-live".to_owned());
+                    push_unique_badge(entity, "chau7-live");
+                    if let Some(session_id) = tab.ai_session_id.as_deref() {
+                        push_unique_badge(entity, &format!("ai-session:{session_id}"));
                     }
 
                     // Feature 9: Populate agent cost from repo stats.
@@ -1154,6 +1163,22 @@ impl AdapterManager {
                                 cost_usd: stats.total_cost,
                                 total_runs: stats.total_runs,
                             });
+                            if stats.total_turns > 0
+                                && !entity
+                                    .attribution_notes
+                                    .iter()
+                                    .any(|note| note.contains("Chau7 repo activity"))
+                            {
+                                let providers = if stats.providers.is_empty() {
+                                    "unknown providers".to_owned()
+                                } else {
+                                    stats.providers.join(", ")
+                                };
+                                entity.attribution_notes.push(format!(
+                                    "Chau7 repo activity: {} total turn(s) across {}.",
+                                    stats.total_turns, providers
+                                ));
+                            }
                         }
                     }
 
@@ -1181,6 +1206,8 @@ impl AdapterManager {
                             }
                         }
                     }
+
+                    apply_chau7_runtime_state(entity, tab, tab_status, session_state, repo_events);
 
                     break; // one tab match per entity
                 }
@@ -1765,10 +1792,16 @@ fn chau7_socket_path() -> Option<String> {
 
 fn chau7_tab_detail(
     tab: &crate::chau7::Chau7Tab,
+    tab_status: Option<&crate::chau7::Chau7TabStatus>,
+    session_state: Option<&crate::chau7::Chau7RuntimeSessionStatus>,
     snapshot: &crate::chau7::Chau7Snapshot,
+    repo_events: Option<&Vec<crate::chau7::Chau7RepoEvent>>,
 ) -> String {
     let mut parts = Vec::new();
-    parts.push(format!("status {}", tab.status));
+    parts.push(format!(
+        "status {}",
+        chau7_session_status(tab, tab_status, session_state, repo_events)
+    ));
     if let Some(repo) = tab.repo_root.as_deref() {
         let short = repo.rsplit('/').next().unwrap_or(repo);
         parts.push(short.to_owned());
@@ -1776,13 +1809,302 @@ fn chau7_tab_detail(
     if let Some(branch) = tab.git_branch.as_deref() {
         parts.push(branch.to_owned());
     }
+    if let Some(status) = tab_status {
+        if status.is_at_prompt {
+            parts.push("at prompt".to_owned());
+        }
+        if status.shell_loading {
+            parts.push("shell loading".to_owned());
+        }
+        if status.cto_active {
+            parts.push("cto active".to_owned());
+        }
+    }
     // Attach run count from matching session.
     if let Some(sid) = tab.ai_session_id.as_deref()
         && let Some(session) = snapshot.sessions.iter().find(|s| s.session_id == sid)
     {
         parts.push(format!("{} runs", session.run_count));
     }
+    if let Some(runtime) = session_state {
+        if runtime.turn_count > 0 {
+            parts.push(format!("{} turns", runtime.turn_count));
+        }
+        if let Some(active_run) = runtime.active_run.as_ref()
+            && active_run.duration_so_far_ms > 0
+        {
+            parts.push(format!(
+                "active {}",
+                human_duration_millis(active_run.duration_so_far_ms)
+            ));
+        }
+        if runtime.child_session_count > 0 {
+            parts.push(format!("{} child sessions", runtime.child_session_count));
+        }
+        if let Some(last_exit_reason) = runtime.last_exit_reason.as_deref()
+            && !last_exit_reason.is_empty()
+        {
+            parts.push(format!("last exit {last_exit_reason}"));
+        }
+        if let Some(approval) = runtime.pending_approval.as_ref()
+            && !approval.description.is_empty()
+        {
+            parts.push(approval.description.clone());
+        }
+    }
+    if let Some(event) = repo_events.and_then(|events| events.first()) {
+        let label = chau7_event_label(event);
+        if !label.is_empty() {
+            parts.push(label);
+        }
+    }
     parts.join(" · ")
+}
+
+fn chau7_session_status(
+    tab: &crate::chau7::Chau7Tab,
+    tab_status: Option<&crate::chau7::Chau7TabStatus>,
+    session_state: Option<&crate::chau7::Chau7RuntimeSessionStatus>,
+    repo_events: Option<&Vec<crate::chau7::Chau7RepoEvent>>,
+) -> String {
+    if let Some(runtime) = session_state {
+        if runtime.pending_approval.is_some() {
+            return "approval-needed".to_owned();
+        }
+        if matches!(
+            runtime.last_exit_reason.as_deref(),
+            Some("error" | "failed")
+        ) {
+            return "error".to_owned();
+        }
+    }
+    if let Some(event) = repo_events.and_then(|events| events.first()) {
+        match event.event_type.as_str() {
+            "waiting_input" => return "waiting-input".to_owned(),
+            "permission" => return "approval-needed".to_owned(),
+            "idle" => return "idle".to_owned(),
+            "finished" => return "finished".to_owned(),
+            "process_ended" => return "process-ended".to_owned(),
+            _ => {}
+        }
+    }
+    if let Some(status) = tab_status {
+        if status.shell_loading {
+            return "shell-loading".to_owned();
+        }
+        if status.is_at_prompt {
+            return "at-prompt".to_owned();
+        }
+        if !status.status.is_empty() {
+            return status.status.clone();
+        }
+        if let Some(raw_status) = status.raw_status.as_deref()
+            && !raw_status.is_empty()
+        {
+            return raw_status.to_owned();
+        }
+    }
+    if let Some(runtime) = session_state
+        && !runtime.state.is_empty()
+    {
+        return runtime.state.clone();
+    }
+    if !tab.status.is_empty() {
+        return tab.status.clone();
+    }
+    "unknown".to_owned()
+}
+
+fn apply_chau7_runtime_state(
+    entity: &mut EntitySnapshot,
+    tab: &crate::chau7::Chau7Tab,
+    tab_status: Option<&crate::chau7::Chau7TabStatus>,
+    session_state: Option<&crate::chau7::Chau7RuntimeSessionStatus>,
+    repo_events: Option<&Vec<crate::chau7::Chau7RepoEvent>>,
+) {
+    let Some(session_id) = tab.ai_session_id.as_deref() else {
+        return;
+    };
+
+    if let Some(runtime) = session_state {
+        if runtime.pending_approval.is_some() {
+            push_unique_badge(entity, "approval-needed");
+            if !entity
+                .recommendations
+                .iter()
+                .any(|recommendation| recommendation.title == "Resolve pending agent approval")
+            {
+                entity.recommendations.push(aetower_model::Recommendation {
+                    title: "Resolve pending agent approval".to_owned(),
+                    detail: runtime
+                        .pending_approval
+                        .as_ref()
+                        .map(|approval| approval.description.clone())
+                        .filter(|description| !description.is_empty())
+                        .unwrap_or_else(|| {
+                            "This Chau7 session is waiting for an approval before it can continue."
+                                .to_owned()
+                        }),
+                });
+            }
+        }
+
+        if matches!(
+            runtime.last_exit_reason.as_deref(),
+            Some("error" | "failed")
+        ) {
+            push_unique_badge(entity, "agent-error");
+            if !entity
+                .attribution_notes
+                .iter()
+                .any(|note| note.contains("last Chau7 turn exited"))
+            {
+                entity.attribution_notes.push(format!(
+                    "The last Chau7 turn for session {} exited with {}.",
+                    session_id,
+                    runtime.last_exit_reason.as_deref().unwrap_or("an error")
+                ));
+            }
+            if !entity
+                .recommendations
+                .iter()
+                .any(|recommendation| recommendation.title == "Inspect failed agent turn")
+            {
+                entity.recommendations.push(aetower_model::Recommendation {
+                    title: "Inspect failed agent turn".to_owned(),
+                    detail: "Recent Chau7 runtime state indicates the last turn failed. Check the terminal transcript, approvals, or subprocess exits tied to this session.".to_owned(),
+                });
+            }
+        }
+
+        if runtime.child_session_count > 0 {
+            push_unique_badge(entity, "delegating");
+            if !entity
+                .attribution_notes
+                .iter()
+                .any(|note| note.contains("child Chau7 session"))
+            {
+                entity.attribution_notes.push(format!(
+                    "Chau7 reports {} child session(s) delegated from this runtime.",
+                    runtime.child_session_count
+                ));
+            }
+        }
+
+        if let Some(active_run) = runtime.active_run.as_ref()
+            && active_run.duration_so_far_ms > 0
+            && entity.recent_change_summary.is_none()
+        {
+            entity.recent_change_summary = Some(format!(
+                "{} has been active in Chau7 for {}.",
+                tab.provider_label().unwrap_or("Agent"),
+                human_duration_millis(active_run.duration_so_far_ms)
+            ));
+        }
+    }
+
+    if let Some(status) = tab_status {
+        if status.is_at_prompt {
+            push_unique_badge(entity, "at-prompt");
+        }
+        if status.cto_active {
+            push_unique_badge(entity, "cto-active");
+        }
+        if status.shell_loading {
+            push_unique_badge(entity, "shell-loading");
+        }
+    }
+
+    if let Some(event) = repo_events.and_then(|events| events.first()) {
+        let label = chau7_event_label(event);
+        if !label.is_empty() {
+            entity.recent_change_summary = Some(format!("Recent Chau7 event: {label}."));
+        }
+        match event.event_type.as_str() {
+            "waiting_input" => {
+                push_unique_badge(entity, "waiting-input");
+                if !entity
+                    .recommendations
+                    .iter()
+                    .any(|recommendation| recommendation.title == "Resume waiting agent")
+                {
+                    entity.recommendations.push(aetower_model::Recommendation {
+                        title: "Resume waiting agent".to_owned(),
+                        detail: "This agent session is currently waiting for input. Resume the conversation if you expect more work from it.".to_owned(),
+                    });
+                }
+            }
+            "permission" => push_unique_badge(entity, "approval-needed"),
+            "process_ended" => {
+                push_unique_badge(entity, "recent-process-exit");
+                if !entity
+                    .attribution_notes
+                    .iter()
+                    .any(|note| note.contains("recent Chau7-linked process exit"))
+                {
+                    entity.attribution_notes.push(
+                        "A recent Chau7-linked process exit was observed for this repo session."
+                            .to_owned(),
+                    );
+                }
+            }
+            "idle" => push_unique_badge(entity, "agent-idle"),
+            "finished" => push_unique_badge(entity, "agent-finished"),
+            _ => {}
+        }
+    }
+
+    entity.recommendations.truncate(4);
+}
+
+fn chau7_event_label(event: &crate::chau7::Chau7RepoEvent) -> String {
+    let message = event.message.trim();
+    match event.event_type.as_str() {
+        "waiting_input" => "waiting for input".to_owned(),
+        "permission" => {
+            if message.is_empty() {
+                "blocked on permission".to_owned()
+            } else {
+                message.to_owned()
+            }
+        }
+        "finished" => {
+            if message.is_empty() {
+                "run finished".to_owned()
+            } else {
+                message.to_owned()
+            }
+        }
+        "process_ended" => "linked subprocess exited".to_owned(),
+        "idle" => {
+            if message.is_empty() {
+                "agent is idle".to_owned()
+            } else {
+                message.to_owned()
+            }
+        }
+        other => {
+            if message.is_empty() {
+                other.replace('_', " ")
+            } else {
+                message.to_owned()
+            }
+        }
+    }
+}
+
+fn human_duration_millis(duration_millis: u64) -> String {
+    let total_seconds = duration_millis / 1000;
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
 }
 
 fn fetch_chromium_targets(
@@ -2690,16 +3012,18 @@ fn read_http_body(stream: &mut impl Read) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, sync::Arc};
 
     use aetower_model::{
-        AggregateMetrics, AttributionConfidence, ComponentKind, ComponentSnapshot, EntityKind,
-        EntitySnapshot, FrictionBreakdown, MetricTrend, ProvenanceKind, ProvenanceSnapshot,
+        AggregateMetrics, AttributionConfidence, CapabilityHealth, CapabilitySnapshot,
+        ComponentKind, ComponentSnapshot, EntityKind, EntitySnapshot, FrictionBreakdown,
+        MetricTrend, ProvenanceKind, ProvenanceSnapshot,
     };
+    use parking_lot::Mutex;
 
     use super::{
-        AdapterState, CapabilityKind, CapabilityState, ChromiumTarget, DockerBlkioEntry,
-        DockerContainerStats, DockerContainerSummary, DockerNetworkStats,
+        AdapterManager, AdapterState, CapabilityKind, CapabilityState, ChromiumTarget,
+        DockerBlkioEntry, DockerContainerStats, DockerContainerSummary, DockerNetworkStats,
         EndpointSecurityLifecycleEvent, EndpointSecuritySample, EndpointSecurityStatusSnapshot,
         adapter_runtime_detail, capability_status, docker_block_io_totals, docker_cpu_percent,
         docker_network_totals, endpoint_security_runtime_detail, enrich_vscode_entity,
@@ -3092,5 +3416,208 @@ mod tests {
         );
         assert!(!entity.attribution_notes.is_empty());
         assert!(!entity.recommendations.is_empty());
+    }
+
+    #[test]
+    fn chau7_enrichment_surfaces_runtime_state_and_repo_events() {
+        let manager = AdapterManager {
+            state: Arc::new(Mutex::new(AdapterState {
+                cached_chau7_snapshot: Some(crate::chau7::Chau7Snapshot {
+                    tabs: vec![crate::chau7::Chau7Tab {
+                        tab_id: "tab-1".to_owned(),
+                        title: "Aetower coding".to_owned(),
+                        cwd: "/Users/test/Aetower".to_owned(),
+                        repo_root: Some("/Users/test/Aetower".to_owned()),
+                        git_branch: Some("master".to_owned()),
+                        ai_provider: Some("claude".to_owned()),
+                        ai_session_id: Some("session-1".to_owned()),
+                        status: "running".to_owned(),
+                        active_app: Some("Claude".to_owned()),
+                        window_id: 0,
+                    }],
+                    sessions: vec![crate::chau7::Chau7Session {
+                        session_id: "session-1".to_owned(),
+                        provider: "claude".to_owned(),
+                        repo_path: "/Users/test/Aetower".to_owned(),
+                        run_count: 6,
+                        last_active: "2026-04-08T14:22:26.696Z".to_owned(),
+                    }],
+                    repo_stats: BTreeMap::from([(
+                        "/Users/test/Aetower".to_owned(),
+                        crate::chau7::Chau7RepoStats {
+                            total_runs: 6,
+                            total_tokens: 82_167_695,
+                            total_cost: 12.5,
+                            total_turns: 503,
+                            providers: vec!["claude".to_owned(), "codex".to_owned()],
+                        },
+                    )]),
+                    recent_runs: vec![],
+                    tab_statuses: BTreeMap::from([(
+                        "tab-1".to_owned(),
+                        crate::chau7::Chau7TabStatus {
+                            tab_id: "tab-1".to_owned(),
+                            title: "Claude".to_owned(),
+                            cwd: "/Users/test/Aetower".to_owned(),
+                            repo_root: Some("/Users/test/Aetower".to_owned()),
+                            git_branch: Some("master".to_owned()),
+                            ai_provider: Some("claude".to_owned()),
+                            ai_session_id: Some("session-1".to_owned()),
+                            status: "running".to_owned(),
+                            active_app: Some("Claude".to_owned()),
+                            is_at_prompt: true,
+                            shell_loading: false,
+                            cto_active: true,
+                            raw_status: Some("running".to_owned()),
+                        },
+                    )]),
+                    runtime_sessions: BTreeMap::from([(
+                        "session-1".to_owned(),
+                        crate::chau7::Chau7RuntimeSessionStatus {
+                            session_id: "session-1".to_owned(),
+                            state: "ready".to_owned(),
+                            turn_count: 3,
+                            last_completed_turn_id: Some("t_3".to_owned()),
+                            last_exit_reason: Some("error".to_owned()),
+                            pending_approval: Some(crate::chau7::Chau7PendingApproval {
+                                id: "approval-1".to_owned(),
+                                description: "Claude needs your permission to use Bash".to_owned(),
+                            }),
+                            active_run: Some(crate::chau7::Chau7ActiveRun {
+                                duration_so_far_ms: 438_172,
+                                provider: "claude".to_owned(),
+                                run_id: "run-1".to_owned(),
+                                session_id: "session-1".to_owned(),
+                                started_at: "2026-04-08T14:22:26.696Z".to_owned(),
+                            }),
+                            child_session_count: 2,
+                        },
+                    )]),
+                    repo_events: BTreeMap::from([(
+                        "/Users/test/Aetower".to_owned(),
+                        vec![crate::chau7::Chau7RepoEvent {
+                            event_type: "permission".to_owned(),
+                            timestamp: "2026-04-08T13:43:55.170Z".to_owned(),
+                            message: "Claude needs your permission to use Write".to_owned(),
+                            session_id: Some("session-1".to_owned()),
+                            tab_id: Some("tab-1".to_owned()),
+                            source: "claude_code".to_owned(),
+                            tool: "Claude".to_owned(),
+                        }],
+                    )]),
+                }),
+                ..AdapterState::default()
+            })),
+        };
+
+        let capabilities = BTreeMap::from([(
+            CapabilityKind::Chau7,
+            CapabilitySnapshot {
+                kind: CapabilityKind::Chau7,
+                state: CapabilityState::Granted,
+                health: CapabilityHealth::Live,
+                detail: "live".to_owned(),
+                last_updated_millis: 0,
+            },
+        )]);
+
+        let mut entities = vec![EntitySnapshot {
+            entity_id: "agent".to_owned(),
+            display_name: "Claude".to_owned(),
+            primary_provenance: None,
+            launcher_summary: None,
+            attribution_notes: Vec::new(),
+            bundle_id: None,
+            executable_path: Some("/Users/test/Aetower/.claude/agent-binary".to_owned()),
+            oldest_process_start_millis: 0,
+            newest_process_start_millis: 0,
+            entity_kind: EntityKind::AiAgent,
+            metrics: AggregateMetrics::default(),
+            friction: FrictionBreakdown::default(),
+            components: vec![ComponentSnapshot {
+                kind: ComponentKind::Process,
+                title: "Claude".to_owned(),
+                detail: String::new(),
+                adapter_context: None,
+                provenance: None,
+                process_id: Some(1),
+                start_time_millis: 0,
+                executable_path: Some("/Users/test/Aetower/bin/claude".to_owned()),
+                command_line: None,
+                parent_summary: None,
+                launched_by: None,
+                cpu_percent: 0.0,
+                memory_bytes: 0,
+                cwd: None,
+                user: None,
+            }],
+            trend: MetricTrend::default(),
+            badges: Vec::new(),
+            active_window_title: None,
+            recent_change_summary: None,
+            anomaly_detected: false,
+            thermal_contribution: None,
+            grouping_suggestion: None,
+            agent_cost: None,
+            session_markers: Vec::new(),
+            recommendations: Vec::new(),
+        }];
+
+        manager.enrich_entities(&mut entities, &capabilities);
+        let entity = &entities[0];
+
+        assert!(entity.badges.iter().any(|badge| badge == "chau7-live"));
+        assert!(entity.badges.iter().any(|badge| badge == "approval-needed"));
+        assert!(entity.badges.iter().any(|badge| badge == "delegating"));
+        assert!(entity.badges.iter().any(|badge| badge == "at-prompt"));
+        assert!(entity.badges.iter().any(|badge| badge == "cto-active"));
+        assert!(
+            entity
+                .badges
+                .iter()
+                .any(|badge| badge == "ai-session:session-1")
+        );
+        assert!(
+            entity
+                .attribution_notes
+                .iter()
+                .any(|note| note.contains("503 total turn(s)"))
+        );
+        assert!(
+            entity
+                .attribution_notes
+                .iter()
+                .any(|note| note.contains("child session(s)"))
+        );
+        assert_eq!(
+            entity.recent_change_summary.as_deref(),
+            Some("Recent Chau7 event: Claude needs your permission to use Write.")
+        );
+        assert!(
+            entity
+                .recommendations
+                .iter()
+                .any(|recommendation| recommendation.title == "Resolve pending agent approval")
+        );
+        assert!(
+            entity
+                .recommendations
+                .iter()
+                .any(|recommendation| recommendation.title == "Inspect failed agent turn")
+        );
+        let adapter_component = entity
+            .components
+            .iter()
+            .find(|component| component.kind == ComponentKind::AdapterContext)
+            .expect("adapter component");
+        assert_eq!(
+            adapter_component
+                .adapter_context
+                .as_ref()
+                .and_then(|value| value.status.as_deref()),
+            Some("approval-needed")
+        );
+        assert!(adapter_component.detail.contains("3 turns"));
+        assert!(adapter_component.detail.contains("2 child sessions"));
     }
 }
