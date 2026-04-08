@@ -364,13 +364,8 @@ public struct EntityDetailView: View {
                 recommendedNextActions
                 attributionCaveats
                 whatAetowerSees
+                processTree
                 components
-
-                if entity.components.count >= 2 {
-                    GroupBox("Process Tree") {
-                        ProcessTreeView(entity: entity)
-                    }
-                }
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -629,6 +624,27 @@ public struct EntityDetailView: View {
                     ForEach(Array(entity.components.enumerated()), id: \.offset) { _, component in
                         ComponentCard(component: component)
                     }
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private var processTree: some View {
+        GroupBox("Process Tree") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Grouped by parent-child hierarchy and aggregated friction footprint so you can see which root groups are actually carrying the load.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if entity.components.isEmpty {
+                    ContentUnavailableView(
+                        "No process tree yet",
+                        systemImage: "arrow.triangle.branch",
+                        description: Text("Aetower does not have enough component attribution for this entity yet.")
+                    )
+                } else {
+                    ProcessTreeView(entity: entity, allEntities: state.snapshot.entities)
                 }
             }
             .padding(.top, 4)
