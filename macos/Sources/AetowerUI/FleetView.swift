@@ -19,14 +19,28 @@ public struct FleetView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Toggle("Enabled", isOn: Binding(
-                    get: { fleet.isEnabled },
-                    set: { newValue in
-                        if newValue { fleet.start(state: state) } else { fleet.stop() }
+                Button {
+                    if fleet.isEnabled { fleet.stop() } else { fleet.start(state: state) }
+                } label: {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(fleet.isEnabled ? .green : Color.secondary.opacity(0.3))
+                            .frame(width: 8, height: 8)
+                        Text(fleet.isEnabled ? "On" : "Off")
+                            .font(.caption.weight(.medium))
                     }
-                ))
-                .toggleStyle(.switch)
-                .labelsHidden()
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        fleet.isEnabled ? Color.green.opacity(0.12) : Color.secondary.opacity(0.08),
+                        in: Capsule()
+                    )
+                    .overlay(
+                        Capsule().stroke(fleet.isEnabled ? Color.green.opacity(0.3) : Color.secondary.opacity(0.15), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .animation(AetowerDesign.Motion.quick, value: fleet.isEnabled)
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
