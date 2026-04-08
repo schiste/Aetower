@@ -3,7 +3,8 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, mpsc},
+    thread,
 };
 
 use parking_lot::Mutex;
@@ -186,10 +187,23 @@ struct DiagnosticsState {
 #[derive(Debug)]
 struct PersistedDiagnostics {
     path: PathBuf,
-    max_events: usize,
-    event_count: usize,
     compact_at: usize,
+    state: Arc<Mutex<PersistedDiagnosticsState>>,
+    command_tx: mpsc::Sender<PersistCommand>,
+}
+
+#[derive(Debug, Default)]
+struct PersistedDiagnosticsState {
+    event_count: usize,
+    pending_writes: usize,
     last_error: Option<String>,
+}
+
+#[derive(Debug)]
+enum PersistCommand {
+    Append(String),
+    Flush(mpsc::Sender<io::Result<()>>),
+    Clear(mpsc::Sender<io::Result<()>>),
 }
 
 impl DiagnosticsStore {
@@ -282,6 +296,14 @@ impl DiagnosticsStore {
             }
         }
 
+        let persistence_stats = guard.persistence.as_ref().map(|persistence| {
+            let state = persistence.state.lock();
+            (
+                state.event_count.min(u64::MAX as usize) as u64,
+                state.last_error.clone(),
+            )
+        });
+
         DiagnosticsOverview {
             ring_capacity: guard.capacity.min(u32::MAX as usize) as u32,
             current_size: guard.events.len().min(u32::MAX as usize) as u32,
@@ -293,7 +315,7 @@ impl DiagnosticsStore {
             persisted_events: guard
                 .persistence
                 .as_ref()
-                .map(|persistence| persistence.event_count.min(u64::MAX as usize) as u64)
+                .and_then(|_| persistence_stats.as_ref().map(|stats| stats.0))
                 .unwrap_or(0),
             persisted_path: guard
                 .persistence
@@ -307,8 +329,23 @@ impl DiagnosticsStore {
             persistence_error: guard
                 .persistence
                 .as_ref()
-                .and_then(|persistence| persistence.last_error.clone()),
+                .and_then(|_| persistence_stats.as_ref().and_then(|stats| stats.1.clone())),
         }
+    }
+
+    pub fn pending_writes(&self) -> u64 {
+        let guard = self.inner.lock();
+        guard
+            .persistence
+            .as_ref()
+            .map(|persistence| {
+                persistence
+                    .state
+                    .lock()
+                    .pending_writes
+                    .min(u64::MAX as usize) as u64
+            })
+            .unwrap_or(0)
     }
 
     pub fn export_json(&self, limit: usize) -> String {
@@ -372,6 +409,15 @@ impl DiagnosticsStore {
         }
         Ok(())
     }
+
+    pub fn flush_persistence(&self) -> io::Result<()> {
+        let guard = self.inner.lock();
+        if let Some(persistence) = guard.persistence.as_ref() {
+            persistence.flush()
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl Default for DiagnosticsStore {
@@ -416,19 +462,29 @@ impl PersistedDiagnostics {
             events.push_back(event);
         }
 
-        let event_count = retained.len();
+        let state = Arc::new(Mutex::new(PersistedDiagnosticsState {
+            event_count: retained.len(),
+            pending_writes: 0,
+            last_error: None,
+        }));
 
         let mut persistence = Self {
             path: path.to_path_buf(),
-            max_events,
-            event_count,
             compact_at: max_events.saturating_add((max_events / 4).max(1)),
-            last_error: None,
+            state: Arc::clone(&state),
+            command_tx: spawn_persistence_worker(
+                path.to_path_buf(),
+                max_events,
+                Arc::clone(&state),
+            ),
         };
         if needs_rewrite {
             persistence.rewrite_from_events(&retained)?;
         }
-        persistence.compact_if_needed();
+        if retained.len() > persistence.compact_at {
+            let compacted = Self::compact_to_last(path, max_events)?;
+            persistence.state.lock().event_count = compacted;
+        }
         Ok((events, persistence))
     }
 
@@ -438,38 +494,26 @@ impl PersistedDiagnostics {
         }
         match self.try_append(event) {
             Ok(()) => {
-                self.last_error = None;
-                self.compact_if_needed();
+                let mut state = self.state.lock();
+                state.pending_writes = state.pending_writes.saturating_add(1);
+                state.last_error = None;
             }
             Err(error) => {
-                self.last_error = Some(error.to_string());
+                self.state.lock().last_error = Some(error.to_string());
             }
         }
     }
 
     fn try_append(&mut self, event: &DiagnosticsEvent) -> std::io::Result<()> {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        serde_json::to_writer(&mut file, event).map_err(io::Error::other)?;
-        file.write_all(b"\n")?;
-        self.event_count = self.event_count.saturating_add(1);
-        Ok(())
+        let mut line = serde_json::to_string(event).map_err(io::Error::other)?;
+        line.push('\n');
+        self.command_tx
+            .send(PersistCommand::Append(line))
+            .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))
     }
 
-    fn compact_if_needed(&mut self) {
-        if self.event_count <= self.compact_at {
-            return;
-        }
-        match self.compact_to_last(self.max_events) {
-            Ok(()) => self.last_error = None,
-            Err(error) => self.last_error = Some(error.to_string()),
-        }
-    }
-
-    fn compact_to_last(&mut self, keep: usize) -> std::io::Result<()> {
-        let file = File::open(&self.path)?;
+    fn compact_to_last(path: &Path, keep: usize) -> std::io::Result<usize> {
+        let file = File::open(path)?;
         let reader = BufReader::new(file);
         let mut retained = VecDeque::with_capacity(keep.max(1));
 
@@ -481,13 +525,12 @@ impl PersistedDiagnostics {
             retained.push_back(line);
         }
 
-        let mut file = File::create(&self.path)?;
+        let mut file = File::create(path)?;
         for line in &retained {
             file.write_all(line.as_bytes())?;
             file.write_all(b"\n")?;
         }
-        self.event_count = retained.len();
-        Ok(())
+        Ok(retained.len())
     }
 
     fn rewrite_from_events(&mut self, events: &VecDeque<DiagnosticsEvent>) -> std::io::Result<()> {
@@ -496,7 +539,10 @@ impl PersistedDiagnostics {
             serde_json::to_writer(&mut file, event).map_err(io::Error::other)?;
             file.write_all(b"\n")?;
         }
-        self.event_count = events.len();
+        let mut state = self.state.lock();
+        state.event_count = events.len();
+        state.pending_writes = 0;
+        state.last_error = None;
         Ok(())
     }
 
@@ -507,13 +553,16 @@ impl PersistedDiagnostics {
     }
 
     fn clear(&mut self) -> io::Result<()> {
-        File::create(&self.path)?;
-        self.event_count = 0;
-        self.last_error = None;
-        Ok(())
+        let (tx, rx) = mpsc::channel();
+        self.command_tx
+            .send(PersistCommand::Clear(tx))
+            .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))?;
+        rx.recv()
+            .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))?
     }
 
     fn read_recent(&self, limit: usize) -> Vec<DiagnosticsEvent> {
+        self.flush().ok();
         let file = match File::open(&self.path) {
             Ok(file) => file,
             Err(_) => return Vec::new(),
@@ -530,6 +579,78 @@ impl PersistedDiagnostics {
         }
         retained.into_iter().collect()
     }
+
+    fn flush(&self) -> io::Result<()> {
+        let (tx, rx) = mpsc::channel();
+        self.command_tx
+            .send(PersistCommand::Flush(tx))
+            .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))?;
+        rx.recv()
+            .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))?
+    }
+}
+
+fn spawn_persistence_worker(
+    path: PathBuf,
+    max_events: usize,
+    state: Arc<Mutex<PersistedDiagnosticsState>>,
+) -> mpsc::Sender<PersistCommand> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let compact_at = max_events.saturating_add((max_events / 4).max(1));
+        while let Ok(command) = rx.recv() {
+            match command {
+                PersistCommand::Append(line) => {
+                    let result = OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&path)
+                        .and_then(|mut file| file.write_all(line.as_bytes()));
+                    let mut guard = state.lock();
+                    guard.pending_writes = guard.pending_writes.saturating_sub(1);
+                    match result {
+                        Ok(()) => {
+                            guard.event_count = guard.event_count.saturating_add(1);
+                            guard.last_error = None;
+                            let should_compact = guard.event_count > compact_at;
+                            drop(guard);
+                            if should_compact {
+                                match PersistedDiagnostics::compact_to_last(&path, max_events) {
+                                    Ok(compacted) => {
+                                        let mut guard = state.lock();
+                                        guard.event_count = compacted;
+                                        guard.last_error = None;
+                                    }
+                                    Err(error) => {
+                                        state.lock().last_error = Some(error.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            guard.last_error = Some(error.to_string());
+                        }
+                    }
+                }
+                PersistCommand::Flush(reply) => {
+                    let _ = reply.send(Ok(()));
+                }
+                PersistCommand::Clear(reply) => {
+                    let result = File::create(&path).map(|_| ());
+                    let mut guard = state.lock();
+                    if result.is_ok() {
+                        guard.event_count = 0;
+                        guard.pending_writes = 0;
+                        guard.last_error = None;
+                    } else if let Err(error) = &result {
+                        guard.last_error = Some(error.to_string());
+                    }
+                    let _ = reply.send(result);
+                }
+            }
+        }
+    });
+    tx
 }
 
 fn diagnostics_event_matches(
@@ -676,6 +797,7 @@ mod tests {
                 .build(),
             );
         }
+        store.flush_persistence().expect("flush");
 
         let reloaded = DiagnosticsStore::with_persistence(3, &path, 6).expect("reloaded");
         let events = reloaded.recent(10);
@@ -712,6 +834,7 @@ mod tests {
             )
             .build(),
         );
+        store.flush_persistence().expect("flush");
 
         let persisted = std::fs::read_to_string(&path).expect("persisted file");
         assert!(!persisted.contains("tick-completed"));
@@ -765,6 +888,7 @@ mod tests {
             )
             .build(),
         );
+        store.flush_persistence().expect("flush");
         assert_eq!(store.recent(10).len(), 1);
         assert!(store.overview().persisted_events >= 1);
 
