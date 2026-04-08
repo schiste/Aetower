@@ -24,6 +24,11 @@ use crate::{
     adapters::AdapterManager, collector::Collector, history::History, run_entity_pipeline,
 };
 
+const GPU_SAMPLE_INTERVAL_TICKS: u8 = 30;
+const GPU_SAMPLE_INTERVAL_LOW_POWER_TICKS: u8 = 60;
+const ADAPTER_IDLE_SLEEP: Duration = Duration::from_secs(5);
+const TELEMETRY_DISABLED_SLEEP: Duration = Duration::from_secs(30);
+
 struct EngineState {
     sequence: u64,
     latest_snapshot: SystemSnapshot,
@@ -140,7 +145,7 @@ impl Engine {
             let mut collector = Collector::new();
             let mut next_tick = Instant::now();
             let mut gpu_sample = aetower_gpu::GpuSample::default();
-            let mut gpu_sample_tick: u8 = 0;
+            let mut ticks_since_gpu_sample: u8 = u8::MAX;
 
             while running.load(Ordering::SeqCst) {
                 let tick_started = Instant::now();
@@ -158,25 +163,6 @@ impl Engine {
                 let collect_started = Instant::now();
                 let raw = collector.collect();
                 let collect_millis = collect_started.elapsed().as_secs_f64() * 1000.0;
-                if gpu_sample_tick.is_multiple_of(3)
-                    && let Some(sample) = aetower_gpu::sample_gpu()
-                {
-                    gpu_sample = sample.clone();
-                    diagnostics.emit(
-                        DiagnosticsEvent::builder(
-                            DiagnosticsLevel::Debug,
-                            DiagnosticsSubsystem::Gpu,
-                            "gpu-sample-read",
-                            "Read a GPU sample.",
-                        )
-                        .timestamp_millis(captured_at_millis)
-                        .field("gpu_percent", sample.gpu_percent)
-                        .field("ane_percent", sample.ane_percent)
-                        .field("gpu_memory_bytes", sample.gpu_memory_bytes)
-                        .build(),
-                    );
-                }
-                gpu_sample_tick = gpu_sample_tick.wrapping_add(1);
                 let (frontmost_app_state, capabilities, runtime_lag_metrics) = {
                     let mut guard = state.lock();
                     refresh_adapter_capabilities(&mut guard, &adapters, captured_at_millis);
@@ -215,6 +201,35 @@ impl Engine {
                     ane_percent: gpu_sample.ane_percent,
                     gpu_memory_bytes: gpu_sample.gpu_memory_bytes,
                 };
+                let gpu_interval = if raw.host.on_battery || raw.host.low_power_mode {
+                    GPU_SAMPLE_INTERVAL_LOW_POWER_TICKS
+                } else {
+                    GPU_SAMPLE_INTERVAL_TICKS
+                };
+                if ticks_since_gpu_sample >= gpu_interval {
+                    if let Some(sample) = aetower_gpu::sample_gpu() {
+                        gpu_sample = sample.clone();
+                        diagnostics.emit(
+                            DiagnosticsEvent::builder(
+                                DiagnosticsLevel::Debug,
+                                DiagnosticsSubsystem::Gpu,
+                                "gpu-sample-read",
+                                "Read a GPU sample.",
+                            )
+                            .timestamp_millis(captured_at_millis)
+                            .field("gpu_percent", sample.gpu_percent)
+                            .field("ane_percent", sample.ane_percent)
+                            .field("gpu_memory_bytes", sample.gpu_memory_bytes)
+                            .build(),
+                        );
+                    }
+                    ticks_since_gpu_sample = 0;
+                    host.gpu_percent = gpu_sample.gpu_percent;
+                    host.ane_percent = gpu_sample.ane_percent;
+                    host.gpu_memory_bytes = gpu_sample.gpu_memory_bytes;
+                } else {
+                    ticks_since_gpu_sample = ticks_since_gpu_sample.saturating_add(1);
+                }
                 let pipeline_output =
                     run_entity_pipeline(&raw.processes, &host, frontmost_app_state.as_ref());
                 let crate::pipeline::EntityPipelineOutput {
@@ -361,22 +376,28 @@ impl Engine {
         let adapters = self.adapters.clone();
         let running = Arc::clone(&self.running);
         self.adapter_worker = Some(thread::spawn(move || {
-            let mut next_tick = Instant::now();
-
             while running.load(Ordering::SeqCst) {
                 let capabilities = {
                     let guard = state.lock();
                     guard.capabilities.clone()
                 };
-                adapters.refresh_caches(&capabilities);
-
-                next_tick += ADAPTER_TICK;
-                let now = Instant::now();
-                if now < next_tick {
-                    thread::sleep(next_tick - now);
-                } else {
-                    next_tick = now;
+                let has_live_adapter = capabilities.values().any(|capability| {
+                    capability.state == CapabilityState::Granted
+                        && matches!(
+                            capability.kind,
+                            CapabilityKind::ChromiumDebug
+                                | CapabilityKind::DockerSocket
+                                | CapabilityKind::PrivilegedHelper
+                                | CapabilityKind::EndpointSecurity
+                                | CapabilityKind::Chau7
+                        )
+                });
+                if !has_live_adapter {
+                    sleep_with_stop(&running, ADAPTER_IDLE_SLEEP);
+                    continue;
                 }
+                adapters.refresh_caches(&capabilities);
+                sleep_with_stop(&running, ADAPTER_TICK);
             }
         }));
 
@@ -407,7 +428,7 @@ impl Engine {
                 let sleep_for = if enabled {
                     Duration::from_secs(interval_secs as u64)
                 } else {
-                    Duration::from_secs(2)
+                    TELEMETRY_DISABLED_SLEEP
                 };
                 sleep_with_stop(&running, sleep_for);
             }

@@ -47,10 +47,12 @@ public struct DiagnosticsView: View {
         .navigationTitle("Diagnostics")
         .onAppear {
             isVisible = true
+            state.setDiagnosticsVisible(true)
             state.loadDiagnosticsQuery(currentQuery, force: true)
         }
         .onDisappear {
             isVisible = false
+            state.setDiagnosticsVisible(false)
         }
         .task(id: "\(isVisible)-\(isLive)-\(includePersisted)-\(searchText)-\(levelFilter.rawValue)-\(subsystemFilter.map(subsystemLabel) ?? "all")") {
             guard isVisible && isLive else { return }

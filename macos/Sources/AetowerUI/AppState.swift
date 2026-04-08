@@ -110,6 +110,12 @@ public final class AppState {
     private var lastSessionLogFingerprint: String?
     @ObservationIgnored
     private var lastSuppressedAnomalySummaryDate = Date.distantPast
+    @ObservationIgnored
+    private var historyVisible = false
+    @ObservationIgnored
+    private var diagnosticsVisible = false
+    @ObservationIgnored
+    private var lagMonitoringActive = false
 
     @ObservationIgnored
     private let frontmostProbeInterval: TimeInterval = 1.0
@@ -184,11 +190,10 @@ public final class AppState {
 
     public func start(refreshInterval: Double) {
         stop()
-        lagMonitor.start()
         observeWorkspaceActivation()
         publishFrontmostState(force: true)
         refresh(force: true)
-        loadHistory(force: true)
+        updateLagMonitoringState()
         let intervalNanos = UInt64(max(1.0, refreshInterval) * 1_000_000_000)
         refreshTask = Task { [weak self] in
             guard let self else { return }
@@ -213,6 +218,7 @@ public final class AppState {
         diagnosticsLoadTask?.cancel()
         diagnosticsLoadTask = nil
         lagMonitor.stop()
+        lagMonitoringActive = false
     }
 
     public func requestCapability(_ capability: CapabilitySnapshot) {
@@ -281,6 +287,18 @@ public final class AppState {
         historySnapshots = []
         historyLoadError = "Persisted history was cleared."
         loadDiagnostics(force: true)
+    }
+
+    public func setHistoryVisible(_ visible: Bool) {
+        historyVisible = visible
+        if visible {
+            loadHistory(force: true)
+        }
+    }
+
+    public func setDiagnosticsVisible(_ visible: Bool) {
+        diagnosticsVisible = visible
+        updateLagMonitoringState()
     }
 
     public func exportSupportBundle(_ settings: SettingsStore, diagnosticsLimit: UInt32 = 1_500) {
@@ -368,6 +386,7 @@ public final class AppState {
             exportIntervalSeconds: UInt32(max(5, Int(settings.telemetryExportIntervalSeconds.rounded())))
         )
 
+        updateLagMonitoringState()
         refresh(force: true)
     }
 
@@ -414,7 +433,7 @@ public final class AppState {
                 appName: lastPublishedFrontmostAppName,
                 windowTitle: lastPublishedWindowTitle
             )
-            if let updatedSnapshotValue {
+            if let updatedSnapshotValue, lagMonitoringActive {
                 publishUiLagMetrics(
                     snapshot: updatedSnapshotValue,
                     bridgeFetchMillis: bridgeFetchMillis,
@@ -422,7 +441,9 @@ public final class AppState {
                     refreshStartedAt: refreshStartedAt
                 )
             }
-            loadHistory(force: force)
+            if historyVisible {
+                loadHistory(force: force)
+            }
             diffAnomalyStates()
             flushSuppressedAnomalySummaryIfNeeded()
             lastError = nil
@@ -433,10 +454,15 @@ public final class AppState {
 
     public func setHistoryWindow(seconds: TimeInterval) {
         historyWindowSeconds = max(seconds, 300)
-        loadHistory(force: true)
+        if historyVisible {
+            loadHistory(force: true)
+        }
     }
 
     public func loadHistory(force: Bool = false) {
+        guard historyVisible || force else {
+            return
+        }
         let now = Date()
         if !force && now.timeIntervalSince(lastHistoryLoadDate) < historyReloadInterval {
             return
@@ -508,6 +534,19 @@ public final class AppState {
                 }
                 self.flushSuppressedAnomalySummaryIfNeeded()
             }
+        }
+    }
+
+    private func updateLagMonitoringState() {
+        let shouldMonitorLag = diagnosticsVisible || telemetryEnabled
+        guard shouldMonitorLag != lagMonitoringActive else {
+            return
+        }
+        lagMonitoringActive = shouldMonitorLag
+        if shouldMonitorLag {
+            lagMonitor.start()
+        } else {
+            lagMonitor.stop()
         }
     }
 

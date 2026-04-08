@@ -201,7 +201,11 @@ public struct HistoryView: View {
         }
         .navigationTitle("History")
         .task {
+            state.setHistoryVisible(true)
             state.setHistoryWindow(seconds: range.rawValue)
+        }
+        .onDisappear {
+            state.setHistoryVisible(false)
         }
         .onChange(of: range) { _, newValue in
             state.setHistoryWindow(seconds: newValue.rawValue)
