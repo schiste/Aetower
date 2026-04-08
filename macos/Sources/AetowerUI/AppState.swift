@@ -234,6 +234,10 @@ public final class AppState {
         refresh(force: true)
     }
 
+    public func exportSnapshotJSON() -> String {
+        bridge.exportSnapshotJSON()
+    }
+
     public func exportSnapshot() {
         let json = exportControlledJson(
             bridge.exportSnapshotJSON(),
