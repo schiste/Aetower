@@ -66,21 +66,30 @@ public struct FleetView: View {
 
                         ForEach(fleet.peers) { peer in
                             HStack(spacing: 8) {
-                                Image(systemName: "desktopcomputer")
+                                Image(systemName: peer.isLocal ? "laptopcomputer" : "desktopcomputer")
                                     .font(.system(size: 11))
-                                    .foregroundStyle(.blue)
-                                Text(peer.name)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .lineLimit(1)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .foregroundStyle(peer.isLocal ? .green : .blue)
+                                HStack(spacing: 4) {
+                                    Text(peer.name)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .lineLimit(1)
+                                    if peer.isLocal {
+                                        Text("(you)")
+                                            .font(.system(size: 9, weight: .medium))
+                                            .foregroundStyle(.green)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 Text(String(format: "%.0f%%", peer.cpuPercent))
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundStyle(.secondary)
                                     .frame(width: 50, alignment: .trailing)
+                                    .contentTransition(.numericText())
                                 Text("\(peer.entityCount)")
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundStyle(.secondary)
                                     .frame(width: 50, alignment: .trailing)
+                                    .contentTransition(.numericText())
                                 Text(peer.lastSeen, style: .relative)
                                     .font(.system(size: 10))
                                     .foregroundStyle(.tertiary)
@@ -88,7 +97,10 @@ public struct FleetView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 6)
-                            .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                            .background(
+                                peer.isLocal ? Color.green.opacity(0.04) : Color.secondary.opacity(0.04),
+                                in: RoundedRectangle(cornerRadius: 6)
+                            )
                             .padding(.horizontal, 8)
                         }
                     }
