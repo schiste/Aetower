@@ -21,13 +21,89 @@ use aetower_time::{self as time, ADAPTER_TICK, FAST_TICK};
 use parking_lot::Mutex;
 
 use crate::{
-    adapters::AdapterManager, collector::Collector, history::History, run_entity_pipeline,
+    adapters::AdapterManager,
+    collector::{Collector, CollectorConfig},
+    history::History,
+    run_entity_pipeline,
 };
 
-const GPU_SAMPLE_INTERVAL_TICKS: u8 = 30;
-const GPU_SAMPLE_INTERVAL_LOW_POWER_TICKS: u8 = 60;
 const ADAPTER_IDLE_SLEEP: Duration = Duration::from_secs(5);
 const TELEMETRY_DISABLED_SLEEP: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone)]
+struct RuntimeCollectionConfig {
+    full_collection: bool,
+    adaptive_cadence: bool,
+    active_tick: Duration,
+    idle_tick: Duration,
+    low_power_tick: Duration,
+    gpu_sample_interval: Duration,
+    gpu_sample_low_power_interval: Duration,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RuntimeCollectionSettings {
+    pub full_collection: bool,
+    pub adaptive_cadence: bool,
+    pub active_tick_millis: u64,
+    pub idle_tick_millis: u64,
+    pub low_power_tick_millis: u64,
+    pub gpu_sample_interval_millis: u64,
+    pub gpu_sample_low_power_interval_millis: u64,
+}
+
+impl Default for RuntimeCollectionConfig {
+    fn default() -> Self {
+        Self {
+            full_collection: false,
+            adaptive_cadence: true,
+            active_tick: FAST_TICK,
+            idle_tick: Duration::from_secs(5),
+            low_power_tick: Duration::from_secs(8),
+            gpu_sample_interval: Duration::from_secs(30),
+            gpu_sample_low_power_interval: Duration::from_secs(60),
+        }
+    }
+}
+
+impl RuntimeCollectionConfig {
+    fn collector_config(&self) -> CollectorConfig {
+        CollectorConfig {
+            full_collection: self.full_collection,
+        }
+    }
+
+    fn target_tick(
+        &self,
+        host: &HostSnapshot,
+        entities: &[aetower_model::EntitySnapshot],
+    ) -> Duration {
+        if !self.adaptive_cadence {
+            return self.active_tick;
+        }
+        if host.on_battery || host.low_power_mode {
+            return self.low_power_tick;
+        }
+        let has_anomaly = entities.iter().any(|entity| entity.anomaly_detected);
+        let hot_entity = entities
+            .first()
+            .map(|entity| entity.friction.total_score >= 45.0)
+            .unwrap_or(false);
+        if has_anomaly || hot_entity || host.thermal_state >= ThermalState::Serious {
+            self.active_tick
+        } else {
+            self.idle_tick
+        }
+    }
+
+    fn gpu_interval(&self, host: &HostSnapshot) -> Duration {
+        if host.on_battery || host.low_power_mode {
+            self.gpu_sample_low_power_interval
+        } else {
+            self.gpu_sample_interval
+        }
+    }
+}
 
 struct EngineState {
     sequence: u64,
@@ -36,6 +112,7 @@ struct EngineState {
     frontmost_app_state: Option<FrontmostAppState>,
     history: History,
     runtime_lag_metrics: RuntimeLagMetrics,
+    runtime_config: RuntimeCollectionConfig,
 }
 
 impl EngineState {
@@ -119,6 +196,7 @@ impl Engine {
                 frontmost_app_state: None,
                 history: History::new(),
                 runtime_lag_metrics: RuntimeLagMetrics::default(),
+                runtime_config: RuntimeCollectionConfig::default(),
             })),
             adapters,
             persistence: Arc::new(Mutex::new(persistence)),
@@ -143,13 +221,19 @@ impl Engine {
         let diagnostics = self.diagnostics.clone();
         self.worker = Some(thread::spawn(move || {
             let mut collector = Collector::new();
-            let mut next_tick = Instant::now();
             let mut gpu_sample = aetower_gpu::GpuSample::default();
-            let mut ticks_since_gpu_sample: u8 = u8::MAX;
+            let mut last_gpu_sample_started_at = Instant::now()
+                .checked_sub(Duration::from_secs(3600))
+                .unwrap_or_else(Instant::now);
 
             while running.load(Ordering::SeqCst) {
                 let tick_started = Instant::now();
                 let captured_at_millis = time::now_millis();
+                let runtime_config = {
+                    let guard = state.lock();
+                    guard.runtime_config.clone()
+                };
+                collector.configure(runtime_config.collector_config());
                 diagnostics.emit(
                     DiagnosticsEvent::builder(
                         DiagnosticsLevel::Debug,
@@ -201,12 +285,10 @@ impl Engine {
                     ane_percent: gpu_sample.ane_percent,
                     gpu_memory_bytes: gpu_sample.gpu_memory_bytes,
                 };
-                let gpu_interval = if raw.host.on_battery || raw.host.low_power_mode {
-                    GPU_SAMPLE_INTERVAL_LOW_POWER_TICKS
-                } else {
-                    GPU_SAMPLE_INTERVAL_TICKS
-                };
-                if ticks_since_gpu_sample >= gpu_interval {
+                let gpu_interval = runtime_config.gpu_interval(&host);
+                let mut gpu_sample_millis = 0.0;
+                if last_gpu_sample_started_at.elapsed() >= gpu_interval {
+                    let gpu_started = Instant::now();
                     if let Some(sample) = aetower_gpu::sample_gpu() {
                         gpu_sample = sample.clone();
                         diagnostics.emit(
@@ -223,12 +305,11 @@ impl Engine {
                             .build(),
                         );
                     }
-                    ticks_since_gpu_sample = 0;
+                    gpu_sample_millis = gpu_started.elapsed().as_secs_f64() * 1000.0;
+                    last_gpu_sample_started_at = Instant::now();
                     host.gpu_percent = gpu_sample.gpu_percent;
                     host.ane_percent = gpu_sample.ane_percent;
                     host.gpu_memory_bytes = gpu_sample.gpu_memory_bytes;
-                } else {
-                    ticks_since_gpu_sample = ticks_since_gpu_sample.saturating_add(1);
                 }
                 let pipeline_output =
                     run_entity_pipeline(&raw.processes, &host, frontmost_app_state.as_ref());
@@ -278,13 +359,26 @@ impl Engine {
                 };
                 // Persist snapshot (best-effort, throttled by write_interval).
                 let persist_started = Instant::now();
+                let history_queue_depth = persistence
+                    .lock()
+                    .as_ref()
+                    .map(|store| store.pending_writes())
+                    .unwrap_or(0);
                 if let Some(store) = persistence.lock().as_mut() {
                     store.maybe_store(&guard.latest_snapshot);
                 }
                 let persist_millis = persist_started.elapsed().as_secs_f64() * 1000.0;
                 runtime_lag_metrics.persist_millis = persist_millis as f32;
+                runtime_lag_metrics.gpu_sample_millis = gpu_sample_millis as f32;
+                runtime_lag_metrics.history_queue_depth =
+                    history_queue_depth.min(u32::MAX as u64) as u32;
+                runtime_lag_metrics.diagnostics_queue_depth =
+                    diagnostics.pending_writes().min(u32::MAX as u64) as u32;
                 let sequence = guard.latest_snapshot.sequence;
                 let entity_count = guard.latest_snapshot.entities.len();
+                let target_tick = runtime_config
+                    .target_tick(&guard.latest_snapshot.host, &guard.latest_snapshot.entities);
+                runtime_lag_metrics.target_tick_millis = target_tick.as_millis() as f32;
                 diagnostics.emit(
                     DiagnosticsEvent::builder(
                         DiagnosticsLevel::Info,
@@ -318,7 +412,7 @@ impl Engine {
                 runtime_lag_metrics.engine_tick_millis = tick_millis as f32;
                 guard.runtime_lag_metrics = runtime_lag_metrics;
                 drop(guard);
-                let is_over_budget = tick_millis > FAST_TICK.as_millis();
+                let is_over_budget = tick_millis > target_tick.as_millis();
                 let level = if is_over_budget {
                     DiagnosticsLevel::Warn
                 } else {
@@ -362,12 +456,9 @@ impl Engine {
                     .field("persist_millis", format!("{persist_millis:.3}"))
                     .build(),
                 );
-                next_tick += FAST_TICK;
-                let now = Instant::now();
-                if now < next_tick {
-                    thread::sleep(next_tick - now);
-                } else {
-                    next_tick = now;
+                let elapsed = tick_started.elapsed();
+                if elapsed < target_tick {
+                    sleep_with_stop(&running, target_tick - elapsed);
                 }
             }
         }));
@@ -604,6 +695,68 @@ impl Engine {
             .field("enabled", enabled)
             .field("export_interval_secs", export_interval_secs.max(5))
             .field("endpoint", guard.config().endpoint.clone())
+            .build(),
+        );
+    }
+
+    pub fn configure_runtime_collection(&self, settings: RuntimeCollectionSettings) {
+        let mut guard = self.state.lock();
+        guard.runtime_config = RuntimeCollectionConfig {
+            full_collection: settings.full_collection,
+            adaptive_cadence: settings.adaptive_cadence,
+            active_tick: Duration::from_millis(settings.active_tick_millis.max(500)),
+            idle_tick: Duration::from_millis(
+                settings
+                    .idle_tick_millis
+                    .max(settings.active_tick_millis.max(500)),
+            ),
+            low_power_tick: Duration::from_millis(
+                settings
+                    .low_power_tick_millis
+                    .max(settings.active_tick_millis.max(500)),
+            ),
+            gpu_sample_interval: Duration::from_millis(
+                settings.gpu_sample_interval_millis.max(5_000),
+            ),
+            gpu_sample_low_power_interval: Duration::from_millis(
+                settings
+                    .gpu_sample_low_power_interval_millis
+                    .max(settings.gpu_sample_interval_millis.max(5_000)),
+            ),
+        };
+        drop(guard);
+        self.diagnostics.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Collector,
+                "runtime-collection-config-updated",
+                "Runtime collection policy updated.",
+            )
+            .field("full_collection", settings.full_collection)
+            .field("adaptive_cadence", settings.adaptive_cadence)
+            .field("active_tick_millis", settings.active_tick_millis.max(500))
+            .field(
+                "idle_tick_millis",
+                settings
+                    .idle_tick_millis
+                    .max(settings.active_tick_millis.max(500)),
+            )
+            .field(
+                "low_power_tick_millis",
+                settings
+                    .low_power_tick_millis
+                    .max(settings.active_tick_millis.max(500)),
+            )
+            .field(
+                "gpu_sample_interval_millis",
+                settings.gpu_sample_interval_millis.max(5_000),
+            )
+            .field(
+                "gpu_sample_low_power_interval_millis",
+                settings
+                    .gpu_sample_low_power_interval_millis
+                    .max(settings.gpu_sample_interval_millis.max(5_000)),
+            )
             .build(),
         );
     }

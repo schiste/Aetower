@@ -258,6 +258,14 @@ pub struct RuntimeLagMetrics {
     #[serde(default)]
     pub persist_millis: f32,
     #[serde(default)]
+    pub gpu_sample_millis: f32,
+    #[serde(default)]
+    pub target_tick_millis: f32,
+    #[serde(default)]
+    pub history_queue_depth: u32,
+    #[serde(default)]
+    pub diagnostics_queue_depth: u32,
+    #[serde(default)]
     pub bridge_fetch_millis: f32,
     #[serde(default)]
     pub ui_refresh_millis: f32,

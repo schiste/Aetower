@@ -77,6 +77,26 @@ public final class EngineBridge: @unchecked Sendable {
         return result.isEmpty ? nil : result
     }
 
+    public func configureRuntimeCollection(
+        fullCollection: Bool,
+        adaptiveCadence: Bool,
+        activeTickMillis: UInt64,
+        idleTickMillis: UInt64,
+        lowPowerTickMillis: UInt64,
+        gpuSampleIntervalMillis: UInt64,
+        gpuSampleLowPowerIntervalMillis: UInt64
+    ) {
+        engine.configureRuntimeCollection(settings: RuntimeCollectionSettingsInput(
+            fullCollection: fullCollection,
+            adaptiveCadence: adaptiveCadence,
+            activeTickMillis: activeTickMillis,
+            idleTickMillis: idleTickMillis,
+            lowPowerTickMillis: lowPowerTickMillis,
+            gpuSampleIntervalMillis: gpuSampleIntervalMillis,
+            gpuSampleLowPowerIntervalMillis: gpuSampleLowPowerIntervalMillis
+        ))
+    }
+
     public func stopAgentSession(sessionId: String, force: Bool) -> String? {
         let result = engine.stopAgentSession(sessionId: sessionId, force: force)
         return result.isEmpty ? nil : result

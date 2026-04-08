@@ -54,6 +54,90 @@ public struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Collection profile")
+                                .font(.headline)
+                            Picker("Collection profile", selection: $settings.collectionProfile) {
+                                Text("Balanced").tag(CollectionProfile.balanced)
+                                Text("Full").tag(CollectionProfile.full)
+                            }
+                            .pickerStyle(.segmented)
+                            Text("Balanced keeps CPU and battery lower by sampling expensive per-process signals like wakeups, usernames, and GPU counters more sparsely while keeping CPU, memory, disk, network, parentage, and provenance live. Full refreshes the expensive signals every engine tick and is intended for short diagnostic sessions.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Toggle("Adaptive engine cadence", isOn: $settings.adaptiveCadenceEnabled)
+                        Text("When enabled, Aetower stays at the active cadence during hotspots and slows down when the machine is quiet or on battery. The tradeoff is extra detection latency during calm periods, up to the idle or low-power interval below.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Engine active interval")
+                                .font(.headline)
+                            HStack {
+                                Slider(value: $settings.engineActiveIntervalSeconds, in: 1...5, step: 0.5)
+                                Text(String(format: "%.1fs", settings.engineActiveIntervalSeconds))
+                                    .font(.caption.monospacedDigit())
+                                    .frame(width: 44, alignment: .trailing)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Engine idle interval")
+                                .font(.headline)
+                            HStack {
+                                Slider(value: $settings.engineIdleIntervalSeconds, in: 2...30, step: 1)
+                                Text(String(format: "%.0fs", settings.engineIdleIntervalSeconds))
+                                    .font(.caption.monospacedDigit())
+                                    .frame(width: 44, alignment: .trailing)
+                            }
+                            Text("Used when adaptive cadence is on and the machine is quiet. Larger values reduce wakeups and battery drain but make anomaly detection and timeline changes arrive later.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Engine low-power interval")
+                                .font(.headline)
+                            HStack {
+                                Slider(value: $settings.engineLowPowerIntervalSeconds, in: 3...45, step: 1)
+                                Text(String(format: "%.0fs", settings.engineLowPowerIntervalSeconds))
+                                    .font(.caption.monospacedDigit())
+                                    .frame(width: 44, alignment: .trailing)
+                            }
+                            Text("Used on battery or Low Power Mode. This is the strongest direct battery lever, but it also increases the delay before Aetower notices new hotspots.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("GPU sample interval")
+                                .font(.headline)
+                            HStack {
+                                Slider(value: $settings.gpuSampleIntervalSeconds, in: 5...120, step: 5)
+                                Text(String(format: "%.0fs", settings.gpuSampleIntervalSeconds))
+                                    .font(.caption.monospacedDigit())
+                                    .frame(width: 44, alignment: .trailing)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("GPU sample interval on battery")
+                                .font(.headline)
+                            HStack {
+                                Slider(value: $settings.gpuSampleLowPowerIntervalSeconds, in: 10...180, step: 5)
+                                Text(String(format: "%.0fs", settings.gpuSampleLowPowerIntervalSeconds))
+                                    .font(.caption.monospacedDigit())
+                                    .frame(width: 44, alignment: .trailing)
+                            }
+                            Text("Longer GPU intervals reduce system-service activity and save power. GPU/ANE values stay available, but they become colder and may lag behind the most recent burst.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 
@@ -140,7 +224,7 @@ public struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        Button("Apply integration settings") {
+                        Button("Apply runtime and integration settings") {
                             state.applyIntegrationSettings(settings)
                         }
                         .buttonStyle(.borderedProminent)

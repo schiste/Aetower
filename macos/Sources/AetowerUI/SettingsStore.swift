@@ -10,6 +10,13 @@ public enum ExportPrivacyTier: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
 }
 
+public enum CollectionProfile: String, CaseIterable, Identifiable {
+    case balanced
+    case full
+
+    public var id: String { rawValue }
+}
+
 @MainActor
 @Observable
 public final class SettingsStore {
@@ -43,6 +50,27 @@ public final class SettingsStore {
     public var telemetryExportIntervalSeconds: Double {
         didSet { persist() }
     }
+    public var collectionProfile: CollectionProfile {
+        didSet { persist() }
+    }
+    public var adaptiveCadenceEnabled: Bool {
+        didSet { persist() }
+    }
+    public var engineActiveIntervalSeconds: Double {
+        didSet { persist() }
+    }
+    public var engineIdleIntervalSeconds: Double {
+        didSet { persist() }
+    }
+    public var engineLowPowerIntervalSeconds: Double {
+        didSet { persist() }
+    }
+    public var gpuSampleIntervalSeconds: Double {
+        didSet { persist() }
+    }
+    public var gpuSampleLowPowerIntervalSeconds: Double {
+        didSet { persist() }
+    }
     public var notificationsEnabled: Bool {
         didSet { persist() }
     }
@@ -74,6 +102,15 @@ public final class SettingsStore {
         self.telemetryEnabled = defaults.object(forKey: Self.telemetryEnabledKey) as? Bool ?? false
         self.telemetryEndpoint = defaults.string(forKey: Self.telemetryEndpointKey) ?? "http://localhost:4318/v1/metrics"
         self.telemetryExportIntervalSeconds = defaults.object(forKey: Self.telemetryExportIntervalKey) as? Double ?? 30.0
+        self.collectionProfile = CollectionProfile(
+            rawValue: defaults.string(forKey: Self.collectionProfileKey) ?? ""
+        ) ?? .balanced
+        self.adaptiveCadenceEnabled = defaults.object(forKey: Self.adaptiveCadenceEnabledKey) as? Bool ?? true
+        self.engineActiveIntervalSeconds = defaults.object(forKey: Self.engineActiveIntervalKey) as? Double ?? 2.0
+        self.engineIdleIntervalSeconds = defaults.object(forKey: Self.engineIdleIntervalKey) as? Double ?? 5.0
+        self.engineLowPowerIntervalSeconds = defaults.object(forKey: Self.engineLowPowerIntervalKey) as? Double ?? 8.0
+        self.gpuSampleIntervalSeconds = defaults.object(forKey: Self.gpuSampleIntervalKey) as? Double ?? 30.0
+        self.gpuSampleLowPowerIntervalSeconds = defaults.object(forKey: Self.gpuSampleLowPowerIntervalKey) as? Double ?? 60.0
         self.notificationsEnabled = defaults.object(forKey: Self.notificationsEnabledKey) as? Bool ?? false
         self.frictionNotificationThreshold = defaults.object(forKey: Self.frictionNotificationThresholdKey) as? Double ?? 60.0
         self.appearanceMode = defaults.string(forKey: Self.appearanceModeKey) ?? "system"
@@ -120,6 +157,13 @@ public final class SettingsStore {
     private static let telemetryEnabledKey = "settings.telemetryEnabled"
     private static let telemetryEndpointKey = "settings.telemetryEndpoint"
     private static let telemetryExportIntervalKey = "settings.telemetryExportIntervalSeconds"
+    private static let collectionProfileKey = "settings.collectionProfile"
+    private static let adaptiveCadenceEnabledKey = "settings.adaptiveCadenceEnabled"
+    private static let engineActiveIntervalKey = "settings.engineActiveIntervalSeconds"
+    private static let engineIdleIntervalKey = "settings.engineIdleIntervalSeconds"
+    private static let engineLowPowerIntervalKey = "settings.engineLowPowerIntervalSeconds"
+    private static let gpuSampleIntervalKey = "settings.gpuSampleIntervalSeconds"
+    private static let gpuSampleLowPowerIntervalKey = "settings.gpuSampleLowPowerIntervalSeconds"
     private static let notificationsEnabledKey = "settings.notificationsEnabled"
     private static let frictionNotificationThresholdKey = "settings.frictionNotificationThreshold"
     private static let appearanceModeKey = "settings.appearanceMode"
@@ -139,6 +183,13 @@ extension SettingsStore {
         defaults.set(telemetryEnabled, forKey: Self.telemetryEnabledKey)
         defaults.set(telemetryEndpoint, forKey: Self.telemetryEndpointKey)
         defaults.set(telemetryExportIntervalSeconds, forKey: Self.telemetryExportIntervalKey)
+        defaults.set(collectionProfile.rawValue, forKey: Self.collectionProfileKey)
+        defaults.set(adaptiveCadenceEnabled, forKey: Self.adaptiveCadenceEnabledKey)
+        defaults.set(engineActiveIntervalSeconds, forKey: Self.engineActiveIntervalKey)
+        defaults.set(engineIdleIntervalSeconds, forKey: Self.engineIdleIntervalKey)
+        defaults.set(engineLowPowerIntervalSeconds, forKey: Self.engineLowPowerIntervalKey)
+        defaults.set(gpuSampleIntervalSeconds, forKey: Self.gpuSampleIntervalKey)
+        defaults.set(gpuSampleLowPowerIntervalSeconds, forKey: Self.gpuSampleLowPowerIntervalKey)
         defaults.set(notificationsEnabled, forKey: Self.notificationsEnabledKey)
         defaults.set(frictionNotificationThreshold, forKey: Self.frictionNotificationThresholdKey)
         defaults.set(appearanceMode, forKey: Self.appearanceModeKey)

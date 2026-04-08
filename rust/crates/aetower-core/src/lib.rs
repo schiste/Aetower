@@ -16,5 +16,5 @@ pub use aetower_friction::apply as apply_friction;
 pub use aetower_history::History;
 pub use aetower_identity::{EntitySeed, IdentityMap, resolve as resolve_identity};
 pub use bench::{BenchmarkConfig, BenchmarkReport, BenchmarkStats, run_benchmark};
-pub use engine::Engine;
+pub use engine::{Engine, RuntimeCollectionSettings};
 pub use pipeline::{EntityPipelineOutput, run_entity_pipeline};

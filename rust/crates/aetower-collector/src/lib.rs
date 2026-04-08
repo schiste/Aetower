@@ -4,6 +4,11 @@ use aetower_model::ThermalState;
 use serde::{Deserialize, Serialize};
 use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System, Users};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CollectorConfig {
+    pub full_collection: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawProcessSample {
     pub pid: u32,
@@ -78,6 +83,7 @@ const USER_DIRECTORY_INITIAL_REFRESH_TICKS: u8 = 10;
 const USER_DIRECTORY_REFRESH_INTERVAL_TICKS: u8 = 120;
 
 pub struct Collector {
+    config: CollectorConfig,
     system: System,
     networks: Networks,
     previous_network_totals: NetworkTotals,
@@ -101,6 +107,7 @@ impl Collector {
         let mut networks = Networks::new_with_refreshed_list();
         networks.refresh(true);
         Self {
+            config: CollectorConfig::default(),
             system,
             networks,
             previous_network_totals: NetworkTotals::default(),
@@ -118,12 +125,17 @@ impl Collector {
         }
     }
 
+    pub fn configure(&mut self, config: CollectorConfig) {
+        self.config = config;
+    }
+
     pub fn collect(&mut self) -> RawSnapshot {
         self.system.refresh_cpu_all();
         self.system.refresh_memory();
         self.networks.refresh(true);
         // Full PID scan every 10th tick (~20s); selective refresh in between.
-        let full_scan = self.process_metadata_tick.is_multiple_of(10);
+        let full_scan =
+            self.config.full_collection || self.process_metadata_tick.is_multiple_of(10);
         if full_scan || self.known_pids.is_empty() {
             self.system.refresh_processes_specifics(
                 ProcessesToUpdate::All,
@@ -153,8 +165,10 @@ impl Collector {
                 .saturating_add(data.transmitted());
         }
 
-        let metadata_refresh = self.process_metadata_tick == 1 || full_scan;
-        let sample_wakeups = self.wakeups_sample_tick.is_multiple_of(3);
+        let metadata_refresh =
+            self.config.full_collection || self.process_metadata_tick == 1 || full_scan;
+        let sample_wakeups =
+            self.config.full_collection || self.wakeups_sample_tick.is_multiple_of(3);
         self.wakeups_sample_tick = self.wakeups_sample_tick.wrapping_add(1);
         let refresh_user_directory = self.should_refresh_user_directory(full_scan);
         if refresh_user_directory {
@@ -249,7 +263,9 @@ impl Collector {
                     disk_read_bytes: disk_read_delta,
                     disk_write_bytes: disk_write_delta,
                     wakeups_per_second,
-                    cwd: if self.process_metadata_tick.is_multiple_of(2) {
+                    cwd: if self.config.full_collection
+                        || self.process_metadata_tick.is_multiple_of(2)
+                    {
                         // Only probe new PIDs; return cached cwd for known ones.
                         let is_new = self
                             .previous_process_counters
@@ -270,7 +286,7 @@ impl Collector {
         self.previous_process_counters = next_process_counters;
 
         // Update CWD cache: insert fresh values, prune dead PIDs.
-        if self.process_metadata_tick.is_multiple_of(2) {
+        if self.config.full_collection || self.process_metadata_tick.is_multiple_of(2) {
             let alive: std::collections::HashSet<u32> = processes.iter().map(|p| p.pid).collect();
             self.cwd_cache.retain(|pid, _| alive.contains(pid));
             self.process_identity_cache.retain(|pid, cached| {
@@ -332,6 +348,9 @@ impl Default for Collector {
 
 impl Collector {
     fn should_refresh_user_directory(&self, full_scan: bool) -> bool {
+        if self.config.full_collection {
+            return full_scan;
+        }
         if !full_scan {
             return false;
         }

@@ -24,6 +24,10 @@ public final class AppState {
         enrichMillis: 0,
         historyMillis: 0,
         persistMillis: 0,
+        gpuSampleMillis: 0,
+        targetTickMillis: 0,
+        historyQueueDepth: 0,
+        diagnosticsQueueDepth: 0,
         bridgeFetchMillis: 0,
         uiRefreshMillis: 0,
         snapshotToUiMillis: 0,
@@ -388,6 +392,15 @@ public final class AppState {
             endpoint: telemetryEndpoint.isEmpty ? nil : telemetryEndpoint,
             enabled: settings.telemetryEnabled,
             exportIntervalSeconds: UInt32(max(5, Int(settings.telemetryExportIntervalSeconds.rounded())))
+        )
+        bridge.configureRuntimeCollection(
+            fullCollection: settings.collectionProfile == .full,
+            adaptiveCadence: settings.adaptiveCadenceEnabled,
+            activeTickMillis: UInt64(max(500, Int((settings.engineActiveIntervalSeconds * 1000).rounded()))),
+            idleTickMillis: UInt64(max(500, Int((settings.engineIdleIntervalSeconds * 1000).rounded()))),
+            lowPowerTickMillis: UInt64(max(500, Int((settings.engineLowPowerIntervalSeconds * 1000).rounded()))),
+            gpuSampleIntervalMillis: UInt64(max(5_000, Int((settings.gpuSampleIntervalSeconds * 1000).rounded()))),
+            gpuSampleLowPowerIntervalMillis: UInt64(max(5_000, Int((settings.gpuSampleLowPowerIntervalSeconds * 1000).rounded())))
         )
 
         updateLagMonitoringState()
@@ -1101,6 +1114,13 @@ public final class AppState {
             ),
             "telemetryExportIntervalSeconds": settings.telemetryExportIntervalSeconds,
             "telemetryVerificationStatus": telemetryVerificationStatus ?? "not-run",
+            "collectionProfile": settings.collectionProfile.rawValue,
+            "adaptiveCadenceEnabled": settings.adaptiveCadenceEnabled,
+            "engineActiveIntervalSeconds": settings.engineActiveIntervalSeconds,
+            "engineIdleIntervalSeconds": settings.engineIdleIntervalSeconds,
+            "engineLowPowerIntervalSeconds": settings.engineLowPowerIntervalSeconds,
+            "gpuSampleIntervalSeconds": settings.gpuSampleIntervalSeconds,
+            "gpuSampleLowPowerIntervalSeconds": settings.gpuSampleLowPowerIntervalSeconds,
             "exportPrivacyTier": settings.exportPrivacyTier.rawValue,
         ]
     }

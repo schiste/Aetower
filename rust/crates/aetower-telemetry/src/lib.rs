@@ -49,6 +49,10 @@ pub mod metric_names {
     pub const HOST_ENRICH_LATENCY: &str = "aetower.host.enrich_millis";
     pub const HOST_HISTORY_LATENCY: &str = "aetower.host.history_millis";
     pub const HOST_PERSIST_LATENCY: &str = "aetower.host.persist_millis";
+    pub const HOST_GPU_SAMPLE_LATENCY: &str = "aetower.host.gpu_sample_millis";
+    pub const HOST_TARGET_TICK: &str = "aetower.host.target_tick_millis";
+    pub const HOST_HISTORY_QUEUE_DEPTH: &str = "aetower.host.history_queue_depth";
+    pub const HOST_DIAGNOSTICS_QUEUE_DEPTH: &str = "aetower.host.diagnostics_queue_depth";
     pub const HOST_BRIDGE_FETCH_LATENCY: &str = "aetower.host.bridge_fetch_millis";
     pub const HOST_UI_REFRESH_LATENCY: &str = "aetower.host.ui_refresh_millis";
     pub const HOST_SNAPSHOT_TO_UI_LATENCY: &str = "aetower.host.snapshot_to_ui_millis";
@@ -394,6 +398,34 @@ fn build_resource_metrics(
             metric_names::HOST_PERSIST_LATENCY,
             "ms",
             lag_metrics.persist_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_GPU_SAMPLE_LATENCY,
+            "ms",
+            lag_metrics.gpu_sample_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_double_metric(
+            metric_names::HOST_TARGET_TICK,
+            "ms",
+            lag_metrics.target_tick_millis as f64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_int_metric(
+            metric_names::HOST_HISTORY_QUEUE_DEPTH,
+            "count",
+            lag_metrics.history_queue_depth as i64,
+            timestamp.clone(),
+            &[],
+        ),
+        host_int_metric(
+            metric_names::HOST_DIAGNOSTICS_QUEUE_DEPTH,
+            "count",
+            lag_metrics.diagnostics_queue_depth as i64,
             timestamp.clone(),
             &[],
         ),
