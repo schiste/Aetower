@@ -62,6 +62,16 @@ struct ProcessCounterSample {
     wakeups: u64,
     disk_read_bytes: u64,
     disk_write_bytes: u64,
+    wakeups_per_second: f32,
+}
+
+#[derive(Debug, Clone)]
+struct ProcessIdentitySample {
+    start_time_millis: u64,
+    name: String,
+    exe: Option<String>,
+    cmd: Vec<String>,
+    user: Option<String>,
 }
 
 pub struct Collector {
@@ -74,8 +84,10 @@ pub struct Collector {
     cached_host_environment: HostEnvironment,
     users: Users,
     previous_process_counters: HashMap<u32, ProcessCounterSample>,
+    process_identity_cache: HashMap<u32, ProcessIdentitySample>,
     known_pids: Vec<sysinfo::Pid>,
     cwd_cache: HashMap<u32, String>,
+    wakeups_sample_tick: u8,
 }
 
 impl Collector {
@@ -94,8 +106,10 @@ impl Collector {
             cached_host_environment: HostEnvironment::default(),
             users: Users::new_with_refreshed_list(),
             previous_process_counters: HashMap::new(),
+            process_identity_cache: HashMap::new(),
             known_pids: Vec::new(),
             cwd_cache: HashMap::new(),
+            wakeups_sample_tick: 0,
         }
     }
 
@@ -133,6 +147,10 @@ impl Collector {
                 .saturating_add(data.transmitted());
         }
 
+        let metadata_refresh = self.process_metadata_tick == 1 || full_scan;
+        let sample_wakeups = self.wakeups_sample_tick.is_multiple_of(3);
+        self.wakeups_sample_tick = self.wakeups_sample_tick.wrapping_add(1);
+
         let mut next_process_counters = HashMap::with_capacity(self.system.processes().len());
         let processes: Vec<_> = self
             .system
@@ -142,17 +160,29 @@ impl Collector {
             .map(|process| {
                 let pid = process.pid().as_u32();
                 let start_time_millis = process.start_time().saturating_mul(1_000);
-                let wakeups = platform::process_wakeups(pid).unwrap_or(0);
-                let disk_read_total = process.disk_usage().read_bytes;
-                let disk_write_total = process.disk_usage().written_bytes;
-
-                let tick_seconds = 2.0_f32;
                 let previous = self
                     .previous_process_counters
                     .get(&pid)
                     .filter(|prev| prev.start_time_millis == start_time_millis);
+                let wakeups = if sample_wakeups || previous.is_none() {
+                    platform::process_wakeups(pid)
+                        .or_else(|| previous.map(|prev| prev.wakeups))
+                        .unwrap_or(0)
+                } else {
+                    previous.map(|prev| prev.wakeups).unwrap_or(0)
+                };
+                let disk_read_total = process.disk_usage().read_bytes;
+                let disk_write_total = process.disk_usage().written_bytes;
+
+                let tick_seconds = 2.0_f32;
                 let wakeups_per_second = previous
-                    .map(|prev| wakeups.saturating_sub(prev.wakeups) as f32 / tick_seconds)
+                    .map(|prev| {
+                        if sample_wakeups || prev.wakeups == 0 {
+                            wakeups.saturating_sub(prev.wakeups) as f32 / tick_seconds
+                        } else {
+                            prev.wakeups_per_second
+                        }
+                    })
                     .unwrap_or(0.0);
                 let disk_read_delta = previous
                     .map(|prev| disk_read_total.saturating_sub(prev.disk_read_bytes))
@@ -168,20 +198,43 @@ impl Collector {
                         wakeups,
                         disk_read_bytes: disk_read_total,
                         disk_write_bytes: disk_write_total,
+                        wakeups_per_second,
                     },
                 );
+
+                let identity = match self.process_identity_cache.get(&pid) {
+                    Some(cached)
+                        if cached.start_time_millis == start_time_millis && !metadata_refresh =>
+                    {
+                        cached.clone()
+                    }
+                    _ => {
+                        let identity = ProcessIdentitySample {
+                            start_time_millis,
+                            name: process.name().to_string_lossy().into_owned(),
+                            exe: process.exe().and_then(path_to_string),
+                            cmd: process
+                                .cmd()
+                                .iter()
+                                .map(|segment| segment.to_string_lossy().into_owned())
+                                .collect(),
+                            user: process
+                                .user_id()
+                                .and_then(|uid| self.users.get_user_by_id(uid))
+                                .map(|u| u.name().to_owned()),
+                        };
+                        self.process_identity_cache.insert(pid, identity.clone());
+                        identity
+                    }
+                };
 
                 RawProcessSample {
                     pid,
                     parent_pid: process.parent().map(|parent| parent.as_u32()),
                     start_time_millis,
-                    name: process.name().to_string_lossy().into_owned(),
-                    exe: process.exe().and_then(path_to_string),
-                    cmd: process
-                        .cmd()
-                        .iter()
-                        .map(|segment| segment.to_string_lossy().into_owned())
-                        .collect(),
+                    name: identity.name,
+                    exe: identity.exe,
+                    cmd: identity.cmd,
                     cpu_percent: process.cpu_usage(),
                     memory_bytes: process.memory(),
                     disk_read_bytes: disk_read_delta,
@@ -201,10 +254,7 @@ impl Collector {
                     } else {
                         self.cwd_cache.get(&pid).cloned()
                     },
-                    user: process
-                        .user_id()
-                        .and_then(|uid| self.users.get_user_by_id(uid))
-                        .map(|u| u.name().to_owned()),
+                    user: identity.user,
                 }
             })
             .collect();
@@ -214,6 +264,12 @@ impl Collector {
         if self.process_metadata_tick.is_multiple_of(2) {
             let alive: std::collections::HashSet<u32> = processes.iter().map(|p| p.pid).collect();
             self.cwd_cache.retain(|pid, _| alive.contains(pid));
+            self.process_identity_cache.retain(|pid, cached| {
+                alive.contains(pid)
+                    && processes
+                        .iter()
+                        .any(|p| p.pid == *pid && p.start_time_millis == cached.start_time_millis)
+            });
             for process in &processes {
                 if let Some(ref cwd) = process.cwd {
                     self.cwd_cache.insert(process.pid, cwd.clone());

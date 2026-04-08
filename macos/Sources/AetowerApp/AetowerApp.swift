@@ -21,6 +21,7 @@ struct AetowerApp: App {
     @State private var state = AppState()
     @State private var settings = SettingsStore()
     @State private var menuBarExtraInserted = false
+    @State private var hudPanel: CompactHUDPanel?
 
     private var resolvedColorScheme: ColorScheme? {
         switch settings.appearanceMode {
@@ -107,6 +108,15 @@ struct AetowerApp: App {
             }
             .onDisappear {
                 state.stop()
+            }
+        }
+        .commands {
+            CommandMenu("View") {
+                Button("Toggle Compact HUD") {
+                    if hudPanel == nil { hudPanel = CompactHUDPanel(state: state) }
+                    hudPanel?.toggle()
+                }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
             }
         }
         MenuBarExtra(menuBarTitle, systemImage: "bolt.fill", isInserted: $menuBarExtraInserted) {
