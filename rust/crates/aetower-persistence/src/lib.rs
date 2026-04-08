@@ -133,7 +133,7 @@ impl HistoryStore {
         {
             Ok(stmt) => stmt,
             Err(error) => {
-                self.emit_load_event(start_millis, end_millis, 0, 0, Some(&error));
+                self.emit_load_event(start_millis, end_millis, 0, 0, None, Some(&error));
                 return Err(error);
             }
         };
@@ -159,19 +159,20 @@ impl HistoryStore {
         {
             Ok(rows) => rows,
             Err(error) => {
-                self.emit_load_event(start_millis, end_millis, 0, 0, Some(&error));
+                self.emit_load_event(start_millis, end_millis, 0, 0, None, Some(&error));
                 return Err(error);
             }
         };
 
         let mut snapshots = Vec::new();
         let mut quarantined_rows = 0u64;
+        let mut quarantine_reason: Option<String> = None;
         for row in rows {
             let (id, captured_at_millis, sequence, format_version, bincode_blob, json_blob) =
                 match row.map_err(|e| format!("row: {e}")) {
                     Ok(row) => row,
                     Err(error) => {
-                        self.emit_load_event(start_millis, end_millis, 0, 0, Some(&error));
+                        self.emit_load_event(start_millis, end_millis, 0, 0, None, Some(&error));
                         return Err(error);
                     }
                 };
@@ -195,11 +196,13 @@ impl HistoryStore {
                                 end_millis,
                                 snapshots.len() as u64,
                                 quarantined_rows,
+                                None,
                                 Some(&quarantine_error),
                             );
                             return Err(quarantine_error);
                         }
                         quarantined_rows = quarantined_rows.saturating_add(1);
+                        quarantine_reason.get_or_insert(error);
                         continue;
                     }
                 }
@@ -223,11 +226,13 @@ impl HistoryStore {
                                 end_millis,
                                 snapshots.len() as u64,
                                 quarantined_rows,
+                                None,
                                 Some(&quarantine_error),
                             );
                             return Err(quarantine_error);
                         }
                         quarantined_rows = quarantined_rows.saturating_add(1);
+                        quarantine_reason.get_or_insert(error);
                         continue;
                     }
                 }
@@ -241,6 +246,7 @@ impl HistoryStore {
             end_millis,
             snapshots.len() as u64,
             quarantined_rows,
+            quarantine_reason.as_deref(),
             None,
         );
         Ok(snapshots)
@@ -330,6 +336,7 @@ impl HistoryStore {
         end_millis: u64,
         loaded_count: u64,
         quarantined_rows: u64,
+        quarantine_reason: Option<&str>,
         error: Option<&str>,
     ) {
         let Some(diagnostics) = self.diagnostics.as_ref() else {
@@ -363,6 +370,9 @@ impl HistoryStore {
         .field("end_millis", end_millis)
         .field("loaded_count", loaded_count)
         .field("quarantined_rows", quarantined_rows);
+        if let Some(reason) = quarantine_reason {
+            builder = builder.field("quarantine_reason", reason);
+        }
         if let Some(error) = error {
             builder = builder.field("error", error);
         }
@@ -407,23 +417,6 @@ impl HistoryStore {
                 params![candidate.snapshot_id],
             )
             .map_err(|error| format!("quarantine delete: {error}"))?;
-
-        if let Some(diagnostics) = self.diagnostics.as_ref() {
-            diagnostics.emit(
-                DiagnosticsEvent::builder(
-                    DiagnosticsLevel::Warn,
-                    DiagnosticsSubsystem::Persistence,
-                    "history-row-quarantined",
-                    "Quarantined an incompatible persisted history row.",
-                )
-                .field("snapshot_id", candidate.snapshot_id)
-                .field("captured_at_millis", candidate.captured_at_millis)
-                .field("sequence", candidate.sequence)
-                .field("format_version", candidate.format_version)
-                .field("reason", reason)
-                .build(),
-            );
-        }
 
         Ok(())
     }
