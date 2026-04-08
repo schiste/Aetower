@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
     time::Duration,
@@ -45,6 +45,76 @@ pub struct Chau7Session {
     pub last_active: String,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Chau7PendingApproval {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Chau7ActiveRun {
+    #[serde(default, rename = "duration_so_far_ms")]
+    pub duration_so_far_ms: u64,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default, rename = "started_at")]
+    pub started_at: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Chau7TabStatus {
+    #[serde(default)]
+    pub tab_id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub cwd: String,
+    pub repo_root: Option<String>,
+    pub git_branch: Option<String>,
+    pub ai_provider: Option<String>,
+    pub ai_session_id: Option<String>,
+    #[serde(default)]
+    pub status: String,
+    pub active_app: Option<String>,
+    #[serde(default)]
+    pub is_at_prompt: bool,
+    #[serde(default)]
+    pub shell_loading: bool,
+    #[serde(default)]
+    pub cto_active: bool,
+    pub raw_status: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Chau7RuntimeSessionStatus {
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub turn_count: u32,
+    #[serde(default)]
+    pub last_completed_turn_id: Option<String>,
+    #[serde(default)]
+    pub last_exit_reason: Option<String>,
+    #[serde(default)]
+    pub pending_approval: Option<Chau7PendingApproval>,
+    #[serde(default)]
+    pub active_run: Option<Chau7ActiveRun>,
+    #[serde(default)]
+    pub child_session_count: u32,
+}
+
 /// Per-repo cost stats from Chau7's `repo_get_metadata` tool.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Chau7RepoStats {
@@ -54,6 +124,10 @@ pub struct Chau7RepoStats {
     pub total_tokens: u64,
     #[serde(default)]
     pub total_cost: f32,
+    #[serde(default)]
+    pub total_turns: u32,
+    #[serde(default)]
+    pub providers: Vec<String>,
 }
 
 /// A run from Chau7's `run_list` tool response.
@@ -73,6 +147,32 @@ pub struct Chau7Run {
     pub duration_ms: Option<u64>,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Chau7RepoEvent {
+    #[serde(default, rename = "type")]
+    pub event_type: String,
+    #[serde(default, rename = "ts")]
+    pub timestamp: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub tab_id: Option<String>,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub tool: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Deserialize)]
+struct Chau7SessionChild {
+    #[serde(default)]
+    pub session_id: String,
+}
+
 /// Combined snapshot cached by the adapter on each refresh cycle.
 #[derive(Debug, Clone, Default)]
 pub struct Chau7Snapshot {
@@ -80,6 +180,9 @@ pub struct Chau7Snapshot {
     pub sessions: Vec<Chau7Session>,
     pub repo_stats: BTreeMap<String, Chau7RepoStats>,
     pub recent_runs: Vec<Chau7Run>,
+    pub tab_statuses: BTreeMap<String, Chau7TabStatus>,
+    pub runtime_sessions: BTreeMap<String, Chau7RuntimeSessionStatus>,
+    pub repo_events: BTreeMap<String, Vec<Chau7RepoEvent>>,
 }
 
 impl Chau7Tab {
@@ -138,10 +241,97 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
     let sessions: Vec<Chau7Session> =
         serde_json::from_value(sessions_raw).map_err(|e| format!("parse sessions: {e}"))?;
 
+    // Fetch deeper runtime/tab state for AI tabs (best-effort, bounded).
+    let mut tab_statuses = BTreeMap::new();
+    let mut runtime_sessions = BTreeMap::new();
+    let mut seen_sessions = BTreeSet::new();
+    let mut next_id: u64 = 4;
+    for tab in tabs.iter().filter(|t| t.is_ai_agent()).take(8) {
+        if let Ok(raw) = rpc_tool_call(
+            &mut writer,
+            &mut reader,
+            next_id,
+            "tab_status",
+            json!({ "tab_id": &tab.tab_id }),
+        ) && let Ok(status) = serde_json::from_value::<Chau7TabStatus>(raw)
+        {
+            tab_statuses.insert(tab.tab_id.clone(), status);
+        }
+        next_id += 1;
+
+        let Some(session_id) = tab.ai_session_id.as_deref() else {
+            continue;
+        };
+        if !seen_sessions.insert(session_id.to_owned()) {
+            continue;
+        }
+
+        let mut merged = rpc_tool_call(
+            &mut writer,
+            &mut reader,
+            next_id,
+            "runtime_session_get",
+            json!({ "session_id": session_id }),
+        )
+        .ok()
+        .and_then(|raw| serde_json::from_value::<Chau7RuntimeSessionStatus>(raw).ok())
+        .unwrap_or_else(|| Chau7RuntimeSessionStatus {
+            session_id: session_id.to_owned(),
+            ..Chau7RuntimeSessionStatus::default()
+        });
+        next_id += 1;
+
+        if let Ok(raw) = rpc_tool_call(
+            &mut writer,
+            &mut reader,
+            next_id,
+            "runtime_turn_status",
+            json!({ "session_id": session_id }),
+        ) && let Ok(turn_status) = serde_json::from_value::<Chau7RuntimeSessionStatus>(raw)
+        {
+            if merged.state.is_empty() {
+                merged.state = turn_status.state;
+            }
+            if merged.pending_approval.is_none() {
+                merged.pending_approval = turn_status.pending_approval;
+            }
+            if merged.active_run.is_none() {
+                merged.active_run = turn_status.active_run;
+            }
+            if merged.last_exit_reason.is_none() {
+                merged.last_exit_reason = turn_status.last_exit_reason;
+            }
+            if merged.turn_count == 0 {
+                merged.turn_count = turn_status.turn_count;
+            }
+            if merged.last_completed_turn_id.is_none() {
+                merged.last_completed_turn_id = turn_status.last_completed_turn_id;
+            }
+        }
+        next_id += 1;
+
+        if let Ok(raw) = rpc_tool_call(
+            &mut writer,
+            &mut reader,
+            next_id,
+            "runtime_session_children",
+            json!({ "session_id": session_id, "recursive": true, "include_stopped": false }),
+        ) && let Ok(children) = serde_json::from_value::<Vec<Chau7SessionChild>>(raw)
+        {
+            merged.child_session_count = children
+                .into_iter()
+                .filter(|child| !child.session_id.is_empty())
+                .count() as u32;
+        }
+        next_id += 1;
+
+        runtime_sessions.insert(session_id.to_owned(), merged);
+    }
+
     // Fetch repo stats for active repos (best-effort, limit 3 repos).
     let mut repo_stats = BTreeMap::new();
-    let mut seen_repos = std::collections::BTreeSet::new();
-    let mut next_id: u64 = 4;
+    let mut repo_events = BTreeMap::new();
+    let mut seen_repos = BTreeSet::new();
     for tab in tabs.iter().filter(|t| t.is_ai_agent()) {
         if let Some(repo) = tab.repo_root.as_deref() {
             if !seen_repos.insert(repo.to_owned()) || seen_repos.len() > 3 {
@@ -157,6 +347,19 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
                 && let Ok(parsed) = serde_json::from_value::<Chau7RepoStats>(stats.clone())
             {
                 repo_stats.insert(repo.to_owned(), parsed);
+            }
+            next_id += 1;
+
+            if let Ok(raw) = rpc_tool_call(
+                &mut writer,
+                &mut reader,
+                next_id,
+                "repo_get_events",
+                json!({ "repo_path": repo, "limit": 12 }),
+            ) && let Some(events) = raw.get("events")
+                && let Ok(parsed) = serde_json::from_value::<Vec<Chau7RepoEvent>>(events.clone())
+            {
+                repo_events.insert(repo.to_owned(), parsed);
             }
             next_id += 1;
         }
@@ -179,6 +382,9 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
         sessions,
         repo_stats,
         recent_runs,
+        tab_statuses,
+        runtime_sessions,
+        repo_events,
     })
 }
 
@@ -383,5 +589,68 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].provider, "codex");
         assert_eq!(sessions[0].run_count, 3);
+    }
+
+    #[test]
+    fn parse_runtime_session_status() {
+        let raw = r#"{
+            "session_id": "rs_36e6122b",
+            "state": "ready",
+            "turn_count": 3,
+            "last_completed_turn_id": "t_3",
+            "last_exit_reason": "error",
+            "pending_approval": {
+                "id": "22CEC148-B1A9-45AC-A67F-059710B0F85E",
+                "description": "Claude needs your permission to use Bash"
+            },
+            "active_run": {
+                "duration_so_far_ms": 438172,
+                "provider": "claude",
+                "run_id": "C01DBDCB-E032-4E4F-A0BE-69D99CF93197",
+                "session_id": "00cc9d06-4fcf-48df-b3a8-c6a53a2788f8",
+                "started_at": "2026-04-08T14:22:26.696Z"
+            }
+        }"#;
+
+        let status: Chau7RuntimeSessionStatus = serde_json::from_str(raw).unwrap();
+        assert_eq!(status.state, "ready");
+        assert_eq!(status.turn_count, 3);
+        assert_eq!(status.last_exit_reason.as_deref(), Some("error"));
+        assert_eq!(
+            status
+                .pending_approval
+                .as_ref()
+                .map(|value| value.description.as_str()),
+            Some("Claude needs your permission to use Bash")
+        );
+        assert_eq!(
+            status
+                .active_run
+                .as_ref()
+                .map(|value| value.duration_so_far_ms),
+            Some(438172)
+        );
+    }
+
+    #[test]
+    fn parse_repo_events_response() {
+        let raw = r#"[
+            {
+                "directory": "/Users/dev/Aetower",
+                "id": "0EC21096-48E9-450F-A708-945A19FE1B83",
+                "message": "Claude needs your permission to use Write",
+                "session_id": "00cc9d06-4fcf-48df-b3a8-c6a53a2788f8",
+                "source": "claude_code",
+                "tab_id": "3D4924F3-24CA-4D4B-8707-2EB7E29C1EB9",
+                "tool": "Claude",
+                "ts": "2026-04-08T13:43:55.170Z",
+                "type": "permission"
+            }
+        ]"#;
+
+        let events: Vec<Chau7RepoEvent> = serde_json::from_str(raw).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "permission");
+        assert_eq!(events[0].source, "claude_code");
     }
 }
