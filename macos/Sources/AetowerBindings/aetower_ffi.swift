@@ -545,6 +545,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func configurePrivilegedHelper(helperPath: String?, enabled: Bool) 
     
+    func configureRuntimeCollection(settings: RuntimeCollectionSettingsInput) 
+    
     func configureTelemetry(endpoint: String?, enabled: Bool, exportIntervalSecs: UInt32) 
     
     func diagnosticsOverview()  -> DiagnosticsOverview
@@ -686,6 +688,13 @@ open func configurePrivilegedHelper(helperPath: String?, enabled: Bool)  {try! r
     uniffi_aetower_ffi_fn_method_monitorengine_configure_privileged_helper(self.uniffiClonePointer(),
         FfiConverterOptionString.lower(helperPath),
         FfiConverterBool.lower(enabled),$0
+    )
+}
+}
+    
+open func configureRuntimeCollection(settings: RuntimeCollectionSettingsInput)  {try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_configure_runtime_collection(self.uniffiClonePointer(),
+        FfiConverterTypeRuntimeCollectionSettingsInput_lower(settings),$0
     )
 }
 }
@@ -3193,6 +3202,116 @@ public func FfiConverterTypeRecommendation_lower(_ value: Recommendation) -> Rus
 }
 
 
+public struct RuntimeCollectionSettingsInput {
+    public var fullCollection: Bool
+    public var adaptiveCadence: Bool
+    public var activeTickMillis: UInt64
+    public var idleTickMillis: UInt64
+    public var lowPowerTickMillis: UInt64
+    public var gpuSampleIntervalMillis: UInt64
+    public var gpuSampleLowPowerIntervalMillis: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(fullCollection: Bool, adaptiveCadence: Bool, activeTickMillis: UInt64, idleTickMillis: UInt64, lowPowerTickMillis: UInt64, gpuSampleIntervalMillis: UInt64, gpuSampleLowPowerIntervalMillis: UInt64) {
+        self.fullCollection = fullCollection
+        self.adaptiveCadence = adaptiveCadence
+        self.activeTickMillis = activeTickMillis
+        self.idleTickMillis = idleTickMillis
+        self.lowPowerTickMillis = lowPowerTickMillis
+        self.gpuSampleIntervalMillis = gpuSampleIntervalMillis
+        self.gpuSampleLowPowerIntervalMillis = gpuSampleLowPowerIntervalMillis
+    }
+}
+
+#if compiler(>=6)
+extension RuntimeCollectionSettingsInput: Sendable {}
+#endif
+
+
+extension RuntimeCollectionSettingsInput: Equatable, Hashable {
+    public static func ==(lhs: RuntimeCollectionSettingsInput, rhs: RuntimeCollectionSettingsInput) -> Bool {
+        if lhs.fullCollection != rhs.fullCollection {
+            return false
+        }
+        if lhs.adaptiveCadence != rhs.adaptiveCadence {
+            return false
+        }
+        if lhs.activeTickMillis != rhs.activeTickMillis {
+            return false
+        }
+        if lhs.idleTickMillis != rhs.idleTickMillis {
+            return false
+        }
+        if lhs.lowPowerTickMillis != rhs.lowPowerTickMillis {
+            return false
+        }
+        if lhs.gpuSampleIntervalMillis != rhs.gpuSampleIntervalMillis {
+            return false
+        }
+        if lhs.gpuSampleLowPowerIntervalMillis != rhs.gpuSampleLowPowerIntervalMillis {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(fullCollection)
+        hasher.combine(adaptiveCadence)
+        hasher.combine(activeTickMillis)
+        hasher.combine(idleTickMillis)
+        hasher.combine(lowPowerTickMillis)
+        hasher.combine(gpuSampleIntervalMillis)
+        hasher.combine(gpuSampleLowPowerIntervalMillis)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRuntimeCollectionSettingsInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RuntimeCollectionSettingsInput {
+        return
+            try RuntimeCollectionSettingsInput(
+                fullCollection: FfiConverterBool.read(from: &buf), 
+                adaptiveCadence: FfiConverterBool.read(from: &buf), 
+                activeTickMillis: FfiConverterUInt64.read(from: &buf), 
+                idleTickMillis: FfiConverterUInt64.read(from: &buf), 
+                lowPowerTickMillis: FfiConverterUInt64.read(from: &buf), 
+                gpuSampleIntervalMillis: FfiConverterUInt64.read(from: &buf), 
+                gpuSampleLowPowerIntervalMillis: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RuntimeCollectionSettingsInput, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.fullCollection, into: &buf)
+        FfiConverterBool.write(value.adaptiveCadence, into: &buf)
+        FfiConverterUInt64.write(value.activeTickMillis, into: &buf)
+        FfiConverterUInt64.write(value.idleTickMillis, into: &buf)
+        FfiConverterUInt64.write(value.lowPowerTickMillis, into: &buf)
+        FfiConverterUInt64.write(value.gpuSampleIntervalMillis, into: &buf)
+        FfiConverterUInt64.write(value.gpuSampleLowPowerIntervalMillis, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeCollectionSettingsInput_lift(_ buf: RustBuffer) throws -> RuntimeCollectionSettingsInput {
+    return try FfiConverterTypeRuntimeCollectionSettingsInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRuntimeCollectionSettingsInput_lower(_ value: RuntimeCollectionSettingsInput) -> RustBuffer {
+    return FfiConverterTypeRuntimeCollectionSettingsInput.lower(value)
+}
+
+
 public struct RuntimeLagMetrics {
     public var updatedAtMillis: UInt64
     public var engineTickMillis: Float
@@ -3203,6 +3322,10 @@ public struct RuntimeLagMetrics {
     public var enrichMillis: Float
     public var historyMillis: Float
     public var persistMillis: Float
+    public var gpuSampleMillis: Float
+    public var targetTickMillis: Float
+    public var historyQueueDepth: UInt32
+    public var diagnosticsQueueDepth: UInt32
     public var bridgeFetchMillis: Float
     public var uiRefreshMillis: Float
     public var snapshotToUiMillis: Float
@@ -3217,7 +3340,7 @@ public struct RuntimeLagMetrics {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(updatedAtMillis: UInt64, engineTickMillis: Float, collectMillis: Float, identityMillis: Float, attributionMillis: Float, frictionMillis: Float, enrichMillis: Float, historyMillis: Float, persistMillis: Float, bridgeFetchMillis: Float, uiRefreshMillis: Float, snapshotToUiMillis: Float, snapshotToRenderMillis: Float, renderCommitMillis: Float, displayFrameIntervalMillis: Float, displayRefreshHz: Float, displayDroppedFrames: UInt64, inputAvgLatencyMillis: Float, inputMaxLatencyMillis: Float, inputSampleCount: UInt32) {
+    public init(updatedAtMillis: UInt64, engineTickMillis: Float, collectMillis: Float, identityMillis: Float, attributionMillis: Float, frictionMillis: Float, enrichMillis: Float, historyMillis: Float, persistMillis: Float, gpuSampleMillis: Float, targetTickMillis: Float, historyQueueDepth: UInt32, diagnosticsQueueDepth: UInt32, bridgeFetchMillis: Float, uiRefreshMillis: Float, snapshotToUiMillis: Float, snapshotToRenderMillis: Float, renderCommitMillis: Float, displayFrameIntervalMillis: Float, displayRefreshHz: Float, displayDroppedFrames: UInt64, inputAvgLatencyMillis: Float, inputMaxLatencyMillis: Float, inputSampleCount: UInt32) {
         self.updatedAtMillis = updatedAtMillis
         self.engineTickMillis = engineTickMillis
         self.collectMillis = collectMillis
@@ -3227,6 +3350,10 @@ public struct RuntimeLagMetrics {
         self.enrichMillis = enrichMillis
         self.historyMillis = historyMillis
         self.persistMillis = persistMillis
+        self.gpuSampleMillis = gpuSampleMillis
+        self.targetTickMillis = targetTickMillis
+        self.historyQueueDepth = historyQueueDepth
+        self.diagnosticsQueueDepth = diagnosticsQueueDepth
         self.bridgeFetchMillis = bridgeFetchMillis
         self.uiRefreshMillis = uiRefreshMillis
         self.snapshotToUiMillis = snapshotToUiMillis
@@ -3275,6 +3402,18 @@ extension RuntimeLagMetrics: Equatable, Hashable {
         if lhs.persistMillis != rhs.persistMillis {
             return false
         }
+        if lhs.gpuSampleMillis != rhs.gpuSampleMillis {
+            return false
+        }
+        if lhs.targetTickMillis != rhs.targetTickMillis {
+            return false
+        }
+        if lhs.historyQueueDepth != rhs.historyQueueDepth {
+            return false
+        }
+        if lhs.diagnosticsQueueDepth != rhs.diagnosticsQueueDepth {
+            return false
+        }
         if lhs.bridgeFetchMillis != rhs.bridgeFetchMillis {
             return false
         }
@@ -3321,6 +3460,10 @@ extension RuntimeLagMetrics: Equatable, Hashable {
         hasher.combine(enrichMillis)
         hasher.combine(historyMillis)
         hasher.combine(persistMillis)
+        hasher.combine(gpuSampleMillis)
+        hasher.combine(targetTickMillis)
+        hasher.combine(historyQueueDepth)
+        hasher.combine(diagnosticsQueueDepth)
         hasher.combine(bridgeFetchMillis)
         hasher.combine(uiRefreshMillis)
         hasher.combine(snapshotToUiMillis)
@@ -3353,6 +3496,10 @@ public struct FfiConverterTypeRuntimeLagMetrics: FfiConverterRustBuffer {
                 enrichMillis: FfiConverterFloat.read(from: &buf), 
                 historyMillis: FfiConverterFloat.read(from: &buf), 
                 persistMillis: FfiConverterFloat.read(from: &buf), 
+                gpuSampleMillis: FfiConverterFloat.read(from: &buf), 
+                targetTickMillis: FfiConverterFloat.read(from: &buf), 
+                historyQueueDepth: FfiConverterUInt32.read(from: &buf), 
+                diagnosticsQueueDepth: FfiConverterUInt32.read(from: &buf), 
                 bridgeFetchMillis: FfiConverterFloat.read(from: &buf), 
                 uiRefreshMillis: FfiConverterFloat.read(from: &buf), 
                 snapshotToUiMillis: FfiConverterFloat.read(from: &buf), 
@@ -3377,6 +3524,10 @@ public struct FfiConverterTypeRuntimeLagMetrics: FfiConverterRustBuffer {
         FfiConverterFloat.write(value.enrichMillis, into: &buf)
         FfiConverterFloat.write(value.historyMillis, into: &buf)
         FfiConverterFloat.write(value.persistMillis, into: &buf)
+        FfiConverterFloat.write(value.gpuSampleMillis, into: &buf)
+        FfiConverterFloat.write(value.targetTickMillis, into: &buf)
+        FfiConverterUInt32.write(value.historyQueueDepth, into: &buf)
+        FfiConverterUInt32.write(value.diagnosticsQueueDepth, into: &buf)
         FfiConverterFloat.write(value.bridgeFetchMillis, into: &buf)
         FfiConverterFloat.write(value.uiRefreshMillis, into: &buf)
         FfiConverterFloat.write(value.snapshotToUiMillis, into: &buf)
@@ -5818,6 +5969,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_privileged_helper() != 57500) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_runtime_collection() != 44129) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_configure_telemetry() != 34639) {

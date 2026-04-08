@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aetower_core::Engine;
+use aetower_core::{Engine, RuntimeCollectionSettings};
 use aetower_diagnostics as diagnostics;
 use aetower_model as model;
 
@@ -234,6 +234,10 @@ pub struct RuntimeLagMetrics {
     pub enrich_millis: f32,
     pub history_millis: f32,
     pub persist_millis: f32,
+    pub gpu_sample_millis: f32,
+    pub target_tick_millis: f32,
+    pub history_queue_depth: u32,
+    pub diagnostics_queue_depth: u32,
     pub bridge_fetch_millis: f32,
     pub ui_refresh_millis: f32,
     pub snapshot_to_ui_millis: f32,
@@ -245,6 +249,17 @@ pub struct RuntimeLagMetrics {
     pub input_avg_latency_millis: f32,
     pub input_max_latency_millis: f32,
     pub input_sample_count: u32,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct RuntimeCollectionSettingsInput {
+    pub full_collection: bool,
+    pub adaptive_cadence: bool,
+    pub active_tick_millis: u64,
+    pub idle_tick_millis: u64,
+    pub low_power_tick_millis: u64,
+    pub gpu_sample_interval_millis: u64,
+    pub gpu_sample_low_power_interval_millis: u64,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -576,6 +591,22 @@ impl MonitorEngine {
             Ok(()) => String::new(),
             Err(error) => error,
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn configure_runtime_collection(&self, settings: RuntimeCollectionSettingsInput) {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .configure_runtime_collection(RuntimeCollectionSettings {
+                full_collection: settings.full_collection,
+                adaptive_cadence: settings.adaptive_cadence,
+                active_tick_millis: settings.active_tick_millis,
+                idle_tick_millis: settings.idle_tick_millis,
+                low_power_tick_millis: settings.low_power_tick_millis,
+                gpu_sample_interval_millis: settings.gpu_sample_interval_millis,
+                gpu_sample_low_power_interval_millis: settings.gpu_sample_low_power_interval_millis,
+            });
     }
 
     pub fn stop_agent_session(&self, session_id: String, force: bool) -> String {
@@ -1137,6 +1168,10 @@ impl From<model::RuntimeLagMetrics> for RuntimeLagMetrics {
             enrich_millis: value.enrich_millis,
             history_millis: value.history_millis,
             persist_millis: value.persist_millis,
+            gpu_sample_millis: value.gpu_sample_millis,
+            target_tick_millis: value.target_tick_millis,
+            history_queue_depth: value.history_queue_depth,
+            diagnostics_queue_depth: value.diagnostics_queue_depth,
             bridge_fetch_millis: value.bridge_fetch_millis,
             ui_refresh_millis: value.ui_refresh_millis,
             snapshot_to_ui_millis: value.snapshot_to_ui_millis,

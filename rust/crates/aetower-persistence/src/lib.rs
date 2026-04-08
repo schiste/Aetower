@@ -1,4 +1,12 @@
-use std::path::Path;
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    },
+    thread::{self, JoinHandle},
+};
 
 use aetower_diagnostics::{
     DiagnosticsEvent, DiagnosticsLevel, DiagnosticsStore, DiagnosticsSubsystem,
@@ -29,6 +37,21 @@ pub struct HistoryStore {
     write_counter: u32,
     write_interval: u32,
     diagnostics: Option<DiagnosticsStore>,
+    writer: HistoryWriter,
+}
+
+struct HistoryWriter {
+    command_tx: mpsc::Sender<HistoryCommand>,
+    pending_writes: Arc<AtomicUsize>,
+    handle: Option<JoinHandle<()>>,
+}
+
+enum HistoryCommand {
+    Store(Box<SystemSnapshot>),
+    Flush(mpsc::Sender<Result<(), String>>),
+    Prune(u64, mpsc::Sender<Result<u64, String>>),
+    ClearAll(mpsc::Sender<Result<(), String>>),
+    Shutdown,
 }
 
 impl HistoryStore {
@@ -37,45 +60,15 @@ impl HistoryStore {
     /// (e.g. 5 = write every 5th tick).
     pub fn open(path: &Path, write_interval: u32) -> Result<Self, String> {
         let conn = Connection::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
-        conn.pragma_update(None, "journal_mode", "WAL")
-            .map_err(|e| format!("WAL: {e}"))?;
-        conn.pragma_update(None, "synchronous", "NORMAL")
-            .map_err(|e| format!("synchronous: {e}"))?;
-
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS snapshots (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                captured_at_millis INTEGER NOT NULL,
-                sequence INTEGER NOT NULL,
-                format_version INTEGER NOT NULL DEFAULT 1,
-                json_blob TEXT,
-                bincode_blob BLOB
-            );
-            CREATE TABLE IF NOT EXISTS snapshot_quarantine (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                snapshot_id INTEGER,
-                captured_at_millis INTEGER NOT NULL,
-                sequence INTEGER NOT NULL,
-                format_version INTEGER,
-                quarantined_at_millis INTEGER NOT NULL,
-                reason TEXT NOT NULL,
-                json_blob TEXT,
-                bincode_blob BLOB
-            );
-            CREATE INDEX IF NOT EXISTS idx_snapshots_time
-                ON snapshots(captured_at_millis);",
-        )
-        .map_err(|e| format!("schema: {e}"))?;
-        let _ = conn.execute(
-            "ALTER TABLE snapshots ADD COLUMN format_version INTEGER NOT NULL DEFAULT 1",
-            [],
-        );
+        configure_connection(&conn)?;
+        let writer = HistoryWriter::spawn(path.to_path_buf())?;
 
         Ok(Self {
             conn,
             write_counter: 0,
             write_interval: write_interval.max(1),
             diagnostics: None,
+            writer,
         })
     }
 
@@ -90,29 +83,7 @@ impl HistoryStore {
             return;
         }
         self.write_counter = 0;
-        let _ = self.store(snapshot);
-    }
-
-    fn store(&self, snapshot: &SystemSnapshot) -> Result<(), String> {
-        let envelope = PersistedSnapshotEnvelope {
-            version: SNAPSHOT_FORMAT_VERSION as u16,
-            snapshot: snapshot.clone(),
-        };
-        let blob = bincode::serialize(&envelope).map_err(|e| format!("serialize snapshot: {e}"))?;
-        let result = self.conn
-            .execute(
-                "INSERT INTO snapshots (captured_at_millis, sequence, format_version, bincode_blob) VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    snapshot.captured_at_millis as i64,
-                    snapshot.sequence as i64,
-                    SNAPSHOT_FORMAT_VERSION,
-                    blob
-                ],
-            )
-            .map_err(|e| format!("insert: {e}"));
-        self.emit_store_event(snapshot, &result);
-        result?;
-        Ok(())
+        let _ = self.writer.store(snapshot.clone());
     }
 
     /// Load snapshots in a time range (inclusive).
@@ -121,6 +92,7 @@ impl HistoryStore {
         start_millis: u64,
         end_millis: u64,
     ) -> Result<Vec<SystemSnapshot>, String> {
+        self.writer.flush()?;
         let mut stmt = match self
             .conn
             .prepare(
@@ -254,13 +226,7 @@ impl HistoryStore {
 
     /// Delete snapshots older than `cutoff_millis`.
     pub fn prune(&self, cutoff_millis: u64) -> Result<u64, String> {
-        let deleted = self
-            .conn
-            .execute(
-                "DELETE FROM snapshots WHERE captured_at_millis < ?1",
-                params![cutoff_millis as i64],
-            )
-            .map_err(|e| format!("prune: {e}"))?;
+        let deleted = self.writer.prune(cutoff_millis)?;
         if let Some(diagnostics) = self.diagnostics.as_ref() {
             diagnostics.emit(
                 DiagnosticsEvent::builder(
@@ -274,16 +240,11 @@ impl HistoryStore {
                 .build(),
             );
         }
-        Ok(deleted as u64)
+        Ok(deleted)
     }
 
     pub fn clear_all(&self) -> Result<(), String> {
-        self.conn
-            .execute("DELETE FROM snapshots", [])
-            .map_err(|e| format!("clear snapshots: {e}"))?;
-        self.conn
-            .execute("DELETE FROM snapshot_quarantine", [])
-            .map_err(|e| format!("clear quarantine: {e}"))?;
+        self.writer.clear_all()?;
         if let Some(diagnostics) = self.diagnostics.as_ref() {
             diagnostics.emit(
                 DiagnosticsEvent::builder(
@@ -296,38 +257,6 @@ impl HistoryStore {
             );
         }
         Ok(())
-    }
-
-    fn emit_store_event(&self, snapshot: &SystemSnapshot, result: &Result<usize, String>) {
-        let Some(diagnostics) = self.diagnostics.as_ref() else {
-            return;
-        };
-        match result {
-            Ok(rows) => diagnostics.emit(
-                DiagnosticsEvent::builder(
-                    DiagnosticsLevel::Info,
-                    DiagnosticsSubsystem::Persistence,
-                    "history-persisted",
-                    "Persisted snapshot into history store.",
-                )
-                .sequence(snapshot.sequence)
-                .field("captured_at_millis", snapshot.captured_at_millis)
-                .field("rows_written", rows)
-                .build(),
-            ),
-            Err(error) => diagnostics.emit(
-                DiagnosticsEvent::builder(
-                    DiagnosticsLevel::Error,
-                    DiagnosticsSubsystem::Persistence,
-                    "history-store-failed",
-                    "Failed to persist snapshot into history store.",
-                )
-                .sequence(snapshot.sequence)
-                .field("captured_at_millis", snapshot.captured_at_millis)
-                .field("error", error)
-                .build(),
-            ),
-        }
     }
 
     fn emit_load_event(
@@ -420,6 +349,177 @@ impl HistoryStore {
 
         Ok(())
     }
+}
+
+impl HistoryStore {
+    pub fn pending_writes(&self) -> u64 {
+        self.writer.pending_writes()
+    }
+}
+
+impl Drop for HistoryStore {
+    fn drop(&mut self) {
+        let _ = self.writer.flush();
+        self.writer.shutdown();
+    }
+}
+
+impl HistoryWriter {
+    fn spawn(path: PathBuf) -> Result<Self, String> {
+        let (command_tx, command_rx) = mpsc::channel();
+        let pending_writes = Arc::new(AtomicUsize::new(0));
+        let pending_for_thread = Arc::clone(&pending_writes);
+        let handle = thread::spawn(move || {
+            let conn = match Connection::open(&path) {
+                Ok(conn) => conn,
+                Err(_) => return,
+            };
+            if configure_connection(&conn).is_err() {
+                return;
+            }
+
+            while let Ok(command) = command_rx.recv() {
+                match command {
+                    HistoryCommand::Store(snapshot) => {
+                        let _ = store_snapshot(&conn, &snapshot);
+                        pending_for_thread.fetch_sub(1, Ordering::Relaxed);
+                    }
+                    HistoryCommand::Flush(reply) => {
+                        let _ = reply.send(Ok(()));
+                    }
+                    HistoryCommand::Prune(cutoff_millis, reply) => {
+                        let result = conn
+                            .execute(
+                                "DELETE FROM snapshots WHERE captured_at_millis < ?1",
+                                params![cutoff_millis as i64],
+                            )
+                            .map(|deleted| deleted as u64)
+                            .map_err(|e| format!("prune: {e}"));
+                        let _ = reply.send(result);
+                    }
+                    HistoryCommand::ClearAll(reply) => {
+                        let result = conn
+                            .execute("DELETE FROM snapshots", [])
+                            .map_err(|e| format!("clear snapshots: {e}"))
+                            .and_then(|_| {
+                                conn.execute("DELETE FROM snapshot_quarantine", [])
+                                    .map_err(|e| format!("clear quarantine: {e}"))
+                            })
+                            .map(|_| ());
+                        pending_for_thread.store(0, Ordering::Relaxed);
+                        let _ = reply.send(result);
+                    }
+                    HistoryCommand::Shutdown => break,
+                }
+            }
+        });
+
+        Ok(Self {
+            command_tx,
+            pending_writes,
+            handle: Some(handle),
+        })
+    }
+
+    fn store(&self, snapshot: SystemSnapshot) -> Result<(), String> {
+        self.pending_writes.fetch_add(1, Ordering::Relaxed);
+        self.command_tx
+            .send(HistoryCommand::Store(Box::new(snapshot)))
+            .map_err(|error| format!("history writer queue: {error}"))
+    }
+
+    fn flush(&self) -> Result<(), String> {
+        let (tx, rx) = mpsc::channel();
+        self.command_tx
+            .send(HistoryCommand::Flush(tx))
+            .map_err(|error| format!("history writer queue: {error}"))?;
+        rx.recv()
+            .map_err(|error| format!("history writer flush: {error}"))?
+    }
+
+    fn prune(&self, cutoff_millis: u64) -> Result<u64, String> {
+        let (tx, rx) = mpsc::channel();
+        self.command_tx
+            .send(HistoryCommand::Prune(cutoff_millis, tx))
+            .map_err(|error| format!("history writer queue: {error}"))?;
+        rx.recv()
+            .map_err(|error| format!("history writer prune: {error}"))?
+    }
+
+    fn clear_all(&self) -> Result<(), String> {
+        let (tx, rx) = mpsc::channel();
+        self.command_tx
+            .send(HistoryCommand::ClearAll(tx))
+            .map_err(|error| format!("history writer queue: {error}"))?;
+        rx.recv()
+            .map_err(|error| format!("history writer clear: {error}"))?
+    }
+
+    fn pending_writes(&self) -> u64 {
+        self.pending_writes.load(Ordering::Relaxed) as u64
+    }
+
+    fn shutdown(&mut self) {
+        let _ = self.command_tx.send(HistoryCommand::Shutdown);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn configure_connection(conn: &Connection) -> Result<(), String> {
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| format!("WAL: {e}"))?;
+    conn.pragma_update(None, "synchronous", "NORMAL")
+        .map_err(|e| format!("synchronous: {e}"))?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            captured_at_millis INTEGER NOT NULL,
+            sequence INTEGER NOT NULL,
+            format_version INTEGER NOT NULL DEFAULT 1,
+            json_blob TEXT,
+            bincode_blob BLOB
+        );
+        CREATE TABLE IF NOT EXISTS snapshot_quarantine (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            snapshot_id INTEGER,
+            captured_at_millis INTEGER NOT NULL,
+            sequence INTEGER NOT NULL,
+            format_version INTEGER,
+            quarantined_at_millis INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            json_blob TEXT,
+            bincode_blob BLOB
+        );
+        CREATE INDEX IF NOT EXISTS idx_snapshots_time
+            ON snapshots(captured_at_millis);",
+    )
+    .map_err(|e| format!("schema: {e}"))?;
+    let _ = conn.execute(
+        "ALTER TABLE snapshots ADD COLUMN format_version INTEGER NOT NULL DEFAULT 1",
+        [],
+    );
+    Ok(())
+}
+
+fn store_snapshot(conn: &Connection, snapshot: &SystemSnapshot) -> Result<usize, String> {
+    let envelope = PersistedSnapshotEnvelope {
+        version: SNAPSHOT_FORMAT_VERSION as u16,
+        snapshot: snapshot.clone(),
+    };
+    let blob = bincode::serialize(&envelope).map_err(|e| format!("serialize snapshot: {e}"))?;
+    conn.execute(
+        "INSERT INTO snapshots (captured_at_millis, sequence, format_version, bincode_blob) VALUES (?1, ?2, ?3, ?4)",
+        params![
+            snapshot.captured_at_millis as i64,
+            snapshot.sequence as i64,
+            SNAPSHOT_FORMAT_VERSION,
+            blob
+        ],
+    )
+    .map_err(|e| format!("insert: {e}"))
 }
 
 #[cfg(test)]

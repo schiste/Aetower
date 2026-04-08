@@ -5,42 +5,117 @@ pub struct GpuSample {
     pub gpu_memory_bytes: u64,
 }
 
-/// Sample GPU, Neural Engine, and Media Engine utilization.
-///
-/// Uses the IOReport private framework on macOS Apple Silicon.
-/// Returns `None` if IOReport is unavailable or the machine is Intel.
+/// Sample GPU, Neural Engine, and memory counters directly from IORegistry on macOS.
 pub fn sample_gpu() -> Option<GpuSample> {
     platform::sample_gpu()
 }
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use std::process::Command;
+    use std::{
+        ffi::{CString, c_void},
+        ptr,
+    };
+
+    use core_foundation_sys::{
+        base::{CFRelease, CFTypeRef, kCFAllocatorDefault},
+        dictionary::{CFDictionaryGetValueIfPresent, CFDictionaryRef, CFMutableDictionaryRef},
+        number::{CFNumberGetValue, CFNumberRef, kCFNumberSInt64Type},
+        string::{
+            CFStringCreateWithCString, CFStringGetCString, CFStringRef, kCFStringEncodingUTF8,
+        },
+    };
 
     use super::GpuSample;
 
-    pub fn sample_gpu() -> Option<GpuSample> {
-        let output = Command::new("ioreg")
-            .args(["-l", "-r", "-c", "IOAccelerator"])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        parse_ioreg_output(&String::from_utf8_lossy(&output.stdout))
+    type KernReturn = i32;
+    type IoObject = u32;
+    type IoIterator = IoObject;
+    type IoRegistryEntry = IoObject;
+    type MachPort = u32;
+
+    const KERN_SUCCESS: KernReturn = 0;
+
+    #[link(name = "IOKit", kind = "framework")]
+    unsafe extern "C" {
+        fn IOServiceMatching(name: *const i8) -> CFMutableDictionaryRef;
+        fn IOServiceGetMatchingServices(
+            master_port: MachPort,
+            matching: CFMutableDictionaryRef,
+            existing: *mut IoIterator,
+        ) -> KernReturn;
+        fn IOIteratorNext(iterator: IoIterator) -> IoObject;
+        fn IOObjectRelease(object: IoObject) -> KernReturn;
+        fn IORegistryEntryCreateCFProperties(
+            entry: IoRegistryEntry,
+            properties: *mut CFMutableDictionaryRef,
+            allocator: *const c_void,
+            options: u32,
+        ) -> KernReturn;
     }
 
-    fn parse_ioreg_output(output: &str) -> Option<GpuSample> {
-        let stats_start = output.find("\"PerformanceStatistics\" = {")?;
-        let stats = &output[stats_start..];
-        let gpu_percent = extract_numeric_field(stats, "Device Utilization %")
-            .or_else(|| extract_numeric_field(stats, "Renderer Utilization %"))
+    pub fn sample_gpu() -> Option<GpuSample> {
+        let class_name = CString::new("IOAccelerator").ok()?;
+        let matching = unsafe { IOServiceMatching(class_name.as_ptr()) };
+        if matching.is_null() {
+            return None;
+        }
+
+        let mut iterator: IoIterator = 0;
+        let result = unsafe { IOServiceGetMatchingServices(0, matching, &mut iterator) };
+        if result != KERN_SUCCESS || iterator == 0 {
+            return None;
+        }
+
+        let mut merged = GpuSample::default();
+        let mut found = false;
+
+        loop {
+            let entry = unsafe { IOIteratorNext(iterator) };
+            if entry == 0 {
+                break;
+            }
+            if let Some(sample) = read_entry_sample(entry) {
+                merged.gpu_percent = merged.gpu_percent.max(sample.gpu_percent);
+                merged.ane_percent = merged.ane_percent.max(sample.ane_percent);
+                merged.gpu_memory_bytes = merged.gpu_memory_bytes.max(sample.gpu_memory_bytes);
+                found = true;
+            }
+            let _ = unsafe { IOObjectRelease(entry) };
+        }
+        let _ = unsafe { IOObjectRelease(iterator) };
+
+        found.then_some(merged)
+    }
+
+    fn read_entry_sample(entry: IoRegistryEntry) -> Option<GpuSample> {
+        let mut properties: CFMutableDictionaryRef = ptr::null_mut();
+        let result = unsafe {
+            IORegistryEntryCreateCFProperties(entry, &mut properties, kCFAllocatorDefault, 0)
+        };
+        if result != KERN_SUCCESS || properties.is_null() {
+            return None;
+        }
+
+        let sample = read_sample_from_properties(properties);
+        unsafe { CFRelease(properties as CFTypeRef) };
+        sample
+    }
+
+    fn read_sample_from_properties(properties: CFDictionaryRef) -> Option<GpuSample> {
+        let performance_stats = dictionary_value(properties, "PerformanceStatistics")
+            .map(|value| value as CFDictionaryRef)
+            .or(Some(properties))?;
+
+        let gpu_percent = number_value(performance_stats, "Device Utilization %")
+            .or_else(|| number_value(performance_stats, "Renderer Utilization %"))
             .unwrap_or(0) as f32;
-        let gpu_memory_bytes = extract_numeric_field(stats, "In use system memory")
-            .or_else(|| extract_numeric_field(stats, "Alloc system memory"))
+        let gpu_memory_bytes = number_value(performance_stats, "In use system memory")
+            .or_else(|| number_value(performance_stats, "Alloc system memory"))
             .unwrap_or(0);
-        let ane_percent = extract_numeric_field(output, "ane-device-utilization")
-            .or_else(|| extract_numeric_field(output, "ANE Utilization %"))
+        let ane_percent = number_value(properties, "ane-device-utilization")
+            .or_else(|| number_value(properties, "ANE Utilization %"))
+            .or_else(|| number_value(performance_stats, "ane-device-utilization"))
             .unwrap_or(0) as f32;
 
         Some(GpuSample {
@@ -50,36 +125,69 @@ mod platform {
         })
     }
 
-    fn extract_numeric_field(haystack: &str, key: &str) -> Option<u64> {
-        let needle = format!("\"{key}\"=");
-        let index = haystack.find(&needle)?;
-        let mut digits = String::new();
-        for ch in haystack[index + needle.len()..].chars() {
-            if ch.is_ascii_digit() {
-                digits.push(ch);
-                continue;
-            }
-            if !digits.is_empty() {
-                break;
-            }
-        }
-        digits.parse().ok()
+    fn dictionary_value(dict: CFDictionaryRef, key: &str) -> Option<*const c_void> {
+        let cf_key = cf_string(key)?;
+        let mut value: *const c_void = ptr::null();
+        let found = unsafe {
+            CFDictionaryGetValueIfPresent(
+                dict,
+                cf_key as *const c_void,
+                &mut value as *mut *const c_void,
+            )
+        };
+        unsafe { CFRelease(cf_key as CFTypeRef) };
+        (found != 0 && !value.is_null()).then_some(value)
     }
 
-    #[cfg(test)]
-    mod tests {
-        use super::parse_ioreg_output;
+    fn number_value(dict: CFDictionaryRef, key: &str) -> Option<u64> {
+        let value = dictionary_value(dict, key)?;
+        number_from_cf(value as CFNumberRef)
+            .or_else(|| string_from_cf(value as CFStringRef).and_then(|text| text.parse().ok()))
+    }
 
-        #[test]
-        fn parses_ioreg_performance_statistics() {
-            let sample = r#"
-            |   "PerformanceStatistics" = {"In use system memory"=681213952,"Renderer Utilization %"=14,"Device Utilization %"=18}
-            "#;
-            let parsed = parse_ioreg_output(sample).expect("gpu sample");
-            assert_eq!(parsed.gpu_percent, 18.0);
-            assert_eq!(parsed.gpu_memory_bytes, 681_213_952);
-            assert_eq!(parsed.ane_percent, 0.0);
+    fn number_from_cf(number: CFNumberRef) -> Option<u64> {
+        let mut value = 0i64;
+        let ok = unsafe {
+            CFNumberGetValue(
+                number,
+                kCFNumberSInt64Type,
+                &mut value as *mut i64 as *mut c_void,
+            )
+        };
+        (ok && value >= 0).then_some(value as u64)
+    }
+
+    fn cf_string(value: &str) -> Option<CFStringRef> {
+        let c_string = CString::new(value).ok()?;
+        let string = unsafe {
+            CFStringCreateWithCString(
+                kCFAllocatorDefault,
+                c_string.as_ptr(),
+                kCFStringEncodingUTF8,
+            )
+        };
+        (!string.is_null()).then_some(string)
+    }
+
+    fn string_from_cf(value: CFStringRef) -> Option<String> {
+        let mut buffer = vec![0i8; 256];
+        let ok = unsafe {
+            CFStringGetCString(
+                value,
+                buffer.as_mut_ptr(),
+                buffer.len() as isize,
+                kCFStringEncodingUTF8,
+            )
+        };
+        if ok == 0 {
+            return None;
         }
+        let bytes = buffer
+            .into_iter()
+            .take_while(|byte| *byte != 0)
+            .map(|byte| byte as u8)
+            .collect::<Vec<_>>();
+        String::from_utf8(bytes).ok()
     }
 }
 
