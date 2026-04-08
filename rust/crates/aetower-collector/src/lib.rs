@@ -74,6 +74,9 @@ struct ProcessIdentitySample {
     user: Option<String>,
 }
 
+const USER_DIRECTORY_INITIAL_REFRESH_TICKS: u8 = 10;
+const USER_DIRECTORY_REFRESH_INTERVAL_TICKS: u8 = 120;
+
 pub struct Collector {
     system: System,
     networks: Networks,
@@ -83,6 +86,7 @@ pub struct Collector {
     host_environment_refresh_tick: u8,
     cached_host_environment: HostEnvironment,
     users: Users,
+    user_directory_refresh_tick: u8,
     previous_process_counters: HashMap<u32, ProcessCounterSample>,
     process_identity_cache: HashMap<u32, ProcessIdentitySample>,
     known_pids: Vec<sysinfo::Pid>,
@@ -104,7 +108,8 @@ impl Collector {
             process_metadata_tick: 0,
             host_environment_refresh_tick: 0,
             cached_host_environment: HostEnvironment::default(),
-            users: Users::new_with_refreshed_list(),
+            users: Users::new(),
+            user_directory_refresh_tick: 0,
             previous_process_counters: HashMap::new(),
             process_identity_cache: HashMap::new(),
             known_pids: Vec::new(),
@@ -134,6 +139,7 @@ impl Collector {
             );
         }
         self.process_metadata_tick = self.process_metadata_tick.wrapping_add(1);
+        self.user_directory_refresh_tick = self.user_directory_refresh_tick.wrapping_add(1);
         if self.host_environment_refresh_tick == 0 {
             self.cached_host_environment = read_environment();
         }
@@ -150,6 +156,10 @@ impl Collector {
         let metadata_refresh = self.process_metadata_tick == 1 || full_scan;
         let sample_wakeups = self.wakeups_sample_tick.is_multiple_of(3);
         self.wakeups_sample_tick = self.wakeups_sample_tick.wrapping_add(1);
+        let refresh_user_directory = self.should_refresh_user_directory(full_scan);
+        if refresh_user_directory {
+            self.users.refresh();
+        }
 
         let mut next_process_counters = HashMap::with_capacity(self.system.processes().len());
         let processes: Vec<_> = self
@@ -218,10 +228,9 @@ impl Collector {
                                 .iter()
                                 .map(|segment| segment.to_string_lossy().into_owned())
                                 .collect(),
-                            user: process
-                                .user_id()
-                                .and_then(|uid| self.users.get_user_by_id(uid))
-                                .map(|u| u.name().to_owned()),
+                            user: process.user_id().and_then(|uid| {
+                                self.users.get_user_by_id(uid).map(|u| u.name().to_owned())
+                            }),
                         };
                         self.process_identity_cache.insert(pid, identity.clone());
                         identity
@@ -318,6 +327,21 @@ impl Collector {
 impl Default for Collector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Collector {
+    fn should_refresh_user_directory(&self, full_scan: bool) -> bool {
+        if !full_scan {
+            return false;
+        }
+
+        if self.users.list().is_empty() {
+            return self.user_directory_refresh_tick >= USER_DIRECTORY_INITIAL_REFRESH_TICKS;
+        }
+
+        self.user_directory_refresh_tick
+            .is_multiple_of(USER_DIRECTORY_REFRESH_INTERVAL_TICKS)
     }
 }
 
