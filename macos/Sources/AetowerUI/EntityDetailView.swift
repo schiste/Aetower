@@ -40,7 +40,7 @@ private struct DetailStatusBadge: View {
     }
 }
 
-private let detailMetricColumns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
+private let detailMetricColumns = [GridItem(.adaptive(minimum: 140), spacing: 8)]
 
 private struct ComponentMetadataLine: View {
     let title: String
@@ -303,7 +303,7 @@ public struct EntityDetailView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 14) {
                 if entity.anomalyDetected {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -311,8 +311,8 @@ public struct EntityDetailView: View {
                         Text("Anomaly detected — friction is unusually high for this entity right now.")
                             .font(.callout)
                     }
-                    .padding(12)
-                    .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(8)
+                    .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                     .transition(.push(from: .top))
                 }
                 if let thermal = entity.thermalContribution {
@@ -322,8 +322,8 @@ public struct EntityDetailView: View {
                         Text(thermal)
                             .font(.callout)
                     }
-                    .padding(12)
-                    .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(8)
+                    .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                     .transition(.push(from: .top))
                 }
                 if let grouping = entity.groupingSuggestion {
@@ -333,8 +333,8 @@ public struct EntityDetailView: View {
                         Text(grouping)
                             .font(.callout)
                     }
-                    .padding(12)
-                    .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(8)
+                    .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                     .transition(.push(from: .top))
                 }
                 if let recentChangeSummary = entity.recentChangeSummary {
@@ -344,8 +344,8 @@ public struct EntityDetailView: View {
                         Text(recentChangeSummary)
                             .font(.callout)
                     }
-                    .padding(12)
-                    .background(Color.teal.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(8)
+                    .background(Color.teal.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                     .transition(.push(from: .top))
                 }
                 hero
@@ -366,15 +366,15 @@ public struct EntityDetailView: View {
                 whatAetowerSees
                 components
             }
-            .padding(24)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(entity.displayName)
     }
 
     private var hero: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            LazyVGrid(columns: detailMetricColumns, alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: detailMetricColumns, alignment: .leading, spacing: 8) {
                 TrendMetricCard(
                     title: "Friction",
                     value: String(format: "%.1f", entity.friction.totalScore),
