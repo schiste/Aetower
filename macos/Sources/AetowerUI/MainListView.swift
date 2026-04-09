@@ -1064,14 +1064,16 @@ public struct MainListView: View {
         VStack(alignment: .leading, spacing: 2) {
             // Compact sort + search bar
             HStack(spacing: 6) {
-                Picker("Layout", selection: $listMode) {
+                Picker(selection: $listMode) {
                     ForEach(ListMode.allCases) { mode in
-                        Label(mode.title, systemImage: mode.icon)
+                        Image(systemName: mode.icon)
                             .tag(mode)
                     }
+                } label: {
+                    EmptyView()
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 150)
+                .frame(width: 80)
                 .onChange(of: listMode) { _, _ in
                     focusedIndex = 0
                     if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
@@ -1102,22 +1104,27 @@ public struct MainListView: View {
                     }
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.08), in: Capsule())
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
 
-                TextField("Search...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .aetowerUtilityTextInput()
-                    .focused($searchFieldFocused)
-                    .onSubmit { searchFieldFocused = false }
-                    .font(.caption)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
-                    .frame(maxWidth: 160)
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                    TextField("Search...", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .aetowerUtilityTextInput()
+                        .focused($searchFieldFocused)
+                        .onSubmit { searchFieldFocused = false }
+                        .font(.caption)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                .frame(maxWidth: 160)
 
                 if isGroupedMode && isGrouping {
                     HStack(spacing: 5) {
