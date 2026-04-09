@@ -170,8 +170,8 @@ impl Collector {
         let sample_wakeups =
             self.config.full_collection || self.wakeups_sample_tick.is_multiple_of(3);
         self.wakeups_sample_tick = self.wakeups_sample_tick.wrapping_add(1);
-        let refresh_user_directory = self.should_refresh_user_directory(full_scan);
-        if refresh_user_directory {
+        let mut user_directory_refreshed = self.should_refresh_user_directory(full_scan);
+        if user_directory_refreshed {
             self.users.refresh();
         }
 
@@ -243,7 +243,18 @@ impl Collector {
                                 .map(|segment| segment.to_string_lossy().into_owned())
                                 .collect(),
                             user: process.user_id().and_then(|uid| {
-                                self.users.get_user_by_id(uid).map(|u| u.name().to_owned())
+                                if let Some(user) = self.users.get_user_by_id(uid) {
+                                    return Some(user.name().to_owned());
+                                }
+                                if !user_directory_refreshed {
+                                    self.users.refresh();
+                                    user_directory_refreshed = true;
+                                    return self
+                                        .users
+                                        .get_user_by_id(uid)
+                                        .map(|u| u.name().to_owned());
+                                }
+                                None
                             }),
                         };
                         self.process_identity_cache.insert(pid, identity.clone());

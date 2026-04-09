@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, ErrorKind, Write},
     os::unix::net::UnixStream,
     time::Duration,
 };
@@ -8,7 +8,8 @@ use std::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-const SOCKET_TIMEOUT: Duration = Duration::from_millis(500);
+const SOCKET_TIMEOUT: Duration = Duration::from_millis(1_500);
+const MAX_RPC_LINES: usize = 24;
 
 /// A tab from Chau7's `tab_list` MCP tool response.
 #[allow(dead_code)]
@@ -485,12 +486,19 @@ fn rpc_call(
     // Read lines until we get a response with a matching id.
     // MCP servers may send notifications (no "id" field) at any time;
     // we skip those to avoid mistaking them for the response.
-    let max_lines = 16;
-    for _ in 0..max_lines {
+    for _ in 0..MAX_RPC_LINES {
         let mut response_line = String::new();
-        reader
-            .read_line(&mut response_line)
-            .map_err(|e| format!("read {method}: {e}"))?;
+        match reader.read_line(&mut response_line) {
+            Ok(_) => {}
+            Err(error) if is_transient_read_error(&error) => {
+                continue;
+            }
+            Err(error) => return Err(format!("read {method}: {error}")),
+        }
+
+        if response_line.trim().is_empty() {
+            continue;
+        }
 
         let response: Value =
             serde_json::from_str(&response_line).map_err(|e| format!("parse response: {e}"))?;
@@ -514,8 +522,15 @@ fn rpc_call(
     }
 
     Err(format!(
-        "no response for {method} after {max_lines} lines (all were notifications)"
+        "no response for {method} after {MAX_RPC_LINES} lines (all were notifications or transient timeouts)"
     ))
+}
+
+fn is_transient_read_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+    ) || error.raw_os_error() == Some(35)
 }
 
 /// Send a JSON-RPC notification (no id, no response expected).
