@@ -2316,6 +2316,100 @@ public func FfiConverterTypeEntitySnapshot_lower(_ value: EntitySnapshot) -> Rus
 }
 
 
+public struct FanReading {
+    public var id: UInt8
+    public var name: String
+    public var currentRpm: Float
+    public var minRpm: Float
+    public var maxRpm: Float
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: UInt8, name: String, currentRpm: Float, minRpm: Float, maxRpm: Float) {
+        self.id = id
+        self.name = name
+        self.currentRpm = currentRpm
+        self.minRpm = minRpm
+        self.maxRpm = maxRpm
+    }
+}
+
+#if compiler(>=6)
+extension FanReading: Sendable {}
+#endif
+
+
+extension FanReading: Equatable, Hashable {
+    public static func ==(lhs: FanReading, rhs: FanReading) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.currentRpm != rhs.currentRpm {
+            return false
+        }
+        if lhs.minRpm != rhs.minRpm {
+            return false
+        }
+        if lhs.maxRpm != rhs.maxRpm {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(name)
+        hasher.combine(currentRpm)
+        hasher.combine(minRpm)
+        hasher.combine(maxRpm)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFanReading: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FanReading {
+        return
+            try FanReading(
+                id: FfiConverterUInt8.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                currentRpm: FfiConverterFloat.read(from: &buf), 
+                minRpm: FfiConverterFloat.read(from: &buf), 
+                maxRpm: FfiConverterFloat.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FanReading, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterFloat.write(value.currentRpm, into: &buf)
+        FfiConverterFloat.write(value.minRpm, into: &buf)
+        FfiConverterFloat.write(value.maxRpm, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFanReading_lift(_ buf: RustBuffer) throws -> FanReading {
+    return try FfiConverterTypeFanReading.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFanReading_lower(_ value: FanReading) -> RustBuffer {
+    return FfiConverterTypeFanReading.lower(value)
+}
+
+
 public struct FrictionBreakdown {
     public var totalScore: Float
     public var cpuScore: Float
@@ -2880,10 +2974,14 @@ public struct HostSnapshot {
     public var gpuPercent: Float
     public var anePercent: Float
     public var gpuMemoryBytes: UInt64
+    public var gpuTemperatureCelsius: Float?
+    public var fans: [FanReading]
+    public var cpuTemperatures: [TemperatureReading]
+    public var powerReadings: [PowerReading]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading]) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
@@ -2905,6 +3003,10 @@ public struct HostSnapshot {
         self.gpuPercent = gpuPercent
         self.anePercent = anePercent
         self.gpuMemoryBytes = gpuMemoryBytes
+        self.gpuTemperatureCelsius = gpuTemperatureCelsius
+        self.fans = fans
+        self.cpuTemperatures = cpuTemperatures
+        self.powerReadings = powerReadings
     }
 }
 
@@ -2978,6 +3080,18 @@ extension HostSnapshot: Equatable, Hashable {
         if lhs.gpuMemoryBytes != rhs.gpuMemoryBytes {
             return false
         }
+        if lhs.gpuTemperatureCelsius != rhs.gpuTemperatureCelsius {
+            return false
+        }
+        if lhs.fans != rhs.fans {
+            return false
+        }
+        if lhs.cpuTemperatures != rhs.cpuTemperatures {
+            return false
+        }
+        if lhs.powerReadings != rhs.powerReadings {
+            return false
+        }
         return true
     }
 
@@ -3003,6 +3117,10 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(gpuPercent)
         hasher.combine(anePercent)
         hasher.combine(gpuMemoryBytes)
+        hasher.combine(gpuTemperatureCelsius)
+        hasher.combine(fans)
+        hasher.combine(cpuTemperatures)
+        hasher.combine(powerReadings)
     }
 }
 
@@ -3035,7 +3153,11 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 aiAgentCount: FfiConverterUInt32.read(from: &buf), 
                 gpuPercent: FfiConverterFloat.read(from: &buf), 
                 anePercent: FfiConverterFloat.read(from: &buf), 
-                gpuMemoryBytes: FfiConverterUInt64.read(from: &buf)
+                gpuMemoryBytes: FfiConverterUInt64.read(from: &buf), 
+                gpuTemperatureCelsius: FfiConverterOptionFloat.read(from: &buf), 
+                fans: FfiConverterSequenceTypeFanReading.read(from: &buf), 
+                cpuTemperatures: FfiConverterSequenceTypeTemperatureReading.read(from: &buf), 
+                powerReadings: FfiConverterSequenceTypePowerReading.read(from: &buf)
         )
     }
 
@@ -3061,6 +3183,10 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterFloat.write(value.gpuPercent, into: &buf)
         FfiConverterFloat.write(value.anePercent, into: &buf)
         FfiConverterUInt64.write(value.gpuMemoryBytes, into: &buf)
+        FfiConverterOptionFloat.write(value.gpuTemperatureCelsius, into: &buf)
+        FfiConverterSequenceTypeFanReading.write(value.fans, into: &buf)
+        FfiConverterSequenceTypeTemperatureReading.write(value.cpuTemperatures, into: &buf)
+        FfiConverterSequenceTypePowerReading.write(value.powerReadings, into: &buf)
     }
 }
 
@@ -3297,6 +3423,84 @@ public func FfiConverterTypeMetricTrend_lift(_ buf: RustBuffer) throws -> Metric
 #endif
 public func FfiConverterTypeMetricTrend_lower(_ value: MetricTrend) -> RustBuffer {
     return FfiConverterTypeMetricTrend.lower(value)
+}
+
+
+public struct PowerReading {
+    public var label: String
+    public var value: Float
+    public var unit: PowerUnit
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(label: String, value: Float, unit: PowerUnit) {
+        self.label = label
+        self.value = value
+        self.unit = unit
+    }
+}
+
+#if compiler(>=6)
+extension PowerReading: Sendable {}
+#endif
+
+
+extension PowerReading: Equatable, Hashable {
+    public static func ==(lhs: PowerReading, rhs: PowerReading) -> Bool {
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        if lhs.unit != rhs.unit {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(label)
+        hasher.combine(value)
+        hasher.combine(unit)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePowerReading: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PowerReading {
+        return
+            try PowerReading(
+                label: FfiConverterString.read(from: &buf), 
+                value: FfiConverterFloat.read(from: &buf), 
+                unit: FfiConverterTypePowerUnit.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PowerReading, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterFloat.write(value.value, into: &buf)
+        FfiConverterTypePowerUnit.write(value.unit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePowerReading_lift(_ buf: RustBuffer) throws -> PowerReading {
+    return try FfiConverterTypePowerReading.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePowerReading_lower(_ value: PowerReading) -> RustBuffer {
+    return FfiConverterTypePowerReading.lower(value)
 }
 
 
@@ -3997,6 +4201,76 @@ public func FfiConverterTypeSystemSnapshot_lift(_ buf: RustBuffer) throws -> Sys
 #endif
 public func FfiConverterTypeSystemSnapshot_lower(_ value: SystemSnapshot) -> RustBuffer {
     return FfiConverterTypeSystemSnapshot.lower(value)
+}
+
+
+public struct TemperatureReading {
+    public var label: String
+    public var celsius: Float
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(label: String, celsius: Float) {
+        self.label = label
+        self.celsius = celsius
+    }
+}
+
+#if compiler(>=6)
+extension TemperatureReading: Sendable {}
+#endif
+
+
+extension TemperatureReading: Equatable, Hashable {
+    public static func ==(lhs: TemperatureReading, rhs: TemperatureReading) -> Bool {
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.celsius != rhs.celsius {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(label)
+        hasher.combine(celsius)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTemperatureReading: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TemperatureReading {
+        return
+            try TemperatureReading(
+                label: FfiConverterString.read(from: &buf), 
+                celsius: FfiConverterFloat.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TemperatureReading, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterFloat.write(value.celsius, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTemperatureReading_lift(_ buf: RustBuffer) throws -> TemperatureReading {
+    return try FfiConverterTypeTemperatureReading.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTemperatureReading_lower(_ value: TemperatureReading) -> RustBuffer {
+    return FfiConverterTypeTemperatureReading.lower(value)
 }
 
 
@@ -5172,6 +5446,83 @@ extension EntityKind: Equatable, Hashable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum PowerUnit {
+    
+    case watts
+    case volts
+    case amps
+}
+
+
+#if compiler(>=6)
+extension PowerUnit: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePowerUnit: FfiConverterRustBuffer {
+    typealias SwiftType = PowerUnit
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PowerUnit {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .watts
+        
+        case 2: return .volts
+        
+        case 3: return .amps
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PowerUnit, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .watts:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .volts:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .amps:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePowerUnit_lift(_ buf: RustBuffer) throws -> PowerUnit {
+    return try FfiConverterTypePowerUnit.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePowerUnit_lower(_ value: PowerUnit) -> RustBuffer {
+    return FfiConverterTypePowerUnit.lower(value)
+}
+
+
+extension PowerUnit: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum ProvenanceKind {
     
     case userLaunch
@@ -5699,6 +6050,30 @@ fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionFloat: FfiConverterRustBuffer {
+    typealias SwiftType = Float?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterFloat.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterFloat.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     typealias SwiftType = String?
 
@@ -6115,6 +6490,31 @@ fileprivate struct FfiConverterSequenceTypeEntitySnapshot: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFanReading: FfiConverterRustBuffer {
+    typealias SwiftType = [FanReading]
+
+    public static func write(_ value: [FanReading], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFanReading.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FanReading] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FanReading]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFanReading.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFrictionContributor: FfiConverterRustBuffer {
     typealias SwiftType = [FrictionContributor]
 
@@ -6132,6 +6532,31 @@ fileprivate struct FfiConverterSequenceTypeFrictionContributor: FfiConverterRust
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFrictionContributor.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePowerReading: FfiConverterRustBuffer {
+    typealias SwiftType = [PowerReading]
+
+    public static func write(_ value: [PowerReading], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePowerReading.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PowerReading] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PowerReading]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePowerReading.read(from: &buf))
         }
         return seq
     }
@@ -6207,6 +6632,31 @@ fileprivate struct FfiConverterSequenceTypeSystemSnapshot: FfiConverterRustBuffe
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeSystemSnapshot.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTemperatureReading: FfiConverterRustBuffer {
+    typealias SwiftType = [TemperatureReading]
+
+    public static func write(_ value: [TemperatureReading], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTemperatureReading.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TemperatureReading] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TemperatureReading]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTemperatureReading.read(from: &buf))
         }
         return seq
     }

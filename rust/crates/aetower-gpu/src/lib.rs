@@ -3,6 +3,7 @@ pub struct GpuSample {
     pub gpu_percent: f32,
     pub ane_percent: f32,
     pub gpu_memory_bytes: u64,
+    pub gpu_temperature_celsius: Option<f32>,
 }
 
 /// Sample GPU, Neural Engine, and memory counters directly from IORegistry on macOS.
@@ -118,10 +119,21 @@ mod platform {
             .or_else(|| number_value(performance_stats, "ane-device-utilization"))
             .unwrap_or(0) as f32;
 
+        // GPU temperature from PerformanceStatistics
+        let gpu_temperature_celsius = number_value(performance_stats, "GPU Die Temperature")
+            .or_else(|| number_value(performance_stats, "gpu-die-temperature"))
+            .or_else(|| number_value(performance_stats, "Temperature(C)"))
+            .map(|v| {
+                let temp = v as f32;
+                if temp > 200.0 { temp / 10.0 } else { temp } // some GPUs report in tenths
+            })
+            .filter(|&t| t > 0.0 && t < 150.0); // sanity check
+
         Some(GpuSample {
             gpu_percent,
             ane_percent,
             gpu_memory_bytes,
+            gpu_temperature_celsius,
         })
     }
 

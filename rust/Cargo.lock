@@ -44,6 +44,7 @@ dependencies = [
  "aetower-identity",
  "aetower-model",
  "aetower-persistence",
+ "aetower-sensors",
  "aetower-telemetry",
  "aetower-time",
  "anyhow",
@@ -143,6 +144,13 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "aetower-sensors"
+version = "0.1.0"
+dependencies = [
+ "aetower-model",
 ]
 
 [[package]]

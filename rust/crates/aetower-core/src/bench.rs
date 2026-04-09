@@ -96,6 +96,10 @@ pub fn run_benchmark(config: BenchmarkConfig) -> BenchmarkReport {
             gpu_percent: 0.0,
             ane_percent: 0.0,
             gpu_memory_bytes: 0,
+            gpu_temperature_celsius: None,
+            fans: Vec::new(),
+            cpu_temperatures: Vec::new(),
+            power_readings: Vec::new(),
         };
         let identity = identity::resolve(&raw.processes);
         let mut entities = attribution::build_entities(&raw.processes, &identity, None);
@@ -131,6 +135,10 @@ pub fn run_benchmark(config: BenchmarkConfig) -> BenchmarkReport {
             gpu_percent: 0.0,
             ane_percent: 0.0,
             gpu_memory_bytes: 0,
+            gpu_temperature_celsius: None,
+            fans: Vec::new(),
+            cpu_temperatures: Vec::new(),
+            power_readings: Vec::new(),
         };
         let identity_started_at = Instant::now();
         let identity = identity::resolve(&raw.processes);

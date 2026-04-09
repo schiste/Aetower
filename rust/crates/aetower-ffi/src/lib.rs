@@ -193,6 +193,39 @@ pub struct HostSnapshot {
     pub gpu_percent: f32,
     pub ane_percent: f32,
     pub gpu_memory_bytes: u64,
+    pub gpu_temperature_celsius: Option<f32>,
+    pub fans: Vec<FanReading>,
+    pub cpu_temperatures: Vec<TemperatureReading>,
+    pub power_readings: Vec<PowerReading>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct FanReading {
+    pub id: u8,
+    pub name: String,
+    pub current_rpm: f32,
+    pub min_rpm: f32,
+    pub max_rpm: f32,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct TemperatureReading {
+    pub label: String,
+    pub celsius: f32,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum PowerUnit {
+    Watts,
+    Volts,
+    Amps,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct PowerReading {
+    pub label: String,
+    pub value: f32,
+    pub unit: PowerUnit,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -1167,6 +1200,51 @@ impl From<model::HostSnapshot> for HostSnapshot {
             gpu_percent: value.gpu_percent,
             ane_percent: value.ane_percent,
             gpu_memory_bytes: value.gpu_memory_bytes,
+            gpu_temperature_celsius: value.gpu_temperature_celsius,
+            fans: value.fans.into_iter().map(Into::into).collect(),
+            cpu_temperatures: value.cpu_temperatures.into_iter().map(Into::into).collect(),
+            power_readings: value.power_readings.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<model::FanReading> for FanReading {
+    fn from(value: model::FanReading) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            current_rpm: value.current_rpm,
+            min_rpm: value.min_rpm,
+            max_rpm: value.max_rpm,
+        }
+    }
+}
+
+impl From<model::TemperatureReading> for TemperatureReading {
+    fn from(value: model::TemperatureReading) -> Self {
+        Self {
+            label: value.label,
+            celsius: value.celsius,
+        }
+    }
+}
+
+impl From<model::PowerUnit> for PowerUnit {
+    fn from(value: model::PowerUnit) -> Self {
+        match value {
+            model::PowerUnit::Watts => Self::Watts,
+            model::PowerUnit::Volts => Self::Volts,
+            model::PowerUnit::Amps => Self::Amps,
+        }
+    }
+}
+
+impl From<model::PowerReading> for PowerReading {
+    fn from(value: model::PowerReading) -> Self {
+        Self {
+            label: value.label,
+            value: value.value,
+            unit: value.unit.into(),
         }
     }
 }

@@ -287,6 +287,10 @@ impl Engine {
                     gpu_percent: gpu_sample.gpu_percent,
                     ane_percent: gpu_sample.ane_percent,
                     gpu_memory_bytes: gpu_sample.gpu_memory_bytes,
+                    gpu_temperature_celsius: None,
+                    fans: Vec::new(),
+                    cpu_temperatures: Vec::new(),
+                    power_readings: Vec::new(),
                 };
                 let gpu_interval = runtime_config.gpu_interval(&host);
                 let mut gpu_sample_millis = 0.0;
@@ -313,6 +317,14 @@ impl Engine {
                     host.gpu_percent = gpu_sample.gpu_percent;
                     host.ane_percent = gpu_sample.ane_percent;
                     host.gpu_memory_bytes = gpu_sample.gpu_memory_bytes;
+                    host.gpu_temperature_celsius = gpu_sample.gpu_temperature_celsius;
+
+                    // Sample hardware sensors (fans, temperatures, power) on same interval
+                    if let Some(sensor_sample) = aetower_sensors::sample_sensors() {
+                        host.fans = sensor_sample.fans;
+                        host.cpu_temperatures = sensor_sample.cpu_temperatures;
+                        host.power_readings = sensor_sample.power_readings;
+                    }
                 }
                 let pipeline_output =
                     run_entity_pipeline(&raw.processes, &host, frontmost_app_state.as_ref());

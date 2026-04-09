@@ -181,7 +181,11 @@ public final class AppState {
                 aiAgentCount: 0,
                 gpuPercent: 0,
                 anePercent: 0,
-                gpuMemoryBytes: 0
+                gpuMemoryBytes: 0,
+                gpuTemperatureCelsius: nil,
+                fans: [],
+                cpuTemperatures: [],
+                powerReadings: []
             ),
             hostTrend: HostTrend(
                 machineFriction: [],

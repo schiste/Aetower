@@ -10,6 +10,7 @@ aetower-collector = { path = "../aetower-collector" }
 aetower-diagnostics = { path = "../aetower-diagnostics" }
 aetower-friction = { path = "../aetower-friction" }
 aetower-gpu = { path = "../aetower-gpu" }
+aetower-sensors = { path = "../aetower-sensors" }
 aetower-history = { path = "../aetower-history" }
 aetower-identity = { path = "../aetower-identity" }
 aetower-model = { path = "../aetower-model" }

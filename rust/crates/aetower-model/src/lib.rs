@@ -219,6 +219,14 @@ pub struct HostSnapshot {
     pub ane_percent: f32,
     #[serde(default)]
     pub gpu_memory_bytes: u64,
+    #[serde(default)]
+    pub gpu_temperature_celsius: Option<f32>,
+    #[serde(default)]
+    pub fans: Vec<FanReading>,
+    #[serde(default)]
+    pub cpu_temperatures: Vec<TemperatureReading>,
+    #[serde(default)]
+    pub power_readings: Vec<PowerReading>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -462,6 +470,37 @@ pub struct SystemSnapshot {
     pub capabilities: Vec<CapabilitySnapshot>,
     pub entities: Vec<EntitySnapshot>,
     pub timeline: Vec<TimelineEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FanReading {
+    pub id: u8,
+    pub name: String,
+    pub current_rpm: f32,
+    pub min_rpm: f32,
+    pub max_rpm: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TemperatureReading {
+    pub label: String,
+    pub celsius: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PowerUnit {
+    #[default]
+    Watts,
+    Volts,
+    Amps,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PowerReading {
+    pub label: String,
+    pub value: f32,
+    pub unit: PowerUnit,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
