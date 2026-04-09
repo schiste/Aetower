@@ -468,6 +468,28 @@ pub struct DiagnosticsQuery {
     pub include_persisted: bool,
 }
 
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct HistoryRangeSummary {
+    pub store_bytes: u64,
+    pub wal_bytes: u64,
+    pub snapshot_count: u64,
+    pub quarantine_count: u64,
+    pub range_count: u64,
+    pub oldest_millis: Option<u64>,
+    pub newest_millis: Option<u64>,
+    pub pending_writes: u64,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct HistoryMaintenanceReport {
+    pub store_bytes_before: u64,
+    pub wal_bytes_before: u64,
+    pub store_bytes_after: u64,
+    pub wal_bytes_after: u64,
+    pub checkpointed: bool,
+    pub vacuumed: bool,
+}
+
 #[derive(uniffi::Object)]
 pub struct MonitorEngine {
     inner: std::sync::Mutex<Engine>,
@@ -629,6 +651,42 @@ impl MonitorEngine {
             .into_iter()
             .map(Into::into)
             .collect()
+    }
+
+    pub fn load_history_page(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+        before_millis_exclusive: Option<u64>,
+        limit: u32,
+    ) -> Vec<SystemSnapshot> {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .load_history_page(start_millis, end_millis, before_millis_exclusive, limit)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    pub fn history_range_summary(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+    ) -> Option<HistoryRangeSummary> {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .history_range_summary(start_millis, end_millis)
+            .map(Into::into)
+    }
+
+    pub fn maintain_history_store(&self, aggressive: bool) -> Option<HistoryMaintenanceReport> {
+        self.inner
+            .lock()
+            .expect("engine lock poisoned")
+            .maintain_history_store(aggressive)
+            .map(Into::into)
     }
 
     pub fn latest_diagnostics(&self, limit: u32) -> Vec<DiagnosticsEvent> {
@@ -970,6 +1028,34 @@ impl From<diagnostics::DiagnosticsOverview> for DiagnosticsOverview {
             persisted_path: value.persisted_path,
             persisted_bytes: value.persisted_bytes,
             persistence_error: value.persistence_error,
+        }
+    }
+}
+
+impl From<aetower_persistence::HistoryRangeSummary> for HistoryRangeSummary {
+    fn from(value: aetower_persistence::HistoryRangeSummary) -> Self {
+        Self {
+            store_bytes: value.store_bytes,
+            wal_bytes: value.wal_bytes,
+            snapshot_count: value.snapshot_count,
+            quarantine_count: value.quarantine_count,
+            range_count: value.range_count,
+            oldest_millis: value.oldest_millis,
+            newest_millis: value.newest_millis,
+            pending_writes: value.pending_writes,
+        }
+    }
+}
+
+impl From<aetower_persistence::HistoryMaintenanceReport> for HistoryMaintenanceReport {
+    fn from(value: aetower_persistence::HistoryMaintenanceReport) -> Self {
+        Self {
+            store_bytes_before: value.store_bytes_before,
+            wal_bytes_before: value.wal_bytes_before,
+            store_bytes_after: value.store_bytes_after,
+            wal_bytes_after: value.wal_bytes_after,
+            checkpointed: value.checkpointed,
+            vacuumed: value.vacuumed,
         }
     }
 }

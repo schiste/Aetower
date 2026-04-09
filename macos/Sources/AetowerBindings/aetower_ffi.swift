@@ -557,6 +557,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func exportSnapshotJson()  -> String
     
+    func historyRangeSummary(startMillis: UInt64, endMillis: UInt64)  -> HistoryRangeSummary?
+    
     func latestDiagnostics(limit: UInt32)  -> [DiagnosticsEvent]
     
     func latestRuntimeLagMetrics()  -> RuntimeLagMetrics
@@ -567,7 +569,11 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func latestSnapshotIfNewer(lastSequence: UInt64)  -> SystemSnapshot?
     
+    func loadHistoryPage(startMillis: UInt64, endMillis: UInt64, beforeMillisExclusive: UInt64?, limit: UInt32)  -> [SystemSnapshot]
+    
     func loadHistoryRange(startMillis: UInt64, endMillis: UInt64)  -> [SystemSnapshot]
+    
+    func maintainHistoryStore(aggressive: Bool)  -> HistoryMaintenanceReport?
     
     func queryDiagnostics(query: DiagnosticsQuery)  -> [DiagnosticsEvent]
     
@@ -738,6 +744,15 @@ open func exportSnapshotJson() -> String  {
 })
 }
     
+open func historyRangeSummary(startMillis: UInt64, endMillis: UInt64) -> HistoryRangeSummary?  {
+    return try!  FfiConverterOptionTypeHistoryRangeSummary.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_history_range_summary(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(startMillis),
+        FfiConverterUInt64.lower(endMillis),$0
+    )
+})
+}
+    
 open func latestDiagnostics(limit: UInt32) -> [DiagnosticsEvent]  {
     return try!  FfiConverterSequenceTypeDiagnosticsEvent.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_diagnostics(self.uniffiClonePointer(),
@@ -775,11 +790,30 @@ open func latestSnapshotIfNewer(lastSequence: UInt64) -> SystemSnapshot?  {
 })
 }
     
+open func loadHistoryPage(startMillis: UInt64, endMillis: UInt64, beforeMillisExclusive: UInt64?, limit: UInt32) -> [SystemSnapshot]  {
+    return try!  FfiConverterSequenceTypeSystemSnapshot.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_load_history_page(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(startMillis),
+        FfiConverterUInt64.lower(endMillis),
+        FfiConverterOptionUInt64.lower(beforeMillisExclusive),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+    
 open func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSnapshot]  {
     return try!  FfiConverterSequenceTypeSystemSnapshot.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_load_history_range(self.uniffiClonePointer(),
         FfiConverterUInt64.lower(startMillis),
         FfiConverterUInt64.lower(endMillis),$0
+    )
+})
+}
+    
+open func maintainHistoryStore(aggressive: Bool) -> HistoryMaintenanceReport?  {
+    return try!  FfiConverterOptionTypeHistoryMaintenanceReport.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_maintain_history_store(self.uniffiClonePointer(),
+        FfiConverterBool.lower(aggressive),$0
     )
 })
 }
@@ -2601,6 +2635,226 @@ public func FfiConverterTypeFrontmostAppState_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeFrontmostAppState_lower(_ value: FrontmostAppState) -> RustBuffer {
     return FfiConverterTypeFrontmostAppState.lower(value)
+}
+
+
+public struct HistoryMaintenanceReport {
+    public var storeBytesBefore: UInt64
+    public var walBytesBefore: UInt64
+    public var storeBytesAfter: UInt64
+    public var walBytesAfter: UInt64
+    public var checkpointed: Bool
+    public var vacuumed: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(storeBytesBefore: UInt64, walBytesBefore: UInt64, storeBytesAfter: UInt64, walBytesAfter: UInt64, checkpointed: Bool, vacuumed: Bool) {
+        self.storeBytesBefore = storeBytesBefore
+        self.walBytesBefore = walBytesBefore
+        self.storeBytesAfter = storeBytesAfter
+        self.walBytesAfter = walBytesAfter
+        self.checkpointed = checkpointed
+        self.vacuumed = vacuumed
+    }
+}
+
+#if compiler(>=6)
+extension HistoryMaintenanceReport: Sendable {}
+#endif
+
+
+extension HistoryMaintenanceReport: Equatable, Hashable {
+    public static func ==(lhs: HistoryMaintenanceReport, rhs: HistoryMaintenanceReport) -> Bool {
+        if lhs.storeBytesBefore != rhs.storeBytesBefore {
+            return false
+        }
+        if lhs.walBytesBefore != rhs.walBytesBefore {
+            return false
+        }
+        if lhs.storeBytesAfter != rhs.storeBytesAfter {
+            return false
+        }
+        if lhs.walBytesAfter != rhs.walBytesAfter {
+            return false
+        }
+        if lhs.checkpointed != rhs.checkpointed {
+            return false
+        }
+        if lhs.vacuumed != rhs.vacuumed {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(storeBytesBefore)
+        hasher.combine(walBytesBefore)
+        hasher.combine(storeBytesAfter)
+        hasher.combine(walBytesAfter)
+        hasher.combine(checkpointed)
+        hasher.combine(vacuumed)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHistoryMaintenanceReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistoryMaintenanceReport {
+        return
+            try HistoryMaintenanceReport(
+                storeBytesBefore: FfiConverterUInt64.read(from: &buf), 
+                walBytesBefore: FfiConverterUInt64.read(from: &buf), 
+                storeBytesAfter: FfiConverterUInt64.read(from: &buf), 
+                walBytesAfter: FfiConverterUInt64.read(from: &buf), 
+                checkpointed: FfiConverterBool.read(from: &buf), 
+                vacuumed: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HistoryMaintenanceReport, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.storeBytesBefore, into: &buf)
+        FfiConverterUInt64.write(value.walBytesBefore, into: &buf)
+        FfiConverterUInt64.write(value.storeBytesAfter, into: &buf)
+        FfiConverterUInt64.write(value.walBytesAfter, into: &buf)
+        FfiConverterBool.write(value.checkpointed, into: &buf)
+        FfiConverterBool.write(value.vacuumed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryMaintenanceReport_lift(_ buf: RustBuffer) throws -> HistoryMaintenanceReport {
+    return try FfiConverterTypeHistoryMaintenanceReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryMaintenanceReport_lower(_ value: HistoryMaintenanceReport) -> RustBuffer {
+    return FfiConverterTypeHistoryMaintenanceReport.lower(value)
+}
+
+
+public struct HistoryRangeSummary {
+    public var storeBytes: UInt64
+    public var walBytes: UInt64
+    public var snapshotCount: UInt64
+    public var quarantineCount: UInt64
+    public var rangeCount: UInt64
+    public var oldestMillis: UInt64?
+    public var newestMillis: UInt64?
+    public var pendingWrites: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(storeBytes: UInt64, walBytes: UInt64, snapshotCount: UInt64, quarantineCount: UInt64, rangeCount: UInt64, oldestMillis: UInt64?, newestMillis: UInt64?, pendingWrites: UInt64) {
+        self.storeBytes = storeBytes
+        self.walBytes = walBytes
+        self.snapshotCount = snapshotCount
+        self.quarantineCount = quarantineCount
+        self.rangeCount = rangeCount
+        self.oldestMillis = oldestMillis
+        self.newestMillis = newestMillis
+        self.pendingWrites = pendingWrites
+    }
+}
+
+#if compiler(>=6)
+extension HistoryRangeSummary: Sendable {}
+#endif
+
+
+extension HistoryRangeSummary: Equatable, Hashable {
+    public static func ==(lhs: HistoryRangeSummary, rhs: HistoryRangeSummary) -> Bool {
+        if lhs.storeBytes != rhs.storeBytes {
+            return false
+        }
+        if lhs.walBytes != rhs.walBytes {
+            return false
+        }
+        if lhs.snapshotCount != rhs.snapshotCount {
+            return false
+        }
+        if lhs.quarantineCount != rhs.quarantineCount {
+            return false
+        }
+        if lhs.rangeCount != rhs.rangeCount {
+            return false
+        }
+        if lhs.oldestMillis != rhs.oldestMillis {
+            return false
+        }
+        if lhs.newestMillis != rhs.newestMillis {
+            return false
+        }
+        if lhs.pendingWrites != rhs.pendingWrites {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(storeBytes)
+        hasher.combine(walBytes)
+        hasher.combine(snapshotCount)
+        hasher.combine(quarantineCount)
+        hasher.combine(rangeCount)
+        hasher.combine(oldestMillis)
+        hasher.combine(newestMillis)
+        hasher.combine(pendingWrites)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHistoryRangeSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistoryRangeSummary {
+        return
+            try HistoryRangeSummary(
+                storeBytes: FfiConverterUInt64.read(from: &buf), 
+                walBytes: FfiConverterUInt64.read(from: &buf), 
+                snapshotCount: FfiConverterUInt64.read(from: &buf), 
+                quarantineCount: FfiConverterUInt64.read(from: &buf), 
+                rangeCount: FfiConverterUInt64.read(from: &buf), 
+                oldestMillis: FfiConverterOptionUInt64.read(from: &buf), 
+                newestMillis: FfiConverterOptionUInt64.read(from: &buf), 
+                pendingWrites: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HistoryRangeSummary, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.storeBytes, into: &buf)
+        FfiConverterUInt64.write(value.walBytes, into: &buf)
+        FfiConverterUInt64.write(value.snapshotCount, into: &buf)
+        FfiConverterUInt64.write(value.quarantineCount, into: &buf)
+        FfiConverterUInt64.write(value.rangeCount, into: &buf)
+        FfiConverterOptionUInt64.write(value.oldestMillis, into: &buf)
+        FfiConverterOptionUInt64.write(value.newestMillis, into: &buf)
+        FfiConverterUInt64.write(value.pendingWrites, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryRangeSummary_lift(_ buf: RustBuffer) throws -> HistoryRangeSummary {
+    return try FfiConverterTypeHistoryRangeSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryRangeSummary_lower(_ value: HistoryRangeSummary) -> RustBuffer {
+    return FfiConverterTypeHistoryRangeSummary.lower(value)
 }
 
 
@@ -5517,6 +5771,54 @@ fileprivate struct FfiConverterOptionTypeAgentCostSummary: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeHistoryMaintenanceReport: FfiConverterRustBuffer {
+    typealias SwiftType = HistoryMaintenanceReport?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeHistoryMaintenanceReport.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeHistoryMaintenanceReport.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeHistoryRangeSummary: FfiConverterRustBuffer {
+    typealias SwiftType = HistoryRangeSummary?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeHistoryRangeSummary.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeHistoryRangeSummary.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeProvenanceSnapshot: FfiConverterRustBuffer {
     typealias SwiftType = ProvenanceSnapshot?
 
@@ -5989,6 +6291,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_export_snapshot_json() != 44531) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_history_range_summary() != 33324) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_diagnostics() != 5182) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6004,7 +6309,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_snapshot_if_newer() != 34622) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_load_history_page() != 20951) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_load_history_range() != 25480) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_maintain_history_store() != 12978) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_query_diagnostics() != 28303) {

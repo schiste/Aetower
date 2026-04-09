@@ -72,6 +72,7 @@ dependencies = [
  "aetower-core",
  "aetower-diagnostics",
  "aetower-model",
+ "aetower-persistence",
  "serde_json",
  "uniffi",
 ]

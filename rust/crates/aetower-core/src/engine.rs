@@ -826,6 +826,45 @@ impl Engine {
             .unwrap_or_default()
     }
 
+    pub fn load_history_page(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+        before_millis_exclusive: Option<u64>,
+        limit: u32,
+    ) -> Vec<SystemSnapshot> {
+        self.persistence
+            .lock()
+            .as_ref()
+            .and_then(|store| {
+                store
+                    .load_range_page(start_millis, end_millis, before_millis_exclusive, limit)
+                    .ok()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn history_range_summary(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+    ) -> Option<aetower_persistence::HistoryRangeSummary> {
+        self.persistence
+            .lock()
+            .as_ref()
+            .and_then(|store| store.range_summary(start_millis, end_millis).ok())
+    }
+
+    pub fn maintain_history_store(
+        &self,
+        aggressive: bool,
+    ) -> Option<aetower_persistence::HistoryMaintenanceReport> {
+        self.persistence
+            .lock()
+            .as_ref()
+            .and_then(|store| store.maintain_storage(aggressive).ok())
+    }
+
     pub fn stop_agent_session(&self, session_id: String, force: bool) -> Result<(), String> {
         self.adapters.stop_chau7_session(&session_id, force)
     }

@@ -1,4 +1,5 @@
 use std::{
+    fs,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -32,8 +33,31 @@ struct QuarantineCandidate<'a> {
     bincode_blob: Option<&'a [u8]>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct HistoryRangeSummary {
+    pub store_bytes: u64,
+    pub wal_bytes: u64,
+    pub snapshot_count: u64,
+    pub quarantine_count: u64,
+    pub range_count: u64,
+    pub oldest_millis: Option<u64>,
+    pub newest_millis: Option<u64>,
+    pub pending_writes: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HistoryMaintenanceReport {
+    pub store_bytes_before: u64,
+    pub wal_bytes_before: u64,
+    pub store_bytes_after: u64,
+    pub wal_bytes_after: u64,
+    pub checkpointed: bool,
+    pub vacuumed: bool,
+}
+
 pub struct HistoryStore {
     conn: Connection,
+    db_path: PathBuf,
     write_counter: u32,
     write_interval: u32,
     diagnostics: Option<DiagnosticsStore>,
@@ -65,6 +89,7 @@ impl HistoryStore {
 
         Ok(Self {
             conn,
+            db_path: path.to_path_buf(),
             write_counter: 0,
             write_interval: write_interval.max(1),
             diagnostics: None,
@@ -92,14 +117,26 @@ impl HistoryStore {
         start_millis: u64,
         end_millis: u64,
     ) -> Result<Vec<SystemSnapshot>, String> {
+        self.load_range_page(start_millis, end_millis, None, 500)
+    }
+
+    pub fn load_range_page(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+        before_millis_exclusive: Option<u64>,
+        limit: u32,
+    ) -> Result<Vec<SystemSnapshot>, String> {
         self.writer.flush()?;
         let mut stmt = match self
             .conn
             .prepare(
                 "SELECT id, captured_at_millis, sequence, format_version, bincode_blob, json_blob FROM snapshots
-                 WHERE captured_at_millis >= ?1 AND captured_at_millis <= ?2
-                 ORDER BY captured_at_millis ASC
-                 LIMIT 500",
+                 WHERE captured_at_millis >= ?1
+                   AND captured_at_millis <= ?2
+                   AND (?3 IS NULL OR captured_at_millis < ?3)
+                 ORDER BY captured_at_millis DESC
+                 LIMIT ?4",
             )
             .map_err(|e| format!("prepare: {e}"))
         {
@@ -111,22 +148,30 @@ impl HistoryStore {
         };
 
         let rows = match stmt
-            .query_map(params![start_millis as i64, end_millis as i64], |row| {
-                let id: i64 = row.get(0)?;
-                let captured_at_millis: i64 = row.get(1)?;
-                let sequence: i64 = row.get(2)?;
-                let format_version: i64 = row.get(3)?;
-                let bincode_blob: Option<Vec<u8>> = row.get(4)?;
-                let json_blob: Option<String> = row.get(5)?;
-                Ok((
-                    id,
-                    captured_at_millis,
-                    sequence,
-                    format_version,
-                    bincode_blob,
-                    json_blob,
-                ))
-            })
+            .query_map(
+                params![
+                    start_millis as i64,
+                    end_millis as i64,
+                    before_millis_exclusive.map(|value| value as i64),
+                    limit.max(1) as i64
+                ],
+                |row| {
+                    let id: i64 = row.get(0)?;
+                    let captured_at_millis: i64 = row.get(1)?;
+                    let sequence: i64 = row.get(2)?;
+                    let format_version: i64 = row.get(3)?;
+                    let bincode_blob: Option<Vec<u8>> = row.get(4)?;
+                    let json_blob: Option<String> = row.get(5)?;
+                    Ok((
+                        id,
+                        captured_at_millis,
+                        sequence,
+                        format_version,
+                        bincode_blob,
+                        json_blob,
+                    ))
+                },
+            )
             .map_err(|e| format!("query: {e}"))
         {
             Ok(rows) => rows,
@@ -213,6 +258,7 @@ impl HistoryStore {
             };
             snapshots.push(snapshot);
         }
+        snapshots.reverse();
         self.emit_load_event(
             start_millis,
             end_millis,
@@ -222,6 +268,98 @@ impl HistoryStore {
             None,
         );
         Ok(snapshots)
+    }
+
+    pub fn range_summary(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+    ) -> Result<HistoryRangeSummary, String> {
+        self.writer.flush()?;
+        let (range_count, oldest_millis, newest_millis): (u64, Option<u64>, Option<u64>) = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*), MIN(captured_at_millis), MAX(captured_at_millis)
+                 FROM snapshots
+                 WHERE captured_at_millis >= ?1 AND captured_at_millis <= ?2",
+                params![start_millis as i64, end_millis as i64],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)? as u64,
+                        row.get::<_, Option<i64>>(1)?.map(|value| value as u64),
+                        row.get::<_, Option<i64>>(2)?.map(|value| value as u64),
+                    ))
+                },
+            )
+            .map_err(|e| format!("range summary: {e}"))?;
+        let snapshot_count = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM snapshots", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|count| count as u64)
+            .map_err(|e| format!("snapshot count: {e}"))?;
+        let quarantine_count = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM snapshot_quarantine", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|count| count as u64)
+            .map_err(|e| format!("quarantine count: {e}"))?;
+        let (store_bytes, wal_bytes) = self.store_file_sizes();
+
+        Ok(HistoryRangeSummary {
+            store_bytes,
+            wal_bytes,
+            snapshot_count,
+            quarantine_count,
+            range_count,
+            oldest_millis,
+            newest_millis,
+            pending_writes: self.writer.pending_writes(),
+        })
+    }
+
+    pub fn maintain_storage(&self, aggressive: bool) -> Result<HistoryMaintenanceReport, String> {
+        self.writer.flush()?;
+        let (store_bytes_before, wal_bytes_before) = self.store_file_sizes();
+        self.conn
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;")
+            .map_err(|e| format!("checkpoint history store: {e}"))?;
+        let mut vacuumed = false;
+        if aggressive && self.should_vacuum()? {
+            self.conn
+                .execute_batch("VACUUM;")
+                .map_err(|e| format!("vacuum history store: {e}"))?;
+            vacuumed = true;
+        }
+        let (store_bytes_after, wal_bytes_after) = self.store_file_sizes();
+        if let Some(diagnostics) = self.diagnostics.as_ref() {
+            diagnostics.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Info,
+                    DiagnosticsSubsystem::Persistence,
+                    "history-maintained",
+                    "Ran persisted history maintenance.",
+                )
+                .field("aggressive", aggressive)
+                .field("checkpointed", true)
+                .field("vacuumed", vacuumed)
+                .field("store_bytes_before", store_bytes_before)
+                .field("wal_bytes_before", wal_bytes_before)
+                .field("store_bytes_after", store_bytes_after)
+                .field("wal_bytes_after", wal_bytes_after)
+                .build(),
+            );
+        }
+        Ok(HistoryMaintenanceReport {
+            store_bytes_before,
+            wal_bytes_before,
+            store_bytes_after,
+            wal_bytes_after,
+            checkpointed: true,
+            vacuumed,
+        })
     }
 
     /// Delete snapshots older than `cutoff_millis`.
@@ -299,6 +437,11 @@ impl HistoryStore {
         .field("end_millis", end_millis)
         .field("loaded_count", loaded_count)
         .field("quarantined_rows", quarantined_rows);
+        let (store_bytes, wal_bytes) = self.store_file_sizes();
+        builder = builder
+            .field("store_bytes", store_bytes)
+            .field("wal_bytes", wal_bytes)
+            .field("pending_writes", self.writer.pending_writes());
         if let Some(reason) = quarantine_reason {
             builder = builder.field("quarantine_reason", reason);
         }
@@ -348,6 +491,39 @@ impl HistoryStore {
             .map_err(|error| format!("quarantine delete: {error}"))?;
 
         Ok(())
+    }
+
+    fn store_file_sizes(&self) -> (u64, u64) {
+        let store_bytes = fs::metadata(&self.db_path)
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        let wal_bytes = fs::metadata(self.wal_path())
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        (store_bytes, wal_bytes)
+    }
+
+    fn wal_path(&self) -> PathBuf {
+        PathBuf::from(format!("{}-wal", self.db_path.display()))
+    }
+
+    fn should_vacuum(&self) -> Result<bool, String> {
+        let page_count = self
+            .conn
+            .query_row("PRAGMA page_count", [], |row| row.get::<_, i64>(0))
+            .map_err(|e| format!("pragma page_count: {e}"))?;
+        let freelist_count = self
+            .conn
+            .query_row("PRAGMA freelist_count", [], |row| row.get::<_, i64>(0))
+            .map_err(|e| format!("pragma freelist_count: {e}"))?;
+        if page_count <= 0 {
+            return Ok(false);
+        }
+        let (store_bytes, wal_bytes) = self.store_file_sizes();
+        let fragmentation_ratio = freelist_count as f64 / page_count as f64;
+        Ok(store_bytes >= 512 * 1024 * 1024
+            && wal_bytes <= 64 * 1024 * 1024
+            && fragmentation_ratio >= 0.25)
     }
 }
 
@@ -472,6 +648,8 @@ fn configure_connection(conn: &Connection) -> Result<(), String> {
         .map_err(|e| format!("WAL: {e}"))?;
     conn.pragma_update(None, "synchronous", "NORMAL")
         .map_err(|e| format!("synchronous: {e}"))?;
+    conn.pragma_update(None, "busy_timeout", 5_000)
+        .map_err(|e| format!("busy_timeout: {e}"))?;
 
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS snapshots (
@@ -700,6 +878,54 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot_count, 0);
         assert_eq!(quarantine_count, 0);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn load_range_page_returns_latest_then_older_samples() {
+        let path = temp_db();
+        let mut store = HistoryStore::open(&path, 1).unwrap();
+
+        for i in 0..6 {
+            store.maybe_store(&SystemSnapshot {
+                sequence: i,
+                captured_at_millis: (i + 1) * 1_000,
+                ..Default::default()
+            });
+        }
+
+        let latest = store.load_range_page(0, 10_000, None, 2).unwrap();
+        assert_eq!(latest.len(), 2);
+        assert_eq!(latest[0].captured_at_millis, 5_000);
+        assert_eq!(latest[1].captured_at_millis, 6_000);
+
+        let older = store.load_range_page(0, 10_000, Some(5_000), 3).unwrap();
+        assert_eq!(older.len(), 3);
+        assert_eq!(older[0].captured_at_millis, 2_000);
+        assert_eq!(older[2].captured_at_millis, 4_000);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn range_summary_reports_counts_and_bounds() {
+        let path = temp_db();
+        let mut store = HistoryStore::open(&path, 1).unwrap();
+
+        for i in 0..4 {
+            store.maybe_store(&SystemSnapshot {
+                sequence: i,
+                captured_at_millis: (i + 1) * 2_000,
+                ..Default::default()
+            });
+        }
+
+        let summary = store.range_summary(2_000, 6_000).unwrap();
+        assert_eq!(summary.snapshot_count, 4);
+        assert_eq!(summary.range_count, 3);
+        assert_eq!(summary.oldest_millis, Some(2_000));
+        assert_eq!(summary.newest_millis, Some(6_000));
 
         std::fs::remove_file(&path).ok();
     }
