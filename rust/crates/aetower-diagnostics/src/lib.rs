@@ -709,6 +709,7 @@ fn should_persist_event(event: &DiagnosticsEvent) -> bool {
                 | "telemetry-config-updated"
                 | "telemetry-verification-succeeded"
                 | "telemetry-verification-failed"
+                | "runtime-heartbeat"
                 | "history-pruned"
                 | "history-row-quarantined"
                 | "notification-settings-disabled"
@@ -967,6 +968,33 @@ mod tests {
         let results = store.query(&query);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].event_type, "history-load-failed");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn runtime_heartbeat_info_events_persist() {
+        let path = std::env::temp_dir().join(format!(
+            "aetower-diag-heartbeat-{}.ndjson",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let store = DiagnosticsStore::with_persistence(4, &path, 16).expect("store");
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Engine,
+                "runtime-heartbeat",
+                "heartbeat",
+            )
+            .field("entity_count", 12)
+            .build(),
+        );
+        store.flush_persistence().expect("flush");
+
+        let persisted = std::fs::read_to_string(&path).expect("persisted file");
+        assert!(persisted.contains("runtime-heartbeat"));
 
         let _ = std::fs::remove_file(&path);
     }

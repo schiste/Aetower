@@ -29,6 +29,7 @@ use crate::{
 
 const ADAPTER_IDLE_SLEEP: Duration = Duration::from_secs(5);
 const TELEMETRY_DISABLED_SLEEP: Duration = Duration::from_secs(30);
+const RUNTIME_HEARTBEAT_INTERVAL_MILLIS: u64 = 10 * 60 * 1000;
 
 #[derive(Debug, Clone)]
 struct RuntimeCollectionConfig {
@@ -113,6 +114,7 @@ struct EngineState {
     history: History,
     runtime_lag_metrics: RuntimeLagMetrics,
     runtime_config: RuntimeCollectionConfig,
+    last_runtime_heartbeat_millis: u64,
 }
 
 impl EngineState {
@@ -197,6 +199,7 @@ impl Engine {
                 history: History::new(),
                 runtime_lag_metrics: RuntimeLagMetrics::default(),
                 runtime_config: RuntimeCollectionConfig::default(),
+                last_runtime_heartbeat_millis: 0,
             })),
             adapters,
             persistence: Arc::new(Mutex::new(persistence)),
@@ -410,6 +413,49 @@ impl Engine {
                 );
                 let tick_millis = tick_started.elapsed().as_millis();
                 runtime_lag_metrics.engine_tick_millis = tick_millis as f32;
+                if should_emit_runtime_heartbeat(
+                    guard.last_runtime_heartbeat_millis,
+                    captured_at_millis,
+                ) {
+                    let top_entity = guard.latest_snapshot.entities.first();
+                    diagnostics.emit(
+                        DiagnosticsEvent::builder(
+                            DiagnosticsLevel::Info,
+                            DiagnosticsSubsystem::Engine,
+                            "runtime-heartbeat",
+                            "Recorded a low-frequency runtime heartbeat.",
+                        )
+                        .timestamp_millis(captured_at_millis)
+                        .sequence(sequence)
+                        .field("entity_count", entity_count)
+                        .field("process_count", raw.processes.len())
+                        .field(
+                            "top_entity",
+                            top_entity
+                                .map(|entity| entity.display_name.as_str())
+                                .unwrap_or("none"),
+                        )
+                        .field(
+                            "top_friction",
+                            format!(
+                                "{:.1}",
+                                top_entity
+                                    .map(|entity| entity.friction.total_score)
+                                    .unwrap_or(0.0)
+                            ),
+                        )
+                        .field("target_tick_millis", target_tick.as_millis())
+                        .field("tick_millis", tick_millis)
+                        .field("collect_millis", format!("{collect_millis:.3}"))
+                        .field("history_queue_depth", history_queue_depth)
+                        .field(
+                            "diagnostics_queue_depth",
+                            diagnostics.pending_writes().min(u32::MAX as u64),
+                        )
+                        .build(),
+                    );
+                    guard.last_runtime_heartbeat_millis = captured_at_millis;
+                }
                 guard.runtime_lag_metrics = runtime_lag_metrics;
                 drop(guard);
                 let is_over_budget = tick_millis > target_tick.as_millis();
@@ -846,4 +892,10 @@ fn sleep_with_stop(running: &AtomicBool, duration: Duration) {
         let remaining = duration.saturating_sub(started_at.elapsed());
         thread::sleep(remaining.min(Duration::from_millis(250)));
     }
+}
+
+fn should_emit_runtime_heartbeat(last_heartbeat_millis: u64, captured_at_millis: u64) -> bool {
+    last_heartbeat_millis == 0
+        || captured_at_millis.saturating_sub(last_heartbeat_millis)
+            >= RUNTIME_HEARTBEAT_INTERVAL_MILLIS
 }
