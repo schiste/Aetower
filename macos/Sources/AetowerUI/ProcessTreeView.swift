@@ -6,10 +6,16 @@ import AetowerBridge
 public struct ProcessTreeView: View {
     let entity: EntitySnapshot
     let allEntities: [EntitySnapshot]
+    let seedEntities: [EntitySnapshot]
 
-    public init(entity: EntitySnapshot, allEntities: [EntitySnapshot]) {
+    public init(
+        entity: EntitySnapshot,
+        allEntities: [EntitySnapshot],
+        seedEntities: [EntitySnapshot]? = nil
+    ) {
         self.entity = entity
         self.allEntities = allEntities
+        self.seedEntities = seedEntities ?? [entity]
     }
 
     public var body: some View {
@@ -36,7 +42,7 @@ public struct ProcessTreeView: View {
     }
 
     private var treeNodes: [TreeNode] {
-        buildTree(for: entity, allEntities: allEntities)
+        buildTree(for: entity, allEntities: allEntities, seedEntities: seedEntities)
     }
 
     private var headerTitle: String {
@@ -44,12 +50,19 @@ public struct ProcessTreeView: View {
     }
 
     private var summaryLabel: String {
-        let processCount = relatedEntities(for: entity, in: allEntities)
+        let groupedProcessCount = seedEntities
+            .flatMap(\.components)
+            .filter { $0.kind != .adapterContext }
+            .count
+        let expandedProcessCount = relatedEntities(seedEntities: seedEntities, in: allEntities)
             .flatMap(\.components)
             .filter { $0.kind != .adapterContext }
             .count
         let rootGroupCount = treeNodes.filter { $0.depth == 0 }.count
-        return "\(rootGroupCount) groups · \(processCount) processes"
+        if expandedProcessCount > groupedProcessCount {
+            return "\(rootGroupCount) groups · \(groupedProcessCount) grouped · \(expandedProcessCount) expanded"
+        }
+        return "\(rootGroupCount) groups · \(groupedProcessCount) grouped"
     }
 }
 
@@ -92,8 +105,12 @@ private struct RelatedComponent {
     let isPrimaryEntity: Bool
 }
 
-private func buildTree(for entity: EntitySnapshot, allEntities: [EntitySnapshot]) -> [TreeNode] {
-    let related = relatedEntities(for: entity, in: allEntities)
+private func buildTree(
+    for entity: EntitySnapshot,
+    allEntities: [EntitySnapshot],
+    seedEntities: [EntitySnapshot]
+) -> [TreeNode] {
+    let related = relatedEntities(seedEntities: seedEntities, in: allEntities)
     let relatedComponents = related.flatMap { relatedEntity in
         relatedEntity.components.map {
             RelatedComponent(
@@ -445,9 +462,12 @@ private func processSort(
     return lhs.component.title.localizedCaseInsensitiveCompare(rhs.component.title) == .orderedAscending
 }
 
-private func relatedEntities(for entity: EntitySnapshot, in allEntities: [EntitySnapshot]) -> [EntitySnapshot] {
-    var includedIDs: Set<String> = [entity.entityId]
-    var includedPIDs = Set(entity.components.compactMap(\.processId))
+private func relatedEntities(
+    seedEntities: [EntitySnapshot],
+    in allEntities: [EntitySnapshot]
+) -> [EntitySnapshot] {
+    var includedIDs = Set(seedEntities.map(\.entityId))
+    var includedPIDs = Set(seedEntities.flatMap { $0.components.compactMap(\.processId) })
 
     func sessionIDs(for candidate: EntitySnapshot) -> Set<String> {
         var result = Set<String>()
@@ -468,8 +488,10 @@ private func relatedEntities(for entity: EntitySnapshot, in allEntities: [Entity
         }
     }
 
-    let selectedSessionIDs = sessionIDs(for: entity)
-    let selectedRepoRoots = repoRoots(for: entity)
+    let selectedSessionIDs = seedEntities.reduce(into: Set<String>()) { result, entity in
+        result.formUnion(sessionIDs(for: entity))
+    }
+    let selectedRepoRoots = seedEntities.flatMap(repoRoots(for:))
 
     var changed = true
     while changed {

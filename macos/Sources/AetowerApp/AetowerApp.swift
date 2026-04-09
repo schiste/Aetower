@@ -22,6 +22,8 @@ struct AetowerApp: App {
     @State private var settings = SettingsStore()
     @State private var menuBarExtraInserted = false
     @State private var hudPanel: CompactHUDPanel?
+    @State private var menuBarDisplayTitle = "Aetower"
+    @State private var lastMenuBarTitleUpdate = Date.distantPast
 
     private var resolvedColorScheme: ColorScheme? {
         switch settings.appearanceMode {
@@ -31,7 +33,7 @@ struct AetowerApp: App {
         }
     }
 
-    private var menuBarTitle: String {
+    private var computedMenuBarTitle: String {
         let entities = state.snapshot.entities
         if entities.isEmpty { return "Aetower" }
         let topFriction = entities.first?.friction.totalScore ?? 0
@@ -81,10 +83,14 @@ struct AetowerApp: App {
             .preferredColorScheme(resolvedColorScheme)
             .task {
                 menuBarExtraInserted = settings.showMenuBarExtra
+                refreshMenuBarTitle(force: true)
                 state.applyNotificationSettings(settings)
                 state.applyIntegrationSettings(settings)
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 state.start(refreshInterval: settings.refreshIntervalSeconds)
+            }
+            .onChange(of: state.snapshot.sequence) { _, _ in
+                refreshMenuBarTitle()
             }
             .onChange(of: settings.refreshIntervalSeconds) { _, newValue in
                 state.start(refreshInterval: newValue)
@@ -93,6 +99,7 @@ struct AetowerApp: App {
                 if menuBarExtraInserted != newValue {
                     menuBarExtraInserted = newValue
                 }
+                refreshMenuBarTitle(force: true)
             }
             .onChange(of: settings.notificationsEnabled) { _, _ in
                 state.applyNotificationSettings(settings)
@@ -113,7 +120,7 @@ struct AetowerApp: App {
                 .keyboardShortcut("h", modifiers: [.command, .shift])
             }
         }
-        MenuBarExtra(menuBarTitle, systemImage: "bolt.fill", isInserted: $menuBarExtraInserted) {
+        MenuBarExtra(menuBarDisplayTitle, systemImage: "bolt.fill", isInserted: $menuBarExtraInserted) {
             MenuBarSummaryView(state: state)
         }
         .onChange(of: menuBarExtraInserted) { _, newValue in
@@ -122,5 +129,31 @@ struct AetowerApp: App {
             }
         }
         .windowStyle(.titleBar)
+    }
+
+    private func refreshMenuBarTitle(force: Bool = false) {
+        if !menuBarExtraInserted && !force {
+            return
+        }
+        let now = Date()
+        let nextTitle = computedMenuBarTitle
+        let previousTitle = menuBarDisplayTitle
+        let elapsed = now.timeIntervalSince(lastMenuBarTitleUpdate)
+
+        if !force {
+            if previousTitle == nextTitle {
+                return
+            }
+            if elapsed < 20,
+               let previousValue = Double(previousTitle),
+               let nextValue = Double(nextTitle),
+               abs(previousValue - nextValue) < 5
+            {
+                return
+            }
+        }
+
+        menuBarDisplayTitle = nextTitle
+        lastMenuBarTitleUpdate = now
     }
 }

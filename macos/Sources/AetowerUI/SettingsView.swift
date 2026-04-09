@@ -5,10 +5,19 @@ import AetowerBridge
 public struct SettingsView: View {
     let state: AppState
     let settings: SettingsStore
+    @FocusState private var focusedField: SettingsField?
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
         self.settings = settings
+    }
+
+    private enum SettingsField: Hashable {
+        case chromiumEndpoint
+        case dockerSocketPath
+        case privilegedHelperPath
+        case chau7Endpoint
+        case telemetryEndpoint
     }
 
     public var body: some View {
@@ -190,19 +199,23 @@ public struct SettingsView: View {
                         TextField("Chromium endpoint", text: $settings.chromiumEndpoint)
                             .textFieldStyle(.roundedBorder)
                             .aetowerUtilityTextInput()
+                            .focused($focusedField, equals: .chromiumEndpoint)
                         TextField("Docker socket path", text: $settings.dockerSocketPath)
                             .textFieldStyle(.roundedBorder)
                             .aetowerUtilityTextInput()
+                            .focused($focusedField, equals: .dockerSocketPath)
                         Toggle("Enable privileged helper", isOn: $settings.privilegedHelperEnabled)
                         TextField("Privileged helper path", text: $settings.privilegedHelperPath)
                             .textFieldStyle(.roundedBorder)
                             .aetowerUtilityTextInput()
+                            .focused($focusedField, equals: .privilegedHelperPath)
                         Text("The privileged helper is optional. It is intended to run with elevated rights when you want deeper socket attribution today and higher-confidence Endpoint Security lineage in enterprise builds.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         TextField("Chau7 socket path", text: $settings.chau7Endpoint, prompt: Text("~/.chau7/mcp.sock"))
                             .textFieldStyle(.roundedBorder)
                             .aetowerUtilityTextInput()
+                            .focused($focusedField, equals: .chau7Endpoint)
                         Text("Optional. Auto-detected when Chau7 is running. Enriches terminal sessions with AI agent context.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -211,6 +224,7 @@ public struct SettingsView: View {
                         TextField("Telemetry endpoint", text: $settings.telemetryEndpoint)
                             .textFieldStyle(.roundedBorder)
                             .aetowerUtilityTextInput()
+                            .focused($focusedField, equals: .telemetryEndpoint)
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Telemetry export interval")
                                 .font(.headline)
@@ -225,11 +239,13 @@ public struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Button("Apply runtime and integration settings") {
+                            focusedField = nil
                             state.applyIntegrationSettings(settings)
                         }
                         .buttonStyle(.borderedProminent)
 
                         Button("Verify telemetry export") {
+                            focusedField = nil
                             state.verifyTelemetryExport(settings)
                         }
                         .buttonStyle(.bordered)
@@ -291,6 +307,9 @@ public struct SettingsView: View {
             .padding(24)
         }
         .navigationTitle("Settings")
+        .onDisappear {
+            focusedField = nil
+        }
     }
 }
 

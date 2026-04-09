@@ -450,6 +450,7 @@ public final class AppState {
                 appName: lastPublishedFrontmostAppName,
                 windowTitle: lastPublishedWindowTitle
             )
+            runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
             if let updatedSnapshotValue, lagMonitoringActive {
                 publishUiLagMetrics(
                     snapshot: updatedSnapshotValue,

@@ -19,6 +19,7 @@ public struct DiagnosticsView: View {
     @State private var isVisible = false
     @State private var includePersisted = true
     @State private var showClearDiagnosticsConfirmation = false
+    @FocusState private var searchFieldFocused: Bool
 
     private let overviewColumns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
 
@@ -53,6 +54,7 @@ public struct DiagnosticsView: View {
         .onDisappear {
             isVisible = false
             state.setDiagnosticsVisible(false)
+            searchFieldFocused = false
         }
         .task(id: "\(isVisible)-\(isLive)-\(includePersisted)-\(searchText)-\(levelFilter.rawValue)-\(subsystemFilter.map(subsystemLabel) ?? "all")") {
             guard isVisible && isLive else { return }
@@ -138,6 +140,8 @@ public struct DiagnosticsView: View {
                 TextField("Search messages, fields, entity ids, adapters, or capabilities", text: $searchText)
                     .textFieldStyle(.roundedBorder)
                     .aetowerUtilityTextInput()
+                    .focused($searchFieldFocused)
+                    .onSubmit { searchFieldFocused = false }
 
                 if let diagnosticsLoadError = state.diagnosticsLoadError {
                     Text(diagnosticsLoadError)
@@ -186,6 +190,11 @@ public struct DiagnosticsView: View {
                     title: "Engine tick",
                     value: String(format: "%.1f ms", state.runtimeLagMetrics.engineTickMillis),
                     subtitle: "current self-observed pipeline latency"
+                )
+                diagnosticsMetric(
+                    title: "Target cadence",
+                    value: String(format: "%.1f s", state.runtimeLagMetrics.targetTickMillis / 1000),
+                    subtitle: "active adaptive target tick"
                 )
                 diagnosticsMetric(
                     title: "UI render",

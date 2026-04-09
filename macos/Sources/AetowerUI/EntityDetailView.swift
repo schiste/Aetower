@@ -295,10 +295,16 @@ private struct ComponentCard: View {
 public struct EntityDetailView: View {
     let entity: EntitySnapshot
     let state: AppState
+    let processTreeSeedEntities: [EntitySnapshot]
 
-    public init(entity: EntitySnapshot, state: AppState) {
+    public init(
+        entity: EntitySnapshot,
+        state: AppState,
+        processTreeSeedEntities: [EntitySnapshot]? = nil
+    ) {
         self.entity = entity
         self.state = state
+        self.processTreeSeedEntities = processTreeSeedEntities ?? [entity]
     }
 
     public var body: some View {
@@ -644,7 +650,11 @@ public struct EntityDetailView: View {
                         description: Text("Aetower does not have enough component attribution for this entity yet.")
                     )
                 } else {
-                    ProcessTreeView(entity: entity, allEntities: state.snapshot.entities)
+                    ProcessTreeView(
+                        entity: entity,
+                        allEntities: state.snapshot.entities,
+                        seedEntities: processTreeSeedEntities
+                    )
                 }
             }
             .padding(.top, 4)

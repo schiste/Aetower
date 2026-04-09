@@ -426,7 +426,10 @@ private struct EntityRow: View {
     }
 
     private var entityUser: String {
-        entity.components.first?.user ?? ""
+        entity.components
+            .lazy
+            .compactMap(\.user)
+            .first(where: { !$0.isEmpty }) ?? ""
     }
 
     private var rowHelpText: String {
@@ -470,6 +473,7 @@ private struct EntityGroup {
     let memoryBytes: UInt64
     let frictionScore: Float
     let processCount: Int
+    let userSummary: String
 
     var id: String { root.entityId }
 }
@@ -497,8 +501,8 @@ private struct GroupedEntityRow: View {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if group.processCount > 1 {
-                Text("\(group.processCount)")
+            if group.members.count > 1 {
+                Text("+\(group.members.count - 1)")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 5)
@@ -516,7 +520,10 @@ private struct GroupedEntityRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 52, alignment: .trailing)
 
-            Text("")
+            Text(group.userSummary)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
                 .frame(width: 60, alignment: .trailing)
 
             Text(groupSummaryText)
@@ -571,18 +578,25 @@ private struct GroupedEntityRow: View {
     private var helpText: String {
         let names = group.members.prefix(6).map(\.displayName).joined(separator: ", ")
         if group.members.count > 6 {
-            return "Grouped entities: \(names), +\(group.members.count - 6) more"
+            return "Collapsed entities: \(names), +\(group.members.count - 6) more · \(group.processCount) grouped processes"
         }
-        return "Grouped entities: \(names)"
+        if group.members.count > 1 {
+            return "Collapsed entities: \(names) · \(group.processCount) grouped processes"
+        }
+        return "Entity footprint: \(group.processCount) grouped processes"
     }
 
     private var groupSummaryText: String {
-        let entityText = group.members.count == 1 ? "1 entity" : "\(group.members.count) entities"
+        let entityCount = group.members.count
+        let entityText = entityCount == 1 ? "1 ent" : "\(entityCount) ent"
+        if entityCount <= 1 {
+            return entityText
+        }
         if group.processCount <= 1 {
             return entityText
         }
-        let processText = group.processCount == 1 ? "1 proc" : "\(group.processCount) procs"
-        return "\(processText) · \(entityText)"
+        let processText = group.processCount == 1 ? "1 proc" : "\(group.processCount) proc"
+        return "\(entityText) · \(processText)"
     }
 
     private var frictionBackgroundOpacity: Double {
@@ -630,7 +644,32 @@ private func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup]
     }
 
     func primaryUser(for entity: EntitySnapshot) -> String? {
-        entity.components.first(where: { $0.user != nil })?.user
+        entity.components
+            .lazy
+            .compactMap(\.user)
+            .first(where: { !$0.isEmpty })
+    }
+
+    func groupUserSummary(for members: [EntitySnapshot]) -> String {
+        let users = members
+            .compactMap { primaryUser(for: $0) }
+            .filter { !$0.isEmpty }
+
+        guard !users.isEmpty else { return "" }
+
+        let counts = Dictionary(users.map { ($0, 1) }, uniquingKeysWith: +)
+        let sorted = counts.sorted {
+            if $0.value != $1.value {
+                return $0.value > $1.value
+            }
+            return $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending
+        }
+
+        guard let dominant = sorted.first else { return "" }
+        if sorted.count == 1 || dominant.value == users.count {
+            return dominant.key
+        }
+        return "\(dominant.key)+"
     }
 
     func isGenericSystemRoot(_ entity: EntitySnapshot) -> Bool {
@@ -740,7 +779,8 @@ private func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup]
                 total + entity.components.reduce(0) { componentTotal, component in
                     componentTotal + (component.kind == .adapterContext ? 0 : 1)
                 }
-            }
+            },
+            userSummary: groupUserSummary(for: members)
         )
     }
 }
@@ -812,8 +852,10 @@ public struct MainListView: View {
     @State private var focusedIndex: Int = 0
     @State private var listMode: ListMode = .grouped
     @State private var groupedEntitiesCache: [GroupingCacheKey: [EntityGroup]] = [:]
+    @State private var displayedGroupedEntities: [EntityGroup] = []
     @State private var groupingTask: Task<[EntityGroup], Never>?
     @State private var isGrouping = false
+    @FocusState private var searchFieldFocused: Bool
 
     public init(state: AppState) {
         self.state = state
@@ -836,9 +878,15 @@ public struct MainListView: View {
         .task(id: groupingTaskToken) {
             await refreshGroupingCache()
         }
+        .onChange(of: selectedEntityID) { _, newValue in
+            if newValue != nil {
+                searchFieldFocused = false
+            }
+        }
         .onDisappear {
             groupingTask?.cancel()
             groupingTask = nil
+            searchFieldFocused = false
         }
     }
 
@@ -865,6 +913,14 @@ public struct MainListView: View {
 
             if state.snapshot.host.gpuPercent > 0 {
                 ribbonMetric("GPU", String(format: "%.0f%%", state.snapshot.host.gpuPercent), AetowerDesign.Tone.gpu)
+            }
+
+            if state.runtimeLagMetrics.targetTickMillis > 0 {
+                ribbonMetric(
+                    "TICK",
+                    String(format: "%.1fs", state.runtimeLagMetrics.targetTickMillis / 1000),
+                    .secondary
+                )
             }
 
             Spacer()
@@ -917,11 +973,15 @@ public struct MainListView: View {
     }
 
     private var monitorSplitView: some View {
-        HStack(spacing: 0) {
+        HSplitView {
             rankingPanel
-                .frame(minWidth: 420, idealWidth: 500, maxWidth: 560, maxHeight: .infinity)
-
-            Divider()
+                .frame(
+                    minWidth: 420,
+                    idealWidth: selectedEntity == nil ? 980 : 760,
+                    maxWidth: .infinity,
+                    maxHeight: .infinity
+                )
+                .layoutPriority(2)
 
             Group {
                 if let entity = selectedEntity {
@@ -931,8 +991,17 @@ public struct MainListView: View {
                     detailPlaceholder
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(
+                minWidth: selectedEntity == nil ? 240 : 360,
+                idealWidth: selectedEntity == nil ? 280 : 760,
+                maxWidth: selectedEntity == nil ? 360 : .infinity,
+                maxHeight: .infinity,
+                alignment: .topLeading
+            )
+            .layoutPriority(1)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(AetowerDesign.Motion.standard, value: selectedEntity?.entityId)
     }
 
     private func detailPanel(for entity: EntitySnapshot) -> some View {
@@ -970,16 +1039,25 @@ public struct MainListView: View {
 
             Divider()
 
-            EntityDetailView(entity: entity, state: state)
+            EntityDetailView(
+                entity: entity,
+                state: state,
+                processTreeSeedEntities: selectedProcessTreeEntities(for: entity)
+            )
         }
     }
 
     private var detailPlaceholder: some View {
-        ContentUnavailableView(
-            "Select an Entity",
-            systemImage: "arrow.triangle.branch",
-            description: Text("Choose an app or process group from the monitor list to inspect its grouped process tree, attribution, and friction drivers.")
-        )
+        VStack(alignment: .leading, spacing: 16) {
+            ContentUnavailableView(
+                "Select an Entity",
+                systemImage: "arrow.triangle.branch",
+                description: Text("Choose an app or process group from the monitor list to inspect its grouped process tree, attribution, and friction drivers.")
+            )
+        }
+        .frame(maxWidth: 320, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 20)
+        .padding(.top, 28)
     }
 
     private var rankedEntitiesSection: some View {
@@ -1033,6 +1111,8 @@ public struct MainListView: View {
                 TextField("Search...", text: $searchText)
                     .textFieldStyle(.plain)
                     .aetowerUtilityTextInput()
+                    .focused($searchFieldFocused)
+                    .onSubmit { searchFieldFocused = false }
                     .font(.caption)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
@@ -1088,6 +1168,7 @@ public struct MainListView: View {
                     if isGroupedMode {
                         ForEach(groupedEntities, id: \.id) { group in
                             Button {
+                                searchFieldFocused = false
                                 withAnimation(AetowerDesign.Motion.standard) {
                                     selectedEntityID = group.root.entityId
                                 }
@@ -1102,6 +1183,7 @@ public struct MainListView: View {
                     } else {
                         ForEach(filteredEntities, id: \.entityId) { entity in
                             Button {
+                                searchFieldFocused = false
                                 withAnimation(AetowerDesign.Motion.standard) {
                                     selectedEntityID = entity.entityId
                                 }
@@ -1139,6 +1221,7 @@ public struct MainListView: View {
                 }
                 .animation(AetowerDesign.Motion.standard, value: sortKey)
                 .animation(AetowerDesign.Motion.standard, value: listMode)
+                .animation(nil, value: state.snapshot.sequence)
             }
         }
     }
@@ -1171,13 +1254,25 @@ public struct MainListView: View {
         return nil
     }
 
+    private var selectedEntityGroup: EntityGroup? {
+        guard let selectedEntityID, isGroupedMode else { return nil }
+        return groupedEntities.first(where: { $0.root.entityId == selectedEntityID })
+    }
+
     private var visibleEntityIDs: [String] {
         isGroupedMode ? groupedEntities.map(\.root.entityId) : filteredEntities.map(\.entityId)
     }
 
     private var groupedEntities: [EntityGroup] {
         guard let key = currentGroupingCacheKey else { return [] }
-        return groupedEntitiesCache[key] ?? []
+        return groupedEntitiesCache[key] ?? displayedGroupedEntities
+    }
+
+    private func selectedProcessTreeEntities(for entity: EntitySnapshot) -> [EntitySnapshot] {
+        if let selectedEntityGroup, selectedEntityGroup.root.entityId == entity.entityId {
+            return selectedEntityGroup.members
+        }
+        return state.snapshot.entities
     }
 
     private var normalizedSearchQuery: String {
@@ -1211,7 +1306,8 @@ public struct MainListView: View {
             return
         }
 
-        if groupedEntitiesCache[key] != nil {
+        if let cached = groupedEntitiesCache[key] {
+            displayedGroupedEntities = cached
             isGrouping = false
             return
         }
@@ -1235,6 +1331,7 @@ public struct MainListView: View {
         groupedEntitiesCache = groupedEntitiesCache
             .filter { $0.key.sequence == key.sequence }
         groupedEntitiesCache[key] = groups
+        displayedGroupedEntities = groups
         isGrouping = false
 
         if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
