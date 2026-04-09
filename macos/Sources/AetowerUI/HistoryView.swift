@@ -75,14 +75,18 @@ public struct HistoryView: View {
                         state.loadHistory(force: true)
                     }
                     .buttonStyle(.bordered)
+                    .disabled(state.historyIsLoading || state.historyIsLoadingMore)
 
                     Button("Clear persisted history", role: .destructive) {
                         showClearHistoryConfirmation = true
                     }
                     .buttonStyle(.bordered)
+                    .disabled(state.historyIsLoading || state.historyIsLoadingMore)
                 }
 
-                if let historyLoadError = state.historyLoadError, state.historySnapshots.isEmpty {
+                if state.historyIsLoading && state.historySnapshots.isEmpty {
+                    historyLoadingState
+                } else if let historyLoadError = state.historyLoadError, state.historySnapshots.isEmpty {
                     ContentUnavailableView(
                         "No persisted history yet",
                         systemImage: "clock.badge.questionmark",
@@ -189,9 +193,53 @@ public struct HistoryView: View {
                     GroupBox("Store coverage") {
                         VStack(alignment: .leading, spacing: 8) {
                             LabeledContent("Range", value: range.detail)
-                            LabeledContent("Persisted samples", value: "\(state.historySnapshots.count)")
-                            LabeledContent("First sample", value: historyTimestamp(state.historySnapshots.first?.capturedAtMillis))
-                            LabeledContent("Last sample", value: historyTimestamp(state.historySnapshots.last?.capturedAtMillis))
+                            LabeledContent(
+                                "Loaded samples",
+                                value: "\(state.historySnapshots.count)\(state.historyRangeSummary.map { " of \($0.rangeCount)" } ?? "")"
+                            )
+                            LabeledContent(
+                                "Store size",
+                                value: historyFormatBytes(state.historyRangeSummary?.storeBytes ?? 0)
+                            )
+                            LabeledContent(
+                                "WAL size",
+                                value: historyFormatBytes(state.historyRangeSummary?.walBytes ?? 0)
+                            )
+                            LabeledContent(
+                                "Persisted samples",
+                                value: "\(state.historyRangeSummary?.snapshotCount ?? 0)"
+                            )
+                            LabeledContent(
+                                "Quarantine rows",
+                                value: "\(state.historyRangeSummary?.quarantineCount ?? 0)"
+                            )
+                            LabeledContent(
+                                "First sample",
+                                value: historyTimestamp(state.historyRangeSummary?.oldestMillis ?? state.historySnapshots.first?.capturedAtMillis)
+                            )
+                            LabeledContent(
+                                "Last sample",
+                                value: historyTimestamp(state.historyRangeSummary?.newestMillis ?? state.historySnapshots.last?.capturedAtMillis)
+                            )
+                            LabeledContent(
+                                "Last load",
+                                value: String(format: "%.0f ms", state.historyLastLoadDurationMillis)
+                            )
+                            if let historyLoadStatus = state.historyLoadStatus {
+                                Text(historyLoadStatus)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if state.historyIsLoadingMore {
+                                ProgressView("Loading older samples…")
+                                    .progressViewStyle(.linear)
+                            } else if state.historyHasMore {
+                                Button("Load more persisted samples") {
+                                    state.loadMoreHistory()
+                                }
+                                .buttonStyle(.bordered)
+                            }
                         }
                         .padding(.top, 4)
                     }
@@ -201,8 +249,8 @@ public struct HistoryView: View {
         }
         .navigationTitle("History")
         .task {
-            state.setHistoryVisible(true)
             state.setHistoryWindow(seconds: range.rawValue)
+            state.setHistoryVisible(true)
         }
         .onDisappear {
             state.setHistoryVisible(false)
@@ -222,6 +270,26 @@ public struct HistoryView: View {
 
     private var latestHostFriction: Double {
         hostFrictionSamples.last ?? 0
+    }
+
+    private var historyLoadingState: some View {
+        ContentUnavailableView {
+            Label("Loading persisted history", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+        } description: {
+            VStack(alignment: .center, spacing: 8) {
+                Text(state.historyLoadStatus ?? "Preparing the local history store and loading recent samples first.")
+                if let summary = state.historyRangeSummary {
+                    Text(
+                        "\(summary.rangeCount) samples in range · store \(historyFormatBytes(summary.storeBytes)) · WAL \(historyFormatBytes(summary.walBytes))"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                ProgressView()
+                    .controlSize(.large)
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var latestHostCPU: Double {

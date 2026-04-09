@@ -12,6 +12,13 @@ public final class AppState {
     public private(set) var snapshot: SystemSnapshot
     public private(set) var historySnapshots: [SystemSnapshot] = []
     public private(set) var historyLoadError: String?
+    public private(set) var historyRangeSummary: HistoryRangeSummary?
+    public private(set) var historyMaintenanceReport: HistoryMaintenanceReport?
+    public private(set) var historyIsLoading = false
+    public private(set) var historyIsLoadingMore = false
+    public private(set) var historyLoadStatus: String?
+    public private(set) var historyHasMore = false
+    public private(set) var historyLastLoadDurationMillis = 0.0
     public private(set) var diagnosticsEvents: [DiagnosticsEvent] = []
     public private(set) var sessionLogSummary: SessionLogSummary?
     public private(set) var runtimeLagMetrics = RuntimeLagMetrics(
@@ -120,6 +127,10 @@ public final class AppState {
     private var diagnosticsVisible = false
     @ObservationIgnored
     private var lagMonitoringActive = false
+    @ObservationIgnored
+    private var historyRangeStartMillis: UInt64 = 0
+    @ObservationIgnored
+    private var historyRangeEndMillis: UInt64 = 0
 
     @ObservationIgnored
     private let frontmostProbeInterval: TimeInterval = 1.0
@@ -137,6 +148,10 @@ public final class AppState {
     private let suppressedAnomalySummaryInterval: TimeInterval = 300.0
     @ObservationIgnored
     private let suppressedAnomalySummaryMinimumCount = 10
+    @ObservationIgnored
+    private let historyInitialPageSize: UInt32 = 120
+    @ObservationIgnored
+    private let historyLoadMorePageSize: UInt32 = 240
 
     public init(
         bridge: EngineBridge = EngineBridge(),
@@ -294,6 +309,11 @@ public final class AppState {
         }
         historySnapshots = []
         historyLoadError = "Persisted history was cleared."
+        historyRangeSummary = nil
+        historyMaintenanceReport = nil
+        historyHasMore = false
+        historyLoadStatus = nil
+        historyLastLoadDurationMillis = 0
         loadDiagnostics(force: true)
     }
 
@@ -301,6 +321,10 @@ public final class AppState {
         historyVisible = visible
         if visible {
             loadHistory(force: true)
+        } else {
+            historyLoadTask?.cancel()
+            historyIsLoading = false
+            historyIsLoadingMore = false
         }
     }
 
@@ -493,16 +517,109 @@ public final class AppState {
         )
         let rangeMillis = UInt64(historyWindowSeconds * 1000)
         let startMillis = endMillis >= rangeMillis ? endMillis - rangeMillis : 0
+        historyRangeStartMillis = startMillis
+        historyRangeEndMillis = endMillis
         let bridge = self.bridge
 
         historyLoadTask?.cancel()
+        historyIsLoading = true
+        historyIsLoadingMore = false
+        historyLoadStatus = "Preparing local history…"
+        historyLoadError = nil
         historyLoadTask = Task(priority: .utility) { [weak self] in
-            let snapshots = bridge.loadHistoryRange(startMillis: startMillis, endMillis: endMillis)
+            let loadStarted = CFAbsoluteTimeGetCurrent()
+            let maintenance = bridge.maintainHistoryStore(aggressive: false)
+            guard !Task.isCancelled else { return }
+            let summary = bridge.historyRangeSummary(startMillis: startMillis, endMillis: endMillis)
+            guard !Task.isCancelled else { return }
+            let snapshots: [SystemSnapshot]
+            if let summary, summary.rangeCount > 0 {
+                snapshots = bridge.loadHistoryPage(
+                    startMillis: startMillis,
+                    endMillis: endMillis,
+                    beforeMillisExclusive: nil,
+                    limit: self?.historyInitialPageSize ?? 120
+                )
+            } else {
+                snapshots = []
+            }
+            await MainActor.run {
+                guard let self else { return }
+                let durationMillis = (CFAbsoluteTimeGetCurrent() - loadStarted) * 1000.0
+                self.historyMaintenanceReport = maintenance
+                self.historyRangeSummary = summary
+                self.historySnapshots = snapshots
+                self.historyLastLoadDurationMillis = durationMillis
+                self.historyHasMore = UInt64(snapshots.count) < (summary?.rangeCount ?? 0)
+                self.historyLoadError = snapshots.isEmpty ? "No persisted history in the selected range yet." : nil
+                self.historyLoadStatus = self.historyStatusMessage(
+                    summary: summary,
+                    loadedCount: snapshots.count,
+                    durationMillis: durationMillis,
+                    maintenance: maintenance,
+                    isLoadMore: false
+                )
+                self.historyIsLoading = false
+                self.recordLocalDiagnosticsEvent(
+                    level: .info,
+                    subsystem: .persistence,
+                    eventType: "history-ui-load-completed",
+                    message: "Loaded persisted history into the History view.",
+                    fields: [
+                        DiagnosticsField(key: "duration_millis", value: String(format: "%.1f", durationMillis)),
+                        DiagnosticsField(key: "loaded_count", value: String(snapshots.count)),
+                        DiagnosticsField(key: "range_count", value: String(summary?.rangeCount ?? 0)),
+                        DiagnosticsField(key: "store_bytes", value: String(summary?.storeBytes ?? 0)),
+                        DiagnosticsField(key: "wal_bytes", value: String(summary?.walBytes ?? 0)),
+                        DiagnosticsField(key: "checkpointed", value: String(maintenance?.checkpointed ?? false)),
+                        DiagnosticsField(key: "vacuumed", value: String(maintenance?.vacuumed ?? false)),
+                    ]
+                )
+            }
+        }
+    }
+
+    public func loadMoreHistory() {
+        guard historyVisible,
+              !historyIsLoading,
+              !historyIsLoadingMore,
+              historyHasMore,
+              let oldestMillis = historySnapshots.first?.capturedAtMillis
+        else {
+            return
+        }
+        let startMillis = historyRangeStartMillis
+        let endMillis = historyRangeEndMillis
+        let bridge = self.bridge
+        historyIsLoadingMore = true
+        historyLoadStatus = "Loading older persisted samples…"
+        historyLoadTask?.cancel()
+        historyLoadTask = Task(priority: .utility) { [weak self] in
+            let loadStarted = CFAbsoluteTimeGetCurrent()
+            let olderSnapshots = bridge.loadHistoryPage(
+                startMillis: startMillis,
+                endMillis: endMillis,
+                beforeMillisExclusive: oldestMillis,
+                limit: self?.historyLoadMorePageSize ?? 240
+            )
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self else { return }
-                self.historySnapshots = snapshots
-                self.historyLoadError = snapshots.isEmpty ? "No persisted history in the selected range yet." : nil
+                let durationMillis = (CFAbsoluteTimeGetCurrent() - loadStarted) * 1000.0
+                let existing = Set(self.historySnapshots.map(\.sequence))
+                let uniqueOlder = olderSnapshots.filter { !existing.contains($0.sequence) }
+                self.historySnapshots.insert(contentsOf: uniqueOlder, at: 0)
+                self.historyLastLoadDurationMillis = durationMillis
+                let rangeCount = self.historyRangeSummary?.rangeCount ?? 0
+                self.historyHasMore = UInt64(self.historySnapshots.count) < rangeCount && !uniqueOlder.isEmpty
+                self.historyIsLoadingMore = false
+                self.historyLoadStatus = self.historyStatusMessage(
+                    summary: self.historyRangeSummary,
+                    loadedCount: self.historySnapshots.count,
+                    durationMillis: durationMillis,
+                    maintenance: self.historyMaintenanceReport,
+                    isLoadMore: true
+                )
             }
         }
     }
@@ -566,6 +683,29 @@ public final class AppState {
         } else {
             lagMonitor.stop()
         }
+    }
+
+    private func historyStatusMessage(
+        summary: HistoryRangeSummary?,
+        loadedCount: Int,
+        durationMillis: Double,
+        maintenance: HistoryMaintenanceReport?,
+        isLoadMore: Bool
+    ) -> String {
+        let total = summary?.rangeCount ?? 0
+        let base = total > 0
+            ? "Loaded \(loadedCount) of \(total) persisted samples in \(String(format: "%.0f", durationMillis)) ms."
+            : "History checked in \(String(format: "%.0f", durationMillis)) ms."
+        if maintenance?.vacuumed == true {
+            return "\(base) Store was compacted."
+        }
+        if maintenance?.checkpointed == true {
+            return "\(base) Store checkpointed before loading."
+        }
+        if isLoadMore {
+            return "\(base) Older samples appended."
+        }
+        return base
     }
 
     private func observeWorkspaceActivation() {

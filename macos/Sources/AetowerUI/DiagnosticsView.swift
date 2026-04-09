@@ -216,6 +216,16 @@ public struct DiagnosticsView: View {
                 if let persistedPath = state.diagnosticsOverview.persistedPath {
                     labeledPersistenceDetail("Diagnostics file", persistedPath)
                 }
+                if let historySummary = state.historyRangeSummary {
+                    labeledPersistenceDetail(
+                        "History store",
+                        "\(byteCount(historySummary.storeBytes)) db · \(byteCount(historySummary.walBytes)) wal · \(historySummary.snapshotCount) persisted"
+                    )
+                    labeledPersistenceDetail(
+                        "Last history load",
+                        "\(Int(state.historyLastLoadDurationMillis.rounded())) ms · \(state.historySnapshots.count)/\(historySummary.rangeCount) loaded"
+                    )
+                }
                 if let lastHistoryLoadFailure {
                     labeledPersistenceDetail("Last history issue", lastHistoryLoadFailure)
                 }
