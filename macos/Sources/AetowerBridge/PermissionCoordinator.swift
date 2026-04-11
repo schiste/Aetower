@@ -180,7 +180,7 @@ public final class PermissionCoordinator {
             cachedWindowTitle = (now, processIdentifier, nil)
             return nil
         }
-        let windowElement = unsafeBitCast(focusedWindow, to: AXUIElement.self)
+        let windowElement = unsafeDowncast(focusedWindow, to: AXUIElement.self)
         var title: CFTypeRef?
         let titleResult = AXUIElementCopyAttributeValue(
             windowElement,
