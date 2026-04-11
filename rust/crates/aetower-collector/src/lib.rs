@@ -136,6 +136,18 @@ pub struct Collector {
     disk_refresh_tick: u8,
     cached_bluetooth_devices: Vec<BluetoothDeviceBattery>,
     bluetooth_refresh_tick: u8,
+    /// True until the first `collect()` call completes. `sysinfo`'s
+    /// `received()` / `transmitted()` on the first refresh after the
+    /// `Collector` is constructed represents the delta between
+    /// `Networks::new_with_refreshed_list()` and whatever time has
+    /// elapsed before the engine calls `collect()` — which is neither
+    /// a full tick nor a predictable interval, so dividing by
+    /// `TICK_SECONDS` gives a misleading rate that is typically under-
+    /// or over-reported by a factor of two or more. Seeding the per-
+    /// interface rates to zero on the first tick ensures the UI never
+    /// shows a misleading initial burst and only displays real rates
+    /// once the tick cadence has stabilised.
+    first_network_tick: bool,
 }
 
 impl Collector {
@@ -165,6 +177,7 @@ impl Collector {
             disk_refresh_tick: 0,
             cached_bluetooth_devices: Vec::new(),
             bluetooth_refresh_tick: 0,
+            first_network_tick: true,
         }
     }
 
@@ -239,8 +252,12 @@ impl Collector {
                 .transmitted
                 .saturating_add(data.transmitted());
         }
-        let network_interfaces =
-            build_network_interface_snapshots(&self.networks, &self.cached_network_interfaces);
+        let network_interfaces = build_network_interface_snapshots(
+            &self.networks,
+            &self.cached_network_interfaces,
+            self.first_network_tick,
+        );
+        self.first_network_tick = false;
 
         let metadata_refresh =
             self.config.full_collection || self.process_metadata_tick == 1 || full_scan;
@@ -453,19 +470,32 @@ fn collect_network_interface_metadata(networks: &Networks) -> Vec<NetworkInterfa
 fn build_network_interface_snapshots(
     networks: &Networks,
     cached_metadata: &[NetworkInterfaceIdentitySample],
+    first_tick: bool,
 ) -> Vec<NetworkInterfaceSnapshot> {
     if cached_metadata.is_empty() {
         return Vec::new();
     }
 
-    let throughput_by_name: HashMap<&str, (u64, u64)> = networks
-        .iter()
-        .map(|(name, data)| {
-            let receive_bps = (data.received() as f64 / TICK_SECONDS as f64) as u64;
-            let send_bps = (data.transmitted() as f64 / TICK_SECONDS as f64) as u64;
-            (name.as_str(), (receive_bps, send_bps))
-        })
-        .collect();
+    // On the first collector tick, `sysinfo`'s `received()` /
+    // `transmitted()` return the delta between `Networks::new_with_
+    // refreshed_list()` and whatever unknown interval has elapsed
+    // before `collect()` was called. Dividing that by `TICK_SECONDS`
+    // produces an arbitrary rate that is typically wrong by a factor
+    // of two or more. Zero all rates on the first tick so the UI does
+    // not flash a misleading initial burst; subsequent ticks land at
+    // the steady 2 s cadence and the rate conversion is accurate.
+    let throughput_by_name: HashMap<&str, (u64, u64)> = if first_tick {
+        HashMap::new()
+    } else {
+        networks
+            .iter()
+            .map(|(name, data)| {
+                let receive_bps = (data.received() as f64 / TICK_SECONDS as f64) as u64;
+                let send_bps = (data.transmitted() as f64 / TICK_SECONDS as f64) as u64;
+                (name.as_str(), (receive_bps, send_bps))
+            })
+            .collect()
+    };
 
     cached_metadata
         .iter()
@@ -1936,5 +1966,72 @@ mod platform {
 
     pub fn sample_bluetooth_devices() -> Vec<BluetoothDeviceBattery> {
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod top_level_tests {
+    use super::{NetworkInterfaceIdentitySample, build_network_interface_snapshots};
+    use sysinfo::Networks;
+
+    /// Regression: the first `collect()` call on a freshly-constructed
+    /// `Collector` must not report non-zero per-interface bps. Before
+    /// this fix, sysinfo's `received()` returned the delta between the
+    /// constructor's initial refresh and the first `collect()` call —
+    /// an unknown interval that divided by `TICK_SECONDS` produced a
+    /// misleading rate (typically off by a factor of two or more).
+    /// With the first-tick seed, all rates must be zero.
+    #[test]
+    fn first_tick_network_rates_are_seeded_to_zero() {
+        let networks = Networks::new_with_refreshed_list();
+        // Pull a real interface name so the cache match succeeds, but
+        // mirror it as a local `NetworkInterfaceIdentitySample` so the
+        // test does not depend on the platform-specific MAC format.
+        let cached: Vec<NetworkInterfaceIdentitySample> = networks
+            .iter()
+            .take(1)
+            .map(|(name, _data)| NetworkInterfaceIdentitySample {
+                name: name.clone(),
+                mac_address: String::new(),
+                is_up: true,
+            })
+            .collect();
+        if cached.is_empty() {
+            // No interfaces exposed in the test environment; nothing to
+            // assert but the code path must still not panic.
+            return;
+        }
+
+        let snapshots = build_network_interface_snapshots(&networks, &cached, true);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(
+            snapshots[0].receive_bps, 0,
+            "first-tick receive_bps must be zero to avoid the misleading startup rate"
+        );
+        assert_eq!(
+            snapshots[0].send_bps, 0,
+            "first-tick send_bps must be zero to avoid the misleading startup rate"
+        );
+    }
+
+    /// A subsequent tick (first_tick=false) is allowed to report any
+    /// non-negative rate. We can't easily assert a specific value
+    /// without mocking sysinfo, so this test just verifies the call
+    /// does not panic and produces the same number of rows as the
+    /// cached metadata.
+    #[test]
+    fn subsequent_ticks_produce_one_snapshot_per_cached_interface() {
+        let networks = Networks::new_with_refreshed_list();
+        let cached: Vec<NetworkInterfaceIdentitySample> = networks
+            .iter()
+            .take(2)
+            .map(|(name, _data)| NetworkInterfaceIdentitySample {
+                name: name.clone(),
+                mac_address: String::new(),
+                is_up: false,
+            })
+            .collect();
+        let snapshots = build_network_interface_snapshots(&networks, &cached, false);
+        assert_eq!(snapshots.len(), cached.len());
     }
 }
