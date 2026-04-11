@@ -2,13 +2,20 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CARGO_BIN="${CARGO_BIN:-$(command -v cargo || printf '%s' cargo)}"
+if [ -n "${HOME:-}" ] \
+    && [ -x "$HOME/.cargo/bin/cargo" ] \
+    && [ "$CARGO_BIN" = "$HOME/.chau7/cto_bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
 APP_NAME="Aetower.app"
 APP_DIR="$ROOT/dist/$APP_NAME"
 BIN_DIR="$APP_DIR/Contents/MacOS"
 FRAMEWORK_DIR="$APP_DIR/Contents/Frameworks"
 HELPER_DIR="$APP_DIR/Contents/Helpers"
 PLIST_DIR="$APP_DIR/Contents"
-SWIFTPM_PLUGIN_DIR="$ROOT/macos/.build/plugins/outputs/macos/AetowerBindings/destination/BuildRustBridgePlugin"
+SWIFT_BUILD_DIR="${SWIFT_BUILD_DIR:-$ROOT/macos/.build}"
+SWIFTPM_PLUGIN_DIR="$SWIFT_BUILD_DIR/plugins/outputs/macos/AetowerBindings/destination/BuildRustBridgePlugin"
 
 BUNDLE_ID="${AETOWER_BUNDLE_ID:-com.aetower.app}"
 VERSION="${AETOWER_VERSION:-0.1.0}"
@@ -69,13 +76,14 @@ notarize_app() {
 }
 
 sh "$ROOT/scripts/build-rust.sh"
-cargo build --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper --release
-/usr/bin/swift build --package-path "$ROOT/macos" -c release
+"$CARGO_BIN" build --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper --release
+rm -rf "$SWIFT_BUILD_DIR"
+/usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -c release
 
 rm -rf "$APP_DIR"
 mkdir -p "$BIN_DIR" "$FRAMEWORK_DIR" "$HELPER_DIR" "$PLIST_DIR/Resources"
 
-cp "$ROOT/macos/.build/release/AetowerApp" "$BIN_DIR/Aetower"
+cp "$SWIFT_BUILD_DIR/release/AetowerApp" "$BIN_DIR/Aetower"
 cp "$ROOT/rust/target/release/libaetower_ffi.dylib" "$FRAMEWORK_DIR/"
 cp "$ROOT/rust/target/release/aetower-helper" "$HELPER_DIR/aetower-helper"
 
