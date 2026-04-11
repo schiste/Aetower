@@ -2,6 +2,10 @@ use std::sync::Arc;
 
 use aetower_core::{Engine, RuntimeCollectionSettings};
 use aetower_diagnostics as diagnostics;
+use aetower_mcp::{
+    AetowerMcpDataSource, HistorySummaryResponse, LocalMcpServerHandle, default_socket_path,
+    start_local_socket_server,
+};
 use aetower_model as model;
 
 uniffi::setup_scaffolding!();
@@ -246,15 +250,18 @@ pub enum BatteryCondition {
 
 /// Long-lived battery health metrics exposed to Swift.
 ///
-/// All values are derived in a single IOPSCopyPowerSourcesInfo pass. Fields
-/// are zero/`None` when the corresponding IOKit key is absent on this
-/// machine (e.g. desktop Macs with no battery at all).
+/// All values are derived in a single IOPSCopyPowerSourcesInfo pass. Every
+/// numeric field is `Option<…>` so the Swift UI can tell "the IOKit key
+/// was not reported this tick" (`nil`) apart from a genuinely-zero
+/// reading (`0`). Before this change the Rust side silently conflated
+/// "missing" with "zero", which made desktop Macs indistinguishable from
+/// a brand-new laptop battery.
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct BatteryHealthSnapshot {
-    pub cycle_count: u32,
-    pub design_capacity_mah: u32,
-    pub max_capacity_mah: u32,
-    pub health_percent: f32,
+    pub cycle_count: Option<u32>,
+    pub design_capacity_mah: Option<u32>,
+    pub max_capacity_mah: Option<u32>,
+    pub health_percent: Option<f32>,
     pub condition: BatteryCondition,
     pub temperature_celsius: Option<f32>,
 }
@@ -628,7 +635,8 @@ pub struct HistoryMaintenanceReport {
 
 #[derive(uniffi::Object)]
 pub struct MonitorEngine {
-    inner: std::sync::Mutex<Engine>,
+    inner: Arc<std::sync::Mutex<Engine>>,
+    mcp_server: std::sync::Mutex<Option<LocalMcpServerHandle>>,
 }
 
 #[uniffi::export]
@@ -638,7 +646,8 @@ impl MonitorEngine {
         let mut engine = Engine::new();
         engine.start();
         Arc::new(Self {
-            inner: std::sync::Mutex::new(engine),
+            inner: Arc::new(std::sync::Mutex::new(engine)),
+            mcp_server: std::sync::Mutex::new(None),
         })
     }
 
@@ -939,13 +948,153 @@ impl MonitorEngine {
             .latest_snapshot();
         serde_json::to_string_pretty(&snapshot).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
     }
+
+    pub fn start_local_mcp_server(&self, socket_path: Option<String>) -> String {
+        let resolved_path = socket_path
+            .clone()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(default_socket_path);
+        if let Ok(mut slot) = self.mcp_server.lock() {
+            let _ = slot.take();
+        }
+        let data_source = Arc::new(MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        });
+        match start_local_socket_server(data_source, &resolved_path) {
+            Ok(handle) => {
+                let path_display = resolved_path.display().to_string();
+                if let Ok(mut slot) = self.mcp_server.lock() {
+                    *slot = Some(handle);
+                }
+                if let Ok(engine) = self.inner.lock() {
+                    engine.record_diagnostics_event(
+                        diagnostics::DiagnosticsEvent::builder(
+                            diagnostics::DiagnosticsLevel::Info,
+                            diagnostics::DiagnosticsSubsystem::Ffi,
+                            "mcp-server-started",
+                            "Started local MCP server",
+                        )
+                        .field("path", path_display)
+                        .build(),
+                    );
+                }
+                String::new()
+            }
+            Err(error) => {
+                let path_display = resolved_path.display().to_string();
+                if let Ok(engine) = self.inner.lock() {
+                    engine.record_diagnostics_event(
+                        diagnostics::DiagnosticsEvent::builder(
+                            diagnostics::DiagnosticsLevel::Error,
+                            diagnostics::DiagnosticsSubsystem::Ffi,
+                            "mcp-server-start-failed",
+                            "Failed to start local MCP server",
+                        )
+                        .field("path", path_display)
+                        .field("error", &error)
+                        .build(),
+                    );
+                }
+                error
+            }
+        }
+    }
 }
 
 impl Drop for MonitorEngine {
     fn drop(&mut self) {
+        if let Ok(mut server) = self.mcp_server.lock() {
+            let _ = server.take();
+        }
         if let Ok(mut engine) = self.inner.lock() {
             engine.stop();
         }
+    }
+}
+
+struct MonitorEngineDataSource {
+    engine: Arc<std::sync::Mutex<Engine>>,
+}
+
+impl AetowerMcpDataSource for MonitorEngineDataSource {
+    fn latest_snapshot(&self) -> model::SystemSnapshot {
+        let Ok(engine) = self.engine.lock() else {
+            return model::SystemSnapshot::default();
+        };
+        engine.latest_snapshot()
+    }
+
+    fn latest_snapshot_if_newer(&self, last_sequence: u64) -> Option<model::SystemSnapshot> {
+        let engine = self.engine.lock().ok()?;
+        engine.latest_snapshot_if_newer(last_sequence)
+    }
+
+    fn latest_sequence(&self) -> u64 {
+        let Ok(engine) = self.engine.lock() else {
+            return 0;
+        };
+        engine.latest_sequence()
+    }
+
+    fn latest_runtime_lag_metrics(&self) -> model::RuntimeLagMetrics {
+        let Ok(engine) = self.engine.lock() else {
+            return model::RuntimeLagMetrics::default();
+        };
+        engine.latest_runtime_lag_metrics()
+    }
+
+    fn history_range_summary(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+    ) -> Result<HistorySummaryResponse, String> {
+        let engine = self
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_owned())?;
+        engine
+            .try_history_range_summary(start_millis, end_millis)
+            .map(|summary| HistorySummaryResponse {
+                store_bytes: summary.store_bytes,
+                wal_bytes: summary.wal_bytes,
+                snapshot_count: summary.snapshot_count,
+                quarantine_count: summary.quarantine_count,
+                range_count: summary.range_count,
+                oldest_millis: summary.oldest_millis,
+                newest_millis: summary.newest_millis,
+                pending_writes: summary.pending_writes,
+            })
+    }
+
+    fn load_history_page(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+        before_millis_exclusive: Option<u64>,
+        limit: u32,
+    ) -> Result<Vec<model::SystemSnapshot>, String> {
+        let engine = self
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_owned())?;
+        engine.try_load_history_page(start_millis, end_millis, before_millis_exclusive, limit)
+    }
+
+    fn diagnostics_overview(&self) -> diagnostics::DiagnosticsOverview {
+        let Ok(engine) = self.engine.lock() else {
+            return diagnostics::DiagnosticsOverview::default();
+        };
+        engine.diagnostics_overview()
+    }
+
+    fn query_diagnostics(
+        &self,
+        query: diagnostics::DiagnosticsQuery,
+    ) -> Vec<diagnostics::DiagnosticsEvent> {
+        let Ok(engine) = self.engine.lock() else {
+            return Vec::new();
+        };
+        engine.query_diagnostics(query)
     }
 }
 
@@ -1774,5 +1923,33 @@ impl From<FrontmostAppState> for model::FrontmostAppState {
             window_title: value.window_title,
             captured_at_millis: value.captured_at_millis,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::PathBuf, time::Duration};
+
+    use super::*;
+
+    #[test]
+    fn monitor_engine_starts_local_mcp_server() {
+        let socket_path =
+            std::env::temp_dir().join(format!("aetower-mcp-ffi-{}.sock", std::process::id()));
+        let socket_string = socket_path.display().to_string();
+        let engine = MonitorEngine::new();
+        let result = engine.start_local_mcp_server(Some(socket_string.clone()));
+        assert!(result.is_empty(), "{result}");
+
+        for _ in 0..50 {
+            if socket_path.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        assert!(socket_path.exists(), "expected socket at {}", socket_string);
+        drop(engine);
+        let _ = fs::remove_file(PathBuf::from(socket_string));
     }
 }

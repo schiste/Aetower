@@ -538,10 +538,21 @@ pub enum BatteryCondition {
 /// ratio. An M-series MacBook is rated for ~1000 cycles before reaching 80%.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BatteryHealthSnapshot {
-    pub cycle_count: u32,
-    pub design_capacity_mah: u32,
-    pub max_capacity_mah: u32,
-    pub health_percent: f32,
+    /// Full discharge cycles logged by the SMC. `None` when the IOPS
+    /// dictionary did not expose the key on this tick, distinct from
+    /// `Some(0)` which would mean a brand-new battery.
+    pub cycle_count: Option<u32>,
+    /// Original factory capacity in mAh. `None` when the IOPS
+    /// dictionary did not expose the key.
+    pub design_capacity_mah: Option<u32>,
+    /// Current full-charge capacity in mAh. `None` when the IOPS
+    /// dictionary did not expose the key.
+    pub max_capacity_mah: Option<u32>,
+    /// Ratio of `max_capacity_mah / design_capacity_mah` as a 0-100
+    /// percentage. `None` when either input is missing — the ratio
+    /// cannot be derived from partial data, and fabricating a `0.0`
+    /// would be indistinguishable from a dead battery.
+    pub health_percent: Option<f32>,
     pub condition: BatteryCondition,
     pub temperature_celsius: Option<f32>,
 }

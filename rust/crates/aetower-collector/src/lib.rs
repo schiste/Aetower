@@ -838,23 +838,30 @@ mod platform {
 
                     // Extended health fields — each is optional because older
                     // Macs or non-Apple batteries may not expose them all.
+                    //
+                    // `None` and `Some(0)` are deliberately distinct here.
+                    // `None` means the IOPS dictionary did not provide the
+                    // key on this tick (could be a Mac mini, an older
+                    // macOS, a third-party USB-C battery, etc.). `Some(0)`
+                    // would only arise from a genuinely-zero reading and
+                    // we do not currently have a code path that produces
+                    // one — but the type distinction prevents downstream
+                    // code from confusing "brand-new battery" with
+                    // "sensor not reporting".
                     let cycle_count = cf_dictionary_i32(description, K_IOPS_CYCLE_COUNT_KEY)
-                        .filter(|value| *value >= 0)
-                        .map(|value| value as u32)
-                        .unwrap_or(0);
+                        .and_then(|value| u32::try_from(value).ok());
                     let design_capacity =
                         cf_dictionary_i32(description, K_IOPS_DESIGN_CAPACITY_KEY)
-                            .filter(|value| *value > 0)
-                            .map(|value| value as u32)
-                            .unwrap_or(0);
+                            .and_then(|value| u32::try_from(value).ok())
+                            .filter(|value| *value > 0);
                     let max_capacity_mah = max_capacity
-                        .filter(|value| *value > 0)
-                        .map(|value| value as u32)
-                        .unwrap_or(0);
-                    let health_percent = if design_capacity > 0 && max_capacity_mah > 0 {
-                        (max_capacity_mah as f32 / design_capacity as f32 * 100.0).clamp(0.0, 100.0)
-                    } else {
-                        0.0
+                        .and_then(|value| u32::try_from(value).ok())
+                        .filter(|value| *value > 0);
+                    let health_percent = match (design_capacity, max_capacity_mah) {
+                        (Some(design), Some(current)) if design > 0 => {
+                            Some((current as f32 / design as f32 * 100.0).clamp(0.0, 100.0))
+                        }
+                        _ => None,
                     };
                     let condition = cf_dictionary_string(description, K_IOPS_BATTERY_HEALTH_KEY)
                         .map(|value| match value.as_str() {
@@ -874,8 +881,12 @@ mod platform {
                             },
                         );
 
-                    if design_capacity > 0
-                        || cycle_count > 0
+                    // Only emit a BatteryHealthSnapshot when we actually
+                    // have at least one meaningful field — otherwise a
+                    // desktop Mac with no battery would still surface an
+                    // empty health record instead of `None`.
+                    if design_capacity.is_some()
+                        || cycle_count.is_some()
                         || condition != BatteryCondition::Unknown
                     {
                         health = Some(BatteryHealthSnapshot {

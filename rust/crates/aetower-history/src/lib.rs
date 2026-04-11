@@ -580,14 +580,20 @@ impl History {
         }
 
         // Battery health: only meaningful when the machine actually has a
-        // battery — desktops skip this entirely.
+        // battery AND the IOPS layer reported both the design capacity
+        // and current capacity so we can compute a ratio. `None` for
+        // `health_percent` is the "missing keys" signal and we must not
+        // trip an alert on it — before the Option conversion, the zero
+        // default here silently bypassed desktops by the `> 0.0` guard,
+        // but it would have classified a genuinely-zero reading the
+        // same way. Now the distinction is explicit in the type.
         if let Some(battery) = host.battery_health.as_ref()
-            && battery.health_percent > 0.0
+            && let Some(health_percent) = battery.health_percent
         {
             self.evaluate_alert_transition(
                 captured_at_millis,
                 SENSOR_KEY_BATTERY_HEALTH,
-                battery.health_percent,
+                health_percent,
                 "Battery health",
                 |value, level| {
                     format!(
@@ -1687,10 +1693,10 @@ mod tests {
     fn host_with_battery_health(health_percent: f32) -> HostSnapshot {
         HostSnapshot {
             battery_health: Some(aetower_model::BatteryHealthSnapshot {
-                cycle_count: 500,
-                design_capacity_mah: 5000,
-                max_capacity_mah: ((health_percent / 100.0) * 5000.0) as u32,
-                health_percent,
+                cycle_count: Some(500),
+                design_capacity_mah: Some(5000),
+                max_capacity_mah: Some(((health_percent / 100.0) * 5000.0) as u32),
+                health_percent: Some(health_percent),
                 condition: aetower_model::BatteryCondition::Good,
                 temperature_celsius: Some(32.0),
             }),

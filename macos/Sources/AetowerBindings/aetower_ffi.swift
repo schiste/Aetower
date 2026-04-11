@@ -595,6 +595,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
      */
     func setFanMinRpm(fanId: UInt8, rpm: Float)  -> String
     
+    func startLocalMcpServer(socketPath: String?)  -> String
+    
     func stopAgentSession(sessionId: String, force: Bool)  -> String
     
     func updateFrontmostAppState(state: FrontmostAppState) 
@@ -879,6 +881,14 @@ open func setFanMinRpm(fanId: UInt8, rpm: Float) -> String  {
     uniffi_aetower_ffi_fn_method_monitorengine_set_fan_min_rpm(self.uniffiClonePointer(),
         FfiConverterUInt8.lower(fanId),
         FfiConverterFloat.lower(rpm),$0
+    )
+})
+}
+    
+open func startLocalMcpServer(socketPath: String?) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_start_local_mcp_server(self.uniffiClonePointer(),
+        FfiConverterOptionString.lower(socketPath),$0
     )
 })
 }
@@ -1390,21 +1400,24 @@ public func FfiConverterTypeAggregateMetrics_lower(_ value: AggregateMetrics) ->
 /**
  * Long-lived battery health metrics exposed to Swift.
  *
- * All values are derived in a single IOPSCopyPowerSourcesInfo pass. Fields
- * are zero/`None` when the corresponding IOKit key is absent on this
- * machine (e.g. desktop Macs with no battery at all).
+ * All values are derived in a single IOPSCopyPowerSourcesInfo pass. Every
+ * numeric field is `Option<…>` so the Swift UI can tell "the IOKit key
+ * was not reported this tick" (`nil`) apart from a genuinely-zero
+ * reading (`0`). Before this change the Rust side silently conflated
+ * "missing" with "zero", which made desktop Macs indistinguishable from
+ * a brand-new laptop battery.
  */
 public struct BatteryHealthSnapshot {
-    public var cycleCount: UInt32
-    public var designCapacityMah: UInt32
-    public var maxCapacityMah: UInt32
-    public var healthPercent: Float
+    public var cycleCount: UInt32?
+    public var designCapacityMah: UInt32?
+    public var maxCapacityMah: UInt32?
+    public var healthPercent: Float?
     public var condition: BatteryCondition
     public var temperatureCelsius: Float?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cycleCount: UInt32, designCapacityMah: UInt32, maxCapacityMah: UInt32, healthPercent: Float, condition: BatteryCondition, temperatureCelsius: Float?) {
+    public init(cycleCount: UInt32?, designCapacityMah: UInt32?, maxCapacityMah: UInt32?, healthPercent: Float?, condition: BatteryCondition, temperatureCelsius: Float?) {
         self.cycleCount = cycleCount
         self.designCapacityMah = designCapacityMah
         self.maxCapacityMah = maxCapacityMah
@@ -1461,20 +1474,20 @@ public struct FfiConverterTypeBatteryHealthSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BatteryHealthSnapshot {
         return
             try BatteryHealthSnapshot(
-                cycleCount: FfiConverterUInt32.read(from: &buf), 
-                designCapacityMah: FfiConverterUInt32.read(from: &buf), 
-                maxCapacityMah: FfiConverterUInt32.read(from: &buf), 
-                healthPercent: FfiConverterFloat.read(from: &buf), 
+                cycleCount: FfiConverterOptionUInt32.read(from: &buf), 
+                designCapacityMah: FfiConverterOptionUInt32.read(from: &buf), 
+                maxCapacityMah: FfiConverterOptionUInt32.read(from: &buf), 
+                healthPercent: FfiConverterOptionFloat.read(from: &buf), 
                 condition: FfiConverterTypeBatteryCondition.read(from: &buf), 
                 temperatureCelsius: FfiConverterOptionFloat.read(from: &buf)
         )
     }
 
     public static func write(_ value: BatteryHealthSnapshot, into buf: inout [UInt8]) {
-        FfiConverterUInt32.write(value.cycleCount, into: &buf)
-        FfiConverterUInt32.write(value.designCapacityMah, into: &buf)
-        FfiConverterUInt32.write(value.maxCapacityMah, into: &buf)
-        FfiConverterFloat.write(value.healthPercent, into: &buf)
+        FfiConverterOptionUInt32.write(value.cycleCount, into: &buf)
+        FfiConverterOptionUInt32.write(value.designCapacityMah, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxCapacityMah, into: &buf)
+        FfiConverterOptionFloat.write(value.healthPercent, into: &buf)
         FfiConverterTypeBatteryCondition.write(value.condition, into: &buf)
         FfiConverterOptionFloat.write(value.temperatureCelsius, into: &buf)
     }
@@ -7693,6 +7706,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_set_fan_min_rpm() != 11672) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_start_local_mcp_server() != 18448) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_stop_agent_session() != 46014) {
