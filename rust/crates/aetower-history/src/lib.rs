@@ -600,39 +600,73 @@ impl History {
 
         // Fan stuck: tracked as a separate key per fan ID because a
         // single-fan machine and a dual-fan Pro are very different cases.
-        // We consider a fan "stuck" when it reports 0 RPM while the
-        // thermal state is Fair or worse — that pairing means the SoC is
-        // warm and yet nothing is cooling it, so the alert is actionable.
+        //
+        // The fan-stuck condition is a compound boolean: `fan.current_rpm
+        // <= 0.0 && thermal_state >= Fair`. Both halves matter — a fan
+        // idling at 0 RPM on a cool SoC is normal, and a spinning fan
+        // under thermal stress is also normal. Only the intersection
+        // ("the SoC is hot and yet nothing is cooling it") is actionable.
+        //
+        // We evaluate every fan on every tick, even when thermal is
+        // nominal, so that `previous_sensor_alert_levels` can drop back to
+        // `Nominal` and emit a recovery event the moment the compound
+        // condition clears. The previous implementation gated the entire
+        // loop on `thermal_is_elevated`, which left stale `Warning` entries
+        // in the map when the thermal state fell back to nominal and never
+        // emitted a recovery event.
+        //
+        // We intentionally bypass the numeric threshold machinery here: the
+        // compound boolean doesn't map cleanly to an `AlertThreshold { warning,
+        // critical, direction }` record, and the previous synthetic-
+        // threshold shim (warning=1.0, critical=1.0) could only ever fire
+        // `Critical` because `classify_alert(1.0, above)` takes the
+        // `>= critical` branch first. A dedicated boolean code path here
+        // produces Warning severity (the UI can still escalate to Critical
+        // after N consecutive stuck ticks in the future if we want).
         let thermal_is_elevated =
             thermal_severity(host.thermal_state) >= thermal_severity(ThermalState::Fair);
-        if thermal_is_elevated {
-            for fan in &host.fans {
-                let key = format!("{SENSOR_KEY_FAN_STUCK}_{id}", id = fan.id);
-                let stuck_value = if fan.current_rpm <= 0.0 { 1.0 } else { 0.0 };
-                // Fan-stuck is a pure boolean but we encode it as a value-vs-
-                // threshold check so the transition machinery is shared with
-                // the other alerts. `>= 1` maps to a fan at rest, `< 1` maps
-                // to any rotation.
-                let synthetic_threshold = AlertThreshold {
-                    sensor_key: key.clone(),
-                    warning_value: 1.0,
-                    critical_value: 1.0,
-                    direction: ThresholdDirection::Above,
-                };
-                self.evaluate_alert_with_threshold(
-                    captured_at_millis,
-                    &synthetic_threshold,
-                    stuck_value,
-                    "Fan stalled",
-                    |_value, level| {
-                        format!(
-                            "{name} is at 0 RPM while the SoC is thermally stressed ({level})",
-                            name = fan.name,
-                            level = level_label(level)
-                        )
-                    },
-                );
+        for fan in &host.fans {
+            let key = format!("{SENSOR_KEY_FAN_STUCK}_{id}", id = fan.id);
+            let is_stuck_under_load = fan.current_rpm <= 0.0 && thermal_is_elevated;
+            let current = if is_stuck_under_load {
+                AlertLevel::Warning
+            } else {
+                AlertLevel::Nominal
+            };
+            let previous = self
+                .previous_sensor_alert_levels
+                .get(&key)
+                .copied()
+                .unwrap_or_default();
+            if current == previous {
+                continue;
             }
+            self.previous_sensor_alert_levels.insert(key, current);
+            if current == AlertLevel::Nominal {
+                self.push_event(
+                    captured_at_millis,
+                    TimelineCategory::Host,
+                    TimelineSeverity::Info,
+                    None,
+                    format!("{name} fan stall cleared", name = fan.name),
+                    format!(
+                        "{name} is now spinning or the SoC is no longer under thermal stress",
+                        name = fan.name
+                    ),
+                );
+                continue;
+            }
+            self.push_event(
+                captured_at_millis,
+                TimelineCategory::Host,
+                alert_level_to_severity(current),
+                None,
+                format!("{name} stalled", name = fan.name),
+                format!(
+                    "{name} is at 0 RPM while the SoC is thermally stressed (warning)",
+                    name = fan.name
+                ),
+            );
         }
     }
 
@@ -1796,13 +1830,68 @@ mod tests {
         let (events, _) = history.update(2_000, &stressed, &mut entities);
         let fan_events: Vec<_> = events
             .iter()
-            .filter(|event| event.title.contains("Fan"))
+            .filter(|event| event.title.contains("stalled"))
             .collect();
         assert_eq!(fan_events.len(), 1);
-        assert!(matches!(
-            fan_events[0].severity,
-            TimelineSeverity::Warning | TimelineSeverity::Critical
-        ));
+        // Regression: the old synthetic-threshold shim could only ever
+        // fire `Critical` because warning_value == critical_value == 1.0
+        // and `classify_alert(1.0, above)` takes the `>= critical` branch
+        // first. The fan-stuck path now has its own boolean classifier
+        // and must produce exactly Warning.
+        assert_eq!(fan_events[0].severity, TimelineSeverity::Warning);
+    }
+
+    /// Regression: when the SoC cools back to nominal while the fan is
+    /// still at 0 RPM, the alert should clear and emit a recovery event.
+    /// The previous implementation gated the whole fan-evaluation loop on
+    /// `thermal_is_elevated`, so the `previous_sensor_alert_levels` entry
+    /// stayed at `Warning` forever and no recovery event was ever emitted.
+    #[test]
+    fn fan_stuck_clears_when_thermal_drops_back_to_nominal() {
+        use aetower_model::{FanReading, ThermalState};
+        let mut history = History::new();
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+
+        // Step 1: Fan stuck while thermal is serious → Warning emitted.
+        let stressed = HostSnapshot {
+            thermal_state: ThermalState::Serious,
+            fans: vec![FanReading {
+                id: 0,
+                name: "Fan 0".to_owned(),
+                current_rpm: 0.0,
+                min_rpm: 1000.0,
+                max_rpm: 6000.0,
+            }],
+            ..Default::default()
+        };
+        let (events, _) = history.update(1_000, &stressed, &mut entities);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.title.contains("stalled"))
+                .count(),
+            1
+        );
+
+        // Step 2: Thermal drops to nominal, fan still at 0 RPM. The
+        // compound condition (stuck AND stressed) is no longer true, so
+        // the alert must clear with a recovery event, not stay silent.
+        let cooled = HostSnapshot {
+            thermal_state: ThermalState::Nominal,
+            fans: stressed.fans.clone(),
+            ..Default::default()
+        };
+        let (events, _) = history.update(2_000, &cooled, &mut entities);
+        let recovery: Vec<_> = events
+            .iter()
+            .filter(|event| event.title.contains("Fan") && event.timestamp_millis == 2_000)
+            .collect();
+        assert_eq!(
+            recovery.len(),
+            1,
+            "recovery event should fire when thermal drops even if fan RPM is unchanged"
+        );
+        assert_eq!(recovery[0].severity, TimelineSeverity::Info);
     }
 
     #[test]

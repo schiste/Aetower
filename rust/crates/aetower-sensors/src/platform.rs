@@ -320,6 +320,26 @@ pub fn sample_sensors() -> Option<SensorSample> {
     })
 }
 
+/// Pin a fan to a manual minimum RPM.
+///
+/// Writes two SMC keys in sequence: `F{n}Md = 1` to switch the fan into
+/// "forced" mode, then `F{n}Mn = rpm*4` to set the new minimum. If the
+/// second write fails, the fan is left in forced mode at whatever `Mn`
+/// was previously configured — possibly zero, meaning no cooling under
+/// load. That is catastrophic for a user who tried to *increase* cooling
+/// and now has the fan actively disabled.
+///
+/// The fix is a two-write rollback: on second-write failure, attempt to
+/// write `F{n}Md = 0` to return the fan to automatic mode. Three outcomes:
+///
+/// - Happy path: both writes succeed, `Ok(())`.
+/// - Second write fails, rollback succeeds: return an error noting that
+///   the fan has been restored to automatic mode so the user knows the
+///   machine is safe to continue using.
+/// - Second write fails AND rollback fails: return a critical error
+///   asking the user to reboot, because the fan may be stuck in forced
+///   mode at the previous `Mn`. This is the worst case and the only path
+///   where the user needs to take manual action.
 pub fn set_fan_min_rpm(fan_id: u8, rpm: f32) -> Result<(), String> {
     let smc = SmcConnection::open().ok_or("failed to open SMC")?;
 
@@ -352,7 +372,21 @@ pub fn set_fan_min_rpm(fan_id: u8, rpm: f32) -> Result<(), String> {
         },
     };
     if !smc.write_key(min_key, &rpm_val) {
-        return Err("failed to set fan RPM".to_owned());
+        // Rollback: return the fan to automatic mode so it isn't left
+        // pinned to whatever `Mn` was before this call (possibly zero).
+        let auto_mode_val = SmcValue {
+            data_type: u32::from_be_bytes(*b"ui8 "),
+            data_size: 1,
+            bytes: [0u8; 32], // byte 0 is already 0 which means automatic
+        };
+        if smc.write_key(mode_key, &auto_mode_val) {
+            return Err("failed to set fan RPM; fan restored to automatic mode".to_owned());
+        }
+        return Err(
+            "failed to set fan RPM AND rollback failed; fan may be stuck \
+             in forced mode — please reboot to restore automatic control"
+                .to_owned(),
+        );
     }
 
     Ok(())

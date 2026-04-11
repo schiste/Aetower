@@ -119,28 +119,57 @@ enum FanCommand {
     Reset,
 }
 
-/// Parse and execute a fan-set/fan-reset command.
+/// Upper bound on the RPM the helper will accept, as a hardware-
+/// plausibility sanity guard.
 ///
-/// Validation is intentionally simple: the helper trusts the parent app to
-/// have already checked the RPM against each fan's reported min/max. The
-/// helper's job is to translate the CLI arguments into an `aetower-sensors`
-/// call and surface any SMC-level failure.
-fn apply_fan_command(args: &[String], command: FanCommand) -> Result<FanControlResult> {
+/// No current Mac fan exceeds ~7000 RPM under normal operation, and the
+/// SMC encoding for `F{n}Mn` is `fpe2` which tops out at 16,383 RPM.
+/// Rejecting anything above 10,000 gives plenty of headroom for every
+/// real Mac without letting a buggy future caller pass `f32::MAX` (which
+/// would be cast to `u16::MAX / 4 = 16383` and rounded down to whatever
+/// the SMC accepts — a silent mismatch between what the caller intended
+/// and what the fan actually does).
+const MAX_PLAUSIBLE_FAN_RPM: f32 = 10_000.0;
+
+/// Validate and parse fan-set arguments into a structured, typed form.
+///
+/// Separated from the side-effecting SMC path so we can unit-test the
+/// validation logic without needing root or a real SMC connection.
+fn validate_fan_set_args(args: &[String]) -> Result<(u8, f32)> {
     let fan_id: u8 = args
         .first()
         .context("missing fan_id argument")?
         .parse()
         .context("fan_id must be a small unsigned integer")?;
+    let rpm: f32 = args
+        .get(1)
+        .context("missing rpm argument")?
+        .parse()
+        .context("rpm must be a floating point number")?;
+    if !rpm.is_finite() || rpm < 0.0 {
+        bail!("rpm must be a non-negative finite value");
+    }
+    // Hardware plausibility: any future non-UI caller (CLI, test, an
+    // automation daemon) can pass `f32::MAX` here. The engine docs
+    // explicitly disclaim bounds checking and delegate it to the UI —
+    // which is a trust-boundary footgun. Enforce a physical ceiling
+    // here so the helper is safe on its own, regardless of caller.
+    if rpm > MAX_PLAUSIBLE_FAN_RPM {
+        bail!(
+            "rpm {rpm:.0} exceeds the plausibility ceiling of \
+             {MAX_PLAUSIBLE_FAN_RPM:.0}; real Mac fans never spin this \
+             fast and accepting this value risks an SMC write at a \
+             nonsense encoding"
+        );
+    }
+    Ok((fan_id, rpm))
+}
+
+/// Parse and execute a fan-set/fan-reset command.
+fn apply_fan_command(args: &[String], command: FanCommand) -> Result<FanControlResult> {
     match command {
         FanCommand::Set => {
-            let rpm: f32 = args
-                .get(1)
-                .context("missing rpm argument")?
-                .parse()
-                .context("rpm must be a floating point number")?;
-            if !rpm.is_finite() || rpm < 0.0 {
-                bail!("rpm must be a non-negative finite value");
-            }
+            let (fan_id, rpm) = validate_fan_set_args(args)?;
             aetower_sensors::set_fan_min_rpm(fan_id, rpm).map_err(anyhow::Error::msg)?;
             Ok(FanControlResult {
                 fan_id,
@@ -150,6 +179,11 @@ fn apply_fan_command(args: &[String], command: FanCommand) -> Result<FanControlR
             })
         }
         FanCommand::Reset => {
+            let fan_id: u8 = args
+                .first()
+                .context("missing fan_id argument")?
+                .parse()
+                .context("fan_id must be a small unsigned integer")?;
             aetower_sensors::reset_fan_auto(fan_id).map_err(anyhow::Error::msg)?;
             Ok(FanControlResult {
                 fan_id,
@@ -506,7 +540,7 @@ fn now_millis() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_executable_names, parse_eslogger_event};
+    use super::{collect_executable_names, parse_eslogger_event, validate_fan_set_args};
     use serde_json::json;
 
     #[test]
@@ -534,5 +568,48 @@ mod tests {
         assert_eq!(event.pid, Some(41));
         assert_eq!(event.parent_pid, Some(1));
         assert_eq!(event.process_path.as_deref(), Some("/bin/zsh"));
+    }
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn fan_set_accepts_plausible_rpm() {
+        let result = validate_fan_set_args(&args(&["0", "2500"]));
+        assert!(result.is_ok(), "got {result:?}");
+        let Ok((fan_id, rpm)) = result else {
+            panic!("expected Ok");
+        };
+        assert_eq!(fan_id, 0);
+        assert!((rpm - 2500.0).abs() < 0.001);
+    }
+
+    /// Regression: a future non-UI caller (CLI, automation daemon, tests)
+    /// could pass `f32::MAX` because the engine docs explicitly delegate
+    /// bounds checking to the UI. That is a footgun — the helper must
+    /// refuse implausible values on its own.
+    #[test]
+    fn fan_set_rejects_implausible_rpm() {
+        assert!(validate_fan_set_args(&args(&["0", "50000"])).is_err());
+        assert!(validate_fan_set_args(&args(&["0", "3.4e38"])).is_err());
+    }
+
+    #[test]
+    fn fan_set_rejects_nan_and_infinity() {
+        assert!(validate_fan_set_args(&args(&["0", "NaN"])).is_err());
+        assert!(validate_fan_set_args(&args(&["0", "inf"])).is_err());
+        assert!(validate_fan_set_args(&args(&["0", "-inf"])).is_err());
+    }
+
+    #[test]
+    fn fan_set_rejects_negative_rpm() {
+        assert!(validate_fan_set_args(&args(&["0", "-1"])).is_err());
+    }
+
+    #[test]
+    fn fan_set_rejects_missing_arguments() {
+        assert!(validate_fan_set_args(&args(&[])).is_err());
+        assert!(validate_fan_set_args(&args(&["0"])).is_err());
     }
 }
