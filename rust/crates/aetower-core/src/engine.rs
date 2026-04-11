@@ -293,6 +293,7 @@ impl Engine {
                     cpu_temperatures: Vec::new(),
                     power_readings: Vec::new(),
                     network_interfaces: raw.host.network_interfaces.clone(),
+                    disks: raw.host.disks.clone(),
                 };
                 let gpu_interval = runtime_config.gpu_interval(&host);
                 let mut gpu_sample_millis = 0.0;

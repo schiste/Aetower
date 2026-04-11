@@ -2228,6 +2228,147 @@ public func FfiConverterTypeDiagnosticsQuery_lower(_ value: DiagnosticsQuery) ->
 }
 
 
+/**
+ * SMART snapshot for one physical disk.
+ *
+ * Optional counters stay `None` when `diskutil` does not expose the key —
+ * the UI should render "—" rather than inventing a zero. `total_size_bytes`
+ * is included so the UI can present "512 GB SSD" alongside the health state.
+ */
+public struct DiskHealthSnapshot {
+    public var deviceIdentifier: String
+    public var model: String
+    public var totalSizeBytes: UInt64
+    public var status: DiskHealthStatus
+    public var temperatureCelsius: Float?
+    public var percentageUsed: UInt8?
+    public var availableSparePercent: UInt8?
+    public var powerOnHours: UInt64?
+    public var powerCycles: UInt64?
+    public var mediaErrors: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(deviceIdentifier: String, model: String, totalSizeBytes: UInt64, status: DiskHealthStatus, temperatureCelsius: Float?, percentageUsed: UInt8?, availableSparePercent: UInt8?, powerOnHours: UInt64?, powerCycles: UInt64?, mediaErrors: UInt64?) {
+        self.deviceIdentifier = deviceIdentifier
+        self.model = model
+        self.totalSizeBytes = totalSizeBytes
+        self.status = status
+        self.temperatureCelsius = temperatureCelsius
+        self.percentageUsed = percentageUsed
+        self.availableSparePercent = availableSparePercent
+        self.powerOnHours = powerOnHours
+        self.powerCycles = powerCycles
+        self.mediaErrors = mediaErrors
+    }
+}
+
+#if compiler(>=6)
+extension DiskHealthSnapshot: Sendable {}
+#endif
+
+
+extension DiskHealthSnapshot: Equatable, Hashable {
+    public static func ==(lhs: DiskHealthSnapshot, rhs: DiskHealthSnapshot) -> Bool {
+        if lhs.deviceIdentifier != rhs.deviceIdentifier {
+            return false
+        }
+        if lhs.model != rhs.model {
+            return false
+        }
+        if lhs.totalSizeBytes != rhs.totalSizeBytes {
+            return false
+        }
+        if lhs.status != rhs.status {
+            return false
+        }
+        if lhs.temperatureCelsius != rhs.temperatureCelsius {
+            return false
+        }
+        if lhs.percentageUsed != rhs.percentageUsed {
+            return false
+        }
+        if lhs.availableSparePercent != rhs.availableSparePercent {
+            return false
+        }
+        if lhs.powerOnHours != rhs.powerOnHours {
+            return false
+        }
+        if lhs.powerCycles != rhs.powerCycles {
+            return false
+        }
+        if lhs.mediaErrors != rhs.mediaErrors {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(deviceIdentifier)
+        hasher.combine(model)
+        hasher.combine(totalSizeBytes)
+        hasher.combine(status)
+        hasher.combine(temperatureCelsius)
+        hasher.combine(percentageUsed)
+        hasher.combine(availableSparePercent)
+        hasher.combine(powerOnHours)
+        hasher.combine(powerCycles)
+        hasher.combine(mediaErrors)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiskHealthSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiskHealthSnapshot {
+        return
+            try DiskHealthSnapshot(
+                deviceIdentifier: FfiConverterString.read(from: &buf), 
+                model: FfiConverterString.read(from: &buf), 
+                totalSizeBytes: FfiConverterUInt64.read(from: &buf), 
+                status: FfiConverterTypeDiskHealthStatus.read(from: &buf), 
+                temperatureCelsius: FfiConverterOptionFloat.read(from: &buf), 
+                percentageUsed: FfiConverterOptionUInt8.read(from: &buf), 
+                availableSparePercent: FfiConverterOptionUInt8.read(from: &buf), 
+                powerOnHours: FfiConverterOptionUInt64.read(from: &buf), 
+                powerCycles: FfiConverterOptionUInt64.read(from: &buf), 
+                mediaErrors: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DiskHealthSnapshot, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.deviceIdentifier, into: &buf)
+        FfiConverterString.write(value.model, into: &buf)
+        FfiConverterUInt64.write(value.totalSizeBytes, into: &buf)
+        FfiConverterTypeDiskHealthStatus.write(value.status, into: &buf)
+        FfiConverterOptionFloat.write(value.temperatureCelsius, into: &buf)
+        FfiConverterOptionUInt8.write(value.percentageUsed, into: &buf)
+        FfiConverterOptionUInt8.write(value.availableSparePercent, into: &buf)
+        FfiConverterOptionUInt64.write(value.powerOnHours, into: &buf)
+        FfiConverterOptionUInt64.write(value.powerCycles, into: &buf)
+        FfiConverterOptionUInt64.write(value.mediaErrors, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiskHealthSnapshot_lift(_ buf: RustBuffer) throws -> DiskHealthSnapshot {
+    return try FfiConverterTypeDiskHealthSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiskHealthSnapshot_lower(_ value: DiskHealthSnapshot) -> RustBuffer {
+    return FfiConverterTypeDiskHealthSnapshot.lower(value)
+}
+
+
 public struct EntitySnapshot {
     public var entityId: String
     public var displayName: String
@@ -3130,10 +3271,11 @@ public struct HostSnapshot {
     public var powerReadings: [PowerReading]
     public var batteryHealth: BatteryHealthSnapshot?
     public var networkInterfaces: [NetworkInterfaceSnapshot]
+    public var disks: [DiskHealthSnapshot]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?, networkInterfaces: [NetworkInterfaceSnapshot]) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?, networkInterfaces: [NetworkInterfaceSnapshot], disks: [DiskHealthSnapshot]) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
@@ -3161,6 +3303,7 @@ public struct HostSnapshot {
         self.powerReadings = powerReadings
         self.batteryHealth = batteryHealth
         self.networkInterfaces = networkInterfaces
+        self.disks = disks
     }
 }
 
@@ -3252,6 +3395,9 @@ extension HostSnapshot: Equatable, Hashable {
         if lhs.networkInterfaces != rhs.networkInterfaces {
             return false
         }
+        if lhs.disks != rhs.disks {
+            return false
+        }
         return true
     }
 
@@ -3283,6 +3429,7 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(powerReadings)
         hasher.combine(batteryHealth)
         hasher.combine(networkInterfaces)
+        hasher.combine(disks)
     }
 }
 
@@ -3321,7 +3468,8 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 cpuTemperatures: FfiConverterSequenceTypeTemperatureReading.read(from: &buf), 
                 powerReadings: FfiConverterSequenceTypePowerReading.read(from: &buf), 
                 batteryHealth: FfiConverterOptionTypeBatteryHealthSnapshot.read(from: &buf), 
-                networkInterfaces: FfiConverterSequenceTypeNetworkInterfaceSnapshot.read(from: &buf)
+                networkInterfaces: FfiConverterSequenceTypeNetworkInterfaceSnapshot.read(from: &buf), 
+                disks: FfiConverterSequenceTypeDiskHealthSnapshot.read(from: &buf)
         )
     }
 
@@ -3353,6 +3501,7 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypePowerReading.write(value.powerReadings, into: &buf)
         FfiConverterOptionTypeBatteryHealthSnapshot.write(value.batteryHealth, into: &buf)
         FfiConverterSequenceTypeNetworkInterfaceSnapshot.write(value.networkInterfaces, into: &buf)
+        FfiConverterSequenceTypeDiskHealthSnapshot.write(value.disks, into: &buf)
     }
 }
 
@@ -5703,6 +5852,104 @@ extension DiagnosticsSubsystem: Equatable, Hashable {}
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Overall disk health classification exposed to Swift.
+ *
+ * Mirrors `aetower_model::DiskHealthStatus`. `Warning` is an Aetower-only
+ * escalation from the macOS `Verified` state when wear indicators suggest
+ * the drive is nearing end-of-life.
+ */
+
+public enum DiskHealthStatus {
+    
+    case unknown
+    case healthy
+    case warning
+    case failing
+    case notSupported
+}
+
+
+#if compiler(>=6)
+extension DiskHealthStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiskHealthStatus: FfiConverterRustBuffer {
+    typealias SwiftType = DiskHealthStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiskHealthStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .unknown
+        
+        case 2: return .healthy
+        
+        case 3: return .warning
+        
+        case 4: return .failing
+        
+        case 5: return .notSupported
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DiskHealthStatus, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .unknown:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .healthy:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .warning:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .failing:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .notSupported:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiskHealthStatus_lift(_ buf: RustBuffer) throws -> DiskHealthStatus {
+    return try FfiConverterTypeDiskHealthStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiskHealthStatus_lower(_ value: DiskHealthStatus) -> RustBuffer {
+    return FfiConverterTypeDiskHealthStatus.lower(value)
+}
+
+
+extension DiskHealthStatus: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum EntityKind {
     
@@ -6844,6 +7091,31 @@ fileprivate struct FfiConverterSequenceTypeDiagnosticsField: FfiConverterRustBuf
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeDiagnosticsField.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDiskHealthSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = [DiskHealthSnapshot]
+
+    public static func write(_ value: [DiskHealthSnapshot], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDiskHealthSnapshot.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DiskHealthSnapshot] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DiskHealthSnapshot]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDiskHealthSnapshot.read(from: &buf))
         }
         return seq
     }

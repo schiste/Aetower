@@ -187,7 +187,8 @@ public final class AppState {
                 cpuTemperatures: [],
                 powerReadings: [],
                 batteryHealth: nil,
-                networkInterfaces: []
+                networkInterfaces: [],
+                disks: []
             ),
             hostTrend: HostTrend(
                 machineFriction: [],

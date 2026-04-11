@@ -102,6 +102,7 @@ pub fn run_benchmark(config: BenchmarkConfig) -> BenchmarkReport {
             cpu_temperatures: Vec::new(),
             power_readings: Vec::new(),
             network_interfaces: raw.host.network_interfaces.clone(),
+            disks: raw.host.disks.clone(),
         };
         let identity = identity::resolve(&raw.processes);
         let mut entities = attribution::build_entities(&raw.processes, &identity, None);
@@ -143,6 +144,7 @@ pub fn run_benchmark(config: BenchmarkConfig) -> BenchmarkReport {
             cpu_temperatures: Vec::new(),
             power_readings: Vec::new(),
             network_interfaces: raw.host.network_interfaces.clone(),
+            disks: raw.host.disks.clone(),
         };
         let identity_started_at = Instant::now();
         let identity = identity::resolve(&raw.processes);

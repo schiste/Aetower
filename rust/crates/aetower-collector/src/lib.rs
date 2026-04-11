@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 
-use aetower_model::{BatteryHealthSnapshot, NetworkInterfaceSnapshot, ThermalState};
+use aetower_model::{
+    BatteryHealthSnapshot, DiskHealthSnapshot, NetworkInterfaceSnapshot, ThermalState,
+};
 use serde::{Deserialize, Serialize};
 use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System, Users};
 
@@ -51,6 +53,8 @@ pub struct RawHostSample {
     pub battery_health: Option<BatteryHealthSnapshot>,
     #[serde(default)]
     pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
+    #[serde(default)]
+    pub disks: Vec<DiskHealthSnapshot>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -96,6 +100,13 @@ const USER_DIRECTORY_REFRESH_INTERVAL_TICKS: u8 = 120;
 /// on this interval, so deltas reported by `sysinfo` can be divided by it to
 /// convert bytes-per-tick into bytes-per-second.
 const TICK_SECONDS: f32 = 2.0;
+/// Disk SMART data barely changes — `PERCENTAGE_USED` typically ticks up once
+/// every few days on a normal workload, and `POWER_ON_HOURS` by one every
+/// hour. Shelling out to `diskutil` is not free (spawns a subprocess, reads
+/// plist, parses it), so refresh every ~2 minutes is plenty fresh for a
+/// health dashboard without burning CPU on something the user cannot act on
+/// in real time.
+const DISK_REFRESH_INTERVAL_TICKS: u8 = 60;
 
 pub struct Collector {
     config: CollectorConfig,
@@ -114,6 +125,8 @@ pub struct Collector {
     cwd_cache: HashMap<u32, String>,
     wakeups_sample_tick: u8,
     cached_network_interfaces: Vec<NetworkInterfaceIdentitySample>,
+    cached_disks: Vec<DiskHealthSnapshot>,
+    disk_refresh_tick: u8,
 }
 
 impl Collector {
@@ -139,6 +152,8 @@ impl Collector {
             cwd_cache: HashMap::new(),
             wakeups_sample_tick: 0,
             cached_network_interfaces: Vec::new(),
+            cached_disks: Vec::new(),
+            disk_refresh_tick: 0,
         }
     }
 
@@ -181,6 +196,18 @@ impl Collector {
         if self.config.full_collection || refresh_host_environment {
             self.cached_network_interfaces = collect_network_interface_metadata(&self.networks);
         }
+
+        // Disk SMART data is sampled on an even slower cadence: shelling out
+        // to `diskutil` is the main cost, and the values change over hours
+        // not seconds. Tick 0 seeds the cache; subsequent ticks rotate the
+        // counter and refresh only when it lands back on 0.
+        let refresh_disks = self.cached_disks.is_empty()
+            || self.config.full_collection
+            || self.disk_refresh_tick == 0;
+        if refresh_disks {
+            self.cached_disks = platform::sample_disks();
+        }
+        self.disk_refresh_tick = (self.disk_refresh_tick + 1) % DISK_REFRESH_INTERVAL_TICKS;
 
         let mut network_totals = NetworkTotals::default();
         for (_name, data) in &self.networks {
@@ -373,6 +400,7 @@ impl Collector {
             low_power_mode: self.cached_host_environment.low_power_mode,
             battery_health: self.cached_host_environment.battery_health.clone(),
             network_interfaces,
+            disks: self.cached_disks.clone(),
         };
         self.previous_network_totals = network_totals;
 
@@ -495,7 +523,9 @@ pub fn read_environment() -> HostEnvironment {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use aetower_model::{BatteryCondition, BatteryHealthSnapshot, ThermalState};
+    use aetower_model::{
+        BatteryCondition, BatteryHealthSnapshot, DiskHealthSnapshot, DiskHealthStatus, ThermalState,
+    };
     use std::{
         ffi::{CStr, c_char, c_void},
         mem, ptr,
@@ -975,11 +1005,284 @@ mod platform {
             (!string.is_null()).then_some(string)
         }
     }
+
+    /// Sample SMART data for every physical disk known to diskutil.
+    ///
+    /// macOS does not publish NVMe SMART data through a public Rust-friendly
+    /// API — `IONVMeSMARTUserClient` requires opening an IOUserClient with
+    /// privileges that the sandboxed app does not hold. The pragmatic path is
+    /// to shell out to `diskutil info -plist`, which Apple documents and
+    /// supports on every recent macOS version. Its output is a standard
+    /// Apple plist XML blob.
+    ///
+    /// We parse two commands:
+    /// - `diskutil list -plist physical` enumerates whole-disk identifiers
+    ///   (`disk0`, `disk1`, ...). Partitions are ignored because SMART is
+    ///   per-physical-device, not per-volume.
+    /// - `diskutil info -plist <id>` returns the SMART status and a nested
+    ///   `SMARTDeviceSpecificKeysMayVaryNotGuaranteed` dictionary with the
+    ///   actual counters (percentage used, spare, temperature, hours).
+    ///
+    /// Each call that fails (no such device, unsupported drive) is skipped
+    /// silently rather than aborting the whole sample — a single flaky
+    /// external enclosure shouldn't black out the disk panel.
+    pub fn sample_disks() -> Vec<DiskHealthSnapshot> {
+        let Some(list_plist) = run_diskutil(&["list", "-plist", "physical"]) else {
+            return Vec::new();
+        };
+        let device_ids = parse_whole_disk_identifiers(&list_plist);
+        let mut disks = Vec::with_capacity(device_ids.len());
+        for device_id in device_ids {
+            let Some(info_plist) = run_diskutil(&["info", "-plist", &device_id]) else {
+                continue;
+            };
+            if let Some(snapshot) = parse_disk_info(&device_id, &info_plist) {
+                disks.push(snapshot);
+            }
+        }
+        disks
+    }
+
+    fn run_diskutil(args: &[&str]) -> Option<String> {
+        let output = std::process::Command::new("/usr/sbin/diskutil")
+            .args(args)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8(output.stdout).ok()
+    }
+
+    /// Extract the whole-disk identifiers (`disk0`, `disk1`, ...) from
+    /// `diskutil list -plist physical` output.
+    ///
+    /// The plist holds a top-level array `WholeDisks` whose entries are the
+    /// identifiers we need. We avoid pulling in a plist parser crate and
+    /// instead walk the XML line-by-line — the format is dead-simple and
+    /// stable:
+    ///
+    /// ```xml
+    /// <key>WholeDisks</key>
+    /// <array>
+    ///     <string>disk0</string>
+    ///     <string>disk1</string>
+    /// </array>
+    /// ```
+    fn parse_whole_disk_identifiers(plist: &str) -> Vec<String> {
+        let mut identifiers = Vec::new();
+        let mut inside_whole_disks = false;
+        for line in plist.lines().map(str::trim) {
+            if line == "<key>WholeDisks</key>" {
+                // The matching <array> opens on the next line.
+                inside_whole_disks = true;
+                continue;
+            }
+            if inside_whole_disks {
+                if line.starts_with("</array>") {
+                    break;
+                }
+                if let Some(id) = line
+                    .strip_prefix("<string>")
+                    .and_then(|rest| rest.strip_suffix("</string>"))
+                {
+                    identifiers.push(id.to_owned());
+                }
+            }
+        }
+        identifiers
+    }
+
+    /// Parse the interesting fields out of `diskutil info -plist <id>` output.
+    ///
+    /// Two tiers of keys:
+    /// - Top-level scalars (`IORegistryEntryName`, `TotalSize`, `SMARTStatus`)
+    ///   map to model fields directly.
+    /// - The nested `SMARTDeviceSpecificKeysMayVaryNotGuaranteed` dict holds
+    ///   NVMe-specific counters (`PERCENTAGE_USED`, `TEMPERATURE`, etc.).
+    ///   Missing keys are `None` so the UI can render "—" instead of
+    ///   inventing a zero.
+    ///
+    /// `TEMPERATURE` is reported in tenths of a Kelvin, matching the NVMe
+    /// spec. The conversion to Celsius is `(value / 10) - 273.15`; values
+    /// outside `-40..=100°C` are treated as garbage.
+    fn parse_disk_info(device_id: &str, plist: &str) -> Option<DiskHealthSnapshot> {
+        let model = find_string_value(plist, "IORegistryEntryName").unwrap_or_default();
+        let total_size_bytes = find_integer_value(plist, "TotalSize")
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or(0);
+        let smart_status = find_string_value(plist, "SMARTStatus").unwrap_or_default();
+        let status = match smart_status.as_str() {
+            "Verified" => DiskHealthStatus::Healthy,
+            "Failing" => DiskHealthStatus::Failing,
+            "Not Supported" | "" => DiskHealthStatus::NotSupported,
+            _ => DiskHealthStatus::Unknown,
+        };
+        let percentage_used =
+            find_integer_value(plist, "PERCENTAGE_USED").and_then(|value| u8::try_from(value).ok());
+        let available_spare =
+            find_integer_value(plist, "AVAILABLE_SPARE").and_then(|value| u8::try_from(value).ok());
+        let power_on_hours =
+            find_integer_value(plist, "POWER_ON_HOURS_0").map(|value| value as u64);
+        let power_cycles = find_integer_value(plist, "POWER_CYCLES_0").map(|value| value as u64);
+        let media_errors = find_integer_value(plist, "MEDIA_ERRORS_0").map(|value| value as u64);
+        let temperature_celsius = find_integer_value(plist, "TEMPERATURE").and_then(|value| {
+            // NVMe TEMPERATURE is 1/10 Kelvin.
+            let celsius = (value as f32 / 10.0) - 273.15;
+            (-40.0..=100.0).contains(&celsius).then_some(celsius)
+        });
+
+        // Elevate "healthy but nearing wear-out" to Warning so the UI can
+        // distinguish "all good" from "back up your data soon" even while
+        // macOS still considers the drive Verified.
+        let status = if matches!(status, DiskHealthStatus::Healthy)
+            && percentage_used.map(|value| value >= 80).unwrap_or(false)
+        {
+            DiskHealthStatus::Warning
+        } else {
+            status
+        };
+
+        Some(DiskHealthSnapshot {
+            device_identifier: device_id.to_owned(),
+            model,
+            total_size_bytes,
+            status,
+            temperature_celsius,
+            percentage_used,
+            available_spare_percent: available_spare,
+            power_on_hours,
+            power_cycles,
+            media_errors,
+        })
+    }
+
+    /// Return the `<string>…</string>` body that follows a given `<key>`.
+    ///
+    /// This is intentionally a simple linear scan — the plists we parse have
+    /// tens of keys, not thousands, and staying off a plist parser keeps the
+    /// dependency footprint small.
+    fn find_string_value(plist: &str, key: &str) -> Option<String> {
+        let key_line = format!("<key>{key}</key>");
+        let mut lines = plist.lines().map(str::trim);
+        while let Some(line) = lines.next() {
+            if line == key_line {
+                let next = lines.next()?;
+                return next
+                    .strip_prefix("<string>")
+                    .and_then(|rest| rest.strip_suffix("</string>"))
+                    .map(|value| value.to_owned());
+            }
+        }
+        None
+    }
+
+    /// Return the `<integer>` value that follows a given `<key>`.
+    fn find_integer_value(plist: &str, key: &str) -> Option<i64> {
+        let key_line = format!("<key>{key}</key>");
+        let mut lines = plist.lines().map(str::trim);
+        while let Some(line) = lines.next() {
+            if line == key_line {
+                let next = lines.next()?;
+                return next
+                    .strip_prefix("<integer>")
+                    .and_then(|rest| rest.strip_suffix("</integer>"))
+                    .and_then(|value| value.parse().ok());
+            }
+        }
+        None
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn parses_whole_disk_identifiers() {
+            let plist = r#"<?xml version="1.0"?>
+<plist version="1.0">
+<dict>
+    <key>WholeDisks</key>
+    <array>
+        <string>disk0</string>
+        <string>disk1</string>
+    </array>
+</dict>
+</plist>"#;
+            assert_eq!(
+                parse_whole_disk_identifiers(plist),
+                vec!["disk0".to_owned(), "disk1".to_owned()]
+            );
+        }
+
+        #[test]
+        fn parses_disk_info_fields() {
+            let plist = r#"<plist>
+<dict>
+    <key>IORegistryEntryName</key>
+    <string>APPLE SSD AP0512Z Media</string>
+    <key>TotalSize</key>
+    <integer>500277792768</integer>
+    <key>SMARTStatus</key>
+    <string>Verified</string>
+    <key>PERCENTAGE_USED</key>
+    <integer>6</integer>
+    <key>AVAILABLE_SPARE</key>
+    <integer>100</integer>
+    <key>POWER_ON_HOURS_0</key>
+    <integer>1807</integer>
+    <key>POWER_CYCLES_0</key>
+    <integer>199</integer>
+    <key>MEDIA_ERRORS_0</key>
+    <integer>0</integer>
+    <key>TEMPERATURE</key>
+    <integer>3021</integer>
+</dict>
+</plist>"#;
+            let Some(snapshot) = parse_disk_info("disk0", plist) else {
+                panic!("parse_disk_info returned None");
+            };
+            assert_eq!(snapshot.device_identifier, "disk0");
+            assert_eq!(snapshot.model, "APPLE SSD AP0512Z Media");
+            assert_eq!(snapshot.total_size_bytes, 500_277_792_768);
+            assert_eq!(snapshot.status, DiskHealthStatus::Healthy);
+            assert_eq!(snapshot.percentage_used, Some(6));
+            assert_eq!(snapshot.available_spare_percent, Some(100));
+            assert_eq!(snapshot.power_on_hours, Some(1807));
+            assert_eq!(snapshot.power_cycles, Some(199));
+            assert_eq!(snapshot.media_errors, Some(0));
+            // 3021 deci-Kelvin = 302.1 K = 28.95°C
+            let Some(temp) = snapshot.temperature_celsius else {
+                panic!("temperature missing from parsed plist");
+            };
+            assert!((temp - 28.95).abs() < 0.01, "got {temp}");
+        }
+
+        #[test]
+        fn high_percentage_used_escalates_to_warning() {
+            let plist = r#"<plist>
+<dict>
+    <key>IORegistryEntryName</key>
+    <string>Old SSD</string>
+    <key>TotalSize</key>
+    <integer>0</integer>
+    <key>SMARTStatus</key>
+    <string>Verified</string>
+    <key>PERCENTAGE_USED</key>
+    <integer>85</integer>
+</dict>
+</plist>"#;
+            let Some(snapshot) = parse_disk_info("disk9", plist) else {
+                panic!("parse_disk_info returned None");
+            };
+            assert_eq!(snapshot.status, DiskHealthStatus::Warning);
+        }
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
 mod platform {
-    use super::HostEnvironment;
+    use super::{DiskHealthSnapshot, HostEnvironment};
 
     pub fn read_environment() -> HostEnvironment {
         HostEnvironment::default()
@@ -995,5 +1298,9 @@ mod platform {
 
     pub fn compressed_memory_bytes() -> Option<u64> {
         None
+    }
+
+    pub fn sample_disks() -> Vec<DiskHealthSnapshot> {
+        Vec::new()
     }
 }

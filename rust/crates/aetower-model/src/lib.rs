@@ -231,6 +231,8 @@ pub struct HostSnapshot {
     pub battery_health: Option<BatteryHealthSnapshot>,
     #[serde(default)]
     pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
+    #[serde(default)]
+    pub disks: Vec<DiskHealthSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -540,6 +542,46 @@ pub struct BatteryHealthSnapshot {
     pub health_percent: f32,
     pub condition: BatteryCondition,
     pub temperature_celsius: Option<f32>,
+}
+
+/// Overall disk health as reported by `diskutil info -plist`'s `SMARTStatus`
+/// field.
+///
+/// Apple only exposes a coarse three-way distinction (`Verified` / `Failing`
+/// / `Not Supported`). We add `Warning` so the UI can surface "healthy but
+/// nearing end-of-life" when `percentage_used >= 80` even if macOS still
+/// calls the drive healthy — that's the earliest actionable signal we have
+/// for "back up now, start shopping for a replacement".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum DiskHealthStatus {
+    #[default]
+    Unknown,
+    Healthy,
+    Warning,
+    Failing,
+    NotSupported,
+}
+
+/// SMART-ish summary for one physical disk.
+///
+/// Sampled from `diskutil info -plist` on macOS. All fields are optional
+/// because non-NVMe drives, external USB enclosures, and older macOS
+/// versions may not expose every key — the UI renders "—" for missing
+/// values instead of zeroing them out, so the distinction between "not
+/// reported" and "genuinely zero" is preserved.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DiskHealthSnapshot {
+    pub device_identifier: String,
+    pub model: String,
+    pub total_size_bytes: u64,
+    pub status: DiskHealthStatus,
+    pub temperature_celsius: Option<f32>,
+    pub percentage_used: Option<u8>,
+    pub available_spare_percent: Option<u8>,
+    pub power_on_hours: Option<u64>,
+    pub power_cycles: Option<u64>,
+    pub media_errors: Option<u64>,
 }
 
 /// One physical or virtual network interface on the host.

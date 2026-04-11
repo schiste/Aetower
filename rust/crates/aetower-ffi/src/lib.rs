@@ -199,6 +199,7 @@ pub struct HostSnapshot {
     pub power_readings: Vec<PowerReading>,
     pub battery_health: Option<BatteryHealthSnapshot>,
     pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
+    pub disks: Vec<DiskHealthSnapshot>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -269,6 +270,39 @@ pub struct NetworkInterfaceSnapshot {
     pub receive_bps: u64,
     pub send_bps: u64,
     pub is_up: bool,
+}
+
+/// Overall disk health classification exposed to Swift.
+///
+/// Mirrors `aetower_model::DiskHealthStatus`. `Warning` is an Aetower-only
+/// escalation from the macOS `Verified` state when wear indicators suggest
+/// the drive is nearing end-of-life.
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum DiskHealthStatus {
+    Unknown,
+    Healthy,
+    Warning,
+    Failing,
+    NotSupported,
+}
+
+/// SMART snapshot for one physical disk.
+///
+/// Optional counters stay `None` when `diskutil` does not expose the key —
+/// the UI should render "—" rather than inventing a zero. `total_size_bytes`
+/// is included so the UI can present "512 GB SSD" alongside the health state.
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct DiskHealthSnapshot {
+    pub device_identifier: String,
+    pub model: String,
+    pub total_size_bytes: u64,
+    pub status: DiskHealthStatus,
+    pub temperature_celsius: Option<f32>,
+    pub percentage_used: Option<u8>,
+    pub available_spare_percent: Option<u8>,
+    pub power_on_hours: Option<u64>,
+    pub power_cycles: Option<u64>,
+    pub media_errors: Option<u64>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -1279,6 +1313,7 @@ impl From<model::HostSnapshot> for HostSnapshot {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
+            disks: value.disks.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -1357,6 +1392,35 @@ impl From<model::NetworkInterfaceSnapshot> for NetworkInterfaceSnapshot {
             receive_bps: value.receive_bps,
             send_bps: value.send_bps,
             is_up: value.is_up,
+        }
+    }
+}
+
+impl From<model::DiskHealthStatus> for DiskHealthStatus {
+    fn from(value: model::DiskHealthStatus) -> Self {
+        match value {
+            model::DiskHealthStatus::Unknown => Self::Unknown,
+            model::DiskHealthStatus::Healthy => Self::Healthy,
+            model::DiskHealthStatus::Warning => Self::Warning,
+            model::DiskHealthStatus::Failing => Self::Failing,
+            model::DiskHealthStatus::NotSupported => Self::NotSupported,
+        }
+    }
+}
+
+impl From<model::DiskHealthSnapshot> for DiskHealthSnapshot {
+    fn from(value: model::DiskHealthSnapshot) -> Self {
+        Self {
+            device_identifier: value.device_identifier,
+            model: value.model,
+            total_size_bytes: value.total_size_bytes,
+            status: value.status.into(),
+            temperature_celsius: value.temperature_celsius,
+            percentage_used: value.percentage_used,
+            available_spare_percent: value.available_spare_percent,
+            power_on_hours: value.power_on_hours,
+            power_cycles: value.power_cycles,
+            media_errors: value.media_errors,
         }
     }
 }
