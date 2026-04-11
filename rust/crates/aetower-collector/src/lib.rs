@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use aetower_model::{BatteryHealthSnapshot, ThermalState};
+use aetower_model::{BatteryHealthSnapshot, NetworkInterfaceSnapshot, ThermalState};
 use serde::{Deserialize, Serialize};
 use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System, Users};
 
@@ -49,6 +49,8 @@ pub struct RawHostSample {
     pub low_power_mode: bool,
     #[serde(default)]
     pub battery_health: Option<BatteryHealthSnapshot>,
+    #[serde(default)]
+    pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -83,6 +85,10 @@ struct ProcessIdentitySample {
 
 const USER_DIRECTORY_INITIAL_REFRESH_TICKS: u8 = 10;
 const USER_DIRECTORY_REFRESH_INTERVAL_TICKS: u8 = 120;
+/// Fixed collector cadence in seconds — the engine drives `Collector::collect()`
+/// on this interval, so deltas reported by `sysinfo` can be divided by it to
+/// convert bytes-per-tick into bytes-per-second.
+const TICK_SECONDS: f32 = 2.0;
 
 pub struct Collector {
     config: CollectorConfig,
@@ -159,13 +165,43 @@ impl Collector {
         }
         self.host_environment_refresh_tick = (self.host_environment_refresh_tick + 1) % 5;
 
+        // Fan out `Networks` into both the host aggregate (unchanged) and a
+        // per-interface vector used by the UI's interface table. `received()`
+        // and `transmitted()` already return the delta since the last
+        // `refresh(true)` call, so dividing by the tick length gives bytes
+        // per second without any extra baseline tracking.
+        let tick_seconds = TICK_SECONDS;
         let mut network_totals = NetworkTotals::default();
-        for (_name, data) in &self.networks {
+        let mut network_interfaces: Vec<NetworkInterfaceSnapshot> =
+            Vec::with_capacity(self.networks.list().len());
+        for (name, data) in &self.networks {
             network_totals.received = network_totals.received.saturating_add(data.received());
             network_totals.transmitted = network_totals
                 .transmitted
                 .saturating_add(data.transmitted());
+            let receive_bps = (data.received() as f64 / tick_seconds as f64) as u64;
+            let send_bps = (data.transmitted() as f64 / tick_seconds as f64) as u64;
+            let mac = data.mac_address();
+            network_interfaces.push(NetworkInterfaceSnapshot {
+                name: name.clone(),
+                // Empty string when the interface exposes no link-level
+                // address (loopback, tunnels, some virtual adapters).
+                mac_address: if mac.is_unspecified() {
+                    String::new()
+                } else {
+                    mac.to_string()
+                },
+                receive_bps,
+                send_bps,
+                // "Up" proxy: an interface with at least one assigned IP
+                // address is configured and reachable. Avoids reaching into
+                // platform-specific link-state APIs for an approximation the
+                // UI just needs as a boolean.
+                is_up: !data.ip_networks().is_empty(),
+            });
         }
+        // Sort by name for stable UI rendering across ticks.
+        network_interfaces.sort_by(|a, b| a.name.cmp(&b.name));
 
         let metadata_refresh =
             self.config.full_collection || self.process_metadata_tick == 1 || full_scan;
@@ -200,7 +236,7 @@ impl Collector {
                 let disk_read_total = process.disk_usage().read_bytes;
                 let disk_write_total = process.disk_usage().written_bytes;
 
-                let tick_seconds = 2.0_f32;
+                let tick_seconds = TICK_SECONDS;
                 let wakeups_per_second = previous
                     .map(|prev| {
                         if sample_wakeups || prev.wakeups == 0 {
@@ -347,6 +383,7 @@ impl Collector {
             battery_charge_percent: self.cached_host_environment.battery_charge_percent,
             low_power_mode: self.cached_host_environment.low_power_mode,
             battery_health: self.cached_host_environment.battery_health.clone(),
+            network_interfaces,
         };
         self.previous_network_totals = network_totals;
 

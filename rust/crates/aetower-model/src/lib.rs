@@ -229,6 +229,8 @@ pub struct HostSnapshot {
     pub power_readings: Vec<PowerReading>,
     #[serde(default)]
     pub battery_health: Option<BatteryHealthSnapshot>,
+    #[serde(default)]
+    pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -538,6 +540,26 @@ pub struct BatteryHealthSnapshot {
     pub health_percent: f32,
     pub condition: BatteryCondition,
     pub temperature_celsius: Option<f32>,
+}
+
+/// One physical or virtual network interface on the host.
+///
+/// Aetower already surfaces a single `network_receive_bps/send_bps` pair for
+/// the entire machine; this record adds the per-interface breakdown without
+/// replacing the aggregate. `mac_address` is the stable identifier that
+/// survives renaming (e.g. `en0` flipping between Wi-Fi and Ethernet when a
+/// USB adapter is plugged in).
+///
+/// `is_up` is derived from whether the interface holds any assigned IP
+/// address at sample time — a good proxy for "configured and reachable"
+/// without reaching into platform-specific link-state APIs.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NetworkInterfaceSnapshot {
+    pub name: String,
+    pub mac_address: String,
+    pub receive_bps: u64,
+    pub send_bps: u64,
+    pub is_up: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

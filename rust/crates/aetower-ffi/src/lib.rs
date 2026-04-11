@@ -198,6 +198,7 @@ pub struct HostSnapshot {
     pub cpu_temperatures: Vec<TemperatureReading>,
     pub power_readings: Vec<PowerReading>,
     pub battery_health: Option<BatteryHealthSnapshot>,
+    pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -254,6 +255,20 @@ pub struct BatteryHealthSnapshot {
     pub health_percent: f32,
     pub condition: BatteryCondition,
     pub temperature_celsius: Option<f32>,
+}
+
+/// Per-interface network snapshot exposed to Swift.
+///
+/// `mac_address` is an empty string when the kernel does not expose one
+/// (loopback, tunnels, some virtual adapters). `is_up` is `true` when the
+/// interface holds at least one assigned IP at sample time.
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct NetworkInterfaceSnapshot {
+    pub name: String,
+    pub mac_address: String,
+    pub receive_bps: u64,
+    pub send_bps: u64,
+    pub is_up: bool,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -1233,6 +1248,11 @@ impl From<model::HostSnapshot> for HostSnapshot {
             cpu_temperatures: value.cpu_temperatures.into_iter().map(Into::into).collect(),
             power_readings: value.power_readings.into_iter().map(Into::into).collect(),
             battery_health: value.battery_health.map(Into::into),
+            network_interfaces: value
+                .network_interfaces
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         }
     }
 }
@@ -1299,6 +1319,18 @@ impl From<model::BatteryHealthSnapshot> for BatteryHealthSnapshot {
             health_percent: value.health_percent,
             condition: value.condition.into(),
             temperature_celsius: value.temperature_celsius,
+        }
+    }
+}
+
+impl From<model::NetworkInterfaceSnapshot> for NetworkInterfaceSnapshot {
+    fn from(value: model::NetworkInterfaceSnapshot) -> Self {
+        Self {
+            name: value.name,
+            mac_address: value.mac_address,
+            receive_bps: value.receive_bps,
+            send_bps: value.send_bps,
+            is_up: value.is_up,
         }
     }
 }

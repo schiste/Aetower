@@ -3088,10 +3088,11 @@ public struct HostSnapshot {
     public var cpuTemperatures: [TemperatureReading]
     public var powerReadings: [PowerReading]
     public var batteryHealth: BatteryHealthSnapshot?
+    public var networkInterfaces: [NetworkInterfaceSnapshot]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?, networkInterfaces: [NetworkInterfaceSnapshot]) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
@@ -3118,6 +3119,7 @@ public struct HostSnapshot {
         self.cpuTemperatures = cpuTemperatures
         self.powerReadings = powerReadings
         self.batteryHealth = batteryHealth
+        self.networkInterfaces = networkInterfaces
     }
 }
 
@@ -3206,6 +3208,9 @@ extension HostSnapshot: Equatable, Hashable {
         if lhs.batteryHealth != rhs.batteryHealth {
             return false
         }
+        if lhs.networkInterfaces != rhs.networkInterfaces {
+            return false
+        }
         return true
     }
 
@@ -3236,6 +3241,7 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(cpuTemperatures)
         hasher.combine(powerReadings)
         hasher.combine(batteryHealth)
+        hasher.combine(networkInterfaces)
     }
 }
 
@@ -3273,7 +3279,8 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 fans: FfiConverterSequenceTypeFanReading.read(from: &buf), 
                 cpuTemperatures: FfiConverterSequenceTypeTemperatureReading.read(from: &buf), 
                 powerReadings: FfiConverterSequenceTypePowerReading.read(from: &buf), 
-                batteryHealth: FfiConverterOptionTypeBatteryHealthSnapshot.read(from: &buf)
+                batteryHealth: FfiConverterOptionTypeBatteryHealthSnapshot.read(from: &buf), 
+                networkInterfaces: FfiConverterSequenceTypeNetworkInterfaceSnapshot.read(from: &buf)
         )
     }
 
@@ -3304,6 +3311,7 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeTemperatureReading.write(value.cpuTemperatures, into: &buf)
         FfiConverterSequenceTypePowerReading.write(value.powerReadings, into: &buf)
         FfiConverterOptionTypeBatteryHealthSnapshot.write(value.batteryHealth, into: &buf)
+        FfiConverterSequenceTypeNetworkInterfaceSnapshot.write(value.networkInterfaces, into: &buf)
     }
 }
 
@@ -3540,6 +3548,107 @@ public func FfiConverterTypeMetricTrend_lift(_ buf: RustBuffer) throws -> Metric
 #endif
 public func FfiConverterTypeMetricTrend_lower(_ value: MetricTrend) -> RustBuffer {
     return FfiConverterTypeMetricTrend.lower(value)
+}
+
+
+/**
+ * Per-interface network snapshot exposed to Swift.
+ *
+ * `mac_address` is an empty string when the kernel does not expose one
+ * (loopback, tunnels, some virtual adapters). `is_up` is `true` when the
+ * interface holds at least one assigned IP at sample time.
+ */
+public struct NetworkInterfaceSnapshot {
+    public var name: String
+    public var macAddress: String
+    public var receiveBps: UInt64
+    public var sendBps: UInt64
+    public var isUp: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, macAddress: String, receiveBps: UInt64, sendBps: UInt64, isUp: Bool) {
+        self.name = name
+        self.macAddress = macAddress
+        self.receiveBps = receiveBps
+        self.sendBps = sendBps
+        self.isUp = isUp
+    }
+}
+
+#if compiler(>=6)
+extension NetworkInterfaceSnapshot: Sendable {}
+#endif
+
+
+extension NetworkInterfaceSnapshot: Equatable, Hashable {
+    public static func ==(lhs: NetworkInterfaceSnapshot, rhs: NetworkInterfaceSnapshot) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.macAddress != rhs.macAddress {
+            return false
+        }
+        if lhs.receiveBps != rhs.receiveBps {
+            return false
+        }
+        if lhs.sendBps != rhs.sendBps {
+            return false
+        }
+        if lhs.isUp != rhs.isUp {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(macAddress)
+        hasher.combine(receiveBps)
+        hasher.combine(sendBps)
+        hasher.combine(isUp)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNetworkInterfaceSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NetworkInterfaceSnapshot {
+        return
+            try NetworkInterfaceSnapshot(
+                name: FfiConverterString.read(from: &buf), 
+                macAddress: FfiConverterString.read(from: &buf), 
+                receiveBps: FfiConverterUInt64.read(from: &buf), 
+                sendBps: FfiConverterUInt64.read(from: &buf), 
+                isUp: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NetworkInterfaceSnapshot, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.macAddress, into: &buf)
+        FfiConverterUInt64.write(value.receiveBps, into: &buf)
+        FfiConverterUInt64.write(value.sendBps, into: &buf)
+        FfiConverterBool.write(value.isUp, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkInterfaceSnapshot_lift(_ buf: RustBuffer) throws -> NetworkInterfaceSnapshot {
+    return try FfiConverterTypeNetworkInterfaceSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkInterfaceSnapshot_lower(_ value: NetworkInterfaceSnapshot) -> RustBuffer {
+    return FfiConverterTypeNetworkInterfaceSnapshot.lower(value)
 }
 
 
@@ -6769,6 +6878,31 @@ fileprivate struct FfiConverterSequenceTypeFrictionContributor: FfiConverterRust
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFrictionContributor.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNetworkInterfaceSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = [NetworkInterfaceSnapshot]
+
+    public static func write(_ value: [NetworkInterfaceSnapshot], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNetworkInterfaceSnapshot.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NetworkInterfaceSnapshot] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NetworkInterfaceSnapshot]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNetworkInterfaceSnapshot.read(from: &buf))
         }
         return seq
     }
