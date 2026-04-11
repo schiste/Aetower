@@ -185,7 +185,8 @@ public final class AppState {
                 gpuTemperatureCelsius: nil,
                 fans: [],
                 cpuTemperatures: [],
-                powerReadings: []
+                powerReadings: [],
+                batteryHealth: nil
             ),
             hostTrend: HostTrend(
                 machineFriction: [],

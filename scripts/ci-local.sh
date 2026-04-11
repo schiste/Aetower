@@ -22,35 +22,134 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-if [ -z "$BENCH_ITERATIONS" ]; then
-    case "$MODE" in
-        pre-commit) BENCH_ITERATIONS="8" ;;
-        pre-push|full) BENCH_ITERATIONS="20" ;;
-        *)
-            echo "unsupported mode: $MODE" >&2
-            exit 1
-            ;;
-    esac
-fi
-
 run() {
     printf '\n==> %s\n' "$1"
     shift
     "$@"
 }
 
-cd "$ROOT"
+staged_files() {
+    git diff --cached --name-only --diff-filter=ACMR
+}
 
-run "cargo fmt --check" cargo fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
-run "cargo clippy" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
-run "cargo test" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml"
-run "build Rust bridge" sh "$ROOT/scripts/build-rust.sh"
-run "swift build" swift build --package-path "$ROOT/macos"
-run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
+has_staged_match() {
+    pattern="$1"
+    staged_files | rg -q "$pattern"
+}
 
-if [ "$MODE" = "pre-push" ] || [ "$MODE" = "full" ]; then
+affected_rust_packages() {
+    staged_files \
+        | awk -F/ '$1 == "rust" && $2 == "crates" && $3 != "" { print $3 }' \
+        | sort -u
+}
+
+should_run_full_rust_gate() {
+    if has_staged_match '^(rust/Cargo\.toml|rust/Cargo\.lock|rustfmt\.toml|rust-toolchain\.toml|scripts/build-rust\.sh|scripts/build-rust-ffi-for-swiftpm\.sh)$'; then
+        return 0
+    fi
+    return 1
+}
+
+run_precommit_rust() {
+    if ! has_staged_match '^rust/|^rustfmt\.toml$|^rust-toolchain\.toml$'; then
+        return
+    fi
+
+    run "cargo fmt --check" cargo fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
+
+    if should_run_full_rust_gate; then
+        run "cargo clippy (workspace)" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
+        run "cargo test (workspace)" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml"
+        return
+    fi
+
+    packages="$(affected_rust_packages)"
+    if [ -z "$packages" ]; then
+        return
+    fi
+
+    for pkg in $packages; do
+        run "cargo clippy ($pkg)" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" -p "$pkg" --all-targets -- -D warnings
+        run "cargo test ($pkg)" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p "$pkg"
+    done
+}
+
+run_precommit_swift() {
+    if ! has_staged_match '^macos/.*\.swift$|^macos/Package\.swift$'; then
+        return
+    fi
+    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos"
+}
+
+run_precommit_bridge() {
+    if ! has_staged_match '^rust/crates/aetower-ffi/|^macos/Sources/AetowerBindings/aetower_ffi\.swift$|^macos/Sources/aetower_ffiFFI/aetower_ffiFFI\.h$|^macos/Sources/AetowerBridge/|^scripts/build-rust'; then
+        return
+    fi
+    run "build Rust bridge" sh "$ROOT/scripts/build-rust.sh"
+}
+
+run_precommit_benchmark() {
+    if ! has_staged_match '^rust/crates/aetower-(core|collector|history|persistence|telemetry|gpu|model|diagnostics|friction|attribution|identity)/'; then
+        return
+    fi
+    iterations="${BENCH_ITERATIONS:-4}"
+    run "benchmark smoke" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$iterations" --enforce
+}
+
+run_precommit_shell() {
+    if ! has_staged_match '(^scripts/.*\.sh$|^\.githooks/)'; then
+        return
+    fi
+}
+
+run_precommit() {
+    run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode pre-commit
+    run_precommit_rust
+    run_precommit_bridge
+    run_precommit_swift
+    run_precommit_benchmark
+    run_precommit_shell
+}
+
+run_full_gate() {
+    if [ -z "$BENCH_ITERATIONS" ]; then
+        case "$MODE" in
+            pre-push) BENCH_ITERATIONS="20" ;;
+            full) BENCH_ITERATIONS="30" ;;
+            *) BENCH_ITERATIONS="20" ;;
+        esac
+    fi
+
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        run "quality guard (working tree)" python3 "$ROOT/scripts/quality-guard.py" --mode working-tree
+    fi
+    run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode "$MODE"
+    run "cargo fmt --check" cargo fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
+    run "cargo clippy" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
+    run "cargo test" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml"
+    run "build Rust bridge" sh "$ROOT/scripts/build-rust.sh"
+    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos"
+    run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
     run "telemetry smoke" sh "$ROOT/scripts/telemetry-smoke.sh"
     run "package smoke" sh "$ROOT/scripts/smoke-package.sh" --rebuild
-fi
+    if [ "$MODE" = "full" ] && command -v cargo-audit >/dev/null 2>&1; then
+        run "cargo audit" cargo audit --file "$ROOT/rust/Cargo.lock"
+    fi
+}
+
+cd "$ROOT"
+
+case "$MODE" in
+    pre-commit)
+        run_precommit
+        ;;
+    pre-push|full)
+        run_full_gate
+        ;;
+    *)
+        echo "unsupported mode: $MODE" >&2
+        exit 1
+        ;;
+esac
 
 printf '\n✓ local ci passed (%s)\n' "$MODE"

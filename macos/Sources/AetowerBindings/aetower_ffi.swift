@@ -1346,6 +1346,115 @@ public func FfiConverterTypeAggregateMetrics_lower(_ value: AggregateMetrics) ->
 }
 
 
+/**
+ * Long-lived battery health metrics exposed to Swift.
+ *
+ * All values are derived in a single IOPSCopyPowerSourcesInfo pass. Fields
+ * are zero/`None` when the corresponding IOKit key is absent on this
+ * machine (e.g. desktop Macs with no battery at all).
+ */
+public struct BatteryHealthSnapshot {
+    public var cycleCount: UInt32
+    public var designCapacityMah: UInt32
+    public var maxCapacityMah: UInt32
+    public var healthPercent: Float
+    public var condition: BatteryCondition
+    public var temperatureCelsius: Float?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(cycleCount: UInt32, designCapacityMah: UInt32, maxCapacityMah: UInt32, healthPercent: Float, condition: BatteryCondition, temperatureCelsius: Float?) {
+        self.cycleCount = cycleCount
+        self.designCapacityMah = designCapacityMah
+        self.maxCapacityMah = maxCapacityMah
+        self.healthPercent = healthPercent
+        self.condition = condition
+        self.temperatureCelsius = temperatureCelsius
+    }
+}
+
+#if compiler(>=6)
+extension BatteryHealthSnapshot: Sendable {}
+#endif
+
+
+extension BatteryHealthSnapshot: Equatable, Hashable {
+    public static func ==(lhs: BatteryHealthSnapshot, rhs: BatteryHealthSnapshot) -> Bool {
+        if lhs.cycleCount != rhs.cycleCount {
+            return false
+        }
+        if lhs.designCapacityMah != rhs.designCapacityMah {
+            return false
+        }
+        if lhs.maxCapacityMah != rhs.maxCapacityMah {
+            return false
+        }
+        if lhs.healthPercent != rhs.healthPercent {
+            return false
+        }
+        if lhs.condition != rhs.condition {
+            return false
+        }
+        if lhs.temperatureCelsius != rhs.temperatureCelsius {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(cycleCount)
+        hasher.combine(designCapacityMah)
+        hasher.combine(maxCapacityMah)
+        hasher.combine(healthPercent)
+        hasher.combine(condition)
+        hasher.combine(temperatureCelsius)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBatteryHealthSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BatteryHealthSnapshot {
+        return
+            try BatteryHealthSnapshot(
+                cycleCount: FfiConverterUInt32.read(from: &buf), 
+                designCapacityMah: FfiConverterUInt32.read(from: &buf), 
+                maxCapacityMah: FfiConverterUInt32.read(from: &buf), 
+                healthPercent: FfiConverterFloat.read(from: &buf), 
+                condition: FfiConverterTypeBatteryCondition.read(from: &buf), 
+                temperatureCelsius: FfiConverterOptionFloat.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BatteryHealthSnapshot, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.cycleCount, into: &buf)
+        FfiConverterUInt32.write(value.designCapacityMah, into: &buf)
+        FfiConverterUInt32.write(value.maxCapacityMah, into: &buf)
+        FfiConverterFloat.write(value.healthPercent, into: &buf)
+        FfiConverterTypeBatteryCondition.write(value.condition, into: &buf)
+        FfiConverterOptionFloat.write(value.temperatureCelsius, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBatteryHealthSnapshot_lift(_ buf: RustBuffer) throws -> BatteryHealthSnapshot {
+    return try FfiConverterTypeBatteryHealthSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBatteryHealthSnapshot_lower(_ value: BatteryHealthSnapshot) -> RustBuffer {
+    return FfiConverterTypeBatteryHealthSnapshot.lower(value)
+}
+
+
 public struct CapabilitySnapshot {
     public var kind: CapabilityKind
     public var state: CapabilityState
@@ -2978,10 +3087,11 @@ public struct HostSnapshot {
     public var fans: [FanReading]
     public var cpuTemperatures: [TemperatureReading]
     public var powerReadings: [PowerReading]
+    public var batteryHealth: BatteryHealthSnapshot?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading]) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
@@ -3007,6 +3117,7 @@ public struct HostSnapshot {
         self.fans = fans
         self.cpuTemperatures = cpuTemperatures
         self.powerReadings = powerReadings
+        self.batteryHealth = batteryHealth
     }
 }
 
@@ -3092,6 +3203,9 @@ extension HostSnapshot: Equatable, Hashable {
         if lhs.powerReadings != rhs.powerReadings {
             return false
         }
+        if lhs.batteryHealth != rhs.batteryHealth {
+            return false
+        }
         return true
     }
 
@@ -3121,6 +3235,7 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(fans)
         hasher.combine(cpuTemperatures)
         hasher.combine(powerReadings)
+        hasher.combine(batteryHealth)
     }
 }
 
@@ -3157,7 +3272,8 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 gpuTemperatureCelsius: FfiConverterOptionFloat.read(from: &buf), 
                 fans: FfiConverterSequenceTypeFanReading.read(from: &buf), 
                 cpuTemperatures: FfiConverterSequenceTypeTemperatureReading.read(from: &buf), 
-                powerReadings: FfiConverterSequenceTypePowerReading.read(from: &buf)
+                powerReadings: FfiConverterSequenceTypePowerReading.read(from: &buf), 
+                batteryHealth: FfiConverterOptionTypeBatteryHealthSnapshot.read(from: &buf)
         )
     }
 
@@ -3187,6 +3303,7 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeFanReading.write(value.fans, into: &buf)
         FfiConverterSequenceTypeTemperatureReading.write(value.cpuTemperatures, into: &buf)
         FfiConverterSequenceTypePowerReading.write(value.powerReadings, into: &buf)
+        FfiConverterOptionTypeBatteryHealthSnapshot.write(value.batteryHealth, into: &buf)
     }
 }
 
@@ -4717,6 +4834,102 @@ extension AttributionConfidence: Equatable, Hashable {}
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * macOS battery condition as reported by IOPS/System Information.
+ *
+ * Mirrors `aetower_model::BatteryCondition` for the UniFFI bridge.
+ */
+
+public enum BatteryCondition {
+    
+    case unknown
+    case good
+    case fair
+    case poor
+    case serviceBattery
+}
+
+
+#if compiler(>=6)
+extension BatteryCondition: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBatteryCondition: FfiConverterRustBuffer {
+    typealias SwiftType = BatteryCondition
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BatteryCondition {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .unknown
+        
+        case 2: return .good
+        
+        case 3: return .fair
+        
+        case 4: return .poor
+        
+        case 5: return .serviceBattery
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: BatteryCondition, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .unknown:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .good:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .fair:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .poor:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .serviceBattery:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBatteryCondition_lift(_ buf: RustBuffer) throws -> BatteryCondition {
+    return try FfiConverterTypeBatteryCondition.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBatteryCondition_lower(_ value: BatteryCondition) -> RustBuffer {
+    return FfiConverterTypeBatteryCondition.lower(value)
+}
+
+
+extension BatteryCondition: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum CapabilityHealth {
     
@@ -6138,6 +6351,30 @@ fileprivate struct FfiConverterOptionTypeAgentCostSummary: FfiConverterRustBuffe
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAgentCostSummary.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeBatteryHealthSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = BatteryHealthSnapshot?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeBatteryHealthSnapshot.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeBatteryHealthSnapshot.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
