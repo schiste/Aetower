@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use aetower_model::{
-    EntitySnapshot, HostSnapshot, HostTrend, MetricTrend, Recommendation, ThermalState,
-    TimelineCategory, TimelineEvent, TimelineSeverity,
+    AlertLevel, AlertThreshold, EntitySnapshot, HostSnapshot, HostTrend, MetricTrend,
+    Recommendation, ThermalState, ThresholdDirection, TimelineCategory, TimelineEvent,
+    TimelineSeverity,
 };
 
 pub struct History {
@@ -24,6 +25,8 @@ pub struct History {
     previous_pressure_band: PressureBand,
     previous_wakeup_band: WakeupBand,
     previous_entity_behaviors: BTreeMap<String, EntityBehaviorFlags>,
+    sensor_alert_thresholds: Vec<AlertThreshold>,
+    previous_sensor_alert_levels: BTreeMap<String, AlertLevel>,
 }
 
 struct MetricTrendState {
@@ -101,6 +104,16 @@ const PROCESS_LAUNCH_BURST_WINDOW_MILLIS: u64 = 15_000;
 const SHORT_LIVED_PROCESS_MILLIS: u64 = 30_000;
 const RESTART_LOOP_WINDOW_MILLIS: u64 = 60_000;
 
+/// Stable identifier for the CPU package temperature alert.
+///
+/// The history tracker uses this as both the alert key and the lookup key
+/// for the "previous level" map, so any string here has to stay consistent
+/// across ticks. Concrete per-sensor keys (`cpu_temperature`, `fan_0_rpm`)
+/// are matched against the sensor reading label at evaluation time.
+const SENSOR_KEY_CPU_TEMPERATURE: &str = "cpu_temperature";
+const SENSOR_KEY_BATTERY_HEALTH: &str = "battery_health";
+const SENSOR_KEY_FAN_STUCK: &str = "fan_stuck_under_load";
+
 impl History {
     pub fn new() -> Self {
         Self {
@@ -122,7 +135,23 @@ impl History {
             previous_pressure_band: PressureBand::Nominal,
             previous_wakeup_band: WakeupBand::Nominal,
             previous_entity_behaviors: BTreeMap::new(),
+            sensor_alert_thresholds: default_sensor_alert_thresholds(),
+            previous_sensor_alert_levels: BTreeMap::new(),
         }
+    }
+
+    /// Replace the active alert thresholds.
+    ///
+    /// Kept public so a future settings UI can wire user-customised
+    /// thresholds through the engine without having to rebuild the
+    /// history state. Calling this resets the "previous level" map so
+    /// the next tick re-emits any currently-active alert under the new
+    /// thresholds — this is the conservative choice because a user who
+    /// just tightened a threshold probably wants to see the alert fire
+    /// immediately rather than waiting for another transition.
+    pub fn set_sensor_alert_thresholds(&mut self, thresholds: Vec<AlertThreshold>) {
+        self.sensor_alert_thresholds = thresholds;
+        self.previous_sensor_alert_levels.clear();
     }
 
     fn intern_entity_id(&mut self, entity_id: &str) -> u16 {
@@ -160,6 +189,7 @@ impl History {
             .collect();
         self.host_history.push(host);
         self.update_host_observability(captured_at_millis, host, entities);
+        self.update_sensor_alerts(captured_at_millis, host);
         self.update_process_observability(captured_at_millis, entities);
 
         for entity in entities.iter_mut() {
@@ -501,6 +531,190 @@ impl History {
             }
         }
         self.previous_wakeup_band = wakeup_band;
+    }
+
+    /// Evaluate the configured alert thresholds against the current sensor
+    /// snapshot and emit timeline events on state transitions.
+    ///
+    /// We only emit on transitions between `AlertLevel` states, not on
+    /// every tick that a reading stays above a threshold. Three kinds of
+    /// events are produced:
+    ///
+    /// - **Escalation** (nominal → warning, nominal → critical, warning →
+    ///   critical): a new `Warning` or `Critical` timeline entry with the
+    ///   current value baked into the detail text.
+    /// - **De-escalation** (critical → warning): a downgrade event at
+    ///   `Warning` severity so the user knows things are improving.
+    /// - **Recovery** (any non-nominal → nominal): an `Info` event so the
+    ///   timeline has a clean "closed" marker for the earlier alert.
+    ///
+    /// Evaluation iterates the per-sensor reading lists in the host
+    /// snapshot so fan IDs and temperature labels participate in their own
+    /// tracking — there is no global "CPU temperature" reading that works
+    /// across SoCs, only labelled per-core readings.
+    fn update_sensor_alerts(&mut self, captured_at_millis: u64, host: &HostSnapshot) {
+        // CPU temperature: evaluate against the hottest core/package we see
+        // this tick. Per-core thresholds would be noisier without adding
+        // signal — any one core above 100°C is an emergency for the whole
+        // SoC because the thermal envelope is shared.
+        if let Some(hottest) = host
+            .cpu_temperatures
+            .iter()
+            .map(|reading| reading.celsius)
+            .fold(None, |max: Option<f32>, celsius| {
+                Some(max.map_or(celsius, |current| current.max(celsius)))
+            })
+        {
+            self.evaluate_alert_transition(
+                captured_at_millis,
+                SENSOR_KEY_CPU_TEMPERATURE,
+                hottest,
+                "CPU temperature",
+                |value, level| {
+                    format!(
+                        "CPU temperature {value:.0}°C ({level})",
+                        level = level_label(level)
+                    )
+                },
+            );
+        }
+
+        // Battery health: only meaningful when the machine actually has a
+        // battery — desktops skip this entirely.
+        if let Some(battery) = host.battery_health.as_ref()
+            && battery.health_percent > 0.0
+        {
+            self.evaluate_alert_transition(
+                captured_at_millis,
+                SENSOR_KEY_BATTERY_HEALTH,
+                battery.health_percent,
+                "Battery health",
+                |value, level| {
+                    format!(
+                        "Battery health {value:.0}% of design capacity ({level})",
+                        level = level_label(level)
+                    )
+                },
+            );
+        }
+
+        // Fan stuck: tracked as a separate key per fan ID because a
+        // single-fan machine and a dual-fan Pro are very different cases.
+        // We consider a fan "stuck" when it reports 0 RPM while the
+        // thermal state is Fair or worse — that pairing means the SoC is
+        // warm and yet nothing is cooling it, so the alert is actionable.
+        let thermal_is_elevated =
+            thermal_severity(host.thermal_state) >= thermal_severity(ThermalState::Fair);
+        if thermal_is_elevated {
+            for fan in &host.fans {
+                let key = format!("{SENSOR_KEY_FAN_STUCK}_{id}", id = fan.id);
+                let stuck_value = if fan.current_rpm <= 0.0 { 1.0 } else { 0.0 };
+                // Fan-stuck is a pure boolean but we encode it as a value-vs-
+                // threshold check so the transition machinery is shared with
+                // the other alerts. `>= 1` maps to a fan at rest, `< 1` maps
+                // to any rotation.
+                let synthetic_threshold = AlertThreshold {
+                    sensor_key: key.clone(),
+                    warning_value: 1.0,
+                    critical_value: 1.0,
+                    direction: ThresholdDirection::Above,
+                };
+                self.evaluate_alert_with_threshold(
+                    captured_at_millis,
+                    &synthetic_threshold,
+                    stuck_value,
+                    "Fan stalled",
+                    |_value, level| {
+                        format!(
+                            "{name} is at 0 RPM while the SoC is thermally stressed ({level})",
+                            name = fan.name,
+                            level = level_label(level)
+                        )
+                    },
+                );
+            }
+        }
+    }
+
+    /// Look up the configured threshold for a sensor key and run the
+    /// transition machinery. Keys with no configured threshold are
+    /// silently skipped — this is how a user would "disable" an alert
+    /// without having to remove the sensor entirely.
+    fn evaluate_alert_transition(
+        &mut self,
+        captured_at_millis: u64,
+        sensor_key: &str,
+        value: f32,
+        title_label: &str,
+        detail_builder: impl Fn(f32, AlertLevel) -> String,
+    ) {
+        let threshold = self
+            .sensor_alert_thresholds
+            .iter()
+            .find(|threshold| threshold.sensor_key == sensor_key)
+            .cloned();
+        let Some(threshold) = threshold else {
+            return;
+        };
+        self.evaluate_alert_with_threshold(
+            captured_at_millis,
+            &threshold,
+            value,
+            title_label,
+            detail_builder,
+        );
+    }
+
+    /// Shared transition machinery used by both configured and synthetic
+    /// thresholds. Split out so the fan-stuck code path (which builds its
+    /// own per-fan synthetic threshold) can reuse the same emission rules
+    /// as the lookup-based path.
+    fn evaluate_alert_with_threshold(
+        &mut self,
+        captured_at_millis: u64,
+        threshold: &AlertThreshold,
+        value: f32,
+        title_label: &str,
+        detail_builder: impl Fn(f32, AlertLevel) -> String,
+    ) {
+        let key = threshold.sensor_key.clone();
+        let previous = self
+            .previous_sensor_alert_levels
+            .get(&key)
+            .copied()
+            .unwrap_or_default();
+        let current = classify_alert(value, threshold);
+        if current == previous {
+            return;
+        }
+        self.previous_sensor_alert_levels.insert(key, current);
+
+        // Recovery: any non-nominal level dropping to Nominal produces
+        // an `Info` marker so the user sees the alert close cleanly.
+        if current == AlertLevel::Nominal {
+            self.push_event(
+                captured_at_millis,
+                TimelineCategory::Host,
+                TimelineSeverity::Info,
+                None,
+                format!("{title_label} normalized"),
+                detail_builder(value, current),
+            );
+            return;
+        }
+
+        // Escalation / de-escalation: emit at the new level's severity.
+        self.push_event(
+            captured_at_millis,
+            TimelineCategory::Host,
+            alert_level_to_severity(current),
+            None,
+            format!(
+                "{title_label} {transition}",
+                transition = transition_verb(previous, current)
+            ),
+            detail_builder(value, current),
+        );
     }
 
     fn update_process_observability(
@@ -1111,11 +1325,111 @@ fn wakeup_band(wakeups_per_second: f32) -> WakeupBand {
     }
 }
 
+/// Default thresholds used when the history tracker is first constructed.
+///
+/// These are the values Aetower ships with; a future settings UI can
+/// replace them via `History::set_sensor_alert_thresholds`. The numbers
+/// were chosen to match the conventional bands used by iStat Menus,
+/// Sensei, and Apple's own System Information:
+///
+/// - **CPU temperature**: 90°C is where M-series SoCs start throttling
+///   aggressively, and 100°C is the hard thermal cut-off. Anything
+///   sustained above 90°C is actionable; above 100°C is "the machine is
+///   about to shut down".
+/// - **Battery health**: 80% is Apple's own threshold for recommending
+///   service (a ~1000-cycle M-series battery); 50% is the point at which
+///   the machine essentially cannot run on battery for anything useful.
+/// - **Fan stuck under load**: separate code path (tracked by key, not
+///   a numeric threshold) — fires when a fan reports 0 RPM while the
+///   thermal state is already above `Fair`.
+fn default_sensor_alert_thresholds() -> Vec<AlertThreshold> {
+    vec![
+        AlertThreshold {
+            sensor_key: SENSOR_KEY_CPU_TEMPERATURE.to_owned(),
+            warning_value: 90.0,
+            critical_value: 100.0,
+            direction: ThresholdDirection::Above,
+        },
+        AlertThreshold {
+            sensor_key: SENSOR_KEY_BATTERY_HEALTH.to_owned(),
+            warning_value: 80.0,
+            critical_value: 50.0,
+            direction: ThresholdDirection::Below,
+        },
+    ]
+}
+
+/// Classify a single reading against a threshold.
+///
+/// For `Above` thresholds: anything at or above `critical` is `Critical`,
+/// at or above `warning` is `Warning`, everything else is `Nominal`.
+/// `Below` mirrors this — values at or below `critical` are `Critical`,
+/// at or below `warning` are `Warning`.
+///
+/// The comparison is deliberately inclusive (`>=` / `<=`) so that a value
+/// pinned exactly to the threshold always trips the alarm. A user who
+/// sets "warn at 90°C" and reads "90°C" expects the alert to fire.
+fn classify_alert(value: f32, threshold: &AlertThreshold) -> AlertLevel {
+    match threshold.direction {
+        ThresholdDirection::Above => {
+            if value >= threshold.critical_value {
+                AlertLevel::Critical
+            } else if value >= threshold.warning_value {
+                AlertLevel::Warning
+            } else {
+                AlertLevel::Nominal
+            }
+        }
+        ThresholdDirection::Below => {
+            if value <= threshold.critical_value {
+                AlertLevel::Critical
+            } else if value <= threshold.warning_value {
+                AlertLevel::Warning
+            } else {
+                AlertLevel::Nominal
+            }
+        }
+    }
+}
+
+/// Map an alert level onto the timeline severity used by the UI.
+fn alert_level_to_severity(level: AlertLevel) -> TimelineSeverity {
+    match level {
+        AlertLevel::Nominal => TimelineSeverity::Info,
+        AlertLevel::Warning => TimelineSeverity::Warning,
+        AlertLevel::Critical => TimelineSeverity::Critical,
+    }
+}
+
+/// Human-readable label for an alert level used inside timeline detail text.
+fn level_label(level: AlertLevel) -> &'static str {
+    match level {
+        AlertLevel::Nominal => "nominal",
+        AlertLevel::Warning => "warning",
+        AlertLevel::Critical => "critical",
+    }
+}
+
+/// Verb describing a transition between two alert levels for the event title.
+///
+/// We distinguish escalation ("elevated"), de-escalation ("improving"), and
+/// recovery ("normalized") so the user can read the timeline top-to-bottom
+/// and understand the shape of the incident without cross-referencing
+/// timestamps.
+fn transition_verb(previous: AlertLevel, current: AlertLevel) -> &'static str {
+    match (previous, current) {
+        (_, AlertLevel::Critical) => "critical",
+        (AlertLevel::Critical, AlertLevel::Warning) => "improving",
+        (_, AlertLevel::Warning) => "elevated",
+        (_, AlertLevel::Nominal) => "normalized",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use aetower_model::{
         AggregateMetrics, ComponentKind, ComponentSnapshot, EntityKind, FrictionBreakdown,
-        HostSnapshot, MetricTrend, ProvenanceSnapshot,
+        HostSnapshot, MetricTrend, ProvenanceSnapshot, TimelineSeverity,
     };
 
     use super::History;
@@ -1324,5 +1638,198 @@ mod tests {
                 .iter()
                 .any(|recommendation| recommendation.title == "Reduce disk churn")
         );
+    }
+
+    fn host_with_cpu_temperature(celsius: f32) -> HostSnapshot {
+        HostSnapshot {
+            cpu_temperatures: vec![aetower_model::TemperatureReading {
+                label: "p-cluster".to_owned(),
+                celsius,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn host_with_battery_health(health_percent: f32) -> HostSnapshot {
+        HostSnapshot {
+            battery_health: Some(aetower_model::BatteryHealthSnapshot {
+                cycle_count: 500,
+                design_capacity_mah: 5000,
+                max_capacity_mah: ((health_percent / 100.0) * 5000.0) as u32,
+                health_percent,
+                condition: aetower_model::BatteryCondition::Good,
+                temperature_celsius: Some(32.0),
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn cpu_temperature_transitions_emit_one_event_per_state_change() {
+        let mut history = History::new();
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+
+        // Cool tick — no alert event.
+        let (events, _) = history.update(1_000, &host_with_cpu_temperature(60.0), &mut entities);
+        assert!(
+            events.is_empty(),
+            "no transition from nominal to nominal should emit an event"
+        );
+
+        // Warming into the warning band.
+        let (events, _) = history.update(2_000, &host_with_cpu_temperature(92.0), &mut entities);
+        let warning_events: Vec<_> = events
+            .iter()
+            .filter(|event| event.title.starts_with("CPU temperature"))
+            .collect();
+        assert_eq!(warning_events.len(), 1);
+        assert_eq!(warning_events[0].severity, TimelineSeverity::Warning);
+
+        // Staying in the warning band — no duplicate event.
+        let (events, _) = history.update(3_000, &host_with_cpu_temperature(95.0), &mut entities);
+        assert!(
+            events
+                .iter()
+                .filter(|event| event.title.starts_with("CPU temperature"))
+                .count()
+                <= 1,
+            "sustained warning must not spam the timeline"
+        );
+
+        // Critical escalation.
+        let (events, _) = history.update(4_000, &host_with_cpu_temperature(102.0), &mut entities);
+        let critical_events: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.title.starts_with("CPU temperature") && event.timestamp_millis == 4_000
+            })
+            .collect();
+        assert_eq!(critical_events.len(), 1);
+        assert_eq!(critical_events[0].severity, TimelineSeverity::Critical);
+
+        // Recovery.
+        let (events, _) = history.update(5_000, &host_with_cpu_temperature(55.0), &mut entities);
+        let recovery_events: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.title.contains("CPU temperature") && event.timestamp_millis == 5_000
+            })
+            .collect();
+        assert_eq!(recovery_events.len(), 1);
+        assert_eq!(recovery_events[0].severity, TimelineSeverity::Info);
+        assert!(recovery_events[0].title.contains("normalized"));
+    }
+
+    #[test]
+    fn battery_health_below_threshold_fires_warning() {
+        let mut history = History::new();
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+
+        let (events, _) = history.update(1_000, &host_with_battery_health(95.0), &mut entities);
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.title.starts_with("Battery health"))
+        );
+
+        let (events, _) = history.update(2_000, &host_with_battery_health(75.0), &mut entities);
+        let alerts: Vec<_> = events
+            .iter()
+            .filter(|event| event.title.starts_with("Battery health"))
+            .collect();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].severity, TimelineSeverity::Warning);
+
+        let (events, _) = history.update(3_000, &host_with_battery_health(45.0), &mut entities);
+        let critical: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.title.starts_with("Battery health") && event.timestamp_millis == 3_000
+            })
+            .collect();
+        assert_eq!(critical.len(), 1);
+        assert_eq!(critical[0].severity, TimelineSeverity::Critical);
+    }
+
+    #[test]
+    fn battery_health_absent_skips_alert() {
+        let mut history = History::new();
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+
+        let (events, _) = history.update(1_000, &HostSnapshot::default(), &mut entities);
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.title.starts_with("Battery health"))
+        );
+    }
+
+    #[test]
+    fn fan_stuck_fires_only_under_thermal_stress() {
+        use aetower_model::{FanReading, ThermalState};
+        let mut history = History::new();
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+
+        // Fan at 0 RPM but thermal state nominal — no alert. This is the
+        // case where a fan is legitimately idle and the SoC is cool.
+        let nominal = HostSnapshot {
+            thermal_state: ThermalState::Nominal,
+            fans: vec![FanReading {
+                id: 0,
+                name: "Fan 0".to_owned(),
+                current_rpm: 0.0,
+                min_rpm: 1000.0,
+                max_rpm: 6000.0,
+            }],
+            ..Default::default()
+        };
+        let (events, _) = history.update(1_000, &nominal, &mut entities);
+        assert!(!events.iter().any(|event| event.title.contains("Fan")));
+
+        // Same fan, but the SoC is now thermally stressed — this is the
+        // actionable case.
+        let stressed = HostSnapshot {
+            thermal_state: ThermalState::Serious,
+            fans: nominal.fans.clone(),
+            ..Default::default()
+        };
+        let (events, _) = history.update(2_000, &stressed, &mut entities);
+        let fan_events: Vec<_> = events
+            .iter()
+            .filter(|event| event.title.contains("Fan"))
+            .collect();
+        assert_eq!(fan_events.len(), 1);
+        assert!(matches!(
+            fan_events[0].severity,
+            TimelineSeverity::Warning | TimelineSeverity::Critical
+        ));
+    }
+
+    #[test]
+    fn classify_alert_handles_both_directions() {
+        use super::{AlertLevel, AlertThreshold, ThresholdDirection, classify_alert};
+
+        let above = AlertThreshold {
+            sensor_key: "t".to_owned(),
+            warning_value: 90.0,
+            critical_value: 100.0,
+            direction: ThresholdDirection::Above,
+        };
+        assert_eq!(classify_alert(60.0, &above), AlertLevel::Nominal);
+        // Inclusive lower bound — exactly 90 must fire warning.
+        assert_eq!(classify_alert(90.0, &above), AlertLevel::Warning);
+        assert_eq!(classify_alert(99.9, &above), AlertLevel::Warning);
+        assert_eq!(classify_alert(100.0, &above), AlertLevel::Critical);
+
+        let below = AlertThreshold {
+            sensor_key: "h".to_owned(),
+            warning_value: 80.0,
+            critical_value: 50.0,
+            direction: ThresholdDirection::Below,
+        };
+        assert_eq!(classify_alert(95.0, &below), AlertLevel::Nominal);
+        assert_eq!(classify_alert(80.0, &below), AlertLevel::Warning);
+        assert_eq!(classify_alert(50.0, &below), AlertLevel::Critical);
+        assert_eq!(classify_alert(10.0, &below), AlertLevel::Critical);
     }
 }

@@ -586,6 +586,55 @@ pub struct DiskHealthSnapshot {
     pub media_errors: Option<u64>,
 }
 
+/// Direction of a threshold check against a sensor value.
+///
+/// `Above` fires when the value exceeds the threshold — used for
+/// temperatures, wakeups, and anything else where "too high" is bad.
+/// `Below` fires when the value drops under the threshold — used for
+/// battery health percentages and available spare, where "too low" is bad.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThresholdDirection {
+    #[default]
+    Above,
+    Below,
+}
+
+/// One configurable threshold for a named sensor reading.
+///
+/// The threshold has two tiers (`warning_value` and `critical_value`). For
+/// `Above` thresholds, `critical_value` must be strictly greater than
+/// `warning_value`; for `Below`, strictly less. Tiered alerts let the UI
+/// show a yellow chip at first sign of trouble and escalate to red when
+/// the situation is actually dangerous.
+///
+/// `sensor_key` identifies the metric being watched. It is a stable string
+/// like `"cpu_temperature"`, `"battery_health"`, or `"fan_0_rpm"` that the
+/// history crate uses to look up both the current value and the previous
+/// alert state without string comparisons to human-readable labels.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AlertThreshold {
+    pub sensor_key: String,
+    pub warning_value: f32,
+    pub critical_value: f32,
+    pub direction: ThresholdDirection,
+}
+
+/// Current classification of a sensor reading against its threshold.
+///
+/// Used both as the "previous state" cached inside the history tracker and
+/// as the "new state" computed each tick — transitions between the two are
+/// what drive `TimelineEvent` emission. `Nominal` is the default state
+/// when no tracker has been initialised yet.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AlertLevel {
+    #[default]
+    Nominal,
+    Warning,
+    Critical,
+}
+
 /// Broad category of a Bluetooth peripheral used to pick the right UI
 /// icon.
 ///
