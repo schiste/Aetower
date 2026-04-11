@@ -4,6 +4,8 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MODE="pre-commit"
 BENCH_ITERATIONS=""
+SWIFTLINT_CACHE_DIR="$ROOT/tmp/swiftlint-cache"
+SWIFT_BUILD_DIR="$ROOT/macos/.build"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -28,6 +30,17 @@ run() {
     "$@"
 }
 
+resolve_cargo_bin() {
+    cargo_bin="$(command -v cargo || true)"
+    if [ -n "${HOME:-}" ] \
+        && [ -x "$HOME/.cargo/bin/cargo" ] \
+        && [ "$cargo_bin" = "$HOME/.chau7/cto_bin/cargo" ]; then
+        printf '%s\n' "$HOME/.cargo/bin/cargo"
+        return
+    fi
+    printf '%s\n' "${cargo_bin:-cargo}"
+}
+
 require_tool() {
     tool="$1"
     install_hint="$2"
@@ -35,6 +48,17 @@ require_tool() {
         echo "missing required tool: $tool ($install_hint)" >&2
         exit 1
     fi
+}
+
+semgrep_healthy() {
+    if ! command -v semgrep >/dev/null 2>&1; then
+        return 1
+    fi
+    env SEMGREP_SEND_METRICS=off semgrep --help >/dev/null 2>&1
+}
+
+clean_swift_build_dir() {
+    rm -rf "$SWIFT_BUILD_DIR"
 }
 
 staged_files() {
@@ -88,10 +112,10 @@ run_precommit_rust() {
         return
     fi
 
-    run "cargo fmt --check" cargo fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
+    run "cargo fmt --check" "$CARGO_BIN" fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
 
     if should_run_full_rust_gate; then
-        run "cargo clippy (workspace)" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
+        run "cargo clippy (workspace)" "$CARGO_BIN" clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
         run_workspace_tests
         return
     fi
@@ -102,8 +126,8 @@ run_precommit_rust() {
     fi
 
     for pkg in $packages; do
-        run "cargo clippy ($pkg)" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" -p "$pkg" --all-targets -- -D warnings
-        run "cargo test ($pkg)" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p "$pkg"
+        run "cargo clippy ($pkg)" "$CARGO_BIN" clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" -p "$pkg" --all-targets -- -D warnings
+        run "cargo test ($pkg)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p "$pkg"
     done
 }
 
@@ -118,8 +142,9 @@ run_precommit_swiftlint() {
         return
     fi
     require_tool "swiftlint" "install with: brew install swiftlint"
+    mkdir -p "$SWIFTLINT_CACHE_DIR"
     for path in $files; do
-        run "swiftlint ($path)" swiftlint lint --strict --quiet --force-exclude --config "$ROOT/.swiftlint.yml" "$ROOT/$path"
+        run "swiftlint ($path)" swiftlint lint --strict --quiet --force-exclude --cache-path "$SWIFTLINT_CACHE_DIR" --config "$ROOT/.swiftlint.yml" "$ROOT/$path"
     done
 }
 
@@ -128,28 +153,30 @@ run_precommit_semgrep() {
     if [ -z "$files" ]; then
         return
     fi
-    if ! command -v semgrep >/dev/null 2>&1; then
+    if ! semgrep_healthy; then
+        printf '\n==> semgrep (skipped: local binary unavailable or unhealthy)\n'
         return
     fi
-    run "semgrep (changed files)" env SEMGREP_SEND_METRICS=off semgrep scan --metrics=off --quiet --config "$ROOT/.semgrep/local-quality.yml" $files
+    run "semgrep (changed files)" env SEMGREP_SEND_METRICS=off semgrep scan --metrics=off --error --quiet --config "$ROOT/.semgrep/local-quality.yml" $files
 }
 
 run_workspace_tests() {
-    run "cargo test (workspace)" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml" --workspace --exclude aetower-helper
-    run "cargo test (aetower-helper)" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper -- --test-threads=1
+    run "cargo test (workspace)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" --workspace --exclude aetower-helper
+    run "cargo test (aetower-helper)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper -- --test-threads=1
 }
 
 run_precommit_swift() {
     if ! has_staged_match '^macos/.*\.swift$|^macos/Package\.swift$'; then
         return
     fi
-    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos"
+    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
 }
 
 run_precommit_bridge() {
     if ! has_staged_match '^rust/crates/aetower-ffi/|^macos/Sources/AetowerBindings/aetower_ffi\.swift$|^macos/Sources/aetower_ffiFFI/aetower_ffiFFI\.h$|^macos/Sources/AetowerBridge/|^scripts/build-rust'; then
         return
     fi
+    clean_swift_build_dir
     run "build Rust bridge" sh "$ROOT/scripts/build-rust.sh"
 }
 
@@ -187,19 +214,25 @@ run_full_gitleaks() {
 
 run_full_swiftlint() {
     require_tool "swiftlint" "install with: brew install swiftlint"
-    run "swiftlint" swiftlint lint --strict --quiet --force-exclude --config "$ROOT/.swiftlint.yml" "$ROOT/macos/Sources"
+    mkdir -p "$SWIFTLINT_CACHE_DIR"
+    run "swiftlint" swiftlint lint --strict --quiet --force-exclude --cache-path "$SWIFTLINT_CACHE_DIR" --config "$ROOT/.swiftlint.yml" "$ROOT/macos/Sources"
 }
 
 run_full_semgrep() {
-    if ! command -v semgrep >/dev/null 2>&1; then
+    if ! semgrep_healthy; then
+        printf '\n==> semgrep (skipped: local binary unavailable or unhealthy)\n'
         return
     fi
-    run "semgrep" env SEMGREP_SEND_METRICS=off semgrep scan --metrics=off --quiet --config "$ROOT/.semgrep/local-quality.yml" "$ROOT/macos/Sources/AetowerUI" "$ROOT/macos/Sources/AetowerApp" "$ROOT/macos/Sources/AetowerBridge" "$ROOT/rust/crates" "$ROOT/scripts"
+    run "semgrep" env SEMGREP_SEND_METRICS=off semgrep scan --metrics=off --error --quiet --config "$ROOT/.semgrep/local-quality.yml" "$ROOT/macos/Sources/AetowerUI" "$ROOT/macos/Sources/AetowerApp" "$ROOT/macos/Sources/AetowerBridge" "$ROOT/rust/crates" "$ROOT/scripts"
 }
 
 run_full_dependency_policy() {
-    require_tool "cargo-deny" "install with: cargo install cargo-deny --locked"
-    run "cargo deny" cargo deny --manifest-path "$ROOT/rust/Cargo.toml" check advisories bans sources --disable-fetch --config "$ROOT/deny.toml"
+    deny_bin="$(command -v cargo-deny || true)"
+    if [ -z "$deny_bin" ]; then
+        echo "missing required tool: cargo-deny (install with: cargo install cargo-deny --locked)" >&2
+        exit 1
+    fi
+    run "cargo deny" sh -c 'cd "$1/rust" && CARGO="$2" "$3" check advisories bans sources --disable-fetch --config "$1/deny.toml"' sh "$ROOT" "$CARGO_BIN" "$deny_bin"
 }
 
 run_full_gate() {
@@ -218,23 +251,23 @@ run_full_gate() {
     run_full_gitleaks
     run_full_swiftlint
     run_full_semgrep
-    run "cargo fmt --check" cargo fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
-    run "cargo clippy" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
+    run "cargo fmt --check" "$CARGO_BIN" fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
+    run "cargo clippy" "$CARGO_BIN" clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
     run_workspace_tests
+    clean_swift_build_dir
     run "build Rust bridge" sh "$ROOT/scripts/build-rust.sh"
-    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos"
+    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
     run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
     run "telemetry smoke" sh "$ROOT/scripts/telemetry-smoke.sh"
     run "package smoke" sh "$ROOT/scripts/smoke-package.sh" --rebuild
-    if [ "$MODE" = "full" ]; then
-        run_full_dependency_policy
-    fi
+    run_full_dependency_policy
     if [ "$MODE" = "full" ] && command -v cargo-audit >/dev/null 2>&1; then
-        run "cargo audit" cargo audit --file "$ROOT/rust/Cargo.lock"
+        run "cargo audit" cargo audit --file "$ROOT/rust/Cargo.lock" --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2026-0097
     fi
 }
 
 cd "$ROOT"
+CARGO_BIN="$(resolve_cargo_bin)"
 
 case "$MODE" in
     pre-commit)

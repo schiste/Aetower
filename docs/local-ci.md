@@ -4,7 +4,7 @@ The local verification path is intentionally strict. It is layered so that:
 
 - `pre-commit` is a hard gate on changed code and staged diff quality
 - `pre-push` is the full repository validation path
-- `full` is the same as `pre-push`, plus optional dependency audit when `cargo-audit` is installed
+- `full` is the same as `pre-push`, plus advisory cross-checking when `cargo-audit` is installed
 
 ## Install commit hooks
 
@@ -31,7 +31,7 @@ Full local push gate:
 sh scripts/ci-local.sh --mode pre-push
 ```
 
-Full local CI, including optional dependency audit:
+Full local CI, including advisory cross-checking:
 
 ```sh
 sh scripts/ci-local.sh --mode full
@@ -51,6 +51,9 @@ sh scripts/ci-local.sh --mode full
   - risky dependency additions in `Cargo.toml` and `Package.swift`
   - suspicious new dumping-ground filenames
   - shell syntax checks on changed hook/script files
+- staged `gitleaks`
+- changed-file `swiftlint`
+- changed-file `semgrep` when the local binary is healthy
 - `cargo fmt --check` when Rust files change
 - targeted Rust `clippy` and `test` runs for changed crates, or full workspace when core crates/manifests change
 - Rust bridge rebuild when FFI/bridge surfaces change
@@ -60,6 +63,9 @@ sh scripts/ci-local.sh --mode full
 `pre-push`:
 
 - full-repo `quality-guard`, including duplicate-block detection against changed files
+- commit-range `gitleaks`
+- full-source `swiftlint`
+- full-source `semgrep` when the local binary is healthy
 - `cargo fmt --check`
 - workspace `cargo clippy --all-targets -- -D warnings`
 - workspace `cargo test`
@@ -69,6 +75,7 @@ sh scripts/ci-local.sh --mode full
 - loopback OTLP telemetry smoke verification
 - full app packaging
 - package smoke verification
+- `cargo-deny` advisories, bans, and source-policy enforcement
 
 `full`:
 
@@ -123,3 +130,23 @@ This starts a temporary in-process HTTP receiver through `aetower-bench`, verifi
 - production Rust panic shortcuts
 - remote or floating dependencies
 - suspicious utility dumping grounds
+
+## Tooling expectations
+
+The local gates now assume these tools are installed:
+
+- `gitleaks`
+- `swiftlint`
+- `semgrep`
+- `cargo-deny`
+
+Install them with:
+
+```sh
+brew install gitleaks swiftlint semgrep
+cargo install cargo-deny --locked
+```
+
+`cargo-deny` is the blocking Rust dependency-policy gate. Its ignore list in [deny.toml](../deny.toml) is intentionally short and documents the migration reason for each allowed advisory. Wildcard version bans stay enforced by `quality-guard`; `cargo-deny` is deliberately not used for that because workspace path dependencies would create false positives.
+
+`semgrep` is wired into the hooks, but the script skips it explicitly if the local binary cannot start cleanly. That keeps the gate strict when the tool is healthy without making commits fail for unrelated local certificate/runtime breakage.

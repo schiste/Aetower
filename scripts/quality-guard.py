@@ -183,12 +183,13 @@ def check_placeholders_and_secrets(
         if path in GENERATED_FILES:
             continue
         suffix = pathlib.Path(path).suffix
+        check_placeholders = not path.startswith(".semgrep/")
         for line_number, line in entries:
             for pattern in SECRET_PATTERNS:
                 if pattern.search(line):
                     violations.append(Violation(path, line_number, "Potential secret detected in added line."))
                     break
-            if suffix in PLACEHOLDER_EXTENSIONS and PLACEHOLDER_PATTERN.search(line):
+            if check_placeholders and suffix in PLACEHOLDER_EXTENSIONS and PLACEHOLDER_PATTERN.search(line):
                 violations.append(Violation(path, line_number, "Placeholder marker detected in added line."))
 
 

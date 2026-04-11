@@ -30,7 +30,7 @@ rules:
         - macos/Sources/AetowerUI/**/*.swift
         - macos/Sources/AetowerApp/**/*.swift
         - macos/Sources/AetowerBridge/**/*.swift
-    pattern: $X as! $Y
+    pattern-regex: "\\bas!\\b"
 
   - id: swift-no-force-try
     message: Avoid try! in app code.
@@ -41,7 +41,34 @@ rules:
         - macos/Sources/AetowerUI/**/*.swift
         - macos/Sources/AetowerApp/**/*.swift
         - macos/Sources/AetowerBridge/**/*.swift
-    pattern: try! $EXPR
+    pattern-regex: "\\btry!\\b"
+
+  - id: rust-no-todo-macro
+    message: Do not commit todo! placeholders.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - rust/crates/**/*.rs
+    pattern-regex: "\\btodo!\\b"
+
+  - id: rust-no-unimplemented-macro
+    message: Do not commit unimplemented! placeholders.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - rust/crates/**/*.rs
+    pattern-regex: "\\bunimplemented!\\b"
+
+  - id: rust-no-dbg-macro
+    message: Do not commit dbg! calls.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - rust/crates/**/*.rs
+    pattern-regex: "\\bdbg!\\b"
 
   - id: shell-no-curl-pipe-sh
     message: Avoid curl|sh style shell execution in repo scripts.
