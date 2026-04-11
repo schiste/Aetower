@@ -59,7 +59,7 @@ run_precommit_rust() {
 
     if should_run_full_rust_gate; then
         run "cargo clippy (workspace)" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
-        run "cargo test (workspace)" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml"
+        run_workspace_tests
         return
     fi
 
@@ -72,6 +72,11 @@ run_precommit_rust() {
         run "cargo clippy ($pkg)" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" -p "$pkg" --all-targets -- -D warnings
         run "cargo test ($pkg)" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p "$pkg"
     done
+}
+
+run_workspace_tests() {
+    run "cargo test (workspace)" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml" --workspace --exclude aetower-helper
+    run "cargo test (aetower-helper)" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper -- --test-threads=1
 }
 
 run_precommit_swift() {
@@ -126,7 +131,7 @@ run_full_gate() {
     run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode "$MODE"
     run "cargo fmt --check" cargo fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
     run "cargo clippy" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
-    run "cargo test" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml"
+    run_workspace_tests
     run "build Rust bridge" sh "$ROOT/scripts/build-rust.sh"
     run "swift build" /usr/bin/swift build --package-path "$ROOT/macos"
     run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
