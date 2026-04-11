@@ -200,6 +200,7 @@ pub struct HostSnapshot {
     pub battery_health: Option<BatteryHealthSnapshot>,
     pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
     pub disks: Vec<DiskHealthSnapshot>,
+    pub bluetooth_devices: Vec<BluetoothDeviceBattery>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -303,6 +304,31 @@ pub struct DiskHealthSnapshot {
     pub power_on_hours: Option<u64>,
     pub power_cycles: Option<u64>,
     pub media_errors: Option<u64>,
+}
+
+/// Broad category used by the UI to pick the right icon for a Bluetooth
+/// peripheral.
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum BluetoothDeviceType {
+    Other,
+    Keyboard,
+    Mouse,
+    Trackpad,
+    Headphones,
+    GameController,
+}
+
+/// Battery level for one wireless peripheral.
+///
+/// `battery_percent` is `Option` because a paired-but-disconnected device
+/// still shows up in the ioreg tree without a current value. The UI should
+/// display "—" for those rows rather than hiding them.
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct BluetoothDeviceBattery {
+    pub name: String,
+    pub address: String,
+    pub battery_percent: Option<u8>,
+    pub device_type: BluetoothDeviceType,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -1314,6 +1340,11 @@ impl From<model::HostSnapshot> for HostSnapshot {
                 .map(Into::into)
                 .collect(),
             disks: value.disks.into_iter().map(Into::into).collect(),
+            bluetooth_devices: value
+                .bluetooth_devices
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         }
     }
 }
@@ -1421,6 +1452,30 @@ impl From<model::DiskHealthSnapshot> for DiskHealthSnapshot {
             power_on_hours: value.power_on_hours,
             power_cycles: value.power_cycles,
             media_errors: value.media_errors,
+        }
+    }
+}
+
+impl From<model::BluetoothDeviceType> for BluetoothDeviceType {
+    fn from(value: model::BluetoothDeviceType) -> Self {
+        match value {
+            model::BluetoothDeviceType::Other => Self::Other,
+            model::BluetoothDeviceType::Keyboard => Self::Keyboard,
+            model::BluetoothDeviceType::Mouse => Self::Mouse,
+            model::BluetoothDeviceType::Trackpad => Self::Trackpad,
+            model::BluetoothDeviceType::Headphones => Self::Headphones,
+            model::BluetoothDeviceType::GameController => Self::GameController,
+        }
+    }
+}
+
+impl From<model::BluetoothDeviceBattery> for BluetoothDeviceBattery {
+    fn from(value: model::BluetoothDeviceBattery) -> Self {
+        Self {
+            name: value.name,
+            address: value.address,
+            battery_percent: value.battery_percent,
+            device_type: value.device_type.into(),
         }
     }
 }

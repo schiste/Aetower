@@ -233,6 +233,8 @@ pub struct HostSnapshot {
     pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
     #[serde(default)]
     pub disks: Vec<DiskHealthSnapshot>,
+    #[serde(default)]
+    pub bluetooth_devices: Vec<BluetoothDeviceBattery>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -582,6 +584,40 @@ pub struct DiskHealthSnapshot {
     pub power_on_hours: Option<u64>,
     pub power_cycles: Option<u64>,
     pub media_errors: Option<u64>,
+}
+
+/// Broad category of a Bluetooth peripheral used to pick the right UI
+/// icon.
+///
+/// macOS's `ClassOfDevice` bitfield technically encodes this, but parsing
+/// it reliably is painful — the peripherals users actually care about
+/// (keyboards, mice, trackpads, headphones, game controllers) are trivial
+/// to disambiguate by name. Anything the heuristic can't classify falls
+/// through to `Other` so the UI still renders a row.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum BluetoothDeviceType {
+    #[default]
+    Other,
+    Keyboard,
+    Mouse,
+    Trackpad,
+    Headphones,
+    GameController,
+}
+
+/// One wireless peripheral with a reported battery level.
+///
+/// Sampled from `ioreg` output on macOS. `address` is the stable device
+/// identifier (Bluetooth MAC); `battery_percent` is `None` when the
+/// peripheral is paired but currently disconnected, so the UI can still
+/// show the device in a list without inventing a level.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BluetoothDeviceBattery {
+    pub name: String,
+    pub address: String,
+    pub battery_percent: Option<u8>,
+    pub device_type: BluetoothDeviceType,
 }
 
 /// One physical or virtual network interface on the host.

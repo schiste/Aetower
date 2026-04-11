@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use aetower_model::{
-    BatteryHealthSnapshot, DiskHealthSnapshot, NetworkInterfaceSnapshot, ThermalState,
+    BatteryHealthSnapshot, BluetoothDeviceBattery, DiskHealthSnapshot, NetworkInterfaceSnapshot,
+    ThermalState,
 };
 use serde::{Deserialize, Serialize};
 use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System, Users};
@@ -55,6 +56,8 @@ pub struct RawHostSample {
     pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
     #[serde(default)]
     pub disks: Vec<DiskHealthSnapshot>,
+    #[serde(default)]
+    pub bluetooth_devices: Vec<BluetoothDeviceBattery>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -107,6 +110,10 @@ const TICK_SECONDS: f32 = 2.0;
 /// health dashboard without burning CPU on something the user cannot act on
 /// in real time.
 const DISK_REFRESH_INTERVAL_TICKS: u8 = 60;
+/// Bluetooth battery percent changes on the order of hours under light use.
+/// Refresh every ~30 seconds so the user sees "just connected" devices
+/// populate quickly without hammering `ioreg`.
+const BLUETOOTH_REFRESH_INTERVAL_TICKS: u8 = 15;
 
 pub struct Collector {
     config: CollectorConfig,
@@ -127,6 +134,8 @@ pub struct Collector {
     cached_network_interfaces: Vec<NetworkInterfaceIdentitySample>,
     cached_disks: Vec<DiskHealthSnapshot>,
     disk_refresh_tick: u8,
+    cached_bluetooth_devices: Vec<BluetoothDeviceBattery>,
+    bluetooth_refresh_tick: u8,
 }
 
 impl Collector {
@@ -154,6 +163,8 @@ impl Collector {
             cached_network_interfaces: Vec::new(),
             cached_disks: Vec::new(),
             disk_refresh_tick: 0,
+            cached_bluetooth_devices: Vec::new(),
+            bluetooth_refresh_tick: 0,
         }
     }
 
@@ -208,6 +219,18 @@ impl Collector {
             self.cached_disks = platform::sample_disks();
         }
         self.disk_refresh_tick = (self.disk_refresh_tick + 1) % DISK_REFRESH_INTERVAL_TICKS;
+
+        // Bluetooth peripheral battery is on its own cadence — fast enough
+        // that "just connected" devices show up within half a minute, slow
+        // enough that we're not invoking `ioreg` every tick.
+        let refresh_bluetooth = self.cached_bluetooth_devices.is_empty()
+            || self.config.full_collection
+            || self.bluetooth_refresh_tick == 0;
+        if refresh_bluetooth {
+            self.cached_bluetooth_devices = platform::sample_bluetooth_devices();
+        }
+        self.bluetooth_refresh_tick =
+            (self.bluetooth_refresh_tick + 1) % BLUETOOTH_REFRESH_INTERVAL_TICKS;
 
         let mut network_totals = NetworkTotals::default();
         for (_name, data) in &self.networks {
@@ -401,6 +424,7 @@ impl Collector {
             battery_health: self.cached_host_environment.battery_health.clone(),
             network_interfaces,
             disks: self.cached_disks.clone(),
+            bluetooth_devices: self.cached_bluetooth_devices.clone(),
         };
         self.previous_network_totals = network_totals;
 
@@ -524,7 +548,8 @@ pub fn read_environment() -> HostEnvironment {
 #[cfg(target_os = "macos")]
 mod platform {
     use aetower_model::{
-        BatteryCondition, BatteryHealthSnapshot, DiskHealthSnapshot, DiskHealthStatus, ThermalState,
+        BatteryCondition, BatteryHealthSnapshot, BluetoothDeviceBattery, DiskHealthSnapshot,
+        DiskHealthStatus, ThermalState,
     };
     use std::{
         ffi::{CStr, c_char, c_void},
@@ -1193,6 +1218,160 @@ mod platform {
         None
     }
 
+    /// Sample battery levels for wireless input peripherals.
+    ///
+    /// macOS exposes these through the IORegistry under
+    /// `AppleDeviceManagementHIDEventService` — one node per connected HID
+    /// device with `BatteryPercent`, `Product`, `DeviceAddress`, and
+    /// `Transport` keys. We parse `ioreg` text output rather than linking
+    /// `IOBluetooth.framework` (deprecated on newer macOS) or opening a
+    /// raw IOKit iterator (requires more C FFI than the value justifies).
+    ///
+    /// Built-in trackpads/keyboards are filtered out via the
+    /// `Transport == "FIFO"` check — they have no battery and would clutter
+    /// the UI. Everything else with a `BatteryPercent` is included.
+    pub fn sample_bluetooth_devices() -> Vec<BluetoothDeviceBattery> {
+        let Some(output) = run_ioreg(&["-r", "-l", "-c", "AppleDeviceManagementHIDEventService"])
+        else {
+            return Vec::new();
+        };
+        parse_bluetooth_devices(&output)
+    }
+
+    fn run_ioreg(args: &[&str]) -> Option<String> {
+        let output = std::process::Command::new("/usr/sbin/ioreg")
+            .args(args)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8(output.stdout).ok()
+    }
+
+    /// Split ioreg output into per-device blocks and extract the fields we care
+    /// about.
+    ///
+    /// `ioreg -r` emits one top-level block per matching node, separated by
+    /// blank lines. Inside a block, property lines look like:
+    ///
+    /// ```text
+    ///       "Product" = "Magic Keyboard"
+    ///       "BatteryPercent" = 42
+    ///       "DeviceAddress" = "38-09-fb-02-17-14"
+    /// ```
+    ///
+    /// The leading indent varies (`|   "..."` vs `    "..."`) depending on
+    /// whether the node is part of a chain or a leaf, so we normalise by
+    /// trimming and skipping the decorative characters before looking at
+    /// content.
+    fn parse_bluetooth_devices(ioreg_output: &str) -> Vec<BluetoothDeviceBattery> {
+        let mut devices = Vec::new();
+        let mut block: Vec<&str> = Vec::new();
+        for line in ioreg_output.lines() {
+            // Top-level nodes start with `+-o` — that's our block separator.
+            if line.starts_with("+-o") {
+                if !block.is_empty() {
+                    if let Some(device) = parse_bluetooth_block(&block) {
+                        devices.push(device);
+                    }
+                    block.clear();
+                }
+                continue;
+            }
+            block.push(line);
+        }
+        if !block.is_empty()
+            && let Some(device) = parse_bluetooth_block(&block)
+        {
+            devices.push(device);
+        }
+        devices
+    }
+
+    fn parse_bluetooth_block(lines: &[&str]) -> Option<BluetoothDeviceBattery> {
+        let mut name = None;
+        let mut address = None;
+        let mut battery_percent = None;
+        let mut transport = None;
+        for raw in lines {
+            let line = raw.trim_start_matches(|ch: char| {
+                matches!(ch, ' ' | '|' | '\t' | '{' | '+' | '-' | 'o')
+            });
+            let line = line.trim();
+            if let Some(value) = extract_string_property(line, "Product") {
+                name = Some(value);
+            } else if let Some(value) = extract_string_property(line, "DeviceAddress") {
+                address = Some(value);
+            } else if let Some(value) = extract_string_property(line, "Transport") {
+                transport = Some(value);
+            } else if let Some(value) = extract_integer_property(line, "BatteryPercent") {
+                battery_percent = u8::try_from(value).ok();
+            }
+        }
+        // Built-in HID devices have no battery and would only clutter the
+        // list. The internal trackpad reports `Transport = "FIFO"` on Apple
+        // Silicon — that's the cleanest filter.
+        if matches!(transport.as_deref(), Some("FIFO")) {
+            return None;
+        }
+        let name = name.unwrap_or_else(|| "Unknown device".to_owned());
+        let address = address.unwrap_or_default();
+        // We only surface devices that report a battery level — users don't
+        // want a pile of rows for wired keyboards, docks, etc. that happen
+        // to match the HID class.
+        battery_percent?;
+        let device_type = classify_bluetooth_device(&name);
+        Some(BluetoothDeviceBattery {
+            name,
+            address,
+            battery_percent,
+            device_type,
+        })
+    }
+
+    fn extract_string_property(line: &str, key: &str) -> Option<String> {
+        let prefix = format!("\"{key}\" = \"");
+        let rest = line.strip_prefix(&prefix)?;
+        let end = rest.rfind('"')?;
+        Some(rest[..end].to_owned())
+    }
+
+    fn extract_integer_property(line: &str, key: &str) -> Option<i64> {
+        let prefix = format!("\"{key}\" = ");
+        let rest = line.strip_prefix(&prefix)?;
+        // Integers are unquoted; a quoted value would be a different key type.
+        rest.trim_end_matches(|ch: char| !ch.is_ascii_digit() && ch != '-')
+            .parse()
+            .ok()
+    }
+
+    fn classify_bluetooth_device(name: &str) -> aetower_model::BluetoothDeviceType {
+        use aetower_model::BluetoothDeviceType;
+        let lowered = name.to_ascii_lowercase();
+        if lowered.contains("trackpad") {
+            BluetoothDeviceType::Trackpad
+        } else if lowered.contains("keyboard") {
+            BluetoothDeviceType::Keyboard
+        } else if lowered.contains("mouse") || lowered.contains("mickey") {
+            BluetoothDeviceType::Mouse
+        } else if lowered.contains("airpods")
+            || lowered.contains("headphones")
+            || lowered.contains("beats")
+            || lowered.contains("headset")
+        {
+            BluetoothDeviceType::Headphones
+        } else if lowered.contains("controller")
+            || lowered.contains("gamepad")
+            || lowered.contains("dualshock")
+            || lowered.contains("xbox")
+        {
+            BluetoothDeviceType::GameController
+        } else {
+            BluetoothDeviceType::Other
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -1277,12 +1456,68 @@ mod platform {
             };
             assert_eq!(snapshot.status, DiskHealthStatus::Warning);
         }
+
+        #[test]
+        fn parses_bluetooth_block_with_battery() {
+            let ioreg = r#"+-o AppleDeviceManagementHIDEventService  <class ...>
+    {
+      "Product" = "Magic Keyboard with Touch ID and Numeric Keypad"
+      "DeviceAddress" = "38-09-fb-02-17-14"
+      "Transport" = "Bluetooth"
+      "BatteryPercent" = 42
+    }
+
++-o AppleDeviceManagementHIDEventService  <class ...>
+    {
+      "Product" = "Apple Internal Keyboard / Trackpad"
+      "Transport" = "FIFO"
+    }
+
++-o AppleDeviceManagementHIDEventService  <class ...>
+    {
+      "Product" = "Mickey"
+      "DeviceAddress" = "f8-73-df-c5-93-9f"
+      "Transport" = "Bluetooth"
+      "BatteryPercent" = 70
+    }
+"#;
+            let devices = parse_bluetooth_devices(ioreg);
+            assert_eq!(devices.len(), 2);
+            assert_eq!(
+                devices[0].name,
+                "Magic Keyboard with Touch ID and Numeric Keypad"
+            );
+            assert_eq!(devices[0].battery_percent, Some(42));
+            assert_eq!(
+                devices[0].device_type,
+                aetower_model::BluetoothDeviceType::Keyboard
+            );
+            assert_eq!(devices[1].name, "Mickey");
+            assert_eq!(devices[1].battery_percent, Some(70));
+            // "Mickey" is caught by the mouse heuristic.
+            assert_eq!(
+                devices[1].device_type,
+                aetower_model::BluetoothDeviceType::Mouse
+            );
+        }
+
+        #[test]
+        fn bluetooth_block_without_battery_is_dropped() {
+            let ioreg = r#"+-o AppleDeviceManagementHIDEventService  <class ...>
+    {
+      "Product" = "Dock Station"
+      "Transport" = "USB"
+    }
+"#;
+            let devices = parse_bluetooth_devices(ioreg);
+            assert!(devices.is_empty());
+        }
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 mod platform {
-    use super::{DiskHealthSnapshot, HostEnvironment};
+    use super::{BluetoothDeviceBattery, DiskHealthSnapshot, HostEnvironment};
 
     pub fn read_environment() -> HostEnvironment {
         HostEnvironment::default()
@@ -1301,6 +1536,10 @@ mod platform {
     }
 
     pub fn sample_disks() -> Vec<DiskHealthSnapshot> {
+        Vec::new()
+    }
+
+    pub fn sample_bluetooth_devices() -> Vec<BluetoothDeviceBattery> {
         Vec::new()
     }
 }

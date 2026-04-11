@@ -292,6 +292,7 @@ impl Engine {
                     fans: Vec::new(),
                     cpu_temperatures: Vec::new(),
                     power_readings: Vec::new(),
+                    bluetooth_devices: raw.host.bluetooth_devices.clone(),
                     network_interfaces: raw.host.network_interfaces.clone(),
                     disks: raw.host.disks.clone(),
                 };

@@ -1496,6 +1496,99 @@ public func FfiConverterTypeBatteryHealthSnapshot_lower(_ value: BatteryHealthSn
 }
 
 
+/**
+ * Battery level for one wireless peripheral.
+ *
+ * `battery_percent` is `Option` because a paired-but-disconnected device
+ * still shows up in the ioreg tree without a current value. The UI should
+ * display "—" for those rows rather than hiding them.
+ */
+public struct BluetoothDeviceBattery {
+    public var name: String
+    public var address: String
+    public var batteryPercent: UInt8?
+    public var deviceType: BluetoothDeviceType
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, address: String, batteryPercent: UInt8?, deviceType: BluetoothDeviceType) {
+        self.name = name
+        self.address = address
+        self.batteryPercent = batteryPercent
+        self.deviceType = deviceType
+    }
+}
+
+#if compiler(>=6)
+extension BluetoothDeviceBattery: Sendable {}
+#endif
+
+
+extension BluetoothDeviceBattery: Equatable, Hashable {
+    public static func ==(lhs: BluetoothDeviceBattery, rhs: BluetoothDeviceBattery) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.address != rhs.address {
+            return false
+        }
+        if lhs.batteryPercent != rhs.batteryPercent {
+            return false
+        }
+        if lhs.deviceType != rhs.deviceType {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(address)
+        hasher.combine(batteryPercent)
+        hasher.combine(deviceType)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBluetoothDeviceBattery: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BluetoothDeviceBattery {
+        return
+            try BluetoothDeviceBattery(
+                name: FfiConverterString.read(from: &buf), 
+                address: FfiConverterString.read(from: &buf), 
+                batteryPercent: FfiConverterOptionUInt8.read(from: &buf), 
+                deviceType: FfiConverterTypeBluetoothDeviceType.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BluetoothDeviceBattery, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.address, into: &buf)
+        FfiConverterOptionUInt8.write(value.batteryPercent, into: &buf)
+        FfiConverterTypeBluetoothDeviceType.write(value.deviceType, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBluetoothDeviceBattery_lift(_ buf: RustBuffer) throws -> BluetoothDeviceBattery {
+    return try FfiConverterTypeBluetoothDeviceBattery.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBluetoothDeviceBattery_lower(_ value: BluetoothDeviceBattery) -> RustBuffer {
+    return FfiConverterTypeBluetoothDeviceBattery.lower(value)
+}
+
+
 public struct CapabilitySnapshot {
     public var kind: CapabilityKind
     public var state: CapabilityState
@@ -3272,10 +3365,11 @@ public struct HostSnapshot {
     public var batteryHealth: BatteryHealthSnapshot?
     public var networkInterfaces: [NetworkInterfaceSnapshot]
     public var disks: [DiskHealthSnapshot]
+    public var bluetoothDevices: [BluetoothDeviceBattery]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?, networkInterfaces: [NetworkInterfaceSnapshot], disks: [DiskHealthSnapshot]) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?, networkInterfaces: [NetworkInterfaceSnapshot], disks: [DiskHealthSnapshot], bluetoothDevices: [BluetoothDeviceBattery]) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
@@ -3304,6 +3398,7 @@ public struct HostSnapshot {
         self.batteryHealth = batteryHealth
         self.networkInterfaces = networkInterfaces
         self.disks = disks
+        self.bluetoothDevices = bluetoothDevices
     }
 }
 
@@ -3398,6 +3493,9 @@ extension HostSnapshot: Equatable, Hashable {
         if lhs.disks != rhs.disks {
             return false
         }
+        if lhs.bluetoothDevices != rhs.bluetoothDevices {
+            return false
+        }
         return true
     }
 
@@ -3430,6 +3528,7 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(batteryHealth)
         hasher.combine(networkInterfaces)
         hasher.combine(disks)
+        hasher.combine(bluetoothDevices)
     }
 }
 
@@ -3469,7 +3568,8 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 powerReadings: FfiConverterSequenceTypePowerReading.read(from: &buf), 
                 batteryHealth: FfiConverterOptionTypeBatteryHealthSnapshot.read(from: &buf), 
                 networkInterfaces: FfiConverterSequenceTypeNetworkInterfaceSnapshot.read(from: &buf), 
-                disks: FfiConverterSequenceTypeDiskHealthSnapshot.read(from: &buf)
+                disks: FfiConverterSequenceTypeDiskHealthSnapshot.read(from: &buf), 
+                bluetoothDevices: FfiConverterSequenceTypeBluetoothDeviceBattery.read(from: &buf)
         )
     }
 
@@ -3502,6 +3602,7 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterOptionTypeBatteryHealthSnapshot.write(value.batteryHealth, into: &buf)
         FfiConverterSequenceTypeNetworkInterfaceSnapshot.write(value.networkInterfaces, into: &buf)
         FfiConverterSequenceTypeDiskHealthSnapshot.write(value.disks, into: &buf)
+        FfiConverterSequenceTypeBluetoothDeviceBattery.write(value.bluetoothDevices, into: &buf)
     }
 }
 
@@ -5221,6 +5322,108 @@ public func FfiConverterTypeBatteryCondition_lower(_ value: BatteryCondition) ->
 
 
 extension BatteryCondition: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Broad category used by the UI to pick the right icon for a Bluetooth
+ * peripheral.
+ */
+
+public enum BluetoothDeviceType {
+    
+    case other
+    case keyboard
+    case mouse
+    case trackpad
+    case headphones
+    case gameController
+}
+
+
+#if compiler(>=6)
+extension BluetoothDeviceType: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBluetoothDeviceType: FfiConverterRustBuffer {
+    typealias SwiftType = BluetoothDeviceType
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BluetoothDeviceType {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .other
+        
+        case 2: return .keyboard
+        
+        case 3: return .mouse
+        
+        case 4: return .trackpad
+        
+        case 5: return .headphones
+        
+        case 6: return .gameController
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: BluetoothDeviceType, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .other:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .keyboard:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .mouse:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .trackpad:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .headphones:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .gameController:
+            writeInt(&buf, Int32(6))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBluetoothDeviceType_lift(_ buf: RustBuffer) throws -> BluetoothDeviceType {
+    return try FfiConverterTypeBluetoothDeviceType.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBluetoothDeviceType_lower(_ value: BluetoothDeviceType) -> RustBuffer {
+    return FfiConverterTypeBluetoothDeviceType.lower(value)
+}
+
+
+extension BluetoothDeviceType: Equatable, Hashable {}
 
 
 
@@ -6991,6 +7194,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeBluetoothDeviceBattery: FfiConverterRustBuffer {
+    typealias SwiftType = [BluetoothDeviceBattery]
+
+    public static func write(_ value: [BluetoothDeviceBattery], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeBluetoothDeviceBattery.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [BluetoothDeviceBattery] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [BluetoothDeviceBattery]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeBluetoothDeviceBattery.read(from: &buf))
         }
         return seq
     }

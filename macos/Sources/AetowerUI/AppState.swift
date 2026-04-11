@@ -188,7 +188,8 @@ public final class AppState {
                 powerReadings: [],
                 batteryHealth: nil,
                 networkInterfaces: [],
-                disks: []
+                disks: [],
+                bluetoothDevices: []
             ),
             hostTrend: HostTrend(
                 machineFriction: [],
