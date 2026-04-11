@@ -1414,36 +1414,56 @@ mod platform {
     /// Split ioreg output into per-device blocks and extract the fields we care
     /// about.
     ///
-    /// `ioreg -r` emits one top-level block per matching node, separated by
-    /// blank lines. Inside a block, property lines look like:
+    /// `ioreg -r -l` emits one node per `+-o` marker and prints its
+    /// properties inside a `{ … }` block. On Apple Silicon, matching
+    /// `AppleDeviceManagementHIDEventService` can return both the
+    /// top-level HID parent **and** a nested `IOHIDEventServiceUserClient`
+    /// child whose properties live inside a sub-block indented further
+    /// right:
     ///
     /// ```text
-    ///       "Product" = "Magic Keyboard"
-    ///       "BatteryPercent" = 42
-    ///       "DeviceAddress" = "38-09-fb-02-17-14"
+    /// +-o AppleDeviceManagementHIDEventService ...
+    ///   | {
+    ///   |   "Product" = "Magic Keyboard"
+    ///   |   "BatteryPercent" = 42
+    ///   | }
+    ///   |
+    ///   +-o IOHIDEventServiceUserClient ...
+    ///       {
+    ///         "IOUserClientCreator" = "pid 386, WindowServer"
+    ///       }
     /// ```
     ///
-    /// The leading indent varies (`|   "..."` vs `    "..."`) depending on
-    /// whether the node is part of a chain or a leaf, so we normalise by
-    /// trimming and skipping the decorative characters before looking at
-    /// content.
+    /// The previous implementation only split on column-zero `+-o` markers,
+    /// so the nested child's property block stayed glued onto the parent.
+    /// That is a silent-failure waiting to happen: if a future ioreg output
+    /// ever puts a conflicting `Product` or `BatteryPercent` inside a child
+    /// node, the parent row would silently absorb it.
+    ///
+    /// The fix is two-fold:
+    /// 1. Split device blocks on **any** `+-o` marker regardless of indent.
+    /// 2. Inside each block, only collect property lines that lie between
+    ///    that block's own `{` and `}` — anything after the closing brace
+    ///    belongs to a sibling or child and is discarded by the block
+    ///    boundary, even though the parser already isolates it.
     fn parse_bluetooth_devices(ioreg_output: &str) -> Vec<BluetoothDeviceBattery> {
         let mut devices = Vec::new();
-        let mut block: Vec<&str> = Vec::new();
+        let mut current: Option<Vec<&str>> = None;
         for line in ioreg_output.lines() {
-            // Top-level nodes start with `+-o` — that's our block separator.
-            if line.starts_with("+-o") {
-                if !block.is_empty() {
-                    if let Some(device) = parse_bluetooth_block(&block) {
-                        devices.push(device);
-                    }
-                    block.clear();
+            if is_ioreg_node_marker(line) {
+                if let Some(block) = current.take()
+                    && let Some(device) = parse_bluetooth_block(&block)
+                {
+                    devices.push(device);
                 }
+                current = Some(Vec::new());
                 continue;
             }
-            block.push(line);
+            if let Some(block) = current.as_mut() {
+                block.push(line);
+            }
         }
-        if !block.is_empty()
+        if let Some(block) = current
             && let Some(device) = parse_bluetooth_block(&block)
         {
             devices.push(device);
@@ -1451,23 +1471,59 @@ mod platform {
         devices
     }
 
+    /// Detect a `+-o` node marker at any indent level.
+    ///
+    /// `ioreg` prefixes nested children with whitespace and optional `|`
+    /// continuation bars. A top-level node looks like `+-o Foo`, a first-
+    /// level child looks like `  +-o Bar`, and deeper descendants add more
+    /// indent. We only care about locating the marker itself, so we trim
+    /// leading whitespace and the vertical-bar decoration before checking.
+    fn is_ioreg_node_marker(line: &str) -> bool {
+        let trimmed = line.trim_start_matches([' ', '\t', '|']);
+        trimmed.starts_with("+-o ")
+    }
+
+    /// Extract property values from a single block's property dict.
+    ///
+    /// Each `+-o` node emits its properties between `{` and `}` markers
+    /// (sometimes prefixed with `|`). Anything outside those markers is
+    /// either the class header line or trailing whitespace, and we ignore
+    /// it. Tracking this inner scope means even if a future ioreg format
+    /// emits property-shaped lines outside the dict block, they cannot
+    /// pollute the device record.
     fn parse_bluetooth_block(lines: &[&str]) -> Option<BluetoothDeviceBattery> {
         let mut name = None;
         let mut address = None;
         let mut battery_percent = None;
         let mut transport = None;
+        let mut inside_property_dict = false;
         for raw in lines {
-            let line = raw.trim_start_matches(|ch: char| {
-                matches!(ch, ' ' | '|' | '\t' | '{' | '+' | '-' | 'o')
-            });
-            let line = line.trim();
-            if let Some(value) = extract_string_property(line, "Product") {
+            let stripped = raw.trim_start_matches([' ', '|', '\t']);
+            let stripped_trimmed = stripped.trim();
+
+            // `{` and `}` delimit the property dict. Some lines are just
+            // `{` or `}` by themselves, others are leaf values with those
+            // characters embedded — only act on the plain delimiters.
+            if stripped_trimmed == "{" {
+                inside_property_dict = true;
+                continue;
+            }
+            if stripped_trimmed == "}" {
+                inside_property_dict = false;
+                continue;
+            }
+            if !inside_property_dict {
+                continue;
+            }
+
+            if let Some(value) = extract_string_property(stripped_trimmed, "Product") {
                 name = Some(value);
-            } else if let Some(value) = extract_string_property(line, "DeviceAddress") {
+            } else if let Some(value) = extract_string_property(stripped_trimmed, "DeviceAddress") {
                 address = Some(value);
-            } else if let Some(value) = extract_string_property(line, "Transport") {
+            } else if let Some(value) = extract_string_property(stripped_trimmed, "Transport") {
                 transport = Some(value);
-            } else if let Some(value) = extract_integer_property(line, "BatteryPercent") {
+            } else if let Some(value) = extract_integer_property(stripped_trimmed, "BatteryPercent")
+            {
                 battery_percent = u8::try_from(value).ok();
             }
         }
@@ -1786,6 +1842,59 @@ mod platform {
 "#;
             let devices = parse_bluetooth_devices(ioreg);
             assert!(devices.is_empty());
+        }
+
+        /// Regression: a top-level Bluetooth node on Apple Silicon often
+        /// has a nested `IOHIDEventServiceUserClient` child. The old
+        /// parser only split on column-zero `+-o`, so the child's
+        /// property block was glued to the parent. If the child ever
+        /// emitted a conflicting `Product` or `BatteryPercent`, the
+        /// parent row would silently absorb the wrong value.
+        ///
+        /// This test uses an indented child whose property looks like
+        /// `Product = "WRONG LEAK"` and asserts the parent keeps its
+        /// real Product string.
+        #[test]
+        fn nested_child_device_does_not_leak_into_parent() {
+            let ioreg = r#"+-o AppleDeviceManagementHIDEventService  <class ...>
+  | {
+  |   "Product" = "Magic Mouse"
+  |   "DeviceAddress" = "aa-bb-cc-dd-ee-ff"
+  |   "Transport" = "Bluetooth"
+  |   "BatteryPercent" = 55
+  | }
+  |
+  +-o IOHIDEventServiceUserClient  <class ...>
+      {
+        "Product" = "WRONG LEAK"
+        "BatteryPercent" = 1
+      }
+"#;
+            let devices = parse_bluetooth_devices(ioreg);
+            // Parent parsed correctly, with its own values.
+            let parent = devices
+                .iter()
+                .find(|device| device.name == "Magic Mouse")
+                .unwrap_or_else(|| panic!("parent device missing: {devices:?}"));
+            assert_eq!(parent.battery_percent, Some(55));
+            // The nested child has no valid Transport or address, but the
+            // key test is that the parent's Product was NOT overwritten
+            // to "WRONG LEAK" and its BatteryPercent was NOT overwritten
+            // to 1.
+            assert_ne!(parent.name, "WRONG LEAK");
+            assert_ne!(parent.battery_percent, Some(1));
+        }
+
+        /// Regression: `is_ioreg_node_marker` must detect `+-o` at any
+        /// indent, not just column zero.
+        #[test]
+        fn ioreg_marker_detected_at_any_indent() {
+            assert!(is_ioreg_node_marker("+-o Foo"));
+            assert!(is_ioreg_node_marker("  +-o Foo"));
+            assert!(is_ioreg_node_marker("  | +-o Foo"));
+            assert!(is_ioreg_node_marker("      | | +-o Foo"));
+            assert!(!is_ioreg_node_marker("+foo"));
+            assert!(!is_ioreg_node_marker("  \"Key\" = \"Value\""));
         }
     }
 }
