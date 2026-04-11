@@ -117,6 +117,29 @@ struct EngineState {
     last_runtime_heartbeat_millis: u64,
 }
 
+/// Per-capability availability tracker used to emit DiagnosticsEvent
+/// on transitions between "collecting" and "not collecting".
+///
+/// `None` is the seeded pre-first-tick state: no transition event
+/// fires on the very first observation, only on subsequent changes.
+/// This avoids spurious "disk readings unavailable" events at startup
+/// when the collector has not yet run its first slow-cadence refresh.
+///
+/// The previous implementation of the sensor sampling paths returned
+/// an empty `Vec` on failure with no log, no diagnostic event, and no
+/// way for an operator to tell "genuinely no devices" (Mac mini, no
+/// battery) from "collection tool broke silently" (SMC handle lost,
+/// `ioreg` missing, `diskutil` renamed its keys). The tracker closes
+/// that gap by surfacing one clear transition event per capability.
+#[derive(Default)]
+struct SensorAvailabilityState {
+    fans_available: Option<bool>,
+    cpu_temperatures_available: Option<bool>,
+    power_readings_available: Option<bool>,
+    disks_available: Option<bool>,
+    bluetooth_available: Option<bool>,
+}
+
 impl EngineState {
     fn publish_mutation(&mut self) {
         self.sequence = self.sequence.saturating_add(1);
@@ -228,6 +251,12 @@ impl Engine {
             let mut last_gpu_sample_started_at = Instant::now()
                 .checked_sub(Duration::from_secs(3600))
                 .unwrap_or_else(Instant::now);
+            // Availability tracking: one bool per sensor capability so we
+            // can emit a DiagnosticsEvent on the transition between
+            // "collecting" and "not collecting". `None` is the seeded
+            // pre-first-tick state — no event fires on the very first
+            // observation, only on subsequent transitions.
+            let mut sensor_availability = SensorAvailabilityState::default();
 
             while running.load(Ordering::SeqCst) {
                 let tick_started = Instant::now();
@@ -330,6 +359,13 @@ impl Engine {
                         host.power_readings = sensor_sample.power_readings;
                     }
                 }
+
+                emit_sensor_availability_transitions(
+                    &diagnostics,
+                    &mut sensor_availability,
+                    &host,
+                    captured_at_millis,
+                );
                 let pipeline_output =
                     run_entity_pipeline(&raw.processes, &host, frontmost_app_state.as_ref());
                 let crate::pipeline::EntityPipelineOutput {
@@ -875,6 +911,20 @@ impl Engine {
             .unwrap_or_default()
     }
 
+    pub fn try_load_history_page(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+        before_millis_exclusive: Option<u64>,
+        limit: u32,
+    ) -> Result<Vec<SystemSnapshot>, String> {
+        let persistence = self.persistence.lock();
+        let store = persistence
+            .as_ref()
+            .ok_or_else(|| "persisted history store is not open".to_string())?;
+        store.load_range_page(start_millis, end_millis, before_millis_exclusive, limit)
+    }
+
     pub fn history_range_summary(
         &self,
         start_millis: u64,
@@ -884,6 +934,18 @@ impl Engine {
             .lock()
             .as_ref()
             .and_then(|store| store.range_summary(start_millis, end_millis).ok())
+    }
+
+    pub fn try_history_range_summary(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+    ) -> Result<aetower_persistence::HistoryRangeSummary, String> {
+        let persistence = self.persistence.lock();
+        let store = persistence
+            .as_ref()
+            .ok_or_else(|| "persisted history store is not open".to_string())?;
+        store.range_summary(start_millis, end_millis)
     }
 
     pub fn maintain_history_store(
@@ -914,6 +976,111 @@ impl Engine {
 impl Default for Engine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Emit a DiagnosticsEvent whenever a sensor capability transitions
+/// between "collecting readings" and "not collecting".
+///
+/// Each capability is tracked independently so that a Mac mini with no
+/// battery and no fans still surfaces useful events for its disks
+/// (available) and Bluetooth peripherals (available when paired).
+///
+/// The transition detector deliberately does NOT emit on the very first
+/// observation: at startup the caches inside the collector have not yet
+/// run their slow-cadence refresh cycles, so the first tick always sees
+/// empty `disks` and `bluetooth_devices` vectors. Emitting "disks
+/// unavailable" immediately would be a false positive every time the app
+/// launches.
+fn emit_sensor_availability_transitions(
+    diagnostics: &DiagnosticsStore,
+    state: &mut SensorAvailabilityState,
+    host: &HostSnapshot,
+    captured_at_millis: u64,
+) {
+    check_capability_transition(
+        diagnostics,
+        &mut state.fans_available,
+        !host.fans.is_empty(),
+        "sensor-fans",
+        "Fan readings",
+        captured_at_millis,
+    );
+    check_capability_transition(
+        diagnostics,
+        &mut state.cpu_temperatures_available,
+        !host.cpu_temperatures.is_empty(),
+        "sensor-cpu-temperatures",
+        "CPU temperature readings",
+        captured_at_millis,
+    );
+    check_capability_transition(
+        diagnostics,
+        &mut state.power_readings_available,
+        !host.power_readings.is_empty(),
+        "sensor-power-readings",
+        "Power readings",
+        captured_at_millis,
+    );
+    check_capability_transition(
+        diagnostics,
+        &mut state.disks_available,
+        !host.disks.is_empty(),
+        "sensor-disks",
+        "Disk SMART readings",
+        captured_at_millis,
+    );
+    check_capability_transition(
+        diagnostics,
+        &mut state.bluetooth_available,
+        !host.bluetooth_devices.is_empty(),
+        "sensor-bluetooth",
+        "Bluetooth peripheral readings",
+        captured_at_millis,
+    );
+}
+
+fn check_capability_transition(
+    diagnostics: &DiagnosticsStore,
+    previous: &mut Option<bool>,
+    currently_available: bool,
+    event_stem: &str,
+    capability_label: &str,
+    captured_at_millis: u64,
+) {
+    let Some(was_available) = *previous else {
+        *previous = Some(currently_available);
+        return;
+    };
+    if was_available == currently_available {
+        return;
+    }
+    *previous = Some(currently_available);
+    if currently_available {
+        diagnostics.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Debug,
+                DiagnosticsSubsystem::Engine,
+                format!("{event_stem}-recovered"),
+                format!("{capability_label} are available again."),
+            )
+            .timestamp_millis(captured_at_millis)
+            .build(),
+        );
+    } else {
+        diagnostics.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Warn,
+                DiagnosticsSubsystem::Engine,
+                format!("{event_stem}-unavailable"),
+                format!(
+                    "{capability_label} disappeared. The underlying sensor or tool may have \
+                     failed; check the collector logs or verify that the helper is running."
+                ),
+            )
+            .timestamp_millis(captured_at_millis)
+            .build(),
+        );
     }
 }
 
