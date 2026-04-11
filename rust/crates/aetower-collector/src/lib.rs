@@ -1122,40 +1122,69 @@ mod platform {
     ///
     /// Two tiers of keys:
     /// - Top-level scalars (`IORegistryEntryName`, `TotalSize`, `SMARTStatus`)
-    ///   map to model fields directly.
+    ///   map to model fields directly. These are read **at depth 1** — the
+    ///   immediate children of the root `<dict>`. `diskutil` sometimes nests
+    ///   duplicate keys inside sub-dicts like `ParentWholeDisk`, so a naive
+    ///   first-match lexical scan can silently return the wrong value.
     /// - The nested `SMARTDeviceSpecificKeysMayVaryNotGuaranteed` dict holds
     ///   NVMe-specific counters (`PERCENTAGE_USED`, `TEMPERATURE`, etc.).
     ///   Missing keys are `None` so the UI can render "—" instead of
     ///   inventing a zero.
     ///
+    /// Returns `None` when the disk has no identifying fields at all — a
+    /// plist with blank model, zero total size, and no SMART status is
+    /// almost certainly garbage or a format change in `diskutil` and we
+    /// would rather skip the drive than render a mystery row.
+    ///
     /// `TEMPERATURE` is reported in tenths of a Kelvin, matching the NVMe
-    /// spec. The conversion to Celsius is `(value / 10) - 273.15`; values
-    /// outside `-40..=100°C` are treated as garbage.
+    /// spec. The conversion to Celsius is `(value / 10) - 273.15`. The
+    /// accepted range is `-40..=120°C` — distressed NVMe drives under
+    /// sustained load can legitimately hit 100-110°C, so clipping at 100°C
+    /// would silently drop the exact readings we most want to surface.
     fn parse_disk_info(device_id: &str, plist: &str) -> Option<DiskHealthSnapshot> {
-        let model = find_string_value(plist, "IORegistryEntryName").unwrap_or_default();
-        let total_size_bytes = find_integer_value(plist, "TotalSize")
+        let top_level = extract_dict_body(plist, 1)?;
+        let model = find_string_in_body(&top_level, "IORegistryEntryName").unwrap_or_default();
+        let total_size_bytes = find_integer_in_body(&top_level, "TotalSize")
             .and_then(|value| u64::try_from(value).ok())
             .unwrap_or(0);
-        let smart_status = find_string_value(plist, "SMARTStatus").unwrap_or_default();
+        let smart_status = find_string_in_body(&top_level, "SMARTStatus").unwrap_or_default();
+
+        // Garbage-in guard: if we got zero identifying information, there is
+        // nothing useful to report. Reporting a phantom drive would be worse
+        // than skipping one.
+        if model.is_empty() && total_size_bytes == 0 && smart_status.is_empty() {
+            return None;
+        }
+
         let status = match smart_status.as_str() {
             "Verified" => DiskHealthStatus::Healthy,
             "Failing" => DiskHealthStatus::Failing,
             "Not Supported" | "" => DiskHealthStatus::NotSupported,
             _ => DiskHealthStatus::Unknown,
         };
-        let percentage_used =
-            find_integer_value(plist, "PERCENTAGE_USED").and_then(|value| u8::try_from(value).ok());
-        let available_spare =
-            find_integer_value(plist, "AVAILABLE_SPARE").and_then(|value| u8::try_from(value).ok());
-        let power_on_hours =
-            find_integer_value(plist, "POWER_ON_HOURS_0").map(|value| value as u64);
-        let power_cycles = find_integer_value(plist, "POWER_CYCLES_0").map(|value| value as u64);
-        let media_errors = find_integer_value(plist, "MEDIA_ERRORS_0").map(|value| value as u64);
-        let temperature_celsius = find_integer_value(plist, "TEMPERATURE").and_then(|value| {
-            // NVMe TEMPERATURE is 1/10 Kelvin.
-            let celsius = (value as f32 / 10.0) - 273.15;
-            (-40.0..=100.0).contains(&celsius).then_some(celsius)
-        });
+
+        // SMART counters live inside the nested dict. Scoped extraction
+        // means every key lookup is unambiguous — no accidental collisions
+        // with top-level or other sub-dict entries.
+        let smart_body =
+            extract_named_section_body(plist, "SMARTDeviceSpecificKeysMayVaryNotGuaranteed")
+                .unwrap_or_default();
+        let percentage_used = find_integer_in_body(&smart_body, "PERCENTAGE_USED")
+            .and_then(|value| u8::try_from(value).ok());
+        let available_spare = find_integer_in_body(&smart_body, "AVAILABLE_SPARE")
+            .and_then(|value| u8::try_from(value).ok());
+        let power_on_hours = find_integer_in_body(&smart_body, "POWER_ON_HOURS_0")
+            .and_then(|value| u64::try_from(value).ok());
+        let power_cycles = find_integer_in_body(&smart_body, "POWER_CYCLES_0")
+            .and_then(|value| u64::try_from(value).ok());
+        let media_errors = find_integer_in_body(&smart_body, "MEDIA_ERRORS_0")
+            .and_then(|value| u64::try_from(value).ok());
+        let temperature_celsius =
+            find_integer_in_body(&smart_body, "TEMPERATURE").and_then(|value| {
+                // NVMe TEMPERATURE is 1/10 Kelvin.
+                let celsius = (value as f32 / 10.0) - 273.15;
+                (-40.0..=120.0).contains(&celsius).then_some(celsius)
+            });
 
         // Elevate "healthy but nearing wear-out" to Warning so the UI can
         // distinguish "all good" from "back up your data soon" even while
@@ -1182,14 +1211,146 @@ mod platform {
         })
     }
 
-    /// Return the `<string>…</string>` body that follows a given `<key>`.
+    /// Return the body of a `<dict>` opened at a specific nesting depth.
     ///
-    /// This is intentionally a simple linear scan — the plists we parse have
-    /// tens of keys, not thousands, and staying off a plist parser keeps the
-    /// dependency footprint small.
-    fn find_string_value(plist: &str, key: &str) -> Option<String> {
+    /// Depth 1 is the first `<dict>` encountered — the root dict in a
+    /// standard plist. Depth 2 would be a `<dict>` nested inside the root.
+    /// We track nesting with a stack of open/close counters so the returned
+    /// slice contains only the content at `target_depth`, with all nested
+    /// dicts **removed entirely** rather than flattened. That makes
+    /// `find_string_in_body` / `find_integer_in_body` unable to cross a
+    /// nested boundary by accident.
+    fn extract_dict_body(plist: &str, target_depth: usize) -> Option<String> {
+        let mut depth = 0usize;
+        let mut collecting_depth: Option<usize> = None;
+        let mut skip_nested_depth: Option<usize> = None;
+        let mut collected = String::new();
+        for raw in plist.lines() {
+            let line = raw.trim();
+            let is_dict_open = line == "<dict>" || line.ends_with("<dict>");
+            let is_dict_close = line == "</dict>";
+
+            // Entering a new dict: increment depth, decide what to do with
+            // the new level.
+            if is_dict_open {
+                depth += 1;
+                if depth == target_depth && collecting_depth.is_none() {
+                    collecting_depth = Some(target_depth);
+                    continue;
+                }
+                // If we're already collecting and this is a nested dict,
+                // record it as a skip region so its keys don't leak in.
+                if collecting_depth.is_some() && skip_nested_depth.is_none() {
+                    skip_nested_depth = Some(depth);
+                }
+                continue;
+            }
+
+            if is_dict_close {
+                if let Some(skip_at) = skip_nested_depth
+                    && depth == skip_at
+                {
+                    skip_nested_depth = None;
+                }
+                if let Some(collecting_at) = collecting_depth
+                    && depth == collecting_at
+                {
+                    // Closing the dict we were collecting — we're done.
+                    return Some(collected);
+                }
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+
+            if collecting_depth.is_some() && skip_nested_depth.is_none() {
+                collected.push_str(line);
+                collected.push('\n');
+            }
+        }
+        // Reached EOF without a matching close — return what we have so a
+        // malformed-but-mostly-complete plist still yields data.
+        (!collected.is_empty()).then_some(collected)
+    }
+
+    /// Walk the original plist text and return the body of the `<dict>`
+    /// that immediately follows `<key>SECTION</key>`.
+    ///
+    /// This is distinct from `extract_dict_body` which operates on an
+    /// already-scoped body. `extract_named_section_body` is used for the
+    /// one nested section we actually care about (the NVMe SMART counters),
+    /// and avoids the ambiguity of a general "find any key" scan by
+    /// anchoring on the key's exact name before consuming the matching
+    /// dict body.
+    ///
+    /// The returned body has further-nested dicts removed the same way
+    /// `extract_dict_body` handles them, so `find_integer_in_body` on the
+    /// result is unambiguous.
+    fn extract_named_section_body(plist: &str, section_key: &str) -> Option<String> {
+        let key_line = format!("<key>{section_key}</key>");
+        let mut found_key = false;
+        let mut depth = 0usize;
+        let mut collecting_at: Option<usize> = None;
+        let mut skip_nested_depth: Option<usize> = None;
+        let mut collected = String::new();
+        for raw in plist.lines() {
+            let line = raw.trim();
+            if !found_key {
+                if line == key_line {
+                    found_key = true;
+                }
+                continue;
+            }
+
+            let is_dict_open = line == "<dict>" || line.ends_with("<dict>");
+            let is_dict_close = line == "</dict>";
+
+            if is_dict_open {
+                depth += 1;
+                if collecting_at.is_none() {
+                    // The dict that opens right after our target key —
+                    // start collecting its body.
+                    collecting_at = Some(depth);
+                    continue;
+                }
+                // Nested dict inside our target — skip its contents.
+                if skip_nested_depth.is_none() {
+                    skip_nested_depth = Some(depth);
+                }
+                continue;
+            }
+
+            if is_dict_close {
+                if let Some(skip_at) = skip_nested_depth
+                    && depth == skip_at
+                {
+                    skip_nested_depth = None;
+                }
+                if let Some(collecting) = collecting_at
+                    && depth == collecting
+                {
+                    return Some(collected);
+                }
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+
+            if collecting_at.is_some() && skip_nested_depth.is_none() {
+                collected.push_str(line);
+                collected.push('\n');
+            }
+        }
+        None
+    }
+
+    /// Return the `<string>…</string>` body that follows a given `<key>` in
+    /// a flattened (depth-scoped) body string.
+    ///
+    /// The input is the output of `extract_dict_body`, so nested dicts have
+    /// already been removed and every key match is unambiguous within its
+    /// scope.
+    fn find_string_in_body(body: &str, key: &str) -> Option<String> {
         let key_line = format!("<key>{key}</key>");
-        let mut lines = plist.lines().map(str::trim);
+        let mut lines = body.lines().map(str::trim);
         while let Some(line) = lines.next() {
             if line == key_line {
                 let next = lines.next()?;
@@ -1202,10 +1363,11 @@ mod platform {
         None
     }
 
-    /// Return the `<integer>` value that follows a given `<key>`.
-    fn find_integer_value(plist: &str, key: &str) -> Option<i64> {
+    /// Return the `<integer>` value that follows a given `<key>` in a
+    /// flattened body string.
+    fn find_integer_in_body(body: &str, key: &str) -> Option<i64> {
         let key_line = format!("<key>{key}</key>");
-        let mut lines = plist.lines().map(str::trim);
+        let mut lines = body.lines().map(str::trim);
         while let Some(line) = lines.next() {
             if line == key_line {
                 let next = lines.next()?;
@@ -1394,31 +1556,61 @@ mod platform {
             );
         }
 
-        #[test]
-        fn parses_disk_info_fields() {
-            let plist = r#"<plist>
+        /// A realistic plist skeleton used by the disk-parser tests. Takes
+        /// an inner SMART body so individual tests can vary the counters
+        /// without repeating the surrounding structure.
+        fn disk_plist(
+            model: &str,
+            total_size: u64,
+            smart_status: &str,
+            smart_body: &str,
+        ) -> String {
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
 <dict>
     <key>IORegistryEntryName</key>
-    <string>APPLE SSD AP0512Z Media</string>
+    <string>{model}</string>
     <key>TotalSize</key>
-    <integer>500277792768</integer>
+    <integer>{total_size}</integer>
     <key>SMARTStatus</key>
-    <string>Verified</string>
-    <key>PERCENTAGE_USED</key>
-    <integer>6</integer>
-    <key>AVAILABLE_SPARE</key>
-    <integer>100</integer>
-    <key>POWER_ON_HOURS_0</key>
-    <integer>1807</integer>
-    <key>POWER_CYCLES_0</key>
-    <integer>199</integer>
-    <key>MEDIA_ERRORS_0</key>
-    <integer>0</integer>
-    <key>TEMPERATURE</key>
-    <integer>3021</integer>
+    <string>{smart_status}</string>
+    <key>SMARTDeviceSpecificKeysMayVaryNotGuaranteed</key>
+    <dict>
+{smart_body}
+    </dict>
+    <key>ParentWholeDisk</key>
+    <dict>
+        <key>IORegistryEntryName</key>
+        <string>SHOULD NOT SHOW UP</string>
+        <key>TotalSize</key>
+        <integer>999</integer>
+    </dict>
 </dict>
-</plist>"#;
-            let Some(snapshot) = parse_disk_info("disk0", plist) else {
+</plist>"#
+            )
+        }
+
+        #[test]
+        fn parses_disk_info_fields() {
+            let plist = disk_plist(
+                "APPLE SSD AP0512Z Media",
+                500_277_792_768,
+                "Verified",
+                r#"        <key>PERCENTAGE_USED</key>
+        <integer>6</integer>
+        <key>AVAILABLE_SPARE</key>
+        <integer>100</integer>
+        <key>POWER_ON_HOURS_0</key>
+        <integer>1807</integer>
+        <key>POWER_CYCLES_0</key>
+        <integer>199</integer>
+        <key>MEDIA_ERRORS_0</key>
+        <integer>0</integer>
+        <key>TEMPERATURE</key>
+        <integer>3021</integer>"#,
+            );
+            let Some(snapshot) = parse_disk_info("disk0", &plist) else {
                 panic!("parse_disk_info returned None");
             };
             assert_eq!(snapshot.device_identifier, "disk0");
@@ -1437,24 +1629,107 @@ mod platform {
             assert!((temp - 28.95).abs() < 0.01, "got {temp}");
         }
 
+        /// Regression: the parser must not leak nested-dict values up to
+        /// top-level lookups. Prior to the depth-aware rewrite, scanning
+        /// for `IORegistryEntryName` would first hit the nested entry in
+        /// `ParentWholeDisk` if it appeared before the top-level copy in
+        /// `diskutil` output.
+        #[test]
+        fn top_level_keys_do_not_collide_with_nested_dict_keys() {
+            let plist = disk_plist(
+                "APPLE SSD Primary",
+                1_000_000_000_000,
+                "Verified",
+                r#"        <key>PERCENTAGE_USED</key>
+        <integer>10</integer>"#,
+            );
+            let Some(snapshot) = parse_disk_info("disk0", &plist) else {
+                panic!("parse_disk_info returned None");
+            };
+            assert_eq!(
+                snapshot.model, "APPLE SSD Primary",
+                "top-level IORegistryEntryName must not be shadowed by ParentWholeDisk"
+            );
+            assert_eq!(
+                snapshot.total_size_bytes, 1_000_000_000_000,
+                "top-level TotalSize must not be shadowed by the nested 999"
+            );
+        }
+
         #[test]
         fn high_percentage_used_escalates_to_warning() {
-            let plist = r#"<plist>
-<dict>
-    <key>IORegistryEntryName</key>
-    <string>Old SSD</string>
-    <key>TotalSize</key>
-    <integer>0</integer>
-    <key>SMARTStatus</key>
-    <string>Verified</string>
-    <key>PERCENTAGE_USED</key>
-    <integer>85</integer>
-</dict>
-</plist>"#;
-            let Some(snapshot) = parse_disk_info("disk9", plist) else {
+            let plist = disk_plist(
+                "Old SSD",
+                512_000_000_000,
+                "Verified",
+                r#"        <key>PERCENTAGE_USED</key>
+        <integer>85</integer>"#,
+            );
+            let Some(snapshot) = parse_disk_info("disk9", &plist) else {
                 panic!("parse_disk_info returned None");
             };
             assert_eq!(snapshot.status, DiskHealthStatus::Warning);
+        }
+
+        /// Regression: a plist with no identifying fields at all must be
+        /// dropped entirely so we don't render a phantom drive with blank
+        /// model and zero size.
+        #[test]
+        fn parse_disk_info_returns_none_on_empty_fields() {
+            let plist = r#"<?xml version="1.0"?>
+<plist version="1.0">
+<dict>
+</dict>
+</plist>"#;
+            assert!(parse_disk_info("disk99", plist).is_none());
+        }
+
+        /// Regression: negative integers in the SMART counters used to be
+        /// cast with `as u64`, which wraps `-1` to `u64::MAX` and renders
+        /// in the UI as a 584-million-year power-on hours count. They must
+        /// now become `None`.
+        #[test]
+        fn negative_integer_counters_become_none_not_u64_max() {
+            let plist = disk_plist(
+                "Test Drive",
+                100,
+                "Verified",
+                r#"        <key>POWER_ON_HOURS_0</key>
+        <integer>-1</integer>
+        <key>POWER_CYCLES_0</key>
+        <integer>-2</integer>
+        <key>MEDIA_ERRORS_0</key>
+        <integer>-3</integer>"#,
+            );
+            let Some(snapshot) = parse_disk_info("disk0", &plist) else {
+                panic!("parse_disk_info returned None");
+            };
+            assert_eq!(snapshot.power_on_hours, None);
+            assert_eq!(snapshot.power_cycles, None);
+            assert_eq!(snapshot.media_errors, None);
+        }
+
+        /// Regression: NVMe drives under sustained load reach 100-115°C
+        /// before Apple flips SMART status to Failing. The previous
+        /// `-40..=100°C` clip silently discarded exactly the readings the
+        /// user most needs to see.
+        #[test]
+        fn temperature_up_to_120c_is_accepted() {
+            // 3831 deci-Kelvin = 383.1 K = 109.95°C
+            let plist = disk_plist(
+                "Hot NVMe",
+                1_000_000_000,
+                "Verified",
+                r#"        <key>TEMPERATURE</key>
+        <integer>3831</integer>"#,
+            );
+            let Some(snapshot) = parse_disk_info("disk0", &plist) else {
+                panic!("parse_disk_info returned None");
+            };
+            let Some(temp) = snapshot.temperature_celsius else {
+                panic!("temperature must be within the valid NVMe range");
+            };
+            assert!((temp - 109.95).abs() < 0.01, "got {temp}");
         }
 
         #[test]
