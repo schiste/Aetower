@@ -27,6 +27,13 @@ pub struct History {
     previous_entity_behaviors: BTreeMap<String, EntityBehaviorFlags>,
     sensor_alert_thresholds: Vec<AlertThreshold>,
     previous_sensor_alert_levels: BTreeMap<String, AlertLevel>,
+    /// Millisecond timestamp of the most recent tick on which we saw a
+    /// reading for a given sensor key. Used by `prune_stale_sensor_alerts`
+    /// to force-clear alert state when readings disappear — without this
+    /// a sensor that was `Critical` before an SMC outage would appear
+    /// "still Critical" when readings resumed, and the transition detector
+    /// would skip re-firing because `current == previous`.
+    last_sensor_reading_millis: BTreeMap<String, u64>,
 }
 
 struct MetricTrendState {
@@ -114,6 +121,18 @@ const SENSOR_KEY_CPU_TEMPERATURE: &str = "cpu_temperature";
 const SENSOR_KEY_BATTERY_HEALTH: &str = "battery_health";
 const SENSOR_KEY_FAN_STUCK: &str = "fan_stuck_under_load";
 
+/// How long a sensor key can go without a fresh reading before the alert
+/// tracker treats it as "unavailable" and force-clears the stored alert
+/// level.
+///
+/// Chosen to be a multiple of the collector's 2s tick so that two or three
+/// missed ticks (a brief hiccup) do not clear state, but a sustained
+/// outage of ~15 s does. The value is long enough to avoid clearing
+/// whenever the collector is briefly starved on a busy SoC and short
+/// enough that when readings return after an SMC outage, the user sees a
+/// fresh alert rather than continuing silence.
+const SENSOR_GAP_MILLIS: u64 = 15_000;
+
 impl History {
     pub fn new() -> Self {
         Self {
@@ -137,6 +156,7 @@ impl History {
             previous_entity_behaviors: BTreeMap::new(),
             sensor_alert_thresholds: default_sensor_alert_thresholds(),
             previous_sensor_alert_levels: BTreeMap::new(),
+            last_sensor_reading_millis: BTreeMap::new(),
         }
     }
 
@@ -152,6 +172,7 @@ impl History {
     pub fn set_sensor_alert_thresholds(&mut self, thresholds: Vec<AlertThreshold>) {
         self.sensor_alert_thresholds = thresholds;
         self.previous_sensor_alert_levels.clear();
+        self.last_sensor_reading_millis.clear();
     }
 
     fn intern_entity_id(&mut self, entity_id: &str) -> u16 {
@@ -548,11 +569,21 @@ impl History {
     /// - **Recovery** (any non-nominal → nominal): an `Info` event so the
     ///   timeline has a clean "closed" marker for the earlier alert.
     ///
+    /// Before evaluating any sensor, a gap-detection pass force-clears
+    /// any stored alert levels whose underlying sensor reading has not
+    /// been observed for `SENSOR_GAP_MILLIS`. Without this, a `Critical`
+    /// CPU temperature recorded before an SMC outage would appear "still
+    /// Critical" when readings resumed (`current == previous` short-
+    /// circuits the transition detector), and the user would never see a
+    /// fresh alert re-fire despite the machine continuing to run hot.
+    ///
     /// Evaluation iterates the per-sensor reading lists in the host
     /// snapshot so fan IDs and temperature labels participate in their own
     /// tracking — there is no global "CPU temperature" reading that works
     /// across SoCs, only labelled per-core readings.
     fn update_sensor_alerts(&mut self, captured_at_millis: u64, host: &HostSnapshot) {
+        self.prune_stale_sensor_alerts(captured_at_millis);
+
         // CPU temperature: evaluate against the hottest core/package we see
         // this tick. Per-core thresholds would be noisier without adding
         // signal — any one core above 100°C is an emergency for the whole
@@ -565,6 +596,7 @@ impl History {
                 Some(max.map_or(celsius, |current| current.max(celsius)))
             })
         {
+            self.record_sensor_reading(SENSOR_KEY_CPU_TEMPERATURE, captured_at_millis);
             self.evaluate_alert_transition(
                 captured_at_millis,
                 SENSOR_KEY_CPU_TEMPERATURE,
@@ -590,6 +622,7 @@ impl History {
         if let Some(battery) = host.battery_health.as_ref()
             && let Some(health_percent) = battery.health_percent
         {
+            self.record_sensor_reading(SENSOR_KEY_BATTERY_HEALTH, captured_at_millis);
             self.evaluate_alert_transition(
                 captured_at_millis,
                 SENSOR_KEY_BATTERY_HEALTH,
@@ -633,6 +666,11 @@ impl History {
             thermal_severity(host.thermal_state) >= thermal_severity(ThermalState::Fair);
         for fan in &host.fans {
             let key = format!("{SENSOR_KEY_FAN_STUCK}_{id}", id = fan.id);
+            // The fan is being observed this tick even if it's spinning
+            // happily — recording the timestamp prevents the gap sweep
+            // from clearing a legitimate in-progress alert just because
+            // the current tick happens to be Nominal.
+            self.record_sensor_reading(&key, captured_at_millis);
             let is_stuck_under_load = fan.current_rpm <= 0.0 && thermal_is_elevated;
             let current = if is_stuck_under_load {
                 AlertLevel::Warning
@@ -673,6 +711,67 @@ impl History {
                     name = fan.name
                 ),
             );
+        }
+    }
+
+    /// Mark a sensor key as observed on the current tick.
+    ///
+    /// The gap-detection sweep compares each tracked key's last-seen
+    /// timestamp against `captured_at_millis`, so every sensor code path
+    /// that *did* evaluate a reading must call this before returning.
+    /// Forgetting to call it would be a silent bug — the key would look
+    /// stale on the next tick and its alert state would be cleared under
+    /// the user's feet.
+    fn record_sensor_reading(&mut self, sensor_key: &str, captured_at_millis: u64) {
+        self.last_sensor_reading_millis
+            .insert(sensor_key.to_owned(), captured_at_millis);
+    }
+
+    /// Sweep the alert tracker for sensors that have not produced a
+    /// reading for `SENSOR_GAP_MILLIS`.
+    ///
+    /// For each stale key:
+    /// 1. If the last known alert level was non-nominal, emit an Info
+    ///    timeline event noting the gap so the user has a visible marker
+    ///    for "the previous alert was closed not because the condition
+    ///    improved, but because the sensor stopped reporting".
+    /// 2. Drop the entry from both `previous_sensor_alert_levels` and
+    ///    `last_sensor_reading_millis`. The next tick that produces a
+    ///    real reading will re-classify from `Nominal` → whatever the
+    ///    current value dictates, which re-fires a fresh escalation
+    ///    event if the condition has persisted through the outage.
+    fn prune_stale_sensor_alerts(&mut self, captured_at_millis: u64) {
+        let stale_keys: Vec<String> = self
+            .last_sensor_reading_millis
+            .iter()
+            .filter(|(_, last_seen)| {
+                captured_at_millis.saturating_sub(**last_seen) >= SENSOR_GAP_MILLIS
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in stale_keys {
+            let previous_level = self
+                .previous_sensor_alert_levels
+                .get(&key)
+                .copied()
+                .unwrap_or_default();
+            if previous_level != AlertLevel::Nominal {
+                self.push_event(
+                    captured_at_millis,
+                    TimelineCategory::Host,
+                    TimelineSeverity::Info,
+                    None,
+                    format!("{key} readings unavailable"),
+                    format!(
+                        "The previous {level} alert was cleared because the sensor stopped \
+                         reporting. A fresh alert will fire if the condition persists when \
+                         readings resume.",
+                        level = level_label(previous_level)
+                    ),
+                );
+            }
+            self.previous_sensor_alert_levels.remove(&key);
+            self.last_sensor_reading_millis.remove(&key);
         }
     }
 
@@ -1845,6 +1944,97 @@ mod tests {
         // first. The fan-stuck path now has its own boolean classifier
         // and must produce exactly Warning.
         assert_eq!(fan_events[0].severity, TimelineSeverity::Warning);
+    }
+
+    /// Regression: if CPU temperature readings disappear for more than
+    /// SENSOR_GAP_MILLIS, the alert tracker must force-clear the
+    /// previous level and emit an "unavailable" info event. Otherwise a
+    /// critical SoC temperature recorded before an SMC outage would be
+    /// treated as "still critical" when readings resumed, and the
+    /// transition detector would short-circuit on `current == previous`
+    /// — the user would never see a fresh alert re-fire despite the
+    /// machine continuing to run hot.
+    #[test]
+    fn cpu_temperature_gap_emits_unavailable_event_and_reclassifies() {
+        let mut history = History::new();
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+
+        // Step 1: CPU hits critical → event fires.
+        let (events, _) = history.update(1_000, &host_with_cpu_temperature(102.0), &mut entities);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.title.starts_with("CPU temperature"))
+                .count(),
+            1
+        );
+
+        // Step 2: readings disappear for several ticks. The gap
+        // threshold is 15s, so we skip forward past it.
+        let empty_host = HostSnapshot::default();
+        let (events, _) = history.update(5_000, &empty_host, &mut entities);
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.title.contains("readings unavailable")),
+            "gap event must not fire before the threshold"
+        );
+        let (events, _) = history.update(20_000, &empty_host, &mut entities);
+        let gap_events: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.title.contains("readings unavailable") && event.timestamp_millis == 20_000
+            })
+            .collect();
+        assert_eq!(
+            gap_events.len(),
+            1,
+            "gap event must fire exactly once when the threshold is crossed"
+        );
+
+        // Step 3: readings resume, still hot. The re-classification must
+        // start from Nominal and re-emit a fresh Critical event, because
+        // the user otherwise would have no indication that the machine
+        // is still in trouble.
+        let (events, _) = history.update(22_000, &host_with_cpu_temperature(103.0), &mut entities);
+        let fresh_events: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.title.starts_with("CPU temperature") && event.timestamp_millis == 22_000
+            })
+            .collect();
+        assert_eq!(fresh_events.len(), 1, "fresh alert must re-fire after gap");
+        assert_eq!(fresh_events[0].severity, TimelineSeverity::Critical);
+    }
+
+    /// A brief two-tick hiccup under the gap threshold must NOT clear
+    /// alert state. The collector sometimes drops one sample when the
+    /// SoC is busy, and we do not want the user to see phantom
+    /// "readings unavailable" events for those cases.
+    #[test]
+    fn cpu_temperature_brief_hiccup_does_not_clear_alert() {
+        let mut history = History::new();
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+
+        let (_, _) = history.update(1_000, &host_with_cpu_temperature(95.0), &mut entities);
+        // Gap below threshold (15s).
+        let (events, _) = history.update(3_000, &HostSnapshot::default(), &mut entities);
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.title.contains("readings unavailable")),
+            "brief hiccup must not emit gap event"
+        );
+        // Readings resume at same level — no event because previous state
+        // is still Warning.
+        let (events, _) = history.update(5_000, &host_with_cpu_temperature(95.0), &mut entities);
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.title.contains("CPU temperature")
+                    && event.timestamp_millis == 5_000),
+            "no fresh alert: the state machine remembered the previous warning"
+        );
     }
 
     /// Regression: when the SoC cools back to nominal while the fan is
