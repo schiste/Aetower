@@ -227,6 +227,8 @@ pub struct HostSnapshot {
     pub cpu_temperatures: Vec<TemperatureReading>,
     #[serde(default)]
     pub power_readings: Vec<PowerReading>,
+    #[serde(default)]
+    pub battery_health: Option<BatteryHealthSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -501,6 +503,41 @@ pub struct PowerReading {
     pub label: String,
     pub value: f32,
     pub unit: PowerUnit,
+}
+
+/// macOS battery condition string as reported by the SMC/IOPS layer.
+///
+/// Apple's System Information displays these exact categories. `Good` and
+/// `Fair` are healthy states; `Poor` and `ServiceBattery` indicate the cell
+/// has degraded enough that Apple recommends replacement.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum BatteryCondition {
+    #[default]
+    Unknown,
+    Good,
+    Fair,
+    Poor,
+    ServiceBattery,
+}
+
+/// Long-lived battery health metrics sampled from the macOS power management layer.
+///
+/// These values change slowly (cycle count ticks by 1 per full discharge,
+/// design capacity is a static per-device constant) so the collector refreshes
+/// them on the low-frequency `HostEnvironment` cadence rather than every tick.
+///
+/// `health_percent` is derived as `max_capacity_mah / design_capacity_mah` —
+/// macOS exposes both values and Apple's own battery report uses the same
+/// ratio. An M-series MacBook is rated for ~1000 cycles before reaching 80%.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BatteryHealthSnapshot {
+    pub cycle_count: u32,
+    pub design_capacity_mah: u32,
+    pub max_capacity_mah: u32,
+    pub health_percent: f32,
+    pub condition: BatteryCondition,
+    pub temperature_celsius: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

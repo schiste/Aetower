@@ -197,6 +197,7 @@ pub struct HostSnapshot {
     pub fans: Vec<FanReading>,
     pub cpu_temperatures: Vec<TemperatureReading>,
     pub power_readings: Vec<PowerReading>,
+    pub battery_health: Option<BatteryHealthSnapshot>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -226,6 +227,33 @@ pub struct PowerReading {
     pub label: String,
     pub value: f32,
     pub unit: PowerUnit,
+}
+
+/// macOS battery condition as reported by IOPS/System Information.
+///
+/// Mirrors `aetower_model::BatteryCondition` for the UniFFI bridge.
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum BatteryCondition {
+    Unknown,
+    Good,
+    Fair,
+    Poor,
+    ServiceBattery,
+}
+
+/// Long-lived battery health metrics exposed to Swift.
+///
+/// All values are derived in a single IOPSCopyPowerSourcesInfo pass. Fields
+/// are zero/`None` when the corresponding IOKit key is absent on this
+/// machine (e.g. desktop Macs with no battery at all).
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct BatteryHealthSnapshot {
+    pub cycle_count: u32,
+    pub design_capacity_mah: u32,
+    pub max_capacity_mah: u32,
+    pub health_percent: f32,
+    pub condition: BatteryCondition,
+    pub temperature_celsius: Option<f32>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -1204,6 +1232,7 @@ impl From<model::HostSnapshot> for HostSnapshot {
             fans: value.fans.into_iter().map(Into::into).collect(),
             cpu_temperatures: value.cpu_temperatures.into_iter().map(Into::into).collect(),
             power_readings: value.power_readings.into_iter().map(Into::into).collect(),
+            battery_health: value.battery_health.map(Into::into),
         }
     }
 }
@@ -1245,6 +1274,31 @@ impl From<model::PowerReading> for PowerReading {
             label: value.label,
             value: value.value,
             unit: value.unit.into(),
+        }
+    }
+}
+
+impl From<model::BatteryCondition> for BatteryCondition {
+    fn from(value: model::BatteryCondition) -> Self {
+        match value {
+            model::BatteryCondition::Unknown => Self::Unknown,
+            model::BatteryCondition::Good => Self::Good,
+            model::BatteryCondition::Fair => Self::Fair,
+            model::BatteryCondition::Poor => Self::Poor,
+            model::BatteryCondition::ServiceBattery => Self::ServiceBattery,
+        }
+    }
+}
+
+impl From<model::BatteryHealthSnapshot> for BatteryHealthSnapshot {
+    fn from(value: model::BatteryHealthSnapshot) -> Self {
+        Self {
+            cycle_count: value.cycle_count,
+            design_capacity_mah: value.design_capacity_mah,
+            max_capacity_mah: value.max_capacity_mah,
+            health_percent: value.health_percent,
+            condition: value.condition.into(),
+            temperature_celsius: value.temperature_celsius,
         }
     }
 }

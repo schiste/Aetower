@@ -275,6 +275,7 @@ impl Engine {
                     thermal_state: raw.host.thermal_state,
                     on_battery: raw.host.on_battery,
                     battery_charge_percent: raw.host.battery_charge_percent,
+                    battery_health: raw.host.battery_health.clone(),
                     low_power_mode: raw.host.low_power_mode,
                     frontmost_app_name: frontmost_app_state
                         .as_ref()

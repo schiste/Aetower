@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use aetower_model::ThermalState;
+use aetower_model::{BatteryHealthSnapshot, ThermalState};
 use serde::{Deserialize, Serialize};
 use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System, Users};
 
@@ -47,6 +47,8 @@ pub struct RawHostSample {
     pub on_battery: bool,
     pub battery_charge_percent: Option<u8>,
     pub low_power_mode: bool,
+    #[serde(default)]
+    pub battery_health: Option<BatteryHealthSnapshot>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -344,6 +346,7 @@ impl Collector {
             on_battery: self.cached_host_environment.on_battery,
             battery_charge_percent: self.cached_host_environment.battery_charge_percent,
             low_power_mode: self.cached_host_environment.low_power_mode,
+            battery_health: self.cached_host_environment.battery_health.clone(),
         };
         self.previous_network_totals = network_totals;
 
@@ -398,23 +401,13 @@ pub fn index_processes(processes: &[RawProcessSample]) -> BTreeMap<u32, &RawProc
         .collect()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct HostEnvironment {
     pub thermal_state: ThermalState,
     pub on_battery: bool,
     pub battery_charge_percent: Option<u8>,
     pub low_power_mode: bool,
-}
-
-impl Default for HostEnvironment {
-    fn default() -> Self {
-        Self {
-            thermal_state: ThermalState::Nominal,
-            on_battery: false,
-            battery_charge_percent: None,
-            low_power_mode: false,
-        }
-    }
+    pub battery_health: Option<BatteryHealthSnapshot>,
 }
 
 pub fn read_environment() -> HostEnvironment {
@@ -423,7 +416,7 @@ pub fn read_environment() -> HostEnvironment {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use aetower_model::ThermalState;
+    use aetower_model::{BatteryCondition, BatteryHealthSnapshot, ThermalState};
     use std::{
         ffi::{CStr, c_char, c_void},
         mem, ptr,
@@ -447,6 +440,13 @@ mod platform {
     const K_IOPS_CURRENT_CAPACITY_KEY: &str = "Current Capacity";
     const K_IOPS_MAX_CAPACITY_KEY: &str = "Max Capacity";
     const K_IOPS_IS_PRESENT_KEY: &str = "Is Present";
+    // Extended battery-health keys exposed by IOPSGetPowerSourceDescription.
+    // These are the same keys Apple's System Information reads to render the
+    // Battery pane, so they're reasonably stable across macOS versions.
+    const K_IOPS_CYCLE_COUNT_KEY: &str = "Cycle Count";
+    const K_IOPS_DESIGN_CAPACITY_KEY: &str = "DesignCapacity";
+    const K_IOPS_BATTERY_HEALTH_KEY: &str = "BatteryHealth";
+    const K_IOPS_TEMPERATURE_KEY: &str = "Temperature";
 
     #[link(name = "Foundation", kind = "framework")]
     unsafe extern "C" {}
@@ -485,14 +485,24 @@ mod platform {
     pub fn read_environment() -> HostEnvironment {
         let thermal_state = thermal_state();
         let low_power_mode = low_power_mode_enabled();
-        let (on_battery, battery_charge_percent) = power_state();
+        let power = power_state();
 
         HostEnvironment {
             thermal_state,
-            on_battery,
-            battery_charge_percent,
+            on_battery: power.on_battery,
+            battery_charge_percent: power.charge_percent,
             low_power_mode,
+            battery_health: power.health,
         }
+    }
+
+    /// Composite result of one IOPS power-sources read. Split out so callers
+    /// can treat on/off-battery, current charge, and long-lived health
+    /// metrics independently.
+    struct PowerState {
+        on_battery: bool,
+        charge_percent: Option<u8>,
+        health: Option<BatteryHealthSnapshot>,
     }
 
     pub fn process_wakeups(pid: u32) -> Option<u64> {
@@ -636,17 +646,36 @@ mod platform {
         unsafe { ns_process_info_low_power_mode_enabled() }
     }
 
+    /// Read one pass of power-source info from IOKit.
+    ///
+    /// `IOPSCopyPowerSourcesInfo` / `IOPSGetPowerSourceDescription` return one
+    /// CF dictionary per attached source. On laptops the internal battery is
+    /// always the first source; on iMacs/Mac minis there is no source at all
+    /// (`on_battery=false`, all optional fields `None`).
+    ///
+    /// This function reads the extended health keys Apple documents for the
+    /// same dictionary: `Cycle Count`, `DesignCapacity`, `BatteryHealth`, and
+    /// `Temperature`. `Max Capacity` is treated as the current full-charge
+    /// value for computing a health ratio against `DesignCapacity`.
+    ///
+    /// `Temperature` is reported in centi-degrees Kelvin (e.g. `3013` = 28.15°C);
+    /// values outside `-40..=100°C` are dropped as obvious garbage.
     #[allow(clippy::collapsible_if)]
-    fn power_state() -> (bool, Option<u8>) {
+    fn power_state() -> PowerState {
         unsafe {
             let snapshot = IOPSCopyPowerSourcesInfo();
             if snapshot.is_null() {
-                return (false, None);
+                return PowerState {
+                    on_battery: false,
+                    charge_percent: None,
+                    health: None,
+                };
             }
 
             let providing_type = cfstring_to_rust_string(IOPSGetProvidingPowerSourceType(snapshot));
             let on_battery = providing_type.as_deref() != Some(K_IO_PM_AC_POWER_KEY);
-            let mut battery_charge_percent = None;
+            let mut charge_percent = None;
+            let mut health: Option<BatteryHealthSnapshot> = None;
 
             let list = IOPSCopyPowerSourcesList(snapshot);
             if !list.is_null() {
@@ -670,15 +699,71 @@ mod platform {
                         let percent = ((current_capacity as f32 / max_capacity as f32) * 100.0)
                             .round()
                             .clamp(0.0, 100.0) as u8;
-                        battery_charge_percent = Some(percent);
-                        break;
+                        charge_percent = Some(percent);
                     }
+
+                    // Extended health fields — each is optional because older
+                    // Macs or non-Apple batteries may not expose them all.
+                    let cycle_count = cf_dictionary_i32(description, K_IOPS_CYCLE_COUNT_KEY)
+                        .filter(|value| *value >= 0)
+                        .map(|value| value as u32)
+                        .unwrap_or(0);
+                    let design_capacity =
+                        cf_dictionary_i32(description, K_IOPS_DESIGN_CAPACITY_KEY)
+                            .filter(|value| *value > 0)
+                            .map(|value| value as u32)
+                            .unwrap_or(0);
+                    let max_capacity_mah = max_capacity
+                        .filter(|value| *value > 0)
+                        .map(|value| value as u32)
+                        .unwrap_or(0);
+                    let health_percent = if design_capacity > 0 && max_capacity_mah > 0 {
+                        (max_capacity_mah as f32 / design_capacity as f32 * 100.0).clamp(0.0, 100.0)
+                    } else {
+                        0.0
+                    };
+                    let condition = cf_dictionary_string(description, K_IOPS_BATTERY_HEALTH_KEY)
+                        .map(|value| match value.as_str() {
+                            "Good" => BatteryCondition::Good,
+                            "Fair" => BatteryCondition::Fair,
+                            "Poor" => BatteryCondition::Poor,
+                            "Check Battery" | "Service Battery" | "Replace Soon"
+                            | "Replace Now" => BatteryCondition::ServiceBattery,
+                            _ => BatteryCondition::Unknown,
+                        })
+                        .unwrap_or(BatteryCondition::Unknown);
+                    let temperature_celsius =
+                        cf_dictionary_i32(description, K_IOPS_TEMPERATURE_KEY).and_then(
+                            |centi_kelvin| {
+                                let celsius = (centi_kelvin as f32 / 100.0) - 273.15;
+                                (-40.0..=100.0).contains(&celsius).then_some(celsius)
+                            },
+                        );
+
+                    if design_capacity > 0
+                        || cycle_count > 0
+                        || condition != BatteryCondition::Unknown
+                    {
+                        health = Some(BatteryHealthSnapshot {
+                            cycle_count,
+                            design_capacity_mah: design_capacity,
+                            max_capacity_mah,
+                            health_percent,
+                            condition,
+                            temperature_celsius,
+                        });
+                    }
+                    break;
                 }
                 CFRelease(list.cast());
             }
 
             CFRelease(snapshot);
-            (on_battery, battery_charge_percent)
+            PowerState {
+                on_battery,
+                charge_percent,
+                health,
+            }
         }
     }
 
@@ -754,6 +839,28 @@ mod platform {
                 &mut number as *mut i32 as *mut c_void,
             );
             success.then_some(number)
+        }
+    }
+
+    /// Read a string-valued entry from a CF dictionary.
+    ///
+    /// Used for `BatteryHealth` which returns human-readable condition
+    /// strings ("Good", "Fair", "Poor", "Service Battery"). The caller maps
+    /// those strings to our typed `BatteryCondition` enum.
+    fn cf_dictionary_string(dictionary: CFDictionaryRef, key: &str) -> Option<String> {
+        unsafe {
+            let key_ref = cfstring_from_str(key)?;
+            let mut value: *const c_void = ptr::null();
+            let found = CFDictionaryGetValueIfPresent(
+                dictionary,
+                key_ref.cast(),
+                &mut value as *mut *const c_void,
+            );
+            CFRelease(key_ref.cast());
+            if found == 0 || value.is_null() {
+                return None;
+            }
+            cfstring_to_rust_string(value.cast::<c_void>() as CFStringRef)
         }
     }
 
