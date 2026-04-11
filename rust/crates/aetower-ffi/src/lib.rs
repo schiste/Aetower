@@ -660,6 +660,32 @@ impl MonitorEngine {
             .configure_privileged_helper(helper_path, enabled);
     }
 
+    /// Pin a fan to a manual minimum RPM via the privileged helper.
+    ///
+    /// Returns an empty string on success or a human-readable error message
+    /// on failure (privileged helper not configured, helper exit non-zero,
+    /// SMC write failed). The UI surfaces the message directly to the user.
+    pub fn set_fan_min_rpm(&self, fan_id: u8, rpm: f32) -> String {
+        let Ok(engine) = self.inner.lock() else {
+            return "engine lock poisoned".to_owned();
+        };
+        match engine.set_fan_min_rpm(fan_id, rpm) {
+            Ok(()) => String::new(),
+            Err(error) => error,
+        }
+    }
+
+    /// Restore a fan to automatic (OS-controlled) mode.
+    pub fn reset_fan_auto(&self, fan_id: u8) -> String {
+        let Ok(engine) = self.inner.lock() else {
+            return "engine lock poisoned".to_owned();
+        };
+        match engine.reset_fan_auto(fan_id) {
+            Ok(()) => String::new(),
+            Err(error) => error,
+        }
+    }
+
     pub fn configure_chau7_endpoint(&self, socket_path: Option<String>) {
         self.inner
             .lock()

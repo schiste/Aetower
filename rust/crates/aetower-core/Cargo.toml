@@ -23,5 +23,5 @@ serde_json.workspace = true
 sysinfo.workspace = true
 aetower-persistence = { path = "../aetower-persistence" }
 dirs = "5"
-tungstenite = "0.26"
+tungstenite = "0.28"
 url = "2"

@@ -726,6 +726,21 @@ impl Engine {
         self.refresh_capability(CapabilityKind::PrivilegedHelper);
     }
 
+    /// Pin a fan to a manual minimum RPM. Delegates to the privileged helper,
+    /// which must already be configured via `configure_privileged_helper`.
+    ///
+    /// The UI layer is expected to validate `rpm` against the fan's reported
+    /// `min_rpm`/`max_rpm` *before* calling this — the engine trusts the
+    /// caller for bounds checking and only surfaces helper-level failures.
+    pub fn set_fan_min_rpm(&self, fan_id: u8, rpm: f32) -> Result<(), String> {
+        self.adapters.set_fan_min_rpm(fan_id, rpm)
+    }
+
+    /// Restore a fan to automatic (OS-controlled) mode.
+    pub fn reset_fan_auto(&self, fan_id: u8) -> Result<(), String> {
+        self.adapters.reset_fan_auto(fan_id)
+    }
+
     pub fn configure_chau7_endpoint(&self, socket_path: Option<String>) {
         self.adapters.configure_chau7_endpoint(socket_path);
         self.refresh_capability(CapabilityKind::Chau7);

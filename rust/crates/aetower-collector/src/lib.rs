@@ -83,6 +83,13 @@ struct ProcessIdentitySample {
     user: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct NetworkInterfaceIdentitySample {
+    name: String,
+    mac_address: String,
+    is_up: bool,
+}
+
 const USER_DIRECTORY_INITIAL_REFRESH_TICKS: u8 = 10;
 const USER_DIRECTORY_REFRESH_INTERVAL_TICKS: u8 = 120;
 /// Fixed collector cadence in seconds — the engine drives `Collector::collect()`
@@ -106,6 +113,7 @@ pub struct Collector {
     known_pids: Vec<sysinfo::Pid>,
     cwd_cache: HashMap<u32, String>,
     wakeups_sample_tick: u8,
+    cached_network_interfaces: Vec<NetworkInterfaceIdentitySample>,
 }
 
 impl Collector {
@@ -130,6 +138,7 @@ impl Collector {
             known_pids: Vec::new(),
             cwd_cache: HashMap::new(),
             wakeups_sample_tick: 0,
+            cached_network_interfaces: Vec::new(),
         }
     }
 
@@ -160,48 +169,28 @@ impl Collector {
         }
         self.process_metadata_tick = self.process_metadata_tick.wrapping_add(1);
         self.user_directory_refresh_tick = self.user_directory_refresh_tick.wrapping_add(1);
-        if self.host_environment_refresh_tick == 0 {
+        let refresh_host_environment = self.host_environment_refresh_tick == 0;
+        if refresh_host_environment {
             self.cached_host_environment = read_environment();
         }
         self.host_environment_refresh_tick = (self.host_environment_refresh_tick + 1) % 5;
 
-        // Fan out `Networks` into both the host aggregate (unchanged) and a
-        // per-interface vector used by the UI's interface table. `received()`
-        // and `transmitted()` already return the delta since the last
-        // `refresh(true)` call, so dividing by the tick length gives bytes
-        // per second without any extra baseline tracking.
-        let tick_seconds = TICK_SECONDS;
+        // Per-interface metadata is currently not surfaced in the hot UI path,
+        // so keep it on the low-frequency host-environment cadence instead of
+        // rebuilding MAC/IP-derived rows every collection tick.
+        if self.config.full_collection || refresh_host_environment {
+            self.cached_network_interfaces = collect_network_interface_metadata(&self.networks);
+        }
+
         let mut network_totals = NetworkTotals::default();
-        let mut network_interfaces: Vec<NetworkInterfaceSnapshot> =
-            Vec::with_capacity(self.networks.list().len());
-        for (name, data) in &self.networks {
+        for (_name, data) in &self.networks {
             network_totals.received = network_totals.received.saturating_add(data.received());
             network_totals.transmitted = network_totals
                 .transmitted
                 .saturating_add(data.transmitted());
-            let receive_bps = (data.received() as f64 / tick_seconds as f64) as u64;
-            let send_bps = (data.transmitted() as f64 / tick_seconds as f64) as u64;
-            let mac = data.mac_address();
-            network_interfaces.push(NetworkInterfaceSnapshot {
-                name: name.clone(),
-                // Empty string when the interface exposes no link-level
-                // address (loopback, tunnels, some virtual adapters).
-                mac_address: if mac.is_unspecified() {
-                    String::new()
-                } else {
-                    mac.to_string()
-                },
-                receive_bps,
-                send_bps,
-                // "Up" proxy: an interface with at least one assigned IP
-                // address is configured and reachable. Avoids reaching into
-                // platform-specific link-state APIs for an approximation the
-                // UI just needs as a boolean.
-                is_up: !data.ip_networks().is_empty(),
-            });
         }
-        // Sort by name for stable UI rendering across ticks.
-        network_interfaces.sort_by(|a, b| a.name.cmp(&b.name));
+        let network_interfaces =
+            build_network_interface_snapshots(&self.networks, &self.cached_network_interfaces);
 
         let metadata_refresh =
             self.config.full_collection || self.process_metadata_tick == 1 || full_scan;
@@ -389,6 +378,59 @@ impl Collector {
 
         RawSnapshot { host, processes }
     }
+}
+
+fn collect_network_interface_metadata(networks: &Networks) -> Vec<NetworkInterfaceIdentitySample> {
+    let mut identities = Vec::with_capacity(networks.iter().size_hint().0);
+    for (name, data) in networks {
+        let mac = data.mac_address();
+        identities.push(NetworkInterfaceIdentitySample {
+            name: name.clone(),
+            mac_address: if mac.is_unspecified() {
+                String::new()
+            } else {
+                mac.to_string()
+            },
+            is_up: !data.ip_networks().is_empty(),
+        });
+    }
+    identities.sort_by(|left, right| left.name.cmp(&right.name));
+    identities
+}
+
+fn build_network_interface_snapshots(
+    networks: &Networks,
+    cached_metadata: &[NetworkInterfaceIdentitySample],
+) -> Vec<NetworkInterfaceSnapshot> {
+    if cached_metadata.is_empty() {
+        return Vec::new();
+    }
+
+    let throughput_by_name: HashMap<&str, (u64, u64)> = networks
+        .iter()
+        .map(|(name, data)| {
+            let receive_bps = (data.received() as f64 / TICK_SECONDS as f64) as u64;
+            let send_bps = (data.transmitted() as f64 / TICK_SECONDS as f64) as u64;
+            (name.as_str(), (receive_bps, send_bps))
+        })
+        .collect();
+
+    cached_metadata
+        .iter()
+        .map(|metadata| {
+            let (receive_bps, send_bps) = throughput_by_name
+                .get(metadata.name.as_str())
+                .copied()
+                .unwrap_or((0, 0));
+            NetworkInterfaceSnapshot {
+                name: metadata.name.clone(),
+                mac_address: metadata.mac_address.clone(),
+                receive_bps,
+                send_bps,
+                is_up: metadata.is_up,
+            }
+        })
+        .collect()
 }
 
 impl Default for Collector {

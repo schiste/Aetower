@@ -1,0 +1,31 @@
+included:
+  - macos/Sources/AetowerUI
+  - macos/Sources/AetowerApp
+  - macos/Sources/AetowerBridge
+
+excluded:
+  - macos/.build
+  - macos/Sources/AetowerBindings
+  - macos/Sources/aetower_ffiFFI
+
+only_rules:
+  - custom_rules
+  - blanket_disable_command
+  - duplicate_imports
+  - force_cast
+  - force_try
+  - invalid_swiftlint_command
+
+custom_rules:
+  no_anyview:
+    included: "macos/Sources/Aetower(UI|App|Bridge)/.*\\.swift"
+    name: "No AnyView"
+    regex: "\\bAnyView\\b"
+    message: "Avoid AnyView in app code."
+    severity: error
+  no_fatal_error:
+    included: "macos/Sources/Aetower(UI|App|Bridge)/.*\\.swift"
+    name: "No fatalError"
+    regex: "\\bfatalError\\("
+    message: "Avoid fatalError in production app code."
+    severity: error

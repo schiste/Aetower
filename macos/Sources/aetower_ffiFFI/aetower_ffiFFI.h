@@ -387,9 +387,19 @@ RustBuffer uniffi_aetower_ffi_fn_method_monitorengine_query_diagnostics(void*_No
 void uniffi_aetower_ffi_fn_method_monitorengine_record_diagnostics_event(void*_Nonnull ptr, RustBuffer event, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_RESET_FAN_AUTO
+#define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_RESET_FAN_AUTO
+RustBuffer uniffi_aetower_ffi_fn_method_monitorengine_reset_fan_auto(void*_Nonnull ptr, uint8_t fan_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_SET_CAPABILITY_STATE
 #define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_SET_CAPABILITY_STATE
 void uniffi_aetower_ffi_fn_method_monitorengine_set_capability_state(void*_Nonnull ptr, RustBuffer kind, RustBuffer state, RustBuffer detail_override, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_SET_FAN_MIN_RPM
+#define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_SET_FAN_MIN_RPM
+RustBuffer uniffi_aetower_ffi_fn_method_monitorengine_set_fan_min_rpm(void*_Nonnull ptr, uint8_t fan_id, float rpm, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_FN_METHOD_MONITORENGINE_STOP_AGENT_SESSION
@@ -836,9 +846,21 @@ uint16_t uniffi_aetower_ffi_checksum_method_monitorengine_record_diagnostics_eve
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_RESET_FAN_AUTO
+#define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_RESET_FAN_AUTO
+uint16_t uniffi_aetower_ffi_checksum_method_monitorengine_reset_fan_auto(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_SET_CAPABILITY_STATE
 #define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_SET_CAPABILITY_STATE
 uint16_t uniffi_aetower_ffi_checksum_method_monitorengine_set_capability_state(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_SET_FAN_MIN_RPM
+#define UNIFFI_FFIDEF_UNIFFI_AETOWER_FFI_CHECKSUM_METHOD_MONITORENGINE_SET_FAN_MIN_RPM
+uint16_t uniffi_aetower_ffi_checksum_method_monitorengine_set_fan_min_rpm(void
     
 );
 #endif

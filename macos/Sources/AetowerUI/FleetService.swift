@@ -71,13 +71,15 @@ public final class FleetService {
     private func handleIncoming(_ connection: NWConnection, state: AppState?) {
         connection.start(queue: .main)
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak state] _, _, _, _ in
-            guard let state else { connection.cancel(); return }
-            let json = state.exportSnapshotJSON()
-            let data = Data(json.utf8)
-            let header = "HTTP/1.1 200 OK\r\nContent-Length: \(data.count)\r\nContent-Type: application/json\r\n\r\n"
-            connection.send(content: Data(header.utf8) + data, completion: .contentProcessed { _ in
-                connection.cancel()
-            })
+            Task { @MainActor in
+                guard let state else { connection.cancel(); return }
+                let json = state.exportSnapshotJSON()
+                let data = Data(json.utf8)
+                let header = "HTTP/1.1 200 OK\r\nContent-Length: \(data.count)\r\nContent-Type: application/json\r\n\r\n"
+                connection.send(content: Data(header.utf8) + data, completion: .contentProcessed { _ in
+                    connection.cancel()
+                })
+            }
         }
     }
 
@@ -176,7 +178,7 @@ public final class FleetService {
         peers[index].lastSeen = .now
     }
 
-    private static func extractHTTPBody(_ data: Data) -> Data? {
+    nonisolated private static func extractHTTPBody(_ data: Data) -> Data? {
         guard let string = String(data: data, encoding: .utf8),
               let range = string.range(of: "\r\n\r\n") else { return nil }
         let bodyStart = string.distance(from: string.startIndex, to: range.upperBound)

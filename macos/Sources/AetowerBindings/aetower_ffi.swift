@@ -579,7 +579,21 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func recordDiagnosticsEvent(event: DiagnosticsEvent) 
     
+    /**
+     * Restore a fan to automatic (OS-controlled) mode.
+     */
+    func resetFanAuto(fanId: UInt8)  -> String
+    
     func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?) 
+    
+    /**
+     * Pin a fan to a manual minimum RPM via the privileged helper.
+     *
+     * Returns an empty string on success or a human-readable error message
+     * on failure (privileged helper not configured, helper exit non-zero,
+     * SMC write failed). The UI surfaces the message directly to the user.
+     */
+    func setFanMinRpm(fanId: UInt8, rpm: Float)  -> String
     
     func stopAgentSession(sessionId: String, force: Bool)  -> String
     
@@ -833,6 +847,17 @@ open func recordDiagnosticsEvent(event: DiagnosticsEvent)  {try! rustCall() {
 }
 }
     
+    /**
+     * Restore a fan to automatic (OS-controlled) mode.
+     */
+open func resetFanAuto(fanId: UInt8) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_reset_fan_auto(self.uniffiClonePointer(),
+        FfiConverterUInt8.lower(fanId),$0
+    )
+})
+}
+    
 open func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_set_capability_state(self.uniffiClonePointer(),
         FfiConverterTypeCapabilityKind_lower(kind),
@@ -840,6 +865,22 @@ open func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detai
         FfiConverterOptionString.lower(detailOverride),$0
     )
 }
+}
+    
+    /**
+     * Pin a fan to a manual minimum RPM via the privileged helper.
+     *
+     * Returns an empty string on success or a human-readable error message
+     * on failure (privileged helper not configured, helper exit non-zero,
+     * SMC write failed). The UI surfaces the message directly to the user.
+     */
+open func setFanMinRpm(fanId: UInt8, rpm: Float) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_set_fan_min_rpm(self.uniffiClonePointer(),
+        FfiConverterUInt8.lower(fanId),
+        FfiConverterFloat.lower(rpm),$0
+    )
+})
 }
     
 open func stopAgentSession(sessionId: String, force: Bool) -> String  {
@@ -7145,7 +7186,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_record_diagnostics_event() != 15141) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_reset_fan_auto() != 1522) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_set_capability_state() != 11556) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_set_fan_min_rpm() != 11672) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_stop_agent_session() != 46014) {

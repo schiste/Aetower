@@ -62,9 +62,9 @@ struct WorkingSample {
 }
 
 fn main() -> Result<()> {
-    let command = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "sample".to_owned());
+    let mut args = std::env::args().skip(1);
+    let command = args.next().unwrap_or_else(|| "sample".to_owned());
+    let command_args: Vec<String> = args.collect();
     match command.as_str() {
         "sample" => {
             let snapshot = collect_snapshot()?;
@@ -81,8 +81,82 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string(&sample)?);
             Ok(())
         }
+        "fan-set" => {
+            // `fan-set <fan_id> <rpm>` pins the fan to a minimum RPM via the
+            // SMC `F<n>Mn` key. Requires root — the helper is expected to be
+            // launched as root by the parent app (via SMJobBless or
+            // equivalent). Errors land on stderr and non-zero exit code so
+            // callers can surface them to the user.
+            let snapshot = apply_fan_command(&command_args, FanCommand::Set)?;
+            println!("{}", serde_json::to_string(&snapshot)?);
+            Ok(())
+        }
+        "fan-reset" => {
+            // `fan-reset <fan_id>` restores automatic (OS-controlled) mode
+            // for the specified fan by writing the original min RPM back.
+            let snapshot = apply_fan_command(&command_args, FanCommand::Reset)?;
+            println!("{}", serde_json::to_string(&snapshot)?);
+            Ok(())
+        }
         other => {
             bail!("unsupported command: {other}")
+        }
+    }
+}
+
+/// Outcome of an SMC fan control write, returned as JSON on stdout so the
+/// parent app can distinguish success from a root-missing error.
+#[derive(Debug, Serialize)]
+struct FanControlResult {
+    fan_id: u8,
+    command: &'static str,
+    success: bool,
+    requested_rpm: Option<f32>,
+}
+
+enum FanCommand {
+    Set,
+    Reset,
+}
+
+/// Parse and execute a fan-set/fan-reset command.
+///
+/// Validation is intentionally simple: the helper trusts the parent app to
+/// have already checked the RPM against each fan's reported min/max. The
+/// helper's job is to translate the CLI arguments into an `aetower-sensors`
+/// call and surface any SMC-level failure.
+fn apply_fan_command(args: &[String], command: FanCommand) -> Result<FanControlResult> {
+    let fan_id: u8 = args
+        .first()
+        .context("missing fan_id argument")?
+        .parse()
+        .context("fan_id must be a small unsigned integer")?;
+    match command {
+        FanCommand::Set => {
+            let rpm: f32 = args
+                .get(1)
+                .context("missing rpm argument")?
+                .parse()
+                .context("rpm must be a floating point number")?;
+            if !rpm.is_finite() || rpm < 0.0 {
+                bail!("rpm must be a non-negative finite value");
+            }
+            aetower_sensors::set_fan_min_rpm(fan_id, rpm).map_err(anyhow::Error::msg)?;
+            Ok(FanControlResult {
+                fan_id,
+                command: "fan-set",
+                success: true,
+                requested_rpm: Some(rpm),
+            })
+        }
+        FanCommand::Reset => {
+            aetower_sensors::reset_fan_auto(fan_id).map_err(anyhow::Error::msg)?;
+            Ok(FanControlResult {
+                fan_id,
+                command: "fan-reset",
+                success: true,
+                requested_rpm: None,
+            })
         }
     }
 }

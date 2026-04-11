@@ -412,6 +412,36 @@ impl AdapterManager {
         crate::chau7::stop_session(&socket_path, session_id, force)
     }
 
+    /// Pin a fan to a minimum RPM by shelling out to the privileged helper.
+    ///
+    /// Fan control requires SMC writes, which in turn require root. The
+    /// sandboxed app cannot write SMC keys directly, so the flow is always
+    /// app → `aetower-helper fan-set <id> <rpm>` → SMC. If the helper is not
+    /// configured (either no path or the user disabled it), this returns a
+    /// clear error rather than silently no-oping.
+    pub fn set_fan_min_rpm(&self, fan_id: u8, rpm: f32) -> Result<(), String> {
+        let helper_path = self
+            .state
+            .lock()
+            .privileged_helper_path()
+            .ok_or_else(|| "privileged helper not configured".to_owned())?;
+        invoke_helper_fan_command(&helper_path, "fan-set", fan_id, Some(rpm))
+    }
+
+    /// Restore a fan to automatic (OS-controlled) mode.
+    ///
+    /// Always paired with `set_fan_min_rpm` — the UI should present these
+    /// together so users have an obvious way out if a manual override makes
+    /// the machine too quiet under load or too loud at idle.
+    pub fn reset_fan_auto(&self, fan_id: u8) -> Result<(), String> {
+        let helper_path = self
+            .state
+            .lock()
+            .privileged_helper_path()
+            .ok_or_else(|| "privileged helper not configured".to_owned())?;
+        invoke_helper_fan_command(&helper_path, "fan-reset", fan_id, None)
+    }
+
     pub fn refresh_caches(&self, capabilities: &BTreeMap<CapabilityKind, CapabilitySnapshot>) {
         let now = time::now_millis();
         let (
@@ -2291,6 +2321,41 @@ fn fetch_endpoint_security_sample(helper_path: &str) -> Result<EndpointSecurityS
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("invalid endpoint security helper json: {error}"))
+}
+
+/// Shell out to the helper for a fan control command.
+///
+/// Returns `Ok(())` on success, or a message containing the helper's stderr
+/// on failure. We intentionally propagate the helper's stderr verbatim — it
+/// is the clearest signal the UI has for distinguishing "not running as
+/// root" from "SMC key not present on this Mac".
+fn invoke_helper_fan_command(
+    helper_path: &str,
+    subcommand: &str,
+    fan_id: u8,
+    rpm: Option<f32>,
+) -> Result<(), String> {
+    let mut command = Command::new(helper_path);
+    command.arg(subcommand).arg(fan_id.to_string());
+    if let Some(rpm) = rpm {
+        command.arg(rpm.to_string());
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("helper execution failed: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let suffix = if stderr.is_empty() {
+        String::new()
+    } else {
+        format!(": {stderr}")
+    };
+    Err(format!(
+        "helper {subcommand} exited with status {}{suffix}",
+        output.status
+    ))
 }
 
 fn helper_process_matches(entity: &EntitySnapshot, process: &PrivilegedProcessSample) -> bool {

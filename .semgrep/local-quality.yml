@@ -1,0 +1,57 @@
+rules:
+  - id: swift-no-anyview
+    message: Avoid AnyView in app code.
+    severity: ERROR
+    languages: [swift]
+    paths:
+      include:
+        - macos/Sources/AetowerUI/**/*.swift
+        - macos/Sources/AetowerApp/**/*.swift
+        - macos/Sources/AetowerBridge/**/*.swift
+    pattern-regex: "\\bAnyView\\b"
+
+  - id: swift-no-fatal-error
+    message: Avoid fatalError in production app code.
+    severity: ERROR
+    languages: [swift]
+    paths:
+      include:
+        - macos/Sources/AetowerUI/**/*.swift
+        - macos/Sources/AetowerApp/**/*.swift
+        - macos/Sources/AetowerBridge/**/*.swift
+    pattern-regex: "\\bfatalError\\("
+
+  - id: swift-no-force-cast
+    message: Avoid force casts in app code.
+    severity: ERROR
+    languages: [swift]
+    paths:
+      include:
+        - macos/Sources/AetowerUI/**/*.swift
+        - macos/Sources/AetowerApp/**/*.swift
+        - macos/Sources/AetowerBridge/**/*.swift
+    pattern: $X as! $Y
+
+  - id: swift-no-force-try
+    message: Avoid try! in app code.
+    severity: ERROR
+    languages: [swift]
+    paths:
+      include:
+        - macos/Sources/AetowerUI/**/*.swift
+        - macos/Sources/AetowerApp/**/*.swift
+        - macos/Sources/AetowerBridge/**/*.swift
+    pattern: try! $EXPR
+
+  - id: shell-no-curl-pipe-sh
+    message: Avoid curl|sh style shell execution in repo scripts.
+    severity: ERROR
+    languages: [bash]
+    paths:
+      include:
+        - scripts/**/*.sh
+        - .githooks/**
+    patterns:
+      - pattern-either:
+          - pattern-regex: "curl[^\\n]*\\|[^\\n]*(sh|bash)"
+          - pattern-regex: "wget[^\\n]*\\|[^\\n]*(sh|bash)"

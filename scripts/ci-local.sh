@@ -28,6 +28,15 @@ run() {
     "$@"
 }
 
+require_tool() {
+    tool="$1"
+    install_hint="$2"
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "missing required tool: $tool ($install_hint)" >&2
+        exit 1
+    fi
+}
+
 staged_files() {
     git diff --cached --name-only --diff-filter=ACMR
 }
@@ -41,6 +50,30 @@ affected_rust_packages() {
     staged_files \
         | awk -F/ '$1 == "rust" && $2 == "crates" && $3 != "" { print $3 }' \
         | sort -u
+}
+
+changed_swift_files() {
+    staged_files \
+        | rg '^macos/.*\.swift$' \
+        | rg -v '^(macos/Sources/AetowerBindings/|macos/Sources/aetower_ffiFFI/)' \
+        || true
+}
+
+changed_semgrep_files() {
+    staged_files \
+        | rg '^(macos/Sources/Aetower(UI|App|Bridge)/.*\.swift|rust/crates/.+\.rs|scripts/.+\.sh|\.githooks/.+)$' \
+        | rg -v '^(macos/Sources/AetowerBindings/|macos/Sources/aetower_ffiFFI/)' \
+        || true
+}
+
+push_diff_base() {
+    if git rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
+        printf '%s' '@{upstream}'
+    elif git rev-parse --verify 'HEAD~1' >/dev/null 2>&1; then
+        printf '%s' 'HEAD~1'
+    else
+        printf '%s' 'HEAD'
+    fi
 }
 
 should_run_full_rust_gate() {
@@ -72,6 +105,33 @@ run_precommit_rust() {
         run "cargo clippy ($pkg)" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" -p "$pkg" --all-targets -- -D warnings
         run "cargo test ($pkg)" cargo test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p "$pkg"
     done
+}
+
+run_precommit_gitleaks() {
+    require_tool "gitleaks" "install with: brew install gitleaks"
+    run "gitleaks (staged)" gitleaks git --pre-commit --staged --no-banner --redact
+}
+
+run_precommit_swiftlint() {
+    files="$(changed_swift_files)"
+    if [ -z "$files" ]; then
+        return
+    fi
+    require_tool "swiftlint" "install with: brew install swiftlint"
+    for path in $files; do
+        run "swiftlint ($path)" swiftlint lint --strict --quiet --force-exclude --config "$ROOT/.swiftlint.yml" "$ROOT/$path"
+    done
+}
+
+run_precommit_semgrep() {
+    files="$(changed_semgrep_files)"
+    if [ -z "$files" ]; then
+        return
+    fi
+    if ! command -v semgrep >/dev/null 2>&1; then
+        return
+    fi
+    run "semgrep (changed files)" env SEMGREP_SEND_METRICS=off semgrep scan --metrics=off --quiet --config "$ROOT/.semgrep/local-quality.yml" $files
 }
 
 run_workspace_tests() {
@@ -109,11 +169,37 @@ run_precommit_shell() {
 
 run_precommit() {
     run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode pre-commit
+    run_precommit_gitleaks
+    run_precommit_swiftlint
+    run_precommit_semgrep
     run_precommit_rust
     run_precommit_bridge
     run_precommit_swift
     run_precommit_benchmark
     run_precommit_shell
+}
+
+run_full_gitleaks() {
+    require_tool "gitleaks" "install with: brew install gitleaks"
+    base="$(push_diff_base)"
+    run "gitleaks (commits)" gitleaks git --no-banner --redact --log-opts "${base}..HEAD"
+}
+
+run_full_swiftlint() {
+    require_tool "swiftlint" "install with: brew install swiftlint"
+    run "swiftlint" swiftlint lint --strict --quiet --force-exclude --config "$ROOT/.swiftlint.yml" "$ROOT/macos/Sources"
+}
+
+run_full_semgrep() {
+    if ! command -v semgrep >/dev/null 2>&1; then
+        return
+    fi
+    run "semgrep" env SEMGREP_SEND_METRICS=off semgrep scan --metrics=off --quiet --config "$ROOT/.semgrep/local-quality.yml" "$ROOT/macos/Sources/AetowerUI" "$ROOT/macos/Sources/AetowerApp" "$ROOT/macos/Sources/AetowerBridge" "$ROOT/rust/crates" "$ROOT/scripts"
+}
+
+run_full_dependency_policy() {
+    require_tool "cargo-deny" "install with: cargo install cargo-deny --locked"
+    run "cargo deny" cargo deny --manifest-path "$ROOT/rust/Cargo.toml" check advisories bans sources --disable-fetch --config "$ROOT/deny.toml"
 }
 
 run_full_gate() {
@@ -129,6 +215,9 @@ run_full_gate() {
         run "quality guard (working tree)" python3 "$ROOT/scripts/quality-guard.py" --mode working-tree
     fi
     run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode "$MODE"
+    run_full_gitleaks
+    run_full_swiftlint
+    run_full_semgrep
     run "cargo fmt --check" cargo fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
     run "cargo clippy" cargo clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
     run_workspace_tests
@@ -137,6 +226,9 @@ run_full_gate() {
     run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
     run "telemetry smoke" sh "$ROOT/scripts/telemetry-smoke.sh"
     run "package smoke" sh "$ROOT/scripts/smoke-package.sh" --rebuild
+    if [ "$MODE" = "full" ]; then
+        run_full_dependency_policy
+    fi
     if [ "$MODE" = "full" ] && command -v cargo-audit >/dev/null 2>&1; then
         run "cargo audit" cargo audit --file "$ROOT/rust/Cargo.lock"
     fi

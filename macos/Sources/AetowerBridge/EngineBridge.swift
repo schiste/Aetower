@@ -102,6 +102,22 @@ public final class EngineBridge: @unchecked Sendable {
         return result.isEmpty ? nil : result
     }
 
+    /// Pin a fan to a minimum RPM via the privileged helper.
+    ///
+    /// Returns `nil` on success, or a human-readable error string on failure
+    /// (helper not configured, SMC write blocked, etc.). The UI surfaces the
+    /// string directly in an alert.
+    public func setFanMinRpm(fanId: UInt8, rpm: Float) -> String? {
+        let result = engine.setFanMinRpm(fanId: fanId, rpm: rpm)
+        return result.isEmpty ? nil : result
+    }
+
+    /// Restore a fan to automatic (OS-controlled) mode.
+    public func resetFanAuto(fanId: UInt8) -> String? {
+        let result = engine.resetFanAuto(fanId: fanId)
+        return result.isEmpty ? nil : result
+    }
+
     public func exportSnapshotJSON() -> String {
         engine.exportSnapshotJson()
     }
