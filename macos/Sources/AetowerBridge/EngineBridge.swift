@@ -149,6 +149,27 @@ public final class EngineBridge: @unchecked Sendable {
         engine.historyRangeSummary(startMillis: startMillis, endMillis: endMillis)
     }
 
+    public func historyRangeSummaryResult(
+        startMillis: UInt64,
+        endMillis: UInt64
+    ) -> HistoryRangeSummaryResult {
+        engine.historyRangeSummaryResult(startMillis: startMillis, endMillis: endMillis)
+    }
+
+    public func loadHistoryPageResult(
+        startMillis: UInt64,
+        endMillis: UInt64,
+        beforeMillisExclusive: UInt64?,
+        limit: UInt32
+    ) -> HistoryPageLoadResult {
+        engine.loadHistoryPageResult(
+            startMillis: startMillis,
+            endMillis: endMillis,
+            beforeMillisExclusive: beforeMillisExclusive,
+            limit: limit
+        )
+    }
+
     public func maintainHistoryStore(aggressive: Bool) -> HistoryMaintenanceReport? {
         engine.maintainHistoryStore(aggressive: aggressive)
     }

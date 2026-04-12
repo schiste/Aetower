@@ -20,6 +20,7 @@ public final class AppState {
     public private(set) var historyLoadStatus: String?
     public private(set) var historyHasMore = false
     public private(set) var historyLastLoadDurationMillis = 0.0
+    public private(set) var monitorFocusEntityID: String?
     public private(set) var diagnosticsEvents: [DiagnosticsEvent] = []
     public private(set) var diagnosticsRecentWarningCount = 0
     public private(set) var diagnosticsRecentErrorCount = 0
@@ -635,6 +636,16 @@ public final class AppState {
         }
     }
 
+    public func focusEntityInMonitor(_ entityID: String) {
+        monitorFocusEntityID = entityID
+    }
+
+    public func consumeMonitorFocusEntityID() -> String? {
+        let entityID = monitorFocusEntityID
+        monitorFocusEntityID = nil
+        return entityID
+    }
+
     public func loadHistory(force: Bool = false) {
         guard historyVisible || force else {
             return
@@ -664,19 +675,21 @@ public final class AppState {
             let loadStarted = CFAbsoluteTimeGetCurrent()
             let maintenance = bridge.maintainHistoryStore(aggressive: false)
             guard !Task.isCancelled else { return }
-            let summary = bridge.historyRangeSummary(startMillis: startMillis, endMillis: endMillis)
+            let summaryResult = bridge.historyRangeSummaryResult(startMillis: startMillis, endMillis: endMillis)
             guard !Task.isCancelled else { return }
-            let snapshots: [SystemSnapshot]
-            if let summary, summary.rangeCount > 0 {
-                snapshots = bridge.loadHistoryPage(
+            let summary = summaryResult.summary
+            let pageResult: HistoryPageLoadResult
+            if summaryResult.errorMessage == nil, let summary, summary.rangeCount > 0 {
+                pageResult = bridge.loadHistoryPageResult(
                     startMillis: startMillis,
                     endMillis: endMillis,
                     beforeMillisExclusive: nil,
                     limit: self?.historyInitialPageSize ?? 120
                 )
             } else {
-                snapshots = []
+                pageResult = HistoryPageLoadResult(snapshots: [], errorMessage: nil)
             }
+            let snapshots = pageResult.snapshots
             await MainActor.run {
                 guard let self else { return }
                 let durationMillis = (CFAbsoluteTimeGetCurrent() - loadStarted) * 1000.0
@@ -686,7 +699,12 @@ public final class AppState {
                 self.historySnapshots = snapshots
                 self.historyLastLoadDurationMillis = durationMillis
                 self.historyHasMore = UInt64(snapshots.count) < (summary?.rangeCount ?? 0)
-                self.historyLoadError = snapshots.isEmpty ? "No persisted history in the selected range yet." : nil
+                self.historyLoadError = self.historyLoadErrorMessage(
+                    summaryError: summaryResult.errorMessage,
+                    pageError: pageResult.errorMessage,
+                    rangeSummary: summary,
+                    loadedCount: snapshots.count
+                )
                 self.historyLoadStatus = self.historyStatusMessage(
                     summary: summary,
                     loadedCount: snapshots.count,
@@ -731,30 +749,45 @@ public final class AppState {
         historyLoadTask?.cancel()
         historyLoadTask = Task(priority: .utility) { [weak self] in
             let loadStarted = CFAbsoluteTimeGetCurrent()
-            let olderSnapshots = bridge.loadHistoryPage(
+            let pageResult = bridge.loadHistoryPageResult(
                 startMillis: startMillis,
                 endMillis: endMillis,
                 beforeMillisExclusive: oldestMillis,
                 limit: self?.historyLoadMorePageSize ?? 240
             )
+            let olderSnapshots = pageResult.snapshots
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self else { return }
                 let durationMillis = (CFAbsoluteTimeGetCurrent() - loadStarted) * 1000.0
+                if let errorMessage = pageResult.errorMessage {
+                    self.historyLoadError = "Failed to load older persisted samples: \(errorMessage)"
+                    self.historyLoadStatus = "Older persisted samples could not be loaded."
+                    self.historyIsLoadingMore = false
+                    return
+                }
                 let existing = Set(self.historySnapshots.map(\.sequence))
                 let uniqueOlder = olderSnapshots.filter { !existing.contains($0.sequence) }
                 self.historySnapshots.insert(contentsOf: uniqueOlder, at: 0)
                 self.historyLastLoadDurationMillis = durationMillis
                 let rangeCount = self.historyRangeSummary?.rangeCount ?? 0
-                self.historyHasMore = UInt64(self.historySnapshots.count) < rangeCount && !uniqueOlder.isEmpty
+                let appendedUniqueSamples = !uniqueOlder.isEmpty
+                self.historyHasMore = UInt64(self.historySnapshots.count) < rangeCount && appendedUniqueSamples
                 self.historyIsLoadingMore = false
-                self.historyLoadStatus = self.historyStatusMessage(
-                    summary: self.historyRangeSummary,
-                    loadedCount: self.historySnapshots.count,
-                    durationMillis: durationMillis,
-                    maintenance: self.historyMaintenanceReport,
-                    isLoadMore: true
-                )
+                self.historyLoadError = nil
+                if olderSnapshots.isEmpty {
+                    self.historyLoadStatus = "Reached the beginning of readable persisted history for this range."
+                } else if !appendedUniqueSamples {
+                    self.historyLoadStatus = "No additional unique persisted samples were returned for this range."
+                } else {
+                    self.historyLoadStatus = self.historyStatusMessage(
+                        summary: self.historyRangeSummary,
+                        loadedCount: self.historySnapshots.count,
+                        durationMillis: durationMillis,
+                        maintenance: self.historyMaintenanceReport,
+                        isLoadMore: true
+                    )
+                }
             }
         }
     }
@@ -872,6 +905,30 @@ public final class AppState {
             return "\(base) Older samples appended."
         }
         return base
+    }
+
+    private func historyLoadErrorMessage(
+        summaryError: String?,
+        pageError: String?,
+        rangeSummary: HistoryRangeSummary?,
+        loadedCount: Int
+    ) -> String? {
+        if let summaryError, !summaryError.isEmpty {
+            return "Failed to summarize persisted history: \(summaryError)"
+        }
+        if let pageError, !pageError.isEmpty {
+            return "Failed to load persisted history: \(pageError)"
+        }
+        guard loadedCount == 0 else {
+            return nil
+        }
+        if rangeSummary?.rangeCount == 0 {
+            return "No persisted history in the selected range yet."
+        }
+        if rangeSummary != nil {
+            return "Persisted history exists in this range, but no readable snapshots were returned."
+        }
+        return "Persisted history is unavailable for the selected range."
     }
 
     private func observeWorkspaceActivation() {

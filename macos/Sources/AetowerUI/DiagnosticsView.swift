@@ -307,34 +307,39 @@ public struct DiagnosticsView: View {
 
     private var sessionHealth: some View {
         GroupBox("Session health") {
-            LazyVGrid(columns: overviewColumns, alignment: .leading, spacing: 12) {
+            LazyVGrid(columns: overviewColumns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 diagnosticsMetric(
                     title: "Diagnostics",
                     value: diagnosticsHealthTitle,
-                    subtitle: diagnosticsHealthSubtitle
+                    subtitle: diagnosticsHealthSubtitle,
+                    valueColor: healthColor(diagnosticsHealthTitle)
                 )
                 diagnosticsMetric(
                     title: "Unified logs",
                     value: unifiedLogHealthTitle,
-                    subtitle: unifiedLogHealthSubtitle
+                    subtitle: unifiedLogHealthSubtitle,
+                    valueColor: healthColor(unifiedLogHealthTitle)
                 )
                 diagnosticsMetric(
                     title: "Permissions",
                     value: permissionHealthTitle,
-                    subtitle: permissionHealthSubtitle
+                    subtitle: permissionHealthSubtitle,
+                    valueColor: healthColor(permissionHealthTitle)
                 )
                 diagnosticsMetric(
                     title: "Telemetry",
                     value: telemetryHealthTitle,
-                    subtitle: telemetryHealthSubtitle
+                    subtitle: telemetryHealthSubtitle,
+                    valueColor: healthColor(telemetryHealthTitle)
                 )
                 diagnosticsMetric(
                     title: "Aetower overhead",
                     value: aetowerOverheadTitle,
-                    subtitle: aetowerOverheadSubtitle
+                    subtitle: aetowerOverheadSubtitle,
+                    valueColor: healthColor(aetowerOverheadTitle)
                 )
             }
-            .padding(.top, 4)
+            .padding(.top, AetowerDesign.Spacing.xs)
         }
     }
 
@@ -693,21 +698,27 @@ public struct DiagnosticsView: View {
     }
 }
 
-private func diagnosticsMetric(title: String, value: String, subtitle: String) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
+private func diagnosticsMetric(
+    title: String,
+    value: String,
+    subtitle: String,
+    valueColor: Color? = nil
+) -> some View {
+    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
         Text(title)
             .font(.caption2.weight(.medium))
             .foregroundStyle(.secondary)
         Text(value)
             .font(.system(size: 18, weight: .semibold, design: .rounded))
+            .foregroundStyle(valueColor ?? .primary)
         Text(subtitle)
             .font(.caption2)
             .foregroundStyle(.tertiary)
             .lineLimit(2)
     }
-    .padding(10)
+    .padding(AetowerDesign.Spacing.sm)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
 }
 
 private func labeledPersistenceDetail(_ title: String, _ value: String) -> some View {
@@ -762,6 +773,22 @@ private func subsystemLabel(_ subsystem: DiagnosticsSubsystem) -> String {
     case .adapterHelper: return "adapter.helper"
     case .adapterChau7: return "adapter.chau7"
     case .adapterVsCode: return "adapter.vscode"
+    }
+}
+
+/// Map health status strings to semantic colors so "Degraded" stands out
+/// visually from "Clean". Previously all health values rendered as plain
+/// text with no color signal.
+private func healthColor(_ title: String) -> Color? {
+    switch title {
+    case "Clean", "Quiet", "Stable", "Bounded", "Verified", "Enabled":
+        return AetowerDesign.Status.success
+    case "Watch", "Noisy", "Chatty", "Stale", "Pending", "Unknown":
+        return AetowerDesign.Status.warning
+    case "Degraded", "Denied", "Failed", "Hot", "Investigate":
+        return AetowerDesign.Status.error
+    default:
+        return nil
     }
 }
 
