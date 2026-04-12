@@ -21,7 +21,12 @@ private enum TimelineSeverityFilter: String, CaseIterable, Identifiable {
 
 private struct EventRow: View {
     let event: TimelineEvent
-    let entityName: String?
+    /// The raw entity identifier (e.g. "ai-agent:1234") — not a
+    /// human-readable display name. TimelineEvent does not carry the
+    /// entity's display name, so we show the technical ID as a
+    /// tertiary hint. This is honest about what data is available
+    /// and still useful for cross-referencing with the Monitor tab.
+    let entityId: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
@@ -34,8 +39,8 @@ private struct EventRow: View {
                     Text(event.title)
                         .font(.headline)
                     categoryBadge(event.category)
-                    if let entityName {
-                        Text(entityName)
+                    if let entityId {
+                        Text(entityId)
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
@@ -159,7 +164,7 @@ public struct TimelineView: View {
                             ForEach(filteredEvents.reversed(), id: \.id) { event in
                                 EventRow(
                                     event: event,
-                                    entityName: event.entityId
+                                    entityId: event.entityId
                                 )
                             }
                         }
@@ -216,13 +221,20 @@ private func categoryLabel(_ category: TimelineCategory) -> String {
 /// Shows relative time for recent events ("3m ago"), date+time for
 /// older ones ("Mon 3:42 PM"). The built-in `.time` style only showed
 /// time-of-day which was ambiguous for events hours or days apart.
+/// Cached formatter for event timestamps older than 24 hours.
+/// DateFormatter is expensive to allocate — creating one per event
+/// per render would mean 120 allocations per pass for an old timeline.
+private let eventDateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "EEE h:mm a"
+    return formatter
+}()
+
 private func formatEventTimestamp(_ millis: UInt64) -> String {
     let date = Date(timeIntervalSince1970: Double(millis) / 1000)
     let elapsed = Date.now.timeIntervalSince(date)
     if elapsed < 60 { return "just now" }
     if elapsed < 3600 { return "\(Int(elapsed / 60))m ago" }
     if elapsed < 86400 { return "\(Int(elapsed / 3600))h ago" }
-    let formatter = DateFormatter()
-    formatter.dateFormat = "EEE h:mm a"
-    return formatter.string(from: date)
+    return eventDateFormatter.string(from: date)
 }
