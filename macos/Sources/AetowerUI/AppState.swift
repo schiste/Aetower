@@ -1617,13 +1617,7 @@ public final class AppState {
     }
 
     private var exportPrivacyTier: ExportPrivacyTier {
-        let defaults = UserDefaults.standard
-        if let raw = defaults.string(forKey: SettingsStore.exportPrivacyTierKey),
-           let tier = ExportPrivacyTier(rawValue: raw) {
-            return tier
-        }
-        let legacySensitive = defaults.object(forKey: SettingsStore.includeSensitiveExportsKey) as? Bool ?? false
-        return legacySensitive ? .full : .redacted
+        SettingsStore.persistedExportPrivacyTier()
     }
 
     private func exportControlledJson(_ json: String, privacyTier: ExportPrivacyTier) -> String {

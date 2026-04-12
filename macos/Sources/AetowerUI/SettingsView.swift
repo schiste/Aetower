@@ -24,7 +24,7 @@ public struct SettingsView: View {
     public var body: some View {
         @Bindable var settings = settings
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
                 GroupBox("Behavior") {
                     VStack(alignment: .leading, spacing: 14) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -400,8 +400,24 @@ public struct SettingsView: View {
                         }
                     }
                 }
+                GroupBox("Reset") {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                        Text("Restore all settings to their factory defaults. You will need to click \"Apply runtime and integration settings\" to push the changes to the running engine.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Reset to defaults", role: .destructive) {
+                            settings.resetToDefaults()
+                            applyConfirmation = "All settings reset to defaults."
+                            Task {
+                                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                                applyConfirmation = nil
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
             }
-            .padding(24)
+            .padding(AetowerDesign.Spacing.xxl)
         }
         .navigationTitle("Settings")
         .onDisappear {

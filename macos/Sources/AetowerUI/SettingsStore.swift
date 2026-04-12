@@ -60,7 +60,14 @@ public final class SettingsStore {
         didSet { persist() }
     }
     public var engineIdleIntervalSeconds: Double {
-        didSet { persist() }
+        didSet {
+            // Enforce: idle must be >= active to avoid the logical
+            // contradiction of polling faster when idle than when active.
+            if engineIdleIntervalSeconds < engineActiveIntervalSeconds {
+                engineIdleIntervalSeconds = engineActiveIntervalSeconds
+            }
+            persist()
+        }
     }
     public var engineLowPowerIntervalSeconds: Double {
         didSet { persist() }
@@ -167,11 +174,52 @@ public final class SettingsStore {
     private static let notificationsEnabledKey = "settings.notificationsEnabled"
     private static let frictionNotificationThresholdKey = "settings.frictionNotificationThreshold"
     private static let appearanceModeKey = "settings.appearanceMode"
-    static let exportPrivacyTierKey = "settings.exportPrivacyTier"
-    static let includeSensitiveExportsKey = "settings.includeSensitiveExports"
+    private static let exportPrivacyTierKey = "settings.exportPrivacyTier"
+    private static let includeSensitiveExportsKey = "settings.includeSensitiveExports"
+
+    /// Read the persisted export privacy tier directly from UserDefaults.
+    /// Used by AppState to check the tier without going through the
+    /// SettingsStore instance (which may not be available in all contexts).
+    public static func persistedExportPrivacyTier(
+        defaults: UserDefaults = .standard
+    ) -> ExportPrivacyTier {
+        if let raw = defaults.string(forKey: exportPrivacyTierKey) {
+            return ExportPrivacyTier(rawValue: raw) ?? .redacted
+        }
+        let legacySensitive = defaults.object(forKey: includeSensitiveExportsKey) as? Bool ?? false
+        return legacySensitive ? .full : .redacted
+    }
 }
 
 extension SettingsStore {
+    /// Reset all settings to factory defaults. Does NOT call
+    /// applyIntegrationSettings — the caller should trigger that
+    /// separately to push the reset values to the running engine.
+    public func resetToDefaults() {
+        showMenuBarExtra = true
+        refreshIntervalSeconds = 2.0
+        chromiumEndpoint = ""
+        dockerSocketPath = "/var/run/docker.sock"
+        privilegedHelperPath = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/aetower-helper").path
+        privilegedHelperEnabled = false
+        chau7Endpoint = ""
+        telemetryEnabled = false
+        telemetryEndpoint = "http://localhost:4318/v1/metrics"
+        telemetryExportIntervalSeconds = 30.0
+        collectionProfile = .balanced
+        adaptiveCadenceEnabled = true
+        engineActiveIntervalSeconds = 2.0
+        engineIdleIntervalSeconds = 5.0
+        engineLowPowerIntervalSeconds = 8.0
+        gpuSampleIntervalSeconds = 30.0
+        gpuSampleLowPowerIntervalSeconds = 60.0
+        notificationsEnabled = false
+        frictionNotificationThreshold = 60.0
+        appearanceMode = "system"
+        exportPrivacyTier = .redacted
+    }
+
     func persist() {
         defaults.set(showMenuBarExtra, forKey: Self.showMenuBarExtraKey)
         defaults.set(refreshIntervalSeconds, forKey: Self.refreshIntervalKey)
