@@ -645,13 +645,6 @@ public struct Chau7View: View {
                             color: AetowerDesign.Status.ready
                         )
                     }
-                    if cost.totalInputTokens + cost.totalOutputTokens > 0,
-                       cost.totalOutputTokens == 0 {
-                        metricPill(
-                            label: formatTokens(cost.totalInputTokens + cost.totalOutputTokens),
-                            color: AetowerDesign.Status.ready
-                        )
-                    }
                     if cost.totalRuns > 0 {
                         metricPill(
                             label: "\(cost.totalRuns) run\(cost.totalRuns == 1 ? "" : "s")",
@@ -1270,7 +1263,11 @@ public struct Chau7View: View {
                 entityName: energy.displayName,
                 valueLabel: formatEnergy(njPerS: energy.metrics.energyNjPerS),
                 color: AetowerDesign.Tone.energy,
-                trend: energy.trend.cpuPercent.map(Double.init)
+                // No dedicated energy trend array exists in MetricTrend;
+                // friction is the closest proxy since energy correlates
+                // with overall system impact. CPU trend was incorrectly
+                // used here before (copy-paste from the CPU leader).
+                trend: energy.trend.friction.map(Double.init)
             ))
         }
         if let gpu = agents.max(by: { $0.metrics.estimatedGpuPercent < $1.metrics.estimatedGpuPercent }), gpu.metrics.estimatedGpuPercent > 0 {
@@ -1280,7 +1277,12 @@ public struct Chau7View: View {
                 entityName: gpu.displayName,
                 valueLabel: String(format: "%.0f%%", gpu.metrics.estimatedGpuPercent),
                 color: AetowerDesign.Tone.gpu,
-                trend: gpu.trend.friction.map(Double.init)
+                // MetricTrend has no GPU-specific trend array. CPU is
+                // the best available proxy — GPU-heavy AI workloads on
+                // Apple Silicon drive CPU for dispatch scheduling even
+                // when most compute runs on Metal. Friction trend was
+                // incorrectly used here before.
+                trend: gpu.trend.cpuPercent.map(Double.init)
             ))
         }
         if let wakeups = agents.max(by: { $0.metrics.wakeupsPerSecond < $1.metrics.wakeupsPerSecond }), wakeups.metrics.wakeupsPerSecond > 0 {
