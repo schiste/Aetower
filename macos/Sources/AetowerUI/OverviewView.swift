@@ -430,7 +430,7 @@ public struct OverviewView: View {
     }
 
     private func burdenLeaderSamples(for leader: BurdenLeaderSummary) -> [Double] {
-        guard let entity = state.snapshot.entities.first(where: { $0.displayName == leader.entityName }) else {
+        guard let entity = state.snapshot.entities.first(where: { $0.entityId == leader.entityId }) else {
             return []
         }
         switch leader.id {

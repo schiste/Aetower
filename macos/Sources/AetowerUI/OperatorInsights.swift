@@ -44,6 +44,7 @@ struct HostIncidentSummary {
 struct BurdenLeaderSummary: Identifiable {
     let id: String
     let title: String
+    let entityId: String
     let entityName: String
     let metricValue: String
     let detail: String
@@ -130,6 +131,7 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
             BurdenLeaderSummary(
                 id: "memory",
                 title: "Memory leader",
+                entityId: memoryLeader.entityId,
                 entityName: memoryLeader.displayName,
                 metricValue: operatorFormatBytes(memoryLeader.metrics.memoryResidentBytes),
                 detail: "Largest resident footprint in the current snapshot.",
@@ -145,6 +147,7 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
             BurdenLeaderSummary(
                 id: "wakeups",
                 title: "Wakeup leader",
+                entityId: wakeupLeader.entityId,
                 entityName: wakeupLeader.displayName,
                 metricValue: operatorFormatWakeups(wakeupLeader.metrics.wakeupsPerSecond),
                 detail: "Top timer and interrupt churn source right now.",
@@ -162,6 +165,7 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
                 BurdenLeaderSummary(
                     id: "disk",
                     title: "Disk leader",
+                    entityId: diskLeader.entityId,
                     entityName: diskLeader.displayName,
                     metricValue: operatorFormatRate(throughput),
                     detail: "Highest read/write throughput among attributed groups.",
@@ -180,6 +184,7 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
                 BurdenLeaderSummary(
                     id: "network",
                     title: "Network leader",
+                    entityId: networkLeader.entityId,
                     entityName: networkLeader.displayName,
                     metricValue: operatorFormatRate(throughput),
                     detail: "Largest current network mover among attributed groups.",
