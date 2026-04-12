@@ -55,6 +55,21 @@ const DIAGNOSTICS_WARN_CRITICAL: u32 = 800;
 const DIAGNOSTICS_ERROR_WARNING: u32 = 10;
 const DIAGNOSTICS_ERROR_CRITICAL: u32 = 50;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MessageFraming {
+    ContentLength,
+    JsonLine,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalMcpCache {
+    pub updated_at_millis: u64,
+    pub snapshot: SystemSnapshot,
+    pub runtime_lag: RuntimeLagMetrics,
+    pub diagnostics_overview: DiagnosticsOverview,
+    pub recent_diagnostics: Vec<DiagnosticsEvent>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct HistorySummaryResponse {
     pub store_bytes: u64,
@@ -321,6 +336,43 @@ pub fn default_socket_path() -> PathBuf {
     base.join(".aetower").join("mcp.sock")
 }
 
+pub fn default_app_support_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Aetower")
+}
+
+pub fn default_cache_path() -> PathBuf {
+    if let Some(override_path) = env::var_os("AETOWER_MCP_CACHE_PATH") {
+        return PathBuf::from(override_path);
+    }
+    default_app_support_dir().join("mcp-cache.json")
+}
+
+pub fn write_local_cache(cache: &LocalMcpCache, path: impl AsRef<Path>) -> Result<(), String> {
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create MCP cache directory {}: {error}", parent.display()))?;
+    }
+    let temp_path = path.with_extension("json.tmp");
+    let payload =
+        serde_json::to_vec(cache).map_err(|error| format!("serialize MCP cache: {error}"))?;
+    fs::write(&temp_path, payload)
+        .map_err(|error| format!("write MCP cache {}: {error}", temp_path.display()))?;
+    fs::rename(&temp_path, path)
+        .map_err(|error| format!("rename MCP cache {}: {error}", path.display()))?;
+    Ok(())
+}
+
+pub fn read_local_cache(path: impl AsRef<Path>) -> Result<LocalMcpCache, String> {
+    let path = path.as_ref();
+    let bytes =
+        fs::read(path).map_err(|error| format!("read MCP cache {}: {error}", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("parse MCP cache {}: {error}", path.display()))
+}
+
 pub fn start_local_socket_server(
     data_source: Arc<dyn AetowerMcpDataSource>,
     socket_path: impl AsRef<Path>,
@@ -490,13 +542,18 @@ fn handle_connection(
         .map_err(|error| format!("set MCP socket read timeout: {error}"))?;
     let mut writer = stream;
     let server = AetowerMcpServer { data_source };
+    let mut framing = None;
 
     loop {
-        match read_message(&mut reader)? {
+        match read_message(&mut reader, &mut framing)? {
             ReadMessageOutcome::Message(message) => {
                 let response = server.handle_message(message);
                 if let Some(response) = response {
-                    write_message(&mut writer, &response)?;
+                    write_message(
+                        &mut writer,
+                        &response,
+                        framing.unwrap_or(MessageFraming::ContentLength),
+                    )?;
                 }
             }
             ReadMessageOutcome::EndOfStream => break,
@@ -517,11 +574,16 @@ where
     W: Write,
 {
     let server = AetowerMcpServer { data_source };
+    let mut framing = None;
     loop {
-        match read_message(&mut reader)? {
+        match read_message(&mut reader, &mut framing)? {
             ReadMessageOutcome::Message(message) => {
                 if let Some(response) = server.handle_message(message) {
-                    write_message(&mut writer, &response)?;
+                    write_message(
+                        &mut writer,
+                        &response,
+                        framing.unwrap_or(MessageFraming::ContentLength),
+                    )?;
                 }
             }
             ReadMessageOutcome::EndOfStream => break,
@@ -3469,10 +3531,17 @@ fn jsonrpc_error(code: i64, message: impl Into<String>) -> Value {
     })
 }
 
-fn read_message(reader: &mut impl Read) -> Result<ReadMessageOutcome, String> {
+fn read_message(
+    reader: &mut impl Read,
+    framing: &mut Option<MessageFraming>,
+) -> Result<ReadMessageOutcome, String> {
+    if matches!(framing, Some(MessageFraming::JsonLine)) {
+        return read_json_line_message(reader);
+    }
+
     let mut headers = Vec::new();
     let mut byte = [0u8; 1];
-    let mut window = Vec::new();
+    let mut recent = Vec::new();
 
     loop {
         match reader.read(&mut byte) {
@@ -3480,15 +3549,25 @@ fn read_message(reader: &mut impl Read) -> Result<ReadMessageOutcome, String> {
                 if headers.is_empty() {
                     return Ok(ReadMessageOutcome::EndOfStream);
                 }
+                let trimmed = trim_ascii_whitespace(&headers);
+                if is_json_line_candidate(trimmed) {
+                    *framing = Some(MessageFraming::JsonLine);
+                    return parse_json_line(trimmed);
+                }
                 return Err("unexpected EOF while reading headers".into());
             }
             Ok(_) => {
                 headers.push(byte[0]);
-                window.push(byte[0]);
-                if window.len() > 4 {
-                    window.remove(0);
+                let trimmed = trim_ascii_whitespace(&headers);
+                if is_json_line_candidate(trimmed) && byte[0] == b'\n' {
+                    *framing = Some(MessageFraming::JsonLine);
+                    return parse_json_line(trimmed);
                 }
-                if window == b"\r\n\r\n" {
+                recent.push(byte[0]);
+                if recent.len() > 4 {
+                    recent.remove(0);
+                }
+                if recent.ends_with(b"\r\n\r\n") || recent.ends_with(b"\n\n") {
                     break;
                 }
             }
@@ -3531,17 +3610,91 @@ fn read_message(reader: &mut impl Read) -> Result<ReadMessageOutcome, String> {
         }
     }
     let value = serde_json::from_slice(&body).map_err(|error| format!("parse json: {error}"))?;
+    *framing = Some(MessageFraming::ContentLength);
     Ok(ReadMessageOutcome::Message(value))
 }
 
-fn write_message(writer: &mut impl Write, message: &Value) -> Result<(), String> {
+fn read_json_line_message(reader: &mut impl Read) -> Result<ReadMessageOutcome, String> {
+    let mut buffer = Vec::new();
+    let mut byte = [0u8; 1];
+
+    loop {
+        match reader.read(&mut byte) {
+            Ok(0) => {
+                if buffer.is_empty() {
+                    return Ok(ReadMessageOutcome::EndOfStream);
+                }
+                return parse_json_line(trim_ascii_whitespace(&buffer));
+            }
+            Ok(_) => {
+                buffer.push(byte[0]);
+                if byte[0] == b'\n' {
+                    return parse_json_line(trim_ascii_whitespace(&buffer));
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                return Ok(ReadMessageOutcome::Timeout);
+            }
+            Err(error) => return Err(format!("read json line: {error}")),
+        }
+    }
+}
+
+fn is_json_line_candidate(bytes: &[u8]) -> bool {
+    matches!(bytes.first(), Some(b'{') | Some(b'['))
+}
+
+fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
+    let start = bytes
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map(|index| index + 1)
+        .unwrap_or(start);
+    &bytes[start..end]
+}
+
+fn parse_json_line(bytes: &[u8]) -> Result<ReadMessageOutcome, String> {
+    if bytes.is_empty() {
+        return Ok(ReadMessageOutcome::Timeout);
+    }
+    let value =
+        serde_json::from_slice(bytes).map_err(|error| format!("parse json line: {error}"))?;
+    Ok(ReadMessageOutcome::Message(value))
+}
+
+fn write_message(
+    writer: &mut impl Write,
+    message: &Value,
+    framing: MessageFraming,
+) -> Result<(), String> {
     let body =
         serde_json::to_vec(message).map_err(|error| format!("serialize response: {error}"))?;
-    write!(writer, "Content-Length: {}\r\n\r\n", body.len())
-        .map_err(|error| format!("write header: {error}"))?;
-    writer
-        .write_all(&body)
-        .map_err(|error| format!("write body: {error}"))?;
+    match framing {
+        MessageFraming::ContentLength => {
+            write!(writer, "Content-Length: {}\r\n\r\n", body.len())
+                .map_err(|error| format!("write header: {error}"))?;
+            writer
+                .write_all(&body)
+                .map_err(|error| format!("write body: {error}"))?;
+        }
+        MessageFraming::JsonLine => {
+            writer
+                .write_all(&body)
+                .map_err(|error| format!("write json line: {error}"))?;
+            writer
+                .write_all(b"\n")
+                .map_err(|error| format!("write json line terminator: {error}"))?;
+        }
+    }
     writer.flush().map_err(|error| format!("flush: {error}"))
 }
 
@@ -3816,13 +3969,49 @@ mod tests {
         let payload = br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
         let mut input = format!("Content-Length: {}\r\n\r\n", payload.len()).into_bytes();
         input.extend_from_slice(payload);
-        let outcome = match read_message(&mut input.as_slice()) {
+        let mut framing = None;
+        let outcome = match read_message(&mut input.as_slice(), &mut framing) {
             Ok(outcome) => outcome,
             Err(error) => panic!("read message: {error}"),
         };
         let ReadMessageOutcome::Message(message) = outcome else {
             panic!("expected framed message");
         };
+        assert_eq!(framing, Some(MessageFraming::ContentLength));
+        assert_eq!(message.get("method").and_then(Value::as_str), Some("ping"));
+    }
+
+    #[test]
+    fn reads_lf_only_framed_message() {
+        let payload = br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let mut input = format!("Content-Length: {}\n\n", payload.len()).into_bytes();
+        input.extend_from_slice(payload);
+        let mut framing = None;
+        let outcome = match read_message(&mut input.as_slice(), &mut framing) {
+            Ok(outcome) => outcome,
+            Err(error) => panic!("read message: {error}"),
+        };
+        let ReadMessageOutcome::Message(message) = outcome else {
+            panic!("expected framed message");
+        };
+        assert_eq!(framing, Some(MessageFraming::ContentLength));
+        assert_eq!(message.get("method").and_then(Value::as_str), Some("ping"));
+    }
+
+    #[test]
+    fn reads_newline_delimited_json_message() {
+        let payload = br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let mut input = payload.to_vec();
+        input.push(b'\n');
+        let mut framing = None;
+        let outcome = match read_message(&mut input.as_slice(), &mut framing) {
+            Ok(outcome) => outcome,
+            Err(error) => panic!("read message: {error}"),
+        };
+        let ReadMessageOutcome::Message(message) = outcome else {
+            panic!("expected framed message");
+        };
+        assert_eq!(framing, Some(MessageFraming::JsonLine));
         assert_eq!(message.get("method").and_then(Value::as_str), Some("ping"));
     }
 
@@ -4076,11 +4265,12 @@ mod tests {
             Err(_) => panic!("output lock"),
         };
         let mut framed_output = buffer.as_slice();
-        let first = match read_message(&mut framed_output) {
+        let mut framing = None;
+        let first = match read_message(&mut framed_output, &mut framing) {
             Ok(message) => message,
             Err(error) => panic!("first frame: {error}"),
         };
-        let second = match read_message(&mut framed_output) {
+        let second = match read_message(&mut framed_output, &mut framing) {
             Ok(message) => message,
             Err(error) => panic!("second frame: {error}"),
         };

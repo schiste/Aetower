@@ -3,8 +3,8 @@ use std::sync::Arc;
 use aetower_core::{Engine, RuntimeCollectionSettings};
 use aetower_diagnostics as diagnostics;
 use aetower_mcp::{
-    AetowerMcpDataSource, HistorySummaryResponse, LocalMcpServerHandle, default_socket_path,
-    start_local_socket_server,
+    AetowerMcpDataSource, HistorySummaryResponse, LocalMcpCache, LocalMcpServerHandle,
+    default_cache_path, default_socket_path, start_local_socket_server, write_local_cache,
 };
 use aetower_model as model;
 
@@ -1090,6 +1090,33 @@ impl MonitorEngine {
                 }
                 error
             }
+        }
+    }
+
+    pub fn refresh_local_mcp_cache(&self, cache_path: Option<String>) -> String {
+        let resolved_path = cache_path
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(default_cache_path);
+        let cache = {
+            let engine = match self.inner.lock() {
+                Ok(engine) => engine,
+                Err(_) => return "engine lock poisoned".to_owned(),
+            };
+            LocalMcpCache {
+                updated_at_millis: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+                    .unwrap_or(0),
+                snapshot: engine.latest_snapshot(),
+                runtime_lag: engine.latest_runtime_lag_metrics(),
+                diagnostics_overview: engine.diagnostics_overview(),
+                recent_diagnostics: engine.latest_diagnostics(500),
+            }
+        };
+
+        match write_local_cache(&cache, &resolved_path) {
+            Ok(()) => String::new(),
+            Err(error) => error,
         }
     }
 }

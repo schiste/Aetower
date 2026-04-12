@@ -127,6 +127,11 @@ public final class EngineBridge: @unchecked Sendable {
         return result.isEmpty ? nil : result
     }
 
+    public func refreshLocalMcpCache(cachePath: String? = nil) -> String? {
+        let result = engine.refreshLocalMcpCache(cachePath: cachePath)
+        return result.isEmpty ? nil : result
+    }
+
     public func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSnapshot] {
         engine.loadHistoryRange(startMillis: startMillis, endMillis: endMillis)
     }

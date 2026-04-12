@@ -556,6 +556,9 @@ public final class AppState {
                 windowTitle: lastPublishedWindowTitle
             )
             runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
+            if let cacheError = bridge.refreshLocalMcpCache() {
+                lastError = cacheError
+            }
             refreshOperatorState(force: force)
             if let updatedSnapshotValue, lagMonitoringActive {
                 publishUiLagMetrics(
@@ -596,6 +599,9 @@ public final class AppState {
         } else {
             localMcpServerStarted = true
             localMcpServerHealthy = FileManager.default.fileExists(atPath: localMcpSocketPath)
+            if let cacheError = bridge.refreshLocalMcpCache() {
+                lastError = cacheError
+            }
             refreshLocalMcpClientStatuses()
         }
     }

@@ -131,9 +131,9 @@ dependencies = [
 name = "aetower-mcp"
 version = "0.1.0"
 dependencies = [
- "aetower-core",
  "aetower-diagnostics",
  "aetower-model",
+ "aetower-persistence",
  "dirs",
  "serde",
  "serde_json",

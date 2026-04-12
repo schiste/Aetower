@@ -599,6 +599,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func recordDiagnosticsEvent(event: DiagnosticsEvent) 
     
+    func refreshLocalMcpCache(cachePath: String?)  -> String
+    
     /**
      * Restore a fan to automatic (OS-controlled) mode.
      */
@@ -887,6 +889,14 @@ open func recordDiagnosticsEvent(event: DiagnosticsEvent)  {try! rustCall() {
         FfiConverterTypeDiagnosticsEvent_lower(event),$0
     )
 }
+}
+    
+open func refreshLocalMcpCache(cachePath: String?) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_refresh_local_mcp_cache(self.uniffiClonePointer(),
+        FfiConverterOptionString.lower(cachePath),$0
+    )
+})
 }
     
     /**
@@ -8097,6 +8107,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_record_diagnostics_event() != 15141) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_refresh_local_mcp_cache() != 39470) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_reset_fan_auto() != 1522) {
