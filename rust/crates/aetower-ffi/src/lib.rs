@@ -564,6 +564,18 @@ pub struct SystemSnapshot {
     pub capabilities: Vec<CapabilitySnapshot>,
     pub entities: Vec<EntitySnapshot>,
     pub timeline: Vec<TimelineEvent>,
+    pub ai_repo_summaries: Vec<AiRepoSummary>,
+}
+
+/// Per-repository AI cost summary from the Chau7 adapter.
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct AiRepoSummary {
+    pub repo_path: String,
+    pub display_name: String,
+    pub total_runs: u32,
+    pub total_tokens: u64,
+    pub total_cost_usd: f32,
+    pub providers: Vec<String>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -1928,6 +1940,24 @@ impl From<model::SystemSnapshot> for SystemSnapshot {
             capabilities: value.capabilities.into_iter().map(Into::into).collect(),
             entities: value.entities.into_iter().map(Into::into).collect(),
             timeline: value.timeline.into_iter().map(Into::into).collect(),
+            ai_repo_summaries: value
+                .ai_repo_summaries
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        }
+    }
+}
+
+impl From<model::AiRepoSummary> for AiRepoSummary {
+    fn from(value: model::AiRepoSummary) -> Self {
+        Self {
+            repo_path: value.repo_path,
+            display_name: value.display_name,
+            total_runs: value.total_runs,
+            total_tokens: value.total_tokens,
+            total_cost_usd: value.total_cost_usd,
+            providers: value.providers,
         }
     }
 }

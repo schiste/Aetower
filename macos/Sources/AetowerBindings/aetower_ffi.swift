@@ -1466,6 +1466,111 @@ public func FfiConverterTypeAggregateMetrics_lower(_ value: AggregateMetrics) ->
 
 
 /**
+ * Per-repository AI cost summary from the Chau7 adapter.
+ */
+public struct AiRepoSummary {
+    public var repoPath: String
+    public var displayName: String
+    public var totalRuns: UInt32
+    public var totalTokens: UInt64
+    public var totalCostUsd: Float
+    public var providers: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(repoPath: String, displayName: String, totalRuns: UInt32, totalTokens: UInt64, totalCostUsd: Float, providers: [String]) {
+        self.repoPath = repoPath
+        self.displayName = displayName
+        self.totalRuns = totalRuns
+        self.totalTokens = totalTokens
+        self.totalCostUsd = totalCostUsd
+        self.providers = providers
+    }
+}
+
+#if compiler(>=6)
+extension AiRepoSummary: Sendable {}
+#endif
+
+
+extension AiRepoSummary: Equatable, Hashable {
+    public static func ==(lhs: AiRepoSummary, rhs: AiRepoSummary) -> Bool {
+        if lhs.repoPath != rhs.repoPath {
+            return false
+        }
+        if lhs.displayName != rhs.displayName {
+            return false
+        }
+        if lhs.totalRuns != rhs.totalRuns {
+            return false
+        }
+        if lhs.totalTokens != rhs.totalTokens {
+            return false
+        }
+        if lhs.totalCostUsd != rhs.totalCostUsd {
+            return false
+        }
+        if lhs.providers != rhs.providers {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(repoPath)
+        hasher.combine(displayName)
+        hasher.combine(totalRuns)
+        hasher.combine(totalTokens)
+        hasher.combine(totalCostUsd)
+        hasher.combine(providers)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAiRepoSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AiRepoSummary {
+        return
+            try AiRepoSummary(
+                repoPath: FfiConverterString.read(from: &buf), 
+                displayName: FfiConverterString.read(from: &buf), 
+                totalRuns: FfiConverterUInt32.read(from: &buf), 
+                totalTokens: FfiConverterUInt64.read(from: &buf), 
+                totalCostUsd: FfiConverterFloat.read(from: &buf), 
+                providers: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AiRepoSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.repoPath, into: &buf)
+        FfiConverterString.write(value.displayName, into: &buf)
+        FfiConverterUInt32.write(value.totalRuns, into: &buf)
+        FfiConverterUInt64.write(value.totalTokens, into: &buf)
+        FfiConverterFloat.write(value.totalCostUsd, into: &buf)
+        FfiConverterSequenceString.write(value.providers, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAiRepoSummary_lift(_ buf: RustBuffer) throws -> AiRepoSummary {
+    return try FfiConverterTypeAiRepoSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAiRepoSummary_lower(_ value: AiRepoSummary) -> RustBuffer {
+    return FfiConverterTypeAiRepoSummary.lower(value)
+}
+
+
+/**
  * Long-lived battery health metrics exposed to Swift.
  *
  * All values are derived in a single IOPSCopyPowerSourcesInfo pass. Every
@@ -4724,10 +4829,11 @@ public struct SystemSnapshot {
     public var capabilities: [CapabilitySnapshot]
     public var entities: [EntitySnapshot]
     public var timeline: [TimelineEvent]
+    public var aiRepoSummaries: [AiRepoSummary]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sequence: UInt64, capturedAtMillis: UInt64, host: HostSnapshot, hostTrend: HostTrend, capabilities: [CapabilitySnapshot], entities: [EntitySnapshot], timeline: [TimelineEvent]) {
+    public init(sequence: UInt64, capturedAtMillis: UInt64, host: HostSnapshot, hostTrend: HostTrend, capabilities: [CapabilitySnapshot], entities: [EntitySnapshot], timeline: [TimelineEvent], aiRepoSummaries: [AiRepoSummary]) {
         self.sequence = sequence
         self.capturedAtMillis = capturedAtMillis
         self.host = host
@@ -4735,6 +4841,7 @@ public struct SystemSnapshot {
         self.capabilities = capabilities
         self.entities = entities
         self.timeline = timeline
+        self.aiRepoSummaries = aiRepoSummaries
     }
 }
 
@@ -4766,6 +4873,9 @@ extension SystemSnapshot: Equatable, Hashable {
         if lhs.timeline != rhs.timeline {
             return false
         }
+        if lhs.aiRepoSummaries != rhs.aiRepoSummaries {
+            return false
+        }
         return true
     }
 
@@ -4777,6 +4887,7 @@ extension SystemSnapshot: Equatable, Hashable {
         hasher.combine(capabilities)
         hasher.combine(entities)
         hasher.combine(timeline)
+        hasher.combine(aiRepoSummaries)
     }
 }
 
@@ -4795,7 +4906,8 @@ public struct FfiConverterTypeSystemSnapshot: FfiConverterRustBuffer {
                 hostTrend: FfiConverterTypeHostTrend.read(from: &buf), 
                 capabilities: FfiConverterSequenceTypeCapabilitySnapshot.read(from: &buf), 
                 entities: FfiConverterSequenceTypeEntitySnapshot.read(from: &buf), 
-                timeline: FfiConverterSequenceTypeTimelineEvent.read(from: &buf)
+                timeline: FfiConverterSequenceTypeTimelineEvent.read(from: &buf), 
+                aiRepoSummaries: FfiConverterSequenceTypeAiRepoSummary.read(from: &buf)
         )
     }
 
@@ -4807,6 +4919,7 @@ public struct FfiConverterTypeSystemSnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeCapabilitySnapshot.write(value.capabilities, into: &buf)
         FfiConverterSequenceTypeEntitySnapshot.write(value.entities, into: &buf)
         FfiConverterSequenceTypeTimelineEvent.write(value.timeline, into: &buf)
+        FfiConverterSequenceTypeAiRepoSummary.write(value.aiRepoSummaries, into: &buf)
     }
 }
 
@@ -7299,6 +7412,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAiRepoSummary: FfiConverterRustBuffer {
+    typealias SwiftType = [AiRepoSummary]
+
+    public static func write(_ value: [AiRepoSummary], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAiRepoSummary.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AiRepoSummary] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AiRepoSummary]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAiRepoSummary.read(from: &buf))
         }
         return seq
     }

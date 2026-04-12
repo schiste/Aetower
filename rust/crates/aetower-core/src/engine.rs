@@ -201,6 +201,7 @@ impl Engine {
             entities: Vec::new(),
             host_trend: HostTrend::default(),
             timeline: Vec::new(),
+            ai_repo_summaries: Vec::new(),
         };
 
         // Open persistence database (best-effort — app works without it).
@@ -455,6 +456,7 @@ impl Engine {
                     capabilities: capabilities.values().cloned().collect(),
                     entities,
                     timeline,
+                    ai_repo_summaries: adapters.ai_repo_summaries(),
                 };
                 // Persist snapshot (best-effort, throttled by write_interval).
                 let persist_started = Instant::now();

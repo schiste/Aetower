@@ -401,6 +401,28 @@ impl AdapterManager {
         guard.chau7_last_error = None;
     }
 
+    /// Extract per-repository AI cost summaries from the cached Chau7
+    /// snapshot. Returns an empty Vec when Chau7 is not connected or no
+    /// repos have been tracked yet.
+    pub fn ai_repo_summaries(&self) -> Vec<aetower_model::AiRepoSummary> {
+        let guard = self.state.lock();
+        let Some(snapshot) = guard.cached_chau7_snapshot.as_ref() else {
+            return Vec::new();
+        };
+        snapshot
+            .repo_stats
+            .iter()
+            .map(|(repo_path, stats)| aetower_model::AiRepoSummary {
+                repo_path: repo_path.clone(),
+                display_name: shorten_home_path(repo_path),
+                total_runs: stats.total_runs,
+                total_tokens: stats.total_tokens,
+                total_cost_usd: stats.total_cost,
+                providers: stats.providers.clone(),
+            })
+            .collect()
+    }
+
     pub fn stop_chau7_session(&self, session_id: &str, force: bool) -> Result<(), String> {
         let guard = self.state.lock();
         let socket_path = guard
@@ -2298,6 +2320,17 @@ fn fetch_docker_containers(config: &DockerAdapterConfig) -> Result<Vec<DockerCon
     }
 
     Ok(containers)
+}
+
+/// Replace the user's home directory prefix with `~` for compact display.
+fn shorten_home_path(path: &str) -> String {
+    if let Some(home) = dirs::home_dir() {
+        let home_str = home.to_string_lossy();
+        if let Some(rest) = path.strip_prefix(home_str.as_ref()) {
+            return format!("~{rest}");
+        }
+    }
+    path.to_owned()
 }
 
 fn fetch_privileged_helper_sample(helper_path: &str) -> Result<PrivilegedHelperSnapshot, String> {

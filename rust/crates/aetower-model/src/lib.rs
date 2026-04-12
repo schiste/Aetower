@@ -503,6 +503,26 @@ pub struct SystemSnapshot {
     pub capabilities: Vec<CapabilitySnapshot>,
     pub entities: Vec<EntitySnapshot>,
     pub timeline: Vec<TimelineEvent>,
+    /// Per-repository AI cost summary sourced from the Chau7 adapter.
+    /// Empty when Chau7 is not connected or no repos have been tracked.
+    #[serde(default)]
+    pub ai_repo_summaries: Vec<AiRepoSummary>,
+}
+
+/// Aggregated cost/usage data for one repository tracked by Chau7.
+///
+/// Populated from `Chau7RepoStats` during adapter enrichment. The
+/// display_name is a shortened version of the full path for UI
+/// rendering (e.g. `~/Projects/Aetower` instead of the full absolute
+/// path).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AiRepoSummary {
+    pub repo_path: String,
+    pub display_name: String,
+    pub total_runs: u32,
+    pub total_tokens: u64,
+    pub total_cost_usd: f32,
+    pub providers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
