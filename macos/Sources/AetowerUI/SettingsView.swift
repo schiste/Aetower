@@ -355,7 +355,7 @@ public struct SettingsView: View {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
-                                Text(capabilityKindLabel(capability.kind))
+                                Text(capabilityKindDisplayName(capability.kind))
                                     .font(.headline)
                                 Spacer()
                                 HStack(spacing: 6) {
@@ -479,27 +479,6 @@ private func capabilityHealthColor(_ health: CapabilityHealth) -> Color {
         return .orange
     case .degraded:
         return .red
-    }
-}
-
-private func capabilityKindLabel(_ kind: CapabilityKind) -> String {
-    switch kind {
-    case .accessibility:
-        return "Accessibility"
-    case .fullDiskAccess:
-        return "Full Disk Access"
-    case .appleAutomation:
-        return "Apple Automation"
-    case .chromiumDebug:
-        return "Chromium Debug"
-    case .dockerSocket:
-        return "Docker Socket"
-    case .privilegedHelper:
-        return "Privileged Helper"
-    case .chau7:
-        return "Chau7"
-    case .endpointSecurity:
-        return "Endpoint Security"
     }
 }
 

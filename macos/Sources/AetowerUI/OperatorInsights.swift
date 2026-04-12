@@ -487,7 +487,7 @@ private func capabilityHealthDetail(_ capabilities: [CapabilitySnapshot]) -> Str
     if degraded.isEmpty {
         return "No blocking capability gaps are currently detected."
     }
-    return degraded.prefix(3).map { operatorCapabilityKindLabel($0.kind) }.joined(separator: ", ")
+    return degraded.prefix(3).map { capabilityKindDisplayName($0.kind) }.joined(separator: ", ")
 }
 
 private func operatorHostPressureBand(_ host: HostSnapshot) -> OperatorSeverity {
@@ -557,24 +557,3 @@ private func operatorRuntimeSeverity(_ runtime: RuntimeLagMetrics) -> OperatorSe
 // operatorFormatBytes/Rate/Wakeups removed — use the shared
 // formatBytes/formatRate/formatWakeups from MonitorFormatters.swift
 // which cache the ByteCountFormatter instead of allocating per call.
-
-private func operatorCapabilityKindLabel(_ kind: CapabilityKind) -> String {
-    switch kind {
-    case .accessibility:
-        return "Accessibility"
-    case .fullDiskAccess:
-        return "Full Disk Access"
-    case .appleAutomation:
-        return "Apple Automation"
-    case .chromiumDebug:
-        return "Chromium Debug"
-    case .dockerSocket:
-        return "Docker Socket"
-    case .privilegedHelper:
-        return "Privileged Helper"
-    case .chau7:
-        return "Chau7"
-    case .endpointSecurity:
-        return "Endpoint Security"
-    }
-}
