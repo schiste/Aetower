@@ -27,14 +27,17 @@ struct LocalMcpClientRegistrationReport {
 
 struct LocalMcpClientRegistrar {
     private enum Client: String, CaseIterable {
-        case claude
+        case claudeDesktop
+        case claudeCli
         case codex
         case chatgpt
 
         var displayName: String {
             switch self {
-            case .claude:
-                return "Claude"
+            case .claudeDesktop:
+                return "Claude Desktop"
+            case .claudeCli:
+                return "Claude CLI"
             case .codex:
                 return "Codex"
             case .chatgpt:
@@ -44,7 +47,7 @@ struct LocalMcpClientRegistrar {
 
         var supportsAutomaticRegistration: Bool {
             switch self {
-            case .claude, .codex:
+            case .claudeDesktop, .claudeCli, .codex:
                 return true
             case .chatgpt:
                 return false
@@ -53,8 +56,10 @@ struct LocalMcpClientRegistrar {
 
         var configPath: String? {
             switch self {
-            case .claude:
+            case .claudeDesktop:
                 return homeRelativePath("Library/Application Support/Claude/claude_desktop_config.json")
+            case .claudeCli:
+                return homeRelativePath(".claude.json")
             case .codex:
                 return homeRelativePath(".codex/config.toml")
             case .chatgpt:
@@ -64,8 +69,10 @@ struct LocalMcpClientRegistrar {
 
         var supportMarkerPath: String? {
             switch self {
-            case .claude:
+            case .claudeDesktop:
                 return configPath
+            case .claudeCli:
+                return nil
             case .codex:
                 return homeRelativePath(".codex/config.toml")
             case .chatgpt:
@@ -75,7 +82,7 @@ struct LocalMcpClientRegistrar {
 
         var appBundleNames: [String] {
             switch self {
-            case .claude:
+            case .claudeDesktop, .claudeCli:
                 return ["Claude.app"]
             case .codex:
                 return ["Codex.app"]
@@ -97,16 +104,28 @@ struct LocalMcpClientRegistrar {
         var updatedProviders: [String] = []
         var errors: [String] = []
 
-        if let commandPath, isInstalled(.claude, fileManager: fileManager) {
+        if let commandPath, isInstalled(.claudeDesktop, fileManager: fileManager) {
             do {
                 if try upsertClaudeRegistration(commandPath: commandPath, fileManager: fileManager) {
-                    updatedProviders.append(Client.claude.displayName)
+                    updatedProviders.append(Client.claudeDesktop.displayName)
                 }
             } catch {
-                errors.append("Claude: \(error.localizedDescription)")
+                errors.append("Claude Desktop: \(error.localizedDescription)")
             }
-        } else if isInstalled(.claude, fileManager: fileManager) {
-            errors.append("Claude: Aetower MCP helper is missing from the app bundle.")
+        } else if isInstalled(.claudeDesktop, fileManager: fileManager) {
+            errors.append("Claude Desktop: Aetower MCP helper is missing from the app bundle.")
+        }
+
+        if let commandPath, isInstalled(.claudeCli, fileManager: fileManager) {
+            do {
+                if try upsertClaudeCliRegistration(commandPath: commandPath) {
+                    updatedProviders.append(Client.claudeCli.displayName)
+                }
+            } catch {
+                errors.append("Claude CLI: \(error.localizedDescription)")
+            }
+        } else if isInstalled(.claudeCli, fileManager: fileManager) {
+            errors.append("Claude CLI: Aetower MCP helper is missing from the app bundle.")
         }
 
         if let commandPath, isInstalled(.codex, fileManager: fileManager) {
@@ -171,7 +190,7 @@ struct LocalMcpClientRegistrar {
         }
 
         switch client {
-        case .claude:
+        case .claudeDesktop:
             do {
                 let registration = try claudeRegistrationState(commandPath: commandPath)
                 return LocalMcpClientRegistrationStatus(
@@ -180,8 +199,8 @@ struct LocalMcpClientRegistrar {
                     isInstalled: true,
                     state: registration,
                     detail: registration == .registered
-                        ? "Claude is configured to launch Aetower's bundled MCP proxy."
-                        : "Claude has a stable user-owned MCP config file and can be registered automatically.",
+                        ? "Claude Desktop is configured to launch Aetower's bundled MCP proxy."
+                        : "Claude Desktop has a stable user-owned MCP config file and can be registered automatically.",
                     configPath: client.configPath,
                     supportsAutomaticRegistration: true,
                     manualSnippet: configSnippet(for: client, commandPath: commandPath)
@@ -192,7 +211,34 @@ struct LocalMcpClientRegistrar {
                     displayName: client.displayName,
                     isInstalled: true,
                     state: .unavailable,
-                    detail: "Claude config could not be read: \(error.localizedDescription)",
+                    detail: "Claude Desktop config could not be read: \(error.localizedDescription)",
+                    configPath: client.configPath,
+                    supportsAutomaticRegistration: true,
+                    manualSnippet: configSnippet(for: client, commandPath: commandPath)
+                )
+            }
+        case .claudeCli:
+            do {
+                let registration = try claudeCliRegistrationState(commandPath: commandPath)
+                return LocalMcpClientRegistrationStatus(
+                    id: client.rawValue,
+                    displayName: client.displayName,
+                    isInstalled: true,
+                    state: registration,
+                    detail: registration == .registered
+                        ? "Claude CLI is configured to launch Aetower via `claude mcp`."
+                        : "Claude CLI has its own MCP registry and can be registered automatically.",
+                    configPath: client.configPath,
+                    supportsAutomaticRegistration: true,
+                    manualSnippet: configSnippet(for: client, commandPath: commandPath)
+                )
+            } catch {
+                return LocalMcpClientRegistrationStatus(
+                    id: client.rawValue,
+                    displayName: client.displayName,
+                    isInstalled: true,
+                    state: .unavailable,
+                    detail: "Claude CLI registration could not be checked: \(error.localizedDescription)",
                     configPath: client.configPath,
                     supportsAutomaticRegistration: true,
                     manualSnippet: configSnippet(for: client, commandPath: commandPath)
@@ -240,6 +286,10 @@ struct LocalMcpClientRegistrar {
     }
 
     private static func isInstalled(_ client: Client, fileManager: FileManager) -> Bool {
+        if client == .claudeCli {
+            return claudeCliAvailable()
+        }
+
         if let markerPath = client.supportMarkerPath, fileManager.fileExists(atPath: markerPath) {
             return true
         }
@@ -258,6 +308,13 @@ struct LocalMcpClientRegistrar {
         return false
     }
 
+    private static func claudeCliAvailable() -> Bool {
+        guard let result = try? runCommand(arguments: ["claude", "--version"], timeout: 3) else {
+            return false
+        }
+        return result.exitCode == 0
+    }
+
     private static func bundledProxyCommandPath(fileManager: FileManager) -> String? {
         let helperPath = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers/aetower-mcp")
@@ -266,7 +323,7 @@ struct LocalMcpClientRegistrar {
     }
 
     private static func upsertClaudeRegistration(commandPath: String, fileManager: FileManager) throws -> Bool {
-        let path = try requiredConfigPath(for: .claude)
+        let path = try requiredConfigPath(for: .claudeDesktop)
         let url = URL(fileURLWithPath: path)
         let parentURL = url.deletingLastPathComponent()
         try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true, attributes: nil)
@@ -283,7 +340,24 @@ struct LocalMcpClientRegistrar {
         root["mcpServers"] = mcpServers
 
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: url, options: .atomic)
+        try data.write(to: url, options: Data.WritingOptions.atomic)
+        return true
+    }
+
+    private static func upsertClaudeCliRegistration(commandPath: String) throws -> Bool {
+        let currentState = try claudeCliRegistrationState(commandPath: commandPath)
+        if currentState == .registered {
+            return false
+        }
+
+        _ = try? runCommand(arguments: ["claude", "mcp", "remove", "aetower"], timeout: 5)
+        let result = try runCommand(
+            arguments: ["claude", "mcp", "add", "--scope", "user", "aetower", "--", commandPath],
+            timeout: 10
+        )
+        guard result.exitCode == 0 else {
+            throw RegistrationError.commandFailed("claude mcp add", result.combinedOutput)
+        }
         return true
     }
 
@@ -327,7 +401,7 @@ command = "\(commandPath)"
     }
 
     private static func claudeRegistrationState(commandPath: String) throws -> LocalMcpClientRegistrationState {
-        let path = try requiredConfigPath(for: .claude)
+        let path = try requiredConfigPath(for: .claudeDesktop)
         let url = URL(fileURLWithPath: path)
         let root = try loadJsonObject(at: url)
         guard let mcpServers = root["mcpServers"] as? [String: Any],
@@ -337,6 +411,19 @@ command = "\(commandPath)"
             return .availableForAutomaticRegistration
         }
         return configuredCommand == commandPath ? .registered : .availableForAutomaticRegistration
+    }
+
+    private static func claudeCliRegistrationState(commandPath: String) throws -> LocalMcpClientRegistrationState {
+        let result = try runCommand(arguments: ["claude", "mcp", "get", "aetower"], timeout: 5)
+        if result.exitCode == 0 {
+            return result.combinedOutput.contains(commandPath) || result.combinedOutput.contains("aetower:")
+                ? .registered
+                : .availableForAutomaticRegistration
+        }
+        if result.combinedOutput.localizedCaseInsensitiveContains("No MCP server found with name: aetower") {
+            return .availableForAutomaticRegistration
+        }
+        throw RegistrationError.commandFailed("claude mcp get aetower", result.combinedOutput)
     }
 
     private static func codexRegistrationState(commandPath: String) throws -> LocalMcpClientRegistrationState {
@@ -381,7 +468,7 @@ command = "\(commandPath)"
 
     private static func configSnippet(for client: Client, commandPath: String) -> String {
         switch client {
-        case .claude, .chatgpt:
+        case .claudeDesktop, .chatgpt:
             let payload: [String: Any] = [
                 "mcpServers": [
                     "aetower": [
@@ -391,6 +478,8 @@ command = "\(commandPath)"
             ]
             let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
             return String(data: data ?? Data(), encoding: .utf8) ?? ""
+        case .claudeCli:
+            return "claude mcp add --scope user aetower -- \(commandPath)"
         case .codex:
             return """
             [mcp_servers.aetower]
@@ -399,13 +488,59 @@ command = "\(commandPath)"
         }
     }
 
+    private static func runCommand(arguments: [String], timeout: TimeInterval) throws -> CommandResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = arguments
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning && Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+
+        if process.isRunning {
+            process.terminate()
+            throw RegistrationError.commandTimedOut(arguments.joined(separator: " "))
+        }
+
+        let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+        return CommandResult(
+            exitCode: process.terminationStatus,
+            stdout: String(decoding: stdoutData, as: UTF8.self),
+            stderr: String(decoding: stderrData, as: UTF8.self)
+        )
+    }
+
     private static func homeRelativePath(_ suffix: String) -> String {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(suffix).path
+    }
+
+    private struct CommandResult {
+        let exitCode: Int32
+        let stdout: String
+        let stderr: String
+
+        var combinedOutput: String {
+            [stdout, stderr]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+        }
     }
 
     private enum RegistrationError: LocalizedError {
         case invalidJsonRoot(String)
         case missingConfigPath(String)
+        case commandFailed(String, String)
+        case commandTimedOut(String)
 
         var errorDescription: String? {
             switch self {
@@ -413,6 +548,10 @@ command = "\(commandPath)"
                 return "Expected a JSON object at \(path)."
             case .missingConfigPath(let displayName):
                 return "No config path is known for \(displayName)."
+            case .commandFailed(let command, let output):
+                return "\(command) failed. \(output)"
+            case .commandTimedOut(let command):
+                return "\(command) timed out."
             }
         }
     }
