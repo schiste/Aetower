@@ -2,8 +2,8 @@ import AetowerBridge
 import SwiftUI
 
 /// Dedicated tab for AI agent hardware impact — surfaces GPU attribution,
-/// energy draw, session costs, and VRAM pressure alongside per-repository
-/// token/cost breakdowns from the Chau7 adapter.
+/// energy draw, session costs, and unified GPU memory pressure alongside
+/// per-repository token/cost breakdowns from local AI runtimes.
 public struct Chau7View: View {
     let state: AppState
 
@@ -11,18 +11,36 @@ public struct Chau7View: View {
         self.state = state
     }
 
-    // MARK: - Computed data
+    // MARK: - Derived data
 
-    private var aiAgents: [EntitySnapshot] {
-        state.snapshot.entities.filter { $0.entityKind == .aiAgent }
+    private struct DerivedData {
+        let aiAgents: [EntitySnapshot]
+        let aiAgentIDs: Set<String>
+        let aiLifecycleTitles: Set<String>
+        let sortedAiAgents: [EntitySnapshot]
+        let sortedRepoSummaries: [AiRepoSummary]
+        let aiTimelineEvents: [TimelineEvent]
+        let totalEnergy: Double
+        let totalCost: Float
+        let totalSessionEnergyNj: UInt64
+        let gpuMemoryUnifiedPercent: Double
     }
 
-    private var aiAgentIDs: Set<String> {
-        Set(aiAgents.map(\.entityId))
-    }
+    private static let fallbackTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter
+    }()
 
-    private var sortedAiAgents: [EntitySnapshot] {
-        aiAgents.sorted {
+    private var host: HostSnapshot { state.snapshot.host }
+
+    private var derived: DerivedData {
+        let aiAgents = state.snapshot.entities.filter { $0.entityKind == .aiAgent }
+        let aiAgentIDs = Set(aiAgents.map(\.entityId))
+        let aiLifecycleTitles = Set(
+            aiAgents.map { "\($0.displayName) session ended".localizedLowercase }
+        )
+        let sortedAiAgents = aiAgents.sorted {
             if $0.friction.totalScore != $1.friction.totalScore {
                 return $0.friction.totalScore > $1.friction.totalScore
             }
@@ -34,37 +52,47 @@ public struct Chau7View: View {
             }
             return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
-    }
+        let sortedRepoSummaries = state.snapshot.aiRepoSummaries.sorted {
+            if $0.totalCostUsd != $1.totalCostUsd {
+                return $0.totalCostUsd > $1.totalCostUsd
+            }
+            if $0.totalTokens != $1.totalTokens {
+                return $0.totalTokens > $1.totalTokens
+            }
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+        let aiTimelineEvents = Array(
+            state.snapshot.timeline
+                .filter { isRelevantAiTimelineEvent($0, aiAgentIDs: aiAgentIDs, aiLifecycleTitles: aiLifecycleTitles) }
+                .suffix(10)
+                .reversed()
+        )
+        let totalEnergy = aiAgents.reduce(0) { $0 + $1.metrics.energyNjPerS }
+        let totalCost = aiAgents.compactMap(\.agentCost?.costUsd).reduce(0, +)
+        let totalSessionEnergyNj = aiAgents.compactMap(\.agentCost?.sessionEnergyNj).reduce(0, +)
+        let gpuMemoryUnifiedPercent = host.memoryTotalBytes > 0
+            ? Double(host.gpuMemoryBytes) / Double(host.memoryTotalBytes) * 100
+            : 0
 
-    private var host: HostSnapshot { state.snapshot.host }
-
-    private var totalEnergy: Double {
-        aiAgents.reduce(0) { $0 + $1.metrics.energyNjPerS }
-    }
-
-    private var totalCost: Float {
-        aiAgents.compactMap(\.agentCost?.costUsd).reduce(0, +)
-    }
-
-    private var totalSessionEnergyNj: UInt64 {
-        aiAgents.compactMap(\.agentCost?.sessionEnergyNj).reduce(0, +)
-    }
-
-    private var gpuMemoryUnifiedPercent: Double {
-        guard host.memoryTotalBytes > 0 else { return 0 }
-        return Double(host.gpuMemoryBytes) / Double(host.memoryTotalBytes) * 100
-    }
-
-    private var aiTimelineEvents: [TimelineEvent] {
-        state.snapshot.timeline
-            .filter(isRelevantAiTimelineEvent)
-            .suffix(10)
-            .reversed()
+        return DerivedData(
+            aiAgents: aiAgents,
+            aiAgentIDs: aiAgentIDs,
+            aiLifecycleTitles: aiLifecycleTitles,
+            sortedAiAgents: sortedAiAgents,
+            sortedRepoSummaries: sortedRepoSummaries,
+            aiTimelineEvents: aiTimelineEvents,
+            totalEnergy: totalEnergy,
+            totalCost: totalCost,
+            totalSessionEnergyNj: totalSessionEnergyNj,
+            gpuMemoryUnifiedPercent: gpuMemoryUnifiedPercent
+        )
     }
 
     // MARK: - Body
 
     public var body: some View {
+        let derived = derived
+
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
                 Text("AI & Agents")
@@ -73,16 +101,20 @@ public struct Chau7View: View {
                     .padding(.horizontal, AetowerDesign.Spacing.lg)
                     .padding(.top, AetowerDesign.Spacing.md)
 
-                if aiAgents.isEmpty && state.snapshot.aiRepoSummaries.isEmpty {
+                if derived.aiAgents.isEmpty && derived.sortedRepoSummaries.isEmpty {
                     emptyState
                 } else {
-                    summaryStrip
-                    activeAgentsSection
-                    if !state.snapshot.aiRepoSummaries.isEmpty {
-                        projectCostsSection
+                    summaryStrip(derived)
+                    if !derived.sortedAiAgents.isEmpty {
+                        activeAgentsSection(derived.sortedAiAgents)
+                    } else {
+                        inactiveAgentsState
                     }
-                    if !aiTimelineEvents.isEmpty {
-                        recentActivitySection
+                    if !derived.sortedRepoSummaries.isEmpty {
+                        projectCostsSection(derived.sortedRepoSummaries)
+                    }
+                    if !derived.aiTimelineEvents.isEmpty {
+                        recentActivitySection(derived.aiTimelineEvents)
                     }
                 }
             }
@@ -110,12 +142,32 @@ public struct Chau7View: View {
         .padding(.top, AetowerDesign.Spacing.xxl)
     }
 
+    private var inactiveAgentsState: some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: "moon.zzz")
+                .font(.caption)
+                .foregroundStyle(AetowerDesign.Status.ready)
+            Text("No live AI runtimes right now. Historical repo cost and activity remain available below.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(
+            AetowerDesign.Surface.card,
+            in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
+        )
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
+    }
+
     // MARK: - Summary strip
 
-    private var summaryStrip: some View {
-        HStack(spacing: AetowerDesign.Spacing.sm) {
+    private func summaryStrip(_ derived: DerivedData) -> some View {
+        let columns = [GridItem(.adaptive(minimum: 118), spacing: AetowerDesign.Spacing.sm)]
+
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
             summaryChip(
-                label: "\(aiAgents.count) agent\(aiAgents.count == 1 ? "" : "s")",
+                label: "\(derived.aiAgents.count) agent\(derived.aiAgents.count == 1 ? "" : "s")",
                 icon: "cpu",
                 color: AetowerDesign.Tone.cpu
             )
@@ -125,25 +177,25 @@ public struct Chau7View: View {
                 color: AetowerDesign.Tone.gpu
             )
             summaryChip(
-                label: formatEnergy(njPerS: totalEnergy),
+                label: formatEnergy(njPerS: derived.totalEnergy),
                 icon: "bolt.fill",
                 color: AetowerDesign.Tone.energy
             )
             summaryChip(
-                label: "GPU mem \(Int(gpuMemoryUnifiedPercent))%",
+                label: "GPU mem \(Int(derived.gpuMemoryUnifiedPercent))%",
                 icon: "memorychip",
-                color: gpuMemoryTone
+                color: gpuMemoryTone(derived.gpuMemoryUnifiedPercent)
             )
-            if totalCost > 0 {
+            if derived.totalCost > 0 {
                 summaryChip(
-                    label: String(format: "$%.2f", totalCost),
+                    label: String(format: "$%.2f", derived.totalCost),
                     icon: "dollarsign.circle",
                     color: AetowerDesign.Status.success
                 )
             }
-            if totalSessionEnergyNj > 0 {
+            if derived.totalSessionEnergyNj > 0 {
                 summaryChip(
-                    label: formatSessionEnergy(nj: totalSessionEnergyNj),
+                    label: formatSessionEnergy(nj: derived.totalSessionEnergyNj),
                     icon: "battery.25percent",
                     color: AetowerDesign.Status.warning
                 )
@@ -155,7 +207,6 @@ public struct Chau7View: View {
                     color: AetowerDesign.Status.error
                 )
             }
-            Spacer()
         }
         .padding(.horizontal, AetowerDesign.Spacing.lg)
     }
@@ -176,10 +227,10 @@ public struct Chau7View: View {
 
     // MARK: - Active agents
 
-    private var activeAgentsSection: some View {
+    private func activeAgentsSection(_ agents: [EntitySnapshot]) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
             sectionHeader("AI Runtimes")
-            ForEach(sortedAiAgents, id: \.entityId) { entity in
+            ForEach(agents, id: \.entityId) { entity in
                 agentCard(entity)
             }
         }
@@ -192,9 +243,7 @@ public struct Chau7View: View {
             HStack {
                 Text(entity.displayName)
                     .font(.headline)
-                if let workspace = entity.components.first(where: {
-                    $0.adapterContext?.kind == .chau7Session
-                })?.adapterContext?.repoRoot {
+                if let workspace = projectContext(for: entity) {
                     Text("—")
                         .foregroundStyle(.tertiary)
                     Text(shortenPath(workspace))
@@ -279,10 +328,10 @@ public struct Chau7View: View {
 
     // MARK: - Project costs
 
-    private var projectCostsSection: some View {
+    private func projectCostsSection(_ repoSummaries: [AiRepoSummary]) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
             sectionHeader("Project Costs")
-            ForEach(sortedRepoSummaries, id: \.repoPath) { repo in
+            ForEach(repoSummaries, id: \.repoPath) { repo in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(repo.displayName)
@@ -317,10 +366,10 @@ public struct Chau7View: View {
 
     // MARK: - Recent activity
 
-    private var recentActivitySection: some View {
+    private func recentActivitySection(_ events: [TimelineEvent]) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
             sectionHeader("Recent Activity")
-            ForEach(Array(aiTimelineEvents), id: \.id) { event in
+            ForEach(events, id: \.id) { event in
                 HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
                     Circle()
                         .fill(severityColor(event.severity))
@@ -373,7 +422,7 @@ public struct Chau7View: View {
         }
     }
 
-    private var gpuMemoryTone: Color {
+    private func gpuMemoryTone(_ gpuMemoryUnifiedPercent: Double) -> Color {
         if gpuMemoryUnifiedPercent >= 90 {
             return AetowerDesign.Status.error
         }
@@ -383,19 +432,46 @@ public struct Chau7View: View {
         return AetowerDesign.Status.success
     }
 
-    private var sortedRepoSummaries: [AiRepoSummary] {
-        state.snapshot.aiRepoSummaries.sorted {
-            if $0.totalCostUsd != $1.totalCostUsd {
-                return $0.totalCostUsd > $1.totalCostUsd
+    private func projectContext(for entity: EntitySnapshot) -> String? {
+        func rankedPath(_ component: ComponentSnapshot) -> (Int, String)? {
+            if let repoRoot = component.adapterContext?.repoRoot, !repoRoot.isEmpty {
+                let rank = component.adapterContext?.kind == .chau7Session ? 0 : 1
+                return (rank, repoRoot)
             }
-            if $0.totalTokens != $1.totalTokens {
-                return $0.totalTokens > $1.totalTokens
+
+            if let workspacePath = component.adapterContext?.workspacePath, !workspacePath.isEmpty {
+                let kind = component.adapterContext?.kind
+                let rank = (kind == .vsCodeWorkspace || kind == .vsCodeRuntime) ? 0 : 2
+                return (rank, workspacePath)
             }
-            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+
+            if let cwd = component.cwd, !cwd.isEmpty {
+                return (3, cwd)
+            }
+
+            return nil
         }
+
+        return entity.components
+            .compactMap(rankedPath)
+            .sorted { lhs, rhs in
+                if lhs.0 != rhs.0 {
+                    return lhs.0 < rhs.0
+                }
+                if lhs.1.count != rhs.1.count {
+                    return lhs.1.count < rhs.1.count
+                }
+                return lhs.1.localizedCaseInsensitiveCompare(rhs.1) == .orderedAscending
+            }
+            .first?
+            .1
     }
 
-    private func isRelevantAiTimelineEvent(_ event: TimelineEvent) -> Bool {
+    private func isRelevantAiTimelineEvent(
+        _ event: TimelineEvent,
+        aiAgentIDs: Set<String>,
+        aiLifecycleTitles: Set<String>
+    ) -> Bool {
         if let entityId = event.entityId, aiAgentIDs.contains(entityId) {
             return true
         }
@@ -404,7 +480,8 @@ public struct Chau7View: View {
             return true
         }
 
-        if event.category == .lifecycle && event.title.localizedCaseInsensitiveContains("session ended") {
+        if event.category == .lifecycle,
+           aiLifecycleTitles.contains(event.title.localizedLowercase) {
             return true
         }
 
@@ -471,8 +548,6 @@ public struct Chau7View: View {
         if delta < 60 { return "just now" }
         if delta < 3600 { return "\(Int(delta / 60))m ago" }
         if delta < 86400 { return "\(Int(delta / 3600))h ago" }
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return Self.fallbackTimeFormatter.string(from: date)
     }
 }

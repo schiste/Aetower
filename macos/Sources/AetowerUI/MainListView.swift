@@ -45,11 +45,11 @@ private struct MachineBandMetric: View {
                 .lineLimit(1)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.vertical, AetowerDesign.Spacing.sm)
         .frame(minWidth: 138, alignment: .leading)
-        .background(tone.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(tone.opacity(0.08), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
                 .stroke(tone.opacity(0.10), lineWidth: 1)
         )
     }
@@ -69,8 +69,8 @@ private struct OperatorIncidentBanner: View {
                 Text(incident.severity.label)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(incident.severity.color)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, AetowerDesign.Spacing.sm)
+                    .padding(.vertical, AetowerDesign.Spacing.xs)
                     .background(incident.severity.color.opacity(0.12), in: Capsule())
             }
             Text(incident.summary)
@@ -81,9 +81,9 @@ private struct OperatorIncidentBanner: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(incident.severity.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(incident.severity.color.opacity(0.08), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
                 .stroke(incident.severity.color.opacity(0.18), lineWidth: 1)
         )
     }
@@ -106,7 +106,7 @@ private struct OperatorSectionCard<Content: View>: View {
         }
         .padding(14)
         .frame(width: 320, alignment: .leading)
-        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
     }
 }
 
@@ -125,7 +125,7 @@ private struct InlineMetric: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, 5)
         .background(Color.secondary.opacity(0.06), in: Capsule())
         .overlay(
@@ -383,16 +383,16 @@ private struct EntityRow: View {
             }
             .frame(width: 50, alignment: .trailing)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+        .padding(.vertical, AetowerDesign.Spacing.xs)
         .frame(maxWidth: .infinity)
         .background(
             AetowerDesign.frictionColor(entity.friction.totalScore)
                 .opacity(frictionBackgroundOpacity),
-            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm, style: .continuous)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm, style: .continuous)
                 .stroke(
                     isSelected ? Color.accentColor.opacity(0.5) : .clear,
                     lineWidth: 1
@@ -572,16 +572,16 @@ private struct GroupedEntityRow: View {
             }
             .frame(width: 50, alignment: .trailing)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+        .padding(.vertical, AetowerDesign.Spacing.xs)
         .frame(maxWidth: .infinity)
         .background(
             AetowerDesign.frictionColor(group.frictionScore)
                 .opacity(frictionBackgroundOpacity),
-            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm, style: .continuous)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm, style: .continuous)
                 .stroke(
                     isSelected ? Color.accentColor.opacity(0.5) : .clear,
                     lineWidth: 1
@@ -941,7 +941,7 @@ public struct MainListView: View {
                     .foregroundStyle(frictionColor)
                     .contentTransition(.numericText())
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, AetowerDesign.Spacing.lg)
 
             Divider().frame(height: 24)
 
@@ -974,7 +974,7 @@ public struct MainListView: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, AetowerDesign.Spacing.md)
             }
 
             // Export
@@ -988,7 +988,7 @@ public struct MainListView: View {
             .padding(.trailing, 12)
         }
         .padding(.vertical, 10)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
         .background(.ultraThinMaterial)
     }
 
@@ -1004,7 +1004,7 @@ public struct MainListView: View {
                     )
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, AetowerDesign.Spacing.lg)
             .padding(.vertical, 10)
         }
         .background(Color.secondary.opacity(0.04))
@@ -1014,7 +1014,7 @@ public struct MainListView: View {
         VStack(alignment: .leading, spacing: 12) {
             if let machineIncident {
                 OperatorIncidentBanner(incident: machineIncident)
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, AetowerDesign.Spacing.lg)
                     .padding(.top, 12)
             }
 
@@ -1098,7 +1098,7 @@ public struct MainListView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, AetowerDesign.Spacing.lg)
                     .padding(.bottom, 12)
                 }
             }
@@ -1121,7 +1121,7 @@ public struct MainListView: View {
     private var rankingPanel: some View {
         ScrollView {
             rankedEntitiesSection
-                .padding(.horizontal, 8)
+                .padding(.horizontal, AetowerDesign.Spacing.sm)
                 .padding(.vertical, 6)
         }
     }
@@ -1188,8 +1188,8 @@ public struct MainListView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, AetowerDesign.Spacing.lg)
+            .padding(.vertical, AetowerDesign.Spacing.md)
 
             Divider()
 
@@ -1210,7 +1210,7 @@ public struct MainListView: View {
             )
         }
         .frame(maxWidth: 320, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.horizontal, 20)
+        .padding(.horizontal, AetowerDesign.Spacing.xl)
         .padding(.top, 28)
     }
 
@@ -1269,9 +1269,9 @@ public struct MainListView: View {
                             .font(.system(size: 8, weight: .semibold))
                     }
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                    .padding(.horizontal, AetowerDesign.Spacing.sm)
+                    .padding(.vertical, AetowerDesign.Spacing.xs)
+                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -1287,9 +1287,9 @@ public struct MainListView: View {
                         .onSubmit { searchFieldFocused = false }
                         .font(.caption)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                .padding(.horizontal, AetowerDesign.Spacing.sm)
+                .padding(.vertical, AetowerDesign.Spacing.xs)
+                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
                 .frame(maxWidth: 160)
 
                 if isGroupedMode && isGrouping {
@@ -1305,7 +1305,7 @@ public struct MainListView: View {
 
                 Spacer()
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
             .padding(.bottom, 2)
 
             // Column headers
@@ -1327,7 +1327,7 @@ public struct MainListView: View {
             }
             .font(.system(size: 9, weight: .semibold))
             .foregroundStyle(.tertiary)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
             .padding(.vertical, 2)
 
             if filteredEntities.isEmpty {
