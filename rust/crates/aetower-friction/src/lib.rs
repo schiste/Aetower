@@ -514,4 +514,102 @@ mod tests {
         );
         assert!(!entities[0].recommendations.is_empty());
     }
+
+    /// Regression: when the kernel reports real per-process energy
+    /// (energy_nj_per_s > 0), the friction scorer must:
+    /// 1. Compute a log-scale energy_score (1 W = ~66)
+    /// 2. Use the energy-present weight branch (CPU 0.30 + energy 0.10)
+    /// 3. Include "energy" in reasons and contributors
+    #[test]
+    fn real_energy_data_produces_energy_friction_contributor() {
+        let host = HostSnapshot {
+            memory_total_bytes: 16 * 1024 * 1024 * 1024,
+            ..HostSnapshot::default()
+        };
+        // 1 W = 1_000_000_000 nJ/s → log10 = 9.0 → (9.0 - 6.0) / 4 * 100 = 75.0
+        let mut entities = vec![entity(
+            "heavy",
+            "heavy",
+            AggregateMetrics {
+                cpu_percent: 50.0,
+                memory_resident_bytes: 512 * 1024 * 1024,
+                energy_nj_per_s: 1_000_000_000.0, // 1 watt
+                ..AggregateMetrics::default()
+            },
+        )];
+
+        apply(&host, &mut entities);
+
+        // energy_impact_score should use the energy-present branch
+        assert!(
+            entities[0].friction.energy_impact_score > 0.0,
+            "energy_impact_score must be non-zero when real energy is reported"
+        );
+        // "energy" must appear in reasons
+        assert!(
+            entities[0]
+                .friction
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("energy")),
+            "friction reasons must mention energy: {:?}",
+            entities[0].friction.reasons
+        );
+        // "energy" must appear in contributors
+        let energy_contributor = entities[0]
+            .friction
+            .contributors
+            .iter()
+            .find(|contributor| contributor.key == "energy");
+        assert!(
+            energy_contributor.is_some(),
+            "energy contributor must be present: {:?}",
+            entities[0].friction.contributors
+        );
+        let contributor = energy_contributor.unwrap_or_else(|| {
+            panic!("checked above");
+        });
+        // 1 W at log scale → score ~75
+        assert!(
+            contributor.score > 50.0 && contributor.score < 100.0,
+            "1 W should produce energy_score in 50-100 range, got {}",
+            contributor.score
+        );
+        assert!(
+            contributor.detail.contains("W"),
+            "detail should mention watts: {}",
+            contributor.detail
+        );
+    }
+
+    /// When energy_nj_per_s is 0 (kernel not reporting), the fallback
+    /// heuristic path must be taken and no energy contributor should
+    /// appear.
+    #[test]
+    fn zero_energy_uses_fallback_heuristic() {
+        let host = HostSnapshot {
+            memory_total_bytes: 16 * 1024 * 1024 * 1024,
+            ..HostSnapshot::default()
+        };
+        let mut entities = vec![entity(
+            "no-energy",
+            "no-energy",
+            AggregateMetrics {
+                cpu_percent: 50.0,
+                energy_nj_per_s: 0.0,
+                ..AggregateMetrics::default()
+            },
+        )];
+
+        apply(&host, &mut entities);
+
+        assert!(
+            !entities[0]
+                .friction
+                .contributors
+                .iter()
+                .any(|contributor| contributor.key == "energy"),
+            "energy contributor must NOT appear when energy_nj_per_s is zero"
+        );
+    }
 }
