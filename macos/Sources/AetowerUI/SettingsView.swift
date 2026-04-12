@@ -6,6 +6,7 @@ public struct SettingsView: View {
     let state: AppState
     let settings: SettingsStore
     @FocusState private var focusedField: SettingsField?
+    @State private var applyConfirmation: String?
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
@@ -241,8 +242,21 @@ public struct SettingsView: View {
                         Button("Apply runtime and integration settings") {
                             focusedField = nil
                             state.applyIntegrationSettings(settings)
+                            applyConfirmation = "Settings applied to the running engine."
+                            // Clear the confirmation after 4 seconds so the
+                            // message doesn't persist indefinitely.
+                            Task {
+                                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                                applyConfirmation = nil
+                            }
                         }
                         .buttonStyle(.borderedProminent)
+
+                        if let applyConfirmation {
+                            Text(applyConfirmation)
+                                .font(.caption)
+                                .foregroundStyle(AetowerDesign.Status.success)
+                        }
 
                         Button("Verify telemetry export") {
                             focusedField = nil
