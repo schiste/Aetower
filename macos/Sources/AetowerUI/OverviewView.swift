@@ -226,7 +226,7 @@ public struct OverviewView: View {
                         title: "Aetower self-health",
                         subtitle: "The health of Aetower’s own runtime, diagnostics, history store, capabilities, and MCP surface."
                     ) {
-                        LazyVGrid(columns: overviewGridColumns(minimum: 240), alignment: .leading, spacing: 12) {
+                        LazyVGrid(columns: overviewGridColumns(minimum: 240), alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                             ForEach(selfHealthChecks) { check in
                                 OverviewListCard(
                                     title: check.title,
@@ -238,6 +238,22 @@ public struct OverviewView: View {
                             }
                         }
                     }
+                }
+
+                // When the machine is healthy and no sections below the
+                // summary rendered, show a positive confirmation so the
+                // user knows the blank space is intentional.
+                if machineIncident == nil && hostAlerts.isEmpty
+                    && burdenLeaders.isEmpty && operatorRecommendations.isEmpty
+                {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(AetowerDesign.Status.success)
+                        Text("System is healthy — no alerts, incidents, or recommendations.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, AetowerDesign.Spacing.sm)
                 }
             }
             .padding(.horizontal, AetowerDesign.Spacing.xl)
@@ -291,7 +307,7 @@ public struct OverviewView: View {
                     TrendMetricCard(
                         title: "Disk",
                         value: formatRate(host.diskReadBps + host.diskWriteBps),
-                        subtitle: "Current read/write throughput",
+                        subtitle: "read + write · \(trendWindowLabel(sampleCount: min(state.historySnapshots.count, 24)))",
                         samples: hostHistorySamples { Double($0.diskReadBps + $0.diskWriteBps) },
                         style: .disk,
                         minHeight: 124
@@ -299,7 +315,7 @@ public struct OverviewView: View {
                     TrendMetricCard(
                         title: "Network",
                         value: formatRate(host.networkReceiveBps + host.networkSendBps),
-                        subtitle: "Current send/receive throughput",
+                        subtitle: "send + receive · \(trendWindowLabel(sampleCount: min(state.historySnapshots.count, 24)))",
                         samples: hostHistorySamples { Double($0.networkReceiveBps + $0.networkSendBps) },
                         style: .network,
                         minHeight: 124
