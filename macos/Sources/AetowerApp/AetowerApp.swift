@@ -64,6 +64,11 @@ struct AetowerApp: App {
                         Label("Timeline", systemImage: "timeline.selection")
                     }
 
+                Chau7View(state: state)
+                    .tabItem {
+                        Label("AI Agents", systemImage: "cpu")
+                    }
+
                 DiagnosticsView(state: state, settings: settings)
                     .tabItem {
                         Label("Diagnostics", systemImage: "waveform.path.ecg.rectangle")

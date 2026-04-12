@@ -18,6 +18,7 @@ GENERATED_FILES = {
 SOURCE_EXTENSIONS = {".swift", ".rs", ".sh"}
 PLACEHOLDER_EXTENSIONS = {".swift", ".rs", ".sh", ".toml", ".yml", ".yaml", ".json"}
 SWIFT_PUBLIC_VIEW_ALLOWLIST = {
+    "Chau7View.swift",
     "CompactHUDView.swift",
     "DiagnosticsView.swift",
     "EntityDetailView.swift",
