@@ -36,6 +36,16 @@ public struct Chau7View: View {
         let trend: [Double]
     }
 
+    private struct HistoricalGroupTrend: Identifiable {
+        let id: String
+        let provider: String
+        let workspace: String?
+        let latestCpuPercent: Double
+        let latestMemoryBytes: UInt64
+        let cpuSamples: [Double]
+        let memorySamples: [Double]
+    }
+
     private struct AgentNarrative: Identifiable {
         let id: String
         let title: String
@@ -57,6 +67,29 @@ public struct Chau7View: View {
         let detail: String
     }
 
+    private struct ApprovalItem: Identifiable {
+        let entityId: String
+        let displayName: String
+        let sessionId: String?
+        let workspace: String?
+        let detail: String
+        let impact: String
+
+        var id: String { entityId }
+    }
+
+    private struct DelegationItem: Identifiable {
+        let entityId: String
+        let displayName: String
+        let sessionId: String?
+        let workspace: String?
+        let childSessionCount: Int
+        let detail: String
+        let note: String
+
+        var id: String { entityId }
+    }
+
     private struct DerivedData {
         let aiAgents: [EntitySnapshot]
         let aiAgentIDs: Set<String>
@@ -66,6 +99,9 @@ public struct Chau7View: View {
         let aiTimelineEvents: [TimelineEvent]
         let runtimeGroups: [RuntimeGroup]
         let burdenLeaders: [BurdenLeader]
+        let historicalGroupTrends: [HistoricalGroupTrend]
+        let approvalQueue: [ApprovalItem]
+        let delegationItems: [DelegationItem]
         let narratives: [AgentNarrative]
         let totalEnergy: Double
         let totalCost: Float
@@ -130,6 +166,9 @@ public struct Chau7View: View {
             aiTimelineEvents: aiTimelineEvents,
             runtimeGroups: buildRuntimeGroups(from: sortedAiAgents),
             burdenLeaders: buildBurdenLeaders(from: sortedAiAgents),
+            historicalGroupTrends: buildHistoricalGroupTrends(from: sortedAiAgents),
+            approvalQueue: buildApprovalQueue(from: sortedAiAgents),
+            delegationItems: buildDelegationItems(from: sortedAiAgents),
             narratives: buildNarratives(from: sortedAiAgents, timeline: aiTimelineEvents),
             totalEnergy: totalEnergy,
             totalCost: totalCost,
@@ -158,6 +197,13 @@ public struct Chau7View: View {
                     if !derived.burdenLeaders.isEmpty {
                         burdenLeadersSection(derived.burdenLeaders)
                     }
+                    historicalTrendsSection(derived.historicalGroupTrends)
+                    if !derived.approvalQueue.isEmpty {
+                        approvalQueueSection(derived.approvalQueue)
+                    }
+                    if !derived.delegationItems.isEmpty {
+                        delegatedSessionsSection(derived.delegationItems)
+                    }
                     if !derived.runtimeGroups.isEmpty {
                         runtimeGroupsSection(derived.runtimeGroups)
                     }
@@ -178,6 +224,11 @@ public struct Chau7View: View {
                 }
             }
             .padding(.bottom, AetowerDesign.Spacing.lg)
+        }
+        .task {
+            if state.historySnapshots.isEmpty && !state.historyIsLoading {
+                state.loadHistory(force: true)
+            }
         }
     }
 
@@ -321,6 +372,138 @@ public struct Chau7View: View {
         .padding(.horizontal, AetowerDesign.Spacing.lg)
     }
 
+    @ViewBuilder
+    private func historicalTrendsSection(_ trends: [HistoricalGroupTrend]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            sectionHeader("Historical Group Trends")
+            if !trends.isEmpty {
+                let columns = [GridItem(.adaptive(minimum: 220), spacing: AetowerDesign.Spacing.sm)]
+                LazyVGrid(columns: columns, alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(trends) { trend in
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(trend.provider)
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                Spacer()
+                                Text(String(format: "%.0f%% CPU", trend.latestCpuPercent))
+                                    .font(.caption)
+                                    .foregroundStyle(AetowerDesign.Tone.cpu)
+                            }
+                            if let workspace = trend.workspace {
+                                Text(shortenPath(workspace))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            HStack(spacing: AetowerDesign.Spacing.md) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("CPU")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    MiniTrendStrip(samples: trend.cpuSamples, color: AetowerDesign.Tone.cpu)
+                                        .frame(height: 18)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(formatBytes(trend.latestMemoryBytes))
+                                        .font(.caption2)
+                                        .foregroundStyle(AetowerDesign.Tone.memory)
+                                    MiniTrendStrip(samples: trend.memorySamples, color: AetowerDesign.Tone.memory)
+                                        .frame(height: 18)
+                                }
+                            }
+                        }
+                        .padding(AetowerDesign.Spacing.md)
+                        .background(
+                            AetowerDesign.Surface.card,
+                            in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
+                        )
+                    }
+                }
+            } else if state.historyIsLoading {
+                loadingInfo("Loading recent persisted AI history…")
+            } else {
+                loadingInfo("Open the AI tab long enough for recent persisted history to load. Trend cards appear when recent AI runtime samples exist.")
+            }
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
+    }
+
+    private func approvalQueueSection(_ approvals: [ApprovalItem]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            sectionHeader("Approval Queue")
+            ForEach(approvals) { item in
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack {
+                        Text(item.displayName)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        if let sessionId = item.sessionId {
+                            stateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.warning)
+                        }
+                    }
+                    if let workspace = item.workspace {
+                        Text(shortenPath(workspace))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Text(item.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(item.impact)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(AetowerDesign.Spacing.md)
+                .background(
+                    AetowerDesign.Surface.card,
+                    in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
+                )
+            }
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
+    }
+
+    private func delegatedSessionsSection(_ delegations: [DelegationItem]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            sectionHeader("Delegated Sessions")
+            ForEach(delegations) { item in
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack {
+                        Text(item.displayName)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        if let sessionId = item.sessionId {
+                            stateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.ready)
+                        }
+                        stateBadge("\(item.childSessionCount) child", color: AetowerDesign.Status.ready)
+                    }
+                    if let workspace = item.workspace {
+                        Text(shortenPath(workspace))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Text(item.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(item.note)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(AetowerDesign.Spacing.md)
+                .background(
+                    AetowerDesign.Surface.card,
+                    in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
+                )
+            }
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
+    }
+
     private func runtimeGroupsSection(_ groups: [RuntimeGroup]) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
             sectionHeader("Runtime Groups")
@@ -450,7 +633,20 @@ public struct Chau7View: View {
                             color: AetowerDesign.Status.success
                         )
                     }
-                    if cost.totalInputTokens + cost.totalOutputTokens > 0 {
+                    if cost.totalInputTokens > 0 {
+                        metricPill(
+                            label: "In \(formatTokens(cost.totalInputTokens))",
+                            color: AetowerDesign.Status.ready
+                        )
+                    }
+                    if cost.totalOutputTokens > 0 {
+                        metricPill(
+                            label: "Out \(formatTokens(cost.totalOutputTokens))",
+                            color: AetowerDesign.Status.ready
+                        )
+                    }
+                    if cost.totalInputTokens + cost.totalOutputTokens > 0,
+                       cost.totalOutputTokens == 0 {
                         metricPill(
                             label: formatTokens(cost.totalInputTokens + cost.totalOutputTokens),
                             color: AetowerDesign.Status.ready
@@ -474,6 +670,8 @@ public struct Chau7View: View {
             if let info = chau7SessionInfo(for: entity) {
                 chau7SessionInsights(info, entity: entity)
             }
+
+            hostBudgetSection(for: entity)
 
             trendStripSection(for: entity)
 
@@ -634,6 +832,22 @@ public struct Chau7View: View {
             .font(.subheadline)
             .fontWeight(.semibold)
             .foregroundStyle(.secondary)
+    }
+
+    private func loadingInfo(_ message: String) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            ProgressView()
+                .scaleEffect(0.8)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(
+            AetowerDesign.Surface.card,
+            in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
+        )
     }
 
     private func stateBadge(_ label: String, color: Color) -> some View {
@@ -862,6 +1076,35 @@ public struct Chau7View: View {
         }
     }
 
+    private func hostBudgetSection(for entity: EntitySnapshot) -> some View {
+        let cpuShare = host.cpuPercent > 0 ? Double(entity.metrics.cpuPercent) / Double(host.cpuPercent) * 100 : 0
+        let memoryShare = host.memoryUsedBytes > 0 ? Double(entity.metrics.memoryResidentBytes) / Double(host.memoryUsedBytes) * 100 : 0
+        let gpuShare = host.gpuPercent > 0 ? Double(entity.metrics.estimatedGpuPercent) / Double(host.gpuPercent) * 100 : 0
+        let wakeupShare = host.wakeupsPerSecond > 0 ? Double(entity.metrics.wakeupsPerSecond) / Double(host.wakeupsPerSecond) * 100 : 0
+
+        return HStack(spacing: AetowerDesign.Spacing.md) {
+            budgetMetric(title: "Host CPU", value: cpuShare)
+            budgetMetric(title: "Host mem", value: memoryShare)
+            if entity.metrics.estimatedGpuPercent > 0 {
+                budgetMetric(title: "Host GPU", value: gpuShare)
+            }
+            if entity.metrics.wakeupsPerSecond > 0 {
+                budgetMetric(title: "Wakeups", value: wakeupShare)
+            }
+        }
+    }
+
+    private func budgetMetric(title: String, value: Double) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value > 0 ? String(format: "%.0f%%", value) : "—")
+                .font(.caption)
+                .foregroundStyle(value >= 40 ? AetowerDesign.Status.warning : .secondary)
+        }
+    }
+
     private func isRelevantAiTimelineEvent(
         _ event: TimelineEvent,
         aiAgentIDs: Set<String>,
@@ -914,6 +1157,86 @@ public struct Chau7View: View {
                 return $0.totalCpuPercent > $1.totalCpuPercent
             }
             return $0.provider.localizedCaseInsensitiveCompare($1.provider) == .orderedAscending
+        }
+    }
+
+    private func buildHistoricalGroupTrends(from agents: [EntitySnapshot]) -> [HistoricalGroupTrend] {
+        guard !state.historySnapshots.isEmpty else {
+            return []
+        }
+
+        return buildRuntimeGroups(from: agents).prefix(4).compactMap { group in
+            let samples: [(cpu: Double, memory: UInt64)] = state.historySnapshots.suffix(24).map { snapshot in
+                let matching = snapshot.entities.filter { entity in
+                    entity.entityKind == .aiAgent
+                        && providerLabel(for: entity) == group.provider
+                        && projectContext(for: entity) == group.workspace
+                }
+                return (
+                    cpu: matching.reduce(0.0) { $0 + Double($1.metrics.cpuPercent) },
+                    memory: matching.reduce(0) { $0 + $1.metrics.memoryResidentBytes }
+                )
+            }
+
+            let latest = samples.last ?? (0, 0)
+            if samples.allSatisfy({ $0.cpu == 0 && $0.memory == 0 }) {
+                return nil
+            }
+
+            return HistoricalGroupTrend(
+                id: group.id,
+                provider: group.provider,
+                workspace: group.workspace,
+                latestCpuPercent: latest.cpu,
+                latestMemoryBytes: latest.memory,
+                cpuSamples: samples.map(\.cpu),
+                memorySamples: samples.map { Double($0.memory) }
+            )
+        }
+    }
+
+    private func buildApprovalQueue(from agents: [EntitySnapshot]) -> [ApprovalItem] {
+        agents.compactMap { entity in
+            guard entity.badges.contains("approval-needed") else {
+                return nil
+            }
+
+            let detail = entity.recommendations.first(where: {
+                $0.title == "Resolve pending agent approval"
+            })?.detail ?? entity.recentChangeSummary ?? "This runtime is waiting for approval before it can continue."
+
+            return ApprovalItem(
+                entityId: entity.entityId,
+                displayName: entity.displayName,
+                sessionId: sessionComponent(for: entity)?.adapterContext?.sessionId,
+                workspace: projectContext(for: entity),
+                detail: detail,
+                impact: impactSummary(for: entity)
+            )
+        }
+    }
+
+    private func buildDelegationItems(from agents: [EntitySnapshot]) -> [DelegationItem] {
+        agents.compactMap { entity in
+            guard entity.badges.contains("delegating") else {
+                return nil
+            }
+
+            let detail = chau7SessionInfo(for: entity)?.detail ?? entity.recentChangeSummary ?? "This runtime is delegating work to child sessions."
+            let childCount = extractChildSessionCount(from: detail)
+            guard childCount > 0 else {
+                return nil
+            }
+
+            return DelegationItem(
+                entityId: entity.entityId,
+                displayName: entity.displayName,
+                sessionId: sessionComponent(for: entity)?.adapterContext?.sessionId,
+                workspace: projectContext(for: entity),
+                childSessionCount: childCount,
+                detail: detail,
+                note: "Chau7 currently exposes delegated child sessions here as an aggregate count. Individual child session identities are not yet available in this tab."
+            )
         }
     }
 
@@ -1033,6 +1356,37 @@ public struct Chau7View: View {
             return AetowerDesign.Status.success
         }
         return AetowerDesign.Status.ready
+    }
+
+    private func extractChildSessionCount(from detail: String) -> Int {
+        let pattern = #"(\d+)\s+child sessions"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return 0
+        }
+        let nsRange = NSRange(detail.startIndex..<detail.endIndex, in: detail)
+        guard let match = regex.firstMatch(in: detail, options: [], range: nsRange),
+              let range = Range(match.range(at: 1), in: detail)
+        else {
+            return 0
+        }
+        return Int(detail[range]) ?? 0
+    }
+
+    private func impactSummary(for entity: EntitySnapshot) -> String {
+        var parts: [String] = []
+        if entity.metrics.cpuPercent > 0 {
+            parts.append(String(format: "%.0f%% CPU", entity.metrics.cpuPercent))
+        }
+        if entity.metrics.wakeupsPerSecond > 0 {
+            parts.append(String(format: "%.0f wake/s", entity.metrics.wakeupsPerSecond))
+        }
+        if entity.metrics.memoryResidentBytes > 0 {
+            parts.append(formatBytes(entity.metrics.memoryResidentBytes))
+        }
+        if parts.isEmpty {
+            parts.append(String(format: "friction %.1f", entity.friction.totalScore))
+        }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: - Formatters
