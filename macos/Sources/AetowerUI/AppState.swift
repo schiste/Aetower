@@ -13,6 +13,7 @@ public final class AppState {
     public private(set) var historySnapshots: [SystemSnapshot] = []
     public private(set) var historyLoadError: String?
     public private(set) var historyRangeSummary: HistoryRangeSummary?
+    public private(set) var historyStoreSummary: HistoryRangeSummary?
     public private(set) var historyMaintenanceReport: HistoryMaintenanceReport?
     public private(set) var historyIsLoading = false
     public private(set) var historyIsLoadingMore = false
@@ -68,6 +69,7 @@ public final class AppState {
     public private(set) var telemetryVerificationStatus: String?
     public private(set) var localMcpClientStatuses: [LocalMcpClientRegistrationStatus] = []
     public private(set) var localMcpRegistrationStatusMessage: String?
+    public private(set) var localMcpServerHealthy = false
     public var lastError: String?
 
     @ObservationIgnored
@@ -144,6 +146,8 @@ public final class AppState {
     private let localMcpSocketPath = NSHomeDirectory() + "/.aetower/mcp.sock"
     @ObservationIgnored
     private var automaticLocalMcpRegistrationAttempted = false
+    @ObservationIgnored
+    private var lastOperatorStateRefreshDate = Date.distantPast
 
     @ObservationIgnored
     private let frontmostProbeInterval: TimeInterval = 1.0
@@ -165,6 +169,8 @@ public final class AppState {
     private let historyInitialPageSize: UInt32 = 120
     @ObservationIgnored
     private let historyLoadMorePageSize: UInt32 = 240
+    @ObservationIgnored
+    private let operatorStateRefreshInterval: TimeInterval = 30.0
 
     public init(
         bridge: EngineBridge = EngineBridge(),
@@ -338,6 +344,7 @@ public final class AppState {
         historySnapshots = []
         historyLoadError = "Persisted history was cleared."
         historyRangeSummary = nil
+        historyStoreSummary = nil
         historyMaintenanceReport = nil
         historyHasMore = false
         historyLoadStatus = nil
@@ -537,6 +544,7 @@ public final class AppState {
                 windowTitle: lastPublishedWindowTitle
             )
             runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
+            refreshOperatorState(force: force)
             if let updatedSnapshotValue, lagMonitoringActive {
                 publishUiLagMetrics(
                     snapshot: updatedSnapshotValue,
@@ -564,17 +572,35 @@ public final class AppState {
         lastLocalMcpHealthCheckDate = now
 
         let socketExists = FileManager.default.fileExists(atPath: localMcpSocketPath)
+        localMcpServerHealthy = localMcpServerStarted && socketExists
         guard force || !localMcpServerStarted || !socketExists else {
             return
         }
 
         if let error = bridge.startLocalMcpServer() {
             localMcpServerStarted = false
+            localMcpServerHealthy = false
             lastError = error
         } else {
             localMcpServerStarted = true
+            localMcpServerHealthy = FileManager.default.fileExists(atPath: localMcpSocketPath)
             refreshLocalMcpClientStatuses()
         }
+    }
+
+    private func refreshOperatorState(force: Bool = false) {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastOperatorStateRefreshDate) >= operatorStateRefreshInterval else {
+            return
+        }
+        lastOperatorStateRefreshDate = now
+        diagnosticsOverview = bridge.diagnosticsOverview()
+        let endMillis = max(
+            snapshot.capturedAtMillis,
+            UInt64(Date().timeIntervalSince1970 * 1000)
+        )
+        historyStoreSummary = bridge.historyRangeSummary(startMillis: 0, endMillis: endMillis)
+        localMcpServerHealthy = localMcpServerStarted && FileManager.default.fileExists(atPath: localMcpSocketPath)
     }
 
     private func ensureAutomaticLocalMcpClientRegistration() {
@@ -645,6 +671,7 @@ public final class AppState {
                 let durationMillis = (CFAbsoluteTimeGetCurrent() - loadStarted) * 1000.0
                 self.historyMaintenanceReport = maintenance
                 self.historyRangeSummary = summary
+                self.historyStoreSummary = summary
                 self.historySnapshots = snapshots
                 self.historyLastLoadDurationMillis = durationMillis
                 self.historyHasMore = UInt64(snapshots.count) < (summary?.rangeCount ?? 0)

@@ -55,6 +55,61 @@ private struct MachineBandMetric: View {
     }
 }
 
+private struct OperatorIncidentBanner: View {
+    let incident: HostIncidentSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: incident.severity == .critical ? "exclamationmark.triangle.fill" : "waveform.path.ecg")
+                    .foregroundStyle(incident.severity.color)
+                Text(incident.title)
+                    .font(.headline)
+                Spacer()
+                Text(incident.severity.label)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(incident.severity.color)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(incident.severity.color.opacity(0.12), in: Capsule())
+            }
+            Text(incident.summary)
+                .font(.subheadline)
+            Text(incident.action)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(incident.severity.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(incident.severity.color.opacity(0.18), lineWidth: 1)
+        )
+    }
+}
+
+private struct OperatorSectionCard<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+            content
+        }
+        .padding(14)
+        .frame(width: 320, alignment: .leading)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
 private struct InlineMetric: View {
     let title: String
     let value: String
@@ -825,9 +880,9 @@ public struct MainListView: View {
     public var body: some View {
         VStack(spacing: 0) {
             summaryHeader
-            if !hostAlerts.isEmpty {
+            if !hostAlerts.isEmpty || machineIncident != nil || !burdenLeaders.isEmpty || !operatorRecommendations.isEmpty || !selfHealthChecks.isEmpty {
                 Divider()
-                hostAlertsPanel
+                operatorOverviewPanel
             }
             Divider()
             monitorSplitView
@@ -931,6 +986,102 @@ public struct MainListView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
+        }
+        .background(Color.secondary.opacity(0.04))
+    }
+
+    private var operatorOverviewPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let machineIncident {
+                OperatorIncidentBanner(incident: machineIncident)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+            }
+
+            if !hostAlerts.isEmpty {
+                hostAlertsPanel
+            }
+
+            if !burdenLeaders.isEmpty || !operatorRecommendations.isEmpty || !selfHealthChecks.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 12) {
+                        if !burdenLeaders.isEmpty {
+                            OperatorSectionCard(title: "Burden leaders") {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    ForEach(burdenLeaders) { leader in
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            HStack {
+                                                Text(leader.title)
+                                                    .font(.caption.weight(.semibold))
+                                                    .foregroundStyle(.secondary)
+                                                Spacer()
+                                                Text(leader.metricValue)
+                                                    .font(.caption.monospacedDigit())
+                                                    .foregroundStyle(leader.severity.color)
+                                            }
+                                            Text(leader.entityName)
+                                                .font(.subheadline.weight(.semibold))
+                                            Text(leader.detail)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !operatorRecommendations.isEmpty {
+                            OperatorSectionCard(title: "Next actions") {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    ForEach(operatorRecommendations) { recommendation in
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            HStack {
+                                                Text(recommendation.title)
+                                                    .font(.subheadline.weight(.semibold))
+                                                Spacer()
+                                                Text(recommendation.severity.label)
+                                                    .font(.caption2.weight(.semibold))
+                                                    .foregroundStyle(recommendation.severity.color)
+                                            }
+                                            Text(recommendation.detail)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                            Text(recommendation.action)
+                                                .font(.caption2)
+                                                .foregroundStyle(.tertiary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !selfHealthChecks.isEmpty {
+                            OperatorSectionCard(title: "Aetower self-health") {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    ForEach(selfHealthChecks) { check in
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            HStack {
+                                                Text(check.title)
+                                                    .font(.caption.weight(.semibold))
+                                                    .foregroundStyle(.secondary)
+                                                Spacer()
+                                                Text(check.value)
+                                                    .font(.caption.weight(.semibold))
+                                                    .foregroundStyle(check.severity.color)
+                                            }
+                                            Text(check.detail)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                }
+            }
         }
         .background(Color.secondary.opacity(0.04))
     }
@@ -1224,6 +1375,33 @@ public struct MainListView: View {
 
     private var topConcern: EntitySnapshot? {
         filteredEntities.first
+    }
+
+    private var machineIncident: HostIncidentSummary? {
+        buildHostIncident(snapshot: state.snapshot, history: state.historyStoreSummary ?? state.historyRangeSummary)
+    }
+
+    private var burdenLeaders: [BurdenLeaderSummary] {
+        Array(buildBurdenLeaders(snapshot: state.snapshot).prefix(4))
+    }
+
+    private var operatorRecommendations: [OperatorRecommendationSummary] {
+        buildOperatorRecommendations(
+            snapshot: state.snapshot,
+            diagnostics: state.diagnosticsOverview,
+            history: state.historyStoreSummary ?? state.historyRangeSummary,
+            runtime: state.runtimeLagMetrics
+        )
+    }
+
+    private var selfHealthChecks: [OperatorHealthCheckSummary] {
+        buildSelfHealthChecks(
+            snapshot: state.snapshot,
+            diagnostics: state.diagnosticsOverview,
+            history: state.historyStoreSummary ?? state.historyRangeSummary,
+            runtime: state.runtimeLagMetrics,
+            localMcpServerHealthy: state.localMcpServerHealthy
+        )
     }
 
     private var hostAlerts: [HostAlertCard] {
