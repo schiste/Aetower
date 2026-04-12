@@ -881,7 +881,7 @@ public struct MainListView: View {
     public var body: some View {
         VStack(spacing: 0) {
             summaryHeader
-            if !hostAlerts.isEmpty || machineIncident != nil || !burdenLeaders.isEmpty || !operatorRecommendations.isEmpty || !selfHealthChecks.isEmpty {
+            if shouldShowOperatorPanel {
                 Divider()
                 operatorOverviewPanel
             }
@@ -1378,6 +1378,19 @@ public struct MainListView: View {
         filterEntities(state.snapshot.entities, query: normalizedSearchQuery).sorted {
             compareEntities($0, $1, by: sortKey)
         }
+    }
+
+    // Lazy short-circuit: evaluate cheapest check first, stop as soon
+    // as any section has content. Previously, all five expensive
+    // computed properties were evaluated unconditionally just to test
+    // isEmpty, which sorted/scanned the entity list multiple times.
+    private var shouldShowOperatorPanel: Bool {
+        if !hostAlerts.isEmpty { return true }
+        if machineIncident != nil { return true }
+        if !burdenLeaders.isEmpty { return true }
+        if !operatorRecommendations.isEmpty { return true }
+        if !selfHealthChecks.isEmpty { return true }
+        return false
     }
 
     private var machineIncident: HostIncidentSummary? {
