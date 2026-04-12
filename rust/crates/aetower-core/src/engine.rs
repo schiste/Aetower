@@ -30,12 +30,15 @@ use crate::{
 const ADAPTER_IDLE_SLEEP: Duration = Duration::from_secs(5);
 const TELEMETRY_DISABLED_SLEEP: Duration = Duration::from_secs(30);
 const RUNTIME_HEARTBEAT_INTERVAL_MILLIS: u64 = 10 * 60 * 1000;
-const DEFAULT_HISTORY_RETENTION_MILLIS: u64 = 72 * 60 * 60 * 1000;
-const EMERGENCY_HISTORY_RETENTION_MILLIS: u64 = 24 * 60 * 60 * 1000;
-const HISTORY_SOFT_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-const HISTORY_HARD_MAX_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-const HISTORY_MAX_WAL_BYTES: u64 = 128 * 1024 * 1024;
-const HISTORY_AGGRESSIVE_QUARANTINE_ROWS: u64 = 128;
+const DEFAULT_HISTORY_RETENTION_MILLIS: u64 = 24 * 60 * 60 * 1000;
+const EMERGENCY_HISTORY_RETENTION_MILLIS: u64 = 6 * 60 * 60 * 1000;
+const HISTORY_SOFT_MAX_BYTES: u64 = 1024 * 1024 * 1024;
+const HISTORY_HARD_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const HISTORY_MAX_WAL_BYTES: u64 = 64 * 1024 * 1024;
+const HISTORY_SOFT_MAX_SNAPSHOT_COUNT: u64 = 8_000;
+const HISTORY_HARD_MAX_SNAPSHOT_COUNT: u64 = 12_000;
+const HISTORY_AGGRESSIVE_QUARANTINE_ROWS: u64 = 64;
+const HISTORY_HARD_MAX_QUARANTINE_ROWS: u64 = 128;
 
 #[derive(Debug, Clone)]
 struct RuntimeCollectionConfig {
@@ -1035,7 +1038,10 @@ fn default_history_retention_policy() -> aetower_persistence::HistoryRetentionPo
         soft_max_store_bytes: HISTORY_SOFT_MAX_BYTES,
         hard_max_store_bytes: HISTORY_HARD_MAX_BYTES,
         max_wal_bytes: HISTORY_MAX_WAL_BYTES,
+        soft_max_snapshot_count: HISTORY_SOFT_MAX_SNAPSHOT_COUNT,
+        hard_max_snapshot_count: HISTORY_HARD_MAX_SNAPSHOT_COUNT,
         aggressive_quarantine_rows: HISTORY_AGGRESSIVE_QUARANTINE_ROWS,
+        hard_max_quarantine_rows: HISTORY_HARD_MAX_QUARANTINE_ROWS,
     }
 }
 

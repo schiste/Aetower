@@ -64,7 +64,10 @@ pub struct HistoryRetentionPolicy {
     pub soft_max_store_bytes: u64,
     pub hard_max_store_bytes: u64,
     pub max_wal_bytes: u64,
+    pub soft_max_snapshot_count: u64,
+    pub hard_max_snapshot_count: u64,
     pub aggressive_quarantine_rows: u64,
+    pub hard_max_quarantine_rows: u64,
 }
 
 impl HistoryRetentionPolicy {
@@ -92,6 +95,8 @@ enum HistoryCommand {
     Store(Box<SystemSnapshot>),
     Flush(mpsc::Sender<Result<(), String>>),
     Prune(u64, mpsc::Sender<Result<u64, String>>),
+    PruneKeepLatest(u64, mpsc::Sender<Result<u64, String>>),
+    TrimQuarantineKeepLatest(u64, mpsc::Sender<Result<u64, String>>),
     ClearAll(mpsc::Sender<Result<(), String>>),
     Shutdown,
 }
@@ -400,6 +405,13 @@ impl HistoryStore {
             })
             .map(|count| count as u64)
             .map_err(|e| format!("quarantine count: {e}"))?;
+        let snapshot_count = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM snapshots", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|count| count as u64)
+            .map_err(|e| format!("snapshot count: {e}"))?;
         let newest_millis = self
             .conn
             .query_row("SELECT MAX(captured_at_millis) FROM snapshots", [], |row| {
@@ -424,12 +436,16 @@ impl HistoryStore {
 
         let threshold_aggressive = store_bytes_before >= policy.soft_max_store_bytes
             || wal_bytes_before >= policy.max_wal_bytes
+            || snapshot_count >= policy.soft_max_snapshot_count
             || quarantine_count >= policy.aggressive_quarantine_rows;
         if store_bytes_before >= policy.soft_max_store_bytes {
             aggressive_reasons.push("store-bytes".to_owned());
         }
         if wal_bytes_before >= policy.max_wal_bytes {
             aggressive_reasons.push("wal-bytes".to_owned());
+        }
+        if snapshot_count >= policy.soft_max_snapshot_count {
+            aggressive_reasons.push("snapshot-count".to_owned());
         }
         if quarantine_count >= policy.aggressive_quarantine_rows {
             aggressive_reasons.push("quarantine-rows".to_owned());
@@ -465,6 +481,44 @@ impl HistoryStore {
             report.checkpointed = report.checkpointed || post_emergency.checkpointed;
         }
 
+        let snapshot_count_after = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM snapshots", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|count| count as u64)
+            .map_err(|e| format!("snapshot count after maintenance: {e}"))?;
+        if snapshot_count_after > policy.hard_max_snapshot_count {
+            let deleted = self
+                .writer
+                .prune_keep_latest(policy.hard_max_snapshot_count)?;
+            report.pruned_rows = report.pruned_rows.saturating_add(deleted);
+            let mut reasons = report.aggressive_reason.take().unwrap_or_default();
+            if !reasons.is_empty() {
+                reasons.push(',');
+            }
+            reasons.push_str("snapshot-hard-cap");
+            report.aggressive_reason = Some(reasons);
+            let post_trim = self.maintain_storage(true)?;
+            report.store_bytes_after = post_trim.store_bytes_after;
+            report.wal_bytes_after = post_trim.wal_bytes_after;
+            report.vacuumed = report.vacuumed || post_trim.vacuumed;
+            report.checkpointed = report.checkpointed || post_trim.checkpointed;
+        }
+
+        if quarantine_count > policy.hard_max_quarantine_rows {
+            let deleted = self
+                .writer
+                .trim_quarantine_keep_latest(policy.hard_max_quarantine_rows)?;
+            report.pruned_rows = report.pruned_rows.saturating_add(deleted);
+            let mut reasons = report.aggressive_reason.take().unwrap_or_default();
+            if !reasons.is_empty() {
+                reasons.push(',');
+            }
+            reasons.push_str("quarantine-hard-cap");
+            report.aggressive_reason = Some(reasons);
+        }
+
         if let Some(diagnostics) = self.diagnostics.as_ref() {
             diagnostics.emit(
                 DiagnosticsEvent::builder(
@@ -484,6 +538,7 @@ impl HistoryStore {
                 .field("pruned_rows", report.pruned_rows)
                 .field("checkpointed", report.checkpointed)
                 .field("vacuumed", report.vacuumed)
+                .field("snapshot_count", snapshot_count)
                 .field("quarantine_count", quarantine_count)
                 .field(
                     "aggressive_reason",
@@ -706,8 +761,46 @@ impl HistoryWriter {
                                 "DELETE FROM snapshots WHERE captured_at_millis < ?1",
                                 params![cutoff_millis as i64],
                             )
-                            .map(|deleted| deleted as u64)
+                            .and_then(|deleted_snapshots| {
+                                conn.execute(
+                                    "DELETE FROM snapshot_quarantine WHERE captured_at_millis < ?1",
+                                    params![cutoff_millis as i64],
+                                )
+                                .map(|deleted_quarantine| {
+                                    deleted_snapshots as u64 + deleted_quarantine as u64
+                                })
+                            })
                             .map_err(|e| format!("prune: {e}"));
+                        let _ = reply.send(result);
+                    }
+                    HistoryCommand::PruneKeepLatest(keep, reply) => {
+                        let result = conn
+                            .execute(
+                                "DELETE FROM snapshots
+                                 WHERE id IN (
+                                     SELECT id FROM snapshots
+                                     ORDER BY captured_at_millis DESC, id DESC
+                                     LIMIT -1 OFFSET ?1
+                                 )",
+                                params![keep as i64],
+                            )
+                            .map(|deleted| deleted as u64)
+                            .map_err(|e| format!("prune keep latest: {e}"));
+                        let _ = reply.send(result);
+                    }
+                    HistoryCommand::TrimQuarantineKeepLatest(keep, reply) => {
+                        let result = conn
+                            .execute(
+                                "DELETE FROM snapshot_quarantine
+                                 WHERE id IN (
+                                     SELECT id FROM snapshot_quarantine
+                                     ORDER BY captured_at_millis DESC, id DESC
+                                     LIMIT -1 OFFSET ?1
+                                 )",
+                                params![keep as i64],
+                            )
+                            .map(|deleted| deleted as u64)
+                            .map_err(|e| format!("trim quarantine keep latest: {e}"));
                         let _ = reply.send(result);
                     }
                     HistoryCommand::ClearAll(reply) => {
@@ -757,6 +850,24 @@ impl HistoryWriter {
             .map_err(|error| format!("history writer queue: {error}"))?;
         rx.recv()
             .map_err(|error| format!("history writer prune: {error}"))?
+    }
+
+    fn prune_keep_latest(&self, keep: u64) -> Result<u64, String> {
+        let (tx, rx) = mpsc::channel();
+        self.command_tx
+            .send(HistoryCommand::PruneKeepLatest(keep.max(1), tx))
+            .map_err(|error| format!("history writer queue: {error}"))?;
+        rx.recv()
+            .map_err(|error| format!("history writer prune_keep_latest: {error}"))?
+    }
+
+    fn trim_quarantine_keep_latest(&self, keep: u64) -> Result<u64, String> {
+        let (tx, rx) = mpsc::channel();
+        self.command_tx
+            .send(HistoryCommand::TrimQuarantineKeepLatest(keep.max(1), tx))
+            .map_err(|error| format!("history writer queue: {error}"))?;
+        rx.recv()
+            .map_err(|error| format!("history writer trim_quarantine_keep_latest: {error}"))?
     }
 
     fn clear_all(&self) -> Result<(), String> {
@@ -1090,7 +1201,10 @@ mod tests {
                 soft_max_store_bytes: u64::MAX,
                 hard_max_store_bytes: u64::MAX,
                 max_wal_bytes: u64::MAX,
+                soft_max_snapshot_count: u64::MAX,
+                hard_max_snapshot_count: u64::MAX,
                 aggressive_quarantine_rows: u64::MAX,
+                hard_max_quarantine_rows: u64::MAX,
             })
             .unwrap_or_else(|error| panic!("maintain_with_policy: {error}"));
 
@@ -1103,6 +1217,65 @@ mod tests {
             .map(|snapshot| snapshot.sequence)
             .collect();
         assert_eq!(sequences, vec![3, 4, 5]);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn maintain_with_policy_trims_snapshot_count_and_quarantine_count() {
+        let path = temp_db();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+
+        for i in 0..8 {
+            store.maybe_store(&SystemSnapshot {
+                sequence: i,
+                captured_at_millis: (i + 1) * 1_000,
+                ..Default::default()
+            });
+        }
+        store
+            .writer
+            .flush()
+            .unwrap_or_else(|error| panic!("flush: {error}"));
+        for i in 0..6 {
+            store
+                .conn
+                .execute(
+                    "INSERT INTO snapshot_quarantine (snapshot_id, captured_at_millis, sequence, format_version, quarantined_at_millis, reason, json_blob, bincode_blob)
+                     VALUES (NULL, ?1, ?2, 2, ?3, 'old-format', NULL, NULL)",
+                    params![i as i64 * 1_000, i as i64, 10_000 + i as i64],
+                )
+                .unwrap_or_else(|error| panic!("insert quarantine: {error}"));
+        }
+
+        let report = store
+            .maintain_with_policy(HistoryRetentionPolicy {
+                max_age_millis: u64::MAX,
+                emergency_max_age_millis: u64::MAX,
+                soft_max_store_bytes: u64::MAX,
+                hard_max_store_bytes: u64::MAX,
+                max_wal_bytes: u64::MAX,
+                soft_max_snapshot_count: 4,
+                hard_max_snapshot_count: 5,
+                aggressive_quarantine_rows: 4,
+                hard_max_quarantine_rows: 3,
+            })
+            .unwrap_or_else(|error| panic!("maintain_with_policy: {error}"));
+
+        assert!(report.pruned_rows >= 6);
+        let remaining = store
+            .load_range(0, 20_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
+        assert_eq!(remaining.len(), 5);
+        let remaining_quarantine = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM snapshot_quarantine", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|count| count as u64)
+            .unwrap_or_else(|error| panic!("count quarantine: {error}"));
+        assert_eq!(remaining_quarantine, 3);
 
         std::fs::remove_file(&path).ok();
     }

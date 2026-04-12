@@ -231,6 +231,10 @@ public struct HistoryView: View {
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
+                            Text("Aetower now keeps persisted history on a bounded local budget by default: a shorter retention window, WAL checkpoints, and automatic hard-cap trims when the store grows too large.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
                             if state.historyIsLoadingMore {
                                 ProgressView("Loading older samples…")
                                     .progressViewStyle(.linear)
