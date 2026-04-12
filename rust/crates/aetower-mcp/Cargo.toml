@@ -8,6 +8,7 @@ license.workspace = true
 name = "aetower_mcp"
 
 [dependencies]
+aetower-core = { path = "../aetower-core" }
 aetower-diagnostics = { path = "../aetower-diagnostics" }
 aetower-model = { path = "../aetower-model" }
 dirs = "5"

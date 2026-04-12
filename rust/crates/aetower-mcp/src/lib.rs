@@ -416,6 +416,12 @@ pub fn proxy_stdio_to_socket(socket_path: impl AsRef<Path>) -> Result<(), String
     proxy_streams_to_socket(std::io::stdin(), std::io::stdout(), socket_path)
 }
 
+pub fn serve_stdio(data_source: Arc<dyn AetowerMcpDataSource>) -> Result<(), String> {
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    serve_streams(data_source, stdin.lock(), stdout.lock())
+}
+
 fn proxy_streams_to_socket<R, W>(
     mut input: R,
     output: W,
@@ -496,6 +502,30 @@ fn handle_connection(
             ReadMessageOutcome::EndOfStream => break,
             ReadMessageOutcome::Timeout if running.load(Ordering::SeqCst) => continue,
             ReadMessageOutcome::Timeout => break,
+        }
+    }
+    Ok(())
+}
+
+fn serve_streams<R, W>(
+    data_source: Arc<dyn AetowerMcpDataSource>,
+    mut reader: R,
+    mut writer: W,
+) -> Result<(), String>
+where
+    R: Read,
+    W: Write,
+{
+    let server = AetowerMcpServer { data_source };
+    loop {
+        match read_message(&mut reader)? {
+            ReadMessageOutcome::Message(message) => {
+                if let Some(response) = server.handle_message(message) {
+                    write_message(&mut writer, &response)?;
+                }
+            }
+            ReadMessageOutcome::EndOfStream => break,
+            ReadMessageOutcome::Timeout => continue,
         }
     }
     Ok(())
