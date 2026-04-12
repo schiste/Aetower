@@ -715,7 +715,6 @@ fn should_persist_event(event: &DiagnosticsEvent) -> bool {
                 | "telemetry-verification-failed"
                 | "runtime-heartbeat"
                 | "history-pruned"
-                | "history-row-quarantined"
                 | "notification-settings-disabled"
                 | "notification-permission-ready"
                 | "notification-permission-denied"
@@ -991,7 +990,10 @@ mod tests {
             std::env::temp_dir().join(format!("aetower-diag-query-{}.ndjson", std::process::id()));
         let _ = std::fs::remove_file(&path);
 
-        let store = DiagnosticsStore::with_persistence(4, &path, 16).expect("store");
+        let store = match DiagnosticsStore::with_persistence(4, &path, 16) {
+            Ok(store) => store,
+            Err(error) => panic!("store: {error}"),
+        };
         store.emit(
             DiagnosticsEvent::builder(
                 DiagnosticsLevel::Warn,
@@ -1026,7 +1028,10 @@ mod tests {
         ));
         let _ = std::fs::remove_file(&path);
 
-        let store = DiagnosticsStore::with_persistence(4, &path, 16).expect("store");
+        let store = match DiagnosticsStore::with_persistence(4, &path, 16) {
+            Ok(store) => store,
+            Err(error) => panic!("store: {error}"),
+        };
         store.emit(
             DiagnosticsEvent::builder(
                 DiagnosticsLevel::Info,
@@ -1037,10 +1042,44 @@ mod tests {
             .field("entity_count", 12)
             .build(),
         );
-        store.flush_persistence().expect("flush");
+        if let Err(error) = store.flush_persistence() {
+            panic!("flush: {error}");
+        }
 
         let persisted = std::fs::read_to_string(&path).expect("persisted file");
         assert!(persisted.contains("runtime-heartbeat"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn row_level_history_quarantine_events_do_not_persist() {
+        let path = std::env::temp_dir().join(format!(
+            "aetower-diag-history-quarantine-{}.ndjson",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let store = match DiagnosticsStore::with_persistence(4, &path, 16) {
+            Ok(store) => store,
+            Err(error) => panic!("store: {error}"),
+        };
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Persistence,
+                "history-row-quarantined",
+                "quarantined row",
+            )
+            .field("sequence", 42)
+            .build(),
+        );
+        if let Err(error) = store.flush_persistence() {
+            panic!("flush: {error}");
+        }
+
+        let persisted = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(!persisted.contains("history-row-quarantined"));
 
         let _ = std::fs::remove_file(&path);
     }

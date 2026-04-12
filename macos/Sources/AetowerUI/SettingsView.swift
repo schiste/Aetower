@@ -365,6 +365,14 @@ public struct SettingsView: View {
                             Text(capability.detail)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            Text(capabilityConsequenceText(capability))
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(capabilityRemediationText(capability))
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
                             HStack {
                                 Button(capabilityActionLabel(capability)) {
                                     state.requestCapability(capability)

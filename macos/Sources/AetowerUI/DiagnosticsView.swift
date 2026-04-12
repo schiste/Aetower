@@ -216,7 +216,7 @@ public struct DiagnosticsView: View {
                 if let persistedPath = state.diagnosticsOverview.persistedPath {
                     labeledPersistenceDetail("Diagnostics file", persistedPath)
                 }
-                if let historySummary = state.historyRangeSummary {
+                if let historySummary = state.historyStoreSummary ?? state.historyRangeSummary {
                     labeledPersistenceDetail(
                         "History store",
                         "\(byteCount(historySummary.storeBytes)) db · \(byteCount(historySummary.walBytes)) wal · \(historySummary.snapshotCount) persisted"
@@ -243,6 +243,10 @@ public struct DiagnosticsView: View {
                 if let lastHistoryLoadFailure {
                     labeledPersistenceDetail("Last history issue", lastHistoryLoadFailure)
                 }
+                labeledPersistenceDetail(
+                    "Signal policy",
+                    "Current errors stay prominent, stale retained errors are downgraded, and repeated persistence churn is summarized instead of retained row-by-row."
+                )
             }
             .padding(.top, 8)
             if let persistenceError = state.diagnosticsOverview.persistenceError {
@@ -416,11 +420,17 @@ public struct DiagnosticsView: View {
     }
 
     private var diagnosticsHealthTitle: String {
-        if state.diagnosticsOverview.errorCount > 0 {
+        if recentDiagnosticsErrorMessage != nil {
             return "Degraded"
         }
-        if state.diagnosticsOverview.warnCount > 0 {
+        if state.diagnosticsOverview.errorCount > 0 {
+            return "Stale"
+        }
+        if recentWarningCount >= 25 {
             return "Watch"
+        }
+        if state.diagnosticsOverview.warnCount > 0 {
+            return "Quiet"
         }
         return "Clean"
     }
@@ -431,6 +441,12 @@ public struct DiagnosticsView: View {
         }
         if let lastErrorMessage = recentDiagnosticsErrorMessage {
             return lastErrorMessage
+        }
+        if state.diagnosticsOverview.errorCount > 0 {
+            return "No active diagnostics error, but stale retained errors still exist."
+        }
+        if recentWarningCount >= 25 {
+            return "\(recentWarningCount) warning-level events in the recent diagnostics window"
         }
         if let lastErrorMillis = state.diagnosticsOverview.lastErrorMillis {
             return "Most recent diagnostics error was \(relativeTimeLabel(from: lastErrorMillis))"
@@ -515,6 +531,9 @@ public struct DiagnosticsView: View {
         if let message = recentDiagnosticsErrorMessage {
             return message
         }
+        if state.diagnosticsOverview.errorCount > 0 {
+            return "stale retained errors exist, but none are active"
+        }
         if let lastErrorMillis = state.diagnosticsOverview.lastErrorMillis {
             return "last error \(relativeTimeLabel(from: lastErrorMillis))"
         }
@@ -533,6 +552,14 @@ public struct DiagnosticsView: View {
             return lastErrorMessage
         }
         return nil
+    }
+
+    private var recentWarningCount: Int {
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        let cutoff = nowMillis > 10 * 60 * 1000 ? nowMillis - 10 * 60 * 1000 : 0
+        return state.diagnosticsEvents.filter {
+            $0.level == .warn && $0.timestampMillis >= cutoff
+        }.count
     }
 }
 
