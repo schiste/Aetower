@@ -15,6 +15,7 @@ members = [
   "crates/aetower-telemetry",
   "crates/aetower-core",
   "crates/aetower-ffi",
+  "crates/aetower-mcp",
   "crates/aetower-helper",
   "crates/aetower-bench",
   "crates/uniffi-bindgen-swift",

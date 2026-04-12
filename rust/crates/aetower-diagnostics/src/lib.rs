@@ -147,6 +147,7 @@ pub struct DiagnosticsOverview {
     pub error_count: u32,
     pub warn_count: u32,
     pub last_event_millis: Option<u64>,
+    pub last_error_millis: Option<u64>,
     pub last_error_message: Option<String>,
     pub persisted_events: u64,
     pub persisted_path: Option<String>,
@@ -280,6 +281,7 @@ impl DiagnosticsStore {
         let mut error_count = 0u32;
         let mut warn_count = 0u32;
         let mut last_error_message = None;
+        let mut last_error_millis = None;
 
         for event in guard.events.iter().rev() {
             match event.level {
@@ -287,6 +289,7 @@ impl DiagnosticsStore {
                     error_count = error_count.saturating_add(1);
                     if last_error_message.is_none() {
                         last_error_message = Some(event.message.clone());
+                        last_error_millis = Some(event.timestamp_millis);
                     }
                 }
                 DiagnosticsLevel::Warn => {
@@ -311,6 +314,7 @@ impl DiagnosticsStore {
             error_count,
             warn_count,
             last_event_millis: guard.events.back().map(|event| event.timestamp_millis),
+            last_error_millis,
             last_error_message,
             persisted_events: guard
                 .persistence
@@ -726,6 +730,8 @@ fn should_persist_event(event: &DiagnosticsEvent) -> bool {
                 | "session-log-window-noise"
                 | "session-log-metal-error"
                 | "session-log-analysis-failed"
+                | "mcp-server-started"
+                | "mcp-server-start-failed"
         ),
         DiagnosticsLevel::Trace | DiagnosticsLevel::Debug => false,
     }
@@ -842,6 +848,46 @@ mod tests {
         assert!(persisted.contains("history-load-failed"));
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn overview_reports_last_error_timestamp() {
+        let store = DiagnosticsStore::new(8);
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Warn,
+                DiagnosticsSubsystem::Engine,
+                "warn",
+                "warn event",
+            )
+            .timestamp_millis(10)
+            .build(),
+        );
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Error,
+                DiagnosticsSubsystem::Persistence,
+                "error",
+                "real failure",
+            )
+            .timestamp_millis(25)
+            .build(),
+        );
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Engine,
+                "info",
+                "recovery",
+            )
+            .timestamp_millis(40)
+            .build(),
+        );
+
+        let overview = store.overview();
+        assert_eq!(overview.last_error_message.as_deref(), Some("real failure"));
+        assert_eq!(overview.last_error_millis, Some(25));
+        assert_eq!(overview.last_event_millis, Some(40));
     }
 
     #[test]

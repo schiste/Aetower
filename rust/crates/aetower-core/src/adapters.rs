@@ -289,7 +289,7 @@ impl AdapterManager {
                     kind: CapabilityKind::Accessibility,
                     state: CapabilityState::Unknown,
                     health: CapabilityHealth::Configured,
-                    detail: "Required for richer UI-state correlation and future window context."
+                    detail: "Not checked yet. Use Request / Refresh to inspect Accessibility access for richer window and UI context."
                         .to_owned(),
                     last_updated_millis: now,
                 },
@@ -301,7 +301,7 @@ impl AdapterManager {
                     state: CapabilityState::Unknown,
                     health: CapabilityHealth::Configured,
                     detail:
-                        "Optional. Improves origin and metadata access for protected locations."
+                        "Not checked yet. Use Request / Refresh to open Full Disk Access and verify protected-path visibility."
                             .to_owned(),
                     last_updated_millis: now,
                 },
@@ -312,7 +312,7 @@ impl AdapterManager {
                     kind: CapabilityKind::AppleAutomation,
                     state: CapabilityState::Unknown,
                     health: CapabilityHealth::Configured,
-                    detail: "Optional. Enables scriptable-app enrichments like media context."
+                    detail: "Not checked yet. Use Request / Refresh to probe Apple Events automation for scriptable app context."
                         .to_owned(),
                     last_updated_millis: now,
                 },

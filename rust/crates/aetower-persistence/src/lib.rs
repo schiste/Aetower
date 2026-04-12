@@ -53,6 +53,24 @@ pub struct HistoryMaintenanceReport {
     pub wal_bytes_after: u64,
     pub checkpointed: bool,
     pub vacuumed: bool,
+    pub pruned_rows: u64,
+    pub aggressive_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct HistoryRetentionPolicy {
+    pub max_age_millis: u64,
+    pub emergency_max_age_millis: u64,
+    pub soft_max_store_bytes: u64,
+    pub hard_max_store_bytes: u64,
+    pub max_wal_bytes: u64,
+    pub aggressive_quarantine_rows: u64,
+}
+
+impl HistoryRetentionPolicy {
+    fn cutoff_for(&self, newest_millis: u64, age_millis: u64) -> u64 {
+        newest_millis.saturating_sub(age_millis)
+    }
 }
 
 pub struct HistoryStore {
@@ -323,6 +341,11 @@ impl HistoryStore {
     pub fn maintain_storage(&self, aggressive: bool) -> Result<HistoryMaintenanceReport, String> {
         self.writer.flush()?;
         let (store_bytes_before, wal_bytes_before) = self.store_file_sizes();
+        let aggressive_reason = if aggressive {
+            Some("manual-request".to_owned())
+        } else {
+            None
+        };
         self.conn
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;")
             .map_err(|e| format!("checkpoint history store: {e}"))?;
@@ -359,7 +382,121 @@ impl HistoryStore {
             wal_bytes_after,
             checkpointed: true,
             vacuumed,
+            pruned_rows: 0,
+            aggressive_reason,
         })
+    }
+
+    pub fn maintain_with_policy(
+        &self,
+        policy: HistoryRetentionPolicy,
+    ) -> Result<HistoryMaintenanceReport, String> {
+        self.writer.flush()?;
+        let (store_bytes_before, wal_bytes_before) = self.store_file_sizes();
+        let quarantine_count = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM snapshot_quarantine", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|count| count as u64)
+            .map_err(|e| format!("quarantine count: {e}"))?;
+        let newest_millis = self
+            .conn
+            .query_row("SELECT MAX(captured_at_millis) FROM snapshots", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })
+            .map(|value| value.map(|millis| millis as u64))
+            .map_err(|e| format!("max captured_at_millis: {e}"))?;
+        let mut pruned_rows = 0u64;
+        let mut aggressive_reasons = Vec::new();
+
+        if let Some(newest_millis) = newest_millis {
+            let cutoff = policy.cutoff_for(newest_millis, policy.max_age_millis);
+            let deleted = self.writer.prune(cutoff)?;
+            if deleted > 0 {
+                pruned_rows = pruned_rows.saturating_add(deleted);
+                aggressive_reasons.push(format!(
+                    "retention-window>{}h",
+                    policy.max_age_millis / 3_600_000
+                ));
+            }
+        }
+
+        let threshold_aggressive = store_bytes_before >= policy.soft_max_store_bytes
+            || wal_bytes_before >= policy.max_wal_bytes
+            || quarantine_count >= policy.aggressive_quarantine_rows;
+        if store_bytes_before >= policy.soft_max_store_bytes {
+            aggressive_reasons.push("store-bytes".to_owned());
+        }
+        if wal_bytes_before >= policy.max_wal_bytes {
+            aggressive_reasons.push("wal-bytes".to_owned());
+        }
+        if quarantine_count >= policy.aggressive_quarantine_rows {
+            aggressive_reasons.push("quarantine-rows".to_owned());
+        }
+
+        let mut report = self.maintain_storage(threshold_aggressive)?;
+        report.pruned_rows = pruned_rows;
+        report.aggressive_reason = if aggressive_reasons.is_empty() {
+            None
+        } else {
+            Some(aggressive_reasons.join(","))
+        };
+
+        if report.store_bytes_after > policy.hard_max_store_bytes
+            && let Some(newest_millis) = newest_millis
+        {
+            let emergency_cutoff =
+                policy.cutoff_for(newest_millis, policy.emergency_max_age_millis);
+            let deleted = self.writer.prune(emergency_cutoff)?;
+            if deleted > 0 {
+                report.pruned_rows = report.pruned_rows.saturating_add(deleted);
+                let mut reasons = report.aggressive_reason.take().unwrap_or_default();
+                if !reasons.is_empty() {
+                    reasons.push(',');
+                }
+                reasons.push_str("emergency-retention");
+                report.aggressive_reason = Some(reasons);
+            }
+            let post_emergency = self.maintain_storage(true)?;
+            report.store_bytes_after = post_emergency.store_bytes_after;
+            report.wal_bytes_after = post_emergency.wal_bytes_after;
+            report.vacuumed = report.vacuumed || post_emergency.vacuumed;
+            report.checkpointed = report.checkpointed || post_emergency.checkpointed;
+        }
+
+        if let Some(diagnostics) = self.diagnostics.as_ref() {
+            diagnostics.emit(
+                DiagnosticsEvent::builder(
+                    if report.pruned_rows > 0 || report.vacuumed {
+                        DiagnosticsLevel::Warn
+                    } else {
+                        DiagnosticsLevel::Info
+                    },
+                    DiagnosticsSubsystem::Persistence,
+                    "history-retention-maintained",
+                    "Applied persisted history retention and maintenance policy.",
+                )
+                .field("store_bytes_before", report.store_bytes_before)
+                .field("wal_bytes_before", report.wal_bytes_before)
+                .field("store_bytes_after", report.store_bytes_after)
+                .field("wal_bytes_after", report.wal_bytes_after)
+                .field("pruned_rows", report.pruned_rows)
+                .field("checkpointed", report.checkpointed)
+                .field("vacuumed", report.vacuumed)
+                .field("quarantine_count", quarantine_count)
+                .field(
+                    "aggressive_reason",
+                    report
+                        .aggressive_reason
+                        .clone()
+                        .unwrap_or_else(|| "none".to_owned()),
+                )
+                .build(),
+            );
+        }
+
+        Ok(report)
     }
 
     /// Delete snapshots older than `cutoff_millis`.
@@ -926,6 +1063,46 @@ mod tests {
         assert_eq!(summary.range_count, 3);
         assert_eq!(summary.oldest_millis, Some(2_000));
         assert_eq!(summary.newest_millis, Some(6_000));
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn maintain_with_policy_prunes_old_history() {
+        let path = temp_db();
+        let mut store = match HistoryStore::open(&path, 1) {
+            Ok(store) => store,
+            Err(error) => panic!("open store: {error}"),
+        };
+
+        for i in 0..6 {
+            store.maybe_store(&SystemSnapshot {
+                sequence: i,
+                captured_at_millis: i * 1_000,
+                ..Default::default()
+            });
+        }
+
+        let report = store
+            .maintain_with_policy(HistoryRetentionPolicy {
+                max_age_millis: 2_500,
+                emergency_max_age_millis: 1_500,
+                soft_max_store_bytes: u64::MAX,
+                hard_max_store_bytes: u64::MAX,
+                max_wal_bytes: u64::MAX,
+                aggressive_quarantine_rows: u64::MAX,
+            })
+            .unwrap_or_else(|error| panic!("maintain_with_policy: {error}"));
+
+        assert_eq!(report.pruned_rows, 3);
+        let remaining = store
+            .load_range(0, 10_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
+        let sequences: Vec<u64> = remaining
+            .into_iter()
+            .map(|snapshot| snapshot.sequence)
+            .collect();
+        assert_eq!(sequences, vec![3, 4, 5]);
 
         std::fs::remove_file(&path).ok();
     }

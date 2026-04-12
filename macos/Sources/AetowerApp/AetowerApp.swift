@@ -84,6 +84,7 @@ struct AetowerApp: App {
             .task {
                 menuBarExtraInserted = settings.showMenuBarExtra
                 refreshMenuBarTitle(force: true)
+                state.startLocalMcpServer()
                 state.applyNotificationSettings(settings)
                 state.applyIntegrationSettings(settings)
                 try? await Task.sleep(nanoseconds: 1_000_000_000)

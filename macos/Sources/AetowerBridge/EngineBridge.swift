@@ -122,6 +122,11 @@ public final class EngineBridge: @unchecked Sendable {
         engine.exportSnapshotJson()
     }
 
+    public func startLocalMcpServer(socketPath: String? = nil) -> String? {
+        let result = engine.startLocalMcpServer(socketPath: socketPath)
+        return result.isEmpty ? nil : result
+    }
+
     public func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSnapshot] {
         engine.loadHistoryRange(startMillis: startMillis, endMillis: endMillis)
     }

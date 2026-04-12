@@ -86,6 +86,7 @@ mkdir -p "$BIN_DIR" "$FRAMEWORK_DIR" "$HELPER_DIR" "$PLIST_DIR/Resources"
 cp "$SWIFT_BUILD_DIR/release/AetowerApp" "$BIN_DIR/Aetower"
 cp "$ROOT/rust/target/release/libaetower_ffi.dylib" "$FRAMEWORK_DIR/"
 cp "$ROOT/rust/target/release/aetower-helper" "$HELPER_DIR/aetower-helper"
+cp "$ROOT/rust/target/release/aetower-mcp" "$HELPER_DIR/aetower-mcp"
 
 cat > "$PLIST_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -124,6 +125,7 @@ install_name_tool -change "$SWIFTPM_PLUGIN_DIR/release/libaetower_ffi.dylib" "@r
 
 sign_target "$FRAMEWORK_DIR/libaetower_ffi.dylib" plain
 sign_target "$HELPER_DIR/aetower-helper" runtime "$HELPER_ENTITLEMENTS_PATH"
+sign_target "$HELPER_DIR/aetower-mcp" plain
 sign_target "$APP_DIR" runtime "$ENTITLEMENTS_PATH"
 codesign --verify --deep --strict "$APP_DIR"
 notarize_app

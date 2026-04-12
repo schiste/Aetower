@@ -6,6 +6,7 @@ APP_DIR="$ROOT/dist/Aetower.app"
 APP_BIN="$APP_DIR/Contents/MacOS/Aetower"
 FFI_LIB="$APP_DIR/Contents/Frameworks/libaetower_ffi.dylib"
 HELPER_BIN="$APP_DIR/Contents/Helpers/aetower-helper"
+MCP_PROXY_BIN="$APP_DIR/Contents/Helpers/aetower-mcp"
 REBUILD=0
 LAUNCH=0
 
@@ -33,6 +34,7 @@ fi
 [ -x "$APP_BIN" ]
 [ -f "$FFI_LIB" ]
 [ -x "$HELPER_BIN" ]
+[ -x "$MCP_PROXY_BIN" ]
 
 codesign --verify --deep --strict "$APP_DIR"
 

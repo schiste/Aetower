@@ -14,45 +14,6 @@ private struct ReasonPill: View {
     }
 }
 
-private struct StatusBadge: View {
-    let score: Double
-
-    var body: some View {
-        Text(label)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(color.opacity(0.14), in: Capsule())
-    }
-
-    private var label: String {
-        switch score {
-        case 75...:
-            return "Critical"
-        case 40...:
-            return "High"
-        case 15...:
-            return "Watch"
-        default:
-            return "Stable"
-        }
-    }
-
-    private var color: Color {
-        switch score {
-        case 75...:
-            return .red
-        case 40...:
-            return .orange
-        case 15...:
-            return .yellow
-        default:
-            return .green
-        }
-    }
-}
-
 private struct SectionEyebrow: View {
     let text: String
 
@@ -864,6 +825,10 @@ public struct MainListView: View {
     public var body: some View {
         VStack(spacing: 0) {
             summaryHeader
+            if !hostAlerts.isEmpty {
+                Divider()
+                hostAlertsPanel
+            }
             Divider()
             monitorSplitView
         }
@@ -952,6 +917,24 @@ public struct MainListView: View {
         .background(.ultraThinMaterial)
     }
 
+    private var hostAlertsPanel: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(Array(hostAlerts.enumerated()), id: \.offset) { _, alert in
+                    MachineBandMetric(
+                        title: alert.title,
+                        value: alert.value,
+                        tone: alert.tone,
+                        subtitle: alert.subtitle
+                    )
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .background(Color.secondary.opacity(0.04))
+    }
+
     private func ribbonMetric(_ label: String, _ value: String, _ color: Color) -> some View {
         HStack(spacing: 4) {
             Text(label)
@@ -1013,7 +996,7 @@ public struct MainListView: View {
                     Text(entity.displayName)
                         .font(.title2.weight(.semibold))
 
-                    StatusBadge(score: Double(entity.friction.totalScore))
+                    FrictionStatusBadge(score: Double(entity.friction.totalScore))
 
                     Spacer()
 
@@ -1243,6 +1226,50 @@ public struct MainListView: View {
         filteredEntities.first
     }
 
+    private var hostAlerts: [HostAlertCard] {
+        var alerts: [HostAlertCard] = []
+        let host = state.snapshot.host
+        let memoryBand = hostPressureBand(host)
+        if memoryBand != .nominal {
+            let leaders = state.snapshot.entities
+                .sorted { $0.metrics.memoryResidentBytes > $1.metrics.memoryResidentBytes }
+                .prefix(3)
+                .map(\.displayName)
+                .joined(separator: ", ")
+            let pressureText = memoryBand == .severe ? "Severe" : "Elevated"
+            alerts.append(
+                HostAlertCard(
+                    title: "Memory pressure",
+                    value: pressureText,
+                    tone: memoryBand == .severe ? .red : .orange,
+                    subtitle: [
+                        "compressed \(formatBytes(host.compressedMemoryBytes))",
+                        host.swapUsedBytes > 0 ? "swap \(formatBytes(host.swapUsedBytes))" : nil,
+                        leaders.isEmpty ? nil : "leaders \(leaders)"
+                    ]
+                    .compactMap { $0 }
+                    .joined(separator: " · ")
+                )
+            )
+        }
+
+        let wakeupBand = hostWakeupBand(host.wakeupsPerSecond)
+        if wakeupBand != .nominal,
+           let leader = state.snapshot.entities.max(by: { $0.metrics.wakeupsPerSecond < $1.metrics.wakeupsPerSecond })
+        {
+            alerts.append(
+                HostAlertCard(
+                    title: "Wakeup leader",
+                    value: leader.displayName,
+                    tone: wakeupBand == .severe ? .red : .yellow,
+                    subtitle: "\(formatWakeups(leader.metrics.wakeupsPerSecond)) entity · \(formatWakeups(host.wakeupsPerSecond)) host · \(wakeupsLeaderSubtitle(for: leader))"
+                )
+            )
+        }
+
+        return alerts
+    }
+
     private var hostMemoryLoadPercent: Double {
         memoryLoadPercent(bytes: state.snapshot.host.memoryUsedBytes, totalBytes: state.snapshot.host.memoryTotalBytes)
     }
@@ -1397,6 +1424,19 @@ public struct MainListView: View {
         }
     }
 
+}
+
+private struct HostAlertCard {
+    let title: String
+    let value: String
+    let tone: Color
+    let subtitle: String
+}
+
+private enum HostBand {
+    case nominal
+    case elevated
+    case severe
 }
 
 private func frictionHighlights(for entity: EntitySnapshot) -> RowFrictionHighlights {
@@ -1558,22 +1598,42 @@ private func wakeupsTrendSummary(_ entity: EntitySnapshot) -> String {
     "\(trendLabel(samples: entity.trend.wakeupsPerSecond.map(Double.init), stableText: "recent wakeups")) · \(trendWindowLabel(sampleCount: entity.trend.wakeupsPerSecond.count))"
 }
 
-private func machineFrictionScore(for host: HostSnapshot) -> Double {
-    let cpuScore = min(Double(host.cpuPercent), 100.0) * 0.5
-    let memoryRatio = host.memoryTotalBytes == 0 ? 0.0 : Double(host.memoryUsedBytes) / Double(host.memoryTotalBytes)
-    let memoryScore = min(memoryRatio, 1.0) * 35.0
-    let swapScore = host.swapUsedBytes == 0 ? 0.0 : (min(Double(host.swapUsedBytes) / 1_073_741_824.0, 8.0) / 8.0) * 15.0
-    let compressedScore = host.memoryTotalBytes == 0 ? 0.0 : min(Double(host.compressedMemoryBytes) / Double(host.memoryTotalBytes), 1.0) * 12.0
-    let networkScore = min(Double(host.networkReceiveBps + host.networkSendBps) / 8_388_608.0, 1.0) * 10.0
-    let wakeupsScore = min(Double(host.wakeupsPerSecond) / 500.0, 1.0) * 8.0
-    return min(cpuScore + memoryScore + swapScore + compressedScore + networkScore + wakeupsScore, 100.0)
-}
-
 private func hostCompressedSummary(_ host: HostSnapshot) -> String {
     if host.compressedMemoryBytes > 0 {
         return "compressed \(formatBytes(host.compressedMemoryBytes))"
     }
     return "memory pressure nominal"
+}
+
+private func hostPressureBand(_ host: HostSnapshot) -> HostBand {
+    let totalBytes = max(Double(host.memoryTotalBytes), 1)
+    let compressedRatio = Double(host.compressedMemoryBytes) / totalBytes
+    let swapRatio = Double(host.swapUsedBytes) / totalBytes
+    if compressedRatio >= 0.12 || swapRatio >= 0.08 {
+        return .severe
+    }
+    if compressedRatio >= 0.05 || swapRatio >= 0.02 {
+        return .elevated
+    }
+    return .nominal
+}
+
+private func hostWakeupBand(_ wakeupsPerSecond: Float) -> HostBand {
+    if wakeupsPerSecond >= 3_000 {
+        return .severe
+    }
+    if wakeupsPerSecond >= 1_500 {
+        return .elevated
+    }
+    return .nominal
+}
+
+private func wakeupsLeaderSubtitle(for entity: EntitySnapshot) -> String {
+    let components = entity.components.filter { $0.kind == .process }
+    if components.count <= 1 {
+        return "single-process hotspot"
+    }
+    return "\(components.count) processes in group"
 }
 
 private func memoryLoadPercent(bytes: UInt64, totalBytes: UInt64) -> Double {

@@ -10,18 +10,41 @@ if [ -n "${HOME:-}" ] \
 fi
 cd "$ROOT/rust"
 
+"$CARGO_BIN" build --locked -p aetower-mcp
+"$CARGO_BIN" build --locked -p aetower-mcp --release
 "$CARGO_BIN" build --locked -p aetower-ffi
 "$CARGO_BIN" build --locked -p aetower-ffi --release
 
 DEBUG_DYLIB="$ROOT/rust/target/debug/libaetower_ffi.dylib"
 RELEASE_DYLIB="$ROOT/rust/target/release/libaetower_ffi.dylib"
 
-install_name_tool -id "@rpath/libaetower_ffi.dylib" "$DEBUG_DYLIB"
-install_name_tool -id "@rpath/libaetower_ffi.dylib" "$RELEASE_DYLIB"
+set_install_name() {
+  dylib_path="$1"
+  attempts=0
+  while [ "$attempts" -lt 5 ]; do
+    if [ -f "$dylib_path" ] && install_name_tool -id "@rpath/libaetower_ffi.dylib" "$dylib_path"; then
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 1
+  done
+  printf 'failed to update install name for %s\n' "$dylib_path" >&2
+  return 1
+}
+
+set_install_name "$DEBUG_DYLIB"
+set_install_name "$RELEASE_DYLIB"
 
 mkdir -p "$ROOT/macos/Sources/AetowerBindings" "$ROOT/macos/Sources/aetower_ffiFFI"
 find "$ROOT/macos/Sources/AetowerBindings" -type f ! -name '.gitkeep' -delete
 find "$ROOT/macos/Sources/aetower_ffiFFI" -type f ! -name '.gitkeep' -delete
+
+find "$ROOT/macos" -type d -path '*/plugins/outputs/*/BuildRustBridgePlugin' | while IFS= read -r plugin_output_dir; do
+  mkdir -p "$plugin_output_dir/debug" "$plugin_output_dir/release"
+  cp "$DEBUG_DYLIB" "$plugin_output_dir/debug/libaetower_ffi.dylib"
+  cp "$RELEASE_DYLIB" "$plugin_output_dir/release/libaetower_ffi.dylib"
+  touch "$plugin_output_dir/.plugin-ready"
+done
 
 "$CARGO_BIN" run --locked -p uniffi-bindgen-swift -- \
   --swift-sources \

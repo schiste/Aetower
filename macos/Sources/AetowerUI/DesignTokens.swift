@@ -66,6 +66,14 @@ enum AetowerDesign {
         static let gpu: Color = .indigo
     }
 
+    enum Status {
+        static let success: Color = Tone.memory
+        static let ready: Color = Tone.cpu
+        static let warning: Color = Tone.friction
+        static let error: Color = .red
+        static let neutral: Color = .secondary
+    }
+
     // MARK: - Surface Colors
 
     enum Surface {

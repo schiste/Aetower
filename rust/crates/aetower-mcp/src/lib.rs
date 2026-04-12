@@ -1,0 +1,3362 @@
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env, fs,
+    io::{Read, Write},
+    net::Shutdown,
+    os::unix::{
+        fs::{FileTypeExt, PermissionsExt},
+        net::{UnixListener, UnixStream},
+    },
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
+};
+
+use aetower_diagnostics::{DiagnosticsEvent, DiagnosticsOverview, DiagnosticsQuery};
+use aetower_model::{RuntimeLagMetrics, SystemSnapshot};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+const PROTOCOL_VERSION: &str = "2024-11-05";
+const SERVER_NAME: &str = "aetower";
+const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const INITIAL_SNAPSHOT_WAIT: Duration = Duration::from_millis(2500);
+const INITIAL_SNAPSHOT_POLL: Duration = Duration::from_millis(100);
+const SOCKET_DIR_MODE: u32 = 0o700;
+const SOCKET_FILE_MODE: u32 = 0o600;
+const MCP_READ_TIMEOUT: Duration = Duration::from_millis(250);
+const MAX_INLINE_TEXT_BYTES: usize = 8 * 1024;
+const DEFAULT_HOST_ALERT_TOP_ENTITIES: usize = 5;
+const DEFAULT_FINDINGS_LIMIT: usize = 10;
+const DEFAULT_RECENT_CHANGES_LIMIT: usize = 25;
+const DEFAULT_RECENT_CHANGES_WINDOW_MILLIS: u64 = 30 * 60 * 1000;
+const DEFAULT_HISTORY_WINDOW_MILLIS: u64 = 72 * 60 * 60 * 1000;
+const DEFAULT_EXPORT_HISTORY_LIMIT: u32 = 120;
+const MEMORY_PRESSURE_WARNING_RATIO: f64 = 0.80;
+const MEMORY_PRESSURE_CRITICAL_RATIO: f64 = 0.90;
+const COMPRESSED_MEMORY_WARNING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const COMPRESSED_MEMORY_CRITICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
+const SWAP_WARNING_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const SWAP_CRITICAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const WAKEUPS_WARNING: f32 = 12_000.0;
+const WAKEUPS_CRITICAL: f32 = 25_000.0;
+const HISTORY_STORE_WARNING_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const HISTORY_STORE_CRITICAL_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const HISTORY_WAL_WARNING_BYTES: u64 = 64 * 1024 * 1024;
+const HISTORY_WAL_CRITICAL_BYTES: u64 = 256 * 1024 * 1024;
+const HISTORY_QUARANTINE_WARNING: u64 = 64;
+const HISTORY_QUARANTINE_CRITICAL: u64 = 256;
+const DIAGNOSTICS_WARN_WARNING: u32 = 200;
+const DIAGNOSTICS_WARN_CRITICAL: u32 = 800;
+const DIAGNOSTICS_ERROR_WARNING: u32 = 10;
+const DIAGNOSTICS_ERROR_CRITICAL: u32 = 50;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HistorySummaryResponse {
+    pub store_bytes: u64,
+    pub wal_bytes: u64,
+    pub snapshot_count: u64,
+    pub quarantine_count: u64,
+    pub range_count: u64,
+    pub oldest_millis: Option<u64>,
+    pub newest_millis: Option<u64>,
+    pub pending_writes: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "kebab-case")]
+enum SeverityBand {
+    Info,
+    Warning,
+    Critical,
+}
+
+impl SeverityBand {
+    fn score(self) -> u8 {
+        match self {
+            Self::Info => 1,
+            Self::Warning => 2,
+            Self::Critical => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum ExportPrivacyTier {
+    Redacted,
+    OperatorMode,
+    Full,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TopFinding {
+    id: String,
+    severity: SeverityBand,
+    title: String,
+    detail: String,
+    source: String,
+    entity_ids: Vec<String>,
+    recommendation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct HostAlert {
+    id: String,
+    severity: SeverityBand,
+    category: String,
+    title: String,
+    detail: String,
+    metrics: BTreeMap<String, Value>,
+    entity_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GroupTreeNode {
+    entity_id: String,
+    display_name: String,
+    relation: String,
+    friction: f32,
+    cpu_percent: f32,
+    memory_bytes: u64,
+    process_count: u32,
+    badges: Vec<String>,
+    recent_change_summary: Option<String>,
+    children: Vec<GroupTreeNode>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RecentChangeItem {
+    timestamp_millis: u64,
+    severity: SeverityBand,
+    source: String,
+    entity_id: Option<String>,
+    title: String,
+    detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CapabilityStatusItem {
+    kind: String,
+    state: String,
+    health: String,
+    operator_label: String,
+    action_label: String,
+    detail: String,
+    last_updated_millis: u64,
+    severity: SeverityBand,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct HistoryStoreHealth {
+    severity: SeverityBand,
+    summary: String,
+    range: HistorySummaryResponse,
+    thresholds: BTreeMap<String, Value>,
+    recent_history_events: Vec<DiagnosticsEvent>,
+    recommendations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SupportBundleSectionManifest {
+    name: String,
+    estimated_bytes: usize,
+    redacted: bool,
+    description: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RecommendationItem {
+    severity: SeverityBand,
+    title: String,
+    detail: String,
+    entity_id: Option<String>,
+    source: String,
+    expected_benefit: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SessionHealthCheck {
+    key: String,
+    severity: SeverityBand,
+    summary: String,
+    detail: String,
+}
+
+struct ExportQueryOptions<'a> {
+    privacy_tier: ExportPrivacyTier,
+    entity_ids: &'a [String],
+    start_millis: u64,
+    end_millis: u64,
+    include_snapshot: bool,
+    include_history: bool,
+    include_diagnostics: bool,
+    include_session_health: bool,
+    diagnostics_limit: usize,
+    history_limit: u32,
+}
+
+pub trait AetowerMcpDataSource: Send + Sync + 'static {
+    fn latest_snapshot(&self) -> Result<SystemSnapshot, String>;
+    fn latest_snapshot_if_newer(
+        &self,
+        last_sequence: u64,
+    ) -> Result<Option<SystemSnapshot>, String>;
+    fn latest_sequence(&self) -> Result<u64, String>;
+    fn latest_runtime_lag_metrics(&self) -> Result<RuntimeLagMetrics, String>;
+    fn history_range_summary(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+    ) -> Result<HistorySummaryResponse, String>;
+    fn load_history_page(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+        before_millis_exclusive: Option<u64>,
+        limit: u32,
+    ) -> Result<Vec<SystemSnapshot>, String>;
+    fn diagnostics_overview(&self) -> Result<DiagnosticsOverview, String>;
+    fn query_diagnostics(&self, query: DiagnosticsQuery) -> Result<Vec<DiagnosticsEvent>, String>;
+}
+
+pub struct LocalMcpServerHandle {
+    running: Arc<AtomicBool>,
+    join_handle: Option<thread::JoinHandle<()>>,
+    client_threads: Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
+    socket_path: PathBuf,
+}
+
+impl LocalMcpServerHandle {
+    pub fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
+}
+
+impl Drop for LocalMcpServerHandle {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::SeqCst);
+        let _ = UnixStream::connect(&self.socket_path);
+        if let Some(join_handle) = self.join_handle.take() {
+            let _ = join_handle.join();
+        }
+        if let Ok(mut client_threads) = self.client_threads.lock() {
+            for join_handle in client_threads.drain(..) {
+                let _ = join_handle.join();
+            }
+        }
+        let _ = fs::remove_file(&self.socket_path);
+    }
+}
+
+pub fn default_socket_path() -> PathBuf {
+    if let Some(override_path) = env::var_os("AETOWER_MCP_SOCKET_PATH") {
+        return PathBuf::from(override_path);
+    }
+    let base = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
+    base.join(".aetower").join("mcp.sock")
+}
+
+pub fn start_local_socket_server(
+    data_source: Arc<dyn AetowerMcpDataSource>,
+    socket_path: impl AsRef<Path>,
+) -> Result<LocalMcpServerHandle, String> {
+    let socket_path = socket_path.as_ref().to_path_buf();
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("create MCP socket directory {}: {error}", parent.display())
+        })?;
+        fs::set_permissions(parent, fs::Permissions::from_mode(SOCKET_DIR_MODE)).map_err(
+            |error| {
+                format!(
+                    "set MCP socket directory permissions {}: {error}",
+                    parent.display()
+                )
+            },
+        )?;
+    }
+    if let Ok(metadata) = fs::symlink_metadata(&socket_path) {
+        if !metadata.file_type().is_socket() {
+            return Err(format!(
+                "refusing to replace non-socket MCP path {}",
+                socket_path.display()
+            ));
+        }
+        fs::remove_file(&socket_path).map_err(|error| {
+            format!("remove stale MCP socket {}: {error}", socket_path.display())
+        })?;
+    }
+
+    let listener = UnixListener::bind(&socket_path)
+        .map_err(|error| format!("bind MCP socket {}: {error}", socket_path.display()))?;
+    fs::set_permissions(&socket_path, fs::Permissions::from_mode(SOCKET_FILE_MODE)).map_err(
+        |error| {
+            format!(
+                "set MCP socket permissions {}: {error}",
+                socket_path.display()
+            )
+        },
+    )?;
+    let running = Arc::new(AtomicBool::new(true));
+    let thread_running = Arc::clone(&running);
+    let thread_socket_path = socket_path.clone();
+    let client_threads: Arc<Mutex<Vec<thread::JoinHandle<()>>>> = Arc::new(Mutex::new(Vec::new()));
+    let thread_client_threads = Arc::clone(&client_threads);
+    let join_handle = thread::spawn(move || {
+        while thread_running.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    if !thread_running.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let source = Arc::clone(&data_source);
+                    let connection_running = Arc::clone(&thread_running);
+                    let join_handle = thread::spawn(move || {
+                        let _ = handle_connection(stream, source, connection_running);
+                    });
+                    if let Ok(mut handles) = thread_client_threads.lock() {
+                        reap_finished_client_threads(&mut handles);
+                        handles.push(join_handle);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        if let Ok(mut handles) = thread_client_threads.lock() {
+            reap_finished_client_threads(&mut handles);
+        }
+        let _ = fs::remove_file(thread_socket_path);
+    });
+
+    Ok(LocalMcpServerHandle {
+        running,
+        join_handle: Some(join_handle),
+        client_threads,
+        socket_path,
+    })
+}
+
+fn reap_finished_client_threads(handles: &mut Vec<thread::JoinHandle<()>>) {
+    let mut remaining = Vec::with_capacity(handles.len());
+    for handle in handles.drain(..) {
+        if handle.is_finished() {
+            let _ = handle.join();
+        } else {
+            remaining.push(handle);
+        }
+    }
+    *handles = remaining;
+}
+
+pub fn proxy_stdio_to_socket(socket_path: impl AsRef<Path>) -> Result<(), String> {
+    proxy_streams_to_socket(std::io::stdin(), std::io::stdout(), socket_path)
+}
+
+fn proxy_streams_to_socket<R, W>(
+    mut input: R,
+    output: W,
+    socket_path: impl AsRef<Path>,
+) -> Result<(), String>
+where
+    R: Read + Send + 'static,
+    W: Write + Send + 'static,
+{
+    let socket_path = socket_path.as_ref();
+    let stream = UnixStream::connect(socket_path)
+        .map_err(|error| format!("connect MCP socket {}: {error}", socket_path.display()))?;
+    let mut reader_stream = stream
+        .try_clone()
+        .map_err(|error| format!("clone socket stream: {error}"))?;
+    let mut writer_stream = stream;
+
+    let stdin_thread = thread::spawn(move || -> Result<(), String> {
+        std::io::copy(&mut input, &mut writer_stream)
+            .map_err(|error| format!("copy stdin to MCP socket: {error}"))?;
+        writer_stream
+            .shutdown(Shutdown::Write)
+            .map_err(|error| format!("shutdown MCP socket write-half: {error}"))?;
+        Ok(())
+    });
+
+    let stdout_thread = thread::spawn(move || -> Result<(), String> {
+        let mut output = output;
+        let mut buffer = [0u8; 8192];
+        loop {
+            let bytes_read = reader_stream
+                .read(&mut buffer)
+                .map_err(|error| format!("read MCP socket: {error}"))?;
+            if bytes_read == 0 {
+                break;
+            }
+            output
+                .write_all(&buffer[..bytes_read])
+                .map_err(|error| format!("write MCP socket to stdout: {error}"))?;
+            output
+                .flush()
+                .map_err(|error| format!("flush stdout: {error}"))?;
+        }
+        Ok(())
+    });
+
+    stdin_thread
+        .join()
+        .map_err(|_| "stdin proxy thread panicked".to_string())??;
+    stdout_thread
+        .join()
+        .map_err(|_| "stdout proxy thread panicked".to_string())??;
+    Ok(())
+}
+
+fn handle_connection(
+    stream: UnixStream,
+    data_source: Arc<dyn AetowerMcpDataSource>,
+    running: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let mut reader = stream
+        .try_clone()
+        .map_err(|error| format!("clone MCP socket for read: {error}"))?;
+    reader
+        .set_read_timeout(Some(MCP_READ_TIMEOUT))
+        .map_err(|error| format!("set MCP socket read timeout: {error}"))?;
+    let mut writer = stream;
+    let server = AetowerMcpServer { data_source };
+
+    loop {
+        match read_message(&mut reader)? {
+            ReadMessageOutcome::Message(message) => {
+                let response = server.handle_message(message);
+                if let Some(response) = response {
+                    write_message(&mut writer, &response)?;
+                }
+            }
+            ReadMessageOutcome::EndOfStream => break,
+            ReadMessageOutcome::Timeout if running.load(Ordering::SeqCst) => continue,
+            ReadMessageOutcome::Timeout => break,
+        }
+    }
+    Ok(())
+}
+
+enum ReadMessageOutcome {
+    Message(Value),
+    EndOfStream,
+    Timeout,
+}
+
+struct AetowerMcpServer {
+    data_source: Arc<dyn AetowerMcpDataSource>,
+}
+
+impl AetowerMcpServer {
+    fn handle_message(&self, message: Value) -> Option<Value> {
+        let id = message.get("id").cloned().unwrap_or(Value::Null);
+        let Some(method) = message.get("method").and_then(Value::as_str) else {
+            return Some(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": jsonrpc_error(-32600, "Invalid request: missing method"),
+            }));
+        };
+        let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
+
+        let response = match method {
+            "initialize" => Ok(json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {
+                    "tools": { "listChanged": false },
+                    "resources": { "subscribe": false, "listChanged": false },
+                    "prompts": { "listChanged": false }
+                },
+                "serverInfo": {
+                    "name": SERVER_NAME,
+                    "version": SERVER_VERSION
+                }
+            })),
+            "notifications/initialized" => return None,
+            "ping" => Ok(json!({})),
+            "tools/list" => Ok(json!({ "tools": tool_definitions() })),
+            "tools/call" => self.handle_tool_call(params).or_else(Ok),
+            "resources/list" => Ok(json!({ "resources": [] })),
+            "prompts/list" => Ok(json!({ "prompts": [] })),
+            _ => Err(jsonrpc_error(-32601, format!("Unknown method: {method}"))),
+        };
+
+        Some(match response {
+            Ok(result) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": result,
+            }),
+            Err(error) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": error,
+            }),
+        })
+    }
+
+    fn handle_tool_call(&self, params: Value) -> Result<Value, Value> {
+        let tool_name = params
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| jsonrpc_error(-32602, "tools/call missing name"))?;
+        let arguments = params
+            .get("arguments")
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Default::default()));
+
+        match tool_name {
+            "aetower_current_snapshot" => self.tool_current_snapshot(arguments),
+            "aetower_host_summary" => self.tool_host_summary(arguments),
+            "aetower_entity_details" => self.tool_entity_details(arguments),
+            "aetower_runtime_lag" => self.tool_runtime_lag(),
+            "aetower_top_findings" => self.tool_top_findings(arguments),
+            "aetower_host_alerts" => self.tool_host_alerts(arguments),
+            "aetower_entity_group_tree" => self.tool_entity_group_tree(arguments),
+            "aetower_recent_changes" => self.tool_recent_changes(arguments),
+            "aetower_capability_status" => self.tool_capability_status(),
+            "aetower_history_summary" => self.tool_history_summary(arguments),
+            "aetower_history_page" => self.tool_history_page(arguments),
+            "aetower_history_store_health" => self.tool_history_store_health(arguments),
+            "aetower_diagnostics_overview" => self.tool_diagnostics_overview(),
+            "aetower_query_diagnostics" => self.tool_query_diagnostics(arguments),
+            "aetower_support_bundle_manifest" => self.tool_support_bundle_manifest(arguments),
+            "aetower_recommendations" => self.tool_recommendations(arguments),
+            "aetower_session_health" => self.tool_session_health(arguments),
+            "aetower_export_query" => self.tool_export_query(arguments),
+            _ => Ok(tool_error(format!("Unknown tool: {tool_name}"))),
+        }
+    }
+
+    fn tool_current_snapshot(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(serde::Deserialize, Default)]
+        struct Args {
+            last_sequence: Option<u64>,
+            entity_limit: Option<usize>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = if let Some(last_sequence) = args.last_sequence {
+            match self
+                .data_source
+                .latest_snapshot_if_newer(last_sequence)
+                .map_err(tool_error)?
+            {
+                Some(snapshot) => {
+                    let summary = SnapshotEnvelope::updated(snapshot, args.entity_limit);
+                    return tool_json(summary);
+                }
+                None => {
+                    let warmed = self.wait_for_nonzero_snapshot()?;
+                    if warmed.sequence > last_sequence {
+                        return tool_json(SnapshotEnvelope::updated(warmed, args.entity_limit));
+                    }
+                    return tool_json(json!({
+                        "updated": false,
+                        "sequence": self.data_source.latest_sequence().map_err(tool_error)?,
+                    }));
+                }
+            }
+        } else {
+            self.wait_for_nonzero_snapshot()?
+        };
+
+        tool_json(SnapshotEnvelope::updated(snapshot, args.entity_limit))
+    }
+
+    fn tool_host_summary(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(serde::Deserialize)]
+        struct Args {
+            #[serde(default = "default_top_entities")]
+            top_entities: usize,
+        }
+
+        fn default_top_entities() -> usize {
+            8
+        }
+
+        #[derive(Serialize)]
+        struct EntitySummary {
+            entity_id: String,
+            display_name: String,
+            friction: f32,
+            cpu_percent: f32,
+            memory_bytes: u64,
+            badges: Vec<String>,
+            recent_change_summary: Option<String>,
+        }
+
+        #[derive(Serialize)]
+        struct HostSummary {
+            sequence: u64,
+            captured_at_millis: u64,
+            host: aetower_model::HostSnapshot,
+            capability_states: BTreeMap<String, String>,
+            top_entities: Vec<EntitySummary>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let top_entities = snapshot
+            .entities
+            .iter()
+            .take(args.top_entities.max(1))
+            .map(|entity| EntitySummary {
+                entity_id: entity.entity_id.clone(),
+                display_name: entity.display_name.clone(),
+                friction: entity.friction.total_score,
+                cpu_percent: entity.metrics.cpu_percent,
+                memory_bytes: entity.metrics.memory_resident_bytes,
+                badges: entity.badges.clone(),
+                recent_change_summary: entity.recent_change_summary.clone(),
+            })
+            .collect();
+        let capability_states = snapshot
+            .capabilities
+            .iter()
+            .map(|capability| {
+                (
+                    format!("{:?}", capability.kind),
+                    format!("{:?}", capability.state),
+                )
+            })
+            .collect();
+
+        tool_json(HostSummary {
+            sequence: snapshot.sequence,
+            captured_at_millis: snapshot.captured_at_millis,
+            host: snapshot.host,
+            capability_states,
+            top_entities,
+        })
+    }
+
+    fn tool_entity_details(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(serde::Deserialize)]
+        struct Args {
+            entity_id: String,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let entity = snapshot
+            .entities
+            .into_iter()
+            .find(|entity| entity.entity_id == args.entity_id)
+            .ok_or_else(|| tool_error(format!("Unknown entity_id: {}", args.entity_id)))?;
+        tool_json(entity)
+    }
+
+    fn tool_runtime_lag(&self) -> Result<Value, Value> {
+        tool_json(
+            self.data_source
+                .latest_runtime_lag_metrics()
+                .map_err(tool_error)?,
+        )
+    }
+
+    fn tool_top_findings(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_findings_limit")]
+            limit: usize,
+        }
+
+        #[derive(Serialize)]
+        struct Response {
+            captured_at_millis: u64,
+            findings: Vec<TopFinding>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let diagnostics = self
+            .data_source
+            .diagnostics_overview()
+            .map_err(tool_error)?;
+        let history = self
+            .data_source
+            .history_range_summary(
+                snapshot
+                    .captured_at_millis
+                    .saturating_sub(DEFAULT_HISTORY_WINDOW_MILLIS),
+                snapshot.captured_at_millis,
+            )
+            .map_err(tool_error)?;
+        let findings = build_top_findings(&snapshot, &diagnostics, &history, args.limit);
+        tool_json(Response {
+            captured_at_millis: snapshot.captured_at_millis,
+            findings,
+        })
+    }
+
+    fn tool_host_alerts(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_host_alert_top_entities")]
+            top_entities: usize,
+        }
+
+        #[derive(Serialize)]
+        struct Response {
+            captured_at_millis: u64,
+            alerts: Vec<HostAlert>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        tool_json(Response {
+            captured_at_millis: snapshot.captured_at_millis,
+            alerts: build_host_alerts(&snapshot, args.top_entities),
+        })
+    }
+
+    fn tool_entity_group_tree(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            entity_id: String,
+        }
+
+        #[derive(Serialize)]
+        struct Response {
+            captured_at_millis: u64,
+            root_entity_id: String,
+            grouped_entity_count: usize,
+            grouped_process_count: u32,
+            relations: Vec<String>,
+            tree: GroupTreeNode,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let root = snapshot
+            .entities
+            .iter()
+            .find(|entity| entity.entity_id == args.entity_id)
+            .cloned()
+            .ok_or_else(|| tool_error(format!("Unknown entity_id: {}", args.entity_id)))?;
+        let (children, relations, grouped_process_count) = related_entity_nodes(&snapshot, &root);
+        tool_json(Response {
+            captured_at_millis: snapshot.captured_at_millis,
+            root_entity_id: root.entity_id.clone(),
+            grouped_entity_count: children.len() + 1,
+            grouped_process_count,
+            relations,
+            tree: GroupTreeNode {
+                entity_id: root.entity_id,
+                display_name: root.display_name,
+                relation: "selected-root".to_owned(),
+                friction: root.friction.total_score,
+                cpu_percent: root.metrics.cpu_percent,
+                memory_bytes: root.metrics.memory_resident_bytes,
+                process_count: root.metrics.process_count,
+                badges: root.badges,
+                recent_change_summary: root.recent_change_summary,
+                children,
+            },
+        })
+    }
+
+    fn tool_recent_changes(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_recent_changes_window_minutes")]
+            window_minutes: u64,
+            #[serde(default = "default_recent_changes_limit")]
+            limit: usize,
+        }
+
+        #[derive(Serialize)]
+        struct Response {
+            captured_at_millis: u64,
+            window_minutes: u64,
+            changes: Vec<RecentChangeItem>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let changes = build_recent_changes(
+            &snapshot,
+            args.window_minutes.saturating_mul(60 * 1000),
+            args.limit.max(1),
+        );
+        tool_json(Response {
+            captured_at_millis: snapshot.captured_at_millis,
+            window_minutes: args.window_minutes,
+            changes,
+        })
+    }
+
+    fn tool_capability_status(&self) -> Result<Value, Value> {
+        #[derive(Serialize)]
+        struct Response {
+            captured_at_millis: u64,
+            counts: BTreeMap<String, usize>,
+            capabilities: Vec<CapabilityStatusItem>,
+        }
+
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let capabilities = build_capability_status(&snapshot);
+        let mut counts = BTreeMap::new();
+        counts.insert(
+            "critical".to_owned(),
+            capabilities
+                .iter()
+                .filter(|capability| capability.severity == SeverityBand::Critical)
+                .count(),
+        );
+        counts.insert(
+            "warning".to_owned(),
+            capabilities
+                .iter()
+                .filter(|capability| capability.severity == SeverityBand::Warning)
+                .count(),
+        );
+        counts.insert(
+            "ok".to_owned(),
+            capabilities
+                .iter()
+                .filter(|capability| capability.severity == SeverityBand::Info)
+                .count(),
+        );
+        tool_json(Response {
+            captured_at_millis: snapshot.captured_at_millis,
+            counts,
+            capabilities,
+        })
+    }
+
+    fn tool_history_summary(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(serde::Deserialize)]
+        struct Args {
+            start_millis: u64,
+            end_millis: u64,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let summary = self
+            .data_source
+            .history_range_summary(args.start_millis, args.end_millis)
+            .map_err(tool_error)?;
+        tool_json(summary)
+    }
+
+    fn tool_history_page(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(serde::Deserialize)]
+        struct Args {
+            start_millis: u64,
+            end_millis: u64,
+            before_millis_exclusive: Option<u64>,
+            limit: Option<u32>,
+        }
+
+        #[derive(Serialize)]
+        struct HistoryPageResponse {
+            snapshots: Vec<aetower_model::SystemSnapshot>,
+            next_before_millis_exclusive: Option<u64>,
+            returned: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshots = self
+            .data_source
+            .load_history_page(
+                args.start_millis,
+                args.end_millis,
+                args.before_millis_exclusive,
+                args.limit.unwrap_or(120),
+            )
+            .map_err(tool_error)?;
+        let next_before_millis_exclusive =
+            snapshots.last().map(|snapshot| snapshot.captured_at_millis);
+        tool_json(HistoryPageResponse {
+            returned: snapshots.len(),
+            snapshots,
+            next_before_millis_exclusive,
+        })
+    }
+
+    fn tool_diagnostics_overview(&self) -> Result<Value, Value> {
+        tool_json(
+            self.data_source
+                .diagnostics_overview()
+                .map_err(tool_error)?,
+        )
+    }
+
+    fn tool_query_diagnostics(&self, arguments: Value) -> Result<Value, Value> {
+        let query: DiagnosticsQuery = parse_args(arguments)?;
+        tool_json(
+            self.data_source
+                .query_diagnostics(query)
+                .map_err(tool_error)?,
+        )
+    }
+
+    fn tool_history_store_health(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_history_window_hours")]
+            window_hours: u64,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let start_millis = snapshot
+            .captured_at_millis
+            .saturating_sub(args.window_hours.saturating_mul(60 * 60 * 1000));
+        let summary = self
+            .data_source
+            .history_range_summary(start_millis, snapshot.captured_at_millis)
+            .map_err(tool_error)?;
+        let recent_history_events = self
+            .data_source
+            .query_diagnostics(DiagnosticsQuery {
+                limit: 32,
+                minimum_level: Some(aetower_diagnostics::DiagnosticsLevel::Info),
+                subsystem: Some(aetower_diagnostics::DiagnosticsSubsystem::History),
+                search: None,
+                since_millis: Some(start_millis),
+                include_persisted: true,
+            })
+            .map_err(tool_error)?;
+        tool_json(build_history_store_health(summary, recent_history_events))
+    }
+
+    fn tool_support_bundle_manifest(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            privacy_tier: Option<ExportPrivacyTier>,
+            #[serde(default = "default_support_bundle_diagnostics_limit")]
+            diagnostics_limit: usize,
+            #[serde(default = "default_history_window_hours")]
+            history_window_hours: u64,
+        }
+
+        #[derive(Serialize)]
+        struct Response {
+            privacy_tier: ExportPrivacyTier,
+            total_estimated_bytes: usize,
+            sections: Vec<SupportBundleSectionManifest>,
+            redaction_notes: Vec<String>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let diagnostics = self
+            .data_source
+            .diagnostics_overview()
+            .map_err(tool_error)?;
+        let runtime_lag = self
+            .data_source
+            .latest_runtime_lag_metrics()
+            .map_err(tool_error)?;
+        let history = self
+            .data_source
+            .history_range_summary(
+                snapshot
+                    .captured_at_millis
+                    .saturating_sub(args.history_window_hours.saturating_mul(60 * 60 * 1000)),
+                snapshot.captured_at_millis,
+            )
+            .map_err(tool_error)?;
+        let diagnostic_events = self
+            .data_source
+            .query_diagnostics(DiagnosticsQuery {
+                limit: args.diagnostics_limit,
+                minimum_level: None,
+                subsystem: None,
+                search: None,
+                since_millis: None,
+                include_persisted: true,
+            })
+            .map_err(tool_error)?;
+        let tier = args.privacy_tier.unwrap_or(ExportPrivacyTier::Redacted);
+        let manifest = build_support_bundle_manifest(
+            tier,
+            snapshot,
+            runtime_lag,
+            diagnostics,
+            history,
+            diagnostic_events,
+        )?;
+        tool_json(Response {
+            privacy_tier: tier,
+            total_estimated_bytes: manifest.iter().map(|section| section.estimated_bytes).sum(),
+            sections: manifest,
+            redaction_notes: privacy_tier_notes(tier),
+        })
+    }
+
+    fn tool_recommendations(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_findings_limit")]
+            limit: usize,
+        }
+
+        #[derive(Serialize)]
+        struct Response {
+            captured_at_millis: u64,
+            recommendations: Vec<RecommendationItem>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let diagnostics = self
+            .data_source
+            .diagnostics_overview()
+            .map_err(tool_error)?;
+        let history = self
+            .data_source
+            .history_range_summary(
+                snapshot
+                    .captured_at_millis
+                    .saturating_sub(DEFAULT_HISTORY_WINDOW_MILLIS),
+                snapshot.captured_at_millis,
+            )
+            .map_err(tool_error)?;
+        let recommendations = build_recommendations(&snapshot, &diagnostics, &history, args.limit);
+        tool_json(Response {
+            captured_at_millis: snapshot.captured_at_millis,
+            recommendations,
+        })
+    }
+
+    fn tool_session_health(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_history_window_hours")]
+            history_window_hours: u64,
+        }
+
+        #[derive(Serialize)]
+        struct Response {
+            captured_at_millis: u64,
+            overall: SeverityBand,
+            checks: Vec<SessionHealthCheck>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let diagnostics = self
+            .data_source
+            .diagnostics_overview()
+            .map_err(tool_error)?;
+        let runtime = self
+            .data_source
+            .latest_runtime_lag_metrics()
+            .map_err(tool_error)?;
+        let history = self
+            .data_source
+            .history_range_summary(
+                snapshot
+                    .captured_at_millis
+                    .saturating_sub(args.history_window_hours.saturating_mul(60 * 60 * 1000)),
+                snapshot.captured_at_millis,
+            )
+            .map_err(tool_error)?;
+        let checks = build_session_health_checks(&snapshot, &diagnostics, &runtime, &history);
+        let overall = checks
+            .iter()
+            .map(|check| check.severity)
+            .max_by_key(|severity| severity.score())
+            .unwrap_or(SeverityBand::Info);
+        tool_json(Response {
+            captured_at_millis: snapshot.captured_at_millis,
+            overall,
+            checks,
+        })
+    }
+
+    fn tool_export_query(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            privacy_tier: Option<ExportPrivacyTier>,
+            #[serde(default)]
+            entity_ids: Vec<String>,
+            #[serde(default)]
+            start_millis: Option<u64>,
+            #[serde(default)]
+            end_millis: Option<u64>,
+            #[serde(default)]
+            include_history: bool,
+            #[serde(default = "default_include_true")]
+            include_snapshot: bool,
+            #[serde(default)]
+            include_diagnostics: bool,
+            #[serde(default)]
+            include_session_health: bool,
+            #[serde(default = "default_support_bundle_diagnostics_limit")]
+            diagnostics_limit: usize,
+            #[serde(default = "default_export_history_limit")]
+            history_limit: u32,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let end_millis = args.end_millis.unwrap_or(snapshot.captured_at_millis);
+        let start_millis = args
+            .start_millis
+            .unwrap_or(end_millis.saturating_sub(DEFAULT_HISTORY_WINDOW_MILLIS));
+        let tier = args.privacy_tier.unwrap_or(ExportPrivacyTier::Redacted);
+        let export = build_export_query_response(
+            &*self.data_source,
+            snapshot,
+            ExportQueryOptions {
+                privacy_tier: tier,
+                entity_ids: &args.entity_ids,
+                start_millis,
+                end_millis,
+                include_snapshot: args.include_snapshot,
+                include_history: args.include_history,
+                include_diagnostics: args.include_diagnostics,
+                include_session_health: args.include_session_health,
+                diagnostics_limit: args.diagnostics_limit,
+                history_limit: args.history_limit,
+            },
+        )
+        .map_err(tool_error)?;
+        tool_json(export)
+    }
+
+    fn wait_for_nonzero_snapshot(&self) -> Result<aetower_model::SystemSnapshot, Value> {
+        let started = Instant::now();
+        loop {
+            let snapshot = self.data_source.latest_snapshot().map_err(tool_error)?;
+            if snapshot.sequence > 0 || started.elapsed() >= INITIAL_SNAPSHOT_WAIT {
+                return Ok(snapshot);
+            }
+            thread::sleep(INITIAL_SNAPSHOT_POLL);
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct SnapshotEnvelope {
+    updated: bool,
+    sequence: u64,
+    snapshot: aetower_model::SystemSnapshot,
+}
+
+impl SnapshotEnvelope {
+    fn updated(mut snapshot: aetower_model::SystemSnapshot, entity_limit: Option<usize>) -> Self {
+        if let Some(limit) = entity_limit {
+            snapshot.entities.truncate(limit.max(1));
+        }
+        Self {
+            updated: true,
+            sequence: snapshot.sequence,
+            snapshot,
+        }
+    }
+}
+
+fn tool_json<T: Serialize>(value: T) -> Result<Value, Value> {
+    let structured = serde_json::to_value(&value)
+        .map_err(|error| tool_error(format!("serialize structured content: {error}")))?;
+    let compact = serde_json::to_vec(&structured)
+        .map_err(|error| tool_error(format!("serialize tool result: {error}")))?;
+    let text = if compact.len() <= MAX_INLINE_TEXT_BYTES {
+        serde_json::to_string_pretty(&structured)
+            .map_err(|error| tool_error(format!("serialize tool result: {error}")))?
+    } else {
+        format!("Structured result attached ({} bytes JSON).", compact.len())
+    };
+    Ok(json!({
+        "structuredContent": structured,
+        "content": [
+            {
+                "type": "text",
+                "text": text,
+            }
+        ]
+    }))
+}
+
+fn default_findings_limit() -> usize {
+    DEFAULT_FINDINGS_LIMIT
+}
+
+fn default_host_alert_top_entities() -> usize {
+    DEFAULT_HOST_ALERT_TOP_ENTITIES
+}
+
+fn default_recent_changes_limit() -> usize {
+    DEFAULT_RECENT_CHANGES_LIMIT
+}
+
+fn default_recent_changes_window_minutes() -> u64 {
+    DEFAULT_RECENT_CHANGES_WINDOW_MILLIS / (60 * 1000)
+}
+
+fn default_history_window_hours() -> u64 {
+    DEFAULT_HISTORY_WINDOW_MILLIS / (60 * 60 * 1000)
+}
+
+fn default_support_bundle_diagnostics_limit() -> usize {
+    1_500
+}
+
+fn default_export_history_limit() -> u32 {
+    DEFAULT_EXPORT_HISTORY_LIMIT
+}
+
+fn default_include_true() -> bool {
+    true
+}
+
+fn build_top_findings(
+    snapshot: &SystemSnapshot,
+    diagnostics: &DiagnosticsOverview,
+    history: &HistorySummaryResponse,
+    limit: usize,
+) -> Vec<TopFinding> {
+    let mut findings = Vec::new();
+    if let Some(memory) = memory_pressure_finding(snapshot) {
+        findings.push(memory);
+    }
+    if let Some(wakeups) = wakeup_finding(snapshot) {
+        findings.push(wakeups);
+    }
+    if let Some(history_finding) = history_store_finding(history) {
+        findings.push(history_finding);
+    }
+    if let Some(diagnostics_finding) = diagnostics_finding(diagnostics) {
+        findings.push(diagnostics_finding);
+    }
+
+    for entity in top_entities(snapshot, 4) {
+        findings.push(TopFinding {
+            id: format!("entity:{}", entity.entity_id),
+            severity: if entity.friction.total_score >= 20.0 {
+                SeverityBand::Critical
+            } else {
+                SeverityBand::Warning
+            },
+            title: format!("{} is a top current friction source", entity.display_name),
+            detail: format!(
+                "{:.1}% CPU, {} resident, friction {:.1}. {}",
+                entity.metrics.cpu_percent,
+                format_bytes(entity.metrics.memory_resident_bytes),
+                entity.friction.total_score,
+                entity
+                    .recent_change_summary
+                    .clone()
+                    .unwrap_or_else(|| "No recent change summary is attached.".to_owned())
+            ),
+            source: "entity".to_owned(),
+            entity_ids: vec![entity.entity_id.clone()],
+            recommendation: entity.recommendations.first().map(|recommendation| {
+                format!("{}: {}", recommendation.title, recommendation.detail)
+            }),
+        });
+    }
+
+    findings.sort_by(|left, right| {
+        right
+            .severity
+            .score()
+            .cmp(&left.severity.score())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    findings.truncate(limit.max(1));
+    findings
+}
+
+fn build_host_alerts(snapshot: &SystemSnapshot, top_entity_limit: usize) -> Vec<HostAlert> {
+    let mut alerts = Vec::new();
+    let used_ratio = if snapshot.host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        snapshot.host.memory_used_bytes as f64 / snapshot.host.memory_total_bytes as f64
+    };
+    let top_memory_entities = top_entities(snapshot, top_entity_limit)
+        .into_iter()
+        .map(|entity| entity.display_name.clone())
+        .collect::<Vec<_>>();
+    if used_ratio >= MEMORY_PRESSURE_WARNING_RATIO
+        || snapshot.host.compressed_memory_bytes >= COMPRESSED_MEMORY_WARNING_BYTES
+        || snapshot.host.swap_used_bytes >= SWAP_WARNING_BYTES
+    {
+        let severity = if used_ratio >= MEMORY_PRESSURE_CRITICAL_RATIO
+            || snapshot.host.compressed_memory_bytes >= COMPRESSED_MEMORY_CRITICAL_BYTES
+            || snapshot.host.swap_used_bytes >= SWAP_CRITICAL_BYTES
+        {
+            SeverityBand::Critical
+        } else {
+            SeverityBand::Warning
+        };
+        let mut metrics = BTreeMap::new();
+        metrics.insert(
+            "memory_used_bytes".to_owned(),
+            json!(snapshot.host.memory_used_bytes),
+        );
+        metrics.insert(
+            "memory_total_bytes".to_owned(),
+            json!(snapshot.host.memory_total_bytes),
+        );
+        metrics.insert(
+            "compressed_memory_bytes".to_owned(),
+            json!(snapshot.host.compressed_memory_bytes),
+        );
+        metrics.insert(
+            "swap_used_bytes".to_owned(),
+            json!(snapshot.host.swap_used_bytes),
+        );
+        alerts.push(HostAlert {
+            id: "host-memory-pressure".to_owned(),
+            severity,
+            category: "memory-pressure".to_owned(),
+            title: "Host memory pressure is elevated".to_owned(),
+            detail: format!(
+                "{} used of {}, {} compressed, {} swap. Top current groups: {}.",
+                format_bytes(snapshot.host.memory_used_bytes),
+                format_bytes(snapshot.host.memory_total_bytes),
+                format_bytes(snapshot.host.compressed_memory_bytes),
+                format_bytes(snapshot.host.swap_used_bytes),
+                if top_memory_entities.is_empty() {
+                    "none".to_owned()
+                } else {
+                    top_memory_entities.join(", ")
+                }
+            ),
+            metrics,
+            entity_ids: top_entities(snapshot, top_entity_limit)
+                .into_iter()
+                .map(|entity| entity.entity_id.clone())
+                .collect(),
+        });
+    }
+
+    if snapshot.host.wakeups_per_second >= WAKEUPS_WARNING {
+        let severity = if snapshot.host.wakeups_per_second >= WAKEUPS_CRITICAL {
+            SeverityBand::Critical
+        } else {
+            SeverityBand::Warning
+        };
+        let leader = snapshot.entities.iter().max_by(|left, right| {
+            left.metrics
+                .wakeups_per_second
+                .partial_cmp(&right.metrics.wakeups_per_second)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let mut metrics = BTreeMap::new();
+        metrics.insert(
+            "host_wakeups_per_second".to_owned(),
+            json!(snapshot.host.wakeups_per_second),
+        );
+        if let Some(leader) = leader {
+            metrics.insert(
+                "leader_wakeups_per_second".to_owned(),
+                json!(leader.metrics.wakeups_per_second),
+            );
+        }
+        alerts.push(HostAlert {
+            id: "host-wakeup-storm".to_owned(),
+            severity,
+            category: "wakeups".to_owned(),
+            title: "Wakeup rate is high".to_owned(),
+            detail: leader.map_or_else(
+                || format!(
+                    "Host wakeups are {:.0}/s with no single entity leader identified.",
+                    snapshot.host.wakeups_per_second
+                ),
+                |leader| {
+                    format!(
+                        "Host wakeups are {:.0}/s. {} is currently the top wakeup leader at {:.0}/s.",
+                        snapshot.host.wakeups_per_second,
+                        leader.display_name,
+                        leader.metrics.wakeups_per_second
+                    )
+                },
+            ),
+            metrics,
+            entity_ids: leader
+                .map(|entity| vec![entity.entity_id.clone()])
+                .unwrap_or_default(),
+        });
+    }
+
+    alerts
+}
+
+fn build_recent_changes(
+    snapshot: &SystemSnapshot,
+    window_millis: u64,
+    limit: usize,
+) -> Vec<RecentChangeItem> {
+    let since = snapshot.captured_at_millis.saturating_sub(window_millis);
+    let mut changes = snapshot
+        .timeline
+        .iter()
+        .filter(|event| event.timestamp_millis >= since)
+        .map(|event| RecentChangeItem {
+            timestamp_millis: event.timestamp_millis,
+            severity: match event.severity {
+                aetower_model::TimelineSeverity::Info => SeverityBand::Info,
+                aetower_model::TimelineSeverity::Warning => SeverityBand::Warning,
+                aetower_model::TimelineSeverity::Critical => SeverityBand::Critical,
+            },
+            source: format!("timeline:{:?}", event.category).to_lowercase(),
+            entity_id: event.entity_id.clone(),
+            title: event.title.clone(),
+            detail: event.detail.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    for entity in &snapshot.entities {
+        if let Some(summary) = &entity.recent_change_summary {
+            changes.push(RecentChangeItem {
+                timestamp_millis: snapshot.captured_at_millis,
+                severity: if entity.anomaly_detected {
+                    SeverityBand::Warning
+                } else {
+                    SeverityBand::Info
+                },
+                source: "entity-summary".to_owned(),
+                entity_id: Some(entity.entity_id.clone()),
+                title: format!("{} changed recently", entity.display_name),
+                detail: summary.clone(),
+            });
+        }
+    }
+
+    changes.sort_by(|left, right| {
+        right
+            .timestamp_millis
+            .cmp(&left.timestamp_millis)
+            .then_with(|| right.severity.score().cmp(&left.severity.score()))
+    });
+    changes.truncate(limit.max(1));
+    changes
+}
+
+fn build_capability_status(snapshot: &SystemSnapshot) -> Vec<CapabilityStatusItem> {
+    let mut capabilities = snapshot
+        .capabilities
+        .iter()
+        .map(|capability| CapabilityStatusItem {
+            kind: format!("{:?}", capability.kind),
+            state: format!("{:?}", capability.state),
+            health: format!("{:?}", capability.health),
+            operator_label: capability_operator_label(capability),
+            action_label: capability_action_label(capability),
+            detail: capability.detail.clone(),
+            last_updated_millis: capability.last_updated_millis,
+            severity: capability_severity(capability),
+        })
+        .collect::<Vec<_>>();
+    capabilities.sort_by(|left, right| {
+        right
+            .severity
+            .score()
+            .cmp(&left.severity.score())
+            .then_with(|| left.kind.cmp(&right.kind))
+    });
+    capabilities
+}
+
+fn build_history_store_health(
+    summary: HistorySummaryResponse,
+    recent_history_events: Vec<DiagnosticsEvent>,
+) -> HistoryStoreHealth {
+    let severity = history_store_severity(&summary);
+    let mut thresholds = BTreeMap::new();
+    thresholds.insert(
+        "warning_store_bytes".to_owned(),
+        json!(HISTORY_STORE_WARNING_BYTES),
+    );
+    thresholds.insert(
+        "critical_store_bytes".to_owned(),
+        json!(HISTORY_STORE_CRITICAL_BYTES),
+    );
+    thresholds.insert(
+        "warning_wal_bytes".to_owned(),
+        json!(HISTORY_WAL_WARNING_BYTES),
+    );
+    thresholds.insert(
+        "critical_wal_bytes".to_owned(),
+        json!(HISTORY_WAL_CRITICAL_BYTES),
+    );
+    thresholds.insert(
+        "warning_quarantine_count".to_owned(),
+        json!(HISTORY_QUARANTINE_WARNING),
+    );
+    thresholds.insert(
+        "critical_quarantine_count".to_owned(),
+        json!(HISTORY_QUARANTINE_CRITICAL),
+    );
+    let mut recommendations = Vec::new();
+    if summary.store_bytes >= HISTORY_STORE_WARNING_BYTES {
+        recommendations.push(
+            "Trim persisted history more aggressively or shorten the default retention window."
+                .to_owned(),
+        );
+    }
+    if summary.wal_bytes >= HISTORY_WAL_WARNING_BYTES {
+        recommendations.push(
+            "Investigate write pressure and ensure checkpointing is keeping WAL growth under control."
+                .to_owned(),
+        );
+    }
+    if summary.quarantine_count >= HISTORY_QUARANTINE_WARNING {
+        recommendations.push(
+            "Inspect persisted history compatibility issues; quarantined rows should stay near zero."
+                .to_owned(),
+        );
+    }
+    HistoryStoreHealth {
+        severity,
+        summary: format!(
+            "{} DB, {} WAL, {} persisted snapshots, {} quarantined rows.",
+            format_bytes(summary.store_bytes),
+            format_bytes(summary.wal_bytes),
+            summary.snapshot_count,
+            summary.quarantine_count
+        ),
+        range: summary,
+        thresholds,
+        recent_history_events,
+        recommendations,
+    }
+}
+
+fn build_support_bundle_manifest(
+    privacy_tier: ExportPrivacyTier,
+    snapshot: SystemSnapshot,
+    runtime_lag: RuntimeLagMetrics,
+    diagnostics: DiagnosticsOverview,
+    history: HistorySummaryResponse,
+    diagnostic_events: Vec<DiagnosticsEvent>,
+) -> Result<Vec<SupportBundleSectionManifest>, Value> {
+    let sections = vec![
+        section_manifest(
+            "current_snapshot",
+            "Live snapshot of host, capabilities, and current entities.",
+            &snapshot,
+            privacy_tier,
+        )?,
+        section_manifest(
+            "runtime_lag",
+            "Self-observability metrics for Aetower itself.",
+            &runtime_lag,
+            privacy_tier,
+        )?,
+        section_manifest(
+            "diagnostics_overview",
+            "Diagnostics ring and persistence overview.",
+            &diagnostics,
+            privacy_tier,
+        )?,
+        section_manifest(
+            "history_summary",
+            "Persisted history store range summary.",
+            &history,
+            privacy_tier,
+        )?,
+        section_manifest(
+            "diagnostics_events",
+            "Recent diagnostics events included in the support bundle payload.",
+            &diagnostic_events,
+            privacy_tier,
+        )?,
+    ];
+    Ok(sections)
+}
+
+fn build_recommendations(
+    snapshot: &SystemSnapshot,
+    diagnostics: &DiagnosticsOverview,
+    history: &HistorySummaryResponse,
+    limit: usize,
+) -> Vec<RecommendationItem> {
+    let mut recommendations = Vec::new();
+    if memory_pressure_finding(snapshot).is_some() {
+        recommendations.push(RecommendationItem {
+            severity: SeverityBand::Critical,
+            title: "Reduce current memory pressure".to_owned(),
+            detail: format!(
+                "Compression ({}) and swap ({}) are elevated. Focus on the top memory-heavy groups first.",
+                format_bytes(snapshot.host.compressed_memory_bytes),
+                format_bytes(snapshot.host.swap_used_bytes)
+            ),
+            entity_id: snapshot.entities.first().map(|entity| entity.entity_id.clone()),
+            source: "host".to_owned(),
+            expected_benefit: "Lower swap, better responsiveness, and less battery drain.".to_owned(),
+        });
+    }
+    if wakeup_finding(snapshot).is_some() {
+        recommendations.push(RecommendationItem {
+            severity: SeverityBand::Warning,
+            title: "Reduce wakeup-heavy workloads".to_owned(),
+            detail: format!(
+                "Host wakeups are {:.0}/s. Investigate the top wakeup leader and background pollers.",
+                snapshot.host.wakeups_per_second
+            ),
+            entity_id: snapshot
+                .entities
+                .iter()
+                .max_by(|left, right| {
+                    left.metrics
+                        .wakeups_per_second
+                        .partial_cmp(&right.metrics.wakeups_per_second)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|entity| entity.entity_id.clone()),
+            source: "host".to_owned(),
+            expected_benefit: "Lower battery drain and smoother foreground interactivity.".to_owned(),
+        });
+    }
+    if history_store_finding(history).is_some() {
+        recommendations.push(RecommendationItem {
+            severity: history_store_severity(history),
+            title: "Keep the persisted history store under control".to_owned(),
+            detail: format!(
+                "The history store is {} with {} WAL and {} quarantined rows.",
+                format_bytes(history.store_bytes),
+                format_bytes(history.wal_bytes),
+                history.quarantine_count
+            ),
+            entity_id: None,
+            source: "history".to_owned(),
+            expected_benefit: "Faster History loads and healthier long-run storage behavior."
+                .to_owned(),
+        });
+    }
+    if diagnostics_finding(diagnostics).is_some() {
+        recommendations.push(RecommendationItem {
+            severity: diagnostics_severity(diagnostics),
+            title: "Reduce diagnostics churn".to_owned(),
+            detail: format!(
+                "{} warnings and {} errors are currently retained in the diagnostics ring.",
+                diagnostics.warn_count, diagnostics.error_count
+            ),
+            entity_id: None,
+            source: "diagnostics".to_owned(),
+            expected_benefit: "Cleaner operator signal and less noisy support output.".to_owned(),
+        });
+    }
+    for entity in top_entities(snapshot, limit) {
+        for recommendation in entity.recommendations.iter().take(2) {
+            recommendations.push(RecommendationItem {
+                severity: if entity.anomaly_detected {
+                    SeverityBand::Warning
+                } else {
+                    SeverityBand::Info
+                },
+                title: recommendation.title.clone(),
+                detail: recommendation.detail.clone(),
+                entity_id: Some(entity.entity_id.clone()),
+                source: entity.display_name.clone(),
+                expected_benefit:
+                    "Higher-confidence attribution and lower friction in the affected group."
+                        .to_owned(),
+            });
+        }
+    }
+    recommendations.sort_by(|left, right| {
+        right
+            .severity
+            .score()
+            .cmp(&left.severity.score())
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    recommendations.truncate(limit.max(1));
+    recommendations
+}
+
+fn build_session_health_checks(
+    snapshot: &SystemSnapshot,
+    diagnostics: &DiagnosticsOverview,
+    runtime: &RuntimeLagMetrics,
+    history: &HistorySummaryResponse,
+) -> Vec<SessionHealthCheck> {
+    vec![
+        SessionHealthCheck {
+            key: "runtime".to_owned(),
+            severity: runtime_severity(runtime),
+            summary: format!(
+                "Engine tick {:.1} ms against a {:.0} ms target.",
+                runtime.engine_tick_millis, runtime.target_tick_millis
+            ),
+            detail: format!(
+                "Collect {:.1} ms, history {:.1} ms, persist {:.1} ms, history queue {}, diagnostics queue {}.",
+                runtime.collect_millis,
+                runtime.history_millis,
+                runtime.persist_millis,
+                runtime.history_queue_depth,
+                runtime.diagnostics_queue_depth
+            ),
+        },
+        SessionHealthCheck {
+            key: "diagnostics".to_owned(),
+            severity: diagnostics_severity(diagnostics),
+            summary: format!(
+                "{} warnings, {} errors, {} persisted diagnostics events.",
+                diagnostics.warn_count, diagnostics.error_count, diagnostics.persisted_events
+            ),
+            detail: diagnostics
+                .last_error_message
+                .clone()
+                .unwrap_or_else(|| "No current diagnostics error is attached.".to_owned()),
+        },
+        SessionHealthCheck {
+            key: "history-store".to_owned(),
+            severity: history_store_severity(history),
+            summary: format!(
+                "{} DB, {} WAL, {} persisted snapshots.",
+                format_bytes(history.store_bytes),
+                format_bytes(history.wal_bytes),
+                history.snapshot_count
+            ),
+            detail: format!(
+                "{} quarantined rows across the current store window.",
+                history.quarantine_count
+            ),
+        },
+        SessionHealthCheck {
+            key: "capabilities".to_owned(),
+            severity: snapshot
+                .capabilities
+                .iter()
+                .map(capability_severity)
+                .max_by_key(|severity| severity.score())
+                .unwrap_or(SeverityBand::Info),
+            summary: format!(
+                "{} capability checks are currently tracked.",
+                snapshot.capabilities.len()
+            ),
+            detail: snapshot
+                .capabilities
+                .iter()
+                .map(|capability| format!("{:?}: {:?}", capability.kind, capability.state))
+                .collect::<Vec<_>>()
+                .join(", "),
+        },
+        SessionHealthCheck {
+            key: "host-load".to_owned(),
+            severity: host_load_severity(snapshot),
+            summary: format!(
+                "{} used / {}, {} compressed, {} swap, {:.0} wakeups/s.",
+                format_bytes(snapshot.host.memory_used_bytes),
+                format_bytes(snapshot.host.memory_total_bytes),
+                format_bytes(snapshot.host.compressed_memory_bytes),
+                format_bytes(snapshot.host.swap_used_bytes),
+                snapshot.host.wakeups_per_second
+            ),
+            detail: top_entities(snapshot, 3)
+                .into_iter()
+                .map(|entity| entity.display_name.clone())
+                .collect::<Vec<_>>()
+                .join(", "),
+        },
+        SessionHealthCheck {
+            key: "mcp".to_owned(),
+            severity: SeverityBand::Info,
+            summary: "The local in-app MCP server is serving the current app-owned engine state."
+                .to_owned(),
+            detail:
+                "Agents should consume these tools instead of starting a second collector process."
+                    .to_owned(),
+        },
+    ]
+}
+
+fn build_export_query_response(
+    data_source: &dyn AetowerMcpDataSource,
+    mut snapshot: SystemSnapshot,
+    options: ExportQueryOptions<'_>,
+) -> Result<Value, String> {
+    if !options.entity_ids.is_empty() {
+        let ids = options.entity_ids.iter().cloned().collect::<BTreeSet<_>>();
+        snapshot
+            .entities
+            .retain(|entity| ids.contains(&entity.entity_id));
+        snapshot
+            .timeline
+            .retain(|event| match event.entity_id.as_ref() {
+                Some(entity_id) => ids.contains(entity_id),
+                None => true,
+            });
+    }
+
+    let mut payload = serde_json::Map::new();
+    payload.insert("privacyTier".to_owned(), json!(options.privacy_tier));
+    payload.insert("startMillis".to_owned(), json!(options.start_millis));
+    payload.insert("endMillis".to_owned(), json!(options.end_millis));
+
+    if options.include_snapshot {
+        payload.insert(
+            "snapshot".to_owned(),
+            export_controlled_json(
+                serde_json::to_value(&snapshot).map_err(|error| error.to_string())?,
+                options.privacy_tier,
+            ),
+        );
+    }
+
+    if options.include_history {
+        let summary =
+            data_source.history_range_summary(options.start_millis, options.end_millis)?;
+        let page = data_source.load_history_page(
+            options.start_millis,
+            options.end_millis,
+            None,
+            options.history_limit,
+        )?;
+        payload.insert(
+            "history".to_owned(),
+            export_controlled_json(
+                json!({
+                    "summary": summary,
+                    "snapshots": page,
+                }),
+                options.privacy_tier,
+            ),
+        );
+    }
+
+    if options.include_diagnostics {
+        let events = data_source.query_diagnostics(DiagnosticsQuery {
+            limit: options.diagnostics_limit,
+            minimum_level: None,
+            subsystem: None,
+            search: None,
+            since_millis: Some(options.start_millis),
+            include_persisted: true,
+        })?;
+        payload.insert(
+            "diagnostics".to_owned(),
+            export_controlled_json(json!(events), options.privacy_tier),
+        );
+    }
+
+    if options.include_session_health {
+        let diagnostics = data_source.diagnostics_overview()?;
+        let runtime = data_source.latest_runtime_lag_metrics()?;
+        let history =
+            data_source.history_range_summary(options.start_millis, options.end_millis)?;
+        let checks = build_session_health_checks(&snapshot, &diagnostics, &runtime, &history);
+        payload.insert(
+            "sessionHealth".to_owned(),
+            export_controlled_json(
+                serde_json::to_value(checks).map_err(|error| error.to_string())?,
+                options.privacy_tier,
+            ),
+        );
+    }
+
+    Ok(Value::Object(payload))
+}
+
+fn section_manifest<T: Serialize>(
+    name: &str,
+    description: &str,
+    value: &T,
+    privacy_tier: ExportPrivacyTier,
+) -> Result<SupportBundleSectionManifest, Value> {
+    let redacted = privacy_tier != ExportPrivacyTier::Full;
+    let json = serde_json::to_value(value)
+        .map_err(|error| tool_error(format!("serialize manifest section: {error}")))?;
+    let controlled = export_controlled_json(json, privacy_tier);
+    let encoded = serde_json::to_vec(&controlled)
+        .map_err(|error| tool_error(format!("encode manifest section: {error}")))?;
+    Ok(SupportBundleSectionManifest {
+        name: name.to_owned(),
+        estimated_bytes: encoded.len(),
+        redacted,
+        description: description.to_owned(),
+    })
+}
+
+fn top_entities(snapshot: &SystemSnapshot, limit: usize) -> Vec<&aetower_model::EntitySnapshot> {
+    let mut entities = snapshot.entities.iter().collect::<Vec<_>>();
+    entities.sort_by(|left, right| {
+        right
+            .friction
+            .total_score
+            .partial_cmp(&left.friction.total_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    entities.truncate(limit.max(1));
+    entities
+}
+
+fn memory_pressure_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
+    let used_ratio = if snapshot.host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        snapshot.host.memory_used_bytes as f64 / snapshot.host.memory_total_bytes as f64
+    };
+    if used_ratio < MEMORY_PRESSURE_WARNING_RATIO
+        && snapshot.host.compressed_memory_bytes < COMPRESSED_MEMORY_WARNING_BYTES
+        && snapshot.host.swap_used_bytes < SWAP_WARNING_BYTES
+    {
+        return None;
+    }
+    let severity = if used_ratio >= MEMORY_PRESSURE_CRITICAL_RATIO
+        || snapshot.host.compressed_memory_bytes >= COMPRESSED_MEMORY_CRITICAL_BYTES
+        || snapshot.host.swap_used_bytes >= SWAP_CRITICAL_BYTES
+    {
+        SeverityBand::Critical
+    } else {
+        SeverityBand::Warning
+    };
+    Some(TopFinding {
+        id: "host-memory-pressure".to_owned(),
+        severity,
+        title: "Memory pressure is elevated".to_owned(),
+        detail: format!(
+            "{} used of {}, {} compressed, {} swap.",
+            format_bytes(snapshot.host.memory_used_bytes),
+            format_bytes(snapshot.host.memory_total_bytes),
+            format_bytes(snapshot.host.compressed_memory_bytes),
+            format_bytes(snapshot.host.swap_used_bytes)
+        ),
+        source: "host".to_owned(),
+        entity_ids: top_entities(snapshot, 3)
+            .into_iter()
+            .map(|entity| entity.entity_id.clone())
+            .collect(),
+        recommendation: Some(
+            "Reduce the top memory-heavy groups first; compression and swap are already active."
+                .to_owned(),
+        ),
+    })
+}
+
+fn wakeup_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
+    if snapshot.host.wakeups_per_second < WAKEUPS_WARNING {
+        return None;
+    }
+    let leader = snapshot.entities.iter().max_by(|left, right| {
+        left.metrics
+            .wakeups_per_second
+            .partial_cmp(&right.metrics.wakeups_per_second)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Some(TopFinding {
+        id: "host-wakeups".to_owned(),
+        severity: if snapshot.host.wakeups_per_second >= WAKEUPS_CRITICAL {
+            SeverityBand::Critical
+        } else {
+            SeverityBand::Warning
+        },
+        title: "Wakeups are high".to_owned(),
+        detail: leader.map_or_else(
+            || format!("Host wakeups are {:.0}/s.", snapshot.host.wakeups_per_second),
+            |leader| {
+                format!(
+                    "Host wakeups are {:.0}/s. {} leads at {:.0}/s.",
+                    snapshot.host.wakeups_per_second,
+                    leader.display_name,
+                    leader.metrics.wakeups_per_second
+                )
+            },
+        ),
+        source: "host".to_owned(),
+        entity_ids: leader
+            .map(|entity| vec![entity.entity_id.clone()])
+            .unwrap_or_default(),
+        recommendation: Some(
+            "Investigate polling-heavy groups and background helpers; wakeups directly affect battery life."
+                .to_owned(),
+        ),
+    })
+}
+
+fn history_store_finding(history: &HistorySummaryResponse) -> Option<TopFinding> {
+    let severity = history_store_severity(history);
+    (severity != SeverityBand::Info).then(|| TopFinding {
+        id: "history-store-health".to_owned(),
+        severity,
+        title: "Persisted history store needs attention".to_owned(),
+        detail: format!(
+            "{} DB, {} WAL, {} quarantined rows.",
+            format_bytes(history.store_bytes),
+            format_bytes(history.wal_bytes),
+            history.quarantine_count
+        ),
+        source: "history".to_owned(),
+        entity_ids: Vec::new(),
+        recommendation: Some(
+            "Keep retention bounded and investigate quarantined rows before the store becomes operator-hostile."
+                .to_owned(),
+        ),
+    })
+}
+
+fn diagnostics_finding(diagnostics: &DiagnosticsOverview) -> Option<TopFinding> {
+    let severity = diagnostics_severity(diagnostics);
+    (severity != SeverityBand::Info).then(|| TopFinding {
+        id: "diagnostics-health".to_owned(),
+        severity,
+        title: "Diagnostics signal is noisy".to_owned(),
+        detail: format!(
+            "{} warnings, {} errors, {} persisted events.",
+            diagnostics.warn_count, diagnostics.error_count, diagnostics.persisted_events
+        ),
+        source: "diagnostics".to_owned(),
+        entity_ids: Vec::new(),
+        recommendation: diagnostics.last_error_message.clone(),
+    })
+}
+
+fn related_entity_nodes(
+    snapshot: &SystemSnapshot,
+    root: &aetower_model::EntitySnapshot,
+) -> (Vec<GroupTreeNode>, Vec<String>, u32) {
+    let root_session_ids = entity_session_ids(root);
+    let root_repo_roots = entity_repo_roots(root);
+    let root_workspaces = entity_workspaces(root);
+    let root_grouping = root.grouping_suggestion.clone().unwrap_or_default();
+    let root_launcher = normalized_group_value(root.launcher_summary.as_deref());
+    let mut relations = BTreeSet::new();
+    let mut children = Vec::new();
+    let mut grouped_process_count = root.metrics.process_count;
+
+    for candidate in &snapshot.entities {
+        if candidate.entity_id == root.entity_id {
+            continue;
+        }
+        let mut reason = None;
+        let candidate_sessions = entity_session_ids(candidate);
+        if !root_session_ids.is_empty()
+            && !candidate_sessions.is_empty()
+            && !root_session_ids.is_disjoint(&candidate_sessions)
+        {
+            reason = Some("shared-session".to_owned());
+        }
+        if reason.is_none() {
+            let candidate_repos = entity_repo_roots(candidate);
+            if !root_repo_roots.is_empty()
+                && !candidate_repos.is_empty()
+                && !root_repo_roots.is_disjoint(&candidate_repos)
+            {
+                reason = Some("shared-repo".to_owned());
+            }
+        }
+        if reason.is_none() {
+            let candidate_workspaces = entity_workspaces(candidate);
+            if !root_workspaces.is_empty()
+                && !candidate_workspaces.is_empty()
+                && !root_workspaces.is_disjoint(&candidate_workspaces)
+            {
+                reason = Some("shared-workspace".to_owned());
+            }
+        }
+        if reason.is_none()
+            && !root_grouping.is_empty()
+            && candidate.grouping_suggestion.as_deref() == Some(root_grouping.as_str())
+        {
+            reason = Some("shared-grouping-hint".to_owned());
+        }
+        if reason.is_none()
+            && !root_launcher.is_empty()
+            && normalized_group_value(candidate.launcher_summary.as_deref()) == root_launcher
+        {
+            reason = Some("shared-launcher".to_owned());
+        }
+        if let Some(reason) = reason {
+            grouped_process_count =
+                grouped_process_count.saturating_add(candidate.metrics.process_count);
+            relations.insert(reason.clone());
+            children.push(GroupTreeNode {
+                entity_id: candidate.entity_id.clone(),
+                display_name: candidate.display_name.clone(),
+                relation: reason,
+                friction: candidate.friction.total_score,
+                cpu_percent: candidate.metrics.cpu_percent,
+                memory_bytes: candidate.metrics.memory_resident_bytes,
+                process_count: candidate.metrics.process_count,
+                badges: candidate.badges.clone(),
+                recent_change_summary: candidate.recent_change_summary.clone(),
+                children: Vec::new(),
+            });
+        }
+    }
+
+    children.sort_by(|left, right| {
+        right
+            .friction
+            .partial_cmp(&left.friction)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    (
+        children,
+        relations.into_iter().collect(),
+        grouped_process_count,
+    )
+}
+
+fn entity_session_ids(entity: &aetower_model::EntitySnapshot) -> BTreeSet<String> {
+    entity
+        .components
+        .iter()
+        .filter_map(|component| component.adapter_context.as_ref())
+        .filter_map(|context| context.session_id.clone())
+        .filter(|session_id| !session_id.is_empty())
+        .collect()
+}
+
+fn entity_repo_roots(entity: &aetower_model::EntitySnapshot) -> BTreeSet<String> {
+    entity
+        .components
+        .iter()
+        .filter_map(|component| component.adapter_context.as_ref())
+        .filter_map(|context| context.repo_root.clone())
+        .filter(|repo_root| !repo_root.is_empty())
+        .collect()
+}
+
+fn entity_workspaces(entity: &aetower_model::EntitySnapshot) -> BTreeSet<String> {
+    entity
+        .components
+        .iter()
+        .filter_map(|component| component.adapter_context.as_ref())
+        .filter_map(|context| context.workspace_path.clone())
+        .filter(|workspace| !workspace.is_empty())
+        .collect()
+}
+
+fn normalized_group_value(value: Option<&str>) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|value| {
+            let normalized = value.to_ascii_lowercase();
+            !matches!(
+                normalized.as_str(),
+                "launchd" | "loginwindow" | "xpcproxy" | "kernel_task" | "runningboardd"
+            )
+        })
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn capability_operator_label(capability: &aetower_model::CapabilitySnapshot) -> String {
+    match capability.state {
+        aetower_model::CapabilityState::Granted => "Ready".to_owned(),
+        aetower_model::CapabilityState::Denied => "Missing access".to_owned(),
+        aetower_model::CapabilityState::Requested => "Pending".to_owned(),
+        aetower_model::CapabilityState::Unavailable => "Not available".to_owned(),
+        aetower_model::CapabilityState::Unknown => "Not checked".to_owned(),
+    }
+}
+
+fn capability_action_label(capability: &aetower_model::CapabilitySnapshot) -> String {
+    match capability.state {
+        aetower_model::CapabilityState::Denied => "Grant access".to_owned(),
+        aetower_model::CapabilityState::Requested => "Complete setup".to_owned(),
+        aetower_model::CapabilityState::Unknown => "Refresh status".to_owned(),
+        aetower_model::CapabilityState::Unavailable => "No action".to_owned(),
+        aetower_model::CapabilityState::Granted => "Healthy".to_owned(),
+    }
+}
+
+fn capability_severity(capability: &aetower_model::CapabilitySnapshot) -> SeverityBand {
+    match capability.state {
+        aetower_model::CapabilityState::Denied => SeverityBand::Critical,
+        aetower_model::CapabilityState::Requested => SeverityBand::Warning,
+        aetower_model::CapabilityState::Unknown | aetower_model::CapabilityState::Unavailable => {
+            SeverityBand::Info
+        }
+        aetower_model::CapabilityState::Granted => match capability.health {
+            aetower_model::CapabilityHealth::Degraded => SeverityBand::Warning,
+            _ => SeverityBand::Info,
+        },
+    }
+}
+
+fn history_store_severity(history: &HistorySummaryResponse) -> SeverityBand {
+    if history.store_bytes >= HISTORY_STORE_CRITICAL_BYTES
+        || history.wal_bytes >= HISTORY_WAL_CRITICAL_BYTES
+        || history.quarantine_count >= HISTORY_QUARANTINE_CRITICAL
+    {
+        SeverityBand::Critical
+    } else if history.store_bytes >= HISTORY_STORE_WARNING_BYTES
+        || history.wal_bytes >= HISTORY_WAL_WARNING_BYTES
+        || history.quarantine_count >= HISTORY_QUARANTINE_WARNING
+    {
+        SeverityBand::Warning
+    } else {
+        SeverityBand::Info
+    }
+}
+
+fn diagnostics_severity(diagnostics: &DiagnosticsOverview) -> SeverityBand {
+    if diagnostics.error_count >= DIAGNOSTICS_ERROR_CRITICAL
+        || diagnostics.warn_count >= DIAGNOSTICS_WARN_CRITICAL
+    {
+        SeverityBand::Critical
+    } else if diagnostics.error_count >= DIAGNOSTICS_ERROR_WARNING
+        || diagnostics.warn_count >= DIAGNOSTICS_WARN_WARNING
+    {
+        SeverityBand::Warning
+    } else {
+        SeverityBand::Info
+    }
+}
+
+fn runtime_severity(runtime: &RuntimeLagMetrics) -> SeverityBand {
+    if runtime.target_tick_millis > 0.0
+        && runtime.engine_tick_millis >= runtime.target_tick_millis * 0.75
+    {
+        SeverityBand::Critical
+    } else if runtime.target_tick_millis > 0.0
+        && runtime.engine_tick_millis >= runtime.target_tick_millis * 0.35
+    {
+        SeverityBand::Warning
+    } else {
+        SeverityBand::Info
+    }
+}
+
+fn host_load_severity(snapshot: &SystemSnapshot) -> SeverityBand {
+    memory_pressure_finding(snapshot)
+        .map(|finding| finding.severity)
+        .into_iter()
+        .chain(wakeup_finding(snapshot).map(|finding| finding.severity))
+        .max_by_key(|severity| severity.score())
+        .unwrap_or(SeverityBand::Info)
+}
+
+fn privacy_tier_notes(privacy_tier: ExportPrivacyTier) -> Vec<String> {
+    match privacy_tier {
+        ExportPrivacyTier::Full => vec![
+            "Full exports include paths, titles, URLs, commands, and other sensitive fields."
+                .to_owned(),
+        ],
+        ExportPrivacyTier::OperatorMode => vec![
+            "Operator mode keeps structure but sanitizes paths, hosts, commands, and sensitive diagnostics."
+                .to_owned(),
+        ],
+        ExportPrivacyTier::Redacted => vec![
+            "Redacted exports hide sensitive paths, URLs, titles, commands, and session identifiers."
+                .to_owned(),
+        ],
+    }
+}
+
+fn export_controlled_json(value: Value, privacy_tier: ExportPrivacyTier) -> Value {
+    match privacy_tier {
+        ExportPrivacyTier::Full => value,
+        _ => export_controlled_value(value, privacy_tier, None),
+    }
+}
+
+fn export_controlled_value(
+    value: Value,
+    privacy_tier: ExportPrivacyTier,
+    key: Option<&str>,
+) -> Value {
+    let normalized_key = key.unwrap_or_default().to_ascii_lowercase();
+    if privacy_tier == ExportPrivacyTier::Redacted && is_sensitive_export_key(&normalized_key) {
+        return Value::String("<redacted>".to_owned());
+    }
+    match value {
+        Value::Object(map) => {
+            let sensitive_event = map
+                .get("sensitive")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let mut redacted = serde_json::Map::with_capacity(map.len());
+            for (child_key, child_value) in map {
+                if sensitive_event && child_key == "message" {
+                    redacted.insert(
+                        child_key,
+                        Value::String(match privacy_tier {
+                            ExportPrivacyTier::OperatorMode => "<sensitive event>".to_owned(),
+                            _ => "<redacted sensitive event>".to_owned(),
+                        }),
+                    );
+                    continue;
+                }
+                if sensitive_event && child_key == "fields" {
+                    redacted.insert(
+                        child_key,
+                        match privacy_tier {
+                            ExportPrivacyTier::OperatorMode => {
+                                redact_sensitive_fields_operator_mode(child_value)
+                            }
+                            _ => Value::Array(Vec::new()),
+                        },
+                    );
+                    continue;
+                }
+                redacted.insert(
+                    child_key.clone(),
+                    export_controlled_value(child_value, privacy_tier, Some(&child_key)),
+                );
+            }
+            Value::Object(redacted)
+        }
+        Value::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(|child| export_controlled_value(child, privacy_tier, key))
+                .collect(),
+        ),
+        Value::String(string) => match privacy_tier {
+            ExportPrivacyTier::Full => Value::String(string),
+            ExportPrivacyTier::Redacted => {
+                if should_redact_string_value(&string, &normalized_key) {
+                    Value::String("<redacted>".to_owned())
+                } else {
+                    Value::String(string)
+                }
+            }
+            ExportPrivacyTier::OperatorMode => {
+                if is_sensitive_export_key(&normalized_key)
+                    || should_redact_string_value(&string, &normalized_key)
+                {
+                    Value::String(sanitized_operator_string_value(&string, &normalized_key))
+                } else {
+                    Value::String(string)
+                }
+            }
+        },
+        other => other,
+    }
+}
+
+fn redact_sensitive_fields_operator_mode(value: Value) -> Value {
+    let Value::Array(fields) = value else {
+        return Value::Array(Vec::new());
+    };
+    Value::Array(
+        fields
+            .into_iter()
+            .filter_map(|field| match field {
+                Value::Object(mut map) => {
+                    let key = map
+                        .get("key")
+                        .and_then(Value::as_str)
+                        .unwrap_or("field")
+                        .to_owned();
+                    let raw_value = map
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned();
+                    map.insert(
+                        "value".to_owned(),
+                        Value::String(sanitized_operator_string_value(
+                            &raw_value,
+                            &key.to_ascii_lowercase(),
+                        )),
+                    );
+                    Some(Value::Object(map))
+                }
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
+fn is_sensitive_export_key(key: &str) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    matches!(
+        key,
+        "commandline"
+            | "cwd"
+            | "executablepath"
+            | "frontmostwindowtitle"
+            | "activewindowtitle"
+            | "windowtitle"
+            | "workspacepath"
+            | "reporoot"
+            | "sessionid"
+            | "telemetryendpoint"
+            | "path"
+            | "url"
+            | "ports"
+            | "entities_preview"
+    ) || key.contains("command")
+        || key.contains("windowtitle")
+        || key.contains("workspace")
+        || key.contains("repo")
+        || key.contains("endpoint")
+        || key.contains("executable")
+        || key.contains("path")
+}
+
+fn should_redact_string_value(value: &str, key: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    is_sensitive_export_key(key)
+        || value.starts_with('/')
+        || value.starts_with("file://")
+        || value.starts_with("http://")
+        || value.starts_with("https://")
+        || value.contains("/Users/")
+        || value.contains("/var/")
+        || value.contains(".sock")
+}
+
+fn sanitized_operator_string_value(value: &str, key: &str) -> String {
+    if value.is_empty() {
+        return value.to_owned();
+    }
+    if key.contains("windowtitle") || key == "message" {
+        return "<redacted>".to_owned();
+    }
+    if key.contains("command") {
+        return value
+            .split(' ')
+            .next()
+            .map(|command| {
+                Path::new(command)
+                    .file_name()
+                    .and_then(|part| part.to_str())
+                    .unwrap_or("command")
+                    .to_owned()
+            })
+            .unwrap_or_else(|| "command".to_owned());
+    }
+    if key.contains("url") || key.contains("endpoint") || value.starts_with("http") {
+        return sanitized_host_string(value);
+    }
+    if key.contains("path")
+        || key.contains("cwd")
+        || key.contains("workspace")
+        || key.contains("repo")
+        || value.starts_with('/')
+        || value.starts_with("file://")
+        || value.contains("/Users/")
+    {
+        return sanitized_path_string(value);
+    }
+    if key == "ports" || key == "sessionid" {
+        return "<redacted>".to_owned();
+    }
+    value.to_owned()
+}
+
+fn sanitized_host_string(value: &str) -> String {
+    let host = value
+        .split("://")
+        .nth(1)
+        .unwrap_or(value)
+        .split('/')
+        .next()
+        .unwrap_or_default();
+    if host.is_empty() {
+        "<redacted host>".to_owned()
+    } else if value.starts_with("http://") {
+        format!("http://{host}")
+    } else {
+        format!("https://{host}")
+    }
+}
+
+fn sanitized_path_string(value: &str) -> String {
+    let cleaned = value.strip_prefix("file://").unwrap_or(value);
+    Path::new(cleaned)
+        .file_name()
+        .and_then(|part| part.to_str())
+        .map(|tail| format!("…/{tail}"))
+        .unwrap_or_else(|| "<redacted path>".to_owned())
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0usize;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} {}", UNITS[unit])
+    } else {
+        format!("{value:.2} {}", UNITS[unit])
+    }
+}
+
+fn tool_error(message: impl Into<String>) -> Value {
+    json!({
+        "content": [
+            {
+                "type": "text",
+                "text": message.into(),
+            }
+        ],
+        "isError": true,
+    })
+}
+
+fn parse_args<T: serde::de::DeserializeOwned>(arguments: Value) -> Result<T, Value> {
+    serde_json::from_value(arguments)
+        .map_err(|error| jsonrpc_error(-32602, format!("invalid tool arguments: {error}")))
+}
+
+fn tool_definitions() -> Vec<Value> {
+    vec![
+        json!({
+            "name": "aetower_current_snapshot",
+            "description": "Return the latest live Aetower snapshot. Optionally skip output unless the sequence advanced.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "last_sequence": { "type": "integer", "minimum": 0 },
+                    "entity_limit": { "type": "integer", "minimum": 1 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_host_summary",
+            "description": "Return a concise host summary plus the top friction entities.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "top_entities": { "type": "integer", "minimum": 1, "maximum": 50 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_entity_details",
+            "description": "Return the full entity snapshot for one entity_id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "entity_id": { "type": "string" }
+                },
+                "required": ["entity_id"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_runtime_lag",
+            "description": "Return the latest self-observability and runtime lag metrics for Aetower itself.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_top_findings",
+            "description": "Return the highest-signal current findings across host load, diagnostics, history health, and top friction groups.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_host_alerts",
+            "description": "Return current host alerts such as memory pressure and wakeup storms with impacted entity IDs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "top_entities": { "type": "integer", "minimum": 1, "maximum": 20 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_entity_group_tree",
+            "description": "Return a grouped entity family view for one entity_id using runtime/session/repo relationships.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "entity_id": { "type": "string" }
+                },
+                "required": ["entity_id"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_recent_changes",
+            "description": "Return a concise feed of recent timeline changes and entity change summaries.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "window_minutes": { "type": "integer", "minimum": 1, "maximum": 1440 },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_capability_status",
+            "description": "Return operator-grade capability state, health, and next-action labels for permissions and adapters.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_history_summary",
+            "description": "Return persisted history coverage and store size information for a time range.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "start_millis": { "type": "integer", "minimum": 0 },
+                    "end_millis": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["start_millis", "end_millis"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_history_page",
+            "description": "Return a bounded page of persisted snapshots for a time range, newest first.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "start_millis": { "type": "integer", "minimum": 0 },
+                    "end_millis": { "type": "integer", "minimum": 0 },
+                    "before_millis_exclusive": { "type": "integer", "minimum": 0 },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 500 }
+                },
+                "required": ["start_millis", "end_millis"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_history_store_health",
+            "description": "Return persisted history store health, thresholds, and recent history-related diagnostics.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "window_hours": { "type": "integer", "minimum": 1, "maximum": 720 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_diagnostics_overview",
+            "description": "Return diagnostics ring and persisted diagnostics health.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_query_diagnostics",
+            "description": "Query recent or persisted diagnostics by level, subsystem, text, and time window.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 5000 },
+                    "minimum_level": { "type": "string", "enum": ["trace", "debug", "info", "warn", "error"] },
+                    "subsystem": {
+                        "type": "string",
+                        "enum": [
+                            "engine",
+                            "collector",
+                            "identity",
+                            "attribution",
+                            "friction",
+                            "history",
+                            "persistence",
+                            "telemetry",
+                            "gpu",
+                            "ffi",
+                            "ui",
+                            "adapter-chromium",
+                            "adapter-docker",
+                            "adapter-helper",
+                            "adapter-chau7",
+                            "adapter-vscode"
+                        ]
+                    },
+                    "search": { "type": "string" },
+                    "since_millis": { "type": "integer", "minimum": 0 },
+                    "include_persisted": { "type": "boolean" }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_support_bundle_manifest",
+            "description": "Return a machine-readable preview of what an Aetower support bundle would contain for a given privacy tier.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "privacy_tier": { "type": "string", "enum": ["redacted", "operator-mode", "full"] },
+                    "diagnostics_limit": { "type": "integer", "minimum": 1, "maximum": 5000 },
+                    "history_window_hours": { "type": "integer", "minimum": 1, "maximum": 720 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_recommendations",
+            "description": "Return structured remediation recommendations derived from host load, history health, diagnostics, and entity recommendations.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_session_health",
+            "description": "Return a merged health view across runtime lag, diagnostics, history store, capabilities, host load, and MCP state.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "history_window_hours": { "type": "integer", "minimum": 1, "maximum": 720 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_export_query",
+            "description": "Return a scoped, privacy-tiered export payload for current snapshot, history, diagnostics, and session health.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "privacy_tier": { "type": "string", "enum": ["redacted", "operator-mode", "full"] },
+                    "entity_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 100 },
+                    "start_millis": { "type": "integer", "minimum": 0 },
+                    "end_millis": { "type": "integer", "minimum": 0 },
+                    "include_history": { "type": "boolean" },
+                    "include_snapshot": { "type": "boolean" },
+                    "include_diagnostics": { "type": "boolean" },
+                    "include_session_health": { "type": "boolean" },
+                    "diagnostics_limit": { "type": "integer", "minimum": 1, "maximum": 5000 },
+                    "history_limit": { "type": "integer", "minimum": 1, "maximum": 500 }
+                },
+                "additionalProperties": false
+            }
+        }),
+    ]
+}
+
+fn jsonrpc_error(code: i64, message: impl Into<String>) -> Value {
+    json!({
+        "code": code,
+        "message": message.into(),
+    })
+}
+
+fn read_message(reader: &mut impl Read) -> Result<ReadMessageOutcome, String> {
+    let mut headers = Vec::new();
+    let mut byte = [0u8; 1];
+    let mut window = Vec::new();
+
+    loop {
+        match reader.read(&mut byte) {
+            Ok(0) => {
+                if headers.is_empty() {
+                    return Ok(ReadMessageOutcome::EndOfStream);
+                }
+                return Err("unexpected EOF while reading headers".into());
+            }
+            Ok(_) => {
+                headers.push(byte[0]);
+                window.push(byte[0]);
+                if window.len() > 4 {
+                    window.remove(0);
+                }
+                if window == b"\r\n\r\n" {
+                    break;
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                return Ok(ReadMessageOutcome::Timeout);
+            }
+            Err(error) => return Err(format!("read header: {error}")),
+        }
+    }
+
+    let header_text =
+        String::from_utf8(headers).map_err(|error| format!("header utf8: {error}"))?;
+    let content_length = header_text
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .ok_or_else(|| "missing Content-Length".to_string())?;
+
+    let mut body = vec![0u8; content_length];
+    let mut offset = 0;
+    while offset < content_length {
+        match reader.read(&mut body[offset..]) {
+            Ok(0) => return Err("unexpected EOF while reading body".into()),
+            Ok(read) => offset += read,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(error) => return Err(format!("read body: {error}")),
+        }
+    }
+    let value = serde_json::from_slice(&body).map_err(|error| format!("parse json: {error}"))?;
+    Ok(ReadMessageOutcome::Message(value))
+}
+
+fn write_message(writer: &mut impl Write, message: &Value) -> Result<(), String> {
+    let body =
+        serde_json::to_vec(message).map_err(|error| format!("serialize response: {error}"))?;
+    write!(writer, "Content-Length: {}\r\n\r\n", body.len())
+        .map_err(|error| format!("write header: {error}"))?;
+    writer
+        .write_all(&body)
+        .map_err(|error| format!("write body: {error}"))?;
+    writer.flush().map_err(|error| format!("flush: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::{Cursor, Write},
+        sync::Arc,
+    };
+
+    use super::*;
+    use aetower_diagnostics::{DiagnosticsLevel, DiagnosticsSubsystem};
+
+    #[derive(Default)]
+    struct FakeSource;
+
+    impl AetowerMcpDataSource for FakeSource {
+        fn latest_snapshot(&self) -> Result<SystemSnapshot, String> {
+            Ok(SystemSnapshot {
+                sequence: 1,
+                captured_at_millis: 123,
+                host: aetower_model::HostSnapshot {
+                    memory_used_bytes: 15 * 1024 * 1024 * 1024,
+                    memory_total_bytes: 16 * 1024 * 1024 * 1024,
+                    compressed_memory_bytes: 7 * 1024 * 1024 * 1024,
+                    swap_used_bytes: 18 * 1024 * 1024 * 1024,
+                    wakeups_per_second: 31_000.0,
+                    ..aetower_model::HostSnapshot::default()
+                },
+                capabilities: vec![aetower_model::CapabilitySnapshot {
+                    kind: aetower_model::CapabilityKind::Accessibility,
+                    state: aetower_model::CapabilityState::Denied,
+                    health: aetower_model::CapabilityHealth::Degraded,
+                    detail: "Accessibility has not been granted.".to_owned(),
+                    last_updated_millis: 123,
+                }],
+                entities: vec![aetower_model::EntitySnapshot {
+                    entity_id: "chau7".to_owned(),
+                    display_name: "Chau7".to_owned(),
+                    metrics: aetower_model::AggregateMetrics {
+                        cpu_percent: 41.5,
+                        memory_resident_bytes: 750 * 1024 * 1024,
+                        wakeups_per_second: 12_000.0,
+                        process_count: 3,
+                        ..aetower_model::AggregateMetrics::default()
+                    },
+                    friction: aetower_model::FrictionBreakdown {
+                        total_score: 35.5,
+                        ..aetower_model::FrictionBreakdown::default()
+                    },
+                    components: vec![aetower_model::ComponentSnapshot {
+                        kind: aetower_model::ComponentKind::AdapterContext,
+                        title: "Chau7 session".to_owned(),
+                        detail: "repo context".to_owned(),
+                        adapter_context: Some(aetower_model::AdapterContextSnapshot {
+                            kind: aetower_model::AdapterContextKind::Chau7Session,
+                            session_id: Some("rs_1".to_owned()),
+                            repo_root: Some("/repo".to_owned()),
+                            workspace_path: Some("/repo".to_owned()),
+                            ..aetower_model::AdapterContextSnapshot::default()
+                        }),
+                        ..aetower_model::ComponentSnapshot::default()
+                    }],
+                    recent_change_summary: Some("Recent Chau7 event: waiting input.".to_owned()),
+                    anomaly_detected: true,
+                    recommendations: vec![aetower_model::Recommendation {
+                        title: "Resolve pending agent approval".to_owned(),
+                        detail: "A Chau7 session is currently blocked waiting for approval."
+                            .to_owned(),
+                    }],
+                    ..aetower_model::EntitySnapshot::default()
+                }],
+                timeline: vec![aetower_model::TimelineEvent {
+                    id: "ev-1".to_owned(),
+                    timestamp_millis: 120,
+                    category: aetower_model::TimelineCategory::Anomaly,
+                    severity: aetower_model::TimelineSeverity::Warning,
+                    entity_id: Some("chau7".to_owned()),
+                    title: "Agent blocked on approval".to_owned(),
+                    detail: "A Chau7 session is waiting for approval.".to_owned(),
+                }],
+                ..SystemSnapshot::default()
+            })
+        }
+
+        fn latest_snapshot_if_newer(
+            &self,
+            last_sequence: u64,
+        ) -> Result<Option<SystemSnapshot>, String> {
+            Ok((last_sequence == 0).then_some(self.latest_snapshot()?))
+        }
+
+        fn latest_sequence(&self) -> Result<u64, String> {
+            Ok(1)
+        }
+
+        fn latest_runtime_lag_metrics(&self) -> Result<RuntimeLagMetrics, String> {
+            Ok(RuntimeLagMetrics {
+                updated_at_millis: 123,
+                ..RuntimeLagMetrics::default()
+            })
+        }
+
+        fn history_range_summary(
+            &self,
+            _start_millis: u64,
+            _end_millis: u64,
+        ) -> Result<HistorySummaryResponse, String> {
+            Ok(HistorySummaryResponse {
+                store_bytes: 1,
+                wal_bytes: 2,
+                snapshot_count: 3,
+                quarantine_count: 0,
+                range_count: 2,
+                oldest_millis: Some(1),
+                newest_millis: Some(2),
+                pending_writes: 0,
+            })
+        }
+
+        fn load_history_page(
+            &self,
+            _start_millis: u64,
+            _end_millis: u64,
+            _before_millis_exclusive: Option<u64>,
+            _limit: u32,
+        ) -> Result<Vec<SystemSnapshot>, String> {
+            Ok(vec![self.latest_snapshot()?])
+        }
+
+        fn diagnostics_overview(&self) -> Result<DiagnosticsOverview, String> {
+            Ok(DiagnosticsOverview {
+                warn_count: 300,
+                error_count: 12,
+                persisted_events: 32,
+                last_error_message: Some("Failed to start local MCP server".to_owned()),
+                ..DiagnosticsOverview::default()
+            })
+        }
+
+        fn query_diagnostics(
+            &self,
+            _query: DiagnosticsQuery,
+        ) -> Result<Vec<DiagnosticsEvent>, String> {
+            Ok(vec![
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Info,
+                    DiagnosticsSubsystem::Engine,
+                    "test",
+                    "ok",
+                )
+                .build(),
+            ])
+        }
+    }
+
+    struct BrokenSource;
+
+    impl AetowerMcpDataSource for BrokenSource {
+        fn latest_snapshot(&self) -> Result<SystemSnapshot, String> {
+            Err("engine lock poisoned".to_owned())
+        }
+
+        fn latest_snapshot_if_newer(
+            &self,
+            _last_sequence: u64,
+        ) -> Result<Option<SystemSnapshot>, String> {
+            Err("engine lock poisoned".to_owned())
+        }
+
+        fn latest_sequence(&self) -> Result<u64, String> {
+            Err("engine lock poisoned".to_owned())
+        }
+
+        fn latest_runtime_lag_metrics(&self) -> Result<RuntimeLagMetrics, String> {
+            Err("engine lock poisoned".to_owned())
+        }
+
+        fn history_range_summary(
+            &self,
+            _start_millis: u64,
+            _end_millis: u64,
+        ) -> Result<HistorySummaryResponse, String> {
+            Err("engine lock poisoned".to_owned())
+        }
+
+        fn load_history_page(
+            &self,
+            _start_millis: u64,
+            _end_millis: u64,
+            _before_millis_exclusive: Option<u64>,
+            _limit: u32,
+        ) -> Result<Vec<SystemSnapshot>, String> {
+            Err("engine lock poisoned".to_owned())
+        }
+
+        fn diagnostics_overview(&self) -> Result<DiagnosticsOverview, String> {
+            Err("engine lock poisoned".to_owned())
+        }
+
+        fn query_diagnostics(
+            &self,
+            _query: DiagnosticsQuery,
+        ) -> Result<Vec<DiagnosticsEvent>, String> {
+            Err("engine lock poisoned".to_owned())
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            match self.0.lock() {
+                Ok(mut writer) => writer.extend_from_slice(buf),
+                Err(_) => panic!("writer lock"),
+            }
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn fake_server() -> AetowerMcpServer {
+        AetowerMcpServer {
+            data_source: Arc::new(FakeSource),
+        }
+    }
+
+    #[test]
+    fn tool_names_are_unique() {
+        let mut names = tool_definitions()
+            .into_iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_owned))
+            .collect::<Vec<_>>();
+        let original_len = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), original_len);
+    }
+
+    #[test]
+    fn tools_list_includes_agent_facing_summary_tools() {
+        let names = tool_definitions()
+            .into_iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_owned))
+            .collect::<Vec<_>>();
+        for expected in [
+            "aetower_top_findings",
+            "aetower_host_alerts",
+            "aetower_entity_group_tree",
+            "aetower_recent_changes",
+            "aetower_capability_status",
+            "aetower_history_store_health",
+            "aetower_support_bundle_manifest",
+            "aetower_recommendations",
+            "aetower_session_health",
+            "aetower_export_query",
+        ] {
+            assert!(
+                names.iter().any(|name| name == expected),
+                "missing tool {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn reads_content_length_framed_message() {
+        let payload = br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let mut input = format!("Content-Length: {}\r\n\r\n", payload.len()).into_bytes();
+        input.extend_from_slice(payload);
+        let outcome = match read_message(&mut input.as_slice()) {
+            Ok(outcome) => outcome,
+            Err(error) => panic!("read message: {error}"),
+        };
+        let ReadMessageOutcome::Message(message) = outcome else {
+            panic!("expected framed message");
+        };
+        assert_eq!(message.get("method").and_then(Value::as_str), Some("ping"));
+    }
+
+    #[test]
+    fn invalid_request_returns_error() {
+        let response = match fake_server().handle_message(json!({ "jsonrpc": "2.0", "id": 7 })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        assert_eq!(
+            response
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(Value::as_i64),
+            Some(-32600)
+        );
+    }
+
+    #[test]
+    fn initialize_returns_server_info() {
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {}
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        assert_eq!(
+            response
+                .get("result")
+                .and_then(|result| result.get("serverInfo"))
+                .and_then(|info| info.get("name"))
+                .and_then(Value::as_str),
+            Some("aetower")
+        );
+    }
+
+    #[test]
+    fn tools_call_returns_structured_content() {
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_host_summary",
+                "arguments": {}
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        assert!(
+            response
+                .get("result")
+                .and_then(|result| result.get("structuredContent"))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn top_findings_reports_high_signal_issues() {
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_top_findings",
+                "arguments": { "limit": 5 }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        let findings = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .and_then(|content| content.get("findings"))
+            .and_then(Value::as_array);
+        let findings = match findings {
+            Some(findings) => findings,
+            None => panic!("findings array"),
+        };
+        assert!(!findings.is_empty());
+    }
+
+    #[test]
+    fn export_query_redacts_sensitive_paths() {
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_export_query",
+                "arguments": {
+                    "privacy_tier": "redacted",
+                    "include_snapshot": true
+                }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        let privacy_tier = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .and_then(|content| content.get("privacyTier"))
+            .and_then(Value::as_str);
+        assert_eq!(privacy_tier, Some("redacted"));
+    }
+
+    #[test]
+    fn tool_call_reports_data_source_errors() {
+        let response = AetowerMcpServer {
+            data_source: Arc::new(BrokenSource),
+        }
+        .handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_host_summary",
+                "arguments": {}
+            }
+        }));
+        let response = match response {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        assert_eq!(
+            response
+                .get("result")
+                .and_then(|result| result.get("isError"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn start_local_socket_server_sets_owner_only_permissions() {
+        let parent = std::env::temp_dir().join(format!("aetower-mcp-test-{}", std::process::id()));
+        let socket_path = parent.join("mcp.sock");
+        let _ = fs::remove_file(&socket_path);
+        let _ = fs::remove_dir_all(&parent);
+        let handle = match start_local_socket_server(Arc::new(FakeSource), &socket_path) {
+            Ok(handle) => handle,
+            Err(error) => panic!("server: {error}"),
+        };
+        let dir_mode = match fs::metadata(&parent) {
+            Ok(metadata) => metadata.permissions().mode() & 0o777,
+            Err(error) => panic!("dir metadata: {error}"),
+        };
+        let file_mode = match fs::metadata(&socket_path) {
+            Ok(metadata) => metadata.permissions().mode() & 0o777,
+            Err(error) => panic!("socket metadata: {error}"),
+        };
+        assert_eq!(dir_mode, SOCKET_DIR_MODE);
+        assert_eq!(file_mode, SOCKET_FILE_MODE);
+        drop(handle);
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn proxy_roundtrip_supports_initialize_and_tool_call() {
+        let parent =
+            std::env::temp_dir().join(format!("aetower-mcp-proxy-test-{}", std::process::id()));
+        let socket_path = parent.join("mcp.sock");
+        let _ = fs::remove_file(&socket_path);
+        let _ = fs::remove_dir_all(&parent);
+        let handle = match start_local_socket_server(Arc::new(FakeSource), &socket_path) {
+            Ok(handle) => handle,
+            Err(error) => panic!("server: {error}"),
+        };
+
+        let initialize = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "1" }
+            }
+        });
+        let tool_call = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_host_summary",
+                "arguments": {}
+            }
+        });
+
+        let mut framed = Vec::new();
+        for message in [initialize, tool_call] {
+            let body = match serde_json::to_vec(&message) {
+                Ok(body) => body,
+                Err(error) => panic!("serialize request: {error}"),
+            };
+            if let Err(error) = write!(&mut framed, "Content-Length: {}\r\n\r\n", body.len()) {
+                panic!("frame header: {error}");
+            }
+            framed.extend_from_slice(&body);
+        }
+
+        let output = Arc::new(Mutex::new(Vec::new()));
+        proxy_streams_to_socket(
+            Cursor::new(framed),
+            SharedWriter(output.clone()),
+            &socket_path,
+        )
+        .map_err(|error| panic!("proxy roundtrip: {error}"))
+        .ok();
+
+        let buffer = match output.lock() {
+            Ok(output) => output.clone(),
+            Err(_) => panic!("output lock"),
+        };
+        let mut framed_output = buffer.as_slice();
+        let first = match read_message(&mut framed_output) {
+            Ok(message) => message,
+            Err(error) => panic!("first frame: {error}"),
+        };
+        let second = match read_message(&mut framed_output) {
+            Ok(message) => message,
+            Err(error) => panic!("second frame: {error}"),
+        };
+
+        let ReadMessageOutcome::Message(initialize_response) = first else {
+            panic!("missing initialize response");
+        };
+        let ReadMessageOutcome::Message(tool_response) = second else {
+            panic!("missing tool response");
+        };
+
+        assert_eq!(
+            initialize_response
+                .get("result")
+                .and_then(|result| result.get("serverInfo"))
+                .and_then(|info| info.get("name"))
+                .and_then(Value::as_str),
+            Some("aetower")
+        );
+        assert!(
+            tool_response
+                .get("result")
+                .and_then(|result| result.get("structuredContent"))
+                .is_some()
+        );
+
+        drop(handle);
+        let _ = fs::remove_dir_all(&parent);
+    }
+}

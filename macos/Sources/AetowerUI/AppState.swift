@@ -54,6 +54,7 @@ public final class AppState {
         errorCount: 0,
         warnCount: 0,
         lastEventMillis: nil,
+        lastErrorMillis: nil,
         lastErrorMessage: nil,
         persistedEvents: 0,
         persistedPath: nil,
@@ -65,6 +66,8 @@ public final class AppState {
     public private(set) var telemetryEnabled = false
     public private(set) var telemetryEndpoint = "http://localhost:4318/v1/metrics"
     public private(set) var telemetryVerificationStatus: String?
+    public private(set) var localMcpClientStatuses: [LocalMcpClientRegistrationStatus] = []
+    public private(set) var localMcpRegistrationStatusMessage: String?
     public var lastError: String?
 
     @ObservationIgnored
@@ -131,6 +134,16 @@ public final class AppState {
     private var historyRangeStartMillis: UInt64 = 0
     @ObservationIgnored
     private var historyRangeEndMillis: UInt64 = 0
+    @ObservationIgnored
+    private var localMcpServerStarted = false
+    @ObservationIgnored
+    private var lastLocalMcpHealthCheckDate = Date.distantPast
+    @ObservationIgnored
+    private let localMcpHealthCheckInterval: TimeInterval = 30
+    @ObservationIgnored
+    private let localMcpSocketPath = NSHomeDirectory() + "/.aetower/mcp.sock"
+    @ObservationIgnored
+    private var automaticLocalMcpRegistrationAttempted = false
 
     @ObservationIgnored
     private let frontmostProbeInterval: TimeInterval = 1.0
@@ -215,8 +228,15 @@ public final class AppState {
         start(refreshInterval: 1.0)
     }
 
+    public func startLocalMcpServer() {
+        ensureLocalMcpServer(force: true)
+        refreshLocalMcpClientStatuses()
+        ensureAutomaticLocalMcpClientRegistration()
+    }
+
     public func start(refreshInterval: Double) {
         stop()
+        startLocalMcpServer()
         observeWorkspaceActivation()
         publishFrontmostState(force: true)
         refresh(force: true)
@@ -458,7 +478,41 @@ public final class AppState {
         }
     }
 
+    public func refreshLocalMcpClientStatuses() {
+        localMcpClientStatuses = LocalMcpClientRegistrar.inspectStatuses()
+    }
+
+    public func registerSupportedLocalMcpClients() {
+        let report = LocalMcpClientRegistrar.registerSupportedClients()
+        localMcpClientStatuses = report.statuses
+        if !report.updatedProviders.isEmpty {
+            let names = report.updatedProviders.joined(separator: ", ")
+            localMcpRegistrationStatusMessage = "Registered Aetower MCP in \(names)."
+        } else if !report.errors.isEmpty {
+            localMcpRegistrationStatusMessage = report.errors.joined(separator: " ")
+            lastError = localMcpRegistrationStatusMessage
+        } else {
+            localMcpRegistrationStatusMessage = "No supported local AI client needed an MCP registration update."
+        }
+    }
+
+    public func copyLocalMcpConfigSnippet(providerId: String) {
+        guard let snippet = LocalMcpClientRegistrar.manualSnippet(for: providerId), !snippet.isEmpty else {
+            lastError = "No MCP config snippet is available for that client."
+            return
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(snippet, forType: .string)
+        if let provider = localMcpClientStatuses.first(where: { $0.id == providerId })?.displayName {
+            localMcpRegistrationStatusMessage = "Copied an Aetower MCP config snippet for \(provider)."
+        } else {
+            localMcpRegistrationStatusMessage = "Copied an Aetower MCP config snippet."
+        }
+    }
+
     public func refresh(force: Bool = false) {
+        ensureLocalMcpServer()
         let refreshStartedAt = CFAbsoluteTimeGetCurrent()
         let fetchStartedAt = CFAbsoluteTimeGetCurrent()
         do {
@@ -499,6 +553,41 @@ public final class AppState {
             lastError = nil
         } catch {
             lastError = error.localizedDescription
+        }
+    }
+
+    private func ensureLocalMcpServer(force: Bool = false) {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastLocalMcpHealthCheckDate) >= localMcpHealthCheckInterval else {
+            return
+        }
+        lastLocalMcpHealthCheckDate = now
+
+        let socketExists = FileManager.default.fileExists(atPath: localMcpSocketPath)
+        guard force || !localMcpServerStarted || !socketExists else {
+            return
+        }
+
+        if let error = bridge.startLocalMcpServer() {
+            localMcpServerStarted = false
+            lastError = error
+        } else {
+            localMcpServerStarted = true
+            refreshLocalMcpClientStatuses()
+        }
+    }
+
+    private func ensureAutomaticLocalMcpClientRegistration() {
+        guard !automaticLocalMcpRegistrationAttempted else {
+            return
+        }
+        automaticLocalMcpRegistrationAttempted = true
+        let report = LocalMcpClientRegistrar.registerSupportedClients()
+        localMcpClientStatuses = report.statuses
+        if !report.updatedProviders.isEmpty {
+            localMcpRegistrationStatusMessage = "Registered Aetower MCP in \(report.updatedProviders.joined(separator: ", "))."
+        } else if !report.errors.isEmpty {
+            localMcpRegistrationStatusMessage = report.errors.joined(separator: " ")
         }
     }
 
@@ -704,6 +793,12 @@ public final class AppState {
         let base = total > 0
             ? "Loaded \(loadedCount) of \(total) persisted samples in \(String(format: "%.0f", durationMillis)) ms."
             : "History checked in \(String(format: "%.0f", durationMillis)) ms."
+        if let maintenance, maintenance.prunedRows > 0 {
+            if let aggressiveReason = maintenance.aggressiveReason, !aggressiveReason.isEmpty {
+                return "\(base) Retention trimmed \(maintenance.prunedRows) rows (\(aggressiveReason))."
+            }
+            return "\(base) Retention trimmed \(maintenance.prunedRows) rows."
+        }
         if maintenance?.vacuumed == true {
             return "\(base) Store was compacted."
         }
@@ -1347,6 +1442,27 @@ public final class AppState {
             "windowSeconds": historyWindowSeconds,
             "loadedSnapshots": historySnapshots.count,
             "historyLoadError": jsonOptional(historyLoadError),
+            "rangeSummary": jsonOptional(historyRangeSummary.map { summary in
+                [
+                    "storeBytes": summary.storeBytes,
+                    "walBytes": summary.walBytes,
+                    "snapshotCount": summary.snapshotCount,
+                    "quarantineCount": summary.quarantineCount,
+                    "rangeCount": summary.rangeCount,
+                ]
+            }),
+            "maintenance": jsonOptional(historyMaintenanceReport.map { maintenance in
+                [
+                    "storeBytesBefore": maintenance.storeBytesBefore,
+                    "walBytesBefore": maintenance.walBytesBefore,
+                    "storeBytesAfter": maintenance.storeBytesAfter,
+                    "walBytesAfter": maintenance.walBytesAfter,
+                    "checkpointed": maintenance.checkpointed,
+                    "vacuumed": maintenance.vacuumed,
+                    "prunedRows": maintenance.prunedRows,
+                    "aggressiveReason": jsonOptional(maintenance.aggressiveReason),
+                ]
+            }),
             "recentSnapshots": recentSnapshots,
         ]
     }

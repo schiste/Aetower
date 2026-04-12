@@ -1,17 +1,15 @@
 [package]
-name = "aetower-ffi"
+name = "aetower-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+name = "aetower_mcp"
 
 [dependencies]
-aetower-core = { path = "../aetower-core" }
 aetower-diagnostics = { path = "../aetower-diagnostics" }
-aetower-mcp = { path = "../aetower-mcp" }
 aetower-model = { path = "../aetower-model" }
-aetower-persistence = { path = "../aetower-persistence" }
+dirs = "5"
+serde.workspace = true
 serde_json.workspace = true
-uniffi.workspace = true

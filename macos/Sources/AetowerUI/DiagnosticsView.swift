@@ -174,7 +174,7 @@ public struct DiagnosticsView: View {
                 diagnosticsMetric(
                     title: "Errors",
                     value: "\(state.diagnosticsOverview.errorCount)",
-                    subtitle: state.diagnosticsOverview.lastErrorMessage ?? "no recent errors"
+                    subtitle: diagnosticsErrorSubtitle
                 )
                 diagnosticsMetric(
                     title: "Persisted events",
@@ -224,6 +224,20 @@ public struct DiagnosticsView: View {
                     labeledPersistenceDetail(
                         "Last history load",
                         "\(Int(state.historyLastLoadDurationMillis.rounded())) ms · \(state.historySnapshots.count)/\(historySummary.rangeCount) loaded"
+                    )
+                }
+                if let maintenance = state.historyMaintenanceReport,
+                   maintenance.prunedRows > 0 || maintenance.vacuumed || maintenance.checkpointed {
+                    labeledPersistenceDetail(
+                        "Last history maintenance",
+                        [
+                            maintenance.prunedRows > 0 ? "trimmed \(maintenance.prunedRows) rows" : nil,
+                            maintenance.vacuumed ? "vacuumed" : nil,
+                            maintenance.checkpointed ? "checkpointed" : nil,
+                            maintenance.aggressiveReason
+                        ]
+                        .compactMap { $0 }
+                        .joined(separator: " · ")
                     )
                 }
                 if let lastHistoryLoadFailure {
@@ -415,8 +429,11 @@ public struct DiagnosticsView: View {
         if let historyIssue = lastHistoryLoadFailure {
             return historyIssue
         }
-        if let lastErrorMessage = state.diagnosticsOverview.lastErrorMessage {
+        if let lastErrorMessage = recentDiagnosticsErrorMessage {
             return lastErrorMessage
+        }
+        if let lastErrorMillis = state.diagnosticsOverview.lastErrorMillis {
+            return "Most recent diagnostics error was \(relativeTimeLabel(from: lastErrorMillis))"
         }
         return "No recent diagnostics errors"
     }
@@ -493,6 +510,30 @@ public struct DiagnosticsView: View {
             state.runtimeLagMetrics.snapshotToRenderMillis
         )
     }
+
+    private var diagnosticsErrorSubtitle: String {
+        if let message = recentDiagnosticsErrorMessage {
+            return message
+        }
+        if let lastErrorMillis = state.diagnosticsOverview.lastErrorMillis {
+            return "last error \(relativeTimeLabel(from: lastErrorMillis))"
+        }
+        return "no recent errors"
+    }
+
+    private var recentDiagnosticsErrorMessage: String? {
+        guard let lastErrorMessage = state.diagnosticsOverview.lastErrorMessage,
+              let lastErrorMillis = state.diagnosticsOverview.lastErrorMillis
+        else {
+            return nil
+        }
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        let ageMillis = nowMillis >= lastErrorMillis ? nowMillis - lastErrorMillis : 0
+        if ageMillis <= 10 * 60 * 1000 {
+            return lastErrorMessage
+        }
+        return nil
+    }
 }
 
 private func diagnosticsMetric(title: String, value: String, subtitle: String) -> some View {
@@ -522,6 +563,24 @@ private func labeledPersistenceDetail(_ title: String, _ value: String) -> some 
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
     }
+}
+
+private func relativeTimeLabel(from timestampMillis: UInt64) -> String {
+    let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+    guard nowMillis >= timestampMillis else {
+        return "just now"
+    }
+    let deltaSeconds = (nowMillis - timestampMillis) / 1000
+    if deltaSeconds < 60 {
+        return "\(deltaSeconds)s ago"
+    }
+    if deltaSeconds < 3600 {
+        return "\(deltaSeconds / 60)m ago"
+    }
+    if deltaSeconds < 86_400 {
+        return "\(deltaSeconds / 3600)h ago"
+    }
+    return "\(deltaSeconds / 86_400)d ago"
 }
 
 private func subsystemLabel(_ subsystem: DiagnosticsSubsystem) -> String {

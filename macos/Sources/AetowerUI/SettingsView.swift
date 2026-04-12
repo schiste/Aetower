@@ -258,6 +258,80 @@ public struct SettingsView: View {
                     }
                 }
 
+                GroupBox("AI Clients") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Aetower can register its bundled MCP proxy for supported local AI clients. Automatic registration only runs when the client exposes a stable user-owned config file.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 10) {
+                            Button("Register supported clients") {
+                                focusedField = nil
+                                state.registerSupportedLocalMcpClients()
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Refresh client status") {
+                                state.refreshLocalMcpClientStatuses()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        if let message = state.localMcpRegistrationStatusMessage {
+                            Text(message)
+                                .font(.caption)
+                                .foregroundStyle(message.contains("Registered")
+                                    ? AetowerDesign.Status.neutral
+                                    : AetowerDesign.Status.warning)
+                        }
+
+                        ForEach(state.localMcpClientStatuses) { status in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(status.displayName)
+                                        .font(.headline)
+                                    Text(registrationLabel(status.state))
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(registrationColor(status.state))
+                                }
+
+                                Text(status.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                if let configPath = status.configPath {
+                                    Text(configPath)
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(.tertiary)
+                                        .textSelection(.enabled)
+                                }
+
+                                HStack(spacing: 10) {
+                                    if status.supportsAutomaticRegistration,
+                                       status.isInstalled,
+                                       status.state != .registered {
+                                        Button("Register") {
+                                            focusedField = nil
+                                            state.registerSupportedLocalMcpClients()
+                                        }
+                                        .buttonStyle(.bordered)
+                                    }
+
+                                    if status.manualSnippet != nil {
+                                        Button("Copy MCP snippet") {
+                                            focusedField = nil
+                                            state.copyLocalMcpConfigSnippet(providerId: status.id)
+                                        }
+                                        .buttonStyle(.bordered)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
+                        }
+                    }
+                }
+
                 Text("Capabilities")
                     .font(.largeTitle.weight(.semibold))
                 Text("Aetower keeps core monitoring useful without invasive access, and exposes richer integrations behind explicit capability gates.")
@@ -267,15 +341,16 @@ public struct SettingsView: View {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
-                                Text(String(describing: capability.kind))
+                                Text(capabilityKindLabel(capability.kind))
                                     .font(.headline)
                                 Spacer()
                                 HStack(spacing: 6) {
-                                    Text(String(describing: capability.state))
-                                        .font(.caption.monospaced())
+                                    Text(capabilityStateLabel(capability))
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(capabilityStateColor(capability))
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(Color.secondary.opacity(0.1), in: Capsule())
+                                        .background(capabilityStateColor(capability).opacity(0.14), in: Capsule())
                                     Text(capabilityHealthLabel(capability.health))
                                         .font(.caption.weight(.semibold))
                                         .foregroundStyle(capabilityHealthColor(capability.health))
@@ -291,7 +366,7 @@ public struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             HStack {
-                                Button("Request / Refresh") {
+                                Button(capabilityActionLabel(capability)) {
                                     state.requestCapability(capability)
                                 }
                                 .buttonStyle(.borderedProminent)
@@ -310,6 +385,36 @@ public struct SettingsView: View {
         .onDisappear {
             focusedField = nil
         }
+    }
+}
+
+private func registrationLabel(_ state: LocalMcpClientRegistrationState) -> String {
+    switch state {
+    case .registered:
+        return "Registered"
+    case .availableForAutomaticRegistration:
+        return "Automatic"
+    case .manualConfigurationRequired:
+        return "Manual"
+    case .unavailable:
+        return "Unavailable"
+    case .notInstalled:
+        return "Not installed"
+    }
+}
+
+private func registrationColor(_ state: LocalMcpClientRegistrationState) -> Color {
+    switch state {
+    case .registered:
+        return AetowerDesign.Status.success
+    case .availableForAutomaticRegistration:
+        return AetowerDesign.Status.ready
+    case .manualConfigurationRequired:
+        return AetowerDesign.Status.warning
+    case .unavailable:
+        return AetowerDesign.Status.error
+    case .notInstalled:
+        return AetowerDesign.Status.neutral
     }
 }
 
@@ -336,5 +441,77 @@ private func capabilityHealthColor(_ health: CapabilityHealth) -> Color {
         return .orange
     case .degraded:
         return .red
+    }
+}
+
+private func capabilityKindLabel(_ kind: CapabilityKind) -> String {
+    switch kind {
+    case .accessibility:
+        return "Accessibility"
+    case .fullDiskAccess:
+        return "Full Disk Access"
+    case .appleAutomation:
+        return "Apple Automation"
+    case .chromiumDebug:
+        return "Chromium Debug"
+    case .dockerSocket:
+        return "Docker Socket"
+    case .privilegedHelper:
+        return "Privileged Helper"
+    case .chau7:
+        return "Chau7"
+    case .endpointSecurity:
+        return "Endpoint Security"
+    }
+}
+
+private func capabilityStateLabel(_ capability: CapabilitySnapshot) -> String {
+    switch capability.state {
+    case .granted:
+        return "Granted"
+    case .denied:
+        return "Denied"
+    case .requested:
+        return "Pending"
+    case .unknown:
+        return "Not checked"
+    case .unavailable:
+        let detail = capability.detail.localizedLowercase
+        if detail.contains("disabled") || detail.contains("configure") || detail.contains("set ") {
+            return "Not configured"
+        }
+        if detail.contains("missing") || detail.contains("not found") || detail.contains("not detected") {
+            return "Missing"
+        }
+        if detail.contains("requires") || detail.contains("unavailable on this system") {
+            return "Not available"
+        }
+        return "Unavailable"
+    }
+}
+
+private func capabilityStateColor(_ capability: CapabilitySnapshot) -> Color {
+    switch capability.state {
+    case .granted:
+        return AetowerDesign.Status.success
+    case .denied:
+        return AetowerDesign.Status.error
+    case .requested:
+        return AetowerDesign.Status.ready
+    case .unknown:
+        return AetowerDesign.Status.neutral
+    case .unavailable:
+        return capabilityStateLabel(capability) == "Not configured"
+            ? AetowerDesign.Status.warning
+            : AetowerDesign.Status.neutral
+    }
+}
+
+private func capabilityActionLabel(_ capability: CapabilitySnapshot) -> String {
+    switch capability.kind {
+    case .accessibility, .fullDiskAccess, .appleAutomation:
+        return "Request Access"
+    default:
+        return "Refresh"
     }
 }
