@@ -287,7 +287,7 @@ public struct Chau7View: View {
                 color: AetowerDesign.Tone.cpu
             )
             summaryChip(
-                label: "GPU \(Int(host.gpuPercent))%",
+                label: "Host GPU \(Int(host.gpuPercent))%",
                 icon: "gpu",
                 color: AetowerDesign.Tone.gpu
             )
@@ -297,7 +297,7 @@ public struct Chau7View: View {
                 color: AetowerDesign.Tone.energy
             )
             summaryChip(
-                label: "GPU mem \(Int(derived.gpuMemoryUnifiedPercent))%",
+                label: "Unified mem \(Int(derived.gpuMemoryUnifiedPercent))%",
                 icon: "memorychip",
                 color: gpuMemoryTone(derived.gpuMemoryUnifiedPercent)
             )
@@ -402,14 +402,14 @@ public struct Chau7View: View {
                                     .lineLimit(1)
                             }
                             HStack(spacing: AetowerDesign.Spacing.md) {
-                                VStack(alignment: .leading, spacing: 2) {
+                                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                                     Text("CPU")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                     MiniTrendStrip(samples: trend.cpuSamples, color: AetowerDesign.Tone.cpu)
                                         .frame(height: 18)
                                 }
-                                VStack(alignment: .leading, spacing: 2) {
+                                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                                     Text(formatBytes(trend.latestMemoryBytes))
                                         .font(.caption2)
                                         .foregroundStyle(AetowerDesign.Tone.memory)
@@ -691,8 +691,8 @@ public struct Chau7View: View {
                             Image(systemName: "arrow.up.right.circle.fill")
                                 .font(.caption2)
                                 .foregroundStyle(AetowerDesign.Status.warning)
-                                .padding(.top, 1)
-                            VStack(alignment: .leading, spacing: 2) {
+                                .padding(.top, AetowerDesign.Spacing.xxs)
+                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                                 Text(recommendation.title)
                                     .font(.caption)
                                     .fontWeight(.medium)
@@ -732,7 +732,7 @@ public struct Chau7View: View {
             sectionHeader("Project Costs")
             ForEach(repoSummaries, id: \.repoPath) { repo in
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                         Text(repo.displayName)
                             .font(.subheadline)
                             .lineLimit(1)
@@ -772,9 +772,9 @@ public struct Chau7View: View {
                 HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
                     Circle()
                         .fill(narrative.tone)
-                        .frame(width: 8, height: 8)
-                        .padding(.top, 4)
-                    VStack(alignment: .leading, spacing: 2) {
+                        .frame(width: 7, height: 7)
+                        .padding(.top, AetowerDesign.Spacing.xs)
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                         Text(narrative.title)
                             .font(.caption)
                             .fontWeight(.medium)
@@ -801,9 +801,9 @@ public struct Chau7View: View {
                 HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
                     Circle()
                         .fill(severityColor(event.severity))
-                        .frame(width: 6, height: 6)
-                        .padding(.top, 5)
-                    VStack(alignment: .leading, spacing: 2) {
+                        .frame(width: 7, height: 7)
+                        .padding(.top, AetowerDesign.Spacing.xs)
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                         Text(event.title)
                             .font(.caption)
                         if !event.detail.isEmpty {
@@ -1060,7 +1060,7 @@ public struct Chau7View: View {
     }
 
     private func trendMetric(title: String, value: String, samples: [Double], color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
             Text(title)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -1093,7 +1093,7 @@ public struct Chau7View: View {
     }
 
     private func budgetMetric(title: String, value: Double) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
             Text(title)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
