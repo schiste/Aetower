@@ -157,6 +157,11 @@ public struct Chau7View: View {
             ? Double(host.gpuMemoryBytes) / Double(host.memoryTotalBytes) * 100
             : 0
 
+        // Compute runtime groups once and pass to both the struct and
+        // the historical trend builder — previously buildRuntimeGroups
+        // was called twice per render.
+        let runtimeGroups = buildRuntimeGroups(from: sortedAiAgents)
+
         return DerivedData(
             aiAgents: aiAgents,
             aiAgentIDs: aiAgentIDs,
@@ -164,9 +169,9 @@ public struct Chau7View: View {
             sortedAiAgents: sortedAiAgents,
             sortedRepoSummaries: sortedRepoSummaries,
             aiTimelineEvents: aiTimelineEvents,
-            runtimeGroups: buildRuntimeGroups(from: sortedAiAgents),
+            runtimeGroups: runtimeGroups,
             burdenLeaders: buildBurdenLeaders(from: sortedAiAgents),
-            historicalGroupTrends: buildHistoricalGroupTrends(from: sortedAiAgents),
+            historicalGroupTrends: buildHistoricalGroupTrends(groups: runtimeGroups),
             approvalQueue: buildApprovalQueue(from: sortedAiAgents),
             delegationItems: buildDelegationItems(from: sortedAiAgents),
             narratives: buildNarratives(from: sortedAiAgents, timeline: aiTimelineEvents),
@@ -1153,12 +1158,15 @@ public struct Chau7View: View {
         }
     }
 
-    private func buildHistoricalGroupTrends(from agents: [EntitySnapshot]) -> [HistoricalGroupTrend] {
+    /// Build sparkline trends for the top runtime groups using persisted
+    /// history snapshots. Accepts pre-computed groups to avoid calling
+    /// buildRuntimeGroups a second time per render.
+    private func buildHistoricalGroupTrends(groups: [RuntimeGroup]) -> [HistoricalGroupTrend] {
         guard !state.historySnapshots.isEmpty else {
             return []
         }
 
-        return buildRuntimeGroups(from: agents).prefix(4).compactMap { group in
+        return groups.prefix(4).compactMap { group in
             let samples: [(cpu: Double, memory: UInt64)] = state.historySnapshots.suffix(24).map { snapshot in
                 let matching = snapshot.entities.filter { entity in
                     entity.entityKind == .aiAgent
@@ -1228,7 +1236,7 @@ public struct Chau7View: View {
                 workspace: projectContext(for: entity),
                 childSessionCount: childCount,
                 detail: detail,
-                note: "Chau7 currently exposes delegated child sessions here as an aggregate count. Individual child session identities are not yet available in this tab."
+                note: "\(childCount) child session\(childCount == 1 ? "" : "s") delegated from this agent."
             )
         }
     }
@@ -1360,11 +1368,13 @@ public struct Chau7View: View {
         return AetowerDesign.Status.ready
     }
 
+    /// Cached regex — NSRegularExpression is expensive to compile and
+    /// was previously allocated on every call to this function.
+    private static let childSessionRegex: NSRegularExpression? =
+        try? NSRegularExpression(pattern: #"(\d+)\s+child sessions"#, options: [.caseInsensitive])
+
     private func extractChildSessionCount(from detail: String) -> Int {
-        let pattern = #"(\d+)\s+child sessions"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return 0
-        }
+        guard let regex = Self.childSessionRegex else { return 0 }
         let nsRange = NSRange(detail.startIndex..<detail.endIndex, in: detail)
         guard let match = regex.firstMatch(in: detail, options: [], range: nsRange),
               let range = Range(match.range(at: 1), in: detail)
