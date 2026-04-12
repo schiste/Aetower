@@ -21,7 +21,12 @@ public final class AppState {
     public private(set) var historyHasMore = false
     public private(set) var historyLastLoadDurationMillis = 0.0
     public private(set) var diagnosticsEvents: [DiagnosticsEvent] = []
+    public private(set) var diagnosticsRecentWarningCount = 0
+    public private(set) var diagnosticsRecentErrorCount = 0
     public private(set) var sessionLogSummary: SessionLogSummary?
+    public private(set) var sessionLogAnalysisError: String?
+    public private(set) var lastDiagnosticsQueryDate: Date?
+    public private(set) var lastSessionLogAnalysisCompletedDate: Date?
     public private(set) var runtimeLagMetrics = RuntimeLagMetrics(
         updatedAtMillis: 0,
         engineTickMillis: 0,
@@ -159,6 +164,8 @@ public final class AppState {
     private let diagnosticsReloadInterval: TimeInterval = 2.0
     @ObservationIgnored
     private let sessionLogAnalysisInterval: TimeInterval = 45.0
+    @ObservationIgnored
+    private let diagnosticsHealthWindowSeconds: TimeInterval = 600.0
     @ObservationIgnored
     private let anomalyNotificationCooldown: TimeInterval = 300.0
     @ObservationIgnored
@@ -333,8 +340,11 @@ public final class AppState {
             return
         }
         diagnosticsEvents = []
+        diagnosticsRecentWarningCount = 0
+        diagnosticsRecentErrorCount = 0
         diagnosticsOverview = bridge.diagnosticsOverview()
         diagnosticsLoadError = nil
+        sessionLogAnalysisError = nil
     }
 
     public func clearHistory() {
@@ -774,23 +784,48 @@ public final class AppState {
         if shouldAnalyzeSessionLogs {
             lastSessionLogAnalysisDate = now
         }
+        let healthWindowStartMillis = UInt64(
+            max(
+                0,
+                Int64(now.timeIntervalSince1970 * 1000) - Int64(diagnosticsHealthWindowSeconds * 1000)
+            )
+        )
+        let healthQuery = DiagnosticsQuery(
+            limit: 500,
+            minimumLevel: .warn,
+            subsystem: nil,
+            search: nil,
+            sinceMillis: healthWindowStartMillis,
+            includePersisted: false
+        )
         diagnosticsLoadTask?.cancel()
         diagnosticsLoadTask = Task(priority: .utility) { [weak self] in
             let events = bridge.queryDiagnostics(query)
             let overview = bridge.diagnosticsOverview()
             let runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
+            let healthWindowEvents = bridge.queryDiagnostics(healthQuery)
             let sessionLogSummary = shouldAnalyzeSessionLogs ? Result { try SessionLogAnalyzer.analyzeCurrentProcess(lastMinutes: 6) } : nil
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self else { return }
                 self.diagnosticsEvents = events
+                self.diagnosticsRecentWarningCount = healthWindowEvents.filter { $0.level == .warn }.count
+                self.diagnosticsRecentErrorCount = healthWindowEvents.filter { $0.level == .error }.count
                 self.diagnosticsOverview = overview
                 self.runtimeLagMetrics = runtimeLagMetrics
+                self.lastDiagnosticsQueryDate = Date()
                 self.diagnosticsLoadError = nil
-                self.mirrorDiagnosticsToUnifiedLog(events)
                 if let sessionLogSummary {
-                    self.sessionLogSummary = try? sessionLogSummary.get()
                     self.applySessionLogSummary(sessionLogSummary)
+                    switch sessionLogSummary {
+                    case let .success(summary):
+                        self.sessionLogSummary = summary
+                        self.sessionLogAnalysisError = nil
+                        self.lastSessionLogAnalysisCompletedDate = Date()
+                    case let .failure(error):
+                        self.sessionLogAnalysisError = error.localizedDescription
+                        self.diagnosticsLoadError = "Unified log analysis failed: \(error.localizedDescription)"
+                    }
                 }
                 self.flushSuppressedAnomalySummaryIfNeeded()
             }
@@ -1404,7 +1439,10 @@ public final class AppState {
             "droppedEvents": diagnosticsOverview.droppedEvents,
             "warnCount": diagnosticsOverview.warnCount,
             "errorCount": diagnosticsOverview.errorCount,
+            "recentWarnCount": diagnosticsRecentWarningCount,
+            "recentErrorCount": diagnosticsRecentErrorCount,
             "lastEventMillis": jsonOptional(diagnosticsOverview.lastEventMillis),
+            "lastErrorMillis": jsonOptional(diagnosticsOverview.lastErrorMillis),
             "lastErrorMessage": jsonOptional(diagnosticsOverview.lastErrorMessage),
             "persistedEvents": diagnosticsOverview.persistedEvents,
             "persistedPath": jsonOptional(diagnosticsOverview.persistedPath),
@@ -1441,6 +1479,13 @@ public final class AppState {
     private func sessionHealthSummary() -> [String: Any] {
         [
             "notificationAuthorizationStatus": notificationAuthorizationStatus,
+            "diagnosticsQueriedAtMillis": jsonOptional(lastDiagnosticsQueryDate.map {
+                UInt64($0.timeIntervalSince1970 * 1000)
+            }),
+            "sessionLogAnalyzedAtMillis": jsonOptional(lastSessionLogAnalysisCompletedDate.map {
+                UInt64($0.timeIntervalSince1970 * 1000)
+            }),
+            "sessionLogAnalysisError": jsonOptional(sessionLogAnalysisError),
             "sessionLogSummary": jsonOptional(sessionLogSummary.map { summary in
                 [
                     "windowMinutes": summary.windowMinutes,
