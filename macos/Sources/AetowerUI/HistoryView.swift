@@ -94,41 +94,54 @@ public struct HistoryView: View {
                     )
                     .frame(maxWidth: .infinity)
                 } else {
+                    // Compute sample arrays once per render to avoid
+                    // the double-evaluation pattern where latestHostXxx
+                    // re-traversed the same array that body passed
+                    // separately. Each hostXxxSamples was O(n) over all
+                    // loaded snapshots; calling it twice per card doubled
+                    // the cost for no benefit.
+                    let frictionSamples = hostFrictionSamples
+                    let cpuSamples = hostCPUSamples
+                    let memorySamples = hostMemorySamples
+                    let networkSamples = hostNetworkSamples
+                    let gpuSamples = hostGPUSamples
+                    let lastHost = state.historySnapshots.last?.host
+
                     GroupBox("Host trend") {
                         LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                             TrendMetricCard(
                                 title: "Friction",
-                                value: String(format: "%.1f", latestHostFriction),
+                                value: String(format: "%.1f", frictionSamples.last ?? 0),
                                 subtitle: range.detail,
-                                samples: hostFrictionSamples,
+                                samples: frictionSamples,
                                 style: .friction
                             )
                             TrendMetricCard(
                                 title: "CPU",
-                                value: String(format: "%.1f%%", latestHostCPU),
+                                value: String(format: "%.1f%%", cpuSamples.last ?? 0),
                                 subtitle: "\(state.historySnapshots.count) persisted samples",
-                                samples: hostCPUSamples,
+                                samples: cpuSamples,
                                 style: .cpu
                             )
                             TrendMetricCard(
                                 title: "Memory",
-                                value: historyFormatBytes(latestHostMemory),
-                                subtitle: "peak \(historyFormatBytes(hostMemorySamples.max().map(UInt64.init) ?? 0))",
-                                samples: hostMemorySamples,
+                                value: formatBytes(UInt64(memorySamples.last ?? 0)),
+                                subtitle: "peak \(formatBytes(memorySamples.max().map(UInt64.init) ?? 0))",
+                                samples: memorySamples,
                                 style: .memory
                             )
                             TrendMetricCard(
                                 title: "Network",
-                                value: historyFormatRate(latestHostNetwork),
-                                subtitle: "peak \(historyFormatRate(hostNetworkSamples.max().map(UInt64.init) ?? 0))",
-                                samples: hostNetworkSamples,
+                                value: formatRate(UInt64(networkSamples.last ?? 0)),
+                                subtitle: "peak \(formatRate(networkSamples.max().map(UInt64.init) ?? 0))",
+                                samples: networkSamples,
                                 style: .network
                             )
                             TrendMetricCard(
                                 title: "GPU",
-                                value: String(format: "%.1f%%", latestHostGPU),
-                                subtitle: "ANE \(String(format: "%.1f%%", latestHostANE)) · \(historyFormatBytes(latestHostGPUMemory)) memory",
-                                samples: hostGPUSamples,
+                                value: String(format: "%.1f%%", gpuSamples.last ?? 0),
+                                subtitle: "ANE \(String(format: "%.1f%%", lastHost.map { Double($0.anePercent) } ?? 0)) · \(formatBytes(lastHost?.gpuMemoryBytes ?? 0)) memory",
+                                samples: gpuSamples,
                                 style: .energy
                             )
                         }
@@ -152,7 +165,7 @@ public struct HistoryView: View {
                                                 .foregroundStyle(.secondary)
                                         }
                                         Text(
-                                            "\(entity.sightings) sightings · peak friction \(String(format: "%.1f", entity.peakFriction)) · peak CPU \(String(format: "%.1f%%", entity.peakCPU)) · peak net \(historyFormatRate(entity.peakNetworkBps))"
+                                            "\(entity.sightings) sightings · peak friction \(String(format: "%.1f", entity.peakFriction)) · peak CPU \(String(format: "%.1f%%", entity.peakCPU)) · peak net \(formatRate(entity.peakNetworkBps))"
                                         )
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
@@ -199,11 +212,11 @@ public struct HistoryView: View {
                             )
                             LabeledContent(
                                 "Store size",
-                                value: historyFormatBytes(state.historyRangeSummary?.storeBytes ?? 0)
+                                value: formatBytes(state.historyRangeSummary?.storeBytes ?? 0)
                             )
                             LabeledContent(
                                 "WAL size",
-                                value: historyFormatBytes(state.historyRangeSummary?.walBytes ?? 0)
+                                value: formatBytes(state.historyRangeSummary?.walBytes ?? 0)
                             )
                             LabeledContent(
                                 "Persisted samples",
@@ -272,9 +285,6 @@ public struct HistoryView: View {
         }
     }
 
-    private var latestHostFriction: Double {
-        hostFrictionSamples.last ?? 0
-    }
 
     private var historyLoadingState: some View {
         ContentUnavailableView {
@@ -284,7 +294,7 @@ public struct HistoryView: View {
                 Text(state.historyLoadStatus ?? "Preparing the local history store and loading recent samples first.")
                 if let summary = state.historyRangeSummary {
                     Text(
-                        "\(summary.rangeCount) samples in range · store \(historyFormatBytes(summary.storeBytes)) · WAL \(historyFormatBytes(summary.walBytes))"
+                        "\(summary.rangeCount) samples in range · store \(formatBytes(summary.storeBytes)) · WAL \(formatBytes(summary.walBytes))"
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -296,29 +306,6 @@ public struct HistoryView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private var latestHostCPU: Double {
-        hostCPUSamples.last ?? 0
-    }
-
-    private var latestHostMemory: UInt64 {
-        UInt64(hostMemorySamples.last ?? 0)
-    }
-
-    private var latestHostNetwork: UInt64 {
-        UInt64(hostNetworkSamples.last ?? 0)
-    }
-
-    private var latestHostGPU: Double {
-        hostGPUSamples.last ?? 0
-    }
-
-    private var latestHostANE: Double {
-        state.historySnapshots.last.map { Double($0.host.anePercent) } ?? 0
-    }
-
-    private var latestHostGPUMemory: UInt64 {
-        state.historySnapshots.last?.host.gpuMemoryBytes ?? 0
-    }
 
     private var hostFrictionSamples: [Double] {
         state.historySnapshots.map(historyMachineFriction)
@@ -405,17 +392,6 @@ public struct HistoryView: View {
 
 private func historyMachineFriction(_ snapshot: SystemSnapshot) -> Double {
     machineFrictionScore(for: snapshot.host)
-}
-
-private func historyFormatBytes(_ bytes: UInt64) -> String {
-    let formatter = ByteCountFormatter()
-    formatter.allowedUnits = [.useMB, .useGB]
-    formatter.countStyle = .binary
-    return formatter.string(fromByteCount: Int64(bytes))
-}
-
-private func historyFormatRate(_ bytesPerSecond: UInt64) -> String {
-    "\(historyFormatBytes(bytesPerSecond))/s"
 }
 
 private func historyTimestamp(_ millis: UInt64?) -> String {

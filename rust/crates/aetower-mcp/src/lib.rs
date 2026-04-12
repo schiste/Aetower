@@ -130,6 +130,65 @@ struct GroupTreeNode {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct AiRuntimeSummary {
+    agent_count: usize,
+    total_energy_nj_per_s: f64,
+    total_cost_usd: f32,
+    total_session_energy_nj: u64,
+    host_gpu_percent: f32,
+    host_gpu_memory_unified_percent: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AiRuntimeGroupReport {
+    provider: String,
+    workspace: Option<String>,
+    agent_count: usize,
+    total_cpu_percent: f32,
+    total_memory_bytes: u64,
+    total_energy_nj_per_s: f64,
+    total_cost_usd: f32,
+    approval_count: usize,
+    delegating_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AiBurdenLeaderReport {
+    kind: String,
+    entity_id: String,
+    display_name: String,
+    value_label: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AiApprovalReport {
+    entity_id: String,
+    display_name: String,
+    session_id: Option<String>,
+    workspace: Option<String>,
+    detail: String,
+    impact: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AiDelegationReport {
+    entity_id: String,
+    display_name: String,
+    session_id: Option<String>,
+    workspace: Option<String>,
+    child_session_count: usize,
+    detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AiHistoricalTrendReport {
+    provider: String,
+    workspace: Option<String>,
+    cpu_percent: Vec<f64>,
+    memory_bytes: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct RecentChangeItem {
     timestamp_millis: u64,
     severity: SeverityBand,
@@ -196,6 +255,7 @@ struct ExportQueryOptions<'a> {
     include_history: bool,
     include_diagnostics: bool,
     include_session_health: bool,
+    include_ai_runtime_report: bool,
     diagnostics_limit: usize,
     history_limit: u32,
 }
@@ -517,6 +577,7 @@ impl AetowerMcpServer {
             "aetower_top_findings" => self.tool_top_findings(arguments),
             "aetower_host_alerts" => self.tool_host_alerts(arguments),
             "aetower_entity_group_tree" => self.tool_entity_group_tree(arguments),
+            "aetower_ai_runtime_report" => self.tool_ai_runtime_report(arguments),
             "aetower_recent_changes" => self.tool_recent_changes(arguments),
             "aetower_capability_status" => self.tool_capability_status(),
             "aetower_history_summary" => self.tool_history_summary(arguments),
@@ -758,6 +819,56 @@ impl AetowerMcpServer {
                 recent_change_summary: root.recent_change_summary,
                 children,
             },
+        })
+    }
+
+    fn tool_ai_runtime_report(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_history_window_hours")]
+            history_window_hours: u64,
+            #[serde(default = "default_export_history_limit")]
+            history_limit: u32,
+        }
+
+        #[derive(Serialize)]
+        struct Response {
+            captured_at_millis: u64,
+            summary: AiRuntimeSummary,
+            burden_leaders: Vec<AiBurdenLeaderReport>,
+            runtime_groups: Vec<AiRuntimeGroupReport>,
+            approvals: Vec<AiApprovalReport>,
+            delegations: Vec<AiDelegationReport>,
+            recent_changes: Vec<RecentChangeItem>,
+            historical_groups: Vec<AiHistoricalTrendReport>,
+            recommendations: Vec<RecommendationItem>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let history_start = snapshot
+            .captured_at_millis
+            .saturating_sub(args.history_window_hours.saturating_mul(60 * 60 * 1000));
+        let history = self
+            .data_source
+            .load_history_page(
+                history_start,
+                snapshot.captured_at_millis,
+                None,
+                args.history_limit,
+            )
+            .map_err(tool_error)?;
+        let report = build_ai_runtime_report(&snapshot, &history);
+        tool_json(Response {
+            captured_at_millis: snapshot.captured_at_millis,
+            summary: report.summary,
+            burden_leaders: report.burden_leaders,
+            runtime_groups: report.runtime_groups,
+            approvals: report.approvals,
+            delegations: report.delegations,
+            recent_changes: report.recent_changes,
+            historical_groups: report.historical_groups,
+            recommendations: report.recommendations,
         })
     }
 
@@ -1093,6 +1204,8 @@ impl AetowerMcpServer {
             include_diagnostics: bool,
             #[serde(default)]
             include_session_health: bool,
+            #[serde(default)]
+            include_ai_runtime_report: bool,
             #[serde(default = "default_support_bundle_diagnostics_limit")]
             diagnostics_limit: usize,
             #[serde(default = "default_export_history_limit")]
@@ -1118,6 +1231,7 @@ impl AetowerMcpServer {
                 include_history: args.include_history,
                 include_diagnostics: args.include_diagnostics,
                 include_session_health: args.include_session_health,
+                include_ai_runtime_report: args.include_ai_runtime_report,
                 diagnostics_limit: args.diagnostics_limit,
                 history_limit: args.history_limit,
             },
@@ -1769,6 +1883,71 @@ fn build_session_health_checks(
     ]
 }
 
+struct AiRuntimeReportData {
+    summary: AiRuntimeSummary,
+    burden_leaders: Vec<AiBurdenLeaderReport>,
+    runtime_groups: Vec<AiRuntimeGroupReport>,
+    approvals: Vec<AiApprovalReport>,
+    delegations: Vec<AiDelegationReport>,
+    recent_changes: Vec<RecentChangeItem>,
+    historical_groups: Vec<AiHistoricalTrendReport>,
+    recommendations: Vec<RecommendationItem>,
+}
+
+fn build_ai_runtime_report(
+    snapshot: &SystemSnapshot,
+    history: &[SystemSnapshot],
+) -> AiRuntimeReportData {
+    let ai_entities = snapshot
+        .entities
+        .iter()
+        .filter(|entity| matches!(entity.entity_kind, aetower_model::EntityKind::AiAgent))
+        .collect::<Vec<_>>();
+
+    let runtime_groups = ai_runtime_groups(&ai_entities);
+    let group_keys = runtime_groups
+        .iter()
+        .map(|group| (group.provider.clone(), group.workspace.clone()))
+        .collect::<Vec<_>>();
+
+    AiRuntimeReportData {
+        summary: AiRuntimeSummary {
+            agent_count: ai_entities.len(),
+            total_energy_nj_per_s: ai_entities
+                .iter()
+                .map(|entity| entity.metrics.energy_nj_per_s)
+                .sum(),
+            total_cost_usd: ai_entities
+                .iter()
+                .filter_map(|entity| entity.agent_cost.as_ref().map(|cost| cost.cost_usd))
+                .sum(),
+            total_session_energy_nj: ai_entities
+                .iter()
+                .filter_map(|entity| {
+                    entity
+                        .agent_cost
+                        .as_ref()
+                        .map(|cost| cost.session_energy_nj)
+                })
+                .sum(),
+            host_gpu_percent: snapshot.host.gpu_percent,
+            host_gpu_memory_unified_percent: if snapshot.host.memory_total_bytes == 0 {
+                0.0
+            } else {
+                snapshot.host.gpu_memory_bytes as f64 / snapshot.host.memory_total_bytes as f64
+                    * 100.0
+            },
+        },
+        burden_leaders: ai_burden_leaders(&ai_entities),
+        approvals: ai_approval_queue(&ai_entities),
+        delegations: ai_delegations(&ai_entities),
+        recent_changes: ai_recent_changes(snapshot, &ai_entities),
+        historical_groups: ai_historical_groups(history, &group_keys),
+        recommendations: ai_recommendations(&ai_entities),
+        runtime_groups,
+    }
+}
+
 fn build_export_query_response(
     data_source: &dyn AetowerMcpDataSource,
     mut snapshot: SystemSnapshot,
@@ -1853,6 +2032,33 @@ fn build_export_query_response(
         );
     }
 
+    if options.include_ai_runtime_report {
+        let history_page = data_source.load_history_page(
+            options.start_millis,
+            options.end_millis,
+            None,
+            options.history_limit,
+        )?;
+        let report = build_ai_runtime_report(&snapshot, &history_page);
+        payload.insert(
+            "aiRuntimeReport".to_owned(),
+            export_controlled_json(
+                serde_json::to_value(json!({
+                    "summary": report.summary,
+                    "burdenLeaders": report.burden_leaders,
+                    "runtimeGroups": report.runtime_groups,
+                    "approvals": report.approvals,
+                    "delegations": report.delegations,
+                    "recentChanges": report.recent_changes,
+                    "historicalGroups": report.historical_groups,
+                    "recommendations": report.recommendations,
+                }))
+                .map_err(|error| error.to_string())?,
+                options.privacy_tier,
+            ),
+        );
+    }
+
     Ok(Value::Object(payload))
 }
 
@@ -1887,6 +2093,475 @@ fn top_entities(snapshot: &SystemSnapshot, limit: usize) -> Vec<&aetower_model::
     });
     entities.truncate(limit.max(1));
     entities
+}
+
+fn ai_provider_label(entity: &aetower_model::EntitySnapshot) -> String {
+    if let Some(component) = entity.components.iter().find(|component| {
+        matches!(
+            component
+                .adapter_context
+                .as_ref()
+                .map(|context| &context.kind),
+            Some(aetower_model::AdapterContextKind::Chau7Session)
+        )
+    }) && let Some(prefix) = component.title.split(" · ").next()
+    {
+        let trimmed = prefix.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_owned();
+        }
+    }
+
+    entity
+        .badges
+        .iter()
+        .find(|badge| {
+            !matches!(
+                badge.as_str(),
+                "ai-agent"
+                    | "chau7-live"
+                    | "approval-needed"
+                    | "delegating"
+                    | "cto-active"
+                    | "at-prompt"
+                    | "shell-loading"
+                    | "agent-error"
+            ) && !badge.starts_with("ai-session:")
+        })
+        .map(|badge| badge.replace('-', " "))
+        .unwrap_or_else(|| "Unknown Provider".to_owned())
+}
+
+fn ai_workspace(entity: &aetower_model::EntitySnapshot) -> Option<String> {
+    entity
+        .components
+        .iter()
+        .filter_map(|component| {
+            component
+                .adapter_context
+                .as_ref()
+                .and_then(|context| {
+                    context
+                        .repo_root
+                        .as_ref()
+                        .or(context.workspace_path.as_ref())
+                        .cloned()
+                })
+                .or_else(|| component.cwd.clone())
+                .map(|path| {
+                    let rank = match component
+                        .adapter_context
+                        .as_ref()
+                        .map(|context| &context.kind)
+                    {
+                        Some(aetower_model::AdapterContextKind::Chau7Session) => 0,
+                        Some(aetower_model::AdapterContextKind::VsCodeWorkspace)
+                        | Some(aetower_model::AdapterContextKind::VsCodeRuntime) => 1,
+                        _ => 2,
+                    };
+                    (rank, path)
+                })
+        })
+        .min_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.len().cmp(&right.1.len()))
+        })
+        .map(|(_, path)| path)
+}
+
+fn ai_session_component(
+    entity: &aetower_model::EntitySnapshot,
+) -> Option<&aetower_model::ComponentSnapshot> {
+    entity.components.iter().find(|component| {
+        matches!(
+            component
+                .adapter_context
+                .as_ref()
+                .map(|context| &context.kind),
+            Some(aetower_model::AdapterContextKind::Chau7Session)
+        )
+    })
+}
+
+fn ai_runtime_groups(ai_entities: &[&aetower_model::EntitySnapshot]) -> Vec<AiRuntimeGroupReport> {
+    let grouped = ai_entities.iter().fold(
+        BTreeMap::<(String, Option<String>), Vec<&aetower_model::EntitySnapshot>>::new(),
+        |mut acc, entity| {
+            let key = (ai_provider_label(entity), ai_workspace(entity));
+            acc.entry(key).or_default().push(*entity);
+            acc
+        },
+    );
+
+    let mut groups = grouped
+        .into_iter()
+        .map(|((provider, workspace), members)| AiRuntimeGroupReport {
+            provider,
+            workspace,
+            agent_count: members.len(),
+            total_cpu_percent: members
+                .iter()
+                .map(|entity| entity.metrics.cpu_percent)
+                .sum(),
+            total_memory_bytes: members
+                .iter()
+                .map(|entity| entity.metrics.memory_resident_bytes)
+                .sum(),
+            total_energy_nj_per_s: members
+                .iter()
+                .map(|entity| entity.metrics.energy_nj_per_s)
+                .sum(),
+            total_cost_usd: members
+                .iter()
+                .filter_map(|entity| entity.agent_cost.as_ref().map(|cost| cost.cost_usd))
+                .sum(),
+            approval_count: members
+                .iter()
+                .filter(|entity| entity.badges.iter().any(|badge| badge == "approval-needed"))
+                .count(),
+            delegating_count: members
+                .iter()
+                .filter(|entity| entity.badges.iter().any(|badge| badge == "delegating"))
+                .count(),
+        })
+        .collect::<Vec<_>>();
+
+    groups.sort_by(|left, right| {
+        right
+            .total_energy_nj_per_s
+            .partial_cmp(&left.total_energy_nj_per_s)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                right
+                    .total_cpu_percent
+                    .partial_cmp(&left.total_cpu_percent)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+    groups
+}
+
+fn ai_burden_leaders(ai_entities: &[&aetower_model::EntitySnapshot]) -> Vec<AiBurdenLeaderReport> {
+    let mut leaders = Vec::new();
+    if let Some(entity) = ai_entities
+        .iter()
+        .max_by(|left, right| {
+            left.metrics
+                .cpu_percent
+                .partial_cmp(&right.metrics.cpu_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .filter(|entity| entity.metrics.cpu_percent > 0.0)
+    {
+        leaders.push(AiBurdenLeaderReport {
+            kind: "cpu".to_owned(),
+            entity_id: entity.entity_id.clone(),
+            display_name: entity.display_name.clone(),
+            value_label: format!("{:.0}%", entity.metrics.cpu_percent),
+        });
+    }
+    if let Some(entity) = ai_entities
+        .iter()
+        .max_by_key(|entity| entity.metrics.memory_resident_bytes)
+        .filter(|entity| entity.metrics.memory_resident_bytes > 0)
+    {
+        leaders.push(AiBurdenLeaderReport {
+            kind: "memory".to_owned(),
+            entity_id: entity.entity_id.clone(),
+            display_name: entity.display_name.clone(),
+            value_label: format_bytes(entity.metrics.memory_resident_bytes),
+        });
+    }
+    if let Some(entity) = ai_entities
+        .iter()
+        .max_by(|left, right| {
+            left.metrics
+                .energy_nj_per_s
+                .partial_cmp(&right.metrics.energy_nj_per_s)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .filter(|entity| entity.metrics.energy_nj_per_s > 0.0)
+    {
+        leaders.push(AiBurdenLeaderReport {
+            kind: "energy".to_owned(),
+            entity_id: entity.entity_id.clone(),
+            display_name: entity.display_name.clone(),
+            value_label: format_energy(entity.metrics.energy_nj_per_s),
+        });
+    }
+    if let Some(entity) = ai_entities
+        .iter()
+        .max_by(|left, right| {
+            left.metrics
+                .estimated_gpu_percent
+                .partial_cmp(&right.metrics.estimated_gpu_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .filter(|entity| entity.metrics.estimated_gpu_percent > 0.0)
+    {
+        leaders.push(AiBurdenLeaderReport {
+            kind: "gpu".to_owned(),
+            entity_id: entity.entity_id.clone(),
+            display_name: entity.display_name.clone(),
+            value_label: format!("{:.0}%", entity.metrics.estimated_gpu_percent),
+        });
+    }
+    if let Some(entity) = ai_entities
+        .iter()
+        .max_by(|left, right| {
+            left.metrics
+                .wakeups_per_second
+                .partial_cmp(&right.metrics.wakeups_per_second)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .filter(|entity| entity.metrics.wakeups_per_second > 0.0)
+    {
+        leaders.push(AiBurdenLeaderReport {
+            kind: "wakeups".to_owned(),
+            entity_id: entity.entity_id.clone(),
+            display_name: entity.display_name.clone(),
+            value_label: format!("{:.0}/s", entity.metrics.wakeups_per_second),
+        });
+    }
+    leaders
+}
+
+fn ai_approval_queue(ai_entities: &[&aetower_model::EntitySnapshot]) -> Vec<AiApprovalReport> {
+    ai_entities
+        .iter()
+        .filter(|entity| entity.badges.iter().any(|badge| badge == "approval-needed"))
+        .map(|entity| AiApprovalReport {
+            entity_id: entity.entity_id.clone(),
+            display_name: entity.display_name.clone(),
+            session_id: ai_session_component(entity)
+                .and_then(|component| component.adapter_context.as_ref())
+                .and_then(|context| context.session_id.clone()),
+            workspace: ai_workspace(entity),
+            detail: entity
+                .recommendations
+                .iter()
+                .find(|recommendation| recommendation.title == "Resolve pending agent approval")
+                .map(|recommendation| recommendation.detail.clone())
+                .or_else(|| entity.recent_change_summary.clone())
+                .unwrap_or_else(|| {
+                    "This runtime is waiting for approval before it can continue.".to_owned()
+                }),
+            impact: ai_impact_summary(entity),
+        })
+        .collect()
+}
+
+fn ai_delegations(ai_entities: &[&aetower_model::EntitySnapshot]) -> Vec<AiDelegationReport> {
+    ai_entities
+        .iter()
+        .filter(|entity| entity.badges.iter().any(|badge| badge == "delegating"))
+        .filter_map(|entity| {
+            let detail = ai_session_component(entity)
+                .map(|component| component.detail.clone())
+                .or_else(|| entity.recent_change_summary.clone())
+                .unwrap_or_else(|| "This runtime is delegating work to child sessions.".to_owned());
+            let child_session_count = extract_child_session_count(&detail);
+            (child_session_count > 0).then(|| AiDelegationReport {
+                entity_id: entity.entity_id.clone(),
+                display_name: entity.display_name.clone(),
+                session_id: ai_session_component(entity)
+                    .and_then(|component| component.adapter_context.as_ref())
+                    .and_then(|context| context.session_id.clone()),
+                workspace: ai_workspace(entity),
+                child_session_count,
+                detail,
+            })
+        })
+        .collect()
+}
+
+fn ai_recent_changes(
+    snapshot: &SystemSnapshot,
+    ai_entities: &[&aetower_model::EntitySnapshot],
+) -> Vec<RecentChangeItem> {
+    let ai_entity_ids = ai_entities
+        .iter()
+        .map(|entity| entity.entity_id.clone())
+        .collect::<BTreeSet<_>>();
+    let ai_titles = ai_entities
+        .iter()
+        .map(|entity| format!("{} session ended", entity.display_name).to_lowercase())
+        .collect::<BTreeSet<_>>();
+
+    let mut changes = ai_entities
+        .iter()
+        .filter_map(|entity| {
+            entity
+                .recent_change_summary
+                .as_ref()
+                .map(|summary| RecentChangeItem {
+                    timestamp_millis: entity
+                        .session_markers
+                        .iter()
+                        .map(|marker| marker.timestamp_millis)
+                        .max()
+                        .unwrap_or(snapshot.captured_at_millis),
+                    severity: if entity.badges.iter().any(|badge| badge == "agent-error") {
+                        SeverityBand::Critical
+                    } else if entity
+                        .badges
+                        .iter()
+                        .any(|badge| badge == "approval-needed" || badge == "delegating")
+                    {
+                        SeverityBand::Warning
+                    } else {
+                        SeverityBand::Info
+                    },
+                    source: entity.display_name.clone(),
+                    entity_id: Some(entity.entity_id.clone()),
+                    title: entity.display_name.clone(),
+                    detail: summary.clone(),
+                })
+        })
+        .collect::<Vec<_>>();
+
+    changes.extend(snapshot.timeline.iter().filter_map(|event| {
+        let entity_match = event
+            .entity_id
+            .as_ref()
+            .map(|entity_id| ai_entity_ids.contains(entity_id))
+            .unwrap_or(false);
+        let title_match = matches!(event.category, aetower_model::TimelineCategory::Host)
+            && event.title.starts_with("GPU memory")
+            || matches!(event.category, aetower_model::TimelineCategory::Lifecycle)
+                && ai_titles.contains(&event.title.to_lowercase());
+        (entity_match || title_match).then(|| RecentChangeItem {
+            timestamp_millis: event.timestamp_millis,
+            severity: match event.severity {
+                aetower_model::TimelineSeverity::Info => SeverityBand::Info,
+                aetower_model::TimelineSeverity::Warning => SeverityBand::Warning,
+                aetower_model::TimelineSeverity::Critical => SeverityBand::Critical,
+            },
+            source: "timeline".to_owned(),
+            entity_id: event.entity_id.clone(),
+            title: event.title.clone(),
+            detail: event.detail.clone(),
+        })
+    }));
+
+    changes.sort_by(|left, right| right.timestamp_millis.cmp(&left.timestamp_millis));
+    changes.truncate(10);
+    changes
+}
+
+fn ai_historical_groups(
+    history: &[SystemSnapshot],
+    group_keys: &[(String, Option<String>)],
+) -> Vec<AiHistoricalTrendReport> {
+    group_keys
+        .iter()
+        .take(4)
+        .filter_map(|(provider, workspace)| {
+            let mut cpu_percent = Vec::new();
+            let mut memory_bytes = Vec::new();
+            for snapshot in history.iter().rev().take(24).rev() {
+                let matching = snapshot
+                    .entities
+                    .iter()
+                    .filter(|entity| {
+                        matches!(entity.entity_kind, aetower_model::EntityKind::AiAgent)
+                            && ai_provider_label(entity) == *provider
+                            && ai_workspace(entity) == *workspace
+                    })
+                    .collect::<Vec<_>>();
+                cpu_percent.push(
+                    matching
+                        .iter()
+                        .map(|entity| entity.metrics.cpu_percent as f64)
+                        .sum(),
+                );
+                memory_bytes.push(
+                    matching
+                        .iter()
+                        .map(|entity| entity.metrics.memory_resident_bytes)
+                        .sum(),
+                );
+            }
+            if cpu_percent.iter().all(|value| *value == 0.0)
+                && memory_bytes.iter().all(|value| *value == 0)
+            {
+                return None;
+            }
+            Some(AiHistoricalTrendReport {
+                provider: provider.clone(),
+                workspace: workspace.clone(),
+                cpu_percent,
+                memory_bytes,
+            })
+        })
+        .collect()
+}
+
+fn ai_recommendations(ai_entities: &[&aetower_model::EntitySnapshot]) -> Vec<RecommendationItem> {
+    let mut items = Vec::new();
+    for entity in ai_entities.iter().take(8) {
+        for recommendation in entity.recommendations.iter().take(2) {
+            items.push(RecommendationItem {
+                severity: if entity.badges.iter().any(|badge| badge == "agent-error") {
+                    SeverityBand::Critical
+                } else if entity.badges.iter().any(|badge| badge == "approval-needed") {
+                    SeverityBand::Warning
+                } else {
+                    SeverityBand::Info
+                },
+                title: recommendation.title.clone(),
+                detail: recommendation.detail.clone(),
+                entity_id: Some(entity.entity_id.clone()),
+                source: entity.display_name.clone(),
+                expected_benefit: "Lower AI runtime friction and clearer operator action."
+                    .to_owned(),
+            });
+        }
+    }
+    items
+}
+
+fn ai_impact_summary(entity: &aetower_model::EntitySnapshot) -> String {
+    let mut parts = Vec::new();
+    if entity.metrics.cpu_percent > 0.0 {
+        parts.push(format!("{:.0}% CPU", entity.metrics.cpu_percent));
+    }
+    if entity.metrics.wakeups_per_second > 0.0 {
+        parts.push(format!("{:.0} wake/s", entity.metrics.wakeups_per_second));
+    }
+    if entity.metrics.memory_resident_bytes > 0 {
+        parts.push(format_bytes(entity.metrics.memory_resident_bytes));
+    }
+    if parts.is_empty() {
+        parts.push(format!("friction {:.1}", entity.friction.total_score));
+    }
+    parts.join(" · ")
+}
+
+fn extract_child_session_count(detail: &str) -> usize {
+    let tokens = detail.split_whitespace().collect::<Vec<_>>();
+    for window in tokens.windows(3) {
+        if let [count, child, sessions] = window
+            && child.eq_ignore_ascii_case("child")
+            && sessions.eq_ignore_ascii_case("sessions")
+            && let Ok(parsed) = count.parse::<usize>()
+        {
+            return parsed;
+        }
+    }
+    0
+}
+
+fn format_energy(nj_per_s: f64) -> String {
+    let mw = nj_per_s / 1_000_000.0;
+    if mw >= 1000.0 {
+        format!("{:.1} W", mw / 1000.0)
+    } else if mw >= 1.0 {
+        format!("{:.0} mW", mw)
+    } else {
+        "0 mW".to_owned()
+    }
 }
 
 fn memory_pressure_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
@@ -2582,6 +3257,18 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "aetower_ai_runtime_report",
+            "description": "Return grouped AI runtime insights including burden leaders, approval queue, delegated sessions, recent changes, and recent persisted history trends.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "history_window_hours": { "type": "integer", "minimum": 1, "maximum": 168 },
+                    "history_limit": { "type": "integer", "minimum": 1, "maximum": 500 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "aetower_recent_changes",
             "description": "Return a concise feed of recent timeline changes and entity change summaries.",
             "inputSchema": {
@@ -2735,6 +3422,7 @@ fn tool_definitions() -> Vec<Value> {
                     "include_snapshot": { "type": "boolean" },
                     "include_diagnostics": { "type": "boolean" },
                     "include_session_health": { "type": "boolean" },
+                    "include_ai_runtime_report": { "type": "boolean" },
                     "diagnostics_limit": { "type": "integer", "minimum": 1, "maximum": 5000 },
                     "history_limit": { "type": "integer", "minimum": 1, "maximum": 500 }
                 },
@@ -3077,6 +3765,7 @@ mod tests {
             "aetower_top_findings",
             "aetower_host_alerts",
             "aetower_entity_group_tree",
+            "aetower_ai_runtime_report",
             "aetower_recent_changes",
             "aetower_capability_status",
             "aetower_history_store_health",
@@ -3192,6 +3881,30 @@ mod tests {
     }
 
     #[test]
+    fn ai_runtime_report_returns_grouped_ai_insights() {
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_ai_runtime_report",
+                "arguments": {}
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        let content = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .cloned()
+            .unwrap_or_else(|| panic!("structuredContent"));
+        assert!(content.get("summary").is_some());
+        assert!(content.get("runtime_groups").is_some());
+        assert!(content.get("burden_leaders").is_some());
+    }
+
+    #[test]
     fn export_query_redacts_sensitive_paths() {
         let response = match fake_server().handle_message(json!({
             "jsonrpc": "2.0",
@@ -3201,7 +3914,8 @@ mod tests {
                 "name": "aetower_export_query",
                 "arguments": {
                     "privacy_tier": "redacted",
-                    "include_snapshot": true
+                    "include_snapshot": true,
+                    "include_ai_runtime_report": true
                 }
             }
         })) {
@@ -3214,6 +3928,13 @@ mod tests {
             .and_then(|content| content.get("privacyTier"))
             .and_then(Value::as_str);
         assert_eq!(privacy_tier, Some("redacted"));
+        assert!(
+            response
+                .get("result")
+                .and_then(|result| result.get("structuredContent"))
+                .and_then(|content| content.get("aiRuntimeReport"))
+                .is_some()
+        );
     }
 
     #[test]

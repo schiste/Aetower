@@ -15,6 +15,7 @@ agent-facing summaries:
 - `aetower_top_findings`
 - `aetower_host_alerts`
 - `aetower_entity_group_tree`
+- `aetower_ai_runtime_report`
 - `aetower_recent_changes`
 - `aetower_capability_status`
 - `aetower_history_summary`
@@ -94,6 +95,11 @@ host counters.
 `aetower_entity_group_tree` returns a grouped entity-family view using shared
 runtime session, repo, workspace, grouping, and launcher context.
 
+`aetower_ai_runtime_report` returns the AI-runtime operator surface directly:
+burden leaders, runtime groups, approval queue, delegated-session counts,
+recent changes, recent persisted history trends, and AI-specific
+recommendations.
+
 `aetower_recent_changes` summarizes the recent timeline and entity change feed.
 
 `aetower_capability_status` gives operator-grade permission and adapter state
@@ -124,4 +130,6 @@ host load, history health, diagnostics, and entity recommendations.
 diagnostics, history store, capabilities, host load, and MCP state.
 
 `aetower_export_query` returns a scoped, privacy-tiered export payload directly
-to the agent without writing any files.
+to the agent without writing any files. It also accepts
+`include_ai_runtime_report` when the caller wants the grouped AI-runtime view
+embedded in the export payload.
