@@ -1,7 +1,7 @@
+import AetowerBridge
 import Foundation
 import Network
 import Observation
-import AetowerBridge
 
 @MainActor
 @Observable
@@ -11,26 +11,39 @@ public final class FleetService {
 
     private var browser: NWBrowser?
     private var listener: NWListener?
-    private var state: AppState?
+    private weak var state: AppState?
     private var pollTimer: Timer?
     private var discoveredEndpoints: [String: NWEndpoint] = [:]
+    /// Active poll connections keyed by peer ID. Each tick cancels the
+    /// previous connection before dialing a new one, preventing the
+    /// unbounded accumulation that occurred when slow connections
+    /// outlived the 5-second poll interval.
+    private var activeConnections: [String: NWConnection] = [:]
 
-    private let serviceType = "_aetower._tcp"
+    private static let serviceType = "_aetower._tcp"
+    /// Peers whose lastSeen is older than this are visually marked stale.
+    nonisolated static let stalenessThreshold: TimeInterval = 30
 
     public struct FleetPeer: Identifiable {
         public let id: String
-        public let name: String
+        public var name: String
         public var friction: Float = 0
         public var cpuPercent: Float = 0
         public var entityCount: Int = 0
         public var lastSeen: Date = .now
         public var isLocal: Bool = false
+
+        /// True when the peer has not responded to polls within the
+        /// staleness threshold. The view renders these with a dimmed
+        /// style so the user knows the data is stale.
+        public var isStale: Bool {
+            !isLocal && Date.now.timeIntervalSince(lastSeen) > FleetService.stalenessThreshold
+        }
     }
 
     public func start(state: AppState) {
         guard !isEnabled else { return }
         self.state = state
-        isEnabled = true
         startAdvertising(state: state)
         startBrowsing()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -46,6 +59,12 @@ public final class FleetService {
         browser = nil
         pollTimer?.invalidate()
         pollTimer = nil
+        // Cancel every in-flight poll connection so they don't outlive
+        // the service and write to deallocated state.
+        for connection in activeConnections.values {
+            connection.cancel()
+        }
+        activeConnections.removeAll()
         peers.removeAll()
         discoveredEndpoints.removeAll()
     }
@@ -55,16 +74,27 @@ public final class FleetService {
     private func startAdvertising(state: AppState) {
         do {
             let listener = try NWListener(using: .tcp)
-            listener.service = NWListener.Service(type: serviceType)
+            listener.service = NWListener.Service(type: Self.serviceType)
             listener.newConnectionHandler = { [weak self, weak state] connection in
                 Task { @MainActor in
                     self?.handleIncoming(connection, state: state)
                 }
             }
+            // Only set isEnabled after the listener confirms it is
+            // ready. Previously isEnabled was set before this call,
+            // so the UI showed "On" even when the listener failed.
+            listener.stateUpdateHandler = { [weak self] listenerState in
+                Task { @MainActor in
+                    if case .ready = listenerState {
+                        self?.isEnabled = true
+                    }
+                }
+            }
             listener.start(queue: .main)
             self.listener = listener
         } catch {
-            // Best-effort
+            // Listener allocation failed (port conflict, entitlement).
+            // isEnabled stays false so the UI shows the real state.
         }
     }
 
@@ -86,7 +116,7 @@ public final class FleetService {
     // MARK: - Discover
 
     private func startBrowsing() {
-        let browser = NWBrowser(for: .bonjour(type: serviceType, domain: nil), using: .tcp)
+        let browser = NWBrowser(for: .bonjour(type: Self.serviceType, domain: nil), using: .tcp)
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             Task { @MainActor in self?.updatePeers(from: results) }
         }
@@ -96,77 +126,101 @@ public final class FleetService {
 
     private func updatePeers(from results: Set<NWBrowser.Result>) {
         let localName = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+
+        // Rebuild discoveredEndpoints from the current result set so
+        // departed peers are pruned (previously the dictionary only
+        // grew and never shrank).
+        var freshEndpoints: [String: NWEndpoint] = [:]
         var updated: [FleetPeer] = []
 
         for result in results {
             guard case let .service(name, _, _, _) = result.endpoint else { continue }
-            let id = name
             let isLocal = name == localName || name.hasPrefix(localName)
 
-            discoveredEndpoints[id] = result.endpoint
+            freshEndpoints[name] = result.endpoint
 
-            if let existing = peers.first(where: { $0.id == id }) {
-                var peer = existing
-                peer.isLocal = isLocal
-                // For local peer, read directly from AppState
-                if isLocal, let state {
-                    peer.cpuPercent = state.snapshot.host.cpuPercent
-                    peer.entityCount = state.snapshot.entities.count
-                    peer.friction = state.snapshot.entities.first?.friction.totalScore ?? 0
-                    peer.lastSeen = .now
-                }
-                updated.append(peer)
+            if var existing = peers.first(where: { $0.id == name }) {
+                existing.isLocal = isLocal
+                if isLocal { syncLocalPeerMetrics(&existing) }
+                updated.append(existing)
             } else {
-                var peer = FleetPeer(id: id, name: name, isLocal: isLocal)
-                if isLocal, let state {
-                    peer.cpuPercent = state.snapshot.host.cpuPercent
-                    peer.entityCount = state.snapshot.entities.count
-                    peer.friction = state.snapshot.entities.first?.friction.totalScore ?? 0
-                    peer.lastSeen = .now
-                }
+                var peer = FleetPeer(id: name, name: name, isLocal: isLocal)
+                if isLocal { syncLocalPeerMetrics(&peer) }
                 updated.append(peer)
             }
         }
 
+        // Cancel connections for peers that disappeared.
+        for id in discoveredEndpoints.keys where freshEndpoints[id] == nil {
+            activeConnections[id]?.cancel()
+            activeConnections.removeValue(forKey: id)
+        }
+
+        discoveredEndpoints = freshEndpoints
         peers = updated.sorted { $0.name < $1.name }
     }
 
     // MARK: - Poll
 
     private func pollPeers() {
-        // Update local peer from AppState directly
-        for (index, peer) in peers.enumerated() where peer.isLocal {
-            guard let state else { continue }
-            peers[index].cpuPercent = state.snapshot.host.cpuPercent
-            peers[index].entityCount = state.snapshot.entities.count
-            peers[index].friction = state.snapshot.entities.first?.friction.totalScore ?? 0
-            peers[index].lastSeen = .now
+        // Local peers: read directly from AppState.
+        for index in peers.indices where peers[index].isLocal {
+            syncLocalPeerMetrics(&peers[index])
         }
 
-        // For remote peers, connect via NWConnection to their Bonjour endpoint
-        for (index, peer) in peers.enumerated() where !peer.isLocal {
+        // Remote peers: dial via NWConnection keyed by peer ID.
+        for peer in peers where !peer.isLocal {
             guard let endpoint = discoveredEndpoints[peer.id] else { continue }
-            let capturedIndex = index
+            let peerId = peer.id
+
+            // Cancel any in-flight connection from the previous tick
+            // so we never accumulate more than one per peer.
+            activeConnections[peerId]?.cancel()
+
             let connection = NWConnection(to: endpoint, using: .tcp)
+            activeConnections[peerId] = connection
             connection.start(queue: .main)
-            connection.stateUpdateHandler = { [weak self] state in
-                guard case .ready = state else { return }
-                let request = Data("GET / HTTP/1.0\r\nHost: local\r\n\r\n".utf8)
-                connection.send(content: request, completion: .contentProcessed { _ in
-                    connection.receive(minimumIncompleteLength: 1, maximumLength: 1_048_576) { data, _, _, _ in
-                        connection.cancel()
-                        guard let data, let body = Self.extractHTTPBody(data) else { return }
-                        Task { @MainActor in
-                            self?.applyRemoteSnapshot(body, at: capturedIndex)
+            connection.stateUpdateHandler = { [weak self] connState in
+                switch connState {
+                case .ready:
+                    let request = Data("GET / HTTP/1.0\r\nHost: local\r\n\r\n".utf8)
+                    connection.send(content: request, completion: .contentProcessed { _ in
+                        connection.receive(minimumIncompleteLength: 1, maximumLength: 1_048_576) { data, _, _, _ in
+                            connection.cancel()
+                            guard let data, let body = Self.extractHTTPBody(data) else { return }
+                            Task { @MainActor in
+                                // ID-based lookup instead of captured index —
+                                // safe even if peers is reordered between the
+                                // dial and the callback.
+                                self?.applyRemoteSnapshot(body, forPeerId: peerId)
+                            }
                         }
+                    })
+                case .failed, .cancelled:
+                    Task { @MainActor in
+                        self?.activeConnections.removeValue(forKey: peerId)
                     }
-                })
+                default:
+                    break
+                }
             }
         }
     }
 
-    private func applyRemoteSnapshot(_ data: Data, at index: Int) {
-        guard index < peers.count else { return }
+    // MARK: - Helpers
+
+    /// Single source of truth for reading local metrics from AppState.
+    /// Previously duplicated in updatePeers (2x) and pollPeers.
+    private func syncLocalPeerMetrics(_ peer: inout FleetPeer) {
+        guard let state else { return }
+        peer.cpuPercent = state.snapshot.host.cpuPercent
+        peer.entityCount = state.snapshot.entities.count
+        peer.friction = state.snapshot.entities.first?.friction.totalScore ?? 0
+        peer.lastSeen = .now
+    }
+
+    private func applyRemoteSnapshot(_ data: Data, forPeerId peerId: String) {
+        guard let index = peers.firstIndex(where: { $0.id == peerId }) else { return }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         let host = json["host"] as? [String: Any] ?? [:]
         let entities = json["entities"] as? [[String: Any]] ?? []
@@ -176,6 +230,7 @@ public final class FleetService {
             peers[index].friction = (friction["total_score"] as? NSNumber)?.floatValue ?? 0
         }
         peers[index].lastSeen = .now
+        activeConnections.removeValue(forKey: peerId)
     }
 
     nonisolated private static func extractHTTPBody(_ data: Data) -> Data? {
