@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Dedicated tab for AI agent hardware impact — surfaces GPU attribution,
 /// energy draw, session costs, and unified GPU memory pressure alongside
-/// per-repository token/cost breakdowns from local AI runtimes.
+/// per-repository token and cost breakdowns from local AI runtimes.
 public struct Chau7View: View {
     let state: AppState
 
@@ -13,6 +13,50 @@ public struct Chau7View: View {
 
     // MARK: - Derived data
 
+    private struct RuntimeGroup: Identifiable {
+        let provider: String
+        let workspace: String?
+        let agents: [EntitySnapshot]
+        let totalCpuPercent: Float
+        let totalMemoryBytes: UInt64
+        let totalEnergyNjPerS: Double
+        let totalCostUsd: Float
+        let approvalCount: Int
+        let delegatingCount: Int
+
+        var id: String { "\(provider)|\(workspace ?? "-")" }
+    }
+
+    private struct BurdenLeader: Identifiable {
+        let id: String
+        let title: String
+        let entityName: String
+        let valueLabel: String
+        let color: Color
+        let trend: [Double]
+    }
+
+    private struct AgentNarrative: Identifiable {
+        let id: String
+        let title: String
+        let detail: String
+        let timestampMillis: UInt64
+        let tone: Color
+    }
+
+    private struct DataBadge: Identifiable {
+        let label: String
+        let color: Color
+
+        var id: String { label }
+    }
+
+    private struct Chau7SessionInfo {
+        let status: String?
+        let sessionId: String?
+        let detail: String
+    }
+
     private struct DerivedData {
         let aiAgents: [EntitySnapshot]
         let aiAgentIDs: Set<String>
@@ -20,6 +64,9 @@ public struct Chau7View: View {
         let sortedAiAgents: [EntitySnapshot]
         let sortedRepoSummaries: [AiRepoSummary]
         let aiTimelineEvents: [TimelineEvent]
+        let runtimeGroups: [RuntimeGroup]
+        let burdenLeaders: [BurdenLeader]
+        let narratives: [AgentNarrative]
         let totalEnergy: Double
         let totalCost: Float
         let totalSessionEnergyNj: UInt64
@@ -81,6 +128,9 @@ public struct Chau7View: View {
             sortedAiAgents: sortedAiAgents,
             sortedRepoSummaries: sortedRepoSummaries,
             aiTimelineEvents: aiTimelineEvents,
+            runtimeGroups: buildRuntimeGroups(from: sortedAiAgents),
+            burdenLeaders: buildBurdenLeaders(from: sortedAiAgents),
+            narratives: buildNarratives(from: sortedAiAgents, timeline: aiTimelineEvents),
             totalEnergy: totalEnergy,
             totalCost: totalCost,
             totalSessionEnergyNj: totalSessionEnergyNj,
@@ -105,6 +155,12 @@ public struct Chau7View: View {
                     emptyState
                 } else {
                     summaryStrip(derived)
+                    if !derived.burdenLeaders.isEmpty {
+                        burdenLeadersSection(derived.burdenLeaders)
+                    }
+                    if !derived.runtimeGroups.isEmpty {
+                        runtimeGroupsSection(derived.runtimeGroups)
+                    }
                     if !derived.sortedAiAgents.isEmpty {
                         activeAgentsSection(derived.sortedAiAgents)
                     } else {
@@ -112,6 +168,9 @@ public struct Chau7View: View {
                     }
                     if !derived.sortedRepoSummaries.isEmpty {
                         projectCostsSection(derived.sortedRepoSummaries)
+                    }
+                    if !derived.narratives.isEmpty {
+                        recentChangesSection(derived.narratives)
                     }
                     if !derived.aiTimelineEvents.isEmpty {
                         recentActivitySection(derived.aiTimelineEvents)
@@ -225,6 +284,100 @@ public struct Chau7View: View {
         .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
     }
 
+    // MARK: - Operator sections
+
+    private func burdenLeadersSection(_ leaders: [BurdenLeader]) -> some View {
+        let columns = [GridItem(.adaptive(minimum: 168), spacing: AetowerDesign.Spacing.sm)]
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            sectionHeader("Burden Leaders")
+            LazyVGrid(columns: columns, alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                ForEach(leaders) { leader in
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        Text(leader.title)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(leader.entityName)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .lineLimit(1)
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(leader.valueLabel)
+                                .font(.caption)
+                                .foregroundStyle(leader.color)
+                            Spacer()
+                            MiniTrendStrip(samples: leader.trend, color: leader.color)
+                                .frame(width: 54, height: 18)
+                        }
+                    }
+                    .padding(AetowerDesign.Spacing.md)
+                    .background(
+                        AetowerDesign.Surface.card,
+                        in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
+                    )
+                }
+            }
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
+    }
+
+    private func runtimeGroupsSection(_ groups: [RuntimeGroup]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            sectionHeader("Runtime Groups")
+            ForEach(groups) { group in
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(group.provider)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        if let workspace = group.workspace {
+                            Text("—")
+                                .foregroundStyle(.tertiary)
+                            Text(shortenPath(workspace))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Text("\(group.agents.count) runtime\(group.agents.count == 1 ? "" : "s")")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        metricPill(
+                            label: String(format: "CPU %.0f%%", group.totalCpuPercent),
+                            color: AetowerDesign.Tone.cpu
+                        )
+                        metricPill(label: formatBytes(group.totalMemoryBytes), color: AetowerDesign.Tone.memory)
+                        metricPill(label: formatEnergy(njPerS: group.totalEnergyNjPerS), color: AetowerDesign.Tone.energy)
+                        if group.totalCostUsd > 0 {
+                            metricPill(
+                                label: String(format: "$%.2f", group.totalCostUsd),
+                                color: AetowerDesign.Status.success
+                            )
+                        }
+                    }
+
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        if group.approvalCount > 0 {
+                            stateBadge("Approvals \(group.approvalCount)", color: AetowerDesign.Status.warning)
+                        }
+                        if group.delegatingCount > 0 {
+                            stateBadge("Delegating \(group.delegatingCount)", color: AetowerDesign.Status.ready)
+                        }
+                    }
+                }
+                .padding(AetowerDesign.Spacing.md)
+                .background(
+                    AetowerDesign.Surface.card,
+                    in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
+                )
+            }
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
+    }
+
     // MARK: - Active agents
 
     private func activeAgentsSection(_ agents: [EntitySnapshot]) -> some View {
@@ -239,21 +392,29 @@ public struct Chau7View: View {
 
     private func agentCard(_ entity: EntitySnapshot) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-            // Header row: name + workspace
             HStack {
                 Text(entity.displayName)
                     .font(.headline)
+                if let provider = providerLabel(for: entity) {
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text(provider)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
                 if let workspace = projectContext(for: entity) {
                     Text("—")
                         .foregroundStyle(.tertiary)
                     Text(shortenPath(workspace))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 Spacer()
             }
 
-            // Metrics row
+            dataQualityBadgeRow(for: entity)
+
             HStack(spacing: AetowerDesign.Spacing.md) {
                 if entity.metrics.estimatedGpuPercent > 0 {
                     metricPill(
@@ -273,9 +434,14 @@ public struct Chau7View: View {
                     label: formatBytes(entity.metrics.memoryResidentBytes),
                     color: AetowerDesign.Tone.memory
                 )
+                if entity.metrics.wakeupsPerSecond > 0 {
+                    metricPill(
+                        label: String(format: "%.0f wake/s", entity.metrics.wakeupsPerSecond),
+                        color: AetowerDesign.Status.warning
+                    )
+                }
             }
 
-            // Cost row (if available)
             if let cost = entity.agentCost {
                 HStack(spacing: AetowerDesign.Spacing.md) {
                     if cost.costUsd > 0 {
@@ -287,13 +453,13 @@ public struct Chau7View: View {
                     if cost.totalInputTokens + cost.totalOutputTokens > 0 {
                         metricPill(
                             label: formatTokens(cost.totalInputTokens + cost.totalOutputTokens),
-                            color: .secondary
+                            color: AetowerDesign.Status.ready
                         )
                     }
                     if cost.totalRuns > 0 {
                         metricPill(
                             label: "\(cost.totalRuns) run\(cost.totalRuns == 1 ? "" : "s")",
-                            color: .secondary
+                            color: AetowerDesign.Status.ready
                         )
                     }
                     if cost.sessionEnergyNj > 0 {
@@ -305,7 +471,44 @@ public struct Chau7View: View {
                 }
             }
 
-            // Latest session marker
+            if let info = chau7SessionInfo(for: entity) {
+                chau7SessionInsights(info, entity: entity)
+            }
+
+            trendStripSection(for: entity)
+
+            if let summary = entity.recentChangeSummary, !summary.isEmpty {
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    Image(systemName: "sparkle")
+                        .font(.caption2)
+                        .foregroundStyle(AetowerDesign.Status.ready)
+                    Text(summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if !entity.recommendations.isEmpty {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(Array(entity.recommendations.prefix(2).enumerated()), id: \.offset) { _, recommendation in
+                        HStack(alignment: .top, spacing: AetowerDesign.Spacing.xs) {
+                            Image(systemName: "arrow.up.right.circle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(AetowerDesign.Status.warning)
+                                .padding(.top, 1)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(recommendation.title)
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                Text(recommendation.detail)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+
             if let latest = entity.sessionMarkers.max(by: { $0.timestampMillis < $1.timestampMillis }) {
                 HStack(spacing: AetowerDesign.Spacing.xs) {
                     Image(systemName: latest.kind == .runStart ? "play.fill" : "stop.fill")
@@ -364,6 +567,35 @@ public struct Chau7View: View {
         .padding(.horizontal, AetowerDesign.Spacing.lg)
     }
 
+    // MARK: - Recent change narratives
+
+    private func recentChangesSection(_ narratives: [AgentNarrative]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            sectionHeader("Recent Changes")
+            ForEach(narratives) { narrative in
+                HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                    Circle()
+                        .fill(narrative.tone)
+                        .frame(width: 8, height: 8)
+                        .padding(.top, 4)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(narrative.title)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Text(narrative.detail)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(formatTimestamp(narrative.timestampMillis))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
+    }
+
     // MARK: - Recent activity
 
     private func recentActivitySection(_ events: [TimelineEvent]) -> some View {
@@ -404,6 +636,16 @@ public struct Chau7View: View {
             .foregroundStyle(.secondary)
     }
 
+    private func stateBadge(_ label: String, color: Color) -> some View {
+        Text(label)
+            .font(.caption2)
+            .fontWeight(.medium)
+            .foregroundStyle(color)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, AetowerDesign.Spacing.xxs)
+            .background(color.opacity(0.08), in: Capsule())
+    }
+
     private func metricPill(label: String, color: Color) -> some View {
         Text(label)
             .font(.caption)
@@ -430,6 +672,35 @@ public struct Chau7View: View {
             return AetowerDesign.Status.warning
         }
         return AetowerDesign.Status.success
+    }
+
+    private func providerLabel(for entity: EntitySnapshot) -> String? {
+        if let title = sessionComponent(for: entity)?.title,
+           let prefix = title.components(separatedBy: " · ").first {
+            let trimmed = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+
+        let providerBadges = entity.badges.filter {
+            $0 != "ai-agent"
+                && $0 != "chau7-live"
+                && !$0.hasPrefix("ai-session:")
+                && ![
+                    "approval-needed",
+                    "delegating",
+                    "cto-active",
+                    "at-prompt",
+                    "shell-loading",
+                    "agent-error",
+                ].contains($0)
+        }
+        return providerBadges.first.map { $0.replacingOccurrences(of: "-", with: " ").capitalized }
+    }
+
+    private func sessionComponent(for entity: EntitySnapshot) -> ComponentSnapshot? {
+        entity.components.first { $0.adapterContext?.kind == .chau7Session }
     }
 
     private func projectContext(for entity: EntitySnapshot) -> String? {
@@ -467,6 +738,130 @@ public struct Chau7View: View {
             .1
     }
 
+    private func dataBadges(for entity: EntitySnapshot) -> [DataBadge] {
+        let sessionLinked = sessionComponent(for: entity)?.adapterContext?.sessionId != nil
+        let projectLinked = projectContext(for: entity) != nil
+        let gpuEstimated = entity.metrics.estimatedGpuPercent > 0
+
+        var badges: [DataBadge] = [
+            DataBadge(
+                label: sessionLinked ? "Session linked" : "Partial context",
+                color: sessionLinked ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+            ),
+        ]
+
+        if projectLinked {
+            badges.append(DataBadge(label: "Project linked", color: AetowerDesign.Status.ready))
+        }
+        if gpuEstimated {
+            badges.append(DataBadge(label: "GPU inferred", color: AetowerDesign.Tone.gpu))
+        }
+        if entity.badges.contains("approval-needed") {
+            badges.append(DataBadge(label: "Approval needed", color: AetowerDesign.Status.warning))
+        }
+        if entity.badges.contains("delegating") {
+            badges.append(DataBadge(label: "Delegating", color: AetowerDesign.Status.ready))
+        }
+        if entity.badges.contains("agent-error") {
+            badges.append(DataBadge(label: "Recent error", color: AetowerDesign.Status.error))
+        }
+
+        return badges
+    }
+
+    @ViewBuilder
+    private func dataQualityBadgeRow(for entity: EntitySnapshot) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.xs) {
+            ForEach(dataBadges(for: entity).prefix(4)) { badge in
+                stateBadge(badge.label, color: badge.color)
+            }
+        }
+    }
+
+    private func chau7SessionInfo(for entity: EntitySnapshot) -> Chau7SessionInfo? {
+        guard let component = sessionComponent(for: entity) else {
+            return nil
+        }
+        return Chau7SessionInfo(
+            status: component.adapterContext?.status,
+            sessionId: component.adapterContext?.sessionId,
+            detail: component.detail
+        )
+    }
+
+    @ViewBuilder
+    private func chau7SessionInsights(_ info: Chau7SessionInfo, entity: EntitySnapshot) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                if let status = info.status, !status.isEmpty {
+                    stateBadge(status.replacingOccurrences(of: "-", with: " ").capitalized, color: statusTone(status))
+                }
+                if let sessionId = info.sessionId, !sessionId.isEmpty {
+                    stateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.ready)
+                }
+                if entity.badges.contains("cto-active") {
+                    stateBadge("CTO active", color: AetowerDesign.Status.ready)
+                }
+                if entity.badges.contains("at-prompt") {
+                    stateBadge("At prompt", color: AetowerDesign.Status.success)
+                }
+                if entity.badges.contains("shell-loading") {
+                    stateBadge("Shell loading", color: AetowerDesign.Status.warning)
+                }
+            }
+
+            if !info.detail.isEmpty {
+                Text(info.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !entity.attributionNotes.isEmpty {
+                Text(entity.attributionNotes.prefix(2).joined(separator: " "))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func trendStripSection(for entity: EntitySnapshot) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.md) {
+            trendMetric(
+                title: "CPU",
+                value: String(format: "%.0f%%", entity.metrics.cpuPercent),
+                samples: entity.trend.cpuPercent.map(Double.init),
+                color: AetowerDesign.Tone.cpu
+            )
+            trendMetric(
+                title: "Memory",
+                value: formatBytes(entity.metrics.memoryResidentBytes),
+                samples: entity.trend.memoryResidentBytes.map { Double($0) },
+                color: AetowerDesign.Tone.memory
+            )
+            trendMetric(
+                title: "Wakeups",
+                value: String(format: "%.0f/s", entity.metrics.wakeupsPerSecond),
+                samples: entity.trend.wakeupsPerSecond.map(Double.init),
+                color: AetowerDesign.Status.warning
+            )
+        }
+    }
+
+    private func trendMetric(title: String, value: String, samples: [Double], color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Text(value)
+                    .font(.caption)
+                    .foregroundStyle(color)
+                MiniTrendStrip(samples: samples, color: color)
+                    .frame(width: 44, height: 14)
+            }
+        }
+    }
+
     private func isRelevantAiTimelineEvent(
         _ event: TimelineEvent,
         aiAgentIDs: Set<String>,
@@ -486,6 +881,158 @@ public struct Chau7View: View {
         }
 
         return false
+    }
+
+    private func buildRuntimeGroups(from agents: [EntitySnapshot]) -> [RuntimeGroup] {
+        let grouped = Dictionary(grouping: agents) { entity in
+            let provider = providerLabel(for: entity) ?? "Unknown Provider"
+            let workspace = projectContext(for: entity)
+            return "\(provider)|\(workspace ?? "-")"
+        }
+
+        return grouped.values.compactMap { members in
+            guard let first = members.first else { return nil }
+            let provider = providerLabel(for: first) ?? "Unknown Provider"
+            let workspace = projectContext(for: first)
+            return RuntimeGroup(
+                provider: provider,
+                workspace: workspace,
+                agents: members.sorted { $0.friction.totalScore > $1.friction.totalScore },
+                totalCpuPercent: members.reduce(0) { $0 + $1.metrics.cpuPercent },
+                totalMemoryBytes: members.reduce(0) { $0 + $1.metrics.memoryResidentBytes },
+                totalEnergyNjPerS: members.reduce(0) { $0 + $1.metrics.energyNjPerS },
+                totalCostUsd: members.compactMap(\.agentCost?.costUsd).reduce(0, +),
+                approvalCount: members.filter { $0.badges.contains("approval-needed") }.count,
+                delegatingCount: members.filter { $0.badges.contains("delegating") }.count
+            )
+        }
+        .sorted {
+            if $0.totalEnergyNjPerS != $1.totalEnergyNjPerS {
+                return $0.totalEnergyNjPerS > $1.totalEnergyNjPerS
+            }
+            if $0.totalCpuPercent != $1.totalCpuPercent {
+                return $0.totalCpuPercent > $1.totalCpuPercent
+            }
+            return $0.provider.localizedCaseInsensitiveCompare($1.provider) == .orderedAscending
+        }
+    }
+
+    private func buildBurdenLeaders(from agents: [EntitySnapshot]) -> [BurdenLeader] {
+        var leaders: [BurdenLeader] = []
+
+        if let cpu = agents.max(by: { $0.metrics.cpuPercent < $1.metrics.cpuPercent }), cpu.metrics.cpuPercent > 0 {
+            leaders.append(BurdenLeader(
+                id: "cpu",
+                title: "Top CPU",
+                entityName: cpu.displayName,
+                valueLabel: String(format: "%.0f%%", cpu.metrics.cpuPercent),
+                color: AetowerDesign.Tone.cpu,
+                trend: cpu.trend.cpuPercent.map(Double.init)
+            ))
+        }
+        if let memory = agents.max(by: { $0.metrics.memoryResidentBytes < $1.metrics.memoryResidentBytes }), memory.metrics.memoryResidentBytes > 0 {
+            leaders.append(BurdenLeader(
+                id: "memory",
+                title: "Top Memory",
+                entityName: memory.displayName,
+                valueLabel: formatBytes(memory.metrics.memoryResidentBytes),
+                color: AetowerDesign.Tone.memory,
+                trend: memory.trend.memoryResidentBytes.map { Double($0) }
+            ))
+        }
+        if let energy = agents.max(by: { $0.metrics.energyNjPerS < $1.metrics.energyNjPerS }), energy.metrics.energyNjPerS > 0 {
+            leaders.append(BurdenLeader(
+                id: "energy",
+                title: "Top Energy",
+                entityName: energy.displayName,
+                valueLabel: formatEnergy(njPerS: energy.metrics.energyNjPerS),
+                color: AetowerDesign.Tone.energy,
+                trend: energy.trend.cpuPercent.map(Double.init)
+            ))
+        }
+        if let gpu = agents.max(by: { $0.metrics.estimatedGpuPercent < $1.metrics.estimatedGpuPercent }), gpu.metrics.estimatedGpuPercent > 0 {
+            leaders.append(BurdenLeader(
+                id: "gpu",
+                title: "Top GPU",
+                entityName: gpu.displayName,
+                valueLabel: String(format: "%.0f%%", gpu.metrics.estimatedGpuPercent),
+                color: AetowerDesign.Tone.gpu,
+                trend: gpu.trend.friction.map(Double.init)
+            ))
+        }
+        if let wakeups = agents.max(by: { $0.metrics.wakeupsPerSecond < $1.metrics.wakeupsPerSecond }), wakeups.metrics.wakeupsPerSecond > 0 {
+            leaders.append(BurdenLeader(
+                id: "wakeups",
+                title: "Top Wakeups",
+                entityName: wakeups.displayName,
+                valueLabel: String(format: "%.0f/s", wakeups.metrics.wakeupsPerSecond),
+                color: AetowerDesign.Status.warning,
+                trend: wakeups.trend.wakeupsPerSecond.map(Double.init)
+            ))
+        }
+
+        return leaders
+    }
+
+    private func buildNarratives(from agents: [EntitySnapshot], timeline: [TimelineEvent]) -> [AgentNarrative] {
+        var items: [AgentNarrative] = agents.compactMap { entity in
+            guard let summary = entity.recentChangeSummary, !summary.isEmpty else {
+                return nil
+            }
+
+            let timestamp = entity.sessionMarkers.map(\.timestampMillis).max() ?? state.snapshot.capturedAtMillis
+            let tone: Color
+            if entity.badges.contains("agent-error") {
+                tone = AetowerDesign.Status.error
+            } else if entity.badges.contains("approval-needed") {
+                tone = AetowerDesign.Status.warning
+            } else {
+                tone = AetowerDesign.Status.ready
+            }
+
+            return AgentNarrative(
+                id: "entity-\(entity.entityId)",
+                title: entity.displayName,
+                detail: summary,
+                timestampMillis: timestamp,
+                tone: tone
+            )
+        }
+
+        items.append(contentsOf: timeline.prefix(4).map { event in
+            AgentNarrative(
+                id: "timeline-\(event.id)",
+                title: event.title,
+                detail: event.detail.isEmpty ? "Aetower observed AI runtime activity." : event.detail,
+                timestampMillis: event.timestampMillis,
+                tone: severityColor(event.severity)
+            )
+        })
+
+        return Array(
+            Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+                .values
+                .sorted { $0.timestampMillis > $1.timestampMillis }
+                .prefix(6)
+        )
+    }
+
+    private func shortSessionId(_ sessionId: String) -> String {
+        if sessionId.count <= 10 {
+            return sessionId
+        }
+        return String(sessionId.prefix(8))
+    }
+
+    private func statusTone(_ status: String) -> Color {
+        let normalized = status.localizedLowercase
+        if normalized.contains("approval") || normalized.contains("error") {
+            return AetowerDesign.Status.warning
+        }
+        if normalized.contains("idle") || normalized.contains("finished") || normalized.contains("prompt") {
+            return AetowerDesign.Status.success
+        }
+        return AetowerDesign.Status.ready
     }
 
     // MARK: - Formatters
@@ -549,5 +1096,50 @@ public struct Chau7View: View {
         if delta < 3600 { return "\(Int(delta / 60))m ago" }
         if delta < 86400 { return "\(Int(delta / 3600))h ago" }
         return Self.fallbackTimeFormatter.string(from: date)
+    }
+}
+
+private struct MiniTrendStrip: View {
+    let samples: [Double]
+    let color: Color
+
+    var body: some View {
+        GeometryReader { geometry in
+            let rect = CGRect(origin: .zero, size: geometry.size)
+            ZStack {
+                Capsule()
+                    .fill(color.opacity(0.08))
+                trendPath(in: rect)
+                    .stroke(
+                        color,
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
+                    )
+            }
+        }
+    }
+
+    private func trendPath(in rect: CGRect) -> Path {
+        let filtered = samples.filter { $0.isFinite }
+        guard filtered.count > 1 else {
+            return Path()
+        }
+
+        let minValue = filtered.min() ?? 0
+        let maxValue = filtered.max() ?? minValue
+        let span = max(maxValue - minValue, 0.0001)
+        let stepX = rect.width / CGFloat(filtered.count - 1)
+
+        return Path { path in
+            for (index, value) in filtered.enumerated() {
+                let x = CGFloat(index) * stepX
+                let normalized = (value - minValue) / span
+                let y = rect.maxY - CGFloat(normalized) * rect.height
+                if index == 0 {
+                    path.move(to: CGPoint(x: x, y: y))
+                } else {
+                    path.addLine(to: CGPoint(x: x, y: y))
+                }
+            }
+        }
     }
 }

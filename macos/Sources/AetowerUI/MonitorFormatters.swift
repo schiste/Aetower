@@ -1,0 +1,183 @@
+import AetowerBridge
+import Foundation
+
+// MARK: - Byte and rate formatters
+
+func formatBytes(_ bytes: UInt64) -> String {
+    MonitorByteFormatters.binary.string(fromByteCount: Int64(bytes))
+}
+
+func formatRate(_ bytesPerSecond: UInt64) -> String {
+    "\(formatBytes(bytesPerSecond))/s"
+}
+
+func formatWakeups(_ wakeupsPerSecond: Float) -> String {
+    if wakeupsPerSecond >= 100 {
+        return String(format: "%.0f/s", wakeupsPerSecond)
+    }
+    return String(format: "%.1f/s", wakeupsPerSecond)
+}
+
+private enum MonitorByteFormatters {
+    nonisolated(unsafe) static let binary: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB, .useGB]
+        formatter.countStyle = .binary
+        return formatter
+    }()
+}
+
+// MARK: - Host summary helpers
+
+func hostStatusSummary(_ host: HostSnapshot) -> String {
+    var parts = [powerStatusSummary(host)]
+    parts.append("thermal \(thermalStateLabel(host.thermalState))")
+    if host.compressedMemoryBytes > 0 {
+        parts.append("compressed \(formatBytes(host.compressedMemoryBytes))")
+    }
+    if host.gpuPercent > 0 || host.anePercent > 0 {
+        parts.append(hostGPUSummary(host))
+    }
+    if host.wakeupsPerSecond > 0 {
+        parts.append("\(formatWakeups(host.wakeupsPerSecond)) wakeups")
+    }
+    if host.lowPowerMode {
+        parts.append("low power mode")
+    }
+    return parts.joined(separator: " · ")
+}
+
+func powerStatusSummary(_ host: HostSnapshot) -> String {
+    if host.onBattery {
+        if let batteryChargePercent = host.batteryChargePercent {
+            return "battery \(batteryChargePercent)%"
+        }
+        return "battery power"
+    }
+    return "AC power"
+}
+
+func hostGPUSummary(_ host: HostSnapshot) -> String {
+    if host.anePercent > 0 {
+        return "ANE \(String(format: "%.1f%%", host.anePercent)) · \(formatBytes(host.gpuMemoryBytes)) GPU memory"
+    }
+    if host.gpuMemoryBytes > 0 {
+        return "\(formatBytes(host.gpuMemoryBytes)) GPU memory"
+    }
+    return "render/compute activity"
+}
+
+func thermalStateLabel(_ state: ThermalState) -> String {
+    switch state {
+    case .nominal: return "nominal"
+    case .fair: return "fair"
+    case .serious: return "serious"
+    case .critical: return "critical"
+    }
+}
+
+// MARK: - Trend helpers
+
+func trendLabel(samples: [Double], stableText: String) -> String {
+    guard let first = samples.first, let last = samples.last, samples.count >= 2 else {
+        return stableText
+    }
+    let baseline = max(abs(first), 1.0)
+    let deltaRatio = (last - first) / baseline
+    if deltaRatio > 0.12 { return "rising" }
+    if deltaRatio < -0.12 { return "falling" }
+    return stableText
+}
+
+func frictionTrendSummary(_ entity: EntitySnapshot) -> String {
+    "\(trendLabel(samples: entity.trend.friction.map(Double.init), stableText: "recent score")) · \(trendWindowLabel(sampleCount: entity.trend.friction.count))"
+}
+
+func cpuTrendSummary(_ entity: EntitySnapshot) -> String {
+    "\(trendLabel(samples: entity.trend.cpuPercent.map(Double.init), stableText: "recent load")) · \(trendWindowLabel(sampleCount: entity.trend.cpuPercent.count))"
+}
+
+func memoryTrendSummary(_ entity: EntitySnapshot) -> String {
+    "\(formatBytes(entity.metrics.memoryResidentBytes)) · \(trendWindowLabel(sampleCount: entity.trend.memoryResidentBytes.count))"
+}
+
+func diskTrendSummary(_ entity: EntitySnapshot) -> String {
+    "\(trendLabel(samples: entity.trend.diskActivityBps.map(Double.init), stableText: "recent throughput")) · \(trendWindowLabel(sampleCount: entity.trend.diskActivityBps.count))"
+}
+
+func networkTrendSummary(_ entity: EntitySnapshot) -> String {
+    "\(trendLabel(samples: entity.trend.networkActivityBps.map(Double.init), stableText: "recent throughput")) · \(trendWindowLabel(sampleCount: entity.trend.networkActivityBps.count))"
+}
+
+func wakeupsTrendSummary(_ entity: EntitySnapshot) -> String {
+    "\(trendLabel(samples: entity.trend.wakeupsPerSecond.map(Double.init), stableText: "recent wakeups")) · \(trendWindowLabel(sampleCount: entity.trend.wakeupsPerSecond.count))"
+}
+
+func trendWindowLabel(sampleCount: Int) -> String {
+    let seconds = min(sampleCount * 2, 300)
+    return "last \(seconds)s"
+}
+
+// MARK: - Host band classification
+
+func hostCompressedSummary(_ host: HostSnapshot) -> String {
+    if host.compressedMemoryBytes > 0 {
+        return "compressed \(formatBytes(host.compressedMemoryBytes))"
+    }
+    return "memory pressure nominal"
+}
+
+enum HostBand {
+    case nominal
+    case elevated
+    case severe
+}
+
+func hostPressureBand(_ host: HostSnapshot) -> HostBand {
+    let totalBytes = max(Double(host.memoryTotalBytes), 1)
+    let compressedRatio = Double(host.compressedMemoryBytes) / totalBytes
+    let swapRatio = Double(host.swapUsedBytes) / totalBytes
+    if compressedRatio >= 0.12 || swapRatio >= 0.08 { return .severe }
+    if compressedRatio >= 0.05 || swapRatio >= 0.02 { return .elevated }
+    return .nominal
+}
+
+func hostWakeupBand(_ wakeupsPerSecond: Float) -> HostBand {
+    if wakeupsPerSecond >= 3_000 { return .severe }
+    if wakeupsPerSecond >= 1_500 { return .elevated }
+    return .nominal
+}
+
+func wakeupsLeaderSubtitle(for entity: EntitySnapshot) -> String {
+    let components = entity.components.filter { $0.kind == .process }
+    if components.count <= 1 { return "single-process hotspot" }
+    return "\(components.count) processes in group"
+}
+
+// MARK: - Memory helpers
+
+func memoryLoadPercent(bytes: UInt64, totalBytes: UInt64) -> Double {
+    guard totalBytes > 0 else { return 0 }
+    return (Double(bytes) / Double(totalBytes)) * 100.0
+}
+
+func entityMemoryLoadPercent(_ entity: EntitySnapshot, totalBytes: UInt64) -> Double {
+    memoryLoadPercent(bytes: entity.metrics.memoryResidentBytes, totalBytes: totalBytes)
+}
+
+func entityMemoryTrendPercents(_ entity: EntitySnapshot, totalBytes: UInt64) -> [Double] {
+    entity.trend.memoryResidentBytes.map {
+        memoryLoadPercent(bytes: $0, totalBytes: totalBytes)
+    }
+}
+
+// MARK: - Age label
+
+func ageLabel(from startMillis: UInt64, now capturedAtMillis: UInt64) -> String {
+    guard startMillis > 0, capturedAtMillis >= startMillis else { return "n/a" }
+    let elapsedSeconds = Int((capturedAtMillis - startMillis) / 1_000)
+    if elapsedSeconds < 60 { return "\(elapsedSeconds)s" }
+    if elapsedSeconds < 3_600 { return "\(elapsedSeconds / 60)m" }
+    if elapsedSeconds < 86_400 { return "\(elapsedSeconds / 3_600)h" }
+    return "\(elapsedSeconds / 86_400)d"
+}

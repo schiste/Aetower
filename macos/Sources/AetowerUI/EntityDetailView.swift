@@ -649,11 +649,6 @@ private extension ComponentSnapshot {
     }
 }
 
-private func trendWindowLabel(sampleCount: Int) -> String {
-    let seconds = min(sampleCount * 2, 300)
-    return "last \(seconds)s"
-}
-
 private func detailProvenanceLabel(_ provenance: ProvenanceSnapshot) -> String {
     switch provenance.kind {
     case .userLaunch:
