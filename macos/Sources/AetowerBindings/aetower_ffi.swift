@@ -575,6 +575,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func historyRangeSummary(startMillis: UInt64, endMillis: UInt64)  -> HistoryRangeSummary?
     
+    func historyRangeSummaryResult(startMillis: UInt64, endMillis: UInt64)  -> HistoryRangeSummaryResult
+    
     func latestDiagnostics(limit: UInt32)  -> [DiagnosticsEvent]
     
     func latestRuntimeLagMetrics()  -> RuntimeLagMetrics
@@ -586,6 +588,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     func latestSnapshotIfNewer(lastSequence: UInt64)  -> SystemSnapshot?
     
     func loadHistoryPage(startMillis: UInt64, endMillis: UInt64, beforeMillisExclusive: UInt64?, limit: UInt32)  -> [SystemSnapshot]
+    
+    func loadHistoryPageResult(startMillis: UInt64, endMillis: UInt64, beforeMillisExclusive: UInt64?, limit: UInt32)  -> HistoryPageLoadResult
     
     func loadHistoryRange(startMillis: UInt64, endMillis: UInt64)  -> [SystemSnapshot]
     
@@ -785,6 +789,15 @@ open func historyRangeSummary(startMillis: UInt64, endMillis: UInt64) -> History
 })
 }
     
+open func historyRangeSummaryResult(startMillis: UInt64, endMillis: UInt64) -> HistoryRangeSummaryResult  {
+    return try!  FfiConverterTypeHistoryRangeSummaryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_history_range_summary_result(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(startMillis),
+        FfiConverterUInt64.lower(endMillis),$0
+    )
+})
+}
+    
 open func latestDiagnostics(limit: UInt32) -> [DiagnosticsEvent]  {
     return try!  FfiConverterSequenceTypeDiagnosticsEvent.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_diagnostics(self.uniffiClonePointer(),
@@ -825,6 +838,17 @@ open func latestSnapshotIfNewer(lastSequence: UInt64) -> SystemSnapshot?  {
 open func loadHistoryPage(startMillis: UInt64, endMillis: UInt64, beforeMillisExclusive: UInt64?, limit: UInt32) -> [SystemSnapshot]  {
     return try!  FfiConverterSequenceTypeSystemSnapshot.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_load_history_page(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(startMillis),
+        FfiConverterUInt64.lower(endMillis),
+        FfiConverterOptionUInt64.lower(beforeMillisExclusive),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+    
+open func loadHistoryPageResult(startMillis: UInt64, endMillis: UInt64, beforeMillisExclusive: UInt64?, limit: UInt32) -> HistoryPageLoadResult  {
+    return try!  FfiConverterTypeHistoryPageLoadResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_load_history_page_result(self.uniffiClonePointer(),
         FfiConverterUInt64.lower(startMillis),
         FfiConverterUInt64.lower(endMillis),
         FfiConverterOptionUInt64.lower(beforeMillisExclusive),
@@ -3428,6 +3452,76 @@ public func FfiConverterTypeHistoryMaintenanceReport_lower(_ value: HistoryMaint
 }
 
 
+public struct HistoryPageLoadResult {
+    public var snapshots: [SystemSnapshot]
+    public var errorMessage: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(snapshots: [SystemSnapshot], errorMessage: String?) {
+        self.snapshots = snapshots
+        self.errorMessage = errorMessage
+    }
+}
+
+#if compiler(>=6)
+extension HistoryPageLoadResult: Sendable {}
+#endif
+
+
+extension HistoryPageLoadResult: Equatable, Hashable {
+    public static func ==(lhs: HistoryPageLoadResult, rhs: HistoryPageLoadResult) -> Bool {
+        if lhs.snapshots != rhs.snapshots {
+            return false
+        }
+        if lhs.errorMessage != rhs.errorMessage {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(snapshots)
+        hasher.combine(errorMessage)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHistoryPageLoadResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistoryPageLoadResult {
+        return
+            try HistoryPageLoadResult(
+                snapshots: FfiConverterSequenceTypeSystemSnapshot.read(from: &buf), 
+                errorMessage: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HistoryPageLoadResult, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeSystemSnapshot.write(value.snapshots, into: &buf)
+        FfiConverterOptionString.write(value.errorMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryPageLoadResult_lift(_ buf: RustBuffer) throws -> HistoryPageLoadResult {
+    return try FfiConverterTypeHistoryPageLoadResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryPageLoadResult_lower(_ value: HistoryPageLoadResult) -> RustBuffer {
+    return FfiConverterTypeHistoryPageLoadResult.lower(value)
+}
+
+
 public struct HistoryRangeSummary {
     public var storeBytes: UInt64
     public var walBytes: UInt64
@@ -3543,6 +3637,76 @@ public func FfiConverterTypeHistoryRangeSummary_lift(_ buf: RustBuffer) throws -
 #endif
 public func FfiConverterTypeHistoryRangeSummary_lower(_ value: HistoryRangeSummary) -> RustBuffer {
     return FfiConverterTypeHistoryRangeSummary.lower(value)
+}
+
+
+public struct HistoryRangeSummaryResult {
+    public var summary: HistoryRangeSummary?
+    public var errorMessage: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(summary: HistoryRangeSummary?, errorMessage: String?) {
+        self.summary = summary
+        self.errorMessage = errorMessage
+    }
+}
+
+#if compiler(>=6)
+extension HistoryRangeSummaryResult: Sendable {}
+#endif
+
+
+extension HistoryRangeSummaryResult: Equatable, Hashable {
+    public static func ==(lhs: HistoryRangeSummaryResult, rhs: HistoryRangeSummaryResult) -> Bool {
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        if lhs.errorMessage != rhs.errorMessage {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(summary)
+        hasher.combine(errorMessage)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHistoryRangeSummaryResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistoryRangeSummaryResult {
+        return
+            try HistoryRangeSummaryResult(
+                summary: FfiConverterOptionTypeHistoryRangeSummary.read(from: &buf), 
+                errorMessage: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HistoryRangeSummaryResult, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeHistoryRangeSummary.write(value.summary, into: &buf)
+        FfiConverterOptionString.write(value.errorMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryRangeSummaryResult_lift(_ buf: RustBuffer) throws -> HistoryRangeSummaryResult {
+    return try FfiConverterTypeHistoryRangeSummaryResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryRangeSummaryResult_lower(_ value: HistoryRangeSummaryResult) -> RustBuffer {
+    return FfiConverterTypeHistoryRangeSummaryResult.lower(value)
 }
 
 
@@ -7899,6 +8063,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_history_range_summary() != 33324) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_history_range_summary_result() != 47039) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_diagnostics() != 5182) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -7915,6 +8082,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_load_history_page() != 20951) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_load_history_page_result() != 37126) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_load_history_range() != 25480) {

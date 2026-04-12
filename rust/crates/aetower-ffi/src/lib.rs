@@ -648,6 +648,18 @@ pub struct HistoryRangeSummary {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct HistoryRangeSummaryResult {
+    pub summary: Option<HistoryRangeSummary>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct HistoryPageLoadResult {
+    pub snapshots: Vec<SystemSnapshot>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct HistoryMaintenanceReport {
     pub store_bytes_before: u64,
     pub wal_bytes_before: u64,
@@ -876,6 +888,61 @@ impl MonitorEngine {
             .expect("engine lock poisoned")
             .history_range_summary(start_millis, end_millis)
             .map(Into::into)
+    }
+
+    pub fn history_range_summary_result(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+    ) -> HistoryRangeSummaryResult {
+        let engine = match self.inner.lock() {
+            Ok(engine) => engine,
+            Err(_) => {
+                return HistoryRangeSummaryResult {
+                    summary: None,
+                    error_message: Some("engine lock poisoned".to_owned()),
+                };
+            }
+        };
+        match engine.try_history_range_summary(start_millis, end_millis) {
+            Ok(summary) => HistoryRangeSummaryResult {
+                summary: Some(summary.into()),
+                error_message: None,
+            },
+            Err(error) => HistoryRangeSummaryResult {
+                summary: None,
+                error_message: Some(error),
+            },
+        }
+    }
+
+    pub fn load_history_page_result(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+        before_millis_exclusive: Option<u64>,
+        limit: u32,
+    ) -> HistoryPageLoadResult {
+        let engine = match self.inner.lock() {
+            Ok(engine) => engine,
+            Err(_) => {
+                return HistoryPageLoadResult {
+                    snapshots: Vec::new(),
+                    error_message: Some("engine lock poisoned".to_owned()),
+                };
+            }
+        };
+        match engine.try_load_history_page(start_millis, end_millis, before_millis_exclusive, limit)
+        {
+            Ok(snapshots) => HistoryPageLoadResult {
+                snapshots: snapshots.into_iter().map(Into::into).collect(),
+                error_message: None,
+            },
+            Err(error) => HistoryPageLoadResult {
+                snapshots: Vec::new(),
+                error_message: Some(error),
+            },
+        }
     }
 
     pub fn maintain_history_store(&self, aggressive: bool) -> Option<HistoryMaintenanceReport> {
