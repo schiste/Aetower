@@ -339,8 +339,9 @@ public struct DiagnosticsView: View {
     }
 
     private var eventStream: some View {
-        GroupBox("Event stream") {
-            if eventClusters.isEmpty {
+        let clusters = eventClusters
+        return GroupBox("Event stream") {
+            if clusters.isEmpty {
                 ContentUnavailableView(
                     "No diagnostics match this filter",
                     systemImage: "waveform.path.ecg.rectangle",
@@ -348,12 +349,12 @@ public struct DiagnosticsView: View {
                 )
                 .frame(maxWidth: .infinity)
             } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(eventStreamSummary)
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    Text(eventStreamSummaryText(clusterCount: clusters.count))
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    ForEach(eventClusters) { cluster in
+                    ForEach(clusters) { cluster in
                         let event = cluster.representative
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(alignment: .top, spacing: 8) {
@@ -416,7 +417,7 @@ public struct DiagnosticsView: View {
                             }
                         }
                         .padding(.vertical, 4)
-                        if cluster.id != eventClusters.last?.id {
+                        if cluster.id != clusters.last?.id {
                             Divider()
                         }
                     }
@@ -663,10 +664,10 @@ public struct DiagnosticsView: View {
         return "Unified logs not analyzed yet"
     }
 
-    private var eventStreamSummary: String {
-        let eventCountLabel = eventClusters.count == state.diagnosticsEvents.count
+    private func eventStreamSummaryText(clusterCount: Int) -> String {
+        let eventCountLabel = clusterCount == state.diagnosticsEvents.count
             ? "\(state.diagnosticsEvents.count) loaded event(s)"
-            : "\(state.diagnosticsEvents.count) loaded event(s) condensed into \(eventClusters.count) groups"
+            : "\(state.diagnosticsEvents.count) loaded event(s) condensed into \(clusterCount) groups"
         return "\(eventCountLabel) · \(diagnosticsFreshnessLabel)"
     }
 
