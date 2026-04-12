@@ -414,6 +414,11 @@ pub struct AggregateMetrics {
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
     pub wakeups_per_second: f32,
+    /// Per-second energy draw in nanojoules (= nanowatts), summed across
+    /// all processes belonging to this entity. Zero when the kernel does
+    /// not report energy. The UI can format as milliwatts (`/ 1e6`) or
+    /// watts (`/ 1e9`) depending on magnitude.
+    pub energy_nj_per_s: f64,
     pub process_count: u32,
     pub is_foreground: bool,
 }
@@ -1017,30 +1022,39 @@ struct MonitorEngineDataSource {
 }
 
 impl AetowerMcpDataSource for MonitorEngineDataSource {
-    fn latest_snapshot(&self) -> model::SystemSnapshot {
-        let Ok(engine) = self.engine.lock() else {
-            return model::SystemSnapshot::default();
-        };
-        engine.latest_snapshot()
+    fn latest_snapshot(&self) -> Result<model::SystemSnapshot, String> {
+        let engine = self
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_owned())?;
+        Ok(engine.latest_snapshot())
     }
 
-    fn latest_snapshot_if_newer(&self, last_sequence: u64) -> Option<model::SystemSnapshot> {
-        let engine = self.engine.lock().ok()?;
-        engine.latest_snapshot_if_newer(last_sequence)
+    fn latest_snapshot_if_newer(
+        &self,
+        last_sequence: u64,
+    ) -> Result<Option<model::SystemSnapshot>, String> {
+        let engine = self
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_owned())?;
+        Ok(engine.latest_snapshot_if_newer(last_sequence))
     }
 
-    fn latest_sequence(&self) -> u64 {
-        let Ok(engine) = self.engine.lock() else {
-            return 0;
-        };
-        engine.latest_sequence()
+    fn latest_sequence(&self) -> Result<u64, String> {
+        let engine = self
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_owned())?;
+        Ok(engine.latest_sequence())
     }
 
-    fn latest_runtime_lag_metrics(&self) -> model::RuntimeLagMetrics {
-        let Ok(engine) = self.engine.lock() else {
-            return model::RuntimeLagMetrics::default();
-        };
-        engine.latest_runtime_lag_metrics()
+    fn latest_runtime_lag_metrics(&self) -> Result<model::RuntimeLagMetrics, String> {
+        let engine = self
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_owned())?;
+        Ok(engine.latest_runtime_lag_metrics())
     }
 
     fn history_range_summary(
@@ -1080,21 +1094,23 @@ impl AetowerMcpDataSource for MonitorEngineDataSource {
         engine.try_load_history_page(start_millis, end_millis, before_millis_exclusive, limit)
     }
 
-    fn diagnostics_overview(&self) -> diagnostics::DiagnosticsOverview {
-        let Ok(engine) = self.engine.lock() else {
-            return diagnostics::DiagnosticsOverview::default();
-        };
-        engine.diagnostics_overview()
+    fn diagnostics_overview(&self) -> Result<diagnostics::DiagnosticsOverview, String> {
+        let engine = self
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_owned())?;
+        Ok(engine.diagnostics_overview())
     }
 
     fn query_diagnostics(
         &self,
         query: diagnostics::DiagnosticsQuery,
-    ) -> Vec<diagnostics::DiagnosticsEvent> {
-        let Ok(engine) = self.engine.lock() else {
-            return Vec::new();
-        };
-        engine.query_diagnostics(query)
+    ) -> Result<Vec<diagnostics::DiagnosticsEvent>, String> {
+        let engine = self
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_owned())?;
+        Ok(engine.query_diagnostics(query))
     }
 }
 
@@ -1654,6 +1670,7 @@ impl From<model::AggregateMetrics> for AggregateMetrics {
             network_receive_bps: value.network_receive_bps,
             network_send_bps: value.network_send_bps,
             wakeups_per_second: value.wakeups_per_second,
+            energy_nj_per_s: value.energy_nj_per_s,
             process_count: value.process_count,
             is_foreground: value.is_foreground,
         }
@@ -1928,14 +1945,21 @@ impl From<FrontmostAppState> for model::FrontmostAppState {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, time::Duration};
+    use std::{fs, time::Duration};
 
     use super::*;
 
     #[test]
     fn monitor_engine_starts_local_mcp_server() {
-        let socket_path =
-            std::env::temp_dir().join(format!("aetower-mcp-ffi-{}.sock", std::process::id()));
+        // Use a per-process sub-directory under $TMPDIR instead of the
+        // top-level temp dir. `start_local_socket_server` chmods the
+        // parent of the socket path, and macOS refuses chmod on the
+        // system tmpfs (`/var/folders/...`) that `env::temp_dir()`
+        // returns — the only way the test can run on macOS is to own
+        // its own directory.
+        let dir = std::env::temp_dir().join(format!("aetower-mcp-ffi-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let socket_path = dir.join("mcp.sock");
         let socket_string = socket_path.display().to_string();
         let engine = MonitorEngine::new();
         let result = engine.start_local_mcp_server(Some(socket_string.clone()));
@@ -1950,6 +1974,6 @@ mod tests {
 
         assert!(socket_path.exists(), "expected socket at {}", socket_string);
         drop(engine);
-        let _ = fs::remove_file(PathBuf::from(socket_string));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -26,6 +26,12 @@ pub struct RawProcessSample {
     pub disk_write_bytes: u64,
     #[serde(default)]
     pub wakeups_per_second: f32,
+    /// Per-second energy draw in nanojoules (= nanowatts). Derived from
+    /// the delta of `ri_billed_energy` between ticks. Zero when the
+    /// process just spawned, the kernel does not support V4, or the
+    /// platform is not macOS.
+    #[serde(default)]
+    pub energy_nj_per_s: f64,
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
@@ -76,9 +82,11 @@ struct NetworkTotals {
 struct ProcessCounterSample {
     start_time_millis: u64,
     wakeups: u64,
+    energy_nj: u64,
     disk_read_bytes: u64,
     disk_write_bytes: u64,
     wakeups_per_second: f32,
+    energy_nj_per_s: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -282,12 +290,23 @@ impl Collector {
                     .previous_process_counters
                     .get(&pid)
                     .filter(|prev| prev.start_time_millis == start_time_millis);
-                let wakeups = if sample_wakeups || previous.is_none() {
-                    platform::process_wakeups(pid)
-                        .or_else(|| previous.map(|prev| prev.wakeups))
-                        .unwrap_or(0)
+                // Wakeups and energy come from the same syscall
+                // (`proc_pid_rusage`). We sample them on the same cadence
+                // (every 3rd tick) to avoid per-process syscall overhead
+                // on every tick, but always read the counters for new PIDs.
+                let (wakeups, energy_nj) = if sample_wakeups || previous.is_none() {
+                    platform::process_counters(pid)
+                        .map(|counters| (counters.wakeups, counters.energy_nj))
+                        .unwrap_or_else(|| {
+                            let prev_wakeups = previous.map(|prev| prev.wakeups).unwrap_or(0);
+                            let prev_energy = previous.map(|prev| prev.energy_nj).unwrap_or(0);
+                            (prev_wakeups, prev_energy)
+                        })
                 } else {
-                    previous.map(|prev| prev.wakeups).unwrap_or(0)
+                    (
+                        previous.map(|prev| prev.wakeups).unwrap_or(0),
+                        previous.map(|prev| prev.energy_nj).unwrap_or(0),
+                    )
                 };
                 let disk_read_total = process.disk_usage().read_bytes;
                 let disk_write_total = process.disk_usage().written_bytes;
@@ -299,6 +318,15 @@ impl Collector {
                             wakeups.saturating_sub(prev.wakeups) as f32 / tick_seconds
                         } else {
                             prev.wakeups_per_second
+                        }
+                    })
+                    .unwrap_or(0.0);
+                let energy_nj_per_s = previous
+                    .map(|prev| {
+                        if sample_wakeups || prev.energy_nj == 0 {
+                            energy_nj.saturating_sub(prev.energy_nj) as f64 / tick_seconds as f64
+                        } else {
+                            prev.energy_nj_per_s
                         }
                     })
                     .unwrap_or(0.0);
@@ -314,9 +342,11 @@ impl Collector {
                     ProcessCounterSample {
                         start_time_millis,
                         wakeups,
+                        energy_nj,
                         disk_read_bytes: disk_read_total,
                         disk_write_bytes: disk_write_total,
                         wakeups_per_second,
+                        energy_nj_per_s,
                     },
                 );
 
@@ -368,6 +398,7 @@ impl Collector {
                     disk_read_bytes: disk_read_delta,
                     disk_write_bytes: disk_write_delta,
                     wakeups_per_second,
+                    energy_nj_per_s,
                     cwd: if self.config.full_collection
                         || self.process_metadata_tick.is_multiple_of(2)
                     {
@@ -669,19 +700,38 @@ mod platform {
         health: Option<BatteryHealthSnapshot>,
     }
 
-    pub fn process_wakeups(pid: u32) -> Option<u64> {
-        let mut info = RUsageInfoV2::default();
+    /// Counters extracted from a single `proc_pid_rusage` call.
+    ///
+    /// Both fields come from the same syscall buffer — the energy
+    /// counter is "free" once we upgrade V2 → V4 because the kernel
+    /// fills the entire struct in one shot.
+    pub struct ProcessRusageCounters {
+        pub wakeups: u64,
+        pub energy_nj: u64,
+    }
+
+    /// Read wakeup count and cumulative energy (nanojoules) for a
+    /// process in a single `proc_pid_rusage` call.
+    ///
+    /// `ri_billed_energy` is the XNU scheduler's per-task energy
+    /// counter: cumulative nanojoules of CPU + GPU work billed to this
+    /// task since process start. It is the same data source Activity
+    /// Monitor's "Energy Impact" column draws from.
+    pub fn process_counters(pid: u32) -> Option<ProcessRusageCounters> {
+        let mut info = RUsageInfoV4::default();
         let result = unsafe {
             proc_pid_rusage(
                 pid as i32,
-                RUSAGE_INFO_V2,
-                &mut info as *mut RUsageInfoV2 as *mut c_void,
+                RUSAGE_INFO_V4,
+                &mut info as *mut RUsageInfoV4 as *mut c_void,
             )
         };
-        (result == 0).then_some(
-            info.ri_interrupt_wkups
+        (result == 0).then_some(ProcessRusageCounters {
+            wakeups: info
+                .ri_interrupt_wkups
                 .saturating_add(info.ri_pkg_idle_wkups),
-        )
+            energy_nj: info.ri_billed_energy,
+        })
     }
 
     const PROC_PIDVNODEPATHINFO: i32 = 9;
@@ -742,11 +792,22 @@ mod platform {
 
     const HOST_VM_INFO64: i32 = 4;
     const KERN_SUCCESS: i32 = 0;
-    const RUSAGE_INFO_V2: i32 = 2;
+    const RUSAGE_INFO_V4: i32 = 4;
 
+    /// macOS `rusage_info_v4` — a strict superset of v2 that adds QoS
+    /// time buckets, instruction/cycle counters, and (critically for us)
+    /// `ri_billed_energy` / `ri_serviced_energy`. The field layout
+    /// matches `/usr/include/sys/resource.h` on macOS 12+.
+    ///
+    /// We upgrade from v2 → v4 so we can read the energy counter in the
+    /// same syscall that already fetches wakeup counts. The kernel fills
+    /// the entire struct in one shot regardless of which fields the caller
+    /// actually inspects, so the marginal cost of reading 37 fields
+    /// instead of 19 is the buffer allocation (still stack, still tiny).
     #[repr(C)]
     #[derive(Default)]
-    struct RUsageInfoV2 {
+    struct RUsageInfoV4 {
+        // ── v0 fields ──
         ri_uuid: [u8; 16],
         ri_user_time: u64,
         ri_system_time: u64,
@@ -758,14 +819,36 @@ mod platform {
         ri_phys_footprint: u64,
         ri_proc_start_abstime: u64,
         ri_proc_exit_abstime: u64,
+        // ── v1 fields (child counters) ──
         ri_child_user_time: u64,
         ri_child_system_time: u64,
         ri_child_pkg_idle_wkups: u64,
         ri_child_interrupt_wkups: u64,
         ri_child_pageins: u64,
         ri_child_elapsed_abstime: u64,
+        // ── v2 fields (disk I/O) ──
         ri_diskio_bytesread: u64,
         ri_diskio_byteswritten: u64,
+        // ── v3 fields (QoS time buckets) ──
+        ri_cpu_time_qos_default: u64,
+        ri_cpu_time_qos_maintenance: u64,
+        ri_cpu_time_qos_background: u64,
+        ri_cpu_time_qos_utility: u64,
+        ri_cpu_time_qos_legacy: u64,
+        ri_cpu_time_qos_user_initiated: u64,
+        ri_cpu_time_qos_user_interactive: u64,
+        ri_billed_system_time: u64,
+        ri_serviced_system_time: u64,
+        // ── v4 fields (counters + energy) ──
+        ri_logical_writes: u64,
+        ri_lifetime_max_phys_footprint: u64,
+        ri_instructions: u64,
+        ri_cycles: u64,
+        /// Cumulative nanojoules of CPU+GPU energy billed to this task.
+        ri_billed_energy: u64,
+        ri_serviced_energy: u64,
+        ri_interval_max_phys_footprint: u64,
+        ri_runnable_time: u64,
     }
 
     #[repr(C)]
@@ -1948,7 +2031,12 @@ mod platform {
         HostEnvironment::default()
     }
 
-    pub fn process_wakeups(_pid: u32) -> Option<u64> {
+    pub struct ProcessRusageCounters {
+        pub wakeups: u64,
+        pub energy_nj: u64,
+    }
+
+    pub fn process_counters(_pid: u32) -> Option<ProcessRusageCounters> {
         None
     }
 

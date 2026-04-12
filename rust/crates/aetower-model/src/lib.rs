@@ -315,6 +315,14 @@ pub struct AggregateMetrics {
     pub network_send_bps: u64,
     #[serde(default)]
     pub wakeups_per_second: f32,
+    /// Per-second energy draw in nanojoules (= nanowatts), aggregated
+    /// across all processes that belong to this entity. Derived from
+    /// macOS `ri_billed_energy` via `proc_pid_rusage(RUSAGE_INFO_V4)`.
+    /// Zero when the kernel does not report energy (older macOS, non-
+    /// Apple-Silicon, process just spawned) or when the platform is not
+    /// macOS.
+    #[serde(default)]
+    pub energy_nj_per_s: f64,
     pub process_count: u32,
     pub is_foreground: bool,
 }

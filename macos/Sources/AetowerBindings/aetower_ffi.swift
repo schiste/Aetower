@@ -464,6 +464,22 @@ fileprivate struct FfiConverterFloat: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterDouble: FfiConverterPrimitive {
+    typealias FfiType = Double
+    typealias SwiftType = Double
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Double {
+        return try lift(readDouble(&buf))
+    }
+
+    public static func write(_ value: Double, into buf: inout [UInt8]) {
+        writeDouble(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterBool : FfiConverter {
     typealias FfiType = Int8
     typealias SwiftType = Bool
@@ -1279,12 +1295,25 @@ public struct AggregateMetrics {
     public var networkReceiveBps: UInt64
     public var networkSendBps: UInt64
     public var wakeupsPerSecond: Float
+    /**
+     * Per-second energy draw in nanojoules (= nanowatts), summed across
+     * all processes belonging to this entity. Zero when the kernel does
+     * not report energy. The UI can format as milliwatts (`/ 1e6`) or
+     * watts (`/ 1e9`) depending on magnitude.
+     */
+    public var energyNjPerS: Double
     public var processCount: UInt32
     public var isForeground: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryResidentBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, processCount: UInt32, isForeground: Bool) {
+    public init(cpuPercent: Float, memoryResidentBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, 
+        /**
+         * Per-second energy draw in nanojoules (= nanowatts), summed across
+         * all processes belonging to this entity. Zero when the kernel does
+         * not report energy. The UI can format as milliwatts (`/ 1e6`) or
+         * watts (`/ 1e9`) depending on magnitude.
+         */energyNjPerS: Double, processCount: UInt32, isForeground: Bool) {
         self.cpuPercent = cpuPercent
         self.memoryResidentBytes = memoryResidentBytes
         self.diskReadBps = diskReadBps
@@ -1292,6 +1321,7 @@ public struct AggregateMetrics {
         self.networkReceiveBps = networkReceiveBps
         self.networkSendBps = networkSendBps
         self.wakeupsPerSecond = wakeupsPerSecond
+        self.energyNjPerS = energyNjPerS
         self.processCount = processCount
         self.isForeground = isForeground
     }
@@ -1325,6 +1355,9 @@ extension AggregateMetrics: Equatable, Hashable {
         if lhs.wakeupsPerSecond != rhs.wakeupsPerSecond {
             return false
         }
+        if lhs.energyNjPerS != rhs.energyNjPerS {
+            return false
+        }
         if lhs.processCount != rhs.processCount {
             return false
         }
@@ -1342,6 +1375,7 @@ extension AggregateMetrics: Equatable, Hashable {
         hasher.combine(networkReceiveBps)
         hasher.combine(networkSendBps)
         hasher.combine(wakeupsPerSecond)
+        hasher.combine(energyNjPerS)
         hasher.combine(processCount)
         hasher.combine(isForeground)
     }
@@ -1363,6 +1397,7 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
                 networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
                 networkSendBps: FfiConverterUInt64.read(from: &buf), 
                 wakeupsPerSecond: FfiConverterFloat.read(from: &buf), 
+                energyNjPerS: FfiConverterDouble.read(from: &buf), 
                 processCount: FfiConverterUInt32.read(from: &buf), 
                 isForeground: FfiConverterBool.read(from: &buf)
         )
@@ -1376,6 +1411,7 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)
         FfiConverterUInt64.write(value.networkSendBps, into: &buf)
         FfiConverterFloat.write(value.wakeupsPerSecond, into: &buf)
+        FfiConverterDouble.write(value.energyNjPerS, into: &buf)
         FfiConverterUInt32.write(value.processCount, into: &buf)
         FfiConverterBool.write(value.isForeground, into: &buf)
     }

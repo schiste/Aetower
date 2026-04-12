@@ -39,6 +39,19 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
             0.0
         };
 
+        // Real per-process energy from the kernel when available (macOS
+        // M-series, process running long enough for a non-zero delta).
+        // Log-scale normalisation: 1 mW → 0, 100 mW → ~33, 1 W → ~66,
+        // 10 W → 100.  When energy is 0 (kernel not reporting, process
+        // just spawned, or non-macOS), this contributes nothing and the
+        // existing heuristic terms carry the full weight.
+        let energy_score = if entity.metrics.energy_nj_per_s > 0.0 {
+            let log_energy = (entity.metrics.energy_nj_per_s.log10() - 6.0).clamp(0.0, 4.0);
+            (log_energy / 4.0 * 100.0) as f32
+        } else {
+            0.0
+        };
+
         let total_score = (cpu_score
             + memory_score
             + disk_score
@@ -77,6 +90,14 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
                 entity.metrics.wakeups_per_second
             ));
         }
+        if energy_score > 10.0 {
+            let mw = entity.metrics.energy_nj_per_s / 1_000_000.0;
+            if mw >= 1000.0 {
+                reasons.push(format!("energy {:.1} W", mw / 1000.0));
+            } else {
+                reasons.push(format!("energy {:.0} mW", mw));
+            }
+        }
         if entity.metrics.is_foreground {
             reasons.push("foreground app".to_owned());
         }
@@ -84,19 +105,33 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
             reasons.push("background baseline activity".to_owned());
         }
 
-        // Energy impact: weighted combination of power-hungry components.
-        // Scale: 0-100 where 100 = maximum single-entity battery drain.
-        // Memory contributes via compressor/swap I/O; network via radio activity.
+        // Energy impact: when the kernel reports real per-process energy
+        // (`energy_score > 0`), weight it alongside the existing heuristic
+        // terms so the score reflects actual measured energy draw. CPU
+        // weight is reduced from 0.40 to 0.30 to make room without
+        // double-counting (CPU correlates strongly with energy).
         let thermal_penalty = (thermal_multiplier - 1.0) * 200.0;
         let battery_penalty = if host.on_battery { 10.0 } else { 0.0 };
-        let energy_impact_score = (cpu_score * 0.40
-            + memory_score * 0.10
-            + wakeups_score * 0.15
-            + disk_score * 0.10
-            + network_score * 0.10
-            + thermal_penalty * 0.10
-            + battery_penalty * 0.05)
-            .min(100.0);
+        let energy_impact_score = if energy_score > 0.0 {
+            (cpu_score * 0.30
+                + energy_score * 0.10
+                + memory_score * 0.10
+                + wakeups_score * 0.15
+                + disk_score * 0.10
+                + network_score * 0.10
+                + thermal_penalty * 0.10
+                + battery_penalty * 0.05)
+                .min(100.0)
+        } else {
+            (cpu_score * 0.40
+                + memory_score * 0.10
+                + wakeups_score * 0.15
+                + disk_score * 0.10
+                + network_score * 0.10
+                + thermal_penalty * 0.10
+                + battery_penalty * 0.05)
+                .min(100.0)
+        };
 
         entity.friction.total_score = total_score;
         entity.friction.cpu_score = cpu_score;
@@ -118,6 +153,7 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
             wakeups_score,
             pressure_score,
             foreground_bonus,
+            energy_score,
             disk_mib,
             network_mib,
         );
@@ -147,6 +183,7 @@ fn friction_contributors(
     wakeups_score: f32,
     pressure_score: f32,
     foreground_bonus: f32,
+    energy_score: f32,
     disk_mib: f32,
     network_mib: f32,
 ) -> Vec<FrictionContributor> {
@@ -216,6 +253,20 @@ fn friction_contributors(
                 "{:.0} wakeups per second",
                 entity.metrics.wakeups_per_second
             ),
+        });
+    }
+    if energy_score > 0.0 {
+        let mw = entity.metrics.energy_nj_per_s / 1_000_000.0;
+        let label = if mw >= 1000.0 {
+            format!("{:.1} W measured", mw / 1000.0)
+        } else {
+            format!("{:.0} mW measured", mw)
+        };
+        contributors.push(FrictionContributor {
+            key: "energy".to_owned(),
+            label: "Energy draw".to_owned(),
+            score: energy_score,
+            detail: label,
         });
     }
     if foreground_bonus > 0.0 {

@@ -1598,6 +1598,7 @@ mod tests {
                 network_receive_bps: 0,
                 network_send_bps: 0,
                 wakeups_per_second: 400.0,
+                energy_nj_per_s: 0.0,
                 process_count: 1,
                 is_foreground: false,
             },
