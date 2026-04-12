@@ -893,7 +893,11 @@ public struct MainListView: View {
             selectedEntityID: $selectedEntityID,
             sortKey: $sortKey,
             entityCount: visibleEntityIDs.count,
-            entityIdAt: { index in visibleEntityIDs[index] }
+            entityIdAt: { index in
+                let ids = visibleEntityIDs
+                guard index >= 0, index < ids.count else { return nil }
+                return ids[index]
+            }
         ))
         .task(id: groupingTaskToken) {
             await refreshGroupingCache()
@@ -1879,38 +1883,71 @@ private func ageLabel(from startMillis: UInt64, now capturedAtMillis: UInt64) ->
     return "\(elapsedSeconds / 86_400)d"
 }
 
+/// Vim-style keyboard navigation for the entity list.
+///
+/// `entityIdAt` returns `nil` when the index is out of bounds so that
+/// a stale `focusedIndex` from before a search/sort/filter change
+/// cannot crash the view. The index is clamped on every movement, but
+/// the closure is the last line of defense against the race between
+/// the `@State` update and the next key event.
 private struct KeyboardNavigationModifier: ViewModifier {
     @Binding var focusedIndex: Int
     @Binding var selectedEntityID: String?
     @Binding var sortKey: SortKey
     let entityCount: Int
-    let entityIdAt: (Int) -> String
+    let entityIdAt: (Int) -> String?
 
     func body(content: Content) -> some View {
         content
             .onKeyPress("j") { moveDown() }
             .onKeyPress("k") { moveUp() }
             .onKeyPress(.return) { selectCurrent() }
-            .onKeyPress(.escape) { withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = nil }; return .handled }
+            .onKeyPress(.escape) {
+                withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = nil }
+                return .handled
+            }
+            .onChange(of: entityCount) { _, newCount in
+                // Clamp the cursor whenever the list size changes so a
+                // search that narrows from 40 to 3 entities doesn't leave
+                // focusedIndex at 39.
+                if newCount > 0 {
+                    focusedIndex = min(focusedIndex, newCount - 1)
+                } else {
+                    focusedIndex = 0
+                }
+            }
+    }
+
+    /// Clamp the index to valid bounds before using it.
+    private var safeIndex: Int {
+        guard entityCount > 0 else { return 0 }
+        return min(max(focusedIndex, 0), entityCount - 1)
     }
 
     private func moveDown() -> KeyPress.Result {
         guard entityCount > 0 else { return .ignored }
-        focusedIndex = min(focusedIndex + 1, entityCount - 1)
-        withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = entityIdAt(focusedIndex) }
+        focusedIndex = min(safeIndex + 1, entityCount - 1)
+        if let id = entityIdAt(focusedIndex) {
+            withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = id }
+        }
         return .handled
     }
 
     private func moveUp() -> KeyPress.Result {
         guard entityCount > 0 else { return .ignored }
-        focusedIndex = max(focusedIndex - 1, 0)
-        withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = entityIdAt(focusedIndex) }
+        focusedIndex = max(safeIndex - 1, 0)
+        if let id = entityIdAt(focusedIndex) {
+            withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = id }
+        }
         return .handled
     }
 
     private func selectCurrent() -> KeyPress.Result {
         guard selectedEntityID == nil, entityCount > 0 else { return .handled }
-        withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = entityIdAt(focusedIndex) }
+        focusedIndex = safeIndex
+        if let id = entityIdAt(focusedIndex) {
+            withAnimation(AetowerDesign.Motion.standard) { selectedEntityID = id }
+        }
         return .handled
     }
 }
