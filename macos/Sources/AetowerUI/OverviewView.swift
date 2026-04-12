@@ -130,7 +130,7 @@ private struct OverviewListCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 124, alignment: .leading)
-        .background(Color.white.opacity(0.0001))
+        .contentShape(Rectangle())
         .overlay(
             RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
                 .stroke(Color.secondary.opacity(0.10), lineWidth: 1)
@@ -166,7 +166,7 @@ public struct OverviewView: View {
                 if !hostAlerts.isEmpty {
                     OverviewPanel(
                         title: "Host alerts",
-                        subtitle: "Expanded machine-level signals that previously sat above the monitor list."
+                        subtitle: "Machine-level signals for memory pressure, wakeup storms, and thermal state."
                     ) {
                         LazyVGrid(columns: overviewGridColumns(minimum: 280), alignment: .leading, spacing: 12) {
                             ForEach(hostAlerts) { alert in

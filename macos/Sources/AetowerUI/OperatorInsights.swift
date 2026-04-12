@@ -89,7 +89,7 @@ func buildHostIncident(
         return HostIncidentSummary(
             severity: memoryBand,
             title: "Machine under memory pressure",
-            summary: "\(operatorFormatBytes(host.memoryUsedBytes)) used of \(operatorFormatBytes(host.memoryTotalBytes)), \(operatorFormatBytes(host.compressedMemoryBytes)) compressed, \(operatorFormatBytes(host.swapUsedBytes)) swap.",
+            summary: "\(formatBytes(host.memoryUsedBytes)) used of \(formatBytes(host.memoryTotalBytes)), \(formatBytes(host.compressedMemoryBytes)) compressed, \(formatBytes(host.swapUsedBytes)) swap.",
             action: memoryLeaders.isEmpty
                 ? "Reduce the top memory-heavy groups first."
                 : "Reduce the top memory-heavy groups first: \(memoryLeaders)."
@@ -103,9 +103,9 @@ func buildHostIncident(
         return HostIncidentSummary(
             severity: wakeupBand,
             title: "Machine is wakeup-heavy",
-            summary: "Host wakeups are \(operatorFormatWakeups(host.wakeupsPerSecond)); background polling is likely affecting battery life.",
+            summary: "Host wakeups are \(formatWakeups(host.wakeupsPerSecond)); background polling is likely affecting battery life.",
             action: leader.map {
-                "Start with \($0.displayName) at \(operatorFormatWakeups($0.metrics.wakeupsPerSecond)) and reduce watcher or polling churn."
+                "Start with \($0.displayName) at \(formatWakeups($0.metrics.wakeupsPerSecond)) and reduce watcher or polling churn."
             } ?? "Reduce timer-driven and polling-heavy workloads first."
         )
     }
@@ -116,7 +116,7 @@ func buildHostIncident(
     return HostIncidentSummary(
         severity: storeBand,
         title: "Persisted history store needs attention",
-        summary: "\(operatorFormatBytes(history.storeBytes)) DB, \(operatorFormatBytes(history.walBytes)) WAL, \(history.quarantineCount) quarantined rows.",
+        summary: "\(formatBytes(history.storeBytes)) DB, \(formatBytes(history.walBytes)) WAL, \(history.quarantineCount) quarantined rows.",
         action: "Shorten retention or let Aetower compact the store before History becomes operator-hostile."
     )
 }
@@ -133,7 +133,7 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
                 title: "Memory leader",
                 entityId: memoryLeader.entityId,
                 entityName: memoryLeader.displayName,
-                metricValue: operatorFormatBytes(memoryLeader.metrics.memoryResidentBytes),
+                metricValue: formatBytes(memoryLeader.metrics.memoryResidentBytes),
                 detail: "Largest resident footprint in the current snapshot.",
                 severity: operatorHostPressureBand(snapshot.host)
             )
@@ -149,7 +149,7 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
                 title: "Wakeup leader",
                 entityId: wakeupLeader.entityId,
                 entityName: wakeupLeader.displayName,
-                metricValue: operatorFormatWakeups(wakeupLeader.metrics.wakeupsPerSecond),
+                metricValue: formatWakeups(wakeupLeader.metrics.wakeupsPerSecond),
                 detail: "Top timer and interrupt churn source right now.",
                 severity: operatorWakeupBand(snapshot.host.wakeupsPerSecond)
             )
@@ -167,7 +167,7 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
                     title: "Disk leader",
                     entityId: diskLeader.entityId,
                     entityName: diskLeader.displayName,
-                    metricValue: operatorFormatRate(throughput),
+                    metricValue: formatRate(throughput),
                     detail: "Highest read/write throughput among attributed groups.",
                     severity: throughput >= 50 * 1024 * 1024 ? .warning : .info
                 )
@@ -186,7 +186,7 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
                     title: "Network leader",
                     entityId: networkLeader.entityId,
                     entityName: networkLeader.displayName,
-                    metricValue: operatorFormatRate(throughput),
+                    metricValue: formatRate(throughput),
                     detail: "Largest current network mover among attributed groups.",
                     severity: throughput >= 20 * 1024 * 1024 ? .warning : .info
                 )
@@ -234,7 +234,7 @@ func buildOperatorRecommendations(
             OperatorRecommendationSummary(
                 id: "history-store",
                 title: "Keep the history store bounded",
-                detail: "\(operatorFormatBytes(history.storeBytes)) DB, \(operatorFormatBytes(history.walBytes)) WAL, \(history.quarantineCount) quarantined rows.",
+                detail: "\(formatBytes(history.storeBytes)) DB, \(formatBytes(history.walBytes)) WAL, \(history.quarantineCount) quarantined rows.",
                 action: "Trim retention or let Aetower compact the store before History becomes slow again.",
                 severity: operatorHistorySeverity(history)
             )
@@ -345,7 +345,7 @@ func buildSelfHealthChecks(
                 id: "history",
                 title: "History store",
                 value: operatorHistorySeverity(history).label,
-                detail: "\(operatorFormatBytes(history.storeBytes)) DB · \(operatorFormatBytes(history.walBytes)) WAL · \(history.snapshotCount) snapshots",
+                detail: "\(formatBytes(history.storeBytes)) DB · \(formatBytes(history.walBytes)) WAL · \(history.snapshotCount) snapshots",
                 severity: operatorHistorySeverity(history)
             ),
             at: 2
@@ -554,20 +554,9 @@ private func operatorRuntimeSeverity(_ runtime: RuntimeLagMetrics) -> OperatorSe
     return .info
 }
 
-private func operatorFormatBytes(_ bytes: UInt64) -> String {
-    ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .binary)
-}
-
-private func operatorFormatRate(_ bytesPerSecond: UInt64) -> String {
-    "\(operatorFormatBytes(bytesPerSecond))/s"
-}
-
-private func operatorFormatWakeups(_ wakeupsPerSecond: Float) -> String {
-    if wakeupsPerSecond >= 100 {
-        return String(format: "%.0f/s", wakeupsPerSecond)
-    }
-    return String(format: "%.1f/s", wakeupsPerSecond)
-}
+// operatorFormatBytes/Rate/Wakeups removed — use the shared
+// formatBytes/formatRate/formatWakeups from MonitorFormatters.swift
+// which cache the ByteCountFormatter instead of allocating per call.
 
 private func operatorCapabilityKindLabel(_ kind: CapabilityKind) -> String {
     switch kind {
