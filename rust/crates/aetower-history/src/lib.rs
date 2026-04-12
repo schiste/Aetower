@@ -638,6 +638,30 @@ impl History {
             );
         }
 
+        // GPU (Metal heap) memory as a percentage of unified memory.
+        // On Apple Silicon, when this ratio climbs past 75% the system
+        // is approaching the point where Metal page evictions will tank
+        // inference throughput. This is the most actionable signal for
+        // a local LLM user deciding "should I try the 13B model or
+        // stick with the 7B?".
+        if host.gpu_memory_bytes > 0 && host.memory_total_bytes > 0 {
+            let gpu_memory_percent =
+                (host.gpu_memory_bytes as f32 / host.memory_total_bytes as f32) * 100.0;
+            self.record_sensor_reading(SENSOR_KEY_GPU_MEMORY, captured_at_millis);
+            self.evaluate_alert_transition(
+                captured_at_millis,
+                SENSOR_KEY_GPU_MEMORY,
+                gpu_memory_percent,
+                "GPU memory",
+                |value, level| {
+                    format!(
+                        "GPU memory at {value:.0}% of unified memory ({level})",
+                        level = level_label(level)
+                    )
+                },
+            );
+        }
+
         // Fan stuck: tracked as a separate key per fan ID because a
         // single-fan machine and a dual-fan Pro are very different cases.
         //
@@ -2131,5 +2155,84 @@ mod tests {
         assert_eq!(classify_alert(80.0, &below), AlertLevel::Warning);
         assert_eq!(classify_alert(50.0, &below), AlertLevel::Critical);
         assert_eq!(classify_alert(10.0, &below), AlertLevel::Critical);
+    }
+
+    #[test]
+    fn gpu_memory_warning_fires_at_75_percent() {
+        let mut history = History::new();
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+
+        // 12 GB of 16 GB = 75% → exactly at warning threshold.
+        let host = HostSnapshot {
+            memory_total_bytes: 16 * 1024 * 1024 * 1024,
+            gpu_memory_bytes: 12 * 1024 * 1024 * 1024,
+            ..Default::default()
+        };
+        let (events, _) = history.update(1_000, &host, &mut entities);
+        let gpu_events: Vec<_> = events
+            .iter()
+            .filter(|event| event.title.starts_with("GPU memory"))
+            .collect();
+        assert_eq!(gpu_events.len(), 1);
+        assert_eq!(gpu_events[0].severity, TimelineSeverity::Warning);
+    }
+
+    #[test]
+    fn gpu_memory_critical_fires_at_90_percent() {
+        let mut history = History::new();
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+
+        // Warm up with a warning first to test the transition.
+        let warning_host = HostSnapshot {
+            memory_total_bytes: 16 * 1024 * 1024 * 1024,
+            gpu_memory_bytes: 12 * 1024 * 1024 * 1024,
+            ..Default::default()
+        };
+        let _ = history.update(1_000, &warning_host, &mut entities);
+
+        // 14.5 GB of 16 GB = ~90.6% → critical.
+        let critical_host = HostSnapshot {
+            memory_total_bytes: 16 * 1024 * 1024 * 1024,
+            gpu_memory_bytes: (14.5 * 1024.0 * 1024.0 * 1024.0) as u64,
+            ..Default::default()
+        };
+        let (events, _) = history.update(2_000, &critical_host, &mut entities);
+        let critical: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.title.starts_with("GPU memory") && event.timestamp_millis == 2_000
+            })
+            .collect();
+        assert_eq!(critical.len(), 1);
+        assert_eq!(critical[0].severity, TimelineSeverity::Critical);
+    }
+
+    #[test]
+    fn gpu_memory_recovers_when_freed() {
+        let mut history = History::new();
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+
+        // Critical state.
+        let critical = HostSnapshot {
+            memory_total_bytes: 16 * 1024 * 1024 * 1024,
+            gpu_memory_bytes: 15 * 1024 * 1024 * 1024,
+            ..Default::default()
+        };
+        let _ = history.update(1_000, &critical, &mut entities);
+
+        // Drop below 75% → recovery.
+        let recovered = HostSnapshot {
+            memory_total_bytes: 16 * 1024 * 1024 * 1024,
+            gpu_memory_bytes: 8 * 1024 * 1024 * 1024,
+            ..Default::default()
+        };
+        let (events, _) = history.update(2_000, &recovered, &mut entities);
+        let recovery: Vec<_> = events
+            .iter()
+            .filter(|event| event.title.contains("GPU memory") && event.timestamp_millis == 2_000)
+            .collect();
+        assert_eq!(recovery.len(), 1);
+        assert_eq!(recovery[0].severity, TimelineSeverity::Info);
+        assert!(recovery[0].title.contains("normalized"));
     }
 }
