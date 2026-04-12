@@ -9,10 +9,46 @@ private enum DiagnosticsLevelFilter: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private struct DiagnosticsEventCluster: Identifiable {
+    let representative: DiagnosticsEvent
+    let events: [DiagnosticsEvent]
+
+    var id: String {
+        "\(representative.id)-\(events.count)"
+    }
+
+    var count: Int {
+        events.count
+    }
+
+    var newestTimestampMillis: UInt64 {
+        events.first?.timestampMillis ?? representative.timestampMillis
+    }
+
+    var oldestTimestampMillis: UInt64 {
+        events.last?.timestampMillis ?? representative.timestampMillis
+    }
+
+    var latestFields: [DiagnosticsField] {
+        events.first?.fields ?? representative.fields
+    }
+
+    func canMerge(_ other: DiagnosticsEvent) -> Bool {
+        representative.level == other.level
+            && representative.subsystem == other.subsystem
+            && representative.eventType == other.eventType
+            && representative.message == other.message
+            && representative.entityId == other.entityId
+            && representative.adapter == other.adapter
+            && representative.capability == other.capability
+    }
+}
+
 public struct DiagnosticsView: View {
     let state: AppState
     let settings: SettingsStore
     @State private var searchText = ""
+    @State private var debouncedSearchText = ""
     @State private var subsystemFilter: DiagnosticsSubsystem?
     @State private var levelFilter: DiagnosticsLevelFilter = .all
     @State private var isLive = true
@@ -48,17 +84,24 @@ public struct DiagnosticsView: View {
         .navigationTitle("Diagnostics")
         .onAppear {
             isVisible = true
+            debouncedSearchText = searchText
             state.setDiagnosticsVisible(true)
-            state.loadDiagnosticsQuery(currentQuery, force: true)
         }
         .onDisappear {
             isVisible = false
             state.setDiagnosticsVisible(false)
             searchFieldFocused = false
         }
-        .task(id: "\(isVisible)-\(isLive)-\(includePersisted)-\(searchText)-\(levelFilter.rawValue)-\(subsystemFilter.map(subsystemLabel) ?? "all")") {
-            guard isVisible && isLive else { return }
+        .task(id: searchText) {
+            let candidate = searchText
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled, candidate == searchText else { return }
+            debouncedSearchText = candidate
+        }
+        .task(id: "\(isVisible)-\(isLive)-\(includePersisted)-\(debouncedSearchText)-\(levelFilter.rawValue)-\(subsystemFilter.map(subsystemLabel) ?? "all")") {
+            guard isVisible else { return }
             state.loadDiagnosticsQuery(currentQuery, force: true)
+            guard isLive else { return }
             while !Task.isCancelled && isVisible && isLive {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 guard !Task.isCancelled && isVisible && isLive else { break }
@@ -148,6 +191,10 @@ public struct DiagnosticsView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+
+                Text(diagnosticsLoadStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .padding(.top, 4)
         }
@@ -293,7 +340,7 @@ public struct DiagnosticsView: View {
 
     private var eventStream: some View {
         GroupBox("Event stream") {
-            if filteredEvents.isEmpty {
+            if eventClusters.isEmpty {
                 ContentUnavailableView(
                     "No diagnostics match this filter",
                     systemImage: "waveform.path.ecg.rectangle",
@@ -302,7 +349,12 @@ public struct DiagnosticsView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(filteredEvents.enumerated()), id: \.element.id) { _, event in
+                    Text(eventStreamSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(eventClusters) { cluster in
+                        let event = cluster.representative
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(alignment: .top, spacing: 8) {
                                 Circle()
@@ -318,13 +370,20 @@ public struct DiagnosticsView: View {
                                             .padding(.horizontal, 8)
                                             .padding(.vertical, 4)
                                             .background(Color.secondary.opacity(0.08), in: Capsule())
+                                        if cluster.count > 1 {
+                                            Text("\(cluster.count)x")
+                                                .font(.caption.monospaced())
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(Color.secondary.opacity(0.06), in: Capsule())
+                                        }
                                         if let sequence = event.sequence {
                                             Text("#\(sequence)")
                                                 .font(.caption.monospacedDigit())
                                                 .foregroundStyle(.secondary)
                                         }
                                     }
-                                    Text("\(event.eventType) · \(formattedTimestamp(event.timestampMillis))")
+                                    Text(eventMetadataLine(cluster))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                     if let entityId = event.entityId {
@@ -332,21 +391,24 @@ public struct DiagnosticsView: View {
                                             .font(.caption2.monospaced())
                                             .foregroundStyle(.tertiary)
                                     }
-                                    if !event.fields.isEmpty {
-                                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 8)], alignment: .leading, spacing: 8) {
-                                            ForEach(Array(event.fields.enumerated()), id: \.offset) { _, field in
-                                                VStack(alignment: .leading, spacing: 2) {
-                                                    Text(field.key)
-                                                        .font(.caption2.weight(.medium))
-                                                        .foregroundStyle(.tertiary)
-                                                    Text(field.value)
-                                                        .font(.caption.monospaced())
-                                                        .foregroundStyle(.secondary)
-                                                        .textSelection(.enabled)
+                                    if !cluster.latestFields.isEmpty {
+                                        DisclosureGroup(cluster.count > 1 ? "Latest fields" : "Fields") {
+                                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 8)], alignment: .leading, spacing: 8) {
+                                                ForEach(Array(cluster.latestFields.enumerated()), id: \.offset) { _, field in
+                                                    VStack(alignment: .leading, spacing: 2) {
+                                                        Text(field.key)
+                                                            .font(.caption2.weight(.medium))
+                                                            .foregroundStyle(.tertiary)
+                                                        Text(field.value)
+                                                            .font(.caption.monospaced())
+                                                            .foregroundStyle(.secondary)
+                                                            .textSelection(.enabled)
+                                                    }
+                                                    .padding(8)
+                                                    .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                                                 }
-                                                .padding(8)
-                                                .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                                             }
+                                            .padding(.top, 4)
                                         }
                                     }
                                 }
@@ -354,7 +416,7 @@ public struct DiagnosticsView: View {
                             }
                         }
                         .padding(.vertical, 4)
-                        if event.id != filteredEvents.last?.id {
+                        if cluster.id != eventClusters.last?.id {
                             Divider()
                         }
                     }
@@ -364,8 +426,20 @@ public struct DiagnosticsView: View {
         }
     }
 
-    private var filteredEvents: [DiagnosticsEvent] {
-        state.diagnosticsEvents
+    private var eventClusters: [DiagnosticsEventCluster] {
+        var clusters: [DiagnosticsEventCluster] = []
+        for event in state.diagnosticsEvents {
+            if let last = clusters.last, last.canMerge(event) {
+                let mergedEvents = last.events + [event]
+                clusters[clusters.count - 1] = DiagnosticsEventCluster(
+                    representative: last.representative,
+                    events: mergedEvents
+                )
+            } else {
+                clusters.append(DiagnosticsEventCluster(representative: event, events: [event]))
+            }
+        }
+        return clusters
     }
 
     private var currentQuery: DiagnosticsQuery {
@@ -373,7 +447,7 @@ public struct DiagnosticsView: View {
             limit: 500,
             minimumLevel: minimumLevel,
             subsystem: subsystemFilter,
-            search: searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : searchText,
+            search: debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : debouncedSearchText,
             sinceMillis: nil,
             includePersisted: includePersisted
         )
@@ -405,7 +479,6 @@ public struct DiagnosticsView: View {
         state.diagnosticsEvents.first(where: {
             $0.eventType == "history-load-failed"
                 || $0.eventType == "history-loaded-with-quarantine"
-                || $0.eventType == "history-row-quarantined"
         }).map { event in
             if let errorField = event.fields.first(where: { $0.key == "error" })?.value,
                !errorField.isEmpty {
@@ -426,7 +499,7 @@ public struct DiagnosticsView: View {
         if state.diagnosticsOverview.errorCount > 0 {
             return "Stale"
         }
-        if recentWarningCount >= 25 {
+        if state.diagnosticsRecentWarningCount >= 25 {
             return "Watch"
         }
         if state.diagnosticsOverview.warnCount > 0 {
@@ -445,16 +518,19 @@ public struct DiagnosticsView: View {
         if state.diagnosticsOverview.errorCount > 0 {
             return "No active diagnostics error, but stale retained errors still exist."
         }
-        if recentWarningCount >= 25 {
-            return "\(recentWarningCount) warning-level events in the recent diagnostics window"
+        if state.diagnosticsRecentWarningCount >= 25 {
+            return "\(state.diagnosticsRecentWarningCount) warning-level events in the recent diagnostics window"
         }
         if let lastErrorMillis = state.diagnosticsOverview.lastErrorMillis {
             return "Most recent diagnostics error was \(relativeTimeLabel(from: lastErrorMillis))"
         }
-        return "No recent diagnostics errors"
+        return "No recent diagnostics errors · \(diagnosticsFreshnessLabel)"
     }
 
     private var unifiedLogHealthTitle: String {
+        if state.sessionLogAnalysisError != nil {
+            return "Degraded"
+        }
         guard let summary = state.sessionLogSummary else {
             return "Pending"
         }
@@ -468,13 +544,22 @@ public struct DiagnosticsView: View {
     }
 
     private var unifiedLogHealthSubtitle: String {
+        if let error = state.sessionLogAnalysisError {
+            let freshness = state.lastSessionLogAnalysisCompletedDate.map {
+                "Last successful analysis \(relativeTimeLabel(from: $0))"
+            } ?? "No successful analysis yet"
+            return "\(error) · \(freshness)"
+        }
         guard let summary = state.sessionLogSummary else {
             return "Open Diagnostics to analyze the current session"
         }
-        return "\(summary.cursorUiEntries) cursor updates, \(summary.metalLoadFailures) Metal errors, \(summary.viewBridgeCancellationCount) view bridge cancellations"
+        return "\(summary.cursorUiEntries) cursor updates, \(summary.metalLoadFailures) Metal errors, \(summary.viewBridgeCancellationCount) view bridge cancellations · \(sessionLogFreshnessLabel)"
     }
 
     private var permissionHealthTitle: String {
+        if state.sessionLogAnalysisError != nil {
+            return "Unknown"
+        }
         guard let summary = state.sessionLogSummary else {
             return "Pending"
         }
@@ -488,10 +573,13 @@ public struct DiagnosticsView: View {
     }
 
     private var permissionHealthSubtitle: String {
+        if state.sessionLogAnalysisError != nil {
+            return sessionLogFreshnessLabel
+        }
         guard let summary = state.sessionLogSummary else {
             return "Session log analysis not loaded yet"
         }
-        return "\(summary.tccAccessRequests) TCC checks, \(summary.notificationAuthorizationFailures) notification failures"
+        return "\(summary.tccAccessRequests) TCC checks, \(summary.notificationAuthorizationFailures) notification failures · \(sessionLogFreshnessLabel)"
     }
 
     private var telemetryHealthTitle: String {
@@ -537,7 +625,7 @@ public struct DiagnosticsView: View {
         if let lastErrorMillis = state.diagnosticsOverview.lastErrorMillis {
             return "last error \(relativeTimeLabel(from: lastErrorMillis))"
         }
-        return "no recent errors"
+        return "no recent errors · \(diagnosticsFreshnessLabel)"
     }
 
     private var recentDiagnosticsErrorMessage: String? {
@@ -554,12 +642,53 @@ public struct DiagnosticsView: View {
         return nil
     }
 
-    private var recentWarningCount: Int {
-        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
-        let cutoff = nowMillis > 10 * 60 * 1000 ? nowMillis - 10 * 60 * 1000 : 0
-        return state.diagnosticsEvents.filter {
-            $0.level == .warn && $0.timestampMillis >= cutoff
-        }.count
+    private var diagnosticsLoadStatus: String {
+        if searchText != debouncedSearchText {
+            return "Updating search…"
+        }
+        return "\(diagnosticsFreshnessLabel) · \(sessionLogFreshnessLabel)"
+    }
+
+    private var diagnosticsFreshnessLabel: String {
+        if let lastDiagnosticsQueryDate = state.lastDiagnosticsQueryDate {
+            return "Diagnostics updated \(relativeTimeLabel(from: lastDiagnosticsQueryDate))"
+        }
+        return "Diagnostics not loaded yet"
+    }
+
+    private var sessionLogFreshnessLabel: String {
+        if let lastSessionLogAnalysisCompletedDate = state.lastSessionLogAnalysisCompletedDate {
+            return "Unified logs analyzed \(relativeTimeLabel(from: lastSessionLogAnalysisCompletedDate)) over last 6m"
+        }
+        return "Unified logs not analyzed yet"
+    }
+
+    private var eventStreamSummary: String {
+        let eventCountLabel = eventClusters.count == state.diagnosticsEvents.count
+            ? "\(state.diagnosticsEvents.count) loaded event(s)"
+            : "\(state.diagnosticsEvents.count) loaded event(s) condensed into \(eventClusters.count) groups"
+        return "\(eventCountLabel) · \(diagnosticsFreshnessLabel)"
+    }
+
+    private func eventMetadataLine(_ cluster: DiagnosticsEventCluster) -> String {
+        if cluster.count == 1 {
+            return "\(cluster.representative.eventType) · \(formattedTimestamp(cluster.newestTimestampMillis))"
+        }
+        return "\(cluster.representative.eventType) · \(formattedTimestamp(cluster.newestTimestampMillis)) · repeated \(cluster.count)x over \(clusterTimespanLabel(cluster))"
+    }
+
+    private func clusterTimespanLabel(_ cluster: DiagnosticsEventCluster) -> String {
+        guard cluster.newestTimestampMillis > cluster.oldestTimestampMillis else {
+            return "one sample"
+        }
+        let deltaSeconds = (cluster.newestTimestampMillis - cluster.oldestTimestampMillis) / 1000
+        if deltaSeconds < 60 {
+            return "\(deltaSeconds)s"
+        }
+        if deltaSeconds < 3600 {
+            return "\(deltaSeconds / 60)m"
+        }
+        return "\(deltaSeconds / 3600)h"
     }
 }
 
@@ -608,6 +737,10 @@ private func relativeTimeLabel(from timestampMillis: UInt64) -> String {
         return "\(deltaSeconds / 3600)h ago"
     }
     return "\(deltaSeconds / 86_400)d ago"
+}
+
+private func relativeTimeLabel(from date: Date) -> String {
+    relativeTimeLabel(from: UInt64(date.timeIntervalSince1970 * 1000))
 }
 
 private func subsystemLabel(_ subsystem: DiagnosticsSubsystem) -> String {
