@@ -5,15 +5,17 @@ enum TrendMetricStyle {
     case cpu
     case memory
     case disk
+    case network
     case energy
 
     var color: Color {
         switch self {
-        case .friction: return .orange
-        case .cpu: return .blue
-        case .memory: return .green
-        case .disk: return .pink
-        case .energy: return .yellow
+        case .friction: return AetowerDesign.Tone.friction
+        case .cpu: return AetowerDesign.Tone.cpu
+        case .memory: return AetowerDesign.Tone.memory
+        case .disk: return AetowerDesign.Tone.disk
+        case .network: return AetowerDesign.Tone.network
+        case .energy: return AetowerDesign.Tone.energy
         }
     }
 }

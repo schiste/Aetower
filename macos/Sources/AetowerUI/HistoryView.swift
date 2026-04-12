@@ -122,7 +122,7 @@ public struct HistoryView: View {
                                 value: historyFormatRate(latestHostNetwork),
                                 subtitle: "peak \(historyFormatRate(hostNetworkSamples.max().map(UInt64.init) ?? 0))",
                                 samples: hostNetworkSamples,
-                                style: .disk
+                                style: .network
                             )
                             TrendMetricCard(
                                 title: "GPU",
