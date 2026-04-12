@@ -26,23 +26,33 @@ struct TrendMetricCard: View {
     let subtitle: String
     let samples: [Double]
     let style: TrendMetricStyle
+    let minHeight: CGFloat
     @State private var isHovered = false
     @State private var hoverX: CGFloat? = nil
 
+    init(
+        title: String,
+        value: String,
+        subtitle: String,
+        samples: [Double],
+        style: TrendMetricStyle,
+        minHeight: CGFloat = 104
+    ) {
+        self.title = title
+        self.value = value
+        self.subtitle = subtitle
+        self.samples = samples
+        self.style = style
+        self.minHeight = minHeight
+    }
+
     var body: some View {
-        ZStack {
-            // Background
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(style.color.opacity(0.12))
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(style.color.opacity(0.20), lineWidth: 1)
-
-            // Sparkline
-            TrendSparkline(samples: samples, color: style.color, hoverX: hoverX)
-                .padding(6)
-                .opacity(0.85)
-
-            // Content
+        MetricCardSurface(
+            tone: style.color,
+            samples: samples,
+            minHeight: minHeight,
+            hoverX: hoverX
+        ) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.caption2.weight(.medium))
@@ -61,10 +71,7 @@ struct TrendMetricCard: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            // Hover overlay: min/max/current + tooltip
+        } hoverOverlay: {
             if isHovered && samples.count >= 2 {
                 VStack {
                     HStack(spacing: 8) {
@@ -93,7 +100,6 @@ struct TrendMetricCard: View {
                 }
             }
         }
-        .frame(minHeight: 104, maxHeight: 104)
         .shadow(color: style.color.opacity(isHovered ? 0.2 : 0), radius: 8)
         .onContinuousHover { phase in
             switch phase {
@@ -139,111 +145,5 @@ struct TrendMetricCard: View {
         } else {
             return String(format: "%.1f", value)
         }
-    }
-}
-
-// MARK: - Interactive Sparkline
-
-private struct TrendSparkline: View {
-    let samples: [Double]
-    let color: Color
-    let hoverX: CGFloat?
-    @State private var drawProgress: CGFloat = 0
-
-    var body: some View {
-        GeometryReader { geometry in
-            let rect = geometry.frame(in: .local)
-            ZStack {
-                if samples.count >= 2 {
-                    // Fill gradient
-                    fillPath(in: rect)
-                        .fill(
-                            LinearGradient(
-                                colors: [color.opacity(0.18), color.opacity(0.02)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .opacity(drawProgress)
-
-                    // Stroke line
-                    sparklinePath(in: rect)
-                        .trim(from: 0, to: drawProgress)
-                        .stroke(color.opacity(0.6), style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round))
-
-                    // Hover cursor line
-                    if let hoverX {
-                        let clampedX = min(max(hoverX, 0), rect.width)
-                        Path { path in
-                            path.move(to: CGPoint(x: clampedX, y: rect.minY))
-                            path.addLine(to: CGPoint(x: clampedX, y: rect.maxY))
-                        }
-                        .stroke(color.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-
-                        // Dot at intersection
-                        let normalized = normalizedSamples
-                        if !normalized.isEmpty {
-                            let ratio = max(0, min(1, clampedX / rect.width))
-                            let index = Int(ratio * Double(normalized.count - 1))
-                            let clamped = max(0, min(normalized.count - 1, index))
-                            let y = rect.maxY - CGFloat(normalized[clamped]) * rect.height
-                            Circle()
-                                .fill(color)
-                                .frame(width: 6, height: 6)
-                                .position(x: clampedX, y: y)
-                        }
-                    }
-                } else {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(color.opacity(0.06))
-                }
-            }
-        }
-        .onAppear {
-            withAnimation(AetowerDesign.Motion.slow) {
-                drawProgress = 1.0
-            }
-        }
-    }
-
-    private func sparklinePath(in rect: CGRect) -> Path {
-        let normalized = normalizedSamples
-        return Path { path in
-            guard let first = normalized.first else { return }
-            path.move(to: point(for: first, index: 0, count: normalized.count, in: rect))
-            for (index, value) in normalized.enumerated().dropFirst() {
-                path.addLine(to: point(for: value, index: index, count: normalized.count, in: rect))
-            }
-        }
-    }
-
-    private func fillPath(in rect: CGRect) -> Path {
-        let normalized = normalizedSamples
-        return Path { path in
-            guard let first = normalized.first else { return }
-            let firstPoint = point(for: first, index: 0, count: normalized.count, in: rect)
-            path.move(to: CGPoint(x: firstPoint.x, y: rect.maxY))
-            path.addLine(to: firstPoint)
-            for (index, value) in normalized.enumerated().dropFirst() {
-                path.addLine(to: point(for: value, index: index, count: normalized.count, in: rect))
-            }
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            path.closeSubpath()
-        }
-    }
-
-    private var normalizedSamples: [Double] {
-        guard let min = samples.min(), let max = samples.max() else { return [] }
-        let range = max - min
-        guard range > 0.000_1 else { return samples.map { _ in 0.5 } }
-        return samples.map { ($0 - min) / range }
-    }
-
-    private func point(for value: Double, index: Int, count: Int, in rect: CGRect) -> CGPoint {
-        let x = count <= 1
-            ? rect.midX
-            : rect.minX + (CGFloat(index) / CGFloat(count - 1)) * rect.width
-        let y = rect.maxY - CGFloat(value) * rect.height
-        return CGPoint(x: x, y: y)
     }
 }
