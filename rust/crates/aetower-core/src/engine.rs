@@ -30,6 +30,12 @@ use crate::{
 const ADAPTER_IDLE_SLEEP: Duration = Duration::from_secs(5);
 const TELEMETRY_DISABLED_SLEEP: Duration = Duration::from_secs(30);
 const RUNTIME_HEARTBEAT_INTERVAL_MILLIS: u64 = 10 * 60 * 1000;
+const DEFAULT_HISTORY_RETENTION_MILLIS: u64 = 72 * 60 * 60 * 1000;
+const EMERGENCY_HISTORY_RETENTION_MILLIS: u64 = 24 * 60 * 60 * 1000;
+const HISTORY_SOFT_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const HISTORY_HARD_MAX_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const HISTORY_MAX_WAL_BYTES: u64 = 128 * 1024 * 1024;
+const HISTORY_AGGRESSIVE_QUARANTINE_ROWS: u64 = 128;
 
 #[derive(Debug, Clone)]
 struct RuntimeCollectionConfig {
@@ -133,11 +139,19 @@ struct EngineState {
 /// that gap by surfacing one clear transition event per capability.
 #[derive(Default)]
 struct SensorAvailabilityState {
-    fans_available: Option<bool>,
-    cpu_temperatures_available: Option<bool>,
-    power_readings_available: Option<bool>,
-    disks_available: Option<bool>,
-    bluetooth_available: Option<bool>,
+    fans_available: SensorCapabilityState,
+    cpu_temperatures_available: SensorCapabilityState,
+    power_readings_available: SensorCapabilityState,
+    disks_available: SensorCapabilityState,
+    bluetooth_available: SensorCapabilityState,
+}
+
+#[derive(Default)]
+struct SensorCapabilityState {
+    last_available: Option<bool>,
+    consecutive_available: u8,
+    consecutive_unavailable: u8,
+    has_reported_unavailable: bool,
 }
 
 impl EngineState {
@@ -196,9 +210,7 @@ impl Engine {
                 store
             });
         if let Some(store) = persistence.as_ref() {
-            // Prune entries older than 7 days on startup.
-            let seven_days_ago = time::now_millis().saturating_sub(7 * 24 * 60 * 60 * 1000);
-            let _ = store.prune(seven_days_ago);
+            let _ = store.maintain_with_policy(default_history_retention_policy());
         }
         let mut telemetry_exporter = TelemetryExporter::new(telemetry_config_from_env());
         telemetry_exporter.set_diagnostics(diagnostics.clone());
@@ -387,6 +399,29 @@ impl Engine {
                 host.ai_agent_friction = ai_friction;
                 host.ai_agent_count = ai_count;
 
+                // Heuristic GPU attribution: macOS has no per-process GPU
+                // API, so distribute the host-level `gpu_percent` among AI
+                // agent entities proportional to their CPU share. When
+                // exactly one agent is running it gets 100% of the host
+                // GPU; when several compete, each gets its proportional
+                // slice. Non-AI entities keep `estimated_gpu_percent = 0`.
+                if host.gpu_percent > 0.0 && ai_count > 0 {
+                    let total_ai_cpu: f32 = entities
+                        .iter()
+                        .filter(|e| matches!(e.entity_kind, aetower_model::EntityKind::AiAgent))
+                        .map(|e| e.metrics.cpu_percent)
+                        .sum();
+                    if total_ai_cpu > 0.0 {
+                        for entity in entities
+                            .iter_mut()
+                            .filter(|e| matches!(e.entity_kind, aetower_model::EntityKind::AiAgent))
+                        {
+                            entity.metrics.estimated_gpu_percent =
+                                (entity.metrics.cpu_percent / total_ai_cpu) * host.gpu_percent;
+                        }
+                    }
+                }
+
                 let history_started = Instant::now();
                 let mut guard = state.lock();
                 let mut runtime_lag_metrics = runtime_lag_metrics;
@@ -469,6 +504,9 @@ impl Engine {
                     guard.last_runtime_heartbeat_millis,
                     captured_at_millis,
                 ) {
+                    if let Some(store) = persistence.lock().as_ref() {
+                        let _ = store.maintain_with_policy(default_history_retention_policy());
+                    }
                     let top_entity = guard.latest_snapshot.entities.first();
                     diagnostics.emit(
                         DiagnosticsEvent::builder(
@@ -952,10 +990,15 @@ impl Engine {
         &self,
         aggressive: bool,
     ) -> Option<aetower_persistence::HistoryMaintenanceReport> {
-        self.persistence
-            .lock()
-            .as_ref()
-            .and_then(|store| store.maintain_storage(aggressive).ok())
+        self.persistence.lock().as_ref().and_then(|store| {
+            if aggressive {
+                store.maintain_storage(true).ok()
+            } else {
+                store
+                    .maintain_with_policy(default_history_retention_policy())
+                    .ok()
+            }
+        })
     }
 
     pub fn stop_agent_session(&self, session_id: String, force: bool) -> Result<(), String> {
@@ -976,6 +1019,17 @@ impl Engine {
 impl Default for Engine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn default_history_retention_policy() -> aetower_persistence::HistoryRetentionPolicy {
+    aetower_persistence::HistoryRetentionPolicy {
+        max_age_millis: DEFAULT_HISTORY_RETENTION_MILLIS,
+        emergency_max_age_millis: EMERGENCY_HISTORY_RETENTION_MILLIS,
+        soft_max_store_bytes: HISTORY_SOFT_MAX_BYTES,
+        hard_max_store_bytes: HISTORY_HARD_MAX_BYTES,
+        max_wal_bytes: HISTORY_MAX_WAL_BYTES,
+        aggressive_quarantine_rows: HISTORY_AGGRESSIVE_QUARANTINE_ROWS,
     }
 }
 
@@ -1042,27 +1096,54 @@ fn emit_sensor_availability_transitions(
 
 fn check_capability_transition(
     diagnostics: &DiagnosticsStore,
-    previous: &mut Option<bool>,
+    previous: &mut SensorCapabilityState,
     currently_available: bool,
     event_stem: &str,
     capability_label: &str,
     captured_at_millis: u64,
 ) {
-    let Some(was_available) = *previous else {
-        *previous = Some(currently_available);
-        return;
-    };
-    if was_available == currently_available {
+    if currently_available {
+        previous.consecutive_available = previous.consecutive_available.saturating_add(1);
+        previous.consecutive_unavailable = 0;
+        let was_unavailable = previous.last_available == Some(false);
+        previous.last_available = Some(true);
+        if was_unavailable
+            && previous.has_reported_unavailable
+            && previous.consecutive_available >= 2
+        {
+            previous.has_reported_unavailable = false;
+            diagnostics.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Info,
+                    DiagnosticsSubsystem::Engine,
+                    format!("{event_stem}-recovered"),
+                    format!("{capability_label} are available again."),
+                )
+                .timestamp_millis(captured_at_millis)
+                .build(),
+            );
+        }
         return;
     }
-    *previous = Some(currently_available);
-    if currently_available {
+
+    previous.consecutive_unavailable = previous.consecutive_unavailable.saturating_add(1);
+    previous.consecutive_available = 0;
+    let was_available = previous.last_available;
+    previous.last_available = Some(false);
+    if previous.consecutive_unavailable < 3 || previous.has_reported_unavailable {
+        return;
+    }
+
+    previous.has_reported_unavailable = true;
+    if was_available == Some(true) {
         diagnostics.emit(
             DiagnosticsEvent::builder(
-                DiagnosticsLevel::Debug,
+                DiagnosticsLevel::Warn,
                 DiagnosticsSubsystem::Engine,
-                format!("{event_stem}-recovered"),
-                format!("{capability_label} are available again."),
+                format!("{event_stem}-unavailable"),
+                format!(
+                    "{capability_label} disappeared after previously being collected. The underlying sensor path likely regressed."
+                ),
             )
             .timestamp_millis(captured_at_millis)
             .build(),
@@ -1070,12 +1151,11 @@ fn check_capability_transition(
     } else {
         diagnostics.emit(
             DiagnosticsEvent::builder(
-                DiagnosticsLevel::Warn,
+                DiagnosticsLevel::Info,
                 DiagnosticsSubsystem::Engine,
                 format!("{event_stem}-unavailable"),
                 format!(
-                    "{capability_label} disappeared. The underlying sensor or tool may have \
-                     failed; check the collector logs or verify that the helper is running."
+                    "{capability_label} are unavailable on this system. Aetower is treating this as a stable unsupported capability instead of an active fault."
                 ),
             )
             .timestamp_millis(captured_at_millis)

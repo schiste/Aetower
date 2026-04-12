@@ -1599,6 +1599,7 @@ mod tests {
                 network_send_bps: 0,
                 wakeups_per_second: 400.0,
                 energy_nj_per_s: 0.0,
+                estimated_gpu_percent: 0.0,
                 process_count: 1,
                 is_foreground: false,
             },

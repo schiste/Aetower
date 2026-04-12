@@ -1302,6 +1302,11 @@ public struct AggregateMetrics {
      * watts (`/ 1e9`) depending on magnitude.
      */
     public var energyNjPerS: Double
+    /**
+     * Heuristic GPU share attributed to this entity (0-100). Only non-zero
+     * for AI agent entities; zero for everything else.
+     */
+    public var estimatedGpuPercent: Float
     public var processCount: UInt32
     public var isForeground: Bool
 
@@ -1313,7 +1318,11 @@ public struct AggregateMetrics {
          * all processes belonging to this entity. Zero when the kernel does
          * not report energy. The UI can format as milliwatts (`/ 1e6`) or
          * watts (`/ 1e9`) depending on magnitude.
-         */energyNjPerS: Double, processCount: UInt32, isForeground: Bool) {
+         */energyNjPerS: Double, 
+        /**
+         * Heuristic GPU share attributed to this entity (0-100). Only non-zero
+         * for AI agent entities; zero for everything else.
+         */estimatedGpuPercent: Float, processCount: UInt32, isForeground: Bool) {
         self.cpuPercent = cpuPercent
         self.memoryResidentBytes = memoryResidentBytes
         self.diskReadBps = diskReadBps
@@ -1322,6 +1331,7 @@ public struct AggregateMetrics {
         self.networkSendBps = networkSendBps
         self.wakeupsPerSecond = wakeupsPerSecond
         self.energyNjPerS = energyNjPerS
+        self.estimatedGpuPercent = estimatedGpuPercent
         self.processCount = processCount
         self.isForeground = isForeground
     }
@@ -1358,6 +1368,9 @@ extension AggregateMetrics: Equatable, Hashable {
         if lhs.energyNjPerS != rhs.energyNjPerS {
             return false
         }
+        if lhs.estimatedGpuPercent != rhs.estimatedGpuPercent {
+            return false
+        }
         if lhs.processCount != rhs.processCount {
             return false
         }
@@ -1376,6 +1389,7 @@ extension AggregateMetrics: Equatable, Hashable {
         hasher.combine(networkSendBps)
         hasher.combine(wakeupsPerSecond)
         hasher.combine(energyNjPerS)
+        hasher.combine(estimatedGpuPercent)
         hasher.combine(processCount)
         hasher.combine(isForeground)
     }
@@ -1398,6 +1412,7 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
                 networkSendBps: FfiConverterUInt64.read(from: &buf), 
                 wakeupsPerSecond: FfiConverterFloat.read(from: &buf), 
                 energyNjPerS: FfiConverterDouble.read(from: &buf), 
+                estimatedGpuPercent: FfiConverterFloat.read(from: &buf), 
                 processCount: FfiConverterUInt32.read(from: &buf), 
                 isForeground: FfiConverterBool.read(from: &buf)
         )
@@ -1412,6 +1427,7 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.networkSendBps, into: &buf)
         FfiConverterFloat.write(value.wakeupsPerSecond, into: &buf)
         FfiConverterDouble.write(value.energyNjPerS, into: &buf)
+        FfiConverterFloat.write(value.estimatedGpuPercent, into: &buf)
         FfiConverterUInt32.write(value.processCount, into: &buf)
         FfiConverterBool.write(value.isForeground, into: &buf)
     }
@@ -2133,6 +2149,7 @@ public struct DiagnosticsOverview {
     public var errorCount: UInt32
     public var warnCount: UInt32
     public var lastEventMillis: UInt64?
+    public var lastErrorMillis: UInt64?
     public var lastErrorMessage: String?
     public var persistedEvents: UInt64
     public var persistedPath: String?
@@ -2141,13 +2158,14 @@ public struct DiagnosticsOverview {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(ringCapacity: UInt32, currentSize: UInt32, droppedEvents: UInt64, errorCount: UInt32, warnCount: UInt32, lastEventMillis: UInt64?, lastErrorMessage: String?, persistedEvents: UInt64, persistedPath: String?, persistedBytes: UInt64, persistenceError: String?) {
+    public init(ringCapacity: UInt32, currentSize: UInt32, droppedEvents: UInt64, errorCount: UInt32, warnCount: UInt32, lastEventMillis: UInt64?, lastErrorMillis: UInt64?, lastErrorMessage: String?, persistedEvents: UInt64, persistedPath: String?, persistedBytes: UInt64, persistenceError: String?) {
         self.ringCapacity = ringCapacity
         self.currentSize = currentSize
         self.droppedEvents = droppedEvents
         self.errorCount = errorCount
         self.warnCount = warnCount
         self.lastEventMillis = lastEventMillis
+        self.lastErrorMillis = lastErrorMillis
         self.lastErrorMessage = lastErrorMessage
         self.persistedEvents = persistedEvents
         self.persistedPath = persistedPath
@@ -2181,6 +2199,9 @@ extension DiagnosticsOverview: Equatable, Hashable {
         if lhs.lastEventMillis != rhs.lastEventMillis {
             return false
         }
+        if lhs.lastErrorMillis != rhs.lastErrorMillis {
+            return false
+        }
         if lhs.lastErrorMessage != rhs.lastErrorMessage {
             return false
         }
@@ -2206,6 +2227,7 @@ extension DiagnosticsOverview: Equatable, Hashable {
         hasher.combine(errorCount)
         hasher.combine(warnCount)
         hasher.combine(lastEventMillis)
+        hasher.combine(lastErrorMillis)
         hasher.combine(lastErrorMessage)
         hasher.combine(persistedEvents)
         hasher.combine(persistedPath)
@@ -2229,6 +2251,7 @@ public struct FfiConverterTypeDiagnosticsOverview: FfiConverterRustBuffer {
                 errorCount: FfiConverterUInt32.read(from: &buf), 
                 warnCount: FfiConverterUInt32.read(from: &buf), 
                 lastEventMillis: FfiConverterOptionUInt64.read(from: &buf), 
+                lastErrorMillis: FfiConverterOptionUInt64.read(from: &buf), 
                 lastErrorMessage: FfiConverterOptionString.read(from: &buf), 
                 persistedEvents: FfiConverterUInt64.read(from: &buf), 
                 persistedPath: FfiConverterOptionString.read(from: &buf), 
@@ -2244,6 +2267,7 @@ public struct FfiConverterTypeDiagnosticsOverview: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.errorCount, into: &buf)
         FfiConverterUInt32.write(value.warnCount, into: &buf)
         FfiConverterOptionUInt64.write(value.lastEventMillis, into: &buf)
+        FfiConverterOptionUInt64.write(value.lastErrorMillis, into: &buf)
         FfiConverterOptionString.write(value.lastErrorMessage, into: &buf)
         FfiConverterUInt64.write(value.persistedEvents, into: &buf)
         FfiConverterOptionString.write(value.persistedPath, into: &buf)
@@ -3172,16 +3196,20 @@ public struct HistoryMaintenanceReport {
     public var walBytesAfter: UInt64
     public var checkpointed: Bool
     public var vacuumed: Bool
+    public var prunedRows: UInt64
+    public var aggressiveReason: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(storeBytesBefore: UInt64, walBytesBefore: UInt64, storeBytesAfter: UInt64, walBytesAfter: UInt64, checkpointed: Bool, vacuumed: Bool) {
+    public init(storeBytesBefore: UInt64, walBytesBefore: UInt64, storeBytesAfter: UInt64, walBytesAfter: UInt64, checkpointed: Bool, vacuumed: Bool, prunedRows: UInt64, aggressiveReason: String?) {
         self.storeBytesBefore = storeBytesBefore
         self.walBytesBefore = walBytesBefore
         self.storeBytesAfter = storeBytesAfter
         self.walBytesAfter = walBytesAfter
         self.checkpointed = checkpointed
         self.vacuumed = vacuumed
+        self.prunedRows = prunedRows
+        self.aggressiveReason = aggressiveReason
     }
 }
 
@@ -3210,6 +3238,12 @@ extension HistoryMaintenanceReport: Equatable, Hashable {
         if lhs.vacuumed != rhs.vacuumed {
             return false
         }
+        if lhs.prunedRows != rhs.prunedRows {
+            return false
+        }
+        if lhs.aggressiveReason != rhs.aggressiveReason {
+            return false
+        }
         return true
     }
 
@@ -3220,6 +3254,8 @@ extension HistoryMaintenanceReport: Equatable, Hashable {
         hasher.combine(walBytesAfter)
         hasher.combine(checkpointed)
         hasher.combine(vacuumed)
+        hasher.combine(prunedRows)
+        hasher.combine(aggressiveReason)
     }
 }
 
@@ -3237,7 +3273,9 @@ public struct FfiConverterTypeHistoryMaintenanceReport: FfiConverterRustBuffer {
                 storeBytesAfter: FfiConverterUInt64.read(from: &buf), 
                 walBytesAfter: FfiConverterUInt64.read(from: &buf), 
                 checkpointed: FfiConverterBool.read(from: &buf), 
-                vacuumed: FfiConverterBool.read(from: &buf)
+                vacuumed: FfiConverterBool.read(from: &buf), 
+                prunedRows: FfiConverterUInt64.read(from: &buf), 
+                aggressiveReason: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -3248,6 +3286,8 @@ public struct FfiConverterTypeHistoryMaintenanceReport: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.walBytesAfter, into: &buf)
         FfiConverterBool.write(value.checkpointed, into: &buf)
         FfiConverterBool.write(value.vacuumed, into: &buf)
+        FfiConverterUInt64.write(value.prunedRows, into: &buf)
+        FfiConverterOptionString.write(value.aggressiveReason, into: &buf)
     }
 }
 

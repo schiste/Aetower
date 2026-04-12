@@ -75,6 +75,28 @@ fn classify_process(
         return terminal_session_seed(shell_process);
     }
 
+    // Daemon-launched AI/ML inference servers (ollama, LM Studio, llama.cpp
+    // via homebrew service, MLX server, etc.) run as standalone processes
+    // under launchd, not inside a terminal shell. Classify them by process
+    // name alone — the name list is specific enough that false positives
+    // are vanishingly unlikely. These get entity_id keyed on their
+    // executable path so each distinct server binary is its own entity.
+    if is_ai_agent_exe(&process.name) {
+        let entity_id = process
+            .exe
+            .as_deref()
+            .map(|path| format!("ai-agent-daemon:{}", path.to_lowercase()))
+            .unwrap_or_else(|| format!("ai-agent:{}", normalized_name(&process.name)));
+        return EntitySeed {
+            entity_id,
+            display_name: ai_agent_display_name(process),
+            bundle_id: None,
+            executable_path: process.exe.clone(),
+            entity_kind: EntityKind::AiAgent,
+            badges: vec!["ai-agent".to_owned(), "daemon".to_owned()],
+        };
+    }
+
     if let Some(seed) = app_bundle_seed(process, process_index) {
         return seed;
     }
@@ -146,10 +168,44 @@ fn is_browser_name(name: &str) -> bool {
     )
 }
 
+/// Match process executable names to known AI/ML inference tools.
+///
+/// The list covers three categories:
+/// - **AI coding agents**: claude, codex, aider, cursor-agent
+/// - **Local LLM servers**: ollama, llama.cpp, MLX, LM Studio, koboldcpp, llamafile
+/// - **Local ML inference**: whisper.cpp, Stable Diffusion, ComfyUI
+///
+/// Names are matched case-sensitively against `RawProcessSample.name`
+/// which is derived from `sysinfo::Process::name()` — on macOS this
+/// is the binary file name, not the bundle display name.
 fn is_ai_agent_exe(name: &str) -> bool {
     matches!(
         name,
-        "claude" | "claude-code" | "codex" | "aider" | "cursor-agent"
+        // AI coding agents
+        "claude"
+            | "claude-code"
+            | "codex"
+            | "aider"
+            | "cursor-agent"
+            // Local LLM servers
+            | "ollama"
+            | "ollama-runner"
+            | "ollama_llama_server"
+            | "mlx_lm"
+            | "mlx-lm-server"
+            | "mlx_lm.server"
+            | "llama-server"
+            | "llama-cli"
+            | "llama-bench"
+            | "llamafile"
+            | "lm-studio"
+            | "lmstudio"
+            | "LM Studio"
+            | "koboldcpp"
+            // Local ML inference
+            | "whisper"
+            | "whisper-server"
+            | "whisper-cpp"
     )
 }
 
@@ -159,6 +215,13 @@ fn ai_agent_display_name(process: &RawProcessSample) -> String {
         "codex" => "Codex".to_owned(),
         "aider" => "Aider".to_owned(),
         "cursor-agent" => "Cursor Agent".to_owned(),
+        "ollama" | "ollama-runner" | "ollama_llama_server" => "Ollama".to_owned(),
+        "mlx_lm" | "mlx-lm-server" | "mlx_lm.server" => "MLX Language Model".to_owned(),
+        "llama-server" | "llama-cli" | "llama-bench" => "llama.cpp".to_owned(),
+        "llamafile" => "Llamafile".to_owned(),
+        "lm-studio" | "lmstudio" | "LM Studio" => "LM Studio".to_owned(),
+        "koboldcpp" => "KoboldCpp".to_owned(),
+        "whisper" | "whisper-server" | "whisper-cpp" => "Whisper".to_owned(),
         other => other.to_owned(),
     }
 }

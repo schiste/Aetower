@@ -323,6 +323,13 @@ pub struct AggregateMetrics {
     /// macOS.
     #[serde(default)]
     pub energy_nj_per_s: f64,
+    /// Heuristic estimate of the percentage of host GPU utilisation
+    /// attributable to this entity. macOS does not expose per-process
+    /// GPU usage, so the engine distributes `host.gpu_percent` among
+    /// AI agent entities proportional to their CPU share. Non-AI
+    /// entities always read 0.0.
+    #[serde(default)]
+    pub estimated_gpu_percent: f32,
     pub process_count: u32,
     pub is_foreground: bool,
 }

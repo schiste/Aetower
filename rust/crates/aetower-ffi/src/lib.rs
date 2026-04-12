@@ -419,6 +419,9 @@ pub struct AggregateMetrics {
     /// not report energy. The UI can format as milliwatts (`/ 1e6`) or
     /// watts (`/ 1e9`) depending on magnitude.
     pub energy_nj_per_s: f64,
+    /// Heuristic GPU share attributed to this entity (0-100). Only non-zero
+    /// for AI agent entities; zero for everything else.
+    pub estimated_gpu_percent: f32,
     pub process_count: u32,
     pub is_foreground: bool,
 }
@@ -599,6 +602,7 @@ pub struct DiagnosticsOverview {
     pub error_count: u32,
     pub warn_count: u32,
     pub last_event_millis: Option<u64>,
+    pub last_error_millis: Option<u64>,
     pub last_error_message: Option<String>,
     pub persisted_events: u64,
     pub persisted_path: Option<String>,
@@ -636,6 +640,8 @@ pub struct HistoryMaintenanceReport {
     pub wal_bytes_after: u64,
     pub checkpointed: bool,
     pub vacuumed: bool,
+    pub pruned_rows: u64,
+    pub aggressive_reason: Option<String>,
 }
 
 #[derive(uniffi::Object)]
@@ -1350,6 +1356,7 @@ impl From<diagnostics::DiagnosticsOverview> for DiagnosticsOverview {
             error_count: value.error_count,
             warn_count: value.warn_count,
             last_event_millis: value.last_event_millis,
+            last_error_millis: value.last_error_millis,
             last_error_message: value.last_error_message,
             persisted_events: value.persisted_events,
             persisted_path: value.persisted_path,
@@ -1383,6 +1390,8 @@ impl From<aetower_persistence::HistoryMaintenanceReport> for HistoryMaintenanceR
             wal_bytes_after: value.wal_bytes_after,
             checkpointed: value.checkpointed,
             vacuumed: value.vacuumed,
+            pruned_rows: value.pruned_rows,
+            aggressive_reason: value.aggressive_reason,
         }
     }
 }
@@ -1671,6 +1680,7 @@ impl From<model::AggregateMetrics> for AggregateMetrics {
             network_send_bps: value.network_send_bps,
             wakeups_per_second: value.wakeups_per_second,
             energy_nj_per_s: value.energy_nj_per_s,
+            estimated_gpu_percent: value.estimated_gpu_percent,
             process_count: value.process_count,
             is_foreground: value.is_foreground,
         }
