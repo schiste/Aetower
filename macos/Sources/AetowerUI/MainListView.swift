@@ -181,6 +181,19 @@ private enum SortKey: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Sort keys that have a meaningful grouped-mode sort implementation.
+    /// Keys that return false silently degrade to friction sort in
+    /// `sortGroups` — the UI should disable or badge them so the user
+    /// knows their selection is not applied.
+    var supportsGroupedMode: Bool {
+        switch self {
+        case .friction, .cpu, .memory, .alphabeticalAsc, .alphabeticalDesc:
+            return true
+        case .disk, .network, .energy, .oldestFirst, .newestFirst:
+            return false
+        }
+    }
+
     var usesMetricValue: Bool {
         switch self {
         case .friction, .cpu, .memory, .disk, .network, .energy:
@@ -1215,10 +1228,16 @@ public struct MainListView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 80)
-                .onChange(of: listMode) { _, _ in
+                .onChange(of: listMode) { _, newMode in
                     focusedIndex = 0
                     if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
                         self.selectedEntityID = nil
+                    }
+                    // Reset unsupported sort keys when switching to grouped
+                    // mode so the user doesn't silently get friction sort
+                    // while the menu shows "Disk".
+                    if newMode == .grouped && !sortKey.supportsGroupedMode {
+                        sortKey = .friction
                     }
                 }
 
@@ -1229,12 +1248,18 @@ public struct MainListView: View {
                         } label: {
                             HStack {
                                 Text(key.title)
+                                if isGroupedMode && !key.supportsGroupedMode {
+                                    Text("(flat only)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
                                 if key == sortKey {
                                     Spacer()
                                     Image(systemName: "checkmark")
                                 }
                             }
                         }
+                        .disabled(isGroupedMode && !key.supportsGroupedMode)
                     }
                 } label: {
                     HStack(spacing: 4) {

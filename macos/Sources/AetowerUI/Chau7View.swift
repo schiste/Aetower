@@ -17,6 +17,25 @@ public struct Chau7View: View {
         state.snapshot.entities.filter { $0.entityKind == .aiAgent }
     }
 
+    private var aiAgentIDs: Set<String> {
+        Set(aiAgents.map(\.entityId))
+    }
+
+    private var sortedAiAgents: [EntitySnapshot] {
+        aiAgents.sorted {
+            if $0.friction.totalScore != $1.friction.totalScore {
+                return $0.friction.totalScore > $1.friction.totalScore
+            }
+            if $0.metrics.energyNjPerS != $1.metrics.energyNjPerS {
+                return $0.metrics.energyNjPerS > $1.metrics.energyNjPerS
+            }
+            if $0.metrics.cpuPercent != $1.metrics.cpuPercent {
+                return $0.metrics.cpuPercent > $1.metrics.cpuPercent
+            }
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
     private var host: HostSnapshot { state.snapshot.host }
 
     private var totalEnergy: Double {
@@ -31,20 +50,14 @@ public struct Chau7View: View {
         aiAgents.compactMap(\.agentCost?.sessionEnergyNj).reduce(0, +)
     }
 
-    private var vramPercent: Double {
+    private var gpuMemoryUnifiedPercent: Double {
         guard host.memoryTotalBytes > 0 else { return 0 }
         return Double(host.gpuMemoryBytes) / Double(host.memoryTotalBytes) * 100
     }
 
     private var aiTimelineEvents: [TimelineEvent] {
         state.snapshot.timeline
-            .filter { event in
-                event.entityId.map { id in
-                    aiAgents.contains { $0.entityId == id }
-                } ?? (event.title.contains("GPU memory")
-                    || event.title.contains("session ended")
-                    || event.title.contains("energy"))
-            }
+            .filter(isRelevantAiTimelineEvent)
             .suffix(10)
             .reversed()
     }
@@ -87,7 +100,7 @@ public struct Chau7View: View {
             Text("No AI agents detected")
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            Text("Start an AI coding agent (Claude Code, Codex, Aider) or a local LLM server (Ollama, MLX, llama.cpp) and it will appear here.")
+            Text("Start a supported AI coding agent or runtime and Aetower will surface its local hardware impact here.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -104,7 +117,7 @@ public struct Chau7View: View {
             summaryChip(
                 label: "\(aiAgents.count) agent\(aiAgents.count == 1 ? "" : "s")",
                 icon: "cpu",
-                color: .blue
+                color: AetowerDesign.Tone.cpu
             )
             summaryChip(
                 label: "GPU \(Int(host.gpuPercent))%",
@@ -117,26 +130,30 @@ public struct Chau7View: View {
                 color: AetowerDesign.Tone.energy
             )
             summaryChip(
-                label: "VRAM \(Int(vramPercent))%",
+                label: "GPU mem \(Int(gpuMemoryUnifiedPercent))%",
                 icon: "memorychip",
-                color: vramPercent >= 90 ? .red : vramPercent >= 75 ? .orange : .green
+                color: gpuMemoryTone
             )
             if totalCost > 0 {
                 summaryChip(
                     label: String(format: "$%.2f", totalCost),
                     icon: "dollarsign.circle",
-                    color: .green
+                    color: AetowerDesign.Status.success
                 )
             }
             if totalSessionEnergyNj > 0 {
                 summaryChip(
                     label: formatSessionEnergy(nj: totalSessionEnergyNj),
                     icon: "battery.25percent",
-                    color: .orange
+                    color: AetowerDesign.Status.warning
                 )
             }
             if host.onBattery {
-                summaryChip(label: "On Battery", icon: "bolt.slash.fill", color: .red)
+                summaryChip(
+                    label: "On Battery",
+                    icon: "bolt.slash.fill",
+                    color: AetowerDesign.Status.error
+                )
             }
             Spacer()
         }
@@ -161,8 +178,8 @@ public struct Chau7View: View {
 
     private var activeAgentsSection: some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-            sectionHeader("Active Agents")
-            ForEach(aiAgents, id: \.entityId) { entity in
+            sectionHeader("AI Runtimes")
+            ForEach(sortedAiAgents, id: \.entityId) { entity in
                 agentCard(entity)
             }
         }
@@ -215,7 +232,7 @@ public struct Chau7View: View {
                     if cost.costUsd > 0 {
                         metricPill(
                             label: String(format: "$%.2f", cost.costUsd),
-                            color: .green
+                            color: AetowerDesign.Status.success
                         )
                     }
                     if cost.totalInputTokens + cost.totalOutputTokens > 0 {
@@ -233,18 +250,20 @@ public struct Chau7View: View {
                     if cost.sessionEnergyNj > 0 {
                         metricPill(
                             label: formatSessionEnergy(nj: cost.sessionEnergyNj),
-                            color: .orange
+                            color: AetowerDesign.Status.warning
                         )
                     }
                 }
             }
 
             // Latest session marker
-            if let latest = entity.sessionMarkers.last {
+            if let latest = entity.sessionMarkers.max(by: { $0.timestampMillis < $1.timestampMillis }) {
                 HStack(spacing: AetowerDesign.Spacing.xs) {
                     Image(systemName: latest.kind == .runStart ? "play.fill" : "stop.fill")
                         .font(.caption2)
-                        .foregroundStyle(latest.kind == .runStart ? .green : .secondary)
+                        .foregroundStyle(
+                            latest.kind == .runStart ? AetowerDesign.Status.success : .secondary
+                        )
                     Text(latest.label)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -263,11 +282,19 @@ public struct Chau7View: View {
     private var projectCostsSection: some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
             sectionHeader("Project Costs")
-            ForEach(state.snapshot.aiRepoSummaries, id: \.repoPath) { repo in
+            ForEach(sortedRepoSummaries, id: \.repoPath) { repo in
                 HStack {
-                    Text(repo.displayName)
-                        .font(.subheadline)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(repo.displayName)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        if !repo.providers.isEmpty {
+                            Text(repo.providers.joined(separator: ", "))
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                        }
+                    }
                     Spacer()
                     Text("\(repo.totalRuns) run\(repo.totalRuns == 1 ? "" : "s")")
                         .font(.caption)
@@ -279,7 +306,7 @@ public struct Chau7View: View {
                         Text(String(format: "$%.2f", repo.totalCostUsd))
                             .font(.caption)
                             .fontWeight(.medium)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(AetowerDesign.Status.success)
                     }
                 }
                 .padding(.vertical, AetowerDesign.Spacing.xs)
@@ -340,10 +367,48 @@ public struct Chau7View: View {
 
     private func severityColor(_ severity: TimelineSeverity) -> Color {
         switch severity {
-        case .critical: return .red
-        case .warning: return .orange
-        case .info: return .blue
+        case .critical: return AetowerDesign.Status.error
+        case .warning: return AetowerDesign.Status.warning
+        case .info: return AetowerDesign.Status.ready
         }
+    }
+
+    private var gpuMemoryTone: Color {
+        if gpuMemoryUnifiedPercent >= 90 {
+            return AetowerDesign.Status.error
+        }
+        if gpuMemoryUnifiedPercent >= 75 {
+            return AetowerDesign.Status.warning
+        }
+        return AetowerDesign.Status.success
+    }
+
+    private var sortedRepoSummaries: [AiRepoSummary] {
+        state.snapshot.aiRepoSummaries.sorted {
+            if $0.totalCostUsd != $1.totalCostUsd {
+                return $0.totalCostUsd > $1.totalCostUsd
+            }
+            if $0.totalTokens != $1.totalTokens {
+                return $0.totalTokens > $1.totalTokens
+            }
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    private func isRelevantAiTimelineEvent(_ event: TimelineEvent) -> Bool {
+        if let entityId = event.entityId, aiAgentIDs.contains(entityId) {
+            return true
+        }
+
+        if event.category == .host && event.title.hasPrefix("GPU memory") {
+            return true
+        }
+
+        if event.category == .lifecycle && event.title.localizedCaseInsensitiveContains("session ended") {
+            return true
+        }
+
+        return false
     }
 
     // MARK: - Formatters
