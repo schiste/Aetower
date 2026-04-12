@@ -1192,6 +1192,7 @@ impl AdapterManager {
                                 total_output_tokens: 0,
                                 cost_usd: stats.total_cost,
                                 total_runs: stats.total_runs,
+                                session_energy_nj: 0, // populated by history tracker
                             });
                             if stats.total_turns > 0
                                 && !entity

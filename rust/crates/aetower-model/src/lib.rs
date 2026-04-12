@@ -410,6 +410,16 @@ pub struct AgentCostSummary {
     pub total_output_tokens: u64,
     pub cost_usd: f32,
     pub total_runs: u32,
+    /// Cumulative energy drawn by this AI agent's processes since the
+    /// session started, in nanojoules. Accumulated by the history
+    /// tracker from per-tick `energy_nj_per_s` rates. Zero when the
+    /// kernel does not report energy or on non-macOS platforms.
+    ///
+    /// Conversion helpers:
+    /// - nJ → Wh: divide by 3.6e12
+    /// - Wh → mAh at 3.7V nominal: Wh / 3.7 * 1000
+    #[serde(default)]
+    pub session_energy_nj: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]

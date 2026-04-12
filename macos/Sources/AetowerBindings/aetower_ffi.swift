@@ -1206,14 +1206,24 @@ public struct AgentCostSummary {
     public var totalOutputTokens: UInt64
     public var costUsd: Float
     public var totalRuns: UInt32
+    /**
+     * Cumulative energy in nanojoules for this AI session. The UI can
+     * convert: nJ → Wh (÷ 3.6e12), Wh → mAh at 3.7V (Wh / 3.7 * 1000).
+     */
+    public var sessionEnergyNj: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(totalInputTokens: UInt64, totalOutputTokens: UInt64, costUsd: Float, totalRuns: UInt32) {
+    public init(totalInputTokens: UInt64, totalOutputTokens: UInt64, costUsd: Float, totalRuns: UInt32, 
+        /**
+         * Cumulative energy in nanojoules for this AI session. The UI can
+         * convert: nJ → Wh (÷ 3.6e12), Wh → mAh at 3.7V (Wh / 3.7 * 1000).
+         */sessionEnergyNj: UInt64) {
         self.totalInputTokens = totalInputTokens
         self.totalOutputTokens = totalOutputTokens
         self.costUsd = costUsd
         self.totalRuns = totalRuns
+        self.sessionEnergyNj = sessionEnergyNj
     }
 }
 
@@ -1236,6 +1246,9 @@ extension AgentCostSummary: Equatable, Hashable {
         if lhs.totalRuns != rhs.totalRuns {
             return false
         }
+        if lhs.sessionEnergyNj != rhs.sessionEnergyNj {
+            return false
+        }
         return true
     }
 
@@ -1244,6 +1257,7 @@ extension AgentCostSummary: Equatable, Hashable {
         hasher.combine(totalOutputTokens)
         hasher.combine(costUsd)
         hasher.combine(totalRuns)
+        hasher.combine(sessionEnergyNj)
     }
 }
 
@@ -1259,7 +1273,8 @@ public struct FfiConverterTypeAgentCostSummary: FfiConverterRustBuffer {
                 totalInputTokens: FfiConverterUInt64.read(from: &buf), 
                 totalOutputTokens: FfiConverterUInt64.read(from: &buf), 
                 costUsd: FfiConverterFloat.read(from: &buf), 
-                totalRuns: FfiConverterUInt32.read(from: &buf)
+                totalRuns: FfiConverterUInt32.read(from: &buf), 
+                sessionEnergyNj: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -1268,6 +1283,7 @@ public struct FfiConverterTypeAgentCostSummary: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.totalOutputTokens, into: &buf)
         FfiConverterFloat.write(value.costUsd, into: &buf)
         FfiConverterUInt32.write(value.totalRuns, into: &buf)
+        FfiConverterUInt64.write(value.sessionEnergyNj, into: &buf)
     }
 }
 

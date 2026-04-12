@@ -490,6 +490,9 @@ pub struct AgentCostSummary {
     pub total_output_tokens: u64,
     pub cost_usd: f32,
     pub total_runs: u32,
+    /// Cumulative energy in nanojoules for this AI session. The UI can
+    /// convert: nJ → Wh (÷ 3.6e12), Wh → mAh at 3.7V (Wh / 3.7 * 1000).
+    pub session_energy_nj: u64,
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -1865,6 +1868,7 @@ impl From<model::AgentCostSummary> for AgentCostSummary {
             total_output_tokens: value.total_output_tokens,
             cost_usd: value.cost_usd,
             total_runs: value.total_runs,
+            session_energy_nj: value.session_energy_nj,
         }
     }
 }

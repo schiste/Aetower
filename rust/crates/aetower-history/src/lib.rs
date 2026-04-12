@@ -34,6 +34,12 @@ pub struct History {
     /// "still Critical" when readings resumed, and the transition detector
     /// would skip re-firing because `current == previous`.
     last_sensor_reading_millis: BTreeMap<String, u64>,
+    /// Cumulative energy per AI agent entity, in nanojoules. Accumulated
+    /// each tick from `entity.metrics.energy_nj_per_s * TICK_SECONDS`.
+    /// When an AI agent entity disappears (process exited), the
+    /// accumulated value is used to emit a "session ended — X Wh" timeline
+    /// event, then the entry is removed.
+    ai_session_energy_nj: BTreeMap<String, u64>,
 }
 
 struct MetricTrendState {
@@ -158,6 +164,7 @@ impl History {
             sensor_alert_thresholds: default_sensor_alert_thresholds(),
             previous_sensor_alert_levels: BTreeMap::new(),
             last_sensor_reading_millis: BTreeMap::new(),
+            ai_session_energy_nj: BTreeMap::new(),
         }
     }
 
@@ -413,6 +420,71 @@ impl History {
             }
             self.previous_scores
                 .insert(entity.entity_id.clone(), entity.friction.total_score);
+        }
+
+        // Session energy journaling: accumulate per-tick energy for each
+        // AI agent entity, and emit a summary event when the entity
+        // disappears (session ended).
+        let tick_seconds = 2.0f64; // matches collector TICK_SECONDS
+        let active_ai_ids: HashSet<String> = entities
+            .iter()
+            .filter(|e| matches!(e.entity_kind, aetower_model::EntityKind::AiAgent))
+            .map(|e| e.entity_id.clone())
+            .collect();
+
+        // Accumulate energy for active AI agents and write back to
+        // entity.agent_cost.session_energy_nj so the UI can display it.
+        for entity in entities
+            .iter_mut()
+            .filter(|e| matches!(e.entity_kind, aetower_model::EntityKind::AiAgent))
+        {
+            let delta_nj = (entity.metrics.energy_nj_per_s * tick_seconds) as u64;
+            let cumulative = self
+                .ai_session_energy_nj
+                .entry(entity.entity_id.clone())
+                .or_insert(0);
+            *cumulative = cumulative.saturating_add(delta_nj);
+            // Ensure the entity has an AgentCostSummary to write to.
+            let cost = entity.agent_cost.get_or_insert_with(Default::default);
+            cost.session_energy_nj = *cumulative;
+        }
+
+        // Detect AI agents that were present last tick but are gone now
+        // (session ended). Emit a summary timeline event with the
+        // accumulated energy in human-readable units.
+        let ended_sessions: Vec<(String, u64)> = self
+            .ai_session_energy_nj
+            .iter()
+            .filter(|(entity_id, _)| !active_ai_ids.contains(*entity_id))
+            .map(|(entity_id, energy_nj)| (entity_id.clone(), *energy_nj))
+            .collect();
+        for (entity_id, energy_nj) in ended_sessions {
+            self.ai_session_energy_nj.remove(&entity_id);
+            if energy_nj == 0 {
+                continue;
+            }
+            let wh = energy_nj as f64 / 3.6e12;
+            let mah = wh / 3.7 * 1000.0;
+            let detail = if wh >= 1.0 {
+                format!("Session consumed {wh:.2} Wh ({mah:.0} mAh at 3.7V nominal)")
+            } else {
+                let mwh = wh * 1000.0;
+                format!("Session consumed {mwh:.1} mWh ({mah:.1} mAh at 3.7V nominal)")
+            };
+            // Extract a human-readable name from the entity_id.
+            let display = entity_id
+                .strip_prefix("ai-agent:")
+                .or_else(|| entity_id.strip_prefix("ai-agent-daemon:"))
+                .unwrap_or(&entity_id)
+                .to_owned();
+            self.push_event(
+                captured_at_millis,
+                TimelineCategory::Lifecycle,
+                TimelineSeverity::Info,
+                Some(entity_id),
+                format!("{display} session ended"),
+                detail,
+            );
         }
 
         while self.timeline.len() > 120 {
@@ -2155,6 +2227,84 @@ mod tests {
         assert_eq!(classify_alert(80.0, &below), AlertLevel::Warning);
         assert_eq!(classify_alert(50.0, &below), AlertLevel::Critical);
         assert_eq!(classify_alert(10.0, &below), AlertLevel::Critical);
+    }
+
+    fn ai_agent_entity(
+        id: &str,
+        name: &str,
+        energy_nj_per_s: f64,
+    ) -> aetower_model::EntitySnapshot {
+        let mut entity = entity_with_process(id, name, 999, 1_000);
+        entity.entity_kind = aetower_model::EntityKind::AiAgent;
+        entity.metrics.energy_nj_per_s = energy_nj_per_s;
+        entity
+    }
+
+    #[test]
+    fn ai_session_accumulates_energy_across_ticks() {
+        let mut history = History::new();
+        let host = HostSnapshot::default();
+
+        // 1 W = 1e9 nJ/s. Over 2s tick → 2e9 nJ per tick.
+        let mut entities = vec![ai_agent_entity(
+            "ai-agent:1",
+            "Claude Code",
+            1_000_000_000.0,
+        )];
+        let _ = history.update(1_000, &host, &mut entities);
+        assert_eq!(
+            entities[0].agent_cost.as_ref().map(|c| c.session_energy_nj),
+            Some(2_000_000_000)
+        );
+
+        // Second tick → cumulative 4e9 nJ.
+        let mut entities = vec![ai_agent_entity(
+            "ai-agent:1",
+            "Claude Code",
+            1_000_000_000.0,
+        )];
+        let _ = history.update(3_000, &host, &mut entities);
+        assert_eq!(
+            entities[0].agent_cost.as_ref().map(|c| c.session_energy_nj),
+            Some(4_000_000_000)
+        );
+    }
+
+    #[test]
+    fn ai_session_end_emits_energy_summary() {
+        let mut history = History::new();
+        let host = HostSnapshot::default();
+
+        // Two ticks of 1 W → 4e9 nJ cumulative.
+        let mut entities = vec![ai_agent_entity(
+            "ai-agent:1",
+            "Claude Code",
+            1_000_000_000.0,
+        )];
+        let _ = history.update(1_000, &host, &mut entities);
+        let mut entities = vec![ai_agent_entity(
+            "ai-agent:1",
+            "Claude Code",
+            1_000_000_000.0,
+        )];
+        let _ = history.update(3_000, &host, &mut entities);
+
+        // Agent disappears (process exited) → session-end event.
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+        let (events, _) = history.update(5_000, &host, &mut entities);
+        let session_end: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.title.contains("session ended") && event.timestamp_millis == 5_000
+            })
+            .collect();
+        assert_eq!(
+            session_end.len(),
+            1,
+            "session end event missing: {events:?}"
+        );
+        assert_eq!(session_end[0].severity, TimelineSeverity::Info);
+        assert!(session_end[0].detail.contains("Wh") || session_end[0].detail.contains("mWh"));
     }
 
     #[test]
