@@ -120,6 +120,7 @@ const RESTART_LOOP_WINDOW_MILLIS: u64 = 60_000;
 const SENSOR_KEY_CPU_TEMPERATURE: &str = "cpu_temperature";
 const SENSOR_KEY_BATTERY_HEALTH: &str = "battery_health";
 const SENSOR_KEY_FAN_STUCK: &str = "fan_stuck_under_load";
+const SENSOR_KEY_GPU_MEMORY: &str = "gpu_memory_ratio";
 
 /// How long a sensor key can go without a fresh reading before the alert
 /// tracker treats it as "unavailable" and force-clears the stored alert
@@ -1494,6 +1495,18 @@ fn default_sensor_alert_thresholds() -> Vec<AlertThreshold> {
             warning_value: 80.0,
             critical_value: 50.0,
             direction: ThresholdDirection::Below,
+        },
+        // GPU (Metal heap) memory as a percentage of total unified memory.
+        // On Apple Silicon, GPU and CPU share the same physical RAM pool.
+        // When the Metal heap exceeds ~75% of total memory, the system is
+        // under pressure and a large model load or additional allocation
+        // risks pushing into swap. At 90%, inference throughput typically
+        // falls off a cliff as Metal pages get evicted to the compressor.
+        AlertThreshold {
+            sensor_key: SENSOR_KEY_GPU_MEMORY.to_owned(),
+            warning_value: 75.0,
+            critical_value: 90.0,
+            direction: ThresholdDirection::Above,
         },
     ]
 }
