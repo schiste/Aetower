@@ -411,14 +411,20 @@ impl Engine {
                         .filter(|e| matches!(e.entity_kind, aetower_model::EntityKind::AiAgent))
                         .map(|e| e.metrics.cpu_percent)
                         .sum();
-                    if total_ai_cpu > 0.0 {
-                        for entity in entities
-                            .iter_mut()
-                            .filter(|e| matches!(e.entity_kind, aetower_model::EntityKind::AiAgent))
-                        {
-                            entity.metrics.estimated_gpu_percent =
-                                (entity.metrics.cpu_percent / total_ai_cpu) * host.gpu_percent;
-                        }
+                    for entity in entities
+                        .iter_mut()
+                        .filter(|e| matches!(e.entity_kind, aetower_model::EntityKind::AiAgent))
+                    {
+                        entity.metrics.estimated_gpu_percent = if total_ai_cpu > 0.0 {
+                            // Distribute proportional to CPU share when agents
+                            // are doing mixed CPU+GPU work.
+                            (entity.metrics.cpu_percent / total_ai_cpu) * host.gpu_percent
+                        } else {
+                            // Fallback: agents are GPU-active but CPU-idle
+                            // (the typical Metal-compute inference pattern).
+                            // Distribute equally since we have no better signal.
+                            host.gpu_percent / ai_count as f32
+                        };
                     }
                 }
 

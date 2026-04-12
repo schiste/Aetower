@@ -40,6 +40,12 @@ pub struct History {
     /// accumulated value is used to emit a "session ended — X Wh" timeline
     /// event, then the entry is removed.
     ai_session_energy_nj: BTreeMap<String, u64>,
+    /// Debounce counter for AI session end detection. When an AI agent
+    /// entity disappears, we wait this many consecutive absent ticks
+    /// before emitting the session-end event. This prevents a single-
+    /// tick collector hiccup (process briefly invisible) from flushing
+    /// accumulated energy and emitting a spurious "session ended" event.
+    ai_session_absent_ticks: BTreeMap<String, u8>,
 }
 
 struct MetricTrendState {
@@ -165,6 +171,7 @@ impl History {
             previous_sensor_alert_levels: BTreeMap::new(),
             last_sensor_reading_millis: BTreeMap::new(),
             ai_session_energy_nj: BTreeMap::new(),
+            ai_session_absent_ticks: BTreeMap::new(),
         }
     }
 
@@ -449,17 +456,39 @@ impl History {
             cost.session_energy_nj = *cumulative;
         }
 
-        // Detect AI agents that were present last tick but are gone now
-        // (session ended). Emit a summary timeline event with the
-        // accumulated energy in human-readable units.
+        // Detect AI agents that were present recently but have been absent
+        // for several consecutive ticks (session truly ended, not a brief
+        // collector hiccup). Without debounce, a single-tick gap would
+        // emit a spurious "session ended" event and lose the accumulated
+        // energy.
+        const SESSION_END_DEBOUNCE_TICKS: u8 = 3;
+        // Increment absent-tick counters for tracked sessions whose entity
+        // is not in this tick's active set.
+        let tracked_ids: Vec<String> = self.ai_session_energy_nj.keys().cloned().collect();
+        for id in &tracked_ids {
+            if active_ai_ids.contains(id) {
+                // Agent is active — reset debounce counter.
+                self.ai_session_absent_ticks.remove(id);
+            } else {
+                let counter = self.ai_session_absent_ticks.entry(id.clone()).or_insert(0);
+                *counter = counter.saturating_add(1);
+            }
+        }
+        // Emit session-end events only for agents absent for the full
+        // debounce window.
         let ended_sessions: Vec<(String, u64)> = self
-            .ai_session_energy_nj
+            .ai_session_absent_ticks
             .iter()
-            .filter(|(entity_id, _)| !active_ai_ids.contains(*entity_id))
-            .map(|(entity_id, energy_nj)| (entity_id.clone(), *energy_nj))
+            .filter(|(_, ticks)| **ticks >= SESSION_END_DEBOUNCE_TICKS)
+            .filter_map(|(entity_id, _)| {
+                self.ai_session_energy_nj
+                    .get(entity_id)
+                    .map(|energy| (entity_id.clone(), *energy))
+            })
             .collect();
         for (entity_id, energy_nj) in ended_sessions {
             self.ai_session_energy_nj.remove(&entity_id);
+            self.ai_session_absent_ticks.remove(&entity_id);
             if energy_nj == 0 {
                 continue;
             }
@@ -2289,22 +2318,77 @@ mod tests {
         )];
         let _ = history.update(3_000, &host, &mut entities);
 
-        // Agent disappears (process exited) → session-end event.
+        // Agent disappears — must be absent for 3 consecutive ticks
+        // (the debounce window) before the session-end event fires.
         let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
         let (events, _) = history.update(5_000, &host, &mut entities);
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.title.contains("session ended")),
+            "session end must NOT fire after only 1 absent tick (debounce)"
+        );
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+        let _ = history.update(7_000, &host, &mut entities);
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+        let (events, _) = history.update(9_000, &host, &mut entities);
         let session_end: Vec<_> = events
             .iter()
-            .filter(|event| {
-                event.title.contains("session ended") && event.timestamp_millis == 5_000
-            })
+            .filter(|event| event.title.contains("session ended"))
             .collect();
         assert_eq!(
             session_end.len(),
             1,
-            "session end event missing: {events:?}"
+            "session end event must fire after 3 absent ticks: {events:?}"
         );
         assert_eq!(session_end[0].severity, TimelineSeverity::Info);
         assert!(session_end[0].detail.contains("Wh") || session_end[0].detail.contains("mWh"));
+    }
+
+    /// Regression: a single-tick entity disappearance (collector hiccup)
+    /// must NOT flush accumulated energy or emit a spurious event.
+    #[test]
+    fn ai_session_survives_single_tick_gap() {
+        let mut history = History::new();
+        let host = HostSnapshot::default();
+
+        // Two ticks of active energy.
+        let mut entities = vec![ai_agent_entity(
+            "ai-agent:1",
+            "Claude Code",
+            1_000_000_000.0,
+        )];
+        let _ = history.update(1_000, &host, &mut entities);
+        let mut entities = vec![ai_agent_entity(
+            "ai-agent:1",
+            "Claude Code",
+            1_000_000_000.0,
+        )];
+        let _ = history.update(3_000, &host, &mut entities);
+
+        // Entity disappears for one tick.
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+        let (events, _) = history.update(5_000, &host, &mut entities);
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.title.contains("session ended")),
+            "single-tick gap must not flush the session"
+        );
+
+        // Entity returns — cumulative energy must continue from where
+        // it left off, NOT restart from zero.
+        let mut entities = vec![ai_agent_entity(
+            "ai-agent:1",
+            "Claude Code",
+            1_000_000_000.0,
+        )];
+        let _ = history.update(7_000, &host, &mut entities);
+        assert_eq!(
+            entities[0].agent_cost.as_ref().map(|c| c.session_energy_nj),
+            Some(6_000_000_000), // 3 ticks × 2e9 nJ/tick
+            "cumulative energy must not reset after a brief gap"
+        );
     }
 
     #[test]
