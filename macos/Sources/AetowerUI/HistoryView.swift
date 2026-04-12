@@ -1,6 +1,6 @@
+import AetowerBridge
 import Foundation
 import SwiftUI
-import AetowerBridge
 
 private enum HistoryRangePreset: Double, CaseIterable, Identifiable {
     case lastHour = 3_600
@@ -39,12 +39,23 @@ private struct HistoricalEntitySummary: Identifiable {
     let peakNetworkBps: UInt64
 }
 
+/// A single notable-change entry extracted from persisted snapshots.
+/// Named struct replaces the anonymous 4-field tuple that was used
+/// as a ForEach element.
+private struct ChangeNoteSummary: Identifiable {
+    let id: String
+    let name: String
+    let summary: String
+    let capturedAtMillis: UInt64
+}
+
 public struct HistoryView: View {
     let state: AppState
     @State private var range: HistoryRangePreset = .lastHour
     @State private var showClearHistoryConfirmation = false
+    @State private var showAllEntities = false
 
-    private let columns = [GridItem(.adaptive(minimum: 180), spacing: 12)]
+    private let columns = [GridItem(.adaptive(minimum: 180), spacing: AetowerDesign.Spacing.md)]
 
     public init(state: AppState) {
         self.state = state
@@ -52,8 +63,8 @@ public struct HistoryView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                     Text("Persisted history")
                         .font(.system(size: 28, weight: .semibold, design: .rounded))
                     Text("This view comes from the persisted snapshot store, not just the in-memory trend buffer. Use it to see what Aetower has been observing over a wider time range.")
@@ -94,12 +105,6 @@ public struct HistoryView: View {
                     )
                     .frame(maxWidth: .infinity)
                 } else {
-                    // Compute sample arrays once per render to avoid
-                    // the double-evaluation pattern where latestHostXxx
-                    // re-traversed the same array that body passed
-                    // separately. Each hostXxxSamples was O(n) over all
-                    // loaded snapshots; calling it twice per card doubled
-                    // the cost for no benefit.
                     let frictionSamples = hostFrictionSamples
                     let cpuSamples = hostCPUSamples
                     let memorySamples = hostMemorySamples
@@ -108,7 +113,7 @@ public struct HistoryView: View {
                     let lastHost = state.historySnapshots.last?.host
 
                     GroupBox("Host trend") {
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+                        LazyVGrid(columns: columns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                             TrendMetricCard(
                                 title: "Friction",
                                 value: String(format: "%.1f", frictionSamples.last ?? 0),
@@ -145,7 +150,7 @@ public struct HistoryView: View {
                                 style: .energy
                             )
                         }
-                        .padding(.top, 4)
+                        .padding(.top, AetowerDesign.Spacing.xs)
                     }
 
                     GroupBox("Most recurring entities") {
@@ -153,9 +158,12 @@ public struct HistoryView: View {
                             Text("No entity-level history is persisted for this range yet.")
                                 .foregroundStyle(.secondary)
                         } else {
-                            VStack(alignment: .leading, spacing: 12) {
-                                ForEach(historicalEntities.prefix(12)) { entity in
-                                    VStack(alignment: .leading, spacing: 4) {
+                            let visibleEntities = showAllEntities
+                                ? historicalEntities
+                                : Array(historicalEntities.prefix(12))
+                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                                ForEach(visibleEntities) { entity in
+                                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                                         HStack {
                                             Text(entity.name)
                                                 .font(.headline)
@@ -171,19 +179,25 @@ public struct HistoryView: View {
                                         .foregroundStyle(.secondary)
                                     }
                                 }
+                                if !showAllEntities && historicalEntities.count > 12 {
+                                    Button("Show all \(historicalEntities.count) entities") {
+                                        showAllEntities = true
+                                    }
+                                    .font(.caption)
+                                }
                             }
-                            .padding(.top, 4)
+                            .padding(.top, AetowerDesign.Spacing.xs)
                         }
                     }
 
-                    GroupBox("Latest notable changes") {
-                        if latestChangeSummaries.isEmpty {
+                    GroupBox("Notable changes across range") {
+                        if changeSummaries.isEmpty {
                             Text("No persisted recent-change summaries are available in this range yet.")
                                 .foregroundStyle(.secondary)
                         } else {
-                            VStack(alignment: .leading, spacing: 10) {
-                                ForEach(latestChangeSummaries, id: \.id) { item in
-                                    VStack(alignment: .leading, spacing: 4) {
+                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                                ForEach(changeSummaries) { item in
+                                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                                         HStack {
                                             Text(item.name)
                                                 .font(.headline)
@@ -199,12 +213,27 @@ public struct HistoryView: View {
                                     }
                                 }
                             }
-                            .padding(.top, 4)
+                            .padding(.top, AetowerDesign.Spacing.xs)
                         }
                     }
 
+                    // Load-more button surfaced prominently between content
+                    // and the diagnostic Store Coverage box. Previously it
+                    // was buried inside Store Coverage and not discoverable.
+                    if state.historyIsLoadingMore {
+                        ProgressView("Loading older samples...")
+                            .progressViewStyle(.linear)
+                    } else if state.historyHasMore {
+                        Button {
+                            state.loadMoreHistory()
+                        } label: {
+                            Label("Load more persisted samples", systemImage: "arrow.down.circle")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
                     GroupBox("Store coverage") {
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                             LabeledContent("Range", value: range.detail)
                             LabeledContent(
                                 "Loaded samples",
@@ -248,21 +277,12 @@ public struct HistoryView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                                 .fixedSize(horizontal: false, vertical: true)
-                            if state.historyIsLoadingMore {
-                                ProgressView("Loading older samples…")
-                                    .progressViewStyle(.linear)
-                            } else if state.historyHasMore {
-                                Button("Load more persisted samples") {
-                                    state.loadMoreHistory()
-                                }
-                                .buttonStyle(.bordered)
-                            }
                         }
-                        .padding(.top, 4)
+                        .padding(.top, AetowerDesign.Spacing.xs)
                     }
                 }
             }
-            .padding(24)
+            .padding(AetowerDesign.Spacing.xxl)
         }
         .navigationTitle("History")
         .task {
@@ -274,6 +294,7 @@ public struct HistoryView: View {
         }
         .onChange(of: range) { _, newValue in
             state.setHistoryWindow(seconds: newValue.rawValue)
+            showAllEntities = false
         }
         .alert("Clear persisted history?", isPresented: $showClearHistoryConfirmation) {
             Button("Cancel", role: .cancel) {}
@@ -285,12 +306,11 @@ public struct HistoryView: View {
         }
     }
 
-
     private var historyLoadingState: some View {
         ContentUnavailableView {
             Label("Loading persisted history", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
         } description: {
-            VStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
                 Text(state.historyLoadStatus ?? "Preparing the local history store and loading recent samples first.")
                 if let summary = state.historyRangeSummary {
                     Text(
@@ -305,7 +325,6 @@ public struct HistoryView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
 
     private var hostFrictionSamples: [Double] {
         state.historySnapshots.map(historyMachineFriction)
@@ -370,23 +389,37 @@ public struct HistoryView: View {
         }
     }
 
-    private var latestChangeSummaries: [(id: String, name: String, summary: String, capturedAtMillis: UInt64)] {
-        guard let latestSnapshot = state.historySnapshots.last else {
-            return []
-        }
-        return latestSnapshot.entities.compactMap { entity in
-            guard let summary = entity.recentChangeSummary, !summary.isEmpty else {
-                return nil
+    /// Aggregate notable change summaries across ALL loaded snapshots,
+    /// not just the most recent one. Each entity's most recent change
+    /// summary is kept (deduped by entity ID, latest timestamp wins).
+    /// This gives meaningful results even for a 7-day window where the
+    /// "latest" snapshot might not capture the most interesting events.
+    private var changeSummaries: [ChangeNoteSummary] {
+        var bestByEntity: [String: ChangeNoteSummary] = [:]
+        for snapshot in state.historySnapshots {
+            for entity in snapshot.entities {
+                guard let summary = entity.recentChangeSummary, !summary.isEmpty else {
+                    continue
+                }
+                let candidate = ChangeNoteSummary(
+                    id: entity.entityId,
+                    name: entity.displayName,
+                    summary: summary,
+                    capturedAtMillis: snapshot.capturedAtMillis
+                )
+                if let existing = bestByEntity[entity.entityId] {
+                    if candidate.capturedAtMillis > existing.capturedAtMillis {
+                        bestByEntity[entity.entityId] = candidate
+                    }
+                } else {
+                    bestByEntity[entity.entityId] = candidate
+                }
             }
-            return (
-                id: entity.entityId,
-                name: entity.displayName,
-                summary: summary,
-                capturedAtMillis: latestSnapshot.capturedAtMillis
-            )
         }
-        .prefix(8)
-        .map { $0 }
+        return bestByEntity.values
+            .sorted { $0.capturedAtMillis > $1.capturedAtMillis }
+            .prefix(12)
+            .map { $0 }
     }
 }
 
