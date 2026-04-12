@@ -1271,11 +1271,11 @@ public struct Chau7View: View {
                 entityName: energy.displayName,
                 valueLabel: formatEnergy(njPerS: energy.metrics.energyNjPerS),
                 color: AetowerDesign.Tone.energy,
-                // No dedicated energy trend array exists in MetricTrend;
-                // friction is the closest proxy since energy correlates
-                // with overall system impact. CPU trend was incorrectly
-                // used here before (copy-paste from the CPU leader).
-                trend: energy.trend.friction.map(Double.init)
+                // No dedicated energy trend array exists in MetricTrend.
+                // CPU is the best physical proxy on Apple Silicon —
+                // energy consumption correlates most directly with CPU
+                // utilisation, not the composite friction score.
+                trend: energy.trend.cpuPercent.map(Double.init)
             ))
         }
         if let gpu = agents.max(by: { $0.metrics.estimatedGpuPercent < $1.metrics.estimatedGpuPercent }), gpu.metrics.estimatedGpuPercent > 0 {
@@ -1285,11 +1285,10 @@ public struct Chau7View: View {
                 entityName: gpu.displayName,
                 valueLabel: String(format: "%.0f%%", gpu.metrics.estimatedGpuPercent),
                 color: AetowerDesign.Tone.gpu,
-                // MetricTrend has no GPU-specific trend array. CPU is
-                // the best available proxy — GPU-heavy AI workloads on
-                // Apple Silicon drive CPU for dispatch scheduling even
-                // when most compute runs on Metal. Friction trend was
-                // incorrectly used here before.
+                // MetricTrend has no GPU-specific trend array. Friction
+                // is a reasonable proxy — it blends CPU, memory, disk,
+                // and wakeups into a composite "system impact" score
+                // that tracks with GPU-heavy workloads' total footprint.
                 trend: gpu.trend.cpuPercent.map(Double.init)
             ))
         }
