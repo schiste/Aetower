@@ -716,7 +716,8 @@ private func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup]
         let rhsHints = workspaceHints(for: rhs)
         let sharedHint = !lhsHints.isDisjoint(with: rhsHints)
 
-        let sameUser = primaryUser(for: lhs) != nil && primaryUser(for: lhs) == primaryUser(for: rhs)
+        let lhsUser = primaryUser(for: lhs)
+        let sameUser = lhsUser != nil && lhsUser == primaryUser(for: rhs)
         let launchDelta = abs(Int64(lhs.oldestProcessStartMillis) - Int64(rhs.oldestProcessStartMillis))
         let closeLaunch = launchDelta > 0 && launchDelta <= 120_000
 
@@ -915,14 +916,16 @@ public struct MainListView: View {
     }
 
     private var summaryHeader: some View {
-        HStack(spacing: 0) {
+        let frictionScore = machineFrictionScore(for: state.snapshot.host)
+        let frictionColor = AetowerDesign.frictionColor(Float(frictionScore))
+        return HStack(spacing: 0) {
             // Friction score — large, colored
             HStack(spacing: 6) {
                 Image(systemName: "bolt.fill")
-                    .foregroundStyle(AetowerDesign.frictionColor(Float(machineFrictionScore(for: state.snapshot.host))))
-                Text(String(format: "%.0f", machineFrictionScore(for: state.snapshot.host)))
+                    .foregroundStyle(frictionColor)
+                Text(String(format: "%.0f", frictionScore))
                     .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundStyle(AetowerDesign.frictionColor(Float(machineFrictionScore(for: state.snapshot.host))))
+                    .foregroundStyle(frictionColor)
                     .contentTransition(.numericText())
             }
             .padding(.horizontal, 16)
@@ -1448,12 +1451,12 @@ public struct MainListView: View {
         return alerts
     }
 
+    // Resolves from the full snapshot so the detail pane persists even
+    // when the entity is filtered out by search. Eliminates one
+    // redundant filteredEntities evaluation per render cycle.
     private var selectedEntity: EntitySnapshot? {
-        if let selectedEntityID {
-            return filteredEntities.first(where: { $0.entityId == selectedEntityID })
-                ?? state.snapshot.entities.first(where: { $0.entityId == selectedEntityID })
-        }
-        return nil
+        guard let selectedEntityID else { return nil }
+        return state.snapshot.entities.first { $0.entityId == selectedEntityID }
     }
 
     private var selectedEntityGroup: EntityGroup? {
