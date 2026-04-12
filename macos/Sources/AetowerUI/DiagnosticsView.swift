@@ -66,8 +66,8 @@ public struct DiagnosticsView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                     Text("Diagnostics")
                         .font(.system(size: 28, weight: .semibold, design: .rounded))
                     Text("Bounded runtime diagnostics from the engine, adapters, persistence, telemetry, and the bridge. Use this to understand what Aetower is doing, not just what it is observing.")
@@ -79,7 +79,7 @@ public struct DiagnosticsView: View {
                 overview
                 eventStream
             }
-            .padding(24)
+            .padding(AetowerDesign.Spacing.xxl)
         }
         .navigationTitle("Diagnostics")
         .onAppear {
@@ -196,7 +196,7 @@ public struct DiagnosticsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .padding(.top, 4)
+            .padding(.top, AetowerDesign.Spacing.xs)
         }
     }
 
@@ -239,6 +239,41 @@ public struct DiagnosticsView: View {
                     subtitle: "current self-observed pipeline latency"
                 )
                 diagnosticsMetric(
+                    title: "Collect",
+                    value: String(format: "%.1f ms", state.runtimeLagMetrics.collectMillis),
+                    subtitle: "process scan + host sample"
+                )
+                diagnosticsMetric(
+                    title: "Identity",
+                    value: String(format: "%.1f ms", state.runtimeLagMetrics.identityMillis),
+                    subtitle: "process → entity resolution"
+                )
+                diagnosticsMetric(
+                    title: "Attribution",
+                    value: String(format: "%.1f ms", state.runtimeLagMetrics.attributionMillis),
+                    subtitle: "entity grouping + metrics"
+                )
+                diagnosticsMetric(
+                    title: "Friction",
+                    value: String(format: "%.1f ms", state.runtimeLagMetrics.frictionMillis),
+                    subtitle: "scoring + recommendations"
+                )
+                diagnosticsMetric(
+                    title: "Enrich",
+                    value: String(format: "%.1f ms", state.runtimeLagMetrics.enrichMillis),
+                    subtitle: "adapter context merge"
+                )
+                diagnosticsMetric(
+                    title: "History",
+                    value: String(format: "%.1f ms", state.runtimeLagMetrics.historyMillis),
+                    subtitle: "timeline + trend update"
+                )
+                diagnosticsMetric(
+                    title: "Persist",
+                    value: String(format: "%.1f ms", state.runtimeLagMetrics.persistMillis),
+                    subtitle: "SQLite write queue"
+                )
+                diagnosticsMetric(
                     title: "Target cadence",
                     value: String(format: "%.1f s", state.runtimeLagMetrics.targetTickMillis / 1000),
                     subtitle: "active adaptive target tick"
@@ -258,7 +293,7 @@ public struct DiagnosticsView: View {
                     subtitle: "refresh and avg input latency"
                 )
             }
-            .padding(.top, 4)
+            .padding(.top, AetowerDesign.Spacing.xs)
             VStack(alignment: .leading, spacing: 6) {
                 if let persistedPath = state.diagnosticsOverview.persistedPath {
                     labeledPersistenceDetail("Diagnostics file", persistedPath)
@@ -295,12 +330,12 @@ public struct DiagnosticsView: View {
                     "Current errors stay prominent, stale retained errors are downgraded, and repeated persistence churn is summarized instead of retained row-by-row."
                 )
             }
-            .padding(.top, 8)
+            .padding(.top, AetowerDesign.Spacing.sm)
             if let persistenceError = state.diagnosticsOverview.persistenceError {
                 Text(persistenceError)
                     .font(.caption)
                     .foregroundStyle(.orange)
-                    .padding(.top, 8)
+                    .padding(.top, AetowerDesign.Spacing.sm)
             }
         }
     }
@@ -362,13 +397,13 @@ public struct DiagnosticsView: View {
                     ForEach(clusters) { cluster in
                         let event = cluster.representative
                         VStack(alignment: .leading, spacing: 6) {
-                            HStack(alignment: .top, spacing: 8) {
+                            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
                                 Circle()
                                     .fill(levelColor(event.level))
                                     .frame(width: 8, height: 8)
                                     .padding(.top, 6)
                                 VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 8) {
+                                    HStack(spacing: AetowerDesign.Spacing.sm) {
                                         Text(event.message)
                                             .font(.headline)
                                         Text(subsystemLabel(event.subsystem))
@@ -399,7 +434,7 @@ public struct DiagnosticsView: View {
                                     }
                                     if !cluster.latestFields.isEmpty {
                                         DisclosureGroup(cluster.count > 1 ? "Latest fields" : "Fields") {
-                                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 8)], alignment: .leading, spacing: 8) {
+                                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: AetowerDesign.Spacing.sm)], alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                                                 ForEach(Array(cluster.latestFields.enumerated()), id: \.offset) { _, field in
                                                     VStack(alignment: .leading, spacing: 2) {
                                                         Text(field.key)
@@ -414,7 +449,7 @@ public struct DiagnosticsView: View {
                                                     .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                                                 }
                                             }
-                                            .padding(.top, 4)
+                                            .padding(.top, AetowerDesign.Spacing.xs)
                                         }
                                     }
                                 }
@@ -427,7 +462,7 @@ public struct DiagnosticsView: View {
                         }
                     }
                 }
-                .padding(.top, 4)
+                .padding(.top, AetowerDesign.Spacing.xs)
             }
         }
     }
@@ -474,8 +509,10 @@ public struct DiagnosticsView: View {
         var seen = Set(state.diagnosticsEvents.map(\.subsystem))
         if seen.isEmpty {
             seen = [
-                .engine, .persistence, .telemetry, .adapterChromium, .adapterDocker,
-                .adapterHelper, .adapterChau7, .gpu, .ffi, .ui
+                .engine, .collector, .identity, .attribution, .friction,
+                .history, .persistence, .telemetry, .gpu, .ffi, .ui,
+                .adapterChromium, .adapterDocker, .adapterHelper, .adapterChau7,
+                .adapterVsCode
             ]
         }
         return Array(seen).sorted { subsystemLabel($0) < subsystemLabel($1) }
@@ -557,7 +594,7 @@ public struct DiagnosticsView: View {
             return "\(error) · \(freshness)"
         }
         guard let summary = state.sessionLogSummary else {
-            return "Open Diagnostics to analyze the current session"
+            return "Unified log analysis is starting…"
         }
         return "\(summary.cursorUiEntries) cursor updates, \(summary.metalLoadFailures) Metal errors, \(summary.viewBridgeCancellationCount) view bridge cancellations · \(sessionLogFreshnessLabel)"
     }
@@ -810,6 +847,16 @@ private func formattedTimestamp(_ millis: UInt64) -> String {
         .formatted(date: .omitted, time: .standard)
 }
 
+/// Cached file-style byte formatter. The class method
+/// ByteCountFormatter.string(fromByteCount:countStyle:) allocates a
+/// throwaway formatter on every call. Caching avoids that overhead
+/// when called multiple times per render (persistence detail rows).
+nonisolated(unsafe) private let diagnosticsByteFormatter: ByteCountFormatter = {
+    let formatter = ByteCountFormatter()
+    formatter.countStyle = .file
+    return formatter
+}()
+
 private func byteCount(_ bytes: UInt64) -> String {
-    ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    diagnosticsByteFormatter.string(fromByteCount: Int64(bytes))
 }
