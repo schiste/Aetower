@@ -305,7 +305,7 @@ public struct Chau7View: View {
                 summaryChip(
                     label: String(format: "$%.2f", derived.totalCost),
                     icon: "dollarsign.circle",
-                    color: AetowerDesign.Status.success
+                    color: AetowerDesign.Status.neutral
                 )
             }
             if derived.totalSessionEnergyNj > 0 {
@@ -319,7 +319,7 @@ public struct Chau7View: View {
                 summaryChip(
                     label: "On Battery",
                     icon: "bolt.slash.fill",
-                    color: AetowerDesign.Status.error
+                    color: AetowerDesign.Status.warning
                 )
             }
         }
@@ -542,7 +542,7 @@ public struct Chau7View: View {
                         if group.totalCostUsd > 0 {
                             metricPill(
                                 label: String(format: "$%.2f", group.totalCostUsd),
-                                color: AetowerDesign.Status.success
+                                color: AetowerDesign.Status.neutral
                             )
                         }
                     }
@@ -754,7 +754,7 @@ public struct Chau7View: View {
                         Text(String(format: "$%.2f", repo.totalCostUsd))
                             .font(.caption)
                             .fontWeight(.medium)
-                            .foregroundStyle(AetowerDesign.Status.success)
+                            .foregroundStyle(AetowerDesign.Status.neutral)
                     }
                 }
                 .padding(.vertical, AetowerDesign.Spacing.xs)
@@ -1427,14 +1427,9 @@ public struct Chau7View: View {
         }
     }
 
-    private func formatBytes(_ bytes: UInt64) -> String {
-        let gb = Double(bytes) / (1024 * 1024 * 1024)
-        if gb >= 1 {
-            return String(format: "%.1f GB", gb)
-        }
-        let mb = Double(bytes) / (1024 * 1024)
-        return String(format: "%.0f MB", mb)
-    }
+    // formatBytes: uses the shared MonitorFormatters.formatBytes()
+    // which caches its ByteCountFormatter. The private fork that was
+    // here allocated a fresh formatter per call with different precision.
 
     private func formatTokens(_ tokens: UInt64) -> String {
         if tokens >= 1_000_000 {
