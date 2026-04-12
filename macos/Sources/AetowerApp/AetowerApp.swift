@@ -59,7 +59,6 @@ struct AetowerApp: App {
                     }
 
                 TimelineView(events: state.snapshot.timeline)
-                    .padding()
                     .tabItem {
                         Label("Timeline", systemImage: "timeline.selection")
                     }

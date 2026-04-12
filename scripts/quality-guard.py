@@ -236,7 +236,7 @@ def check_textfield_modifier(
             if "TextField(" not in line:
                 continue
             window = "\n".join(lines[line_number - 1 : min(len(lines), line_number + 8)])
-            if ".utilityTextInput()" not in window:
+            if ".utilityTextInput()" not in window and ".aetowerUtilityTextInput()" not in window:
                 violations.append(Violation(path, line_number, "TextField must use .utilityTextInput() in AetowerUI."))
 
 
