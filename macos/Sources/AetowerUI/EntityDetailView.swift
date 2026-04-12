@@ -1,7 +1,7 @@
 import SwiftUI
 import AetowerBridge
 
-private let detailMetricColumns = [GridItem(.adaptive(minimum: 140), spacing: 8)]
+private let detailMetricColumns = [GridItem(.adaptive(minimum: 170), spacing: 8)]
 
 private struct ComponentMetadataLine: View {
     let title: String
@@ -121,14 +121,16 @@ private struct ComponentCard: View {
                     value: formatBytes(component.memoryBytes),
                     subtitle: "component footprint",
                     samples: component.memoryBytes > 0 ? [Double(component.memoryBytes), Double(component.memoryBytes)] : [],
-                    style: .memory
+                    style: .memory,
+                    minHeight: 124
                 )
                 TrendMetricCard(
                     title: "CPU",
                     value: String(format: "%.1f%%", component.cpuPercent),
                     subtitle: component.kindLabel,
                     samples: component.cpuPercent > 0 ? [Double(component.cpuPercent), Double(component.cpuPercent)] : [],
-                    style: .cpu
+                    style: .cpu,
+                    minHeight: 124
                 )
                 if let adapterContext = component.adapterContext,
                    adapterContext.networkReceiveBps + adapterContext.networkSendBps > 0 {
@@ -137,7 +139,8 @@ private struct ComponentCard: View {
                         value: formatRate(adapterContext.networkReceiveBps + adapterContext.networkSendBps),
                         subtitle: "adapter-attributed traffic",
                         samples: [Double(adapterContext.networkReceiveBps + adapterContext.networkSendBps)],
-                        style: .disk
+                        style: .network,
+                        minHeight: 124
                     )
                 }
                 if let adapterContext = component.adapterContext,
@@ -147,7 +150,8 @@ private struct ComponentCard: View {
                         value: formatRate(adapterContext.diskReadBps + adapterContext.diskWriteBps),
                         subtitle: "adapter-attributed throughput",
                         samples: [Double(adapterContext.diskReadBps + adapterContext.diskWriteBps)],
-                        style: .disk
+                        style: .disk,
+                        minHeight: 124
                     )
                 }
             }
@@ -348,49 +352,56 @@ public struct EntityDetailView: View {
                     value: String(format: "%.1f", entity.friction.totalScore),
                     subtitle: "recent score · \(trendWindowLabel(sampleCount: entity.trend.friction.count))",
                     samples: entity.trend.friction.map(Double.init),
-                    style: .friction
+                    style: .friction,
+                    minHeight: 124
                 )
                 TrendMetricCard(
                     title: "CPU",
                     value: String(format: "%.1f%%", entity.metrics.cpuPercent),
                     subtitle: "\(entity.metrics.isForeground ? "frontmost app" : "backgrounded app") · \(trendWindowLabel(sampleCount: entity.trend.cpuPercent.count))",
                     samples: entity.trend.cpuPercent.map(Double.init),
-                    style: .cpu
+                    style: .cpu,
+                    minHeight: 124
                 )
                 TrendMetricCard(
                     title: "Memory Footprint",
                     value: formatBytes(entity.metrics.memoryResidentBytes),
                     subtitle: "\(entity.metrics.processCount) grouped processes · \(trendWindowLabel(sampleCount: entity.trend.memoryResidentBytes.count))",
                     samples: entity.trend.memoryResidentBytes.map(Double.init),
-                    style: .memory
+                    style: .memory,
+                    minHeight: 124
                 )
                 TrendMetricCard(
                     title: "Disk Activity",
                     value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
                     subtitle: "read + write throughput · \(trendWindowLabel(sampleCount: entity.trend.diskActivityBps.count))",
                     samples: entity.trend.diskActivityBps.map(Double.init),
-                    style: .disk
+                    style: .disk,
+                    minHeight: 124
                 )
                 TrendMetricCard(
                     title: "Energy Impact",
                     value: String(format: "%.1f", entity.friction.energyImpactScore),
                     subtitle: "estimated battery drain",
                     samples: [],
-                    style: .energy
+                    style: .energy,
+                    minHeight: 124
                 )
                 TrendMetricCard(
                     title: "Network",
                     value: formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps),
                     subtitle: "read + send throughput · \(trendWindowLabel(sampleCount: entity.trend.networkActivityBps.count))",
                     samples: entity.trend.networkActivityBps.map(Double.init),
-                    style: .disk
+                    style: .network,
+                    minHeight: 124
                 )
                 TrendMetricCard(
                     title: "Wakeups",
                     value: formatWakeups(entity.metrics.wakeupsPerSecond),
                     subtitle: "timer and interrupt churn · \(trendWindowLabel(sampleCount: entity.trend.wakeupsPerSecond.count))",
                     samples: entity.trend.wakeupsPerSecond.map(Double.init),
-                    style: .friction
+                    style: .friction,
+                    minHeight: 124
                 )
             }
         }
