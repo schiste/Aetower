@@ -789,6 +789,12 @@ public struct MainListView: View {
                 searchFieldFocused = false
             }
         }
+        .onChange(of: state.monitorFocusEntityID) { _, _ in
+            applyPendingMonitorFocusIfNeeded()
+        }
+        .task {
+            applyPendingMonitorFocusIfNeeded()
+        }
         .onDisappear {
             groupingTask?.cancel()
             groupingTask = nil
@@ -1132,6 +1138,28 @@ public struct MainListView: View {
     private var groupingTaskToken: String {
         guard let key = currentGroupingCacheKey else { return "flat" }
         return "\(key.sequence)|\(key.query)|\(key.sortKey.rawValue)"
+    }
+
+    private func applyPendingMonitorFocusIfNeeded() {
+        guard let requestedEntityID = state.consumeMonitorFocusEntityID() else {
+            return
+        }
+        searchText = ""
+        focusedIndex = 0
+        searchFieldFocused = false
+
+        if isGroupedMode,
+           let group = groupedEntities.first(where: { group in
+               group.members.contains(where: { $0.entityId == requestedEntityID })
+           }) {
+            selectedEntityID = group.root.entityId
+            return
+        }
+
+        if state.snapshot.entities.contains(where: { $0.entityId == requestedEntityID }) {
+            listMode = .flat
+            selectedEntityID = requestedEntityID
+        }
     }
 
     @MainActor
