@@ -110,33 +110,6 @@ private struct OperatorSectionCard<Content: View>: View {
     }
 }
 
-private struct InlineMetric: View {
-    let title: String
-    let value: String
-    let isHighlighted: Bool
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-            Text(value)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(Color.secondary.opacity(0.06), in: Capsule())
-        .overlay(
-            Capsule()
-                .stroke(
-                    isHighlighted ? Color.red.opacity(0.9) : Color.clear,
-                    lineWidth: isHighlighted ? 1 : 0
-                )
-        )
-    }
-}
 
 private enum SortKey: String, CaseIterable, Identifiable {
     case friction
@@ -209,87 +182,6 @@ private enum ListMode: String, CaseIterable, Identifiable {
         case .flat: return "list.bullet"
         }
     }
-}
-
-private struct SortChip: View {
-    let title: String
-    let tone: Color
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-            Image(systemName: "chevron.down")
-                .font(.caption2.weight(.semibold))
-        }
-        .foregroundStyle(.primary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.secondary.opacity(0.08), in: Capsule())
-        .overlay(
-            Capsule()
-                .stroke(tone.opacity(0.16), lineWidth: 1)
-        )
-    }
-}
-
-private struct RowSignalBadge: View {
-    let valueText: String?
-    let title: String
-    let tone: Color
-    let showsForegroundDot: Bool
-    let isHighlighted: Bool
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if let valueText {
-                Text(valueText)
-                    .font(.caption.weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(.white)
-            }
-
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-
-            if showsForegroundDot {
-                Circle()
-                    .fill(.white.opacity(0.92))
-                    .frame(width: 6, height: 6)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(
-            LinearGradient(
-                colors: [tone.opacity(0.95), tone.opacity(0.65)],
-                startPoint: .leading,
-                endPoint: .trailing
-            ),
-            in: Capsule()
-        )
-        .overlay(
-            Capsule()
-                .stroke(
-                    isHighlighted ? Color.red.opacity(0.9) : Color.clear,
-                    lineWidth: isHighlighted ? 1 : 0
-                )
-        )
-    }
-
-}
-
-private struct RowFrictionHighlights {
-    let title: Bool
-    let cpu: Bool
-    let memory: Bool
-    let disk: Bool
-    let network: Bool
-    let wakeups: Bool
-
-    static let none = Self(title: false, cpu: false, memory: false, disk: false, network: false, wakeups: false)
 }
 
 private struct EntityRow: View {
@@ -413,17 +305,6 @@ private struct EntityRow: View {
                     }
                 }
             }
-        }
-    }
-
-    private func metricPill(_ label: String, _ value: String) -> some View {
-        HStack(spacing: 2) {
-            Text(label)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.tertiary)
-            Text(value)
-                .font(.caption2.monospacedDigit().weight(.medium))
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -1377,10 +1258,6 @@ public struct MainListView: View {
         }
     }
 
-    private var topConcern: EntitySnapshot? {
-        filteredEntities.first
-    }
-
     private var machineIncident: HostIncidentSummary? {
         buildHostIncident(snapshot: state.snapshot, history: state.historyStoreSummary ?? state.historyRangeSummary)
     }
@@ -1450,16 +1327,6 @@ public struct MainListView: View {
         }
 
         return alerts
-    }
-
-    private var hostMemoryLoadPercent: Double {
-        memoryLoadPercent(bytes: state.snapshot.host.memoryUsedBytes, totalBytes: state.snapshot.host.memoryTotalBytes)
-    }
-
-    private var hostMemoryTrendPercents: [Double] {
-        state.snapshot.hostTrend.memoryUsedBytes.map {
-            memoryLoadPercent(bytes: $0, totalBytes: state.snapshot.host.memoryTotalBytes)
-        }
     }
 
     private var selectedEntity: EntitySnapshot? {
@@ -1583,29 +1450,6 @@ public struct MainListView: View {
         }
     }
 
-    private func badgeValueText(for entity: EntitySnapshot) -> String? {
-        switch sortKey {
-        case .friction:
-            return String(format: "%.1f", entity.friction.totalScore)
-        case .cpu:
-            return String(format: "%.1f%%", entity.metrics.cpuPercent)
-        case .memory:
-            return String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes))
-        case .disk:
-            return formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps)
-        case .network:
-            return formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps)
-        case .energy:
-            return String(format: "%.1f", entity.friction.energyImpactScore)
-        case .alphabeticalAsc, .alphabeticalDesc:
-            return nil
-        case .oldestFirst:
-            return ageLabel(from: entity.oldestProcessStartMillis, now: state.snapshot.capturedAtMillis)
-        case .newestFirst:
-            return ageLabel(from: entity.newestProcessStartMillis, now: state.snapshot.capturedAtMillis)
-        }
-    }
-
 }
 
 private struct HostAlertCard {
@@ -1619,50 +1463,6 @@ private enum HostBand {
     case nominal
     case elevated
     case severe
-}
-
-private func frictionHighlights(for entity: EntitySnapshot) -> RowFrictionHighlights {
-    let reasons = entity.friction.reasons.map { $0.localizedLowercase }
-    let isBaselineOnly = !reasons.isEmpty && reasons.allSatisfy { $0.contains("baseline activity") }
-    guard !isBaselineOnly else {
-        return .none
-    }
-
-    return RowFrictionHighlights(
-        title: reasons.contains(where: { $0.contains("foreground app") }),
-        cpu: reasons.contains(where: { $0.contains("high cpu") }),
-        memory: reasons.contains(where: { $0.contains("high memory") }),
-        disk: reasons.contains(where: { $0.contains("heavy disk") }),
-        network: reasons.contains(where: { $0.contains("heavy network") }),
-        wakeups: reasons.contains(where: { $0.contains("wakeups") })
-    )
-}
-
-private func provenanceSummaryLabel(_ provenance: ProvenanceSnapshot) -> String {
-    switch provenance.kind {
-    case .userLaunch:
-        return provenance.label.isEmpty ? "user-launched app" : provenance.label.lowercased()
-    case .appBundle:
-        return "application bundle"
-    case .helperTree:
-        return provenance.label.isEmpty ? "grouped app helpers" : provenance.label.lowercased()
-    case .shellSession:
-        return provenance.label.isEmpty ? "interactive shell session" : provenance.label.lowercased()
-    case .loginItem:
-        return provenance.label.isEmpty ? "login item" : provenance.label.lowercased()
-    case .serviceManager:
-        return provenance.label.isEmpty ? "launchd-managed service" : provenance.label.lowercased()
-    case .xpcService:
-        return provenance.label.isEmpty ? "xpc service" : provenance.label.lowercased()
-    case .browserContext:
-        return provenance.label.isEmpty ? "browser context" : provenance.label.lowercased()
-    case .containerWorkload:
-        return provenance.label.isEmpty ? "container workload" : provenance.label.lowercased()
-    case .parentProcess:
-        return provenance.label.isEmpty ? "parent process" : provenance.label.lowercased()
-    case .unknown:
-        return provenance.label.isEmpty ? "unknown" : provenance.label.lowercased()
-    }
 }
 
 private func hostStatusSummary(_ host: HostSnapshot) -> String {
