@@ -42,7 +42,11 @@ public final class FleetService {
     }
 
     public func start(state: AppState) {
-        guard !isEnabled else { return }
+        // Guard on listener presence, not isEnabled. Since isEnabled
+        // is now set asynchronously in the listener's stateUpdateHandler,
+        // a rapid stop/start could pass a guard on isEnabled twice and
+        // create duplicate listeners, browsers, and timers.
+        guard listener == nil else { return }
         self.state = state
         startAdvertising(state: state)
         startBrowsing()
@@ -173,9 +177,14 @@ public final class FleetService {
             guard let endpoint = discoveredEndpoints[peer.id] else { continue }
             let peerId = peer.id
 
-            // Cancel any in-flight connection from the previous tick
-            // so we never accumulate more than one per peer.
-            activeConnections[peerId]?.cancel()
+            // Cancel any in-flight connection from the previous tick.
+            // Nil out its stateUpdateHandler first so its .cancelled
+            // callback doesn't race with the new connection and remove
+            // the new entry from activeConnections.
+            if let old = activeConnections[peerId] {
+                old.stateUpdateHandler = nil
+                old.cancel()
+            }
 
             let connection = NWConnection(to: endpoint, using: .tcp)
             activeConnections[peerId] = connection
@@ -189,16 +198,18 @@ public final class FleetService {
                             connection.cancel()
                             guard let data, let body = Self.extractHTTPBody(data) else { return }
                             Task { @MainActor in
-                                // ID-based lookup instead of captured index —
-                                // safe even if peers is reordered between the
-                                // dial and the callback.
                                 self?.applyRemoteSnapshot(body, forPeerId: peerId)
                             }
                         }
                     })
                 case .failed, .cancelled:
                     Task { @MainActor in
-                        self?.activeConnections.removeValue(forKey: peerId)
+                        // Only remove if this connection is still the
+                        // current one — a newer connection may have
+                        // already replaced it in the map.
+                        if self?.activeConnections[peerId] === connection {
+                            self?.activeConnections.removeValue(forKey: peerId)
+                        }
                     }
                 default:
                     break
