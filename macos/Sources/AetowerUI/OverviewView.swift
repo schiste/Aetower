@@ -156,7 +156,7 @@ public struct OverviewView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
                 summarySection
 
                 if let machineIncident {
@@ -168,7 +168,7 @@ public struct OverviewView: View {
                         title: "Host alerts",
                         subtitle: "Expanded machine-level signals that previously sat above the monitor list."
                     ) {
-                        LazyVGrid(columns: gridColumns(minimum: 280), alignment: .leading, spacing: 12) {
+                        LazyVGrid(columns: overviewGridColumns(minimum: 280), alignment: .leading, spacing: 12) {
                             ForEach(hostAlerts) { alert in
                                 OverviewHostAlertCard(
                                     title: alert.title,
@@ -187,7 +187,7 @@ public struct OverviewView: View {
                         title: "Burden leaders",
                         subtitle: "The groups currently carrying the largest memory, wakeup, disk, and network burden."
                     ) {
-                        LazyVGrid(columns: gridColumns(minimum: 260), alignment: .leading, spacing: 12) {
+                        LazyVGrid(columns: overviewGridColumns(minimum: 260), alignment: .leading, spacing: 12) {
                             ForEach(burdenLeaders) { leader in
                                 TrendMetricCard(
                                     title: leader.title,
@@ -207,7 +207,7 @@ public struct OverviewView: View {
                         title: "Recommended next actions",
                         subtitle: "Operator-grade remediation suggestions derived from the current host state."
                     ) {
-                        LazyVGrid(columns: gridColumns(minimum: 260), alignment: .leading, spacing: 12) {
+                        LazyVGrid(columns: overviewGridColumns(minimum: 260), alignment: .leading, spacing: 12) {
                             ForEach(operatorRecommendations) { recommendation in
                                 OverviewListCard(
                                     title: recommendation.title,
@@ -226,7 +226,7 @@ public struct OverviewView: View {
                         title: "Aetower self-health",
                         subtitle: "The health of Aetower’s own runtime, diagnostics, history store, capabilities, and MCP surface."
                     ) {
-                        LazyVGrid(columns: gridColumns(minimum: 240), alignment: .leading, spacing: 12) {
+                        LazyVGrid(columns: overviewGridColumns(minimum: 240), alignment: .leading, spacing: 12) {
                             ForEach(selfHealthChecks) { check in
                                 OverviewListCard(
                                     title: check.title,
@@ -240,8 +240,8 @@ public struct OverviewView: View {
                     }
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 18)
+            .padding(.horizontal, AetowerDesign.Spacing.xl)
+            .padding(.vertical, AetowerDesign.Spacing.lg)
         }
         .background(Color.secondary.opacity(0.03))
         .navigationTitle("Overview")
@@ -271,12 +271,12 @@ public struct OverviewView: View {
                     Spacer(minLength: 0)
                 }
 
-                LazyVGrid(columns: gridColumns(minimum: 180), alignment: .leading, spacing: 12) {
+                LazyVGrid(columns: overviewGridColumns(minimum: 180), alignment: .leading, spacing: 12) {
                     TrendMetricCard(
                         title: "CPU",
                         value: String(format: "%.0f%%", host.cpuPercent),
                         subtitle: "Thermal \(thermalStateLabel(host.thermalState))",
-                        samples: hostHistoryFloatSamples(\.cpuPercent),
+                        samples: hostHistorySamples { Double($0.cpuPercent) },
                         style: .cpu,
                         minHeight: 124
                     )
@@ -284,7 +284,7 @@ public struct OverviewView: View {
                         title: "Memory",
                         value: formatBytes(host.memoryUsedBytes),
                         subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap",
-                        samples: hostHistoryUInt64Samples(\.memoryUsedBytes),
+                        samples: hostHistorySamples { Double($0.memoryUsedBytes) },
                         style: .memory,
                         minHeight: 124
                     )
@@ -292,7 +292,7 @@ public struct OverviewView: View {
                         title: "Disk",
                         value: formatRate(host.diskReadBps + host.diskWriteBps),
                         subtitle: "Current read/write throughput",
-                        samples: hostHistoryDoubleSamples { Double($0.diskReadBps + $0.diskWriteBps) },
+                        samples: hostHistorySamples { Double($0.diskReadBps + $0.diskWriteBps) },
                         style: .disk,
                         minHeight: 124
                     )
@@ -300,7 +300,7 @@ public struct OverviewView: View {
                         title: "Network",
                         value: formatRate(host.networkReceiveBps + host.networkSendBps),
                         subtitle: "Current send/receive throughput",
-                        samples: hostHistoryDoubleSamples { Double($0.networkReceiveBps + $0.networkSendBps) },
+                        samples: hostHistorySamples { Double($0.networkReceiveBps + $0.networkSendBps) },
                         style: .network,
                         minHeight: 124
                     )
@@ -308,7 +308,7 @@ public struct OverviewView: View {
                         title: "Wakeups",
                         value: formatWakeups(host.wakeupsPerSecond),
                         subtitle: hostWakeupBand(host.wakeupsPerSecond) == .severe ? "Wakeup storm band" : "Current host wakeup rate",
-                        samples: hostHistoryFloatSamples(\.wakeupsPerSecond),
+                        samples: hostHistorySamples { Double($0.wakeupsPerSecond) },
                         style: .friction,
                         minHeight: 124
                     )
@@ -316,7 +316,7 @@ public struct OverviewView: View {
                         title: "AI agents",
                         value: "\(agentCount)",
                         subtitle: "recent local AI runtime count",
-                        samples: hostHistoryDoubleSamples { Double($0.aiAgentCount) },
+                        samples: hostHistorySamples { Double($0.aiAgentCount) },
                         style: .energy,
                         minHeight: 124
                     )
@@ -328,8 +328,8 @@ public struct OverviewView: View {
                                 : formatBytes(host.gpuMemoryBytes),
                             subtitle: hostGPUSummary(host),
                             samples: host.gpuPercent > 0
-                                ? hostHistoryFloatSamples(\.gpuPercent)
-                                : hostHistoryUInt64Samples(\.gpuMemoryBytes),
+                                ? hostHistorySamples { Double($0.gpuPercent) }
+                                : hostHistorySamples { Double($0.gpuMemoryBytes) },
                             style: .energy,
                             minHeight: 124
                         )
@@ -390,7 +390,7 @@ public struct OverviewView: View {
                     .compactMap { $0 }
                     .joined(separator: " · "),
                     tone: memoryBand == .severe ? AetowerDesign.Status.error : AetowerDesign.Status.warning,
-                    samples: hostHistoryDoubleSamples { Double($0.compressedMemoryBytes + $0.swapUsedBytes) }
+                    samples: hostHistorySamples { Double($0.compressedMemoryBytes + $0.swapUsedBytes) }
                 )
             )
         }
@@ -447,22 +447,17 @@ public struct OverviewView: View {
         }
     }
 
-    private func hostHistoryFloatSamples(_ extractor: (HostSnapshot) -> Float) -> [Double] {
-        let samples = state.historySnapshots.suffix(24).map { Double(extractor($0.host)) }
-        return samples.isEmpty ? [Double(extractor(state.snapshot.host))] : samples
-    }
-
-    private func hostHistoryUInt64Samples(_ extractor: (HostSnapshot) -> UInt64) -> [Double] {
-        let samples = state.historySnapshots.suffix(24).map { Double(extractor($0.host)) }
-        return samples.isEmpty ? [Double(extractor(state.snapshot.host))] : samples
-    }
-
-    private func hostHistoryDoubleSamples(_ extractor: (HostSnapshot) -> Double) -> [Double] {
+    /// Unified history sample extractor. The previous three type-specific
+    /// helpers (Float, UInt64, Double) were nearly identical and each
+    /// iterated the same .suffix(24) slice independently.
+    private func hostHistorySamples(_ extractor: (HostSnapshot) -> Double) -> [Double] {
         let samples = state.historySnapshots.suffix(24).map { extractor($0.host) }
         return samples.isEmpty ? [extractor(state.snapshot.host)] : samples
     }
+}
 
-    private func gridColumns(minimum: CGFloat) -> [GridItem] {
-        [GridItem(.adaptive(minimum: minimum, maximum: 420), spacing: 12, alignment: .top)]
-    }
+// MARK: - Grid column presets (allocated once, not per render)
+
+private func overviewGridColumns(minimum: CGFloat) -> [GridItem] {
+    [GridItem(.adaptive(minimum: minimum, maximum: 420), spacing: AetowerDesign.Spacing.md, alignment: .top)]
 }
