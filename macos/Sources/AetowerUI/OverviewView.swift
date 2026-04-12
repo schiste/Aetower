@@ -1,63 +1,36 @@
 import SwiftUI
 import AetowerBridge
 
-private struct OverviewMetricCard: View {
-    let title: String
-    let value: String
-    let subtitle: String
-    let tone: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.tertiary)
-                .tracking(0.8)
-            Text(value)
-                .font(.system(size: 24, weight: .bold, design: .rounded))
-                .foregroundStyle(tone)
-                .lineLimit(1)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tone.opacity(0.08), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
-                .stroke(tone.opacity(0.14), lineWidth: 1)
-        )
-    }
-}
-
 private struct OverviewHostAlertCard: View {
     let title: String
     let value: String
     let subtitle: String
     let tone: Color
+    let samples: [Double]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.headline)
-                Spacer()
-                Text(value)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(tone)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(tone.opacity(0.10), in: Capsule())
+        MetricCardSurface(tone: tone, samples: samples, fillOpacity: 0.08, minHeight: 124) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title)
+                        .font(.headline)
+                    Spacer()
+                    Text(value)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(tone)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(tone.opacity(0.10), in: Capsule())
+                }
+                Spacer(minLength: 0)
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
             }
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        } hoverOverlay: {
+            EmptyView()
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
     }
 }
 
@@ -156,7 +129,7 @@ private struct OverviewListCard: View {
                 .foregroundStyle(.secondary)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 124, alignment: .leading)
         .background(Color.white.opacity(0.0001))
         .overlay(
             RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
@@ -171,6 +144,7 @@ private struct OverviewHostAlert: Identifiable {
     let value: String
     let subtitle: String
     let tone: Color
+    let samples: [Double]
 }
 
 public struct OverviewView: View {
@@ -200,7 +174,8 @@ public struct OverviewView: View {
                                     title: alert.title,
                                     value: alert.value,
                                     subtitle: alert.subtitle,
-                                    tone: alert.tone
+                                    tone: alert.tone,
+                                    samples: alert.samples
                                 )
                             }
                         }
@@ -214,12 +189,13 @@ public struct OverviewView: View {
                     ) {
                         LazyVGrid(columns: gridColumns(minimum: 260), alignment: .leading, spacing: 12) {
                             ForEach(burdenLeaders) { leader in
-                                OverviewListCard(
+                                TrendMetricCard(
                                     title: leader.title,
                                     value: leader.metricValue,
-                                    detail: leader.entityName,
-                                    tone: leader.severity.color,
-                                    footer: leader.detail
+                                    subtitle: "\(leader.entityName) · \(leader.detail)",
+                                    samples: burdenLeaderSamples(for: leader),
+                                    style: burdenLeaderStyle(for: leader),
+                                    minHeight: 124
                                 )
                             }
                         }
@@ -296,56 +272,66 @@ public struct OverviewView: View {
                 }
 
                 LazyVGrid(columns: gridColumns(minimum: 180), alignment: .leading, spacing: 12) {
-                    OverviewMetricCard(
+                    TrendMetricCard(
                         title: "CPU",
                         value: String(format: "%.0f%%", host.cpuPercent),
                         subtitle: "Thermal \(thermalStateLabel(host.thermalState))",
-                        tone: AetowerDesign.Tone.cpu
+                        samples: hostHistoryFloatSamples(\.cpuPercent),
+                        style: .cpu,
+                        minHeight: 124
                     )
-                    OverviewMetricCard(
+                    TrendMetricCard(
                         title: "Memory",
                         value: formatBytes(host.memoryUsedBytes),
                         subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap",
-                        tone: AetowerDesign.Tone.memory
+                        samples: hostHistoryUInt64Samples(\.memoryUsedBytes),
+                        style: .memory,
+                        minHeight: 124
                     )
-                    OverviewMetricCard(
+                    TrendMetricCard(
                         title: "Disk",
                         value: formatRate(host.diskReadBps + host.diskWriteBps),
                         subtitle: "Current read/write throughput",
-                        tone: AetowerDesign.Tone.disk
+                        samples: hostHistoryDoubleSamples { Double($0.diskReadBps + $0.diskWriteBps) },
+                        style: .disk,
+                        minHeight: 124
                     )
-                    OverviewMetricCard(
+                    TrendMetricCard(
                         title: "Network",
                         value: formatRate(host.networkReceiveBps + host.networkSendBps),
                         subtitle: "Current send/receive throughput",
-                        tone: AetowerDesign.Tone.network
+                        samples: hostHistoryDoubleSamples { Double($0.networkReceiveBps + $0.networkSendBps) },
+                        style: .network,
+                        minHeight: 124
                     )
-                    OverviewMetricCard(
+                    TrendMetricCard(
                         title: "Wakeups",
                         value: formatWakeups(host.wakeupsPerSecond),
                         subtitle: hostWakeupBand(host.wakeupsPerSecond) == .severe ? "Wakeup storm band" : "Current host wakeup rate",
-                        tone: hostWakeupBand(host.wakeupsPerSecond) == .severe ? AetowerDesign.Status.error : AetowerDesign.Status.warning
+                        samples: hostHistoryFloatSamples(\.wakeupsPerSecond),
+                        style: .friction,
+                        minHeight: 124
                     )
-                    OverviewMetricCard(
-                        title: "Tick target",
-                        value: state.runtimeLagMetrics.targetTickMillis > 0
-                            ? String(format: "%.1fs", state.runtimeLagMetrics.targetTickMillis / 1000)
-                            : "n/a",
-                        subtitle: String(
-                            format: "tick %.1f ms · collect %.1f ms",
-                            state.runtimeLagMetrics.engineTickMillis,
-                            state.runtimeLagMetrics.collectMillis
-                        ),
-                        tone: .secondary
+                    TrendMetricCard(
+                        title: "AI agents",
+                        value: "\(agentCount)",
+                        subtitle: "recent local AI runtime count",
+                        samples: hostHistoryDoubleSamples { Double($0.aiAgentCount) },
+                        style: .energy,
+                        minHeight: 124
                     )
                     if host.gpuPercent > 0 || host.gpuMemoryBytes > 0 {
-                        OverviewMetricCard(
+                        TrendMetricCard(
                             title: "GPU",
                             value: host.gpuPercent > 0
                                 ? String(format: "%.0f%%", host.gpuPercent)
                                 : formatBytes(host.gpuMemoryBytes),
                             subtitle: hostGPUSummary(host),
-                            tone: AetowerDesign.Tone.gpu
+                            samples: host.gpuPercent > 0
+                                ? hostHistoryFloatSamples(\.gpuPercent)
+                                : hostHistoryUInt64Samples(\.gpuMemoryBytes),
+                            style: .energy,
+                            minHeight: 124
                         )
                     }
                 }
@@ -403,7 +389,8 @@ public struct OverviewView: View {
                     ]
                     .compactMap { $0 }
                     .joined(separator: " · "),
-                    tone: memoryBand == .severe ? AetowerDesign.Status.error : AetowerDesign.Status.warning
+                    tone: memoryBand == .severe ? AetowerDesign.Status.error : AetowerDesign.Status.warning,
+                    samples: hostHistoryDoubleSamples { Double($0.compressedMemoryBytes + $0.swapUsedBytes) }
                 )
             )
         }
@@ -418,12 +405,61 @@ public struct OverviewView: View {
                     title: "Wakeup leader",
                     value: leader.displayName,
                     subtitle: "\(formatWakeups(leader.metrics.wakeupsPerSecond)) entity · \(formatWakeups(host.wakeupsPerSecond)) host · \(wakeupsLeaderSubtitle(for: leader))",
-                    tone: wakeupBand == .severe ? AetowerDesign.Status.error : AetowerDesign.Status.warning
+                    tone: wakeupBand == .severe ? AetowerDesign.Status.error : AetowerDesign.Status.warning,
+                    samples: leader.trend.wakeupsPerSecond.map(Double.init)
                 )
             )
         }
 
         return alerts
+    }
+
+    private func burdenLeaderStyle(for leader: BurdenLeaderSummary) -> TrendMetricStyle {
+        switch leader.id {
+        case "memory":
+            return .memory
+        case "wakeups":
+            return .friction
+        case "disk":
+            return .disk
+        case "network":
+            return .network
+        default:
+            return .energy
+        }
+    }
+
+    private func burdenLeaderSamples(for leader: BurdenLeaderSummary) -> [Double] {
+        guard let entity = state.snapshot.entities.first(where: { $0.displayName == leader.entityName }) else {
+            return []
+        }
+        switch leader.id {
+        case "memory":
+            return entity.trend.memoryResidentBytes.map(Double.init)
+        case "wakeups":
+            return entity.trend.wakeupsPerSecond.map(Double.init)
+        case "disk":
+            return entity.trend.diskActivityBps.map(Double.init)
+        case "network":
+            return entity.trend.networkActivityBps.map(Double.init)
+        default:
+            return []
+        }
+    }
+
+    private func hostHistoryFloatSamples(_ extractor: (HostSnapshot) -> Float) -> [Double] {
+        let samples = state.historySnapshots.suffix(24).map { Double(extractor($0.host)) }
+        return samples.isEmpty ? [Double(extractor(state.snapshot.host))] : samples
+    }
+
+    private func hostHistoryUInt64Samples(_ extractor: (HostSnapshot) -> UInt64) -> [Double] {
+        let samples = state.historySnapshots.suffix(24).map { Double(extractor($0.host)) }
+        return samples.isEmpty ? [Double(extractor(state.snapshot.host))] : samples
+    }
+
+    private func hostHistoryDoubleSamples(_ extractor: (HostSnapshot) -> Double) -> [Double] {
+        let samples = state.historySnapshots.suffix(24).map { extractor($0.host) }
+        return samples.isEmpty ? [extractor(state.snapshot.host)] : samples
     }
 
     private func gridColumns(minimum: CGFloat) -> [GridItem] {
