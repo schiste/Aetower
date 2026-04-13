@@ -567,6 +567,12 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func diagnosticsOverview()  -> DiagnosticsOverview
     
+    func diffSnapshotsJson(beforeMillis: UInt64, afterMillis: UInt64, entityIds: [String], limit: UInt32)  -> JsonQueryResult
+    
+    func entityProcessTreeJson(entityId: String)  -> JsonQueryResult
+    
+    func explainAnomaliesJson(entityIds: [String], limit: UInt32, windowMinutes: UInt32)  -> JsonQueryResult
+    
     func exportDiagnosticsJson(limit: UInt32)  -> String
     
     func exportDiagnosticsQueryJson(query: DiagnosticsQuery)  -> String
@@ -594,6 +600,10 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     func loadHistoryRange(startMillis: UInt64, endMillis: UInt64)  -> [SystemSnapshot]
     
     func maintainHistoryStore(aggressive: Bool)  -> HistoryMaintenanceReport?
+    
+    func memoryBreakdownJson(entityId: String, topRegions: UInt32)  -> JsonQueryResult
+    
+    func profileEntityJson(entityId: String, durationSeconds: UInt32, topStacks: UInt32)  -> JsonQueryResult
     
     func queryDiagnostics(query: DiagnosticsQuery)  -> [DiagnosticsEvent]
     
@@ -626,6 +636,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     func updateUiLagMetrics(metrics: UiLagMetrics) 
     
     func verifyTelemetryExport()  -> String
+    
+    func wakeupAttributionJson(entityId: String, durationSeconds: UInt32, topStacks: UInt32)  -> JsonQueryResult
     
 }
 open class MonitorEngine: MonitorEngineProtocol, @unchecked Sendable {
@@ -759,6 +771,35 @@ open func diagnosticsOverview() -> DiagnosticsOverview  {
 })
 }
     
+open func diffSnapshotsJson(beforeMillis: UInt64, afterMillis: UInt64, entityIds: [String], limit: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_diff_snapshots_json(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(beforeMillis),
+        FfiConverterUInt64.lower(afterMillis),
+        FfiConverterSequenceString.lower(entityIds),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+    
+open func entityProcessTreeJson(entityId: String) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_entity_process_tree_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(entityId),$0
+    )
+})
+}
+    
+open func explainAnomaliesJson(entityIds: [String], limit: UInt32, windowMinutes: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_explain_anomalies_json(self.uniffiClonePointer(),
+        FfiConverterSequenceString.lower(entityIds),
+        FfiConverterUInt32.lower(limit),
+        FfiConverterUInt32.lower(windowMinutes),$0
+    )
+})
+}
+    
 open func exportDiagnosticsJson(limit: UInt32) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_export_diagnostics_json(self.uniffiClonePointer(),
@@ -876,6 +917,25 @@ open func maintainHistoryStore(aggressive: Bool) -> HistoryMaintenanceReport?  {
 })
 }
     
+open func memoryBreakdownJson(entityId: String, topRegions: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_memory_breakdown_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(entityId),
+        FfiConverterUInt32.lower(topRegions),$0
+    )
+})
+}
+    
+open func profileEntityJson(entityId: String, durationSeconds: UInt32, topStacks: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_profile_entity_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(entityId),
+        FfiConverterUInt32.lower(durationSeconds),
+        FfiConverterUInt32.lower(topStacks),$0
+    )
+})
+}
+    
 open func queryDiagnostics(query: DiagnosticsQuery) -> [DiagnosticsEvent]  {
     return try!  FfiConverterSequenceTypeDiagnosticsEvent.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_query_diagnostics(self.uniffiClonePointer(),
@@ -969,6 +1029,16 @@ open func updateUiLagMetrics(metrics: UiLagMetrics)  {try! rustCall() {
 open func verifyTelemetryExport() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_verify_telemetry_export(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func wakeupAttributionJson(entityId: String, durationSeconds: UInt32, topStacks: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_wakeup_attribution_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(entityId),
+        FfiConverterUInt32.lower(durationSeconds),
+        FfiConverterUInt32.lower(topStacks),$0
     )
 })
 }
@@ -4121,6 +4191,76 @@ public func FfiConverterTypeHostTrend_lift(_ buf: RustBuffer) throws -> HostTren
 #endif
 public func FfiConverterTypeHostTrend_lower(_ value: HostTrend) -> RustBuffer {
     return FfiConverterTypeHostTrend.lower(value)
+}
+
+
+public struct JsonQueryResult {
+    public var json: String?
+    public var errorMessage: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(json: String?, errorMessage: String?) {
+        self.json = json
+        self.errorMessage = errorMessage
+    }
+}
+
+#if compiler(>=6)
+extension JsonQueryResult: Sendable {}
+#endif
+
+
+extension JsonQueryResult: Equatable, Hashable {
+    public static func ==(lhs: JsonQueryResult, rhs: JsonQueryResult) -> Bool {
+        if lhs.json != rhs.json {
+            return false
+        }
+        if lhs.errorMessage != rhs.errorMessage {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(json)
+        hasher.combine(errorMessage)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeJsonQueryResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> JsonQueryResult {
+        return
+            try JsonQueryResult(
+                json: FfiConverterOptionString.read(from: &buf), 
+                errorMessage: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: JsonQueryResult, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.json, into: &buf)
+        FfiConverterOptionString.write(value.errorMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeJsonQueryResult_lift(_ buf: RustBuffer) throws -> JsonQueryResult {
+    return try FfiConverterTypeJsonQueryResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeJsonQueryResult_lower(_ value: JsonQueryResult) -> RustBuffer {
+    return FfiConverterTypeJsonQueryResult.lower(value)
 }
 
 
@@ -8061,6 +8201,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_diagnostics_overview() != 6234) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_diff_snapshots_json() != 42400) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_entity_process_tree_json() != 62352) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_explain_anomalies_json() != 5183) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_export_diagnostics_json() != 20988) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8103,6 +8252,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_maintain_history_store() != 12978) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_memory_breakdown_json() != 26789) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_profile_entity_json() != 30295) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_query_diagnostics() != 28303) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8134,6 +8289,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_verify_telemetry_export() != 6522) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_wakeup_attribution_json() != 22205) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_constructor_monitorengine_new() != 50482) {

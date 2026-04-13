@@ -20,6 +20,8 @@ public final class AppState {
     public private(set) var historyLoadStatus: String?
     public private(set) var historyHasMore = false
     public private(set) var historyLastLoadDurationMillis = 0.0
+    private(set) var historySnapshotDiff: SnapshotDiffReportModel?
+    private(set) var historySnapshotDiffError: String?
     public private(set) var monitorFocusEntityID: String?
     public private(set) var diagnosticsEvents: [DiagnosticsEvent] = []
     public private(set) var diagnosticsRecentWarningCount = 0
@@ -76,6 +78,11 @@ public final class AppState {
     public private(set) var localMcpClientStatuses: [LocalMcpClientRegistrationStatus] = []
     public private(set) var localMcpRegistrationStatusMessage: String?
     public private(set) var localMcpServerHealthy = false
+    private(set) var entityAnomalyExplanations: [String: AnomalyExplanationReport] = [:]
+    private(set) var entityProcessTreeReports: [String: EntityProcessTreeReportModel] = [:]
+    private(set) var entityMemoryBreakdowns: [String: EntityMemoryBreakdownReportModel] = [:]
+    private(set) var entityProfiles: [String: EntityProfileReportModel] = [:]
+    private(set) var entityWakeupAttributions: [String: WakeupAttributionReportModel] = [:]
     public var lastError: String?
 
     @ObservationIgnored
@@ -154,6 +161,12 @@ public final class AppState {
     private var automaticLocalMcpRegistrationAttempted = false
     @ObservationIgnored
     private var lastOperatorStateRefreshDate = Date.distantPast
+    @ObservationIgnored
+    private var entityAnalysisLoadingKeys = Set<String>()
+    @ObservationIgnored
+    private var entityAnalysisErrorMessages: [String: String] = [:]
+    @ObservationIgnored
+    private var entityAnalysisUpdatedAtByKey: [String: Date] = [:]
 
     @ObservationIgnored
     private let frontmostProbeInterval: TimeInterval = 1.0
@@ -179,6 +192,8 @@ public final class AppState {
     private let historyLoadMorePageSize: UInt32 = 240
     @ObservationIgnored
     private let operatorStateRefreshInterval: TimeInterval = 30.0
+    @ObservationIgnored
+    private let entityStaticAnalysisReloadInterval: TimeInterval = 15.0
 
     public init(
         bridge: EngineBridge = EngineBridge(),
@@ -361,6 +376,8 @@ public final class AppState {
         historyHasMore = false
         historyLoadStatus = nil
         historyLastLoadDurationMillis = 0
+        historySnapshotDiff = nil
+        historySnapshotDiffError = nil
         loadDiagnostics(force: true)
     }
 
@@ -652,6 +669,142 @@ public final class AppState {
         return entityID
     }
 
+    func entityAnalysisIsLoading(_ entityID: String, kind: EntityAnalysisKind) -> Bool {
+        entityAnalysisLoadingKeys.contains(entityAnalysisKey(entityID, kind: kind))
+    }
+
+    func entityAnalysisError(_ entityID: String, kind: EntityAnalysisKind) -> String? {
+        entityAnalysisErrorMessages[entityAnalysisKey(entityID, kind: kind)]
+    }
+
+    func entityAnalysisUpdatedAt(_ entityID: String, kind: EntityAnalysisKind) -> Date? {
+        entityAnalysisUpdatedAtByKey[entityAnalysisKey(entityID, kind: kind)]
+    }
+
+    func loadEntityStaticAnalysis(entityID: String, force: Bool = false) {
+        guard snapshot.entities.contains(where: { $0.entityId == entityID }) else {
+            return
+        }
+        if !force,
+           let processUpdatedAt = entityAnalysisUpdatedAt(entityID, kind: .processTree),
+           let anomalyUpdatedAt = entityAnalysisUpdatedAt(entityID, kind: .anomalyExplanation),
+           Date().timeIntervalSince(processUpdatedAt) < entityStaticAnalysisReloadInterval,
+           Date().timeIntervalSince(anomalyUpdatedAt) < entityStaticAnalysisReloadInterval {
+            return
+        }
+
+        setEntityAnalysisLoading(entityID, kind: .processTree, isLoading: true)
+        setEntityAnalysisLoading(entityID, kind: .anomalyExplanation, isLoading: true)
+
+        let bridge = self.bridge
+        Task(priority: .utility) { [weak self] in
+            let processTreeResult = bridge.entityProcessTreeJSON(entityId: entityID)
+            let anomalyResult = bridge.explainAnomaliesJSON(entityIds: [entityID], limit: 1, windowMinutes: 20)
+            await MainActor.run {
+                guard let self else { return }
+                self.entityProcessTreeReports[entityID] = self.decodeJsonQueryResult(
+                    processTreeResult,
+                    as: EntityProcessTreeReportModel.self
+                )
+                self.finishEntityAnalysis(
+                    entityID,
+                    kind: .processTree,
+                    result: processTreeResult,
+                    fallback: "Process-tree analysis is unavailable for this entity."
+                )
+                self.entityAnomalyExplanations[entityID] = self.decodeJsonQueryResult(
+                    anomalyResult,
+                    as: [AnomalyExplanationReport].self
+                )?.first
+                self.finishEntityAnalysis(
+                    entityID,
+                    kind: .anomalyExplanation,
+                    result: anomalyResult,
+                    fallback: "Anomaly explanation is unavailable for this entity."
+                )
+            }
+        }
+    }
+
+    func runEntityMemoryBreakdown(entityID: String, topRegions: UInt32 = 8) {
+        let bridge = self.bridge
+        setEntityAnalysisLoading(entityID, kind: .memoryBreakdown, isLoading: true)
+        Task(priority: .utility) { [weak self] in
+            let result = bridge.memoryBreakdownJSON(entityId: entityID, topRegions: topRegions)
+            await MainActor.run {
+                guard let self else { return }
+                self.entityMemoryBreakdowns[entityID] = self.decodeJsonQueryResult(
+                    result,
+                    as: EntityMemoryBreakdownReportModel.self
+                )
+                self.finishEntityAnalysis(
+                    entityID,
+                    kind: .memoryBreakdown,
+                    result: result,
+                    fallback: "Memory breakdown could not be collected."
+                )
+            }
+        }
+    }
+
+    func runEntityProfile(
+        entityID: String,
+        durationSeconds: UInt32 = 5,
+        topStacks: UInt32 = 6
+    ) {
+        let bridge = self.bridge
+        setEntityAnalysisLoading(entityID, kind: .profile, isLoading: true)
+        Task(priority: .utility) { [weak self] in
+            let result = bridge.profileEntityJSON(
+                entityId: entityID,
+                durationSeconds: durationSeconds,
+                topStacks: topStacks
+            )
+            await MainActor.run {
+                guard let self else { return }
+                self.entityProfiles[entityID] = self.decodeJsonQueryResult(
+                    result,
+                    as: EntityProfileReportModel.self
+                )
+                self.finishEntityAnalysis(
+                    entityID,
+                    kind: .profile,
+                    result: result,
+                    fallback: "Sampled profile could not be collected."
+                )
+            }
+        }
+    }
+
+    func runEntityWakeupAttribution(
+        entityID: String,
+        durationSeconds: UInt32 = 5,
+        topStacks: UInt32 = 6
+    ) {
+        let bridge = self.bridge
+        setEntityAnalysisLoading(entityID, kind: .wakeupAttribution, isLoading: true)
+        Task(priority: .utility) { [weak self] in
+            let result = bridge.wakeupAttributionJSON(
+                entityId: entityID,
+                durationSeconds: durationSeconds,
+                topStacks: topStacks
+            )
+            await MainActor.run {
+                guard let self else { return }
+                self.entityWakeupAttributions[entityID] = self.decodeJsonQueryResult(
+                    result,
+                    as: WakeupAttributionReportModel.self
+                )
+                self.finishEntityAnalysis(
+                    entityID,
+                    kind: .wakeupAttribution,
+                    result: result,
+                    fallback: "Wakeup attribution could not be collected."
+                )
+            }
+        }
+    }
+
     public func loadHistory(force: Bool = false) {
         guard historyVisible || force else {
             return
@@ -696,6 +849,20 @@ public final class AppState {
                 pageResult = HistoryPageLoadResult(snapshots: [], errorMessage: nil)
             }
             let snapshots = pageResult.snapshots
+            let diffResult: JsonQueryResult
+            if let oldestMillis = snapshots.map(\.capturedAtMillis).min(),
+               let newestMillis = snapshots.map(\.capturedAtMillis).max(),
+               oldestMillis != newestMillis
+            {
+                diffResult = bridge.diffSnapshotsJSON(
+                    beforeMillis: oldestMillis,
+                    afterMillis: newestMillis,
+                    entityIds: [],
+                    limit: 12
+                )
+            } else {
+                diffResult = JsonQueryResult(json: nil, errorMessage: nil)
+            }
             await MainActor.run {
                 guard let self else { return }
                 let durationMillis = (CFAbsoluteTimeGetCurrent() - loadStarted) * 1000.0
@@ -710,6 +877,11 @@ public final class AppState {
                     pageError: pageResult.errorMessage,
                     rangeSummary: summary,
                     loadedCount: snapshots.count
+                )
+                self.historySnapshotDiff = self.decodeJsonQueryResult(diffResult, as: SnapshotDiffReportModel.self)
+                self.historySnapshotDiffError = self.jsonQueryErrorMessage(
+                    diffResult,
+                    fallback: snapshots.count >= 2 ? "Persisted diff analysis could not be prepared." : nil
                 )
                 self.historyLoadStatus = self.historyStatusMessage(
                     summary: summary,
@@ -1601,6 +1773,60 @@ public final class AppState {
             }),
             "recentSnapshots": recentSnapshots,
         ]
+    }
+
+    private func entityAnalysisKey(_ entityID: String, kind: EntityAnalysisKind) -> String {
+        "\(entityID)|\(kind.rawValue)"
+    }
+
+    private func setEntityAnalysisLoading(_ entityID: String, kind: EntityAnalysisKind, isLoading: Bool) {
+        let key = entityAnalysisKey(entityID, kind: kind)
+        if isLoading {
+            entityAnalysisLoadingKeys.insert(key)
+            entityAnalysisErrorMessages[key] = nil
+        } else {
+            entityAnalysisLoadingKeys.remove(key)
+        }
+    }
+
+    private func finishEntityAnalysis(
+        _ entityID: String,
+        kind: EntityAnalysisKind,
+        result: JsonQueryResult,
+        fallback: String
+    ) {
+        let key = entityAnalysisKey(entityID, kind: kind)
+        entityAnalysisLoadingKeys.remove(key)
+        entityAnalysisErrorMessages[key] = jsonQueryErrorMessage(result, fallback: fallback)
+        if entityAnalysisErrorMessages[key] == nil {
+            entityAnalysisUpdatedAtByKey[key] = Date()
+        }
+    }
+
+    private func jsonDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }
+
+    private func decodeJsonQueryResult<T: Decodable>(_ result: JsonQueryResult, as type: T.Type) -> T? {
+        guard let json = result.json, let data = json.data(using: .utf8) else {
+            return nil
+        }
+        return try? jsonDecoder().decode(T.self, from: data)
+    }
+
+    private func jsonQueryErrorMessage(_ result: JsonQueryResult, fallback: String?) -> String? {
+        if let error = result.errorMessage, !error.isEmpty {
+            return error
+        }
+        guard let json = result.json else {
+            return fallback
+        }
+        if json.isEmpty {
+            return fallback
+        }
+        return nil
     }
 
     private func jsonOptional(_ value: Any?) -> Any {

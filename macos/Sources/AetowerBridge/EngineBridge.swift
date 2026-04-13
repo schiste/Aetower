@@ -132,6 +132,64 @@ public final class EngineBridge: @unchecked Sendable {
         return result.isEmpty ? nil : result
     }
 
+    public func diffSnapshotsJSON(
+        beforeMillis: UInt64,
+        afterMillis: UInt64,
+        entityIds: [String] = [],
+        limit: UInt32 = 12
+    ) -> JsonQueryResult {
+        engine.diffSnapshotsJson(
+            beforeMillis: beforeMillis,
+            afterMillis: afterMillis,
+            entityIds: entityIds,
+            limit: limit
+        )
+    }
+
+    public func explainAnomaliesJSON(
+        entityIds: [String] = [],
+        limit: UInt32 = 6,
+        windowMinutes: UInt32 = 20
+    ) -> JsonQueryResult {
+        engine.explainAnomaliesJson(
+            entityIds: entityIds,
+            limit: limit,
+            windowMinutes: windowMinutes
+        )
+    }
+
+    public func entityProcessTreeJSON(entityId: String) -> JsonQueryResult {
+        engine.entityProcessTreeJson(entityId: entityId)
+    }
+
+    public func memoryBreakdownJSON(entityId: String, topRegions: UInt32 = 8) -> JsonQueryResult {
+        engine.memoryBreakdownJson(entityId: entityId, topRegions: topRegions)
+    }
+
+    public func profileEntityJSON(
+        entityId: String,
+        durationSeconds: UInt32 = 5,
+        topStacks: UInt32 = 6
+    ) -> JsonQueryResult {
+        engine.profileEntityJson(
+            entityId: entityId,
+            durationSeconds: durationSeconds,
+            topStacks: topStacks
+        )
+    }
+
+    public func wakeupAttributionJSON(
+        entityId: String,
+        durationSeconds: UInt32 = 5,
+        topStacks: UInt32 = 6
+    ) -> JsonQueryResult {
+        engine.wakeupAttributionJson(
+            entityId: entityId,
+            durationSeconds: durationSeconds,
+            topStacks: topStacks
+        )
+    }
+
     public func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSnapshot] {
         engine.loadHistoryRange(startMillis: startMillis, endMillis: endMillis)
     }

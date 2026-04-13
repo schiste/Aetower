@@ -5,8 +5,10 @@ use aetower_diagnostics as diagnostics;
 use aetower_mcp::{
     AetowerMcpDataSource, HistorySummaryResponse, LocalMcpCache,
     LocalMcpDynamicRequestWorkerHandle, LocalMcpServerHandle, default_cache_path,
-    default_request_dir, default_socket_path, start_dynamic_request_worker,
-    start_local_socket_server, write_local_cache,
+    default_request_dir, default_socket_path, diff_snapshots_json, entity_process_tree_json,
+    explain_anomalies_json, memory_breakdown_json, profile_entity_json,
+    start_dynamic_request_worker, start_local_socket_server, wakeup_attribution_json,
+    write_local_cache,
 };
 use aetower_model as model;
 
@@ -662,6 +664,12 @@ pub struct HistoryPageLoadResult {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct JsonQueryResult {
+    pub json: Option<String>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct HistoryMaintenanceReport {
     pub store_bytes_before: u64,
     pub wal_bytes_before: u64,
@@ -1141,6 +1149,94 @@ impl MonitorEngine {
             Err(error) => error,
         }
     }
+
+    pub fn diff_snapshots_json(
+        &self,
+        before_millis: u64,
+        after_millis: u64,
+        entity_ids: Vec<String>,
+        limit: u32,
+    ) -> JsonQueryResult {
+        let data_source = MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        };
+        json_query_result(diff_snapshots_json(
+            &data_source,
+            before_millis,
+            after_millis,
+            &entity_ids,
+            limit as usize,
+        ))
+    }
+
+    pub fn explain_anomalies_json(
+        &self,
+        entity_ids: Vec<String>,
+        limit: u32,
+        window_minutes: u32,
+    ) -> JsonQueryResult {
+        let data_source = MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        };
+        json_query_result(explain_anomalies_json(
+            &data_source,
+            &entity_ids,
+            limit as usize,
+            window_minutes as u64,
+        ))
+    }
+
+    pub fn entity_process_tree_json(&self, entity_id: String) -> JsonQueryResult {
+        let data_source = MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        };
+        json_query_result(entity_process_tree_json(&data_source, &entity_id))
+    }
+
+    pub fn memory_breakdown_json(&self, entity_id: String, top_regions: u32) -> JsonQueryResult {
+        let data_source = MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        };
+        json_query_result(memory_breakdown_json(
+            &data_source,
+            &entity_id,
+            top_regions as usize,
+        ))
+    }
+
+    pub fn profile_entity_json(
+        &self,
+        entity_id: String,
+        duration_seconds: u32,
+        top_stacks: u32,
+    ) -> JsonQueryResult {
+        let data_source = MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        };
+        json_query_result(profile_entity_json(
+            &data_source,
+            &entity_id,
+            duration_seconds as u64,
+            top_stacks as usize,
+        ))
+    }
+
+    pub fn wakeup_attribution_json(
+        &self,
+        entity_id: String,
+        duration_seconds: u32,
+        top_stacks: u32,
+    ) -> JsonQueryResult {
+        let data_source = MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        };
+        json_query_result(wakeup_attribution_json(
+            &data_source,
+            &entity_id,
+            duration_seconds as u64,
+            top_stacks as usize,
+        ))
+    }
 }
 
 impl Drop for MonitorEngine {
@@ -1251,6 +1347,19 @@ impl AetowerMcpDataSource for MonitorEngineDataSource {
             .lock()
             .map_err(|_| "engine lock poisoned".to_owned())?;
         Ok(engine.query_diagnostics(query))
+    }
+}
+
+fn json_query_result(result: Result<String, String>) -> JsonQueryResult {
+    match result {
+        Ok(json) => JsonQueryResult {
+            json: Some(json),
+            error_message: None,
+        },
+        Err(error) => JsonQueryResult {
+            json: None,
+            error_message: Some(error),
+        },
     }
 }
 

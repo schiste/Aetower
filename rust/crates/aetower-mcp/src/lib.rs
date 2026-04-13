@@ -2156,6 +2156,31 @@ fn build_snapshot_diff_report(
     }
 }
 
+pub fn diff_snapshots_json(
+    data_source: &dyn AetowerMcpDataSource,
+    before_millis: u64,
+    after_millis: u64,
+    entity_ids: &[String],
+    limit: usize,
+) -> Result<String, String> {
+    let start_millis = before_millis.min(after_millis);
+    let end_millis = before_millis.max(after_millis);
+    let snapshots = data_source.load_history_page(start_millis, end_millis, None, 512)?;
+    if snapshots.is_empty() {
+        return Err("No persisted snapshots were available for that comparison window.".to_owned());
+    }
+    let before = snapshots
+        .iter()
+        .min_by_key(|snapshot| snapshot.captured_at_millis.abs_diff(before_millis))
+        .ok_or_else(|| "Could not resolve the before snapshot.".to_owned())?;
+    let after = snapshots
+        .iter()
+        .min_by_key(|snapshot| snapshot.captured_at_millis.abs_diff(after_millis))
+        .ok_or_else(|| "Could not resolve the after snapshot.".to_owned())?;
+    let report = build_snapshot_diff_report(before, after, entity_ids, limit);
+    serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
 fn build_anomaly_explanations(
     snapshot: &SystemSnapshot,
     requested_entity_ids: &[String],
@@ -2245,6 +2270,22 @@ fn build_anomaly_explanations(
             }
         })
         .collect()
+}
+
+pub fn explain_anomalies_json(
+    data_source: &dyn AetowerMcpDataSource,
+    entity_ids: &[String],
+    limit: usize,
+    window_minutes: u64,
+) -> Result<String, String> {
+    let snapshot = data_source.latest_snapshot()?;
+    let explanations = build_anomaly_explanations(
+        &snapshot,
+        entity_ids,
+        limit.max(1),
+        window_minutes.max(1) * 60_000,
+    );
+    serde_json::to_string(&explanations).map_err(|error| error.to_string())
 }
 
 fn entity_metric_drivers(entity: &aetower_model::EntitySnapshot) -> Vec<AnomalyDriver> {
@@ -2376,6 +2417,15 @@ fn build_process_tree_report(
         grouping_reasons,
         roots,
     })
+}
+
+pub fn entity_process_tree_json(
+    data_source: &dyn AetowerMcpDataSource,
+    entity_id: &str,
+) -> Result<String, String> {
+    let snapshot = data_source.latest_snapshot()?;
+    let report = build_process_tree_report(&snapshot, entity_id)?;
+    serde_json::to_string(&report).map_err(|error| error.to_string())
 }
 
 #[derive(Clone)]
@@ -2851,6 +2901,15 @@ fn build_entity_memory_breakdown(
     })
 }
 
+pub fn memory_breakdown_json(
+    data_source: &dyn AetowerMcpDataSource,
+    entity_id: &str,
+    top_regions: usize,
+) -> Result<String, String> {
+    let report = build_entity_memory_breakdown(data_source, entity_id, top_regions.max(1))?;
+    serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
 fn build_entity_profile(
     data_source: &dyn AetowerMcpDataSource,
     entity_id: &str,
@@ -2902,6 +2961,21 @@ fn build_entity_profile(
         top_stacks: stack_reports,
         summary,
     })
+}
+
+pub fn profile_entity_json(
+    data_source: &dyn AetowerMcpDataSource,
+    entity_id: &str,
+    duration_seconds: u64,
+    top_stacks: usize,
+) -> Result<String, String> {
+    let report = build_entity_profile(
+        data_source,
+        entity_id,
+        duration_seconds.max(1),
+        top_stacks.max(1),
+    )?;
+    serde_json::to_string(&report).map_err(|error| error.to_string())
 }
 
 fn build_wakeup_attribution(
@@ -2965,6 +3039,21 @@ fn build_wakeup_attribution(
             "Queue labels are only present when the sampled stack exposed one.".to_owned(),
         ],
     })
+}
+
+pub fn wakeup_attribution_json(
+    data_source: &dyn AetowerMcpDataSource,
+    entity_id: &str,
+    duration_seconds: u64,
+    top_stacks: usize,
+) -> Result<String, String> {
+    let report = build_wakeup_attribution(
+        data_source,
+        entity_id,
+        duration_seconds.max(1),
+        top_stacks.max(1),
+    )?;
+    serde_json::to_string(&report).map_err(|error| error.to_string())
 }
 
 fn entity_process_ids(entity: &aetower_model::EntitySnapshot) -> Vec<u32> {
