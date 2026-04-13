@@ -12,6 +12,9 @@ agent-facing summaries:
 - `aetower_host_summary`
 - `aetower_entity_details`
 - `aetower_runtime_lag`
+- `aetower_diff_snapshots`
+- `aetower_explain_anomalies`
+- `aetower_entity_process_tree`
 - `aetower_top_findings`
 - `aetower_host_alerts`
 - `aetower_entity_group_tree`
@@ -21,6 +24,9 @@ agent-facing summaries:
 - `aetower_history_summary`
 - `aetower_history_page`
 - `aetower_history_store_health`
+- `aetower_memory_breakdown`
+- `aetower_profile_entity`
+- `aetower_wakeup_attribution`
 - `aetower_diagnostics_overview`
 - `aetower_query_diagnostics`
 - `aetower_support_bundle_manifest`
@@ -29,7 +35,9 @@ agent-facing summaries:
 - `aetower_export_query`
 
 The runtime implementation lives in [aetower-mcp](../rust/crates/aetower-mcp/src/lib.rs). The
-binary at [main.rs](../rust/crates/aetower-mcp/src/main.rs) is only a thin stdio proxy.
+binary at [main.rs](../rust/crates/aetower-mcp/src/main.rs) serves MCP over
+stdio for local clients. It reads the app-written cache for standard tools and
+uses an app-owned request channel for deeper profiling tools.
 
 ## Runtime model
 
@@ -60,8 +68,9 @@ Then agents can use:
 sh scripts/run-aetower-mcp.sh
 ```
 
-That command does not start another Aetower engine. It only proxies stdio to
-the app-owned local MCP socket.
+That command does not start another Aetower engine. It serves from Aetower’s
+app-written cache and asks the running app to perform deeper profiling when a
+tool needs `vmmap`/`sample` access.
 
 ## Example MCP client config
 
@@ -79,7 +88,9 @@ When a packaged Aetower app launches, it automatically registers that entry for
 Claude if Claude is installed locally. Other AI clients currently require
 manual setup unless they expose a stable writable MCP config file.
 
-If the app is not running, the proxy exits with a clear connection error.
+If the app is not running, standard cached tools still work from the last
+written cache. Dynamic profiling tools return a clear error telling the caller
+that the running Aetower app is required.
 
 ## Tool behavior
 
@@ -91,6 +102,15 @@ If the app is not running, the proxy exits with a clear connection error.
 `aetower_top_findings` and `aetower_host_alerts` provide ranked machine-level
 operator context so agents do not have to rebuild urgency heuristics from raw
 host counters.
+
+`aetower_diff_snapshots` compares two persisted time points and returns host
+and per-entity deltas.
+
+`aetower_explain_anomalies` explains why a current entity looks unusual by
+calling out the strongest changed metrics and the most relevant recent events.
+
+`aetower_entity_process_tree` returns the per-process tree for one entity,
+including subtree burden and expansion reasons.
 
 `aetower_entity_group_tree` returns a grouped entity-family view using shared
 runtime session, repo, workspace, grouping, and launcher context.
@@ -109,6 +129,16 @@ labels.
 
 `aetower_history_store_health` surfaces persisted store size, WAL size,
 quarantine count, thresholds, and recent history diagnostics.
+
+`aetower_memory_breakdown` asks the running app to collect a `vmmap`-style
+memory region breakdown for one entity.
+
+`aetower_profile_entity` asks the running app to run a short sampled profile
+for one entity and summarize hot threads, queues, and stacks.
+
+`aetower_wakeup_attribution` asks the running app for a sampled wakeup
+attribution report by thread, queue, and dominant sampled cause. It is
+explicitly heuristic, not kernel-exact wakeup accounting.
 
 `aetower_query_diagnostics` accepts the same filter fields Aetower already uses
 internally:
