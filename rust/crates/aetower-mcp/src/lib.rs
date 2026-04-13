@@ -8,9 +8,10 @@ use std::{
         net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
+    process::Command,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -30,6 +31,12 @@ const SOCKET_DIR_MODE: u32 = 0o700;
 const SOCKET_FILE_MODE: u32 = 0o600;
 const MCP_READ_TIMEOUT: Duration = Duration::from_millis(250);
 const MAX_INLINE_TEXT_BYTES: usize = 8 * 1024;
+const DEFAULT_DYNAMIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const DEFAULT_DYNAMIC_REQUEST_POLL: Duration = Duration::from_millis(150);
+const DEFAULT_PROFILE_DURATION_SECONDS: u64 = 3;
+const MAX_PROFILE_DURATION_SECONDS: u64 = 15;
+const DEFAULT_TOP_STACKS: usize = 5;
+const DEFAULT_TOP_REGIONS: usize = 10;
 const DEFAULT_HOST_ALERT_TOP_ENTITIES: usize = 5;
 const DEFAULT_FINDINGS_LIMIT: usize = 10;
 const DEFAULT_RECENT_CHANGES_LIMIT: usize = 25;
@@ -54,6 +61,8 @@ const DIAGNOSTICS_WARN_WARNING: u32 = 200;
 const DIAGNOSTICS_WARN_CRITICAL: u32 = 800;
 const DIAGNOSTICS_ERROR_WARNING: u32 = 10;
 const DIAGNOSTICS_ERROR_CRITICAL: u32 = 50;
+
+static NEXT_DYNAMIC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MessageFraming {
@@ -261,6 +270,178 @@ struct SessionHealthCheck {
     detail: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct SnapshotMetricDelta {
+    before: f64,
+    after: f64,
+    delta: f64,
+    percent_change: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SnapshotEntityDelta {
+    entity_id: String,
+    display_name: String,
+    before_present: bool,
+    after_present: bool,
+    friction: SnapshotMetricDelta,
+    cpu_percent: SnapshotMetricDelta,
+    memory_bytes: SnapshotMetricDelta,
+    wakeups_per_second: SnapshotMetricDelta,
+    process_count: SnapshotMetricDelta,
+    recent_change_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SnapshotDiffReport {
+    before_snapshot_millis: u64,
+    after_snapshot_millis: u64,
+    host: BTreeMap<String, SnapshotMetricDelta>,
+    entities: Vec<SnapshotEntityDelta>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AnomalyDriver {
+    metric: String,
+    before: f64,
+    after: f64,
+    delta: f64,
+    summary: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AnomalyExplanation {
+    entity_id: String,
+    display_name: String,
+    severity: SeverityBand,
+    summary: String,
+    recent_change_summary: Option<String>,
+    drivers: Vec<AnomalyDriver>,
+    supporting_events: Vec<RecentChangeItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessTreeNodeReport {
+    title: String,
+    pid: Option<u32>,
+    relation: String,
+    owner_entity_id: String,
+    owner_display_name: String,
+    self_cpu_percent: f32,
+    subtree_cpu_percent: f32,
+    self_memory_bytes: u64,
+    subtree_memory_bytes: u64,
+    subtree_process_count: u32,
+    badges: Vec<String>,
+    user: Option<String>,
+    cwd: Option<String>,
+    provenance: Option<String>,
+    launched_by: Option<String>,
+    adapter_label: Option<String>,
+    status_label: Option<String>,
+    children: Vec<ProcessTreeNodeReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessTreeReport {
+    captured_at_millis: u64,
+    root_entity_id: String,
+    root_display_name: String,
+    seed_entity_ids: Vec<String>,
+    expanded_entity_ids: Vec<String>,
+    grouped_process_count: u32,
+    expanded_process_count: u32,
+    grouping_reasons: Vec<String>,
+    roots: Vec<ProcessTreeNodeReport>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum DynamicToolRequest {
+    MemoryBreakdown {
+        entity_id: String,
+        top_regions: usize,
+    },
+    ProfileEntity {
+        entity_id: String,
+        duration_seconds: u64,
+        top_stacks: usize,
+    },
+    WakeupAttribution {
+        entity_id: String,
+        duration_seconds: u64,
+        top_stacks: usize,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DynamicToolRequestEnvelope {
+    request_id: String,
+    created_at_millis: u64,
+    request: DynamicToolRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DynamicToolResponseEnvelope {
+    request_id: String,
+    completed_at_millis: u64,
+    result: Option<Value>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct MemoryRegionBreakdown {
+    region_type: String,
+    virtual_bytes: u64,
+    resident_bytes: u64,
+    dirty_bytes: u64,
+    swap_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EntityMemoryBreakdown {
+    captured_at_millis: u64,
+    entity_id: String,
+    display_name: String,
+    process_ids: Vec<u32>,
+    resident_bytes: u64,
+    regions: Vec<MemoryRegionBreakdown>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SampledStackReport {
+    thread_label: String,
+    queue_label: Option<String>,
+    sample_count: u32,
+    top_frames: Vec<String>,
+    classification: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EntityProfileReport {
+    captured_at_millis: u64,
+    entity_id: String,
+    display_name: String,
+    duration_seconds: u64,
+    sampled_process_ids: Vec<u32>,
+    thread_count: usize,
+    top_stacks: Vec<SampledStackReport>,
+    summary: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WakeupAttributionReport {
+    captured_at_millis: u64,
+    entity_id: String,
+    display_name: String,
+    duration_seconds: u64,
+    sampled_process_ids: Vec<u32>,
+    queue_breakdown: Vec<SampledStackReport>,
+    dominant_cause: Option<String>,
+    attribution_mode: String,
+    caveats: Vec<String>,
+}
+
 struct ExportQueryOptions<'a> {
     privacy_tier: ExportPrivacyTier,
     entity_ids: &'a [String],
@@ -306,9 +487,21 @@ pub struct LocalMcpServerHandle {
     socket_path: PathBuf,
 }
 
+pub struct LocalMcpDynamicRequestWorkerHandle {
+    running: Arc<AtomicBool>,
+    join_handle: Option<thread::JoinHandle<()>>,
+    request_dir: PathBuf,
+}
+
 impl LocalMcpServerHandle {
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
+    }
+}
+
+impl LocalMcpDynamicRequestWorkerHandle {
+    pub fn request_dir(&self) -> &Path {
+        &self.request_dir
     }
 }
 
@@ -326,6 +519,21 @@ impl Drop for LocalMcpServerHandle {
         }
         let _ = fs::remove_file(&self.socket_path);
     }
+}
+
+impl Drop for LocalMcpDynamicRequestWorkerHandle {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::SeqCst);
+        if let Some(join_handle) = self.join_handle.take() {
+            let _ = join_handle.join();
+        }
+    }
+}
+
+#[derive(Clone)]
+enum DynamicExecutionMode {
+    Local,
+    RequestClient(PathBuf),
 }
 
 pub fn default_socket_path() -> PathBuf {
@@ -347,6 +555,13 @@ pub fn default_cache_path() -> PathBuf {
         return PathBuf::from(override_path);
     }
     default_app_support_dir().join("mcp-cache.json")
+}
+
+pub fn default_request_dir() -> PathBuf {
+    if let Some(override_path) = env::var_os("AETOWER_MCP_REQUEST_DIR") {
+        return PathBuf::from(override_path);
+    }
+    std::env::temp_dir().join("aetower-mcp-requests")
 }
 
 pub fn write_local_cache(cache: &LocalMcpCache, path: impl AsRef<Path>) -> Result<(), String> {
@@ -427,8 +642,9 @@ pub fn start_local_socket_server(
                     }
                     let source = Arc::clone(&data_source);
                     let connection_running = Arc::clone(&thread_running);
+                    let dynamic_mode = DynamicExecutionMode::Local;
                     let join_handle = thread::spawn(move || {
-                        let _ = handle_connection(stream, source, connection_running);
+                        let _ = handle_connection(stream, source, dynamic_mode, connection_running);
                     });
                     if let Ok(mut handles) = thread_client_threads.lock() {
                         reap_finished_client_threads(&mut handles);
@@ -452,6 +668,100 @@ pub fn start_local_socket_server(
     })
 }
 
+pub fn start_dynamic_request_worker(
+    data_source: Arc<dyn AetowerMcpDataSource>,
+    request_dir: impl AsRef<Path>,
+) -> Result<LocalMcpDynamicRequestWorkerHandle, String> {
+    let request_dir = request_dir.as_ref().to_path_buf();
+    fs::create_dir_all(&request_dir).map_err(|error| {
+        format!(
+            "create MCP request directory {}: {error}",
+            request_dir.display()
+        )
+    })?;
+    let running = Arc::new(AtomicBool::new(true));
+    let thread_running = Arc::clone(&running);
+    let thread_request_dir = request_dir.clone();
+    let join_handle = thread::spawn(move || {
+        while thread_running.load(Ordering::SeqCst) {
+            let entries = match fs::read_dir(&thread_request_dir) {
+                Ok(entries) => entries,
+                Err(_) => {
+                    thread::sleep(DEFAULT_DYNAMIC_REQUEST_POLL);
+                    continue;
+                }
+            };
+            for entry in entries.flatten() {
+                if !thread_running.load(Ordering::SeqCst) {
+                    break;
+                }
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                if !name.ends_with(".request.json") {
+                    continue;
+                }
+                let claim_path = path.with_extension("processing");
+                if fs::rename(&path, &claim_path).is_err() {
+                    continue;
+                }
+                let response = match fs::read(&claim_path)
+                    .map_err(|error| {
+                        format!("read dynamic request {}: {error}", claim_path.display())
+                    })
+                    .and_then(|bytes| {
+                        serde_json::from_slice::<DynamicToolRequestEnvelope>(&bytes).map_err(
+                            |error| {
+                                format!("parse dynamic request {}: {error}", claim_path.display())
+                            },
+                        )
+                    }) {
+                    Ok(envelope) => {
+                        match process_dynamic_tool_request(&*data_source, &envelope.request) {
+                            Ok(result) => DynamicToolResponseEnvelope {
+                                request_id: envelope.request_id.clone(),
+                                completed_at_millis: now_millis(),
+                                result: Some(result),
+                                error: None,
+                            },
+                            Err(error) => DynamicToolResponseEnvelope {
+                                request_id: envelope.request_id.clone(),
+                                completed_at_millis: now_millis(),
+                                result: None,
+                                error: Some(error),
+                            },
+                        }
+                    }
+                    Err(error) => DynamicToolResponseEnvelope {
+                        request_id: claim_path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .unwrap_or("unknown")
+                            .to_owned(),
+                        completed_at_millis: now_millis(),
+                        result: None,
+                        error: Some(error),
+                    },
+                };
+                let response_path = response_path_for(&thread_request_dir, &response.request_id);
+                let temp_path = response_path.with_extension("json.tmp");
+                if let Ok(payload) = serde_json::to_vec(&response) {
+                    let _ = fs::write(&temp_path, payload);
+                    let _ = fs::rename(&temp_path, &response_path);
+                }
+                let _ = fs::remove_file(&claim_path);
+            }
+            thread::sleep(DEFAULT_DYNAMIC_REQUEST_POLL);
+        }
+    });
+    Ok(LocalMcpDynamicRequestWorkerHandle {
+        running,
+        join_handle: Some(join_handle),
+        request_dir,
+    })
+}
+
 fn reap_finished_client_threads(handles: &mut Vec<thread::JoinHandle<()>>) {
     let mut remaining = Vec::with_capacity(handles.len());
     for handle in handles.drain(..) {
@@ -471,7 +781,12 @@ pub fn proxy_stdio_to_socket(socket_path: impl AsRef<Path>) -> Result<(), String
 pub fn serve_stdio(data_source: Arc<dyn AetowerMcpDataSource>) -> Result<(), String> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    serve_streams(data_source, stdin.lock(), stdout.lock())
+    serve_streams(
+        data_source,
+        DynamicExecutionMode::RequestClient(default_request_dir()),
+        stdin.lock(),
+        stdout.lock(),
+    )
 }
 
 fn proxy_streams_to_socket<R, W>(
@@ -532,6 +847,7 @@ where
 fn handle_connection(
     stream: UnixStream,
     data_source: Arc<dyn AetowerMcpDataSource>,
+    dynamic_mode: DynamicExecutionMode,
     running: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let mut reader = stream
@@ -541,7 +857,10 @@ fn handle_connection(
         .set_read_timeout(Some(MCP_READ_TIMEOUT))
         .map_err(|error| format!("set MCP socket read timeout: {error}"))?;
     let mut writer = stream;
-    let server = AetowerMcpServer { data_source };
+    let server = AetowerMcpServer {
+        data_source,
+        dynamic_mode,
+    };
     let mut framing = None;
 
     loop {
@@ -566,6 +885,7 @@ fn handle_connection(
 
 fn serve_streams<R, W>(
     data_source: Arc<dyn AetowerMcpDataSource>,
+    dynamic_mode: DynamicExecutionMode,
     mut reader: R,
     mut writer: W,
 ) -> Result<(), String>
@@ -573,7 +893,10 @@ where
     R: Read,
     W: Write,
 {
-    let server = AetowerMcpServer { data_source };
+    let server = AetowerMcpServer {
+        data_source,
+        dynamic_mode,
+    };
     let mut framing = None;
     loop {
         match read_message(&mut reader, &mut framing)? {
@@ -601,6 +924,7 @@ enum ReadMessageOutcome {
 
 struct AetowerMcpServer {
     data_source: Arc<dyn AetowerMcpDataSource>,
+    dynamic_mode: DynamicExecutionMode,
 }
 
 impl AetowerMcpServer {
@@ -666,6 +990,9 @@ impl AetowerMcpServer {
             "aetower_host_summary" => self.tool_host_summary(arguments),
             "aetower_entity_details" => self.tool_entity_details(arguments),
             "aetower_runtime_lag" => self.tool_runtime_lag(),
+            "aetower_diff_snapshots" => self.tool_diff_snapshots(arguments),
+            "aetower_explain_anomalies" => self.tool_explain_anomalies(arguments),
+            "aetower_entity_process_tree" => self.tool_entity_process_tree(arguments),
             "aetower_top_findings" => self.tool_top_findings(arguments),
             "aetower_host_alerts" => self.tool_host_alerts(arguments),
             "aetower_entity_group_tree" => self.tool_entity_group_tree(arguments),
@@ -675,6 +1002,9 @@ impl AetowerMcpServer {
             "aetower_history_summary" => self.tool_history_summary(arguments),
             "aetower_history_page" => self.tool_history_page(arguments),
             "aetower_history_store_health" => self.tool_history_store_health(arguments),
+            "aetower_memory_breakdown" => self.tool_memory_breakdown(arguments),
+            "aetower_profile_entity" => self.tool_profile_entity(arguments),
+            "aetower_wakeup_attribution" => self.tool_wakeup_attribution(arguments),
             "aetower_diagnostics_overview" => self.tool_diagnostics_overview(),
             "aetower_query_diagnostics" => self.tool_query_diagnostics(arguments),
             "aetower_support_bundle_manifest" => self.tool_support_bundle_manifest(arguments),
@@ -810,6 +1140,85 @@ impl AetowerMcpServer {
                 .latest_runtime_lag_metrics()
                 .map_err(tool_error)?,
         )
+    }
+
+    fn tool_diff_snapshots(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            before_millis: u64,
+            after_millis: u64,
+            #[serde(default)]
+            entity_ids: Vec<String>,
+            #[serde(default = "default_findings_limit")]
+            limit: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let before = snapshot_at_or_before(&*self.data_source, args.before_millis)
+            .map_err(tool_error)?
+            .ok_or_else(|| {
+                tool_error(format!(
+                    "No persisted snapshot found at or before {}.",
+                    args.before_millis
+                ))
+            })?;
+        let after = snapshot_at_or_before(&*self.data_source, args.after_millis)
+            .map_err(tool_error)?
+            .ok_or_else(|| {
+                tool_error(format!(
+                    "No persisted snapshot found at or before {}.",
+                    args.after_millis
+                ))
+            })?;
+        tool_json(build_snapshot_diff_report(
+            &before,
+            &after,
+            &args.entity_ids,
+            args.limit.max(1),
+        ))
+    }
+
+    fn tool_explain_anomalies(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            entity_ids: Vec<String>,
+            #[serde(default = "default_findings_limit")]
+            limit: usize,
+            #[serde(default = "default_recent_changes_window_minutes")]
+            window_minutes: u64,
+        }
+
+        #[derive(Serialize)]
+        struct Response {
+            captured_at_millis: u64,
+            explanations: Vec<AnomalyExplanation>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let explanations = build_anomaly_explanations(
+            &snapshot,
+            &args.entity_ids,
+            args.limit.max(1),
+            args.window_minutes.saturating_mul(60 * 1000),
+        );
+        tool_json(Response {
+            captured_at_millis: snapshot.captured_at_millis,
+            explanations,
+        })
+    }
+
+    fn tool_entity_process_tree(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            entity_id: String,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let report = build_process_tree_report(&snapshot, &args.entity_id).map_err(tool_error)?;
+        tool_json(report)
     }
 
     fn tool_top_findings(&self, arguments: Value) -> Result<Value, Value> {
@@ -1130,6 +1539,63 @@ impl AetowerMcpServer {
         tool_json(build_history_store_health(summary, recent_history_events))
     }
 
+    fn tool_memory_breakdown(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            entity_id: String,
+            #[serde(default = "default_top_regions")]
+            top_regions: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let request = DynamicToolRequest::MemoryBreakdown {
+            entity_id: args.entity_id,
+            top_regions: args.top_regions.max(1),
+        };
+        let result = self.execute_dynamic_request(&request).map_err(tool_error)?;
+        Ok(result)
+    }
+
+    fn tool_profile_entity(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            entity_id: String,
+            #[serde(default = "default_profile_duration_seconds")]
+            duration_seconds: u64,
+            #[serde(default = "default_top_stacks")]
+            top_stacks: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let request = DynamicToolRequest::ProfileEntity {
+            entity_id: args.entity_id,
+            duration_seconds: args.duration_seconds.clamp(1, MAX_PROFILE_DURATION_SECONDS),
+            top_stacks: args.top_stacks.max(1),
+        };
+        let result = self.execute_dynamic_request(&request).map_err(tool_error)?;
+        Ok(result)
+    }
+
+    fn tool_wakeup_attribution(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            entity_id: String,
+            #[serde(default = "default_profile_duration_seconds")]
+            duration_seconds: u64,
+            #[serde(default = "default_top_stacks")]
+            top_stacks: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let request = DynamicToolRequest::WakeupAttribution {
+            entity_id: args.entity_id,
+            duration_seconds: args.duration_seconds.clamp(1, MAX_PROFILE_DURATION_SECONDS),
+            top_stacks: args.top_stacks.max(1),
+        };
+        let result = self.execute_dynamic_request(&request).map_err(tool_error)?;
+        Ok(result)
+    }
+
     fn tool_support_bundle_manifest(&self, arguments: Value) -> Result<Value, Value> {
         #[derive(Deserialize)]
         struct Args {
@@ -1342,6 +1808,17 @@ impl AetowerMcpServer {
             thread::sleep(INITIAL_SNAPSHOT_POLL);
         }
     }
+
+    fn execute_dynamic_request(&self, request: &DynamicToolRequest) -> Result<Value, String> {
+        match &self.dynamic_mode {
+            DynamicExecutionMode::Local => {
+                process_dynamic_tool_request(&*self.data_source, request)
+            }
+            DynamicExecutionMode::RequestClient(request_dir) => {
+                request_dynamic_tool(request_dir, request, DEFAULT_DYNAMIC_REQUEST_TIMEOUT)
+            }
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -1414,8 +1891,1315 @@ fn default_export_history_limit() -> u32 {
     DEFAULT_EXPORT_HISTORY_LIMIT
 }
 
+fn default_profile_duration_seconds() -> u64 {
+    DEFAULT_PROFILE_DURATION_SECONDS
+}
+
+fn default_top_stacks() -> usize {
+    DEFAULT_TOP_STACKS
+}
+
+fn default_top_regions() -> usize {
+    DEFAULT_TOP_REGIONS
+}
+
 fn default_include_true() -> bool {
     true
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+fn request_path_for(request_dir: &Path, request_id: &str) -> PathBuf {
+    request_dir.join(format!("{request_id}.request.json"))
+}
+
+fn response_path_for(request_dir: &Path, request_id: &str) -> PathBuf {
+    request_dir.join(format!("{request_id}.response.json"))
+}
+
+fn request_dynamic_tool(
+    request_dir: &Path,
+    request: &DynamicToolRequest,
+    timeout: Duration,
+) -> Result<Value, String> {
+    fs::create_dir_all(request_dir).map_err(|error| {
+        format!(
+            "create MCP request directory {}: {error}",
+            request_dir.display()
+        )
+    })?;
+    let request_id = format!(
+        "{}-{}-{}",
+        std::process::id(),
+        now_millis(),
+        NEXT_DYNAMIC_REQUEST_ID.fetch_add(1, Ordering::SeqCst)
+    );
+    let request_path = request_path_for(request_dir, &request_id);
+    let response_path = response_path_for(request_dir, &request_id);
+    let envelope = DynamicToolRequestEnvelope {
+        request_id: request_id.clone(),
+        created_at_millis: now_millis(),
+        request: request.clone(),
+    };
+    let payload = serde_json::to_vec(&envelope)
+        .map_err(|error| format!("serialize dynamic request: {error}"))?;
+    fs::write(&request_path, payload)
+        .map_err(|error| format!("write dynamic request {}: {error}", request_path.display()))?;
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if let Ok(bytes) = fs::read(&response_path) {
+            let envelope: DynamicToolResponseEnvelope =
+                serde_json::from_slice(&bytes).map_err(|error| {
+                    format!(
+                        "parse dynamic response {}: {error}",
+                        response_path.display()
+                    )
+                })?;
+            let _ = fs::remove_file(&request_path);
+            let _ = fs::remove_file(&response_path);
+            if let Some(error) = envelope.error {
+                return Err(error);
+            }
+            return envelope
+                .result
+                .ok_or_else(|| "dynamic request completed without a result".to_owned());
+        }
+        thread::sleep(DEFAULT_DYNAMIC_REQUEST_POLL);
+    }
+    let _ = fs::remove_file(&request_path);
+    Err(
+        "Timed out waiting for the running Aetower app to complete the requested analysis."
+            .to_owned(),
+    )
+}
+
+fn snapshot_at_or_before(
+    data_source: &dyn AetowerMcpDataSource,
+    target_millis: u64,
+) -> Result<Option<SystemSnapshot>, String> {
+    let mut snapshots = data_source.load_history_page(0, target_millis, None, 1)?;
+    Ok(snapshots.pop())
+}
+
+fn metric_delta(before: f64, after: f64) -> SnapshotMetricDelta {
+    let delta = after - before;
+    let percent_change = if before.abs() < f64::EPSILON {
+        None
+    } else {
+        Some((delta / before.abs()) * 100.0)
+    };
+    SnapshotMetricDelta {
+        before,
+        after,
+        delta,
+        percent_change,
+    }
+}
+
+fn build_snapshot_diff_report(
+    before: &SystemSnapshot,
+    after: &SystemSnapshot,
+    requested_entity_ids: &[String],
+    limit: usize,
+) -> SnapshotDiffReport {
+    let mut host = BTreeMap::new();
+    host.insert(
+        "cpu_percent".to_owned(),
+        metric_delta(
+            before.host.cpu_percent as f64,
+            after.host.cpu_percent as f64,
+        ),
+    );
+    host.insert(
+        "memory_used_bytes".to_owned(),
+        metric_delta(
+            before.host.memory_used_bytes as f64,
+            after.host.memory_used_bytes as f64,
+        ),
+    );
+    host.insert(
+        "compressed_memory_bytes".to_owned(),
+        metric_delta(
+            before.host.compressed_memory_bytes as f64,
+            after.host.compressed_memory_bytes as f64,
+        ),
+    );
+    host.insert(
+        "swap_used_bytes".to_owned(),
+        metric_delta(
+            before.host.swap_used_bytes as f64,
+            after.host.swap_used_bytes as f64,
+        ),
+    );
+    host.insert(
+        "wakeups_per_second".to_owned(),
+        metric_delta(
+            before.host.wakeups_per_second as f64,
+            after.host.wakeups_per_second as f64,
+        ),
+    );
+
+    let before_entities = before
+        .entities
+        .iter()
+        .map(|entity| (entity.entity_id.clone(), entity))
+        .collect::<BTreeMap<_, _>>();
+    let after_entities = after
+        .entities
+        .iter()
+        .map(|entity| (entity.entity_id.clone(), entity))
+        .collect::<BTreeMap<_, _>>();
+    let entity_ids = if requested_entity_ids.is_empty() {
+        before_entities
+            .keys()
+            .chain(after_entities.keys())
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+    } else {
+        requested_entity_ids.to_vec()
+    };
+    let mut entities = entity_ids
+        .into_iter()
+        .filter_map(|entity_id| {
+            let before_entity = before_entities.get(&entity_id).copied();
+            let after_entity = after_entities.get(&entity_id).copied();
+            let display_name = after_entity
+                .or(before_entity)
+                .map(|entity| entity.display_name.clone())?;
+            let before_metrics = before_entity.map(|entity| &entity.metrics);
+            let after_metrics = after_entity.map(|entity| &entity.metrics);
+            Some(SnapshotEntityDelta {
+                entity_id: entity_id.clone(),
+                display_name,
+                before_present: before_entity.is_some(),
+                after_present: after_entity.is_some(),
+                friction: metric_delta(
+                    before_entity
+                        .map(|entity| entity.friction.total_score as f64)
+                        .unwrap_or(0.0),
+                    after_entity
+                        .map(|entity| entity.friction.total_score as f64)
+                        .unwrap_or(0.0),
+                ),
+                cpu_percent: metric_delta(
+                    before_metrics
+                        .map(|metrics| metrics.cpu_percent as f64)
+                        .unwrap_or(0.0),
+                    after_metrics
+                        .map(|metrics| metrics.cpu_percent as f64)
+                        .unwrap_or(0.0),
+                ),
+                memory_bytes: metric_delta(
+                    before_metrics
+                        .map(|metrics| metrics.memory_resident_bytes as f64)
+                        .unwrap_or(0.0),
+                    after_metrics
+                        .map(|metrics| metrics.memory_resident_bytes as f64)
+                        .unwrap_or(0.0),
+                ),
+                wakeups_per_second: metric_delta(
+                    before_metrics
+                        .map(|metrics| metrics.wakeups_per_second as f64)
+                        .unwrap_or(0.0),
+                    after_metrics
+                        .map(|metrics| metrics.wakeups_per_second as f64)
+                        .unwrap_or(0.0),
+                ),
+                process_count: metric_delta(
+                    before_metrics
+                        .map(|metrics| metrics.process_count as f64)
+                        .unwrap_or(0.0),
+                    after_metrics
+                        .map(|metrics| metrics.process_count as f64)
+                        .unwrap_or(0.0),
+                ),
+                recent_change_summary: after_entity
+                    .and_then(|entity| entity.recent_change_summary.clone())
+                    .or_else(|| {
+                        before_entity.and_then(|entity| entity.recent_change_summary.clone())
+                    }),
+            })
+        })
+        .collect::<Vec<_>>();
+    entities.sort_by(|left, right| {
+        right
+            .friction
+            .delta
+            .abs()
+            .partial_cmp(&left.friction.delta.abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                right
+                    .wakeups_per_second
+                    .delta
+                    .abs()
+                    .partial_cmp(&left.wakeups_per_second.delta.abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+    if requested_entity_ids.is_empty() {
+        entities.truncate(limit.max(1));
+    }
+
+    SnapshotDiffReport {
+        before_snapshot_millis: before.captured_at_millis,
+        after_snapshot_millis: after.captured_at_millis,
+        host,
+        entities,
+    }
+}
+
+fn build_anomaly_explanations(
+    snapshot: &SystemSnapshot,
+    requested_entity_ids: &[String],
+    limit: usize,
+    window_millis: u64,
+) -> Vec<AnomalyExplanation> {
+    let requested = requested_entity_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut entities = snapshot
+        .entities
+        .iter()
+        .filter(|entity| {
+            if !requested.is_empty() {
+                return requested.contains(&entity.entity_id);
+            }
+            entity.anomaly_detected || entity.recent_change_summary.is_some()
+        })
+        .collect::<Vec<_>>();
+    entities.sort_by(|left, right| {
+        right
+            .friction
+            .total_score
+            .partial_cmp(&left.friction.total_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    entities.truncate(limit.max(1));
+    let since = snapshot.captured_at_millis.saturating_sub(window_millis);
+
+    entities
+        .into_iter()
+        .map(|entity| {
+            let mut drivers = entity_metric_drivers(entity);
+            drivers.sort_by(|left, right| {
+                right
+                    .delta
+                    .abs()
+                    .partial_cmp(&left.delta.abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            drivers.truncate(3);
+            let supporting_events = snapshot
+                .timeline
+                .iter()
+                .filter(|event| {
+                    event.timestamp_millis >= since
+                        && event.entity_id.as_deref() == Some(entity.entity_id.as_str())
+                })
+                .map(|event| RecentChangeItem {
+                    timestamp_millis: event.timestamp_millis,
+                    severity: match event.severity {
+                        aetower_model::TimelineSeverity::Info => SeverityBand::Info,
+                        aetower_model::TimelineSeverity::Warning => SeverityBand::Warning,
+                        aetower_model::TimelineSeverity::Critical => SeverityBand::Critical,
+                    },
+                    source: format!("timeline:{:?}", event.category).to_lowercase(),
+                    entity_id: event.entity_id.clone(),
+                    title: event.title.clone(),
+                    detail: event.detail.clone(),
+                })
+                .take(3)
+                .collect::<Vec<_>>();
+            let driver_summary = drivers
+                .iter()
+                .map(|driver| driver.summary.clone())
+                .collect::<Vec<_>>()
+                .join(" ");
+            AnomalyExplanation {
+                entity_id: entity.entity_id.clone(),
+                display_name: entity.display_name.clone(),
+                severity: if entity.friction.total_score >= 20.0 || entity.anomaly_detected {
+                    SeverityBand::Warning
+                } else {
+                    SeverityBand::Info
+                },
+                summary: if driver_summary.is_empty() {
+                    entity.recent_change_summary.clone().unwrap_or_else(|| {
+                        "This entity is unusual relative to its recent trend.".to_owned()
+                    })
+                } else {
+                    driver_summary
+                },
+                recent_change_summary: entity.recent_change_summary.clone(),
+                drivers,
+                supporting_events,
+            }
+        })
+        .collect()
+}
+
+fn entity_metric_drivers(entity: &aetower_model::EntitySnapshot) -> Vec<AnomalyDriver> {
+    let mut drivers = Vec::new();
+    push_driver(
+        &mut drivers,
+        "friction",
+        entity
+            .trend
+            .friction
+            .iter()
+            .map(|value| *value as f64)
+            .collect::<Vec<_>>(),
+    );
+    push_driver(
+        &mut drivers,
+        "cpu_percent",
+        entity
+            .trend
+            .cpu_percent
+            .iter()
+            .map(|value| *value as f64)
+            .collect::<Vec<_>>(),
+    );
+    push_driver(
+        &mut drivers,
+        "memory_bytes",
+        entity
+            .trend
+            .memory_resident_bytes
+            .iter()
+            .map(|value| *value as f64)
+            .collect::<Vec<_>>(),
+    );
+    push_driver(
+        &mut drivers,
+        "wakeups_per_second",
+        entity
+            .trend
+            .wakeups_per_second
+            .iter()
+            .map(|value| *value as f64)
+            .collect::<Vec<_>>(),
+    );
+    push_driver(
+        &mut drivers,
+        "disk_activity_bps",
+        entity
+            .trend
+            .disk_activity_bps
+            .iter()
+            .map(|value| *value as f64)
+            .collect::<Vec<_>>(),
+    );
+    push_driver(
+        &mut drivers,
+        "network_activity_bps",
+        entity
+            .trend
+            .network_activity_bps
+            .iter()
+            .map(|value| *value as f64)
+            .collect::<Vec<_>>(),
+    );
+    drivers
+}
+
+fn push_driver(drivers: &mut Vec<AnomalyDriver>, metric: &str, values: Vec<f64>) {
+    if values.len() < 2 {
+        return;
+    }
+    let after = *values.last().unwrap_or(&0.0);
+    let baseline_slice = &values[..values.len() - 1];
+    let before = baseline_slice.iter().sum::<f64>() / baseline_slice.len() as f64;
+    let delta = after - before;
+    if delta.abs() < f64::EPSILON {
+        return;
+    }
+    drivers.push(AnomalyDriver {
+        metric: metric.to_owned(),
+        before,
+        after,
+        delta,
+        summary: format!(
+            "{} shifted from {} to {} (delta {}).",
+            metric,
+            format_metric_value(metric, before),
+            format_metric_value(metric, after),
+            format_metric_value(metric, delta)
+        ),
+    });
+}
+
+fn build_process_tree_report(
+    snapshot: &SystemSnapshot,
+    entity_id: &str,
+) -> Result<ProcessTreeReport, String> {
+    let root = snapshot
+        .entities
+        .iter()
+        .find(|entity| entity.entity_id == entity_id)
+        .ok_or_else(|| format!("Unknown entity_id: {entity_id}"))?;
+    let seed_entities = vec![root.clone()];
+    let (expanded_entities, grouping_reasons) =
+        related_entities_for_process_tree(&seed_entities, &snapshot.entities);
+    let expanded_ids = expanded_entities
+        .iter()
+        .map(|entity| entity.entity_id.clone())
+        .collect::<Vec<_>>();
+    let grouped_process_count = seed_entities
+        .iter()
+        .flat_map(|entity| entity.components.iter())
+        .filter(|component| component.kind != aetower_model::ComponentKind::AdapterContext)
+        .count() as u32;
+    let expanded_process_count = expanded_entities
+        .iter()
+        .flat_map(|entity| entity.components.iter())
+        .filter(|component| component.kind != aetower_model::ComponentKind::AdapterContext)
+        .count() as u32;
+    let roots = process_tree_roots(root, &expanded_entities);
+    Ok(ProcessTreeReport {
+        captured_at_millis: snapshot.captured_at_millis,
+        root_entity_id: root.entity_id.clone(),
+        root_display_name: root.display_name.clone(),
+        seed_entity_ids: vec![root.entity_id.clone()],
+        expanded_entity_ids: expanded_ids,
+        grouped_process_count,
+        expanded_process_count,
+        grouping_reasons,
+        roots,
+    })
+}
+
+#[derive(Clone)]
+struct RelatedProcessComponent {
+    entity_id: String,
+    owner_display_name: String,
+    component: aetower_model::ComponentSnapshot,
+    badges: Vec<String>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ProcessAggregate {
+    subtree_cpu_percent: f32,
+    subtree_memory_bytes: u64,
+    subtree_process_count: u32,
+}
+
+fn process_tree_roots(
+    root_entity: &aetower_model::EntitySnapshot,
+    expanded_entities: &[aetower_model::EntitySnapshot],
+) -> Vec<ProcessTreeNodeReport> {
+    let related_components = expanded_entities
+        .iter()
+        .flat_map(|entity| {
+            entity
+                .components
+                .iter()
+                .cloned()
+                .map(|component| RelatedProcessComponent {
+                    entity_id: entity.entity_id.clone(),
+                    owner_display_name: entity.display_name.clone(),
+                    component,
+                    badges: entity.badges.clone(),
+                })
+        })
+        .collect::<Vec<_>>();
+    let process_components = related_components
+        .iter()
+        .filter(|related| related.component.kind != aetower_model::ComponentKind::AdapterContext)
+        .cloned()
+        .collect::<Vec<_>>();
+    let adapter_components = root_entity
+        .components
+        .iter()
+        .filter(|component| component.kind == aetower_model::ComponentKind::AdapterContext)
+        .cloned()
+        .collect::<Vec<_>>();
+    let pid_map = process_components
+        .iter()
+        .filter_map(|related| {
+            related
+                .component
+                .process_id
+                .map(|pid| (pid, related.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let mut roots = Vec::new();
+    let mut children: BTreeMap<u32, Vec<RelatedProcessComponent>> = BTreeMap::new();
+    for related in process_components {
+        let parent_pid = extract_parent_pid(related.component.parent_summary.as_deref());
+        if let Some(parent_pid) = parent_pid
+            && pid_map.contains_key(&parent_pid)
+        {
+            children.entry(parent_pid).or_default().push(related);
+        } else {
+            roots.push(related);
+        }
+    }
+
+    let mut reports = Vec::new();
+    let total_aggregate = roots
+        .iter()
+        .fold(ProcessAggregate::default(), |aggregate, root| {
+            let next = subtree_aggregate(root, &children);
+            ProcessAggregate {
+                subtree_cpu_percent: aggregate.subtree_cpu_percent + next.subtree_cpu_percent,
+                subtree_memory_bytes: aggregate.subtree_memory_bytes + next.subtree_memory_bytes,
+                subtree_process_count: aggregate.subtree_process_count + next.subtree_process_count,
+            }
+        });
+
+    let mut sorted_roots = roots;
+    sorted_roots.sort_by(|left, right| {
+        let left_aggregate = subtree_aggregate(left, &children);
+        let right_aggregate = subtree_aggregate(right, &children);
+        right_aggregate
+            .subtree_cpu_percent
+            .partial_cmp(&left_aggregate.subtree_cpu_percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                right_aggregate
+                    .subtree_memory_bytes
+                    .cmp(&left_aggregate.subtree_memory_bytes)
+            })
+    });
+
+    let chau7_sessions = adapter_components
+        .iter()
+        .filter(|component| {
+            component.adapter_context.as_ref().is_some_and(|context| {
+                context.kind == aetower_model::AdapterContextKind::Chau7Session
+            })
+        })
+        .collect::<Vec<_>>();
+    if !chau7_sessions.is_empty() {
+        for session in chau7_sessions {
+            reports.push(ProcessTreeNodeReport {
+                title: session.title.clone(),
+                pid: session.process_id,
+                relation: "adapter-root".to_owned(),
+                owner_entity_id: root_entity.entity_id.clone(),
+                owner_display_name: root_entity.display_name.clone(),
+                self_cpu_percent: 0.0,
+                subtree_cpu_percent: total_aggregate.subtree_cpu_percent,
+                self_memory_bytes: 0,
+                subtree_memory_bytes: total_aggregate.subtree_memory_bytes,
+                subtree_process_count: total_aggregate.subtree_process_count,
+                badges: root_entity.badges.clone(),
+                user: session.user.clone(),
+                cwd: session
+                    .adapter_context
+                    .as_ref()
+                    .and_then(|context| {
+                        context.repo_root.clone().or(context.workspace_path.clone())
+                    })
+                    .or_else(|| session.cwd.clone()),
+                provenance: None,
+                launched_by: None,
+                adapter_label: adapter_label(session),
+                status_label: session
+                    .adapter_context
+                    .as_ref()
+                    .and_then(|context| context.status.clone()),
+                children: sorted_roots
+                    .iter()
+                    .map(|root| process_tree_node(root, &children, "session-child"))
+                    .collect(),
+            });
+        }
+    } else {
+        for root in &sorted_roots {
+            reports.push(process_tree_node(root, &children, "process-root"));
+        }
+    }
+
+    for component in adapter_components.into_iter().filter(|component| {
+        component
+            .adapter_context
+            .as_ref()
+            .is_none_or(|context| context.kind != aetower_model::AdapterContextKind::Chau7Session)
+    }) {
+        reports.push(ProcessTreeNodeReport {
+            title: component.title.clone(),
+            pid: component.process_id,
+            relation: "adapter".to_owned(),
+            owner_entity_id: root_entity.entity_id.clone(),
+            owner_display_name: root_entity.display_name.clone(),
+            self_cpu_percent: 0.0,
+            subtree_cpu_percent: 0.0,
+            self_memory_bytes: 0,
+            subtree_memory_bytes: 0,
+            subtree_process_count: 0,
+            badges: root_entity.badges.clone(),
+            user: component.user.clone(),
+            cwd: component
+                .adapter_context
+                .as_ref()
+                .and_then(|context| context.repo_root.clone().or(context.workspace_path.clone()))
+                .or_else(|| component.cwd.clone()),
+            provenance: None,
+            launched_by: None,
+            adapter_label: adapter_label(&component),
+            status_label: component
+                .adapter_context
+                .as_ref()
+                .and_then(|context| context.status.clone()),
+            children: Vec::new(),
+        });
+    }
+
+    reports
+}
+
+fn process_tree_node(
+    related: &RelatedProcessComponent,
+    children: &BTreeMap<u32, Vec<RelatedProcessComponent>>,
+    relation: &str,
+) -> ProcessTreeNodeReport {
+    let aggregate = subtree_aggregate(related, children);
+    let child_nodes = related
+        .component
+        .process_id
+        .and_then(|pid| children.get(&pid))
+        .map(|child_components| {
+            let mut child_components = child_components.clone();
+            child_components.sort_by(|left, right| {
+                let left_aggregate = subtree_aggregate(left, children);
+                let right_aggregate = subtree_aggregate(right, children);
+                right_aggregate
+                    .subtree_cpu_percent
+                    .partial_cmp(&left_aggregate.subtree_cpu_percent)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            child_components
+                .iter()
+                .map(|child| process_tree_node(child, children, "child"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    ProcessTreeNodeReport {
+        title: related.component.title.clone(),
+        pid: related.component.process_id,
+        relation: relation.to_owned(),
+        owner_entity_id: related.entity_id.clone(),
+        owner_display_name: related.owner_display_name.clone(),
+        self_cpu_percent: related.component.cpu_percent,
+        subtree_cpu_percent: aggregate.subtree_cpu_percent,
+        self_memory_bytes: related.component.memory_bytes,
+        subtree_memory_bytes: aggregate.subtree_memory_bytes,
+        subtree_process_count: aggregate.subtree_process_count,
+        badges: related.badges.clone(),
+        user: related.component.user.clone(),
+        cwd: related.component.cwd.clone(),
+        provenance: related
+            .component
+            .provenance
+            .as_ref()
+            .map(|provenance| format!("{:?}: {}", provenance.kind, provenance.label)),
+        launched_by: related.component.launched_by.clone(),
+        adapter_label: None,
+        status_label: if aggregate.subtree_process_count > 1 {
+            Some("group".to_owned())
+        } else {
+            None
+        },
+        children: child_nodes,
+    }
+}
+
+fn subtree_aggregate(
+    related: &RelatedProcessComponent,
+    children: &BTreeMap<u32, Vec<RelatedProcessComponent>>,
+) -> ProcessAggregate {
+    let mut aggregate = ProcessAggregate {
+        subtree_cpu_percent: related.component.cpu_percent,
+        subtree_memory_bytes: related.component.memory_bytes,
+        subtree_process_count: 1,
+    };
+    if let Some(pid) = related.component.process_id
+        && let Some(child_components) = children.get(&pid)
+    {
+        for child in child_components {
+            let child_aggregate = subtree_aggregate(child, children);
+            aggregate.subtree_cpu_percent += child_aggregate.subtree_cpu_percent;
+            aggregate.subtree_memory_bytes += child_aggregate.subtree_memory_bytes;
+            aggregate.subtree_process_count += child_aggregate.subtree_process_count;
+        }
+    }
+    aggregate
+}
+
+fn related_entities_for_process_tree(
+    seed_entities: &[aetower_model::EntitySnapshot],
+    all_entities: &[aetower_model::EntitySnapshot],
+) -> (Vec<aetower_model::EntitySnapshot>, Vec<String>) {
+    let mut included_ids = seed_entities
+        .iter()
+        .map(|entity| entity.entity_id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut included_pids = seed_entities
+        .iter()
+        .flat_map(|entity| {
+            entity
+                .components
+                .iter()
+                .filter_map(|component| component.process_id)
+        })
+        .collect::<BTreeSet<_>>();
+    let selected_session_ids = seed_entities
+        .iter()
+        .flat_map(entity_session_ids)
+        .collect::<BTreeSet<_>>();
+    let selected_repo_roots = seed_entities
+        .iter()
+        .flat_map(entity_repo_roots)
+        .collect::<BTreeSet<_>>();
+    let mut reasons = BTreeSet::new();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let candidates = all_entities
+            .iter()
+            .filter(|entity| !included_ids.contains(&entity.entity_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for candidate in candidates {
+            let is_child_by_pid = candidate.components.iter().any(|component| {
+                extract_parent_pid(component.parent_summary.as_deref())
+                    .is_some_and(|parent_pid| included_pids.contains(&parent_pid))
+            });
+            let shares_chau7_context = candidate.badges.iter().any(|badge| badge == "chau7-live")
+                && (!selected_session_ids.is_disjoint(&entity_session_ids(&candidate))
+                    || candidate.components.iter().any(|component| {
+                        [
+                            component.cwd.as_deref(),
+                            component.executable_path.as_deref(),
+                            component
+                                .adapter_context
+                                .as_ref()
+                                .and_then(|context| context.workspace_path.as_deref()),
+                            component
+                                .adapter_context
+                                .as_ref()
+                                .and_then(|context| context.repo_root.as_deref()),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|path| {
+                            selected_repo_roots
+                                .iter()
+                                .any(|root| path.starts_with(root))
+                        })
+                    }));
+            if is_child_by_pid || shares_chau7_context {
+                included_ids.insert(candidate.entity_id.clone());
+                included_pids.extend(
+                    candidate
+                        .components
+                        .iter()
+                        .filter_map(|component| component.process_id),
+                );
+                if is_child_by_pid {
+                    reasons.insert("expanded through parent/child PID lineage".to_owned());
+                }
+                if shares_chau7_context {
+                    reasons.insert(
+                        "expanded through shared Chau7 session or workspace context".to_owned(),
+                    );
+                }
+                changed = true;
+            }
+        }
+    }
+    (
+        all_entities
+            .iter()
+            .filter(|entity| included_ids.contains(&entity.entity_id))
+            .cloned()
+            .collect(),
+        reasons.into_iter().collect(),
+    )
+}
+
+fn extract_parent_pid(summary: Option<&str>) -> Option<u32> {
+    let summary = summary?;
+    let marker = summary.find("pid ")?;
+    let digits = summary[marker + 4..]
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect::<String>();
+    digits.parse::<u32>().ok()
+}
+
+fn adapter_label(component: &aetower_model::ComponentSnapshot) -> Option<String> {
+    match component
+        .adapter_context
+        .as_ref()
+        .map(|context| &context.kind)
+    {
+        Some(aetower_model::AdapterContextKind::Chau7Session) => Some("chau7".to_owned()),
+        Some(aetower_model::AdapterContextKind::ChromiumTab) => Some("chromium".to_owned()),
+        Some(aetower_model::AdapterContextKind::DockerContainer) => Some("docker".to_owned()),
+        Some(aetower_model::AdapterContextKind::PrivilegedSocket) => Some("helper".to_owned()),
+        Some(aetower_model::AdapterContextKind::VsCodeWorkspace)
+        | Some(aetower_model::AdapterContextKind::VsCodeRuntime) => Some("vscode".to_owned()),
+        Some(aetower_model::AdapterContextKind::Unknown) | None => None,
+    }
+}
+
+fn process_dynamic_tool_request(
+    data_source: &dyn AetowerMcpDataSource,
+    request: &DynamicToolRequest,
+) -> Result<Value, String> {
+    match request {
+        DynamicToolRequest::MemoryBreakdown {
+            entity_id,
+            top_regions,
+        } => tool_json(build_entity_memory_breakdown(
+            data_source,
+            entity_id,
+            *top_regions,
+        )?)
+        .map_err(|error| extract_tool_error_message(&error)),
+        DynamicToolRequest::ProfileEntity {
+            entity_id,
+            duration_seconds,
+            top_stacks,
+        } => tool_json(build_entity_profile(
+            data_source,
+            entity_id,
+            *duration_seconds,
+            *top_stacks,
+        )?)
+        .map_err(|error| extract_tool_error_message(&error)),
+        DynamicToolRequest::WakeupAttribution {
+            entity_id,
+            duration_seconds,
+            top_stacks,
+        } => tool_json(build_wakeup_attribution(
+            data_source,
+            entity_id,
+            *duration_seconds,
+            *top_stacks,
+        )?)
+        .map_err(|error| extract_tool_error_message(&error)),
+    }
+}
+
+fn build_entity_memory_breakdown(
+    data_source: &dyn AetowerMcpDataSource,
+    entity_id: &str,
+    top_regions: usize,
+) -> Result<EntityMemoryBreakdown, String> {
+    let snapshot = data_source.latest_snapshot()?;
+    let entity = snapshot
+        .entities
+        .iter()
+        .find(|entity| entity.entity_id == entity_id)
+        .ok_or_else(|| format!("Unknown entity_id: {entity_id}"))?;
+    let process_ids = entity_process_ids(entity);
+    if process_ids.is_empty() {
+        return Err(format!(
+            "Entity {} has no attributed process IDs to inspect.",
+            entity.display_name
+        ));
+    }
+    let mut regions_by_type = BTreeMap::<String, MemoryRegionBreakdown>::new();
+    for pid in &process_ids {
+        let output = run_os_command("/usr/bin/vmmap", &[pid.to_string()])?;
+        for region in parse_vmmap_regions(&output) {
+            let entry = regions_by_type.entry(region.region_type.clone()).or_insert(
+                MemoryRegionBreakdown {
+                    region_type: region.region_type.clone(),
+                    virtual_bytes: 0,
+                    resident_bytes: 0,
+                    dirty_bytes: 0,
+                    swap_bytes: 0,
+                },
+            );
+            entry.virtual_bytes += region.virtual_bytes;
+            entry.resident_bytes += region.resident_bytes;
+            entry.dirty_bytes += region.dirty_bytes;
+            entry.swap_bytes += region.swap_bytes;
+        }
+    }
+    let mut regions = regions_by_type.into_values().collect::<Vec<_>>();
+    regions.sort_by(|left, right| {
+        right
+            .resident_bytes
+            .cmp(&left.resident_bytes)
+            .then_with(|| right.virtual_bytes.cmp(&left.virtual_bytes))
+    });
+    regions.truncate(top_regions.max(1));
+    Ok(EntityMemoryBreakdown {
+        captured_at_millis: snapshot.captured_at_millis,
+        entity_id: entity.entity_id.clone(),
+        display_name: entity.display_name.clone(),
+        process_ids,
+        resident_bytes: entity.metrics.memory_resident_bytes,
+        regions,
+    })
+}
+
+fn build_entity_profile(
+    data_source: &dyn AetowerMcpDataSource,
+    entity_id: &str,
+    duration_seconds: u64,
+    top_stacks: usize,
+) -> Result<EntityProfileReport, String> {
+    let snapshot = data_source.latest_snapshot()?;
+    let entity = snapshot
+        .entities
+        .iter()
+        .find(|entity| entity.entity_id == entity_id)
+        .ok_or_else(|| format!("Unknown entity_id: {entity_id}"))?;
+    let process_ids = entity_process_ids(entity);
+    if process_ids.is_empty() {
+        return Err(format!(
+            "Entity {} has no attributed process IDs to profile.",
+            entity.display_name
+        ));
+    }
+    let mut stack_reports = Vec::new();
+    for pid in &process_ids {
+        let output = run_os_command(
+            "/usr/bin/sample",
+            &[
+                pid.to_string(),
+                duration_seconds.to_string(),
+                "1".to_owned(),
+            ],
+        )?;
+        stack_reports.extend(parse_sample_threads(&output));
+    }
+    stack_reports.sort_by(|left, right| right.sample_count.cmp(&left.sample_count));
+    stack_reports.truncate(top_stacks.max(1));
+    let summary = if let Some(first) = stack_reports.first() {
+        format!(
+            "Top sampled thread {} accounted for {} samples and is classified as {}.",
+            first.thread_label, first.sample_count, first.classification
+        )
+    } else {
+        "No non-empty sampled stacks were captured.".to_owned()
+    };
+    Ok(EntityProfileReport {
+        captured_at_millis: snapshot.captured_at_millis,
+        entity_id: entity.entity_id.clone(),
+        display_name: entity.display_name.clone(),
+        duration_seconds,
+        sampled_process_ids: process_ids,
+        thread_count: stack_reports.len(),
+        top_stacks: stack_reports,
+        summary,
+    })
+}
+
+fn build_wakeup_attribution(
+    data_source: &dyn AetowerMcpDataSource,
+    entity_id: &str,
+    duration_seconds: u64,
+    top_stacks: usize,
+) -> Result<WakeupAttributionReport, String> {
+    let profile =
+        build_entity_profile(data_source, entity_id, duration_seconds, top_stacks.max(3))?;
+    let mut grouped = BTreeMap::<(String, String), SampledStackReport>::new();
+    for stack in &profile.top_stacks {
+        let key = (
+            stack
+                .queue_label
+                .clone()
+                .unwrap_or_else(|| stack.thread_label.clone()),
+            stack.classification.clone(),
+        );
+        let entry = grouped.entry(key).or_insert(SampledStackReport {
+            thread_label: stack.thread_label.clone(),
+            queue_label: stack.queue_label.clone(),
+            sample_count: 0,
+            top_frames: stack.top_frames.clone(),
+            classification: stack.classification.clone(),
+        });
+        entry.sample_count += stack.sample_count;
+        if entry.top_frames.is_empty() {
+            entry.top_frames = stack.top_frames.clone();
+        }
+    }
+    let mut queue_breakdown = grouped.into_values().collect::<Vec<_>>();
+    queue_breakdown.sort_by(|left, right| right.sample_count.cmp(&left.sample_count));
+    queue_breakdown.truncate(top_stacks.max(1));
+    let dominant_cause = queue_breakdown
+        .iter()
+        .find(|entry| entry.classification != "idle")
+        .map(|entry| {
+            format!(
+                "{} dominates sampled wakeups with {} samples on {}.",
+                entry.classification,
+                entry.sample_count,
+                entry
+                    .queue_label
+                    .clone()
+                    .unwrap_or_else(|| entry.thread_label.clone())
+            )
+        });
+    Ok(WakeupAttributionReport {
+        captured_at_millis: profile.captured_at_millis,
+        entity_id: profile.entity_id,
+        display_name: profile.display_name,
+        duration_seconds: profile.duration_seconds,
+        sampled_process_ids: profile.sampled_process_ids,
+        queue_breakdown,
+        dominant_cause,
+        attribution_mode: "sampled-call-stack-heuristic".to_owned(),
+        caveats: vec![
+            "This is a sampled heuristic based on `sample`, not exact kernel wakeup accounting."
+                .to_owned(),
+            "Queue labels are only present when the sampled stack exposed one.".to_owned(),
+        ],
+    })
+}
+
+fn entity_process_ids(entity: &aetower_model::EntitySnapshot) -> Vec<u32> {
+    let mut process_ids = entity
+        .components
+        .iter()
+        .filter_map(|component| {
+            (component.kind != aetower_model::ComponentKind::AdapterContext)
+                .then_some(component.process_id)
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    process_ids.sort_unstable();
+    process_ids.dedup();
+    process_ids
+}
+
+fn run_os_command(program: &str, args: &[String]) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|error| format!("run {}: {error}", program))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if stderr.is_empty() {
+            format!("{} exited with status {}", program, output.status)
+        } else {
+            format!("{} failed: {}", program, stderr)
+        });
+    }
+    String::from_utf8(output.stdout).map_err(|error| format!("decode {} output: {error}", program))
+}
+
+fn parse_vmmap_regions(output: &str) -> Vec<MemoryRegionBreakdown> {
+    output.lines().filter_map(parse_vmmap_region_line).collect()
+}
+
+fn parse_vmmap_region_line(line: &str) -> Option<MemoryRegionBreakdown> {
+    let trimmed = line.trim_end();
+    let bracket_start = trimmed.find('[')?;
+    let bracket_end = trimmed[bracket_start..].find(']')? + bracket_start;
+    let prefix = &trimmed[..bracket_start];
+    let prefix_tokens = prefix.split_whitespace().collect::<Vec<_>>();
+    let address_index = prefix_tokens.iter().position(|token| {
+        token.contains('-')
+            && token.split('-').all(|part| {
+                !part.is_empty() && part.chars().all(|character| character.is_ascii_hexdigit())
+            })
+    })?;
+    let region_type = prefix_tokens[..address_index].join(" ");
+    if region_type.is_empty() || region_type == "REGION TYPE" {
+        return None;
+    }
+    let stats = trimmed[bracket_start + 1..bracket_end]
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    if stats.len() < 4 {
+        return None;
+    }
+    Some(MemoryRegionBreakdown {
+        region_type,
+        virtual_bytes: parse_vmmap_bytes(stats[0]),
+        resident_bytes: parse_vmmap_bytes(stats[1]),
+        dirty_bytes: parse_vmmap_bytes(stats[2]),
+        swap_bytes: parse_vmmap_bytes(stats[3]),
+    })
+}
+
+fn parse_vmmap_bytes(value: &str) -> u64 {
+    let numeric = value.trim_end_matches(|character: char| character.is_ascii_alphabetic());
+    let suffix = value[numeric.len()..].to_ascii_uppercase();
+    let number = numeric.parse::<f64>().unwrap_or(0.0);
+    let multiplier = match suffix.as_str() {
+        "K" => 1024.0,
+        "M" => 1024.0 * 1024.0,
+        "G" => 1024.0 * 1024.0 * 1024.0,
+        "T" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => 1.0,
+    };
+    (number * multiplier).round() as u64
+}
+
+fn parse_sample_threads(output: &str) -> Vec<SampledStackReport> {
+    let mut threads = Vec::new();
+    let mut in_call_graph = false;
+    let mut current: Option<(u32, String, Option<String>, Vec<String>)> = None;
+    for line in output.lines() {
+        if line.trim() == "Call graph:" {
+            in_call_graph = true;
+            continue;
+        }
+        if !in_call_graph {
+            continue;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        if !line.starts_with(' ') && !line.starts_with('\t') {
+            break;
+        }
+        if let Some((sample_count, thread_label, queue_label)) = parse_sample_thread_header(line) {
+            if let Some((sample_count, thread_label, queue_label, frames)) = current.take() {
+                threads.push(sampled_stack_report(
+                    sample_count,
+                    thread_label,
+                    queue_label,
+                    frames,
+                ));
+            }
+            current = Some((sample_count, thread_label, queue_label, Vec::new()));
+            continue;
+        }
+        if let Some((_, _, _, frames)) = current.as_mut()
+            && let Some(frame) = parse_sample_frame(line)
+        {
+            frames.push(frame);
+        }
+    }
+    if let Some((sample_count, thread_label, queue_label, frames)) = current.take() {
+        threads.push(sampled_stack_report(
+            sample_count,
+            thread_label,
+            queue_label,
+            frames,
+        ));
+    }
+    threads
+}
+
+fn parse_sample_thread_header(line: &str) -> Option<(u32, String, Option<String>)> {
+    let trimmed = line.trim_start();
+    let mut parts = trimmed.split_whitespace();
+    let sample_count = parts.next()?.parse::<u32>().ok()?;
+    let rest = trimmed[trimmed.find(' ')?..].trim_start();
+    if !rest.starts_with("Thread_") {
+        return None;
+    }
+    let thread_label = rest.to_owned();
+    let queue_label = rest
+        .split_once(": ")
+        .map(|(_, queue)| queue.trim_end_matches("  (serial)").trim().to_owned());
+    Some((sample_count, thread_label, queue_label))
+}
+
+fn parse_sample_frame(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let frame = trimmed
+        .trim_start_matches('+')
+        .trim_start_matches('!')
+        .trim_start();
+    let mut parts = frame.split("  (in ");
+    let symbol = parts.next()?.trim();
+    if symbol.is_empty() {
+        return None;
+    }
+    let symbol = symbol
+        .split_once(' ')
+        .map(|(_, rest)| rest.trim())
+        .unwrap_or(symbol);
+    if symbol.is_empty() {
+        None
+    } else {
+        Some(symbol.to_owned())
+    }
+}
+
+fn sampled_stack_report(
+    sample_count: u32,
+    thread_label: String,
+    queue_label: Option<String>,
+    frames: Vec<String>,
+) -> SampledStackReport {
+    let top_frames = frames
+        .into_iter()
+        .filter(|frame| {
+            !frame.contains("mach_msg")
+                && !frame.contains("kevent")
+                && !frame.contains("start")
+                && !frame.contains("thread_start")
+        })
+        .take(6)
+        .collect::<Vec<_>>();
+    let classification = classify_sample_frames(&top_frames);
+    SampledStackReport {
+        thread_label,
+        queue_label,
+        sample_count,
+        top_frames,
+        classification,
+    }
+}
+
+fn classify_sample_frames(frames: &[String]) -> String {
+    let joined = frames.join(" ").to_ascii_lowercase();
+    if joined.contains("cvdisplaylink") || joined.contains("displaylink") {
+        "display-link".to_owned()
+    } else if joined.contains("dispatchsourcetimer")
+        || joined.contains("dispatch_source")
+        || joined.contains("timer")
+    {
+        "timer".to_owned()
+    } else if joined.contains("nsrunloop") || joined.contains("cfrunlooptimer") {
+        "runloop-timer".to_owned()
+    } else if joined.contains("recv")
+        || joined.contains("send")
+        || joined.contains("socket")
+        || joined.contains("poll")
+    {
+        "io".to_owned()
+    } else if joined.is_empty() {
+        "idle".to_owned()
+    } else {
+        "cpu-work".to_owned()
+    }
+}
+
+fn extract_tool_error_message(value: &Value) -> String {
+    value
+        .get("content")
+        .and_then(Value::as_array)
+        .and_then(|content| content.first())
+        .and_then(|item| item.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or("tool request failed")
+        .to_owned()
+}
+
+fn format_metric_value(metric: &str, value: f64) -> String {
+    match metric {
+        "memory_bytes" => format_bytes(value.max(0.0).round() as u64),
+        "disk_activity_bps" | "network_activity_bps" => {
+            format!("{}/s", format_bytes(value.max(0.0).round() as u64))
+        }
+        _ => format!("{value:.1}"),
+    }
 }
 
 fn build_top_findings(
@@ -3315,6 +5099,46 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "aetower_diff_snapshots",
+            "description": "Compare two persisted time points and return host plus per-entity deltas for friction, CPU, memory, wakeups, and process count.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "before_millis": { "type": "integer", "minimum": 0 },
+                    "after_millis": { "type": "integer", "minimum": 0 },
+                    "entity_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 100 },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+                },
+                "required": ["before_millis", "after_millis"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_explain_anomalies",
+            "description": "Explain current anomalous entities by highlighting the dominant changed metrics and recent supporting events.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "entity_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 100 },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+                    "window_minutes": { "type": "integer", "minimum": 1, "maximum": 1440 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_entity_process_tree",
+            "description": "Return a per-process tree for one entity with subtree burden, grouping scope, and expansion reasons.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "entity_id": { "type": "string" }
+                },
+                "required": ["entity_id"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "aetower_top_findings",
             "description": "Return the highest-signal current findings across host load, diagnostics, history health, and top friction groups.",
             "inputSchema": {
@@ -3417,6 +5241,47 @@ fn tool_definitions() -> Vec<Value> {
                 "properties": {
                     "window_hours": { "type": "integer", "minimum": 1, "maximum": 720 }
                 },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_memory_breakdown",
+            "description": "Ask the running Aetower app to collect a vmmap-style memory region breakdown for one entity.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "entity_id": { "type": "string" },
+                    "top_regions": { "type": "integer", "minimum": 1, "maximum": 50 }
+                },
+                "required": ["entity_id"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_profile_entity",
+            "description": "Ask the running Aetower app to run a short sampled profile for one entity and summarize hot threads, queues, and stacks.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "entity_id": { "type": "string" },
+                    "duration_seconds": { "type": "integer", "minimum": 1, "maximum": 15 },
+                    "top_stacks": { "type": "integer", "minimum": 1, "maximum": 20 }
+                },
+                "required": ["entity_id"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_wakeup_attribution",
+            "description": "Ask the running Aetower app to sample one entity and return heuristic wakeup attribution by thread, queue, and dominant sampled cause.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "entity_id": { "type": "string" },
+                    "duration_seconds": { "type": "integer", "minimum": 1, "maximum": 15 },
+                    "top_stacks": { "type": "integer", "minimum": 1, "maximum": 20 }
+                },
+                "required": ["entity_id"],
                 "additionalProperties": false
             }
         }),
@@ -3923,6 +5788,7 @@ mod tests {
     fn fake_server() -> AetowerMcpServer {
         AetowerMcpServer {
             data_source: Arc::new(FakeSource),
+            dynamic_mode: DynamicExecutionMode::Local,
         }
     }
 
@@ -3945,6 +5811,9 @@ mod tests {
             .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_owned))
             .collect::<Vec<_>>();
         for expected in [
+            "aetower_diff_snapshots",
+            "aetower_explain_anomalies",
+            "aetower_entity_process_tree",
             "aetower_top_findings",
             "aetower_host_alerts",
             "aetower_entity_group_tree",
@@ -3952,6 +5821,9 @@ mod tests {
             "aetower_recent_changes",
             "aetower_capability_status",
             "aetower_history_store_health",
+            "aetower_memory_breakdown",
+            "aetower_profile_entity",
+            "aetower_wakeup_attribution",
             "aetower_support_bundle_manifest",
             "aetower_recommendations",
             "aetower_session_health",
@@ -4160,6 +6032,7 @@ mod tests {
     fn tool_call_reports_data_source_errors() {
         let response = AetowerMcpServer {
             data_source: Arc::new(BrokenSource),
+            dynamic_mode: DynamicExecutionMode::Local,
         }
         .handle_message(json!({
             "jsonrpc": "2.0",
@@ -4299,5 +6172,137 @@ mod tests {
 
         drop(handle);
         let _ = fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn snapshot_diff_report_surfaces_entity_delta() {
+        let before = SystemSnapshot {
+            captured_at_millis: 100,
+            host: aetower_model::HostSnapshot {
+                wakeups_per_second: 8_000.0,
+                ..aetower_model::HostSnapshot::default()
+            },
+            entities: vec![aetower_model::EntitySnapshot {
+                entity_id: "chau7".to_owned(),
+                display_name: "Chau7".to_owned(),
+                friction: aetower_model::FrictionBreakdown {
+                    total_score: 12.0,
+                    ..aetower_model::FrictionBreakdown::default()
+                },
+                metrics: aetower_model::AggregateMetrics {
+                    cpu_percent: 12.0,
+                    memory_resident_bytes: 512 * 1024 * 1024,
+                    wakeups_per_second: 7_450.0,
+                    process_count: 2,
+                    ..aetower_model::AggregateMetrics::default()
+                },
+                ..aetower_model::EntitySnapshot::default()
+            }],
+            ..SystemSnapshot::default()
+        };
+        let mut after = before.clone();
+        after.captured_at_millis = 200;
+        after.host.wakeups_per_second = 400.0;
+        after.entities[0].friction.total_score = 3.0;
+        after.entities[0].metrics.wakeups_per_second = 50.0;
+
+        let report = build_snapshot_diff_report(&before, &after, &[], 10);
+        assert_eq!(report.before_snapshot_millis, 100);
+        assert_eq!(report.after_snapshot_millis, 200);
+        assert_eq!(report.entities.len(), 1);
+        assert!(report.entities[0].wakeups_per_second.delta < 0.0);
+    }
+
+    #[test]
+    fn anomaly_explanations_identify_changed_driver() {
+        let snapshot = SystemSnapshot {
+            captured_at_millis: 500,
+            entities: vec![aetower_model::EntitySnapshot {
+                entity_id: "agent".to_owned(),
+                display_name: "Claude Code".to_owned(),
+                anomaly_detected: true,
+                trend: aetower_model::MetricTrend {
+                    friction: vec![4.0, 5.0, 6.0, 24.8],
+                    wakeups_per_second: vec![65.0, 70.0, 75.0, 522.0],
+                    ..aetower_model::MetricTrend::default()
+                },
+                recent_change_summary: Some("Friction jumped after tool use.".to_owned()),
+                ..aetower_model::EntitySnapshot::default()
+            }],
+            timeline: vec![aetower_model::TimelineEvent {
+                id: "ev".to_owned(),
+                timestamp_millis: 480,
+                category: aetower_model::TimelineCategory::Anomaly,
+                severity: aetower_model::TimelineSeverity::Warning,
+                entity_id: Some("agent".to_owned()),
+                title: "Friction jumped".to_owned(),
+                detail: "Wakeups spiked.".to_owned(),
+            }],
+            ..SystemSnapshot::default()
+        };
+        let explanations = build_anomaly_explanations(&snapshot, &[], 10, 60_000);
+        assert_eq!(explanations.len(), 1);
+        assert!(!explanations[0].drivers.is_empty());
+    }
+
+    #[test]
+    fn process_tree_report_includes_pid_children() {
+        let snapshot = SystemSnapshot {
+            captured_at_millis: 123,
+            entities: vec![aetower_model::EntitySnapshot {
+                entity_id: "root".to_owned(),
+                display_name: "Root".to_owned(),
+                components: vec![
+                    aetower_model::ComponentSnapshot {
+                        title: "Root proc".to_owned(),
+                        process_id: Some(10),
+                        cpu_percent: 5.0,
+                        memory_bytes: 100,
+                        ..aetower_model::ComponentSnapshot::default()
+                    },
+                    aetower_model::ComponentSnapshot {
+                        title: "Child proc".to_owned(),
+                        process_id: Some(11),
+                        parent_summary: Some("Root proc pid 10".to_owned()),
+                        cpu_percent: 2.0,
+                        memory_bytes: 50,
+                        ..aetower_model::ComponentSnapshot::default()
+                    },
+                ],
+                ..aetower_model::EntitySnapshot::default()
+            }],
+            ..SystemSnapshot::default()
+        };
+        let report =
+            build_process_tree_report(&snapshot, "root").unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(report.roots.len(), 1);
+        assert_eq!(report.roots[0].children.len(), 1);
+    }
+
+    #[test]
+    fn parse_vmmap_region_line_extracts_region_sizes() {
+        let line = "__TEXT                      104a5c000-104c30000    [ 1872K  1248K     0K     0K] r-x/r-x SM=COW";
+        let region = parse_vmmap_region_line(line).unwrap_or_else(|| panic!("region"));
+        assert_eq!(region.region_type, "__TEXT");
+        assert_eq!(region.virtual_bytes, 1_916_928);
+        assert_eq!(region.resident_bytes, 1_277_952);
+    }
+
+    #[test]
+    fn parse_sample_threads_extracts_queue_labels() {
+        let sample = r#"
+Call graph:
+    883 Thread_20416162   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 883 start  (in dyld) + 6076
+    +   1 CVDisplayLinkCallback  (in Chau7) + 12
+    884 Thread_20416314: reqwest-internal-sync-runtime
+    + 884 tokio::runtime::runtime::Runtime::block_on  (in libaetower_ffi.dylib) + 584
+"#;
+        let threads = parse_sample_threads(sample);
+        assert_eq!(threads.len(), 2);
+        assert_eq!(
+            threads[0].queue_label.as_deref(),
+            Some("com.apple.main-thread")
+        );
     }
 }
