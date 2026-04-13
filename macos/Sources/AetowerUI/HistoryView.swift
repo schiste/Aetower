@@ -153,6 +153,8 @@ public struct HistoryView: View {
                         .padding(.top, AetowerDesign.Spacing.xs)
                     }
 
+                    historyDiffSection
+
                     GroupBox("Most recurring entities") {
                         if historicalEntities.isEmpty {
                             Text("No entity-level history is persisted for this range yet.")
@@ -326,6 +328,96 @@ public struct HistoryView: View {
         .frame(maxWidth: .infinity)
     }
 
+    @ViewBuilder
+    private var historyDiffSection: some View {
+        GroupBox("Before / After across range") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                AnalysisMetadataStrip(
+                    descriptor: AnalysisDescriptor(
+                        label: "Persisted diff",
+                        confidence: .persisted,
+                        overhead: .low,
+                        detail: "Compares the oldest and newest persisted snapshots loaded for the selected range."
+                    ),
+                    trailing: range.detail
+                )
+
+                if let diff = state.historySnapshotDiff {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                        HistoryDeltaMetricCard(
+                            title: "Friction",
+                            delta: SnapshotMetricDeltaReport(
+                                before: hostFrictionSamples.first ?? 0,
+                                after: hostFrictionSamples.last ?? 0,
+                                delta: (hostFrictionSamples.last ?? 0) - (hostFrictionSamples.first ?? 0),
+                                percentChange: nil
+                            ),
+                            style: .friction
+                        )
+                        if let cpu = diff.host["cpu_percent"] {
+                            HistoryDeltaMetricCard(title: "CPU", delta: cpu, style: .cpu, valueSuffix: "%")
+                        }
+                        if let memory = diff.host["memory_used_bytes"] {
+                            HistoryDeltaMetricCard(title: "Memory", delta: memory, style: .memory, bytesMode: true)
+                        }
+                        if let wakeups = diff.host["wakeups_per_second"] {
+                            HistoryDeltaMetricCard(title: "Wakeups", delta: wakeups, style: .energy, rateMode: true)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                        HStack {
+                            Text("Biggest entity deltas")
+                                .font(.headline)
+                            Spacer()
+                            Text("\(historyTimestamp(diff.beforeSnapshotMillis)) → \(historyTimestamp(diff.afterSnapshotMillis))")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        ForEach(diff.entities.prefix(6)) { entity in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(entity.displayName)
+                                            .font(.subheadline.weight(.semibold))
+                                        Text(historyEntityDeltaSummary(entity))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    Spacer()
+                                    Button("Focus in Monitor") {
+                                        state.focusEntityInMonitor(entity.entityId)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                                if let summary = entity.recentChangeSummary, !summary.isEmpty {
+                                    Text(summary)
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .padding(10)
+                            .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    }
+                } else if let error = state.historySnapshotDiffError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Load at least two persisted samples in the selected range to compare before/after changes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
     private var hostFrictionSamples: [Double] {
         state.historySnapshots.map(historyMachineFriction)
     }
@@ -423,6 +515,59 @@ public struct HistoryView: View {
     }
 }
 
+private struct HistoryDeltaMetricCard: View {
+    let title: String
+    let delta: SnapshotMetricDeltaReport
+    let style: TrendMetricStyle
+    var valueSuffix: String = ""
+    var bytesMode = false
+    var rateMode = false
+
+    var body: some View {
+        MetricCardSurface(
+            tone: style.color,
+            samples: [delta.before, delta.after],
+            minHeight: 124
+        ) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Text(deltaLabel)
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                Text("from \(valueLabel(delta.before)) to \(valueLabel(delta.after))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        } hoverOverlay: {
+            EmptyView()
+        }
+    }
+
+    private var deltaLabel: String {
+        if bytesMode {
+            let prefix = delta.delta > 0 ? "+" : delta.delta < 0 ? "-" : ""
+            return "\(prefix)\(formatBytes(UInt64(abs(delta.delta))))"
+        }
+        let prefix = delta.delta > 0 ? "+" : ""
+        return "\(prefix)\(valueLabel(delta.delta))"
+    }
+
+    private func valueLabel(_ value: Double) -> String {
+        if bytesMode {
+            return formatBytes(UInt64(max(0, value)))
+        }
+        if rateMode {
+            return formatWakeups(Float(value))
+        }
+        return String(format: "%.1f%@", value, valueSuffix)
+    }
+}
+
 private func historyMachineFriction(_ snapshot: SystemSnapshot) -> Double {
     machineFrictionScore(for: snapshot.host)
 }
@@ -433,4 +578,12 @@ private func historyTimestamp(_ millis: UInt64?) -> String {
     }
     let date = Date(timeIntervalSince1970: TimeInterval(millis) / 1000)
     return date.formatted(date: .abbreviated, time: .shortened)
+}
+
+private func historyEntityDeltaSummary(_ entity: SnapshotEntityDeltaReport) -> String {
+    let friction = String(format: "%+.1f", entity.friction.delta)
+    let cpu = String(format: "%+.1f%%", entity.cpuPercent.delta)
+    let wakeups = String(format: "%+.0f/s", entity.wakeupsPerSecond.delta)
+    let memory = formatBytes(UInt64(max(0, entity.memoryBytes.after)))
+    return "friction \(friction) · CPU \(cpu) · wakeups \(wakeups) · now \(memory)"
 }
