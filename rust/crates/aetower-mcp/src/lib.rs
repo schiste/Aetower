@@ -296,8 +296,63 @@ struct SnapshotEntityDelta {
 struct SnapshotDiffReport {
     before_snapshot_millis: u64,
     after_snapshot_millis: u64,
+    crossed_boot_boundary: bool,
+    before_boot_id: Option<String>,
+    after_boot_id: Option<String>,
+    before_boot_time_millis: Option<u64>,
+    after_boot_time_millis: Option<u64>,
+    before_previous_shutdown: Option<aetower_model::RebootCauseSnapshot>,
+    after_previous_shutdown: Option<aetower_model::RebootCauseSnapshot>,
     host: BTreeMap<String, SnapshotMetricDelta>,
     entities: Vec<SnapshotEntityDelta>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RebootSessionReport {
+    boot_id: Option<String>,
+    boot_time_millis: Option<u64>,
+    first_snapshot_millis: u64,
+    last_snapshot_millis: u64,
+    snapshot_count: usize,
+    first_sequence: u64,
+    last_sequence: u64,
+    previous_shutdown: Option<aetower_model::RebootCauseSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RebootCorrelationMarker {
+    timestamp_millis: u64,
+    event_type: String,
+    level: String,
+    message: String,
+    detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RebootBoundaryReport {
+    before_snapshot_millis: u64,
+    after_snapshot_millis: u64,
+    reboot_detected_at_millis: Option<u64>,
+    gap_millis: u64,
+    before_boot_id: Option<String>,
+    after_boot_id: Option<String>,
+    before_boot_time_millis: Option<u64>,
+    after_boot_time_millis: Option<u64>,
+    previous_shutdown: Option<aetower_model::RebootCauseSnapshot>,
+    before_top_entities: Vec<String>,
+    after_top_entities: Vec<String>,
+    correlated_markers: Vec<RebootCorrelationMarker>,
+    pre_reboot_incidents: Vec<RebootCorrelationMarker>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RebootReport {
+    range_start_millis: u64,
+    range_end_millis: u64,
+    session_count: usize,
+    boundary_count: usize,
+    sessions: Vec<RebootSessionReport>,
+    boundaries: Vec<RebootBoundaryReport>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -991,6 +1046,7 @@ impl AetowerMcpServer {
             "aetower_entity_details" => self.tool_entity_details(arguments),
             "aetower_runtime_lag" => self.tool_runtime_lag(),
             "aetower_diff_snapshots" => self.tool_diff_snapshots(arguments),
+            "aetower_reboot_report" => self.tool_reboot_report(arguments),
             "aetower_explain_anomalies" => self.tool_explain_anomalies(arguments),
             "aetower_entity_process_tree" => self.tool_entity_process_tree(arguments),
             "aetower_top_findings" => self.tool_top_findings(arguments),
@@ -1176,6 +1232,31 @@ impl AetowerMcpServer {
             &args.entity_ids,
             args.limit.max(1),
         ))
+    }
+
+    fn tool_reboot_report(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            start_millis: Option<u64>,
+            #[serde(default)]
+            end_millis: Option<u64>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let latest = self.wait_for_nonzero_snapshot()?;
+        let end_millis = args.end_millis.unwrap_or(latest.captured_at_millis);
+        let start_millis = args
+            .start_millis
+            .unwrap_or_else(|| end_millis.saturating_sub(DEFAULT_HISTORY_WINDOW_MILLIS));
+        tool_json(
+            build_reboot_report(
+                &*self.data_source,
+                start_millis.min(end_millis),
+                start_millis.max(end_millis),
+            )
+            .map_err(tool_error)?,
+        )
     }
 
     fn tool_explain_anomalies(&self, arguments: Value) -> Result<Value, Value> {
@@ -2007,6 +2088,14 @@ fn build_snapshot_diff_report(
     requested_entity_ids: &[String],
     limit: usize,
 ) -> SnapshotDiffReport {
+    let before_boot = before.host.boot_session.as_ref();
+    let after_boot = after.host.boot_session.as_ref();
+    let before_boot_id = before_boot.and_then(|boot| boot.boot_id.clone());
+    let after_boot_id = after_boot.and_then(|boot| boot.boot_id.clone());
+    let before_boot_time_millis = before_boot.and_then(|boot| boot.boot_time_millis);
+    let after_boot_time_millis = after_boot.and_then(|boot| boot.boot_time_millis);
+    let crossed_boot_boundary =
+        before_boot_id != after_boot_id || before_boot_time_millis != after_boot_time_millis;
     let mut host = BTreeMap::new();
     host.insert(
         "cpu_percent".to_owned(),
@@ -2151,9 +2240,72 @@ fn build_snapshot_diff_report(
     SnapshotDiffReport {
         before_snapshot_millis: before.captured_at_millis,
         after_snapshot_millis: after.captured_at_millis,
+        crossed_boot_boundary,
+        before_boot_id,
+        after_boot_id,
+        before_boot_time_millis,
+        after_boot_time_millis,
+        before_previous_shutdown: before_boot.and_then(|boot| boot.previous_shutdown.clone()),
+        after_previous_shutdown: after_boot.and_then(|boot| boot.previous_shutdown.clone()),
         host,
         entities,
     }
+}
+
+fn build_reboot_report(
+    data_source: &dyn AetowerMcpDataSource,
+    start_millis: u64,
+    end_millis: u64,
+) -> Result<RebootReport, String> {
+    let snapshots = load_history_snapshots(data_source, start_millis, end_millis, 2048)?;
+    if snapshots.is_empty() {
+        return Err(
+            "No persisted snapshots were available for that reboot report window.".to_owned(),
+        );
+    }
+    let mut sessions = Vec::<Vec<SystemSnapshot>>::new();
+    for snapshot in snapshots {
+        let key = snapshot_boot_key(&snapshot.host);
+        match sessions.last_mut() {
+            Some(current)
+                if current
+                    .last()
+                    .map(|last| snapshot_boot_key(&last.host) == key)
+                    .unwrap_or(false) =>
+            {
+                current.push(snapshot);
+            }
+            _ => sessions.push(vec![snapshot]),
+        }
+    }
+
+    let diagnostics = data_source.query_diagnostics(DiagnosticsQuery {
+        limit: 512,
+        since_millis: Some(start_millis.saturating_sub(60 * 60 * 1000)),
+        include_persisted: true,
+        ..DiagnosticsQuery::default()
+    })?;
+    let session_reports = sessions
+        .iter()
+        .filter_map(|session| build_reboot_session_report(session))
+        .collect::<Vec<_>>();
+    let mut boundaries = Vec::new();
+    for pair in sessions.windows(2) {
+        let before = pair.first().and_then(|session| session.last());
+        let after = pair.get(1).and_then(|session| session.first());
+        if let (Some(before), Some(after)) = (before, after) {
+            boundaries.push(build_reboot_boundary_report(before, after, &diagnostics));
+        }
+    }
+
+    Ok(RebootReport {
+        range_start_millis: start_millis,
+        range_end_millis: end_millis,
+        session_count: session_reports.len(),
+        boundary_count: boundaries.len(),
+        sessions: session_reports,
+        boundaries,
+    })
 }
 
 pub fn diff_snapshots_json(
@@ -2179,6 +2331,228 @@ pub fn diff_snapshots_json(
         .ok_or_else(|| "Could not resolve the after snapshot.".to_owned())?;
     let report = build_snapshot_diff_report(before, after, entity_ids, limit);
     serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
+fn load_history_snapshots(
+    data_source: &dyn AetowerMcpDataSource,
+    start_millis: u64,
+    end_millis: u64,
+    max_snapshots: usize,
+) -> Result<Vec<SystemSnapshot>, String> {
+    let mut before_cursor = None;
+    let mut snapshots = Vec::new();
+    let page_limit = 256u32;
+    while snapshots.len() < max_snapshots {
+        let page =
+            data_source.load_history_page(start_millis, end_millis, before_cursor, page_limit)?;
+        if page.is_empty() {
+            break;
+        }
+        before_cursor = page
+            .last()
+            .map(|snapshot| snapshot.captured_at_millis)
+            .and_then(|captured_at| captured_at.checked_sub(1));
+        snapshots.extend(page);
+        if snapshots.len() >= max_snapshots {
+            break;
+        }
+    }
+    snapshots.sort_by_key(|snapshot| snapshot.captured_at_millis);
+    snapshots.dedup_by(|left, right| {
+        left.captured_at_millis == right.captured_at_millis && left.sequence == right.sequence
+    });
+    Ok(snapshots)
+}
+
+fn build_reboot_session_report(session: &[SystemSnapshot]) -> Option<RebootSessionReport> {
+    let first = session.first()?;
+    let last = session.last()?;
+    Some(RebootSessionReport {
+        boot_id: first
+            .host
+            .boot_session
+            .as_ref()
+            .and_then(|boot| boot.boot_id.clone()),
+        boot_time_millis: first
+            .host
+            .boot_session
+            .as_ref()
+            .and_then(|boot| boot.boot_time_millis),
+        first_snapshot_millis: first.captured_at_millis,
+        last_snapshot_millis: last.captured_at_millis,
+        snapshot_count: session.len(),
+        first_sequence: first.sequence,
+        last_sequence: last.sequence,
+        previous_shutdown: first
+            .host
+            .boot_session
+            .as_ref()
+            .and_then(|boot| boot.previous_shutdown.clone()),
+    })
+}
+
+fn build_reboot_boundary_report(
+    before: &SystemSnapshot,
+    after: &SystemSnapshot,
+    diagnostics: &[DiagnosticsEvent],
+) -> RebootBoundaryReport {
+    let reboot_detected_at_millis = after
+        .host
+        .boot_session
+        .as_ref()
+        .and_then(|boot| boot.boot_time_millis)
+        .or(Some(after.captured_at_millis));
+    let window_start = before.captured_at_millis.saturating_sub(30 * 60 * 1000);
+    let window_end = after.captured_at_millis.saturating_add(30 * 60 * 1000);
+    let correlated_markers = diagnostics
+        .iter()
+        .filter(|event| {
+            event.timestamp_millis >= window_start
+                && event.timestamp_millis <= window_end
+                && matches!(
+                    event.event_type.as_str(),
+                    "boot-session-observed"
+                        | "system-previous-shutdown-cause"
+                        | "system-sleep-marker"
+                        | "system-wake-marker"
+                        | "system-panic-marker"
+                        | "system-thermal-marker"
+                        | "system-power-marker"
+                        | "engine-initialized"
+                )
+        })
+        .map(reboot_correlation_marker)
+        .collect::<Vec<_>>();
+    let pre_reboot_incidents = diagnostics
+        .iter()
+        .filter(|event| {
+            event.timestamp_millis >= window_start
+                && event.timestamp_millis <= before.captured_at_millis
+                && matches!(
+                    event.event_type.as_str(),
+                    "host-incident-snapshot" | "tick-over-budget"
+                )
+        })
+        .map(reboot_correlation_marker)
+        .collect::<Vec<_>>();
+    RebootBoundaryReport {
+        before_snapshot_millis: before.captured_at_millis,
+        after_snapshot_millis: after.captured_at_millis,
+        reboot_detected_at_millis,
+        gap_millis: after
+            .captured_at_millis
+            .saturating_sub(before.captured_at_millis),
+        before_boot_id: before
+            .host
+            .boot_session
+            .as_ref()
+            .and_then(|boot| boot.boot_id.clone()),
+        after_boot_id: after
+            .host
+            .boot_session
+            .as_ref()
+            .and_then(|boot| boot.boot_id.clone()),
+        before_boot_time_millis: before
+            .host
+            .boot_session
+            .as_ref()
+            .and_then(|boot| boot.boot_time_millis),
+        after_boot_time_millis: after
+            .host
+            .boot_session
+            .as_ref()
+            .and_then(|boot| boot.boot_time_millis),
+        previous_shutdown: after
+            .host
+            .boot_session
+            .as_ref()
+            .and_then(|boot| boot.previous_shutdown.clone())
+            .or_else(|| {
+                extract_previous_shutdown_from_events(diagnostics, window_start, window_end)
+            }),
+        before_top_entities: before
+            .entities
+            .iter()
+            .take(5)
+            .map(|entity| entity.display_name.clone())
+            .collect(),
+        after_top_entities: after
+            .entities
+            .iter()
+            .take(5)
+            .map(|entity| entity.display_name.clone())
+            .collect(),
+        correlated_markers,
+        pre_reboot_incidents,
+    }
+}
+
+fn reboot_correlation_marker(event: &DiagnosticsEvent) -> RebootCorrelationMarker {
+    RebootCorrelationMarker {
+        timestamp_millis: event.timestamp_millis,
+        event_type: event.event_type.clone(),
+        level: format!("{:?}", event.level).to_ascii_lowercase(),
+        message: event.message.clone(),
+        detail: event
+            .fields
+            .iter()
+            .find(|field| field.key == "detail")
+            .map(|field| field.value.clone()),
+    }
+}
+
+fn extract_previous_shutdown_from_events(
+    events: &[DiagnosticsEvent],
+    start_millis: u64,
+    end_millis: u64,
+) -> Option<aetower_model::RebootCauseSnapshot> {
+    events
+        .iter()
+        .filter(|event| {
+            event.timestamp_millis >= start_millis
+                && event.timestamp_millis <= end_millis
+                && matches!(
+                    event.event_type.as_str(),
+                    "system-previous-shutdown-cause" | "system-panic-marker"
+                )
+        })
+        .max_by_key(|event| event.timestamp_millis)
+        .map(|event| {
+            let detail = event
+                .fields
+                .iter()
+                .find(|field| field.key == "detail")
+                .map(|field| field.value.clone())
+                .unwrap_or_else(|| event.message.clone());
+            let code = if event.event_type == "system-previous-shutdown-cause" {
+                detail
+                    .split(':')
+                    .nth(1)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+            } else {
+                Some("panic".to_owned())
+            };
+            aetower_model::RebootCauseSnapshot {
+                source: "diagnostics".to_owned(),
+                code,
+                detail,
+                observed_at_millis: Some(event.timestamp_millis),
+            }
+        })
+}
+
+fn snapshot_boot_key(host: &aetower_model::HostSnapshot) -> Option<String> {
+    host.boot_session
+        .as_ref()
+        .and_then(|boot| boot.boot_id.clone())
+        .or_else(|| {
+            host.boot_session
+                .as_ref()
+                .and_then(|boot| boot.boot_time_millis)
+                .map(|millis| millis.to_string())
+        })
 }
 
 fn build_anomaly_explanations(
@@ -3781,10 +4155,13 @@ fn build_session_health_checks(
                 "{} warnings, {} errors, {} persisted diagnostics events.",
                 diagnostics.warn_count, diagnostics.error_count, diagnostics.persisted_events
             ),
-            detail: diagnostics
-                .last_error_message
-                .clone()
-                .unwrap_or_else(|| "No current diagnostics error is attached.".to_owned()),
+            detail: diagnostics_active_error_message(diagnostics).unwrap_or_else(|| {
+                if diagnostics.error_count > 0 {
+                    "Retained diagnostics errors are stale or already recovered.".to_owned()
+                } else {
+                    "No current diagnostics error is attached.".to_owned()
+                }
+            }),
         },
         SessionHealthCheck {
             key: "history-store".to_owned(),
@@ -4645,7 +5022,8 @@ fn diagnostics_finding(diagnostics: &DiagnosticsOverview) -> Option<TopFinding> 
         ),
         source: "diagnostics".to_owned(),
         entity_ids: Vec::new(),
-        recommendation: diagnostics.last_error_message.clone(),
+        recommendation: diagnostics_active_error_message(diagnostics)
+            .or_else(|| Some("No active retained error is attached.".to_owned())),
     })
 }
 
@@ -4842,6 +5220,21 @@ fn diagnostics_severity(diagnostics: &DiagnosticsOverview) -> SeverityBand {
         SeverityBand::Warning
     } else {
         SeverityBand::Info
+    }
+}
+
+fn diagnostics_active_error_message(diagnostics: &DiagnosticsOverview) -> Option<String> {
+    let last_error_millis = diagnostics.last_error_millis?;
+    let last_error_message = diagnostics.last_error_message.clone()?;
+    let now_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(last_error_millis);
+    let age_millis = now_millis.saturating_sub(last_error_millis);
+    if age_millis <= 10 * 60 * 1000 {
+        Some(last_error_message)
+    } else {
+        None
     }
 }
 
@@ -5189,7 +5582,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "aetower_diff_snapshots",
-            "description": "Compare two persisted time points and return host plus per-entity deltas for friction, CPU, memory, wakeups, and process count.",
+            "description": "Compare two persisted time points and return host plus per-entity deltas for friction, CPU, memory, wakeups, and process count, including boot-boundary metadata when the snapshots span a reboot.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -5199,6 +5592,18 @@ fn tool_definitions() -> Vec<Value> {
                     "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
                 },
                 "required": ["before_millis", "after_millis"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_reboot_report",
+            "description": "Summarize detected boot-session boundaries, pre-reboot pressure, and correlated sleep/wake/panic markers for a time range.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "start_millis": { "type": "integer", "minimum": 0 },
+                    "end_millis": { "type": "integer", "minimum": 0 }
+                },
                 "additionalProperties": false
             }
         }),
@@ -5901,6 +6306,7 @@ mod tests {
             .collect::<Vec<_>>();
         for expected in [
             "aetower_diff_snapshots",
+            "aetower_reboot_report",
             "aetower_explain_anomalies",
             "aetower_entity_process_tree",
             "aetower_top_findings",
@@ -6269,6 +6675,12 @@ mod tests {
             captured_at_millis: 100,
             host: aetower_model::HostSnapshot {
                 wakeups_per_second: 8_000.0,
+                boot_session: Some(aetower_model::BootSessionSnapshot {
+                    boot_id: Some("boot-a".to_owned()),
+                    boot_time_millis: Some(10),
+                    host_uptime_millis: Some(90),
+                    previous_shutdown: None,
+                }),
                 ..aetower_model::HostSnapshot::default()
             },
             entities: vec![aetower_model::EntitySnapshot {
@@ -6298,8 +6710,219 @@ mod tests {
         let report = build_snapshot_diff_report(&before, &after, &[], 10);
         assert_eq!(report.before_snapshot_millis, 100);
         assert_eq!(report.after_snapshot_millis, 200);
+        assert!(!report.crossed_boot_boundary);
         assert_eq!(report.entities.len(), 1);
         assert!(report.entities[0].wakeups_per_second.delta < 0.0);
+    }
+
+    #[test]
+    fn snapshot_diff_report_flags_boot_boundary() {
+        let before = SystemSnapshot {
+            captured_at_millis: 100,
+            host: aetower_model::HostSnapshot {
+                boot_session: Some(aetower_model::BootSessionSnapshot {
+                    boot_id: Some("boot-a".to_owned()),
+                    boot_time_millis: Some(10),
+                    host_uptime_millis: Some(90),
+                    previous_shutdown: None,
+                }),
+                ..aetower_model::HostSnapshot::default()
+            },
+            ..SystemSnapshot::default()
+        };
+        let after = SystemSnapshot {
+            captured_at_millis: 200,
+            host: aetower_model::HostSnapshot {
+                boot_session: Some(aetower_model::BootSessionSnapshot {
+                    boot_id: Some("boot-b".to_owned()),
+                    boot_time_millis: Some(180),
+                    host_uptime_millis: Some(20),
+                    previous_shutdown: Some(aetower_model::RebootCauseSnapshot {
+                        source: "unified-log".to_owned(),
+                        code: Some("-128".to_owned()),
+                        detail: "Previous shutdown cause: -128".to_owned(),
+                        observed_at_millis: Some(181),
+                    }),
+                }),
+                ..aetower_model::HostSnapshot::default()
+            },
+            ..SystemSnapshot::default()
+        };
+
+        let report = build_snapshot_diff_report(&before, &after, &[], 10);
+        assert!(report.crossed_boot_boundary);
+        assert_eq!(report.before_boot_id.as_deref(), Some("boot-a"));
+        assert_eq!(report.after_boot_id.as_deref(), Some("boot-b"));
+        assert!(report.after_previous_shutdown.is_some());
+    }
+
+    #[test]
+    fn reboot_report_detects_boundary_and_incidents() {
+        struct RebootSource {
+            snapshots: Vec<SystemSnapshot>,
+            diagnostics: Vec<DiagnosticsEvent>,
+        }
+
+        impl AetowerMcpDataSource for RebootSource {
+            fn latest_snapshot(&self) -> Result<SystemSnapshot, String> {
+                self.snapshots
+                    .last()
+                    .cloned()
+                    .ok_or_else(|| "missing snapshot".to_owned())
+            }
+            fn latest_snapshot_if_newer(
+                &self,
+                _last_sequence: u64,
+            ) -> Result<Option<SystemSnapshot>, String> {
+                Ok(None)
+            }
+            fn latest_sequence(&self) -> Result<u64, String> {
+                Ok(self
+                    .snapshots
+                    .last()
+                    .map(|snapshot| snapshot.sequence)
+                    .unwrap_or(0))
+            }
+            fn latest_runtime_lag_metrics(&self) -> Result<RuntimeLagMetrics, String> {
+                Ok(RuntimeLagMetrics::default())
+            }
+            fn history_range_summary(
+                &self,
+                _start_millis: u64,
+                _end_millis: u64,
+            ) -> Result<HistorySummaryResponse, String> {
+                Ok(HistorySummaryResponse {
+                    store_bytes: 1,
+                    wal_bytes: 0,
+                    snapshot_count: self.snapshots.len() as u64,
+                    quarantine_count: 0,
+                    range_count: self.snapshots.len() as u64,
+                    oldest_millis: self
+                        .snapshots
+                        .first()
+                        .map(|snapshot| snapshot.captured_at_millis),
+                    newest_millis: self
+                        .snapshots
+                        .last()
+                        .map(|snapshot| snapshot.captured_at_millis),
+                    pending_writes: 0,
+                })
+            }
+            fn load_history_page(
+                &self,
+                start_millis: u64,
+                end_millis: u64,
+                before_millis_exclusive: Option<u64>,
+                limit: u32,
+            ) -> Result<Vec<SystemSnapshot>, String> {
+                let mut snapshots = self
+                    .snapshots
+                    .iter()
+                    .filter(|snapshot| {
+                        snapshot.captured_at_millis >= start_millis
+                            && snapshot.captured_at_millis <= end_millis
+                            && before_millis_exclusive
+                                .map(|before| snapshot.captured_at_millis < before)
+                                .unwrap_or(true)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                snapshots
+                    .sort_by(|left, right| right.captured_at_millis.cmp(&left.captured_at_millis));
+                snapshots.truncate(limit as usize);
+                Ok(snapshots)
+            }
+            fn diagnostics_overview(&self) -> Result<DiagnosticsOverview, String> {
+                Ok(DiagnosticsOverview::default())
+            }
+            fn query_diagnostics(
+                &self,
+                _query: DiagnosticsQuery,
+            ) -> Result<Vec<DiagnosticsEvent>, String> {
+                Ok(self.diagnostics.clone())
+            }
+        }
+
+        let before = SystemSnapshot {
+            sequence: 10,
+            captured_at_millis: 1_000,
+            host: aetower_model::HostSnapshot {
+                boot_session: Some(aetower_model::BootSessionSnapshot {
+                    boot_id: Some("boot-a".to_owned()),
+                    boot_time_millis: Some(100),
+                    host_uptime_millis: Some(900),
+                    previous_shutdown: None,
+                }),
+                ..aetower_model::HostSnapshot::default()
+            },
+            entities: vec![aetower_model::EntitySnapshot {
+                display_name: "Chau7".to_owned(),
+                ..aetower_model::EntitySnapshot::default()
+            }],
+            ..SystemSnapshot::default()
+        };
+        let after = SystemSnapshot {
+            sequence: 1,
+            captured_at_millis: 2_000,
+            host: aetower_model::HostSnapshot {
+                boot_session: Some(aetower_model::BootSessionSnapshot {
+                    boot_id: Some("boot-b".to_owned()),
+                    boot_time_millis: Some(1_850),
+                    host_uptime_millis: Some(150),
+                    previous_shutdown: None,
+                }),
+                ..aetower_model::HostSnapshot::default()
+            },
+            entities: vec![aetower_model::EntitySnapshot {
+                display_name: "Aetower".to_owned(),
+                ..aetower_model::EntitySnapshot::default()
+            }],
+            ..SystemSnapshot::default()
+        };
+        let source = RebootSource {
+            snapshots: vec![before, after],
+            diagnostics: vec![
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Warn,
+                    DiagnosticsSubsystem::History,
+                    "host-incident-snapshot",
+                    "Host wakeup storm incident snapshot recorded.",
+                )
+                .timestamp_millis(950)
+                .field("detail", "Wakeups were elevated before reboot.")
+                .build(),
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Warn,
+                    DiagnosticsSubsystem::Engine,
+                    "system-previous-shutdown-cause",
+                    "Observed a previous shutdown cause marker in the recent system log.",
+                )
+                .timestamp_millis(1_851)
+                .field("detail", "Previous shutdown cause: -128")
+                .build(),
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Info,
+                    DiagnosticsSubsystem::Engine,
+                    "engine-initialized",
+                    "Aetower engine initialized.",
+                )
+                .timestamp_millis(1_900)
+                .build(),
+            ],
+        };
+
+        let report =
+            build_reboot_report(&source, 500, 2_500).unwrap_or_else(|_| panic!("reboot report"));
+        assert_eq!(report.boundary_count, 1);
+        assert_eq!(report.session_count, 2);
+        assert_eq!(
+            report.boundaries[0]
+                .previous_shutdown
+                .as_ref()
+                .and_then(|cause| cause.code.as_deref()),
+            Some("-128")
+        );
+        assert!(!report.boundaries[0].pre_reboot_incidents.is_empty());
     }
 
     #[test]

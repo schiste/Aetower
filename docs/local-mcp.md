@@ -13,6 +13,7 @@ agent-facing summaries:
 - `aetower_entity_details`
 - `aetower_runtime_lag`
 - `aetower_diff_snapshots`
+- `aetower_reboot_report`
 - `aetower_explain_anomalies`
 - `aetower_entity_process_tree`
 - `aetower_top_findings`
@@ -104,7 +105,12 @@ operator context so agents do not have to rebuild urgency heuristics from raw
 host counters.
 
 `aetower_diff_snapshots` compares two persisted time points and returns host
-and per-entity deltas.
+and per-entity deltas. When the comparison crosses a reboot boundary it also
+surfaces boot-session metadata and previous-shutdown context.
+
+`aetower_reboot_report` summarizes detected boot-session boundaries, recent
+pre-reboot incident snapshots, and correlated sleep/wake/panic markers across
+the requested time range.
 
 `aetower_explain_anomalies` explains why a current entity looks unusual by
 calling out the strongest changed metrics and the most relevant recent events.
