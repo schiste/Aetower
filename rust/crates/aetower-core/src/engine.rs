@@ -738,12 +738,13 @@ impl Engine {
         }));
 
         let diagnostics = self.diagnostics.clone();
+        let running = Arc::clone(&self.running);
         self.system_marker_worker = Some(thread::spawn(move || {
             let since_millis =
                 last_persisted_system_marker_millis(&diagnostics).unwrap_or_else(|| {
                     aet_time::now_millis().saturating_sub(SYSTEM_MARKER_LOOKBACK_MILLIS)
                 });
-            ingest_recent_system_markers(&diagnostics, since_millis);
+            ingest_recent_system_markers(&diagnostics, &running, since_millis);
         }));
     }
 
@@ -1573,9 +1574,19 @@ fn last_persisted_system_marker_millis(diagnostics: &DiagnosticsStore) -> Option
         .max()
 }
 
-fn ingest_recent_system_markers(diagnostics: &DiagnosticsStore, since_millis: u64) {
+fn ingest_recent_system_markers(
+    diagnostics: &DiagnosticsStore,
+    running: &AtomicBool,
+    since_millis: u64,
+) {
+    if !running.load(Ordering::SeqCst) {
+        return;
+    }
     let markers = load_recent_system_markers(since_millis);
     for marker in markers {
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
         diagnostics.emit(
             DiagnosticsEvent::builder(
                 marker.level,
