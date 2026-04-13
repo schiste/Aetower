@@ -2088,6 +2088,16 @@ fn build_snapshot_diff_report(
     requested_entity_ids: &[String],
     limit: usize,
 ) -> SnapshotDiffReport {
+    build_snapshot_diff_report_with_diagnostics(before, after, requested_entity_ids, limit, &[])
+}
+
+fn build_snapshot_diff_report_with_diagnostics(
+    before: &SystemSnapshot,
+    after: &SystemSnapshot,
+    requested_entity_ids: &[String],
+    limit: usize,
+    diagnostics: &[DiagnosticsEvent],
+) -> SnapshotDiffReport {
     let before_boot = before.host.boot_session.as_ref();
     let after_boot = after.host.boot_session.as_ref();
     let before_boot_id = before_boot.and_then(|boot| boot.boot_id.clone());
@@ -2245,8 +2255,24 @@ fn build_snapshot_diff_report(
         after_boot_id,
         before_boot_time_millis,
         after_boot_time_millis,
-        before_previous_shutdown: before_boot.and_then(|boot| boot.previous_shutdown.clone()),
-        after_previous_shutdown: after_boot.and_then(|boot| boot.previous_shutdown.clone()),
+        before_previous_shutdown: before_boot
+            .and_then(|boot| boot.previous_shutdown.clone())
+            .or_else(|| {
+                extract_previous_shutdown_from_events(
+                    diagnostics,
+                    before.captured_at_millis.saturating_sub(30 * 60 * 1000),
+                    before.captured_at_millis.saturating_add(5 * 60 * 1000),
+                )
+            }),
+        after_previous_shutdown: after_boot
+            .and_then(|boot| boot.previous_shutdown.clone())
+            .or_else(|| {
+                extract_previous_shutdown_from_events(
+                    diagnostics,
+                    after.captured_at_millis.saturating_sub(30 * 60 * 1000),
+                    after.captured_at_millis.saturating_add(5 * 60 * 1000),
+                )
+            }),
         host,
         entities,
     }
@@ -2279,12 +2305,11 @@ fn build_reboot_report(
         }
     }
 
-    let diagnostics = data_source.query_diagnostics(DiagnosticsQuery {
-        limit: 512,
-        since_millis: Some(start_millis.saturating_sub(60 * 60 * 1000)),
-        include_persisted: true,
-        ..DiagnosticsQuery::default()
-    })?;
+    let diagnostics = load_reboot_diagnostics(
+        data_source,
+        start_millis.saturating_sub(60 * 60 * 1000),
+        end_millis.saturating_add(30 * 60 * 1000),
+    )?;
     let session_reports = sessions
         .iter()
         .filter_map(|session| build_reboot_session_report(session))
@@ -2329,8 +2354,61 @@ pub fn diff_snapshots_json(
         .iter()
         .min_by_key(|snapshot| snapshot.captured_at_millis.abs_diff(after_millis))
         .ok_or_else(|| "Could not resolve the after snapshot.".to_owned())?;
-    let report = build_snapshot_diff_report(before, after, entity_ids, limit);
+    let diagnostics = load_reboot_diagnostics(
+        data_source,
+        start_millis.saturating_sub(60 * 60 * 1000),
+        end_millis.saturating_add(30 * 60 * 1000),
+    )?;
+    let report =
+        build_snapshot_diff_report_with_diagnostics(before, after, entity_ids, limit, &diagnostics);
     serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
+fn load_reboot_diagnostics(
+    data_source: &dyn AetowerMcpDataSource,
+    start_millis: u64,
+    end_millis: u64,
+) -> Result<Vec<DiagnosticsEvent>, String> {
+    const SEARCHES: &[(&str, usize)] = &[
+        ("boot-session-observed", 256),
+        ("system-previous-shutdown-cause", 128),
+        ("system-panic-marker", 128),
+        ("system-sleep-marker", 256),
+        ("system-wake-marker", 256),
+        ("system-thermal-marker", 256),
+        ("system-power-marker", 256),
+        ("engine-initialized", 128),
+        ("host-incident-snapshot", 512),
+        ("tick-over-budget", 2048),
+    ];
+
+    let mut events = Vec::new();
+    for (search, limit) in SEARCHES {
+        let mut chunk = data_source.query_diagnostics(DiagnosticsQuery {
+            limit: *limit,
+            search: Some((*search).to_owned()),
+            since_millis: Some(start_millis),
+            include_persisted: true,
+            ..DiagnosticsQuery::default()
+        })?;
+        chunk.retain(|event| event.timestamp_millis <= end_millis);
+        events.extend(chunk);
+    }
+    events.sort_by(|left, right| {
+        left.timestamp_millis
+            .cmp(&right.timestamp_millis)
+            .then(left.id.cmp(&right.id))
+    });
+    events.dedup_by(|left, right| {
+        if !left.id.is_empty() && !right.id.is_empty() {
+            left.id == right.id
+        } else {
+            left.timestamp_millis == right.timestamp_millis
+                && left.event_type == right.event_type
+                && left.message == right.message
+        }
+    });
+    Ok(events)
 }
 
 fn load_history_snapshots(
@@ -6754,6 +6832,57 @@ mod tests {
         assert_eq!(report.before_boot_id.as_deref(), Some("boot-a"));
         assert_eq!(report.after_boot_id.as_deref(), Some("boot-b"));
         assert!(report.after_previous_shutdown.is_some());
+    }
+
+    #[test]
+    fn snapshot_diff_report_uses_diagnostics_shutdown_fallback() {
+        let before = SystemSnapshot {
+            captured_at_millis: 100,
+            host: aetower_model::HostSnapshot {
+                boot_session: Some(aetower_model::BootSessionSnapshot {
+                    boot_id: Some("boot-a".to_owned()),
+                    boot_time_millis: Some(10),
+                    host_uptime_millis: Some(90),
+                    previous_shutdown: None,
+                }),
+                ..aetower_model::HostSnapshot::default()
+            },
+            ..SystemSnapshot::default()
+        };
+        let after = SystemSnapshot {
+            captured_at_millis: 200,
+            host: aetower_model::HostSnapshot {
+                boot_session: Some(aetower_model::BootSessionSnapshot {
+                    boot_id: Some("boot-b".to_owned()),
+                    boot_time_millis: Some(180),
+                    host_uptime_millis: Some(20),
+                    previous_shutdown: None,
+                }),
+                ..aetower_model::HostSnapshot::default()
+            },
+            ..SystemSnapshot::default()
+        };
+        let diagnostics = vec![
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Warn,
+                DiagnosticsSubsystem::Engine,
+                "system-previous-shutdown-cause",
+                "Observed a previous shutdown cause marker in the recent system log.",
+            )
+            .timestamp_millis(181)
+            .field("detail", "Previous shutdown cause: -128")
+            .build(),
+        ];
+
+        let report =
+            build_snapshot_diff_report_with_diagnostics(&before, &after, &[], 10, &diagnostics);
+        assert_eq!(
+            report
+                .after_previous_shutdown
+                .as_ref()
+                .and_then(|cause| cause.code.as_deref()),
+            Some("-128")
+        );
     }
 
     #[test]
