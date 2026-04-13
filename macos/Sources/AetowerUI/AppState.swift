@@ -229,6 +229,7 @@ public final class AppState {
                 cpuTemperatures: [],
                 powerReadings: [],
                 batteryHealth: nil,
+                bootSession: nil,
                 networkInterfaces: [],
                 disks: [],
                 bluetoothDevices: []

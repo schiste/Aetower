@@ -206,6 +206,7 @@ pub struct HostSnapshot {
     pub cpu_temperatures: Vec<TemperatureReading>,
     pub power_readings: Vec<PowerReading>,
     pub battery_health: Option<BatteryHealthSnapshot>,
+    pub boot_session: Option<BootSessionSnapshot>,
     pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
     pub disks: Vec<DiskHealthSnapshot>,
     pub bluetooth_devices: Vec<BluetoothDeviceBattery>,
@@ -268,6 +269,22 @@ pub struct BatteryHealthSnapshot {
     pub health_percent: Option<f32>,
     pub condition: BatteryCondition,
     pub temperature_celsius: Option<f32>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct BootSessionSnapshot {
+    pub boot_id: Option<String>,
+    pub boot_time_millis: Option<u64>,
+    pub host_uptime_millis: Option<u64>,
+    pub previous_shutdown: Option<RebootCauseSnapshot>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct RebootCauseSnapshot {
+    pub source: String,
+    pub code: Option<String>,
+    pub detail: String,
+    pub observed_at_millis: Option<u64>,
 }
 
 /// Per-interface network snapshot exposed to Swift.
@@ -1751,6 +1768,7 @@ impl From<model::HostSnapshot> for HostSnapshot {
             cpu_temperatures: value.cpu_temperatures.into_iter().map(Into::into).collect(),
             power_readings: value.power_readings.into_iter().map(Into::into).collect(),
             battery_health: value.battery_health.map(Into::into),
+            boot_session: value.boot_session.map(Into::into),
             network_interfaces: value
                 .network_interfaces
                 .into_iter()
@@ -1828,6 +1846,28 @@ impl From<model::BatteryHealthSnapshot> for BatteryHealthSnapshot {
             health_percent: value.health_percent,
             condition: value.condition.into(),
             temperature_celsius: value.temperature_celsius,
+        }
+    }
+}
+
+impl From<model::RebootCauseSnapshot> for RebootCauseSnapshot {
+    fn from(value: model::RebootCauseSnapshot) -> Self {
+        Self {
+            source: value.source,
+            code: value.code,
+            detail: value.detail,
+            observed_at_millis: value.observed_at_millis,
+        }
+    }
+}
+
+impl From<model::BootSessionSnapshot> for BootSessionSnapshot {
+    fn from(value: model::BootSessionSnapshot) -> Self {
+        Self {
+            boot_id: value.boot_id,
+            boot_time_millis: value.boot_time_millis,
+            host_uptime_millis: value.host_uptime_millis,
+            previous_shutdown: value.previous_shutdown.map(Into::into),
         }
     }
 }

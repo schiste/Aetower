@@ -230,6 +230,8 @@ pub struct HostSnapshot {
     #[serde(default)]
     pub battery_health: Option<BatteryHealthSnapshot>,
     #[serde(default)]
+    pub boot_session: Option<BootSessionSnapshot>,
+    #[serde(default)]
     pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
     #[serde(default)]
     pub disks: Vec<DiskHealthSnapshot>,
@@ -251,6 +253,28 @@ pub struct HostTrend {
     pub compressed_memory_bytes: Vec<u64>,
     #[serde(default)]
     pub ai_agent_friction: Vec<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BootSessionSnapshot {
+    #[serde(default)]
+    pub boot_id: Option<String>,
+    #[serde(default)]
+    pub boot_time_millis: Option<u64>,
+    #[serde(default)]
+    pub host_uptime_millis: Option<u64>,
+    #[serde(default)]
+    pub previous_shutdown: Option<RebootCauseSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RebootCauseSnapshot {
+    pub source: String,
+    #[serde(default)]
+    pub code: Option<String>,
+    pub detail: String,
+    #[serde(default)]
+    pub observed_at_millis: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

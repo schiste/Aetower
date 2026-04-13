@@ -1879,6 +1879,92 @@ public func FfiConverterTypeBluetoothDeviceBattery_lower(_ value: BluetoothDevic
 }
 
 
+public struct BootSessionSnapshot {
+    public var bootId: String?
+    public var bootTimeMillis: UInt64?
+    public var hostUptimeMillis: UInt64?
+    public var previousShutdown: RebootCauseSnapshot?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(bootId: String?, bootTimeMillis: UInt64?, hostUptimeMillis: UInt64?, previousShutdown: RebootCauseSnapshot?) {
+        self.bootId = bootId
+        self.bootTimeMillis = bootTimeMillis
+        self.hostUptimeMillis = hostUptimeMillis
+        self.previousShutdown = previousShutdown
+    }
+}
+
+#if compiler(>=6)
+extension BootSessionSnapshot: Sendable {}
+#endif
+
+
+extension BootSessionSnapshot: Equatable, Hashable {
+    public static func ==(lhs: BootSessionSnapshot, rhs: BootSessionSnapshot) -> Bool {
+        if lhs.bootId != rhs.bootId {
+            return false
+        }
+        if lhs.bootTimeMillis != rhs.bootTimeMillis {
+            return false
+        }
+        if lhs.hostUptimeMillis != rhs.hostUptimeMillis {
+            return false
+        }
+        if lhs.previousShutdown != rhs.previousShutdown {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(bootId)
+        hasher.combine(bootTimeMillis)
+        hasher.combine(hostUptimeMillis)
+        hasher.combine(previousShutdown)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBootSessionSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BootSessionSnapshot {
+        return
+            try BootSessionSnapshot(
+                bootId: FfiConverterOptionString.read(from: &buf), 
+                bootTimeMillis: FfiConverterOptionUInt64.read(from: &buf), 
+                hostUptimeMillis: FfiConverterOptionUInt64.read(from: &buf), 
+                previousShutdown: FfiConverterOptionTypeRebootCauseSnapshot.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BootSessionSnapshot, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.bootId, into: &buf)
+        FfiConverterOptionUInt64.write(value.bootTimeMillis, into: &buf)
+        FfiConverterOptionUInt64.write(value.hostUptimeMillis, into: &buf)
+        FfiConverterOptionTypeRebootCauseSnapshot.write(value.previousShutdown, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBootSessionSnapshot_lift(_ buf: RustBuffer) throws -> BootSessionSnapshot {
+    return try FfiConverterTypeBootSessionSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBootSessionSnapshot_lower(_ value: BootSessionSnapshot) -> RustBuffer {
+    return FfiConverterTypeBootSessionSnapshot.lower(value)
+}
+
+
 public struct CapabilitySnapshot {
     public var kind: CapabilityKind
     public var state: CapabilityState
@@ -3817,13 +3903,14 @@ public struct HostSnapshot {
     public var cpuTemperatures: [TemperatureReading]
     public var powerReadings: [PowerReading]
     public var batteryHealth: BatteryHealthSnapshot?
+    public var bootSession: BootSessionSnapshot?
     public var networkInterfaces: [NetworkInterfaceSnapshot]
     public var disks: [DiskHealthSnapshot]
     public var bluetoothDevices: [BluetoothDeviceBattery]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?, networkInterfaces: [NetworkInterfaceSnapshot], disks: [DiskHealthSnapshot], bluetoothDevices: [BluetoothDeviceBattery]) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?, bootSession: BootSessionSnapshot?, networkInterfaces: [NetworkInterfaceSnapshot], disks: [DiskHealthSnapshot], bluetoothDevices: [BluetoothDeviceBattery]) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
@@ -3850,6 +3937,7 @@ public struct HostSnapshot {
         self.cpuTemperatures = cpuTemperatures
         self.powerReadings = powerReadings
         self.batteryHealth = batteryHealth
+        self.bootSession = bootSession
         self.networkInterfaces = networkInterfaces
         self.disks = disks
         self.bluetoothDevices = bluetoothDevices
@@ -3941,6 +4029,9 @@ extension HostSnapshot: Equatable, Hashable {
         if lhs.batteryHealth != rhs.batteryHealth {
             return false
         }
+        if lhs.bootSession != rhs.bootSession {
+            return false
+        }
         if lhs.networkInterfaces != rhs.networkInterfaces {
             return false
         }
@@ -3980,6 +4071,7 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(cpuTemperatures)
         hasher.combine(powerReadings)
         hasher.combine(batteryHealth)
+        hasher.combine(bootSession)
         hasher.combine(networkInterfaces)
         hasher.combine(disks)
         hasher.combine(bluetoothDevices)
@@ -4021,6 +4113,7 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 cpuTemperatures: FfiConverterSequenceTypeTemperatureReading.read(from: &buf), 
                 powerReadings: FfiConverterSequenceTypePowerReading.read(from: &buf), 
                 batteryHealth: FfiConverterOptionTypeBatteryHealthSnapshot.read(from: &buf), 
+                bootSession: FfiConverterOptionTypeBootSessionSnapshot.read(from: &buf), 
                 networkInterfaces: FfiConverterSequenceTypeNetworkInterfaceSnapshot.read(from: &buf), 
                 disks: FfiConverterSequenceTypeDiskHealthSnapshot.read(from: &buf), 
                 bluetoothDevices: FfiConverterSequenceTypeBluetoothDeviceBattery.read(from: &buf)
@@ -4054,6 +4147,7 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeTemperatureReading.write(value.cpuTemperatures, into: &buf)
         FfiConverterSequenceTypePowerReading.write(value.powerReadings, into: &buf)
         FfiConverterOptionTypeBatteryHealthSnapshot.write(value.batteryHealth, into: &buf)
+        FfiConverterOptionTypeBootSessionSnapshot.write(value.bootSession, into: &buf)
         FfiConverterSequenceTypeNetworkInterfaceSnapshot.write(value.networkInterfaces, into: &buf)
         FfiConverterSequenceTypeDiskHealthSnapshot.write(value.disks, into: &buf)
         FfiConverterSequenceTypeBluetoothDeviceBattery.write(value.bluetoothDevices, into: &buf)
@@ -4628,6 +4722,92 @@ public func FfiConverterTypeProvenanceSnapshot_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeProvenanceSnapshot_lower(_ value: ProvenanceSnapshot) -> RustBuffer {
     return FfiConverterTypeProvenanceSnapshot.lower(value)
+}
+
+
+public struct RebootCauseSnapshot {
+    public var source: String
+    public var code: String?
+    public var detail: String
+    public var observedAtMillis: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(source: String, code: String?, detail: String, observedAtMillis: UInt64?) {
+        self.source = source
+        self.code = code
+        self.detail = detail
+        self.observedAtMillis = observedAtMillis
+    }
+}
+
+#if compiler(>=6)
+extension RebootCauseSnapshot: Sendable {}
+#endif
+
+
+extension RebootCauseSnapshot: Equatable, Hashable {
+    public static func ==(lhs: RebootCauseSnapshot, rhs: RebootCauseSnapshot) -> Bool {
+        if lhs.source != rhs.source {
+            return false
+        }
+        if lhs.code != rhs.code {
+            return false
+        }
+        if lhs.detail != rhs.detail {
+            return false
+        }
+        if lhs.observedAtMillis != rhs.observedAtMillis {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(source)
+        hasher.combine(code)
+        hasher.combine(detail)
+        hasher.combine(observedAtMillis)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRebootCauseSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RebootCauseSnapshot {
+        return
+            try RebootCauseSnapshot(
+                source: FfiConverterString.read(from: &buf), 
+                code: FfiConverterOptionString.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf), 
+                observedAtMillis: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RebootCauseSnapshot, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterOptionString.write(value.code, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterOptionUInt64.write(value.observedAtMillis, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRebootCauseSnapshot_lift(_ buf: RustBuffer) throws -> RebootCauseSnapshot {
+    return try FfiConverterTypeRebootCauseSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRebootCauseSnapshot_lower(_ value: RebootCauseSnapshot) -> RustBuffer {
+    return FfiConverterTypeRebootCauseSnapshot.lower(value)
 }
 
 
@@ -7515,6 +7695,30 @@ fileprivate struct FfiConverterOptionTypeBatteryHealthSnapshot: FfiConverterRust
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeBootSessionSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = BootSessionSnapshot?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeBootSessionSnapshot.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeBootSessionSnapshot.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeHistoryMaintenanceReport: FfiConverterRustBuffer {
     typealias SwiftType = HistoryMaintenanceReport?
 
@@ -7579,6 +7783,30 @@ fileprivate struct FfiConverterOptionTypeProvenanceSnapshot: FfiConverterRustBuf
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeProvenanceSnapshot.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeRebootCauseSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = RebootCauseSnapshot?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRebootCauseSnapshot.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRebootCauseSnapshot.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

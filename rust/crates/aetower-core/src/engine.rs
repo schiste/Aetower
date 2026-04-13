@@ -17,8 +17,9 @@ use aetower_model::{
     HostTrend, RuntimeLagMetrics, SystemSnapshot, ThermalState,
 };
 use aetower_telemetry::{OtlpConfig, TelemetryExporter};
-use aetower_time::{self as time, ADAPTER_TICK, FAST_TICK};
+use aetower_time::{self as aet_time, ADAPTER_TICK, FAST_TICK};
 use parking_lot::Mutex;
+use time::{OffsetDateTime, macros::format_description};
 
 use crate::{
     adapters::AdapterManager,
@@ -39,6 +40,21 @@ const HISTORY_SOFT_MAX_SNAPSHOT_COUNT: u64 = 8_000;
 const HISTORY_HARD_MAX_SNAPSHOT_COUNT: u64 = 12_000;
 const HISTORY_AGGRESSIVE_QUARANTINE_ROWS: u64 = 64;
 const HISTORY_HARD_MAX_QUARANTINE_ROWS: u64 = 128;
+const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 12 * 60 * 60 * 1000;
+const SYSTEM_MARKER_PREDICATE: &str = "(eventMessage CONTAINS[c] \"Previous shutdown cause\") OR (eventMessage CONTAINS[c] \"Entering Sleep state\") OR (eventMessage CONTAINS[c] \"Wake reason\") OR (eventMessage CONTAINS[c] \"Wake from\") OR (eventMessage CONTAINS[c] \"panic(cpu\") OR (eventMessage CONTAINS[c] \"userspace watchdog timeout\") OR (eventMessage CONTAINS[c] \"thermal pressure\") OR (eventMessage CONTAINS[c] \"low power mode\")";
+const HOST_INCIDENT_PERSIST_INTERVAL_MILLIS: u64 = 15 * 60 * 1000;
+const MEMORY_PRESSURE_WARNING_RATIO: f64 = 0.80;
+const MEMORY_PRESSURE_CRITICAL_RATIO: f64 = 0.90;
+const COMPRESSED_MEMORY_WARNING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const COMPRESSED_MEMORY_CRITICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
+const SWAP_WARNING_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const SWAP_CRITICAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const WAKEUPS_WARNING: f32 = 12_000.0;
+const WAKEUPS_CRITICAL: f32 = 25_000.0;
+
+const UNIFIED_LOG_TIMESTAMP_FORMAT: &[::time::format_description::FormatItem<'static>] = format_description!(
+    "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond][offset_hour sign:mandatory][offset_minute]"
+);
 
 #[derive(Debug, Clone)]
 struct RuntimeCollectionConfig {
@@ -157,6 +173,39 @@ struct SensorCapabilityState {
     has_reported_unavailable: bool,
 }
 
+#[derive(Debug, Clone)]
+struct SystemMarker {
+    timestamp_millis: u64,
+    level: DiagnosticsLevel,
+    event_type: &'static str,
+    message: &'static str,
+    detail: String,
+    category: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct PersistedHostIncidentState {
+    severity: DiagnosticsLevel,
+    last_emitted_millis: u64,
+}
+
+#[derive(Debug, Clone)]
+struct HostIncidentSnapshot {
+    key: &'static str,
+    severity: DiagnosticsLevel,
+    title: &'static str,
+    detail: String,
+    fields: Vec<(&'static str, String)>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct UnifiedLogEntry {
+    #[serde(default, rename = "timestamp")]
+    timestamp: Option<String>,
+    #[serde(default, rename = "eventMessage")]
+    event_message: Option<String>,
+}
+
 impl EngineState {
     fn publish_mutation(&mut self) {
         self.sequence = self.sequence.saturating_add(1);
@@ -174,6 +223,7 @@ pub struct Engine {
     worker: Option<JoinHandle<()>>,
     adapter_worker: Option<JoinHandle<()>>,
     telemetry_worker: Option<JoinHandle<()>>,
+    system_marker_worker: Option<JoinHandle<()>>,
 }
 
 impl Engine {
@@ -189,7 +239,7 @@ impl Engine {
         let capabilities = adapters.initial_capabilities();
         let snapshot = SystemSnapshot {
             sequence: 0,
-            captured_at_millis: time::now_millis(),
+            captured_at_millis: aet_time::now_millis(),
             host: HostSnapshot {
                 thermal_state: ThermalState::Nominal,
                 on_battery: false,
@@ -248,6 +298,7 @@ impl Engine {
             worker: None,
             adapter_worker: None,
             telemetry_worker: None,
+            system_marker_worker: None,
         }
     }
 
@@ -273,10 +324,13 @@ impl Engine {
             // pre-first-tick state — no event fires on the very first
             // observation, only on subsequent transitions.
             let mut sensor_availability = SensorAvailabilityState::default();
+            let mut last_boot_session_key: Option<String> = None;
+            let mut host_incident_state =
+                BTreeMap::<&'static str, PersistedHostIncidentState>::new();
 
             while running.load(Ordering::SeqCst) {
                 let tick_started = Instant::now();
-                let captured_at_millis = time::now_millis();
+                let captured_at_millis = aet_time::now_millis();
                 let runtime_config = {
                     let guard = state.lock();
                     guard.runtime_config.clone()
@@ -337,6 +391,7 @@ impl Engine {
                     fans: Vec::new(),
                     cpu_temperatures: Vec::new(),
                     power_readings: Vec::new(),
+                    boot_session: raw.host.boot_session.clone(),
                     bluetooth_devices: raw.host.bluetooth_devices.clone(),
                     network_interfaces: raw.host.network_interfaces.clone(),
                     disks: raw.host.disks.clone(),
@@ -458,6 +513,16 @@ impl Engine {
                     timeline,
                     ai_repo_summaries: adapters.ai_repo_summaries(),
                 };
+                emit_boot_session_observed(
+                    &diagnostics,
+                    &guard.latest_snapshot,
+                    &mut last_boot_session_key,
+                );
+                emit_host_incident_snapshots(
+                    &diagnostics,
+                    &guard.latest_snapshot,
+                    &mut host_incident_state,
+                );
                 // Persist snapshot (best-effort, throttled by write_interval).
                 let persist_started = Instant::now();
                 let history_queue_depth = persistence
@@ -671,6 +736,15 @@ impl Engine {
                 sleep_with_stop(&running, sleep_for);
             }
         }));
+
+        let diagnostics = self.diagnostics.clone();
+        self.system_marker_worker = Some(thread::spawn(move || {
+            let since_millis =
+                last_persisted_system_marker_millis(&diagnostics).unwrap_or_else(|| {
+                    aet_time::now_millis().saturating_sub(SYSTEM_MARKER_LOOKBACK_MILLIS)
+                });
+            ingest_recent_system_markers(&diagnostics, since_millis);
+        }));
     }
 
     pub fn stop(&mut self) {
@@ -684,6 +758,9 @@ impl Engine {
         if let Some(worker) = self.telemetry_worker.take() {
             let _ = worker.join();
         }
+        // System-marker ingestion is best-effort and can be slow on machines
+        // with large unified-log stores. Never block engine shutdown on it.
+        let _ = self.system_marker_worker.take();
     }
 
     pub fn latest_snapshot(&self) -> SystemSnapshot {
@@ -775,7 +852,7 @@ impl Engine {
             .build(),
         );
         let mut guard = self.state.lock();
-        let now = time::now_millis();
+        let now = aet_time::now_millis();
         if let Some(capability) = guard.capabilities.get_mut(&kind) {
             capability.state = state;
             capability.last_updated_millis = now;
@@ -1020,7 +1097,8 @@ impl Engine {
         let mut guard = self.state.lock();
         guard.capabilities.insert(
             kind.clone(),
-            self.adapters.capability_snapshot(kind, time::now_millis()),
+            self.adapters
+                .capability_snapshot(kind, aet_time::now_millis()),
         );
         guard.latest_snapshot.capabilities = guard.capabilities.values().cloned().collect();
         guard.publish_mutation();
@@ -1229,4 +1307,469 @@ fn should_emit_runtime_heartbeat(last_heartbeat_millis: u64, captured_at_millis:
     last_heartbeat_millis == 0
         || captured_at_millis.saturating_sub(last_heartbeat_millis)
             >= RUNTIME_HEARTBEAT_INTERVAL_MILLIS
+}
+
+fn emit_boot_session_observed(
+    diagnostics: &DiagnosticsStore,
+    snapshot: &SystemSnapshot,
+    last_boot_session_key: &mut Option<String>,
+) {
+    let Some(boot_session) = snapshot.host.boot_session.as_ref() else {
+        return;
+    };
+    let current_key = boot_session_key(boot_session);
+    if current_key.is_none() || *last_boot_session_key == current_key {
+        return;
+    }
+    let mut event = DiagnosticsEvent::builder(
+        DiagnosticsLevel::Info,
+        DiagnosticsSubsystem::Engine,
+        "boot-session-observed",
+        "Observed the active boot session in the latest host snapshot.",
+    )
+    .timestamp_millis(snapshot.captured_at_millis)
+    .sequence(snapshot.sequence);
+    if let Some(boot_id) = boot_session.boot_id.as_deref() {
+        event = event.field("boot_id", boot_id);
+    }
+    if let Some(boot_time_millis) = boot_session.boot_time_millis {
+        event = event.field("boot_time_millis", boot_time_millis);
+    }
+    if let Some(host_uptime_millis) = boot_session.host_uptime_millis {
+        event = event.field("host_uptime_millis", host_uptime_millis);
+    }
+    if let Some(previous_shutdown) = boot_session.previous_shutdown.as_ref() {
+        event = event
+            .field("previous_shutdown_source", &previous_shutdown.source)
+            .field(
+                "previous_shutdown_code",
+                previous_shutdown.code.as_deref().unwrap_or("unknown"),
+            )
+            .field("previous_shutdown_detail", &previous_shutdown.detail);
+    }
+    diagnostics.emit(event.build());
+    *last_boot_session_key = current_key;
+}
+
+fn emit_host_incident_snapshots(
+    diagnostics: &DiagnosticsStore,
+    snapshot: &SystemSnapshot,
+    state: &mut BTreeMap<&'static str, PersistedHostIncidentState>,
+) {
+    let incidents = collect_host_incidents(snapshot);
+    let captured_at_millis = snapshot.captured_at_millis;
+    let active_keys = incidents
+        .iter()
+        .map(|incident| incident.key)
+        .collect::<Vec<_>>();
+    state.retain(|key, _| active_keys.iter().any(|active| active == key));
+
+    for incident in incidents {
+        let should_emit = match state.get(incident.key) {
+            Some(previous) => {
+                previous.severity != incident.severity
+                    || captured_at_millis.saturating_sub(previous.last_emitted_millis)
+                        >= HOST_INCIDENT_PERSIST_INTERVAL_MILLIS
+            }
+            None => true,
+        };
+        if !should_emit {
+            continue;
+        }
+
+        let mut event = DiagnosticsEvent::builder(
+            incident.severity.clone(),
+            DiagnosticsSubsystem::History,
+            "host-incident-snapshot",
+            incident.title,
+        )
+        .timestamp_millis(captured_at_millis)
+        .sequence(snapshot.sequence)
+        .field("incident_key", incident.key)
+        .field(
+            "severity",
+            match incident.severity {
+                DiagnosticsLevel::Warn => "warning",
+                DiagnosticsLevel::Error => "critical",
+                _ => "info",
+            },
+        )
+        .field("detail", &incident.detail);
+        if let Some(boot_session) = snapshot.host.boot_session.as_ref()
+            && let Some(boot_id) = boot_session.boot_id.as_deref()
+        {
+            event = event.field("boot_id", boot_id);
+        }
+        let top_entity_ids = snapshot
+            .entities
+            .iter()
+            .take(3)
+            .map(|entity| entity.entity_id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let top_entity_names = snapshot
+            .entities
+            .iter()
+            .take(3)
+            .map(|entity| entity.display_name.as_str())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        if !top_entity_ids.is_empty() {
+            event = event.field("top_entity_ids", top_entity_ids);
+        }
+        if !top_entity_names.is_empty() {
+            event = event.field("top_entity_names", top_entity_names);
+        }
+        for (key, value) in incident.fields {
+            event = event.field(key, value);
+        }
+        diagnostics.emit(event.build());
+        state.insert(
+            incident.key,
+            PersistedHostIncidentState {
+                severity: incident.severity,
+                last_emitted_millis: captured_at_millis,
+            },
+        );
+    }
+}
+
+fn collect_host_incidents(snapshot: &SystemSnapshot) -> Vec<HostIncidentSnapshot> {
+    let mut incidents = Vec::new();
+    let host = &snapshot.host;
+    let memory_ratio = if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        host.memory_used_bytes as f64 / host.memory_total_bytes as f64
+    };
+    let memory_severity = if memory_ratio >= MEMORY_PRESSURE_CRITICAL_RATIO
+        || host.swap_used_bytes >= SWAP_CRITICAL_BYTES
+        || host.compressed_memory_bytes >= COMPRESSED_MEMORY_CRITICAL_BYTES
+    {
+        Some(DiagnosticsLevel::Error)
+    } else if memory_ratio >= MEMORY_PRESSURE_WARNING_RATIO
+        || host.swap_used_bytes >= SWAP_WARNING_BYTES
+        || host.compressed_memory_bytes >= COMPRESSED_MEMORY_WARNING_BYTES
+    {
+        Some(DiagnosticsLevel::Warn)
+    } else {
+        None
+    };
+    if let Some(severity) = memory_severity {
+        incidents.push(HostIncidentSnapshot {
+            key: "memory-pressure",
+            severity: severity.clone(),
+            title: if severity == DiagnosticsLevel::Error {
+                "Critical host memory pressure incident snapshot recorded."
+            } else {
+                "Host memory pressure incident snapshot recorded."
+            },
+            detail: format!(
+                "Memory pressure reached {:.0}% used with {} compressed and {} swap in use.",
+                memory_ratio * 100.0,
+                format_bytes(host.compressed_memory_bytes),
+                format_bytes(host.swap_used_bytes)
+            ),
+            fields: vec![
+                ("memory_used_bytes", host.memory_used_bytes.to_string()),
+                ("memory_total_bytes", host.memory_total_bytes.to_string()),
+                (
+                    "compressed_memory_bytes",
+                    host.compressed_memory_bytes.to_string(),
+                ),
+                ("swap_used_bytes", host.swap_used_bytes.to_string()),
+            ],
+        });
+    }
+
+    let wakeup_severity = if host.wakeups_per_second >= WAKEUPS_CRITICAL {
+        Some(DiagnosticsLevel::Error)
+    } else if host.wakeups_per_second >= WAKEUPS_WARNING {
+        Some(DiagnosticsLevel::Warn)
+    } else {
+        None
+    };
+    if let Some(severity) = wakeup_severity {
+        let leader = snapshot.entities.first();
+        incidents.push(HostIncidentSnapshot {
+            key: "host-wakeup-storm",
+            severity: severity.clone(),
+            title: if severity == DiagnosticsLevel::Error {
+                "Critical host wakeup storm incident snapshot recorded."
+            } else {
+                "Host wakeup storm incident snapshot recorded."
+            },
+            detail: leader
+                .map(|entity| {
+                    format!(
+                        "{} is currently the top wakeup leader at {:.0}/s while the host is at {:.0}/s.",
+                        entity.display_name,
+                        entity.metrics.wakeups_per_second,
+                        host.wakeups_per_second
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "Host wakeups are elevated at {:.0}/s with no clear entity leader.",
+                        host.wakeups_per_second
+                    )
+                }),
+            fields: vec![("wakeups_per_second", format!("{:.1}", host.wakeups_per_second))],
+        });
+    }
+
+    if host.thermal_state >= ThermalState::Serious {
+        let severity = if host.thermal_state >= ThermalState::Critical {
+            DiagnosticsLevel::Error
+        } else {
+            DiagnosticsLevel::Warn
+        };
+        incidents.push(HostIncidentSnapshot {
+            key: "thermal-pressure",
+            severity: severity.clone(),
+            title: if severity == DiagnosticsLevel::Error {
+                "Critical host thermal pressure incident snapshot recorded."
+            } else {
+                "Host thermal pressure incident snapshot recorded."
+            },
+            detail: format!(
+                "Host thermal state is {:?} with CPU {:.1}% and wakeups {:.0}/s.",
+                host.thermal_state, host.cpu_percent, host.wakeups_per_second
+            ),
+            fields: vec![
+                ("thermal_state", format!("{:?}", host.thermal_state)),
+                ("cpu_percent", format!("{:.1}", host.cpu_percent)),
+                (
+                    "wakeups_per_second",
+                    format!("{:.1}", host.wakeups_per_second),
+                ),
+            ],
+        });
+    }
+
+    incidents
+}
+
+fn last_persisted_system_marker_millis(diagnostics: &DiagnosticsStore) -> Option<u64> {
+    diagnostics
+        .query(&DiagnosticsQuery {
+            limit: 256,
+            include_persisted: true,
+            ..DiagnosticsQuery::default()
+        })
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event.event_type.as_str(),
+                "system-sleep-marker"
+                    | "system-wake-marker"
+                    | "system-previous-shutdown-cause"
+                    | "system-panic-marker"
+                    | "system-thermal-marker"
+                    | "system-power-marker"
+            )
+        })
+        .map(|event| event.timestamp_millis)
+        .max()
+}
+
+fn ingest_recent_system_markers(diagnostics: &DiagnosticsStore, since_millis: u64) {
+    let markers = load_recent_system_markers(since_millis);
+    for marker in markers {
+        diagnostics.emit(
+            DiagnosticsEvent::builder(
+                marker.level,
+                DiagnosticsSubsystem::Engine,
+                marker.event_type,
+                marker.message,
+            )
+            .timestamp_millis(marker.timestamp_millis)
+            .field("category", marker.category)
+            .field("detail", marker.detail)
+            .build(),
+        );
+    }
+}
+
+fn load_recent_system_markers(since_millis: u64) -> Vec<SystemMarker> {
+    let output = match std::process::Command::new("/usr/bin/log")
+        .args([
+            "show",
+            "--style",
+            "json",
+            "--last",
+            "12h",
+            "--predicate",
+            SYSTEM_MARKER_PREDICATE,
+        ])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    let stdout = match String::from_utf8(output.stdout) {
+        Ok(stdout) => stdout,
+        Err(_) => return Vec::new(),
+    };
+    let entries = match serde_json::from_str::<Vec<UnifiedLogEntry>>(&stdout) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    let mut markers = entries
+        .into_iter()
+        .filter_map(classify_system_marker)
+        .filter(|marker| marker.timestamp_millis > since_millis)
+        .collect::<Vec<_>>();
+    markers.sort_by_key(|marker| marker.timestamp_millis);
+    markers.dedup_by(|left, right| {
+        left.timestamp_millis == right.timestamp_millis
+            && left.event_type == right.event_type
+            && left.detail == right.detail
+    });
+    markers
+}
+
+fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
+    let timestamp = parse_unified_log_timestamp(entry.timestamp.as_deref()?)?;
+    let detail = entry.event_message?;
+    let normalized = detail.to_ascii_lowercase();
+    if normalized.contains("previous shutdown cause") {
+        return Some(SystemMarker {
+            timestamp_millis: timestamp,
+            level: DiagnosticsLevel::Warn,
+            event_type: "system-previous-shutdown-cause",
+            message: "Observed a previous shutdown cause marker in the recent system log.",
+            detail,
+            category: "shutdown",
+        });
+    }
+    if normalized.contains("panic(cpu") || normalized.contains("userspace watchdog timeout") {
+        return Some(SystemMarker {
+            timestamp_millis: timestamp,
+            level: DiagnosticsLevel::Warn,
+            event_type: "system-panic-marker",
+            message: "Observed a panic or watchdog marker in the recent system log.",
+            detail,
+            category: "panic",
+        });
+    }
+    if normalized.contains("wake reason")
+        || normalized.contains("wake from")
+        || normalized.contains("darkwake")
+    {
+        return Some(SystemMarker {
+            timestamp_millis: timestamp,
+            level: DiagnosticsLevel::Info,
+            event_type: "system-wake-marker",
+            message: "Observed a recent system wake marker.",
+            detail,
+            category: "wake",
+        });
+    }
+    if normalized.contains("entering sleep state") || normalized.contains("previous sleep cause") {
+        return Some(SystemMarker {
+            timestamp_millis: timestamp,
+            level: DiagnosticsLevel::Info,
+            event_type: "system-sleep-marker",
+            message: "Observed a recent system sleep marker.",
+            detail,
+            category: "sleep",
+        });
+    }
+    if normalized.contains("thermal pressure") {
+        return Some(SystemMarker {
+            timestamp_millis: timestamp,
+            level: DiagnosticsLevel::Warn,
+            event_type: "system-thermal-marker",
+            message: "Observed a recent thermal pressure marker.",
+            detail,
+            category: "thermal",
+        });
+    }
+    if normalized.contains("low power mode") {
+        return Some(SystemMarker {
+            timestamp_millis: timestamp,
+            level: DiagnosticsLevel::Info,
+            event_type: "system-power-marker",
+            message: "Observed a recent power-state marker.",
+            detail,
+            category: "power",
+        });
+    }
+    None
+}
+
+fn parse_unified_log_timestamp(value: &str) -> Option<u64> {
+    let parsed = OffsetDateTime::parse(value, UNIFIED_LOG_TIMESTAMP_FORMAT).ok()?;
+    let unix = parsed.unix_timestamp_nanos() / 1_000_000;
+    u64::try_from(unix).ok()
+}
+
+fn boot_session_key(boot_session: &aetower_model::BootSessionSnapshot) -> Option<String> {
+    boot_session.boot_id.clone().or_else(|| {
+        boot_session
+            .boot_time_millis
+            .map(|millis| millis.to_string())
+    })
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    if bytes >= 1024 * 1024 * 1024 {
+        format!("{:.2} GiB", bytes as f64 / GIB)
+    } else if bytes >= 1024 * 1024 {
+        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_unified_log_timestamp() {
+        let millis = parse_unified_log_timestamp("2026-04-13 19:03:09.753950+0200")
+            .unwrap_or_else(|| panic!("timestamp"));
+        assert!(millis > 0);
+    }
+
+    #[test]
+    fn classifies_sleep_and_wake_markers() {
+        let sleep = classify_system_marker(UnifiedLogEntry {
+            timestamp: Some("2026-04-13 19:03:09.753950+0200".to_owned()),
+            event_message: Some("Entering Sleep state due to Clamshell Sleep".to_owned()),
+        })
+        .unwrap_or_else(|| panic!("sleep marker"));
+        assert_eq!(sleep.event_type, "system-sleep-marker");
+
+        let wake = classify_system_marker(UnifiedLogEntry {
+            timestamp: Some("2026-04-13 19:05:09.753950+0200".to_owned()),
+            event_message: Some("Wake reason: EC.RTC".to_owned()),
+        })
+        .unwrap_or_else(|| panic!("wake marker"));
+        assert_eq!(wake.event_type, "system-wake-marker");
+    }
+
+    #[test]
+    fn collects_memory_pressure_incident() {
+        let snapshot = SystemSnapshot {
+            captured_at_millis: 100,
+            host: HostSnapshot {
+                memory_used_bytes: 15 * 1024 * 1024 * 1024,
+                memory_total_bytes: 16 * 1024 * 1024 * 1024,
+                compressed_memory_bytes: 7 * 1024 * 1024 * 1024,
+                swap_used_bytes: 20 * 1024 * 1024 * 1024,
+                ..HostSnapshot::default()
+            },
+            ..SystemSnapshot::default()
+        };
+        let incidents = collect_host_incidents(&snapshot);
+        assert!(
+            incidents
+                .iter()
+                .any(|incident| incident.key == "memory-pressure")
+        );
+    }
 }

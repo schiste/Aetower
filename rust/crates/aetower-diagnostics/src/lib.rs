@@ -278,6 +278,12 @@ impl DiagnosticsStore {
 
     pub fn overview(&self) -> DiagnosticsOverview {
         let guard = self.inner.lock();
+        let last_mcp_server_started_millis = guard
+            .events
+            .iter()
+            .rev()
+            .find(|event| event.event_type == "mcp-server-started")
+            .map(|event| event.timestamp_millis);
         let mut error_count = 0u32;
         let mut warn_count = 0u32;
         let mut last_error_message = None;
@@ -286,6 +292,13 @@ impl DiagnosticsStore {
         for event in guard.events.iter().rev() {
             match event.level {
                 DiagnosticsLevel::Error => {
+                    if event.event_type == "mcp-server-start-failed"
+                        && last_mcp_server_started_millis
+                            .map(|started_at| started_at >= event.timestamp_millis)
+                            .unwrap_or(false)
+                    {
+                        continue;
+                    }
                     error_count = error_count.saturating_add(1);
                     if last_error_message.is_none() {
                         last_error_message = Some(event.message.clone());
@@ -769,7 +782,10 @@ fn should_persist_event(event: &DiagnosticsEvent) -> bool {
                 | "session-log-metal-error"
                 | "session-log-analysis-failed"
                 | "mcp-server-started"
-                | "mcp-server-start-failed"
+                | "boot-session-observed"
+                | "system-sleep-marker"
+                | "system-wake-marker"
+                | "system-power-marker"
         ),
         DiagnosticsLevel::Trace | DiagnosticsLevel::Debug => false,
     }
@@ -985,6 +1001,36 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap_or_default(), "");
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn overview_ignores_recovered_mcp_server_start_failures() {
+        let store = DiagnosticsStore::new(16);
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Error,
+                DiagnosticsSubsystem::Ffi,
+                "mcp-server-start-failed",
+                "Failed to start local MCP server",
+            )
+            .timestamp_millis(10)
+            .build(),
+        );
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Ffi,
+                "mcp-server-started",
+                "Started local MCP server",
+            )
+            .timestamp_millis(20)
+            .build(),
+        );
+
+        let overview = store.overview();
+        assert_eq!(overview.error_count, 0);
+        assert_eq!(overview.last_error_millis, None);
+        assert_eq!(overview.last_error_message, None);
     }
 
     #[test]

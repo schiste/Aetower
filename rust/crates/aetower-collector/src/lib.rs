@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use aetower_model::{
-    BatteryHealthSnapshot, BluetoothDeviceBattery, DiskHealthSnapshot, NetworkInterfaceSnapshot,
-    ThermalState,
+    BatteryHealthSnapshot, BluetoothDeviceBattery, BootSessionSnapshot, DiskHealthSnapshot,
+    NetworkInterfaceSnapshot, ThermalState,
 };
 use serde::{Deserialize, Serialize};
 use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System, Users};
@@ -58,6 +58,8 @@ pub struct RawHostSample {
     pub low_power_mode: bool,
     #[serde(default)]
     pub battery_health: Option<BatteryHealthSnapshot>,
+    #[serde(default)]
+    pub boot_session: Option<BootSessionSnapshot>,
     #[serde(default)]
     pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
     #[serde(default)]
@@ -470,6 +472,7 @@ impl Collector {
             battery_charge_percent: self.cached_host_environment.battery_charge_percent,
             low_power_mode: self.cached_host_environment.low_power_mode,
             battery_health: self.cached_host_environment.battery_health.clone(),
+            boot_session: self.cached_host_environment.boot_session.clone(),
             network_interfaces,
             disks: self.cached_disks.clone(),
             bluetooth_devices: self.cached_bluetooth_devices.clone(),
@@ -600,6 +603,7 @@ pub struct HostEnvironment {
     pub battery_charge_percent: Option<u8>,
     pub low_power_mode: bool,
     pub battery_health: Option<BatteryHealthSnapshot>,
+    pub boot_session: Option<BootSessionSnapshot>,
 }
 
 pub fn read_environment() -> HostEnvironment {
@@ -609,12 +613,13 @@ pub fn read_environment() -> HostEnvironment {
 #[cfg(target_os = "macos")]
 mod platform {
     use aetower_model::{
-        BatteryCondition, BatteryHealthSnapshot, BluetoothDeviceBattery, DiskHealthSnapshot,
-        DiskHealthStatus, ThermalState,
+        BatteryCondition, BatteryHealthSnapshot, BluetoothDeviceBattery, BootSessionSnapshot,
+        DiskHealthSnapshot, DiskHealthStatus, ThermalState,
     };
     use std::{
         ffi::{CStr, c_char, c_void},
         mem, ptr,
+        time::SystemTime,
     };
 
     use core_foundation_sys::{
@@ -660,6 +665,13 @@ mod platform {
             host_info_out: *mut i32,
             host_info_out_cnt: *mut u32,
         ) -> i32;
+        fn sysctlbyname(
+            name: *const c_char,
+            oldp: *mut c_void,
+            oldlenp: *mut usize,
+            newp: *mut c_void,
+            newlen: usize,
+        ) -> i32;
         fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut c_void) -> i32;
         fn proc_pidinfo(
             pid: i32,
@@ -681,6 +693,7 @@ mod platform {
         let thermal_state = thermal_state();
         let low_power_mode = low_power_mode_enabled();
         let power = power_state();
+        let boot_session = boot_session();
 
         HostEnvironment {
             thermal_state,
@@ -688,6 +701,95 @@ mod platform {
             battery_charge_percent: power.charge_percent,
             low_power_mode,
             battery_health: power.health,
+            boot_session,
+        }
+    }
+
+    fn boot_session() -> Option<BootSessionSnapshot> {
+        let boot_id = sysctl_string("kern.bootsessionuuid");
+        let boot_time_millis = sysctl_timeval_millis("kern.boottime");
+        let host_uptime_millis = boot_time_millis.and_then(|boot_time| {
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .ok()?;
+            let now_millis = now.as_millis().min(u128::from(u64::MAX)) as u64;
+            Some(now_millis.saturating_sub(boot_time))
+        });
+        if boot_id.is_none() && boot_time_millis.is_none() && host_uptime_millis.is_none() {
+            return None;
+        }
+
+        Some(BootSessionSnapshot {
+            boot_id,
+            boot_time_millis,
+            host_uptime_millis,
+            previous_shutdown: None,
+        })
+    }
+
+    fn sysctl_string(name: &str) -> Option<String> {
+        let name = std::ffi::CString::new(name).ok()?;
+        unsafe {
+            let mut size = 0usize;
+            if sysctlbyname(
+                name.as_ptr(),
+                ptr::null_mut(),
+                &mut size as *mut usize,
+                ptr::null_mut(),
+                0,
+            ) != 0
+                || size == 0
+            {
+                return None;
+            }
+            let mut buffer = vec![0u8; size];
+            if sysctlbyname(
+                name.as_ptr(),
+                buffer.as_mut_ptr().cast::<c_void>(),
+                &mut size as *mut usize,
+                ptr::null_mut(),
+                0,
+            ) != 0
+            {
+                return None;
+            }
+            let end = buffer
+                .iter()
+                .position(|byte| *byte == 0)
+                .unwrap_or(buffer.len());
+            String::from_utf8(buffer[..end].to_vec())
+                .ok()
+                .filter(|value| !value.is_empty())
+        }
+    }
+
+    #[repr(C)]
+    struct Timeval {
+        tv_sec: i64,
+        tv_usec: i32,
+    }
+
+    fn sysctl_timeval_millis(name: &str) -> Option<u64> {
+        let name = std::ffi::CString::new(name).ok()?;
+        unsafe {
+            let mut value = Timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            };
+            let mut size = mem::size_of::<Timeval>();
+            if sysctlbyname(
+                name.as_ptr(),
+                &mut value as *mut Timeval as *mut c_void,
+                &mut size as *mut usize,
+                ptr::null_mut(),
+                0,
+            ) != 0
+            {
+                return None;
+            }
+            let seconds = u64::try_from(value.tv_sec).ok()?;
+            let micros = u64::try_from(value.tv_usec).ok()?;
+            Some(seconds.saturating_mul(1_000).saturating_add(micros / 1_000))
         }
     }
 
