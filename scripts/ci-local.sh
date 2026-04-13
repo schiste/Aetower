@@ -260,6 +260,9 @@ run_full_gate() {
     run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
     run "telemetry smoke" sh "$ROOT/scripts/telemetry-smoke.sh"
     run "package smoke" sh "$ROOT/scripts/smoke-package.sh" --rebuild
+    if [ "$MODE" = "full" ]; then
+        run "local operator smoke" sh "$ROOT/scripts/local-operator-smoke.sh"
+    fi
     run_full_dependency_policy
     if [ "$MODE" = "full" ] && command -v cargo-audit >/dev/null 2>&1; then
         run "cargo audit" cargo audit --file "$ROOT/rust/Cargo.lock" --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2026-0097

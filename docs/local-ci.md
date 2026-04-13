@@ -80,6 +80,7 @@ sh scripts/ci-local.sh --mode full
 `full`:
 
 - everything in `pre-push`
+- packaged-app MCP/operator smoke against the bundled helper
 - `cargo audit` when `cargo-audit` is installed locally
 
 ## Packaging smoke
@@ -109,6 +110,23 @@ For a long-running enforced soak with telemetry smoke and optional release prefl
 ```sh
 sh scripts/soak-local.sh --rebuild --launch
 ```
+
+## Local operator smoke
+
+To launch the packaged app if needed and verify the bundled MCP helper end to end:
+
+```sh
+sh scripts/local-operator-smoke.sh --rebuild
+```
+
+This validates:
+
+- packaged app startup
+- MCP `initialize`
+- `aetower_current_snapshot`
+- `aetower_diff_snapshots`
+- `aetower_entity_process_tree`
+- one dynamic profiling call via `aetower_profile_entity`
 
 ## Telemetry smoke
 
