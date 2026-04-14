@@ -127,11 +127,6 @@ public final class EngineBridge: @unchecked Sendable {
         return result.isEmpty ? nil : result
     }
 
-    public func refreshLocalMcpCache(cachePath: String? = nil) -> String? {
-        let result = engine.refreshLocalMcpCache(cachePath: cachePath)
-        return result.isEmpty ? nil : result
-    }
-
     public func diffSnapshotsJSON(
         beforeMillis: UInt64,
         afterMillis: UInt64,
