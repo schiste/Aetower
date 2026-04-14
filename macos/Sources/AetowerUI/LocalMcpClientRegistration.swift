@@ -93,11 +93,17 @@ struct LocalMcpClientRegistrar {
     }
 
     /// Default Unix socket path for Aetower's in-process MCP server. Must stay
-    /// aligned with `default_socket_path()` in aetower-mcp's Rust lib. Clients
-    /// pass this as argv[1] to the bundled `aetower-mcp` helper so the helper
-    /// proxies to the live app rather than running as an independent process.
+    /// aligned with `default_socket_path()` in aetower-mcp's Rust lib: both
+    /// sides honour AETOWER_MCP_SOCKET_PATH and otherwise fall back to
+    /// ~/.aetower/mcp.sock. Clients pass this as argv[1] to the bundled
+    /// `aetower-mcp` helper so the helper proxies to the live app rather
+    /// than running as an independent process.
     public static func defaultSocketPath() -> String {
-        NSHomeDirectory() + "/.aetower/mcp.sock"
+        if let override = ProcessInfo.processInfo.environment["AETOWER_MCP_SOCKET_PATH"],
+           !override.isEmpty {
+            return override
+        }
+        return NSHomeDirectory() + "/.aetower/mcp.sock"
     }
 
     static func inspectStatuses(fileManager: FileManager = .default) -> [LocalMcpClientRegistrationStatus] {
