@@ -397,9 +397,19 @@ args = ["\(socketPath)"]
             let nextSectionRange = remainder.range(of: "\n[")
             let blockEnd = nextSectionRange.map { $0.lowerBound } ?? content.endIndex
             let replacementRange = sectionRange.lowerBound..<blockEnd
-            let existingBlock = String(content[replacementRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let existingBlock = String(content[replacementRange])
+            // Refuse to silently overwrite a block that has nested subtables
+            // (e.g. [mcp_servers.aetower.env]) or keys we do not recognise.
+            // Hand-authored subsections would otherwise be truncated at the
+            // first "\n[" we matched above.
+            if hasNestedSubtableOrUnknownKeys(existingBlock) {
+                throw RegistrationError.manualConfigurationRequired(
+                    "[mcp_servers.aetower] block contains subtables or unknown keys; edit \(path) by hand."
+                )
+            }
+            let trimmedExisting = existingBlock.trimmingCharacters(in: .whitespacesAndNewlines)
             let normalizedDesired = desiredBlock.trimmingCharacters(in: .whitespacesAndNewlines)
-            if existingBlock == normalizedDesired {
+            if trimmedExisting == normalizedDesired {
                 return false
             }
             content.replaceSubrange(replacementRange, with: normalizedDesired)
@@ -415,6 +425,30 @@ args = ["\(socketPath)"]
 
         try content.write(to: url, atomically: true, encoding: .utf8)
         return true
+    }
+
+    /// Returns true if the Codex `[mcp_servers.aetower]` block contains any
+    /// subtable header (e.g. `[mcp_servers.aetower.env]`) or a key outside
+    /// {command, args} — in either case we must not rewrite it blindly.
+    private static func hasNestedSubtableOrUnknownKeys(_ block: String) -> Bool {
+        for rawLine in block.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("#") || line == "[mcp_servers.aetower]" {
+                continue
+            }
+            if line.hasPrefix("[mcp_servers.aetower.") {
+                return true
+            }
+            // Parse `key = ...` — treat anything that isn't command/args as
+            // a user customisation we don't want to drop.
+            if let equalsIndex = line.firstIndex(of: "=") {
+                let key = line[..<equalsIndex].trimmingCharacters(in: .whitespaces)
+                if key != "command" && key != "args" {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     private static func claudeRegistrationState(commandPath: String, socketPath: String) throws -> LocalMcpClientRegistrationState {
@@ -570,6 +604,7 @@ args = ["\(socketPath)"]
         case missingConfigPath(String)
         case commandFailed(String, String)
         case commandTimedOut(String)
+        case manualConfigurationRequired(String)
 
         var errorDescription: String? {
             switch self {
@@ -581,6 +616,8 @@ args = ["\(socketPath)"]
                 return "\(command) failed. \(output)"
             case .commandTimedOut(let command):
                 return "\(command) timed out."
+            case .manualConfigurationRequired(let detail):
+                return detail
             }
         }
     }
