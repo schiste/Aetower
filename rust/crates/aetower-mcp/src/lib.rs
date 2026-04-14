@@ -664,7 +664,16 @@ pub fn start_local_socket_server(
                     let connection_running = Arc::clone(&thread_running);
                     let dynamic_mode = DynamicExecutionMode::Local;
                     let join_handle = thread::spawn(move || {
-                        let _ = handle_connection(stream, source, dynamic_mode, connection_running);
+                        if let Err(err) =
+                            handle_connection(stream, source, dynamic_mode, connection_running)
+                        {
+                            // Surface per-connection failures — handle_connection
+                            // returns Ok on clean peer close, so reaching here
+                            // means a real transport/framing fault the operator
+                            // should see instead of the server reporting healthy
+                            // while silently dropping every request.
+                            eprintln!("aetower-mcp socket: handle_connection: {err}");
+                        }
                     });
                     if let Ok(mut handles) = thread_client_threads.lock() {
                         reap_finished_client_threads(&mut handles);
