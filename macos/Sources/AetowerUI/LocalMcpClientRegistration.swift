@@ -470,11 +470,13 @@ args = ["\(socketPath)"]
     private static func claudeCliRegistrationState(commandPath: String, socketPath: String) throws -> LocalMcpClientRegistrationState {
         let result = try runCommand(arguments: ["claude", "mcp", "get", "aetower"], timeout: 5)
         if result.exitCode == 0 {
-            let output = result.combinedOutput
-            // Require both the command path and the socket-path argument: a
-            // legacy no-args registration must re-register to pick up the
-            // socket.
-            return (output.contains(commandPath) && output.contains(socketPath))
+            // Parse stdout only (not stderr) and anchor on the "Command:" /
+            // "Args:" fields claude CLI prints, rather than free-form
+            // substring matching over the whole blob. This avoids a
+            // false-positive if stderr echoes the paths in an error message,
+            // and surfaces format drift as "needs re-registration" instead of
+            // silently reporting registered against a shape we can't verify.
+            return isClaudeCliRegistered(stdout: result.stdout, commandPath: commandPath, socketPath: socketPath)
                 ? .registered
                 : .availableForAutomaticRegistration
         }
@@ -482,6 +484,31 @@ args = ["\(socketPath)"]
             return .availableForAutomaticRegistration
         }
         throw RegistrationError.commandFailed("claude mcp get aetower", result.combinedOutput)
+    }
+
+    private static func isClaudeCliRegistered(stdout: String, commandPath: String, socketPath: String) -> Bool {
+        var commandMatches = false
+        var argsMatches = false
+        for rawLine in stdout.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if let value = trimmedFieldValue(line: line, key: "Command") {
+                commandMatches = value == commandPath
+            } else if let value = trimmedFieldValue(line: line, key: "Args") {
+                // claude CLI typically prints args space-joined; an exact
+                // match on the socket path token (bounded by whitespace or
+                // end of line) is what we want.
+                let tokens = value.split(whereSeparator: { $0.isWhitespace })
+                argsMatches = tokens.contains { $0 == socketPath }
+            }
+        }
+        return commandMatches && argsMatches
+    }
+
+    private static func trimmedFieldValue(line: String, key: String) -> String? {
+        let prefix = "\(key):"
+        guard line.hasPrefix(prefix) else { return nil }
+        let valueStart = line.index(line.startIndex, offsetBy: prefix.count)
+        return String(line[valueStart...]).trimmingCharacters(in: .whitespaces)
     }
 
     private static func codexRegistrationState(commandPath: String, socketPath: String) throws -> LocalMcpClientRegistrationState {
