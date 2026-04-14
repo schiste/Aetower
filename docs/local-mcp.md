@@ -124,7 +124,15 @@ runtime session, repo, workspace, grouping, and launcher context.
 `aetower_ai_runtime_report` returns the AI-runtime operator surface directly:
 burden leaders, runtime groups, approval queue, delegated-session counts,
 recent changes, recent persisted history trends, and AI-specific
-recommendations.
+recommendations. When the Chau7 adapter publishes build identity, runtime
+groups also expose optional `chau7_build` metadata.
+
+Raw snapshot/entity tools surface the same optional Chau7 build fields on
+`adapter_context` for `chau7-session` components:
+- `app_version`
+- `build_sha`
+- `build_timestamp`
+- `build_channel`
 
 `aetower_recent_changes` summarizes the recent timeline and entity change feed.
 

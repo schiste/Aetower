@@ -164,6 +164,14 @@ struct AiRuntimeSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct Chau7BuildIdentityReport {
+    app_version: Option<String>,
+    build_sha: Option<String>,
+    build_timestamp: Option<String>,
+    build_channel: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct AiRuntimeGroupReport {
     provider: String,
     workspace: Option<String>,
@@ -174,6 +182,7 @@ struct AiRuntimeGroupReport {
     total_cost_usd: f32,
     approval_count: usize,
     delegating_count: usize,
+    chau7_build: Option<Chau7BuildIdentityReport>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -4668,6 +4677,7 @@ fn ai_runtime_groups(ai_entities: &[&aetower_model::EntitySnapshot]) -> Vec<AiRu
                 .iter()
                 .filter(|entity| entity.badges.iter().any(|badge| badge == "delegating"))
                 .count(),
+            chau7_build: common_chau7_build_identity(&members),
         })
         .collect::<Vec<_>>();
 
@@ -4684,6 +4694,43 @@ fn ai_runtime_groups(ai_entities: &[&aetower_model::EntitySnapshot]) -> Vec<AiRu
             })
     });
     groups
+}
+
+fn common_chau7_build_identity(
+    members: &[&aetower_model::EntitySnapshot],
+) -> Option<Chau7BuildIdentityReport> {
+    let identities = members
+        .iter()
+        .filter_map(|entity| {
+            entity.components.iter().find_map(|component| {
+                let context = component.adapter_context.as_ref()?;
+                (context.kind == aetower_model::AdapterContextKind::Chau7Session).then(|| {
+                    Chau7BuildIdentityReport {
+                        app_version: context.app_version.clone(),
+                        build_sha: context.build_sha.clone(),
+                        build_timestamp: context.build_timestamp.clone(),
+                        build_channel: context.build_channel.clone(),
+                    }
+                })
+            })
+        })
+        .filter(|identity| {
+            identity.app_version.is_some()
+                || identity.build_sha.is_some()
+                || identity.build_timestamp.is_some()
+                || identity.build_channel.is_some()
+        })
+        .collect::<Vec<_>>();
+    let first = identities.first()?.clone();
+    identities
+        .iter()
+        .all(|identity| {
+            identity.app_version == first.app_version
+                && identity.build_sha == first.build_sha
+                && identity.build_timestamp == first.build_timestamp
+                && identity.build_channel == first.build_channel
+        })
+        .then_some(first)
 }
 
 fn ai_burden_leaders(ai_entities: &[&aetower_model::EntitySnapshot]) -> Vec<AiBurdenLeaderReport> {
@@ -6195,6 +6242,7 @@ mod tests {
                 entities: vec![aetower_model::EntitySnapshot {
                     entity_id: "chau7".to_owned(),
                     display_name: "Chau7".to_owned(),
+                    entity_kind: aetower_model::EntityKind::AiAgent,
                     metrics: aetower_model::AggregateMetrics {
                         cpu_percent: 41.5,
                         memory_resident_bytes: 750 * 1024 * 1024,
@@ -6215,6 +6263,10 @@ mod tests {
                             session_id: Some("rs_1".to_owned()),
                             repo_root: Some("/repo".to_owned()),
                             workspace_path: Some("/repo".to_owned()),
+                            app_version: Some("1.4.2".to_owned()),
+                            build_sha: Some("abc123def456".to_owned()),
+                            build_timestamp: Some("2026-04-14T11:41:49Z".to_owned()),
+                            build_channel: Some("dev".to_owned()),
                             ..aetower_model::AdapterContextSnapshot::default()
                         }),
                         ..aetower_model::ComponentSnapshot::default()
@@ -6649,6 +6701,19 @@ mod tests {
         assert!(content.get("summary").is_some());
         assert!(content.get("runtime_groups").is_some());
         assert!(content.get("burden_leaders").is_some());
+        let build = content
+            .get("runtime_groups")
+            .and_then(Value::as_array)
+            .and_then(|groups| {
+                groups
+                    .iter()
+                    .find_map(|group| group.get("chau7_build").and_then(Value::as_object))
+            })
+            .unwrap_or_else(|| panic!("chau7_build"));
+        assert_eq!(
+            build.get("app_version").and_then(Value::as_str),
+            Some("1.4.2")
+        );
     }
 
     #[test]
