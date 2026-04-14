@@ -11,7 +11,7 @@ use std::{
     process::Command,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -31,7 +31,6 @@ const SOCKET_DIR_MODE: u32 = 0o700;
 const SOCKET_FILE_MODE: u32 = 0o600;
 const MCP_READ_TIMEOUT: Duration = Duration::from_millis(250);
 const MAX_INLINE_TEXT_BYTES: usize = 8 * 1024;
-const DEFAULT_DYNAMIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_DYNAMIC_REQUEST_POLL: Duration = Duration::from_millis(150);
 const DEFAULT_PROFILE_DURATION_SECONDS: u64 = 3;
 const MAX_PROFILE_DURATION_SECONDS: u64 = 15;
@@ -62,21 +61,10 @@ const DIAGNOSTICS_WARN_CRITICAL: u32 = 800;
 const DIAGNOSTICS_ERROR_WARNING: u32 = 10;
 const DIAGNOSTICS_ERROR_CRITICAL: u32 = 50;
 
-static NEXT_DYNAMIC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MessageFraming {
     ContentLength,
     JsonLine,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalMcpCache {
-    pub updated_at_millis: u64,
-    pub snapshot: SystemSnapshot,
-    pub runtime_lag: RuntimeLagMetrics,
-    pub diagnostics_overview: DiagnosticsOverview,
-    pub recent_diagnostics: Vec<DiagnosticsEvent>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -597,7 +585,6 @@ impl Drop for LocalMcpDynamicRequestWorkerHandle {
 #[derive(Clone)]
 enum DynamicExecutionMode {
     Local,
-    RequestClient(PathBuf),
 }
 
 pub fn default_socket_path() -> PathBuf {
@@ -614,42 +601,11 @@ pub fn default_app_support_dir() -> PathBuf {
         .join("Aetower")
 }
 
-pub fn default_cache_path() -> PathBuf {
-    if let Some(override_path) = env::var_os("AETOWER_MCP_CACHE_PATH") {
-        return PathBuf::from(override_path);
-    }
-    default_app_support_dir().join("mcp-cache.json")
-}
-
 pub fn default_request_dir() -> PathBuf {
     if let Some(override_path) = env::var_os("AETOWER_MCP_REQUEST_DIR") {
         return PathBuf::from(override_path);
     }
     std::env::temp_dir().join("aetower-mcp-requests")
-}
-
-pub fn write_local_cache(cache: &LocalMcpCache, path: impl AsRef<Path>) -> Result<(), String> {
-    let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("create MCP cache directory {}: {error}", parent.display()))?;
-    }
-    let temp_path = path.with_extension("json.tmp");
-    let payload =
-        serde_json::to_vec(cache).map_err(|error| format!("serialize MCP cache: {error}"))?;
-    fs::write(&temp_path, payload)
-        .map_err(|error| format!("write MCP cache {}: {error}", temp_path.display()))?;
-    fs::rename(&temp_path, path)
-        .map_err(|error| format!("rename MCP cache {}: {error}", path.display()))?;
-    Ok(())
-}
-
-pub fn read_local_cache(path: impl AsRef<Path>) -> Result<LocalMcpCache, String> {
-    let path = path.as_ref();
-    let bytes =
-        fs::read(path).map_err(|error| format!("read MCP cache {}: {error}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|error| format!("parse MCP cache {}: {error}", path.display()))
 }
 
 pub fn start_local_socket_server(
@@ -842,17 +798,6 @@ pub fn proxy_stdio_to_socket(socket_path: impl AsRef<Path>) -> Result<(), String
     proxy_streams_to_socket(std::io::stdin(), std::io::stdout(), socket_path)
 }
 
-pub fn serve_stdio(data_source: Arc<dyn AetowerMcpDataSource>) -> Result<(), String> {
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    serve_streams(
-        data_source,
-        DynamicExecutionMode::RequestClient(default_request_dir()),
-        stdin.lock(),
-        stdout.lock(),
-    )
-}
-
 fn proxy_streams_to_socket<R, W>(
     mut input: R,
     output: W,
@@ -942,39 +887,6 @@ fn handle_connection(
             ReadMessageOutcome::EndOfStream => break,
             ReadMessageOutcome::Timeout if running.load(Ordering::SeqCst) => continue,
             ReadMessageOutcome::Timeout => break,
-        }
-    }
-    Ok(())
-}
-
-fn serve_streams<R, W>(
-    data_source: Arc<dyn AetowerMcpDataSource>,
-    dynamic_mode: DynamicExecutionMode,
-    mut reader: R,
-    mut writer: W,
-) -> Result<(), String>
-where
-    R: Read,
-    W: Write,
-{
-    let server = AetowerMcpServer {
-        data_source,
-        dynamic_mode,
-    };
-    let mut framing = None;
-    loop {
-        match read_message(&mut reader, &mut framing)? {
-            ReadMessageOutcome::Message(message) => {
-                if let Some(response) = server.handle_message(message) {
-                    write_message(
-                        &mut writer,
-                        &response,
-                        framing.unwrap_or(MessageFraming::ContentLength),
-                    )?;
-                }
-            }
-            ReadMessageOutcome::EndOfStream => break,
-            ReadMessageOutcome::Timeout => continue,
         }
     }
     Ok(())
@@ -1909,9 +1821,6 @@ impl AetowerMcpServer {
             DynamicExecutionMode::Local => {
                 process_dynamic_tool_request(&*self.data_source, request)
             }
-            DynamicExecutionMode::RequestClient(request_dir) => {
-                request_dynamic_tool(request_dir, request, DEFAULT_DYNAMIC_REQUEST_TIMEOUT)
-            }
         }
     }
 }
@@ -2009,68 +1918,8 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
-fn request_path_for(request_dir: &Path, request_id: &str) -> PathBuf {
-    request_dir.join(format!("{request_id}.request.json"))
-}
-
 fn response_path_for(request_dir: &Path, request_id: &str) -> PathBuf {
     request_dir.join(format!("{request_id}.response.json"))
-}
-
-fn request_dynamic_tool(
-    request_dir: &Path,
-    request: &DynamicToolRequest,
-    timeout: Duration,
-) -> Result<Value, String> {
-    fs::create_dir_all(request_dir).map_err(|error| {
-        format!(
-            "create MCP request directory {}: {error}",
-            request_dir.display()
-        )
-    })?;
-    let request_id = format!(
-        "{}-{}-{}",
-        std::process::id(),
-        now_millis(),
-        NEXT_DYNAMIC_REQUEST_ID.fetch_add(1, Ordering::SeqCst)
-    );
-    let request_path = request_path_for(request_dir, &request_id);
-    let response_path = response_path_for(request_dir, &request_id);
-    let envelope = DynamicToolRequestEnvelope {
-        request_id: request_id.clone(),
-        created_at_millis: now_millis(),
-        request: request.clone(),
-    };
-    let payload = serde_json::to_vec(&envelope)
-        .map_err(|error| format!("serialize dynamic request: {error}"))?;
-    fs::write(&request_path, payload)
-        .map_err(|error| format!("write dynamic request {}: {error}", request_path.display()))?;
-    let started = Instant::now();
-    while started.elapsed() < timeout {
-        if let Ok(bytes) = fs::read(&response_path) {
-            let envelope: DynamicToolResponseEnvelope =
-                serde_json::from_slice(&bytes).map_err(|error| {
-                    format!(
-                        "parse dynamic response {}: {error}",
-                        response_path.display()
-                    )
-                })?;
-            let _ = fs::remove_file(&request_path);
-            let _ = fs::remove_file(&response_path);
-            if let Some(error) = envelope.error {
-                return Err(error);
-            }
-            return envelope
-                .result
-                .ok_or_else(|| "dynamic request completed without a result".to_owned());
-        }
-        thread::sleep(DEFAULT_DYNAMIC_REQUEST_POLL);
-    }
-    let _ = fs::remove_file(&request_path);
-    Err(
-        "Timed out waiting for the running Aetower app to complete the requested analysis."
-            .to_owned(),
-    )
 }
 
 fn snapshot_at_or_before(
