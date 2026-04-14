@@ -31,7 +31,6 @@ const SOCKET_DIR_MODE: u32 = 0o700;
 const SOCKET_FILE_MODE: u32 = 0o600;
 const MCP_READ_TIMEOUT: Duration = Duration::from_millis(250);
 const MAX_INLINE_TEXT_BYTES: usize = 8 * 1024;
-const DEFAULT_DYNAMIC_REQUEST_POLL: Duration = Duration::from_millis(150);
 const DEFAULT_PROFILE_DURATION_SECONDS: u64 = 3;
 const MAX_PROFILE_DURATION_SECONDS: u64 = 15;
 const DEFAULT_TOP_STACKS: usize = 5;
@@ -426,21 +425,6 @@ enum DynamicToolRequest {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DynamicToolRequestEnvelope {
-    request_id: String,
-    created_at_millis: u64,
-    request: DynamicToolRequest,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DynamicToolResponseEnvelope {
-    request_id: String,
-    completed_at_millis: u64,
-    result: Option<Value>,
-    error: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 struct MemoryRegionBreakdown {
     region_type: String,
@@ -539,21 +523,9 @@ pub struct LocalMcpServerHandle {
     socket_path: PathBuf,
 }
 
-pub struct LocalMcpDynamicRequestWorkerHandle {
-    running: Arc<AtomicBool>,
-    join_handle: Option<thread::JoinHandle<()>>,
-    request_dir: PathBuf,
-}
-
 impl LocalMcpServerHandle {
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
-    }
-}
-
-impl LocalMcpDynamicRequestWorkerHandle {
-    pub fn request_dir(&self) -> &Path {
-        &self.request_dir
     }
 }
 
@@ -570,15 +542,6 @@ impl Drop for LocalMcpServerHandle {
             }
         }
         let _ = fs::remove_file(&self.socket_path);
-    }
-}
-
-impl Drop for LocalMcpDynamicRequestWorkerHandle {
-    fn drop(&mut self) {
-        self.running.store(false, Ordering::SeqCst);
-        if let Some(join_handle) = self.join_handle.take() {
-            let _ = join_handle.join();
-        }
     }
 }
 
@@ -599,13 +562,6 @@ pub fn default_app_support_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("Aetower")
-}
-
-pub fn default_request_dir() -> PathBuf {
-    if let Some(override_path) = env::var_os("AETOWER_MCP_REQUEST_DIR") {
-        return PathBuf::from(override_path);
-    }
-    std::env::temp_dir().join("aetower-mcp-requests")
 }
 
 pub fn start_local_socket_server(
@@ -694,100 +650,6 @@ pub fn start_local_socket_server(
         join_handle: Some(join_handle),
         client_threads,
         socket_path,
-    })
-}
-
-pub fn start_dynamic_request_worker(
-    data_source: Arc<dyn AetowerMcpDataSource>,
-    request_dir: impl AsRef<Path>,
-) -> Result<LocalMcpDynamicRequestWorkerHandle, String> {
-    let request_dir = request_dir.as_ref().to_path_buf();
-    fs::create_dir_all(&request_dir).map_err(|error| {
-        format!(
-            "create MCP request directory {}: {error}",
-            request_dir.display()
-        )
-    })?;
-    let running = Arc::new(AtomicBool::new(true));
-    let thread_running = Arc::clone(&running);
-    let thread_request_dir = request_dir.clone();
-    let join_handle = thread::spawn(move || {
-        while thread_running.load(Ordering::SeqCst) {
-            let entries = match fs::read_dir(&thread_request_dir) {
-                Ok(entries) => entries,
-                Err(_) => {
-                    thread::sleep(DEFAULT_DYNAMIC_REQUEST_POLL);
-                    continue;
-                }
-            };
-            for entry in entries.flatten() {
-                if !thread_running.load(Ordering::SeqCst) {
-                    break;
-                }
-                let path = entry.path();
-                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                    continue;
-                };
-                if !name.ends_with(".request.json") {
-                    continue;
-                }
-                let claim_path = path.with_extension("processing");
-                if fs::rename(&path, &claim_path).is_err() {
-                    continue;
-                }
-                let response = match fs::read(&claim_path)
-                    .map_err(|error| {
-                        format!("read dynamic request {}: {error}", claim_path.display())
-                    })
-                    .and_then(|bytes| {
-                        serde_json::from_slice::<DynamicToolRequestEnvelope>(&bytes).map_err(
-                            |error| {
-                                format!("parse dynamic request {}: {error}", claim_path.display())
-                            },
-                        )
-                    }) {
-                    Ok(envelope) => {
-                        match process_dynamic_tool_request(&*data_source, &envelope.request) {
-                            Ok(result) => DynamicToolResponseEnvelope {
-                                request_id: envelope.request_id.clone(),
-                                completed_at_millis: now_millis(),
-                                result: Some(result),
-                                error: None,
-                            },
-                            Err(error) => DynamicToolResponseEnvelope {
-                                request_id: envelope.request_id.clone(),
-                                completed_at_millis: now_millis(),
-                                result: None,
-                                error: Some(error),
-                            },
-                        }
-                    }
-                    Err(error) => DynamicToolResponseEnvelope {
-                        request_id: claim_path
-                            .file_stem()
-                            .and_then(|stem| stem.to_str())
-                            .unwrap_or("unknown")
-                            .to_owned(),
-                        completed_at_millis: now_millis(),
-                        result: None,
-                        error: Some(error),
-                    },
-                };
-                let response_path = response_path_for(&thread_request_dir, &response.request_id);
-                let temp_path = response_path.with_extension("json.tmp");
-                if let Ok(payload) = serde_json::to_vec(&response) {
-                    let _ = fs::write(&temp_path, payload);
-                    let _ = fs::rename(&temp_path, &response_path);
-                }
-                let _ = fs::remove_file(&claim_path);
-            }
-            thread::sleep(DEFAULT_DYNAMIC_REQUEST_POLL);
-        }
-    });
-    Ok(LocalMcpDynamicRequestWorkerHandle {
-        running,
-        join_handle: Some(join_handle),
-        request_dir,
     })
 }
 
@@ -1941,17 +1803,6 @@ fn default_top_regions() -> usize {
 
 fn default_include_true() -> bool {
     true
-}
-
-fn now_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0)
-}
-
-fn response_path_for(request_dir: &Path, request_id: &str) -> PathBuf {
-    request_dir.join(format!("{request_id}.response.json"))
 }
 
 fn snapshot_at_or_before(

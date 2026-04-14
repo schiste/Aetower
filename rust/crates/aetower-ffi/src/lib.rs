@@ -3,10 +3,9 @@ use std::sync::Arc;
 use aetower_core::{Engine, RuntimeCollectionSettings};
 use aetower_diagnostics as diagnostics;
 use aetower_mcp::{
-    AetowerMcpDataSource, HistorySummaryResponse, LocalMcpDynamicRequestWorkerHandle,
-    LocalMcpServerHandle, default_request_dir, default_socket_path, diff_snapshots_json,
-    entity_process_tree_json, explain_anomalies_json, memory_breakdown_json, profile_entity_json,
-    start_dynamic_request_worker, start_local_socket_server, wakeup_attribution_json,
+    AetowerMcpDataSource, HistorySummaryResponse, LocalMcpServerHandle, default_socket_path,
+    diff_snapshots_json, entity_process_tree_json, explain_anomalies_json, memory_breakdown_json,
+    profile_entity_json, start_local_socket_server, wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -704,7 +703,6 @@ pub struct HistoryMaintenanceReport {
 pub struct MonitorEngine {
     inner: Arc<std::sync::Mutex<Engine>>,
     mcp_server: std::sync::Mutex<Option<LocalMcpServerHandle>>,
-    mcp_dynamic_worker: std::sync::Mutex<Option<LocalMcpDynamicRequestWorkerHandle>>,
 }
 
 #[uniffi::export]
@@ -716,7 +714,6 @@ impl MonitorEngine {
         Arc::new(Self {
             inner: Arc::new(std::sync::Mutex::new(engine)),
             mcp_server: std::sync::Mutex::new(None),
-            mcp_dynamic_worker: std::sync::Mutex::new(None),
         })
     }
 
@@ -1075,33 +1072,19 @@ impl MonitorEngine {
 
     pub fn start_local_mcp_server(&self, socket_path: Option<String>) -> String {
         let resolved_path = socket_path
-            .clone()
             .map(std::path::PathBuf::from)
             .unwrap_or_else(default_socket_path);
-        let resolved_request_dir = default_request_dir();
         if let Ok(mut slot) = self.mcp_server.lock() {
-            let _ = slot.take();
-        }
-        if let Ok(mut slot) = self.mcp_dynamic_worker.lock() {
             let _ = slot.take();
         }
         let data_source = Arc::new(MonitorEngineDataSource {
             engine: Arc::clone(&self.inner),
         });
-        let worker_result = start_dynamic_request_worker(
-            Arc::clone(&data_source) as Arc<dyn AetowerMcpDataSource>,
-            &resolved_request_dir,
-        );
-        let server_result = start_local_socket_server(data_source, &resolved_path);
-        match (worker_result, server_result) {
-            (Ok(worker_handle), Ok(handle)) => {
+        match start_local_socket_server(data_source, &resolved_path) {
+            Ok(handle) => {
                 let path_display = resolved_path.display().to_string();
-                let request_dir_display = resolved_request_dir.display().to_string();
                 if let Ok(mut slot) = self.mcp_server.lock() {
                     *slot = Some(handle);
-                }
-                if let Ok(mut slot) = self.mcp_dynamic_worker.lock() {
-                    *slot = Some(worker_handle);
                 }
                 if let Ok(engine) = self.inner.lock() {
                     engine.record_diagnostics_event(
@@ -1112,17 +1095,12 @@ impl MonitorEngine {
                             "Started local MCP server",
                         )
                         .field("path", path_display)
-                        .field("request_dir", request_dir_display)
                         .build(),
                     );
                 }
                 String::new()
             }
-            (worker_result, server_result) => {
-                let error = worker_result
-                    .err()
-                    .or_else(|| server_result.err())
-                    .unwrap_or_else(|| "unknown MCP startup failure".to_owned());
+            Err(error) => {
                 let path_display = resolved_path.display().to_string();
                 if let Ok(engine) = self.inner.lock() {
                     engine.record_diagnostics_event(
@@ -1235,9 +1213,6 @@ impl Drop for MonitorEngine {
     fn drop(&mut self) {
         if let Ok(mut server) = self.mcp_server.lock() {
             let _ = server.take();
-        }
-        if let Ok(mut worker) = self.mcp_dynamic_worker.lock() {
-            let _ = worker.take();
         }
         if let Ok(mut engine) = self.inner.lock() {
             engine.stop();
