@@ -206,14 +206,14 @@ impl Collector {
             self.system.refresh_processes_specifics(
                 ProcessesToUpdate::All,
                 true,
-                process_refresh_kind(self.process_metadata_tick),
+                process_refresh_kind(full_scan || self.known_pids.is_empty()),
             );
             self.known_pids = self.system.processes().keys().copied().collect();
         } else {
             self.system.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&self.known_pids),
                 false,
-                process_refresh_kind(self.process_metadata_tick),
+                process_refresh_kind(false),
             );
         }
         self.process_metadata_tick = self.process_metadata_tick.wrapping_add(1);
@@ -573,8 +573,8 @@ impl Collector {
     }
 }
 
-fn process_refresh_kind(metadata_tick: u8) -> ProcessRefreshKind {
-    if metadata_tick == 0 {
+fn process_refresh_kind(full_scan: bool) -> ProcessRefreshKind {
+    if full_scan {
         ProcessRefreshKind::everything()
     } else {
         ProcessRefreshKind::nothing().with_cpu().with_disk_usage()
@@ -2161,8 +2161,10 @@ mod platform {
 
 #[cfg(test)]
 mod top_level_tests {
-    use super::{NetworkInterfaceIdentitySample, build_network_interface_snapshots};
-    use sysinfo::Networks;
+    use super::{
+        NetworkInterfaceIdentitySample, build_network_interface_snapshots, process_refresh_kind,
+    };
+    use sysinfo::{Networks, ProcessRefreshKind, UpdateKind};
 
     /// Regression: the first `collect()` call on a freshly-constructed
     /// `Collector` must not report non-zero per-interface bps. Before
@@ -2223,5 +2225,20 @@ mod top_level_tests {
             .collect();
         let snapshots = build_network_interface_snapshots(&networks, &cached, false);
         assert_eq!(snapshots.len(), cached.len());
+    }
+
+    #[test]
+    fn full_scan_requests_full_process_refresh() {
+        let kind = process_refresh_kind(true);
+        assert_eq!(kind, ProcessRefreshKind::everything());
+    }
+
+    #[test]
+    fn selective_scan_stays_on_cpu_and_disk_only() {
+        let kind = process_refresh_kind(false);
+        assert!(kind.cpu());
+        assert!(kind.disk_usage());
+        assert!(!kind.memory());
+        assert_eq!(kind.user(), UpdateKind::Never);
     }
 }
