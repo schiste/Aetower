@@ -169,6 +169,19 @@ pub struct Chau7RepoEvent {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct Chau7RuntimeInfo {
+    #[serde(default)]
+    pub app_version: Option<String>,
+    #[serde(default)]
+    pub build_sha: Option<String>,
+    #[serde(default)]
+    pub build_timestamp: Option<String>,
+    #[serde(default)]
+    pub build_channel: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Deserialize)]
 struct Chau7SessionChild {
     #[serde(default)]
     pub session_id: String,
@@ -179,6 +192,7 @@ struct Chau7SessionChild {
 pub struct Chau7Snapshot {
     pub tabs: Vec<Chau7Tab>,
     pub sessions: Vec<Chau7Session>,
+    pub runtime_info: Option<Chau7RuntimeInfo>,
     pub repo_stats: BTreeMap<String, Chau7RepoStats>,
     pub recent_runs: Vec<Chau7Run>,
     pub tab_statuses: BTreeMap<String, Chau7TabStatus>,
@@ -242,11 +256,23 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
     let sessions: Vec<Chau7Session> =
         serde_json::from_value(sessions_raw).map_err(|e| format!("parse sessions: {e}"))?;
 
+    let mut next_id: u64 = 4;
+    let mut runtime_info = None;
+    for tool_name in ["chau7_runtime_info", "runtime_info"] {
+        let parsed = rpc_tool_call(&mut writer, &mut reader, next_id, tool_name, json!({}))
+            .ok()
+            .and_then(|raw| serde_json::from_value::<Chau7RuntimeInfo>(raw).ok());
+        next_id += 1;
+        if parsed.is_some() {
+            runtime_info = parsed;
+            break;
+        }
+    }
+
     // Fetch deeper runtime/tab state for AI tabs (best-effort, bounded).
     let mut tab_statuses = BTreeMap::new();
     let mut runtime_sessions = BTreeMap::new();
     let mut seen_sessions = BTreeSet::new();
-    let mut next_id: u64 = 4;
     for tab in tabs.iter().filter(|t| t.is_ai_agent()).take(8) {
         if let Ok(raw) = rpc_tool_call(
             &mut writer,
@@ -381,6 +407,7 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
     Ok(Chau7Snapshot {
         tabs,
         sessions,
+        runtime_info,
         repo_stats,
         recent_runs,
         tab_statuses,
@@ -667,5 +694,27 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "permission");
         assert_eq!(events[0].source, "claude_code");
+    }
+
+    #[test]
+    fn parse_runtime_info_response() {
+        let raw = r#"{
+            "app_version": "1.4.2",
+            "build_sha": "abc123def456",
+            "build_timestamp": "2026-04-14T11:41:49Z",
+            "build_channel": "dev"
+        }"#;
+
+        let runtime_info: Chau7RuntimeInfo = match serde_json::from_str(raw) {
+            Ok(runtime_info) => runtime_info,
+            Err(error) => panic!("parse runtime info: {error}"),
+        };
+        assert_eq!(runtime_info.app_version.as_deref(), Some("1.4.2"));
+        assert_eq!(runtime_info.build_sha.as_deref(), Some("abc123def456"));
+        assert_eq!(
+            runtime_info.build_timestamp.as_deref(),
+            Some("2026-04-14T11:41:49Z")
+        );
+        assert_eq!(runtime_info.build_channel.as_deref(), Some("dev"));
     }
 }

@@ -164,6 +164,14 @@ pub struct AdapterContextSnapshot {
     #[serde(default)]
     pub session_id: Option<String>,
     #[serde(default)]
+    pub app_version: Option<String>,
+    #[serde(default)]
+    pub build_sha: Option<String>,
+    #[serde(default)]
+    pub build_timestamp: Option<String>,
+    #[serde(default)]
+    pub build_channel: Option<String>,
+    #[serde(default)]
     pub network_receive_bps: u64,
     #[serde(default)]
     pub network_send_bps: u64,

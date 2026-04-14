@@ -911,6 +911,10 @@ impl AdapterManager {
                                 repo_root: None,
                                 image_name: None,
                                 session_id: None,
+                                app_version: None,
+                                build_sha: None,
+                                build_timestamp: None,
+                                build_channel: None,
                                 network_receive_bps: target.network_bps,
                                 network_send_bps: 0,
                                 disk_read_bps: 0,
@@ -980,6 +984,10 @@ impl AdapterManager {
                                 repo_root: None,
                                 image_name: Some(container.image.clone()),
                                 session_id: None,
+                                app_version: None,
+                                build_sha: None,
+                                build_timestamp: None,
+                                build_channel: None,
                                 network_receive_bps: container.network_rx_bytes,
                                 network_send_bps: container.network_tx_bytes,
                                 disk_read_bps: container.block_read_bytes,
@@ -1038,6 +1046,10 @@ impl AdapterManager {
                             repo_root: None,
                             image_name: None,
                             session_id: None,
+                            app_version: None,
+                            build_sha: None,
+                            build_timestamp: None,
+                            build_channel: None,
                             network_receive_bps: 0,
                             network_send_bps: 0,
                             disk_read_bps: 0,
@@ -1168,6 +1180,22 @@ impl AdapterManager {
                             repo_root: tab.repo_root.clone(),
                             image_name: None,
                             session_id: tab.ai_session_id.clone(),
+                            app_version: snapshot
+                                .runtime_info
+                                .as_ref()
+                                .and_then(|info| info.app_version.clone()),
+                            build_sha: snapshot
+                                .runtime_info
+                                .as_ref()
+                                .and_then(|info| info.build_sha.clone()),
+                            build_timestamp: snapshot
+                                .runtime_info
+                                .as_ref()
+                                .and_then(|info| info.build_timestamp.clone()),
+                            build_channel: snapshot
+                                .runtime_info
+                                .as_ref()
+                                .and_then(|info| info.build_channel.clone()),
                             network_receive_bps: 0,
                             network_send_bps: 0,
                             disk_read_bps: 0,
@@ -1871,6 +1899,9 @@ fn chau7_tab_detail(
     if let Some(branch) = tab.git_branch.as_deref() {
         parts.push(branch.to_owned());
     }
+    if let Some(build) = chau7_build_label(snapshot.runtime_info.as_ref()) {
+        parts.push(build);
+    }
     if let Some(status) = tab_status {
         if status.is_at_prompt {
             parts.push("at prompt".to_owned());
@@ -1921,6 +1952,27 @@ fn chau7_tab_detail(
         }
     }
     parts.join(" · ")
+}
+
+fn chau7_build_label(runtime_info: Option<&crate::chau7::Chau7RuntimeInfo>) -> Option<String> {
+    let runtime_info = runtime_info?;
+    let mut parts = Vec::new();
+    if let Some(version) = runtime_info.app_version.as_deref()
+        && !version.is_empty()
+    {
+        parts.push(format!("v{version}"));
+    }
+    if let Some(channel) = runtime_info.build_channel.as_deref()
+        && !channel.is_empty()
+    {
+        parts.push(channel.to_owned());
+    }
+    if let Some(sha) = runtime_info.build_sha.as_deref()
+        && !sha.is_empty()
+    {
+        parts.push(format!("#{}", sha.chars().take(7).collect::<String>()));
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
 }
 
 fn chau7_session_status(
@@ -2851,6 +2903,10 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
                 repo_root: None,
                 image_name: None,
                 session_id: None,
+                app_version: None,
+                build_sha: None,
+                build_timestamp: None,
+                build_channel: None,
                 network_receive_bps: 0,
                 network_send_bps: 0,
                 disk_read_bps: 0,
@@ -2896,6 +2952,10 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
                 repo_root: None,
                 image_name: None,
                 session_id: None,
+                app_version: None,
+                build_sha: None,
+                build_timestamp: None,
+                build_channel: None,
                 network_receive_bps: 0,
                 network_send_bps: 0,
                 disk_read_bps: 0,
@@ -2947,6 +3007,10 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
                 repo_root: None,
                 image_name: None,
                 session_id: None,
+                app_version: None,
+                build_sha: None,
+                build_timestamp: None,
+                build_channel: None,
                 network_receive_bps: 0,
                 network_send_bps: 0,
                 disk_read_bps: 0,
@@ -3573,6 +3637,12 @@ mod tests {
                         run_count: 6,
                         last_active: "2026-04-08T14:22:26.696Z".to_owned(),
                     }],
+                    runtime_info: Some(crate::chau7::Chau7RuntimeInfo {
+                        app_version: Some("1.4.2".to_owned()),
+                        build_sha: Some("abc123def456".to_owned()),
+                        build_timestamp: Some("2026-04-08T14:20:00Z".to_owned()),
+                        build_channel: Some("dev".to_owned()),
+                    }),
                     repo_stats: BTreeMap::from([(
                         "/Users/test/Aetower".to_owned(),
                         crate::chau7::Chau7RepoStats {
@@ -3747,6 +3817,20 @@ mod tests {
                 .as_ref()
                 .and_then(|value| value.status.as_deref()),
             Some("approval-needed")
+        );
+        assert_eq!(
+            adapter_component
+                .adapter_context
+                .as_ref()
+                .and_then(|value| value.app_version.as_deref()),
+            Some("1.4.2")
+        );
+        assert_eq!(
+            adapter_component
+                .adapter_context
+                .as_ref()
+                .and_then(|value| value.build_sha.as_deref()),
+            Some("abc123def456")
         );
         assert!(adapter_component.detail.contains("3 turns"));
         assert!(adapter_component.detail.contains("2 child sessions"));
