@@ -816,30 +816,44 @@ where
     let mut writer_stream = stream;
 
     let stdin_thread = thread::spawn(move || -> Result<(), String> {
-        std::io::copy(&mut input, &mut writer_stream)
-            .map_err(|error| format!("copy stdin to MCP socket: {error}"))?;
-        writer_stream
-            .shutdown(Shutdown::Write)
-            .map_err(|error| format!("shutdown MCP socket write-half: {error}"))?;
-        Ok(())
+        match std::io::copy(&mut input, &mut writer_stream) {
+            Ok(_) => {}
+            Err(ref err) if is_graceful_peer_close(err) => {}
+            Err(err) => return Err(format!("copy stdin to MCP socket: {err}")),
+        }
+        // Signal to the peer that the client is done sending, but keep the
+        // read half open so the stdout thread can drain any in-flight response.
+        match writer_stream.shutdown(Shutdown::Write) {
+            Ok(()) => Ok(()),
+            Err(ref err) if is_graceful_peer_close(err) => Ok(()),
+            Err(err) => Err(format!("shutdown MCP socket write-half: {err}")),
+        }
     });
 
     let stdout_thread = thread::spawn(move || -> Result<(), String> {
         let mut output = output;
         let mut buffer = [0u8; 8192];
         loop {
-            let bytes_read = reader_stream
-                .read(&mut buffer)
-                .map_err(|error| format!("read MCP socket: {error}"))?;
+            let bytes_read = match reader_stream.read(&mut buffer) {
+                Ok(count) => count,
+                Err(ref err) if is_graceful_peer_close(err) => 0,
+                Err(err) => return Err(format!("read MCP socket: {err}")),
+            };
             if bytes_read == 0 {
                 break;
             }
-            output
-                .write_all(&buffer[..bytes_read])
-                .map_err(|error| format!("write MCP socket to stdout: {error}"))?;
-            output
-                .flush()
-                .map_err(|error| format!("flush stdout: {error}"))?;
+            if let Err(err) = output.write_all(&buffer[..bytes_read]) {
+                if is_graceful_peer_close(&err) {
+                    break;
+                }
+                return Err(format!("write MCP socket to stdout: {err}"));
+            }
+            if let Err(err) = output.flush() {
+                if is_graceful_peer_close(&err) {
+                    break;
+                }
+                return Err(format!("flush stdout: {err}"));
+            }
         }
         Ok(())
     });
@@ -851,6 +865,15 @@ where
         .join()
         .map_err(|_| "stdout proxy thread panicked".to_string())??;
     Ok(())
+}
+
+fn is_graceful_peer_close(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::UnexpectedEof
+    )
 }
 
 fn handle_connection(
