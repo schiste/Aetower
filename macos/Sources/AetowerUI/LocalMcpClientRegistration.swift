@@ -92,21 +92,31 @@ struct LocalMcpClientRegistrar {
         }
     }
 
+    /// Default Unix socket path for Aetower's in-process MCP server. Must stay
+    /// aligned with `default_socket_path()` in aetower-mcp's Rust lib. Clients
+    /// pass this as argv[1] to the bundled `aetower-mcp` helper so the helper
+    /// proxies to the live app rather than running as an independent process.
+    public static func defaultSocketPath() -> String {
+        NSHomeDirectory() + "/.aetower/mcp.sock"
+    }
+
     static func inspectStatuses(fileManager: FileManager = .default) -> [LocalMcpClientRegistrationStatus] {
         let commandPath = bundledProxyCommandPath(fileManager: fileManager)
+        let socketPath = defaultSocketPath()
         return Client.allCases.map { client in
-            status(for: client, commandPath: commandPath, fileManager: fileManager)
+            status(for: client, commandPath: commandPath, socketPath: socketPath, fileManager: fileManager)
         }
     }
 
     static func registerSupportedClients(fileManager: FileManager = .default) -> LocalMcpClientRegistrationReport {
         let commandPath = bundledProxyCommandPath(fileManager: fileManager)
+        let socketPath = defaultSocketPath()
         var updatedProviders: [String] = []
         var errors: [String] = []
 
         if let commandPath, isInstalled(.claudeDesktop, fileManager: fileManager) {
             do {
-                if try upsertClaudeRegistration(commandPath: commandPath, fileManager: fileManager) {
+                if try upsertClaudeRegistration(commandPath: commandPath, socketPath: socketPath, fileManager: fileManager) {
                     updatedProviders.append(Client.claudeDesktop.displayName)
                 }
             } catch {
@@ -118,7 +128,7 @@ struct LocalMcpClientRegistrar {
 
         if let commandPath, isInstalled(.claudeCli, fileManager: fileManager) {
             do {
-                if try upsertClaudeCliRegistration(commandPath: commandPath) {
+                if try upsertClaudeCliRegistration(commandPath: commandPath, socketPath: socketPath) {
                     updatedProviders.append(Client.claudeCli.displayName)
                 }
             } catch {
@@ -130,7 +140,7 @@ struct LocalMcpClientRegistrar {
 
         if let commandPath, isInstalled(.codex, fileManager: fileManager) {
             do {
-                if try upsertCodexRegistration(commandPath: commandPath, fileManager: fileManager) {
+                if try upsertCodexRegistration(commandPath: commandPath, socketPath: socketPath, fileManager: fileManager) {
                     updatedProviders.append(Client.codex.displayName)
                 }
             } catch {
@@ -154,12 +164,13 @@ struct LocalMcpClientRegistrar {
         else {
             return nil
         }
-        return configSnippet(for: client, commandPath: commandPath)
+        return configSnippet(for: client, commandPath: commandPath, socketPath: defaultSocketPath())
     }
 
     private static func status(
         for client: Client,
         commandPath: String?,
+        socketPath: String,
         fileManager: FileManager
     ) -> LocalMcpClientRegistrationStatus {
         let installed = isInstalled(client, fileManager: fileManager)
@@ -192,7 +203,7 @@ struct LocalMcpClientRegistrar {
         switch client {
         case .claudeDesktop:
             do {
-                let registration = try claudeRegistrationState(commandPath: commandPath)
+                let registration = try claudeRegistrationState(commandPath: commandPath, socketPath: socketPath)
                 return LocalMcpClientRegistrationStatus(
                     id: client.rawValue,
                     displayName: client.displayName,
@@ -203,7 +214,7 @@ struct LocalMcpClientRegistrar {
                         : "Claude Desktop has a stable user-owned MCP config file and can be registered automatically.",
                     configPath: client.configPath,
                     supportsAutomaticRegistration: true,
-                    manualSnippet: configSnippet(for: client, commandPath: commandPath)
+                    manualSnippet: configSnippet(for: client, commandPath: commandPath, socketPath: socketPath)
                 )
             } catch {
                 return LocalMcpClientRegistrationStatus(
@@ -214,12 +225,12 @@ struct LocalMcpClientRegistrar {
                     detail: "Claude Desktop config could not be read: \(error.localizedDescription)",
                     configPath: client.configPath,
                     supportsAutomaticRegistration: true,
-                    manualSnippet: configSnippet(for: client, commandPath: commandPath)
+                    manualSnippet: configSnippet(for: client, commandPath: commandPath, socketPath: socketPath)
                 )
             }
         case .claudeCli:
             do {
-                let registration = try claudeCliRegistrationState(commandPath: commandPath)
+                let registration = try claudeCliRegistrationState(commandPath: commandPath, socketPath: socketPath)
                 return LocalMcpClientRegistrationStatus(
                     id: client.rawValue,
                     displayName: client.displayName,
@@ -230,7 +241,7 @@ struct LocalMcpClientRegistrar {
                         : "Claude CLI has its own MCP registry and can be registered automatically.",
                     configPath: client.configPath,
                     supportsAutomaticRegistration: true,
-                    manualSnippet: configSnippet(for: client, commandPath: commandPath)
+                    manualSnippet: configSnippet(for: client, commandPath: commandPath, socketPath: socketPath)
                 )
             } catch {
                 return LocalMcpClientRegistrationStatus(
@@ -241,12 +252,12 @@ struct LocalMcpClientRegistrar {
                     detail: "Claude CLI registration could not be checked: \(error.localizedDescription)",
                     configPath: client.configPath,
                     supportsAutomaticRegistration: true,
-                    manualSnippet: configSnippet(for: client, commandPath: commandPath)
+                    manualSnippet: configSnippet(for: client, commandPath: commandPath, socketPath: socketPath)
                 )
             }
         case .codex:
             do {
-                let registration = try codexRegistrationState(commandPath: commandPath)
+                let registration = try codexRegistrationState(commandPath: commandPath, socketPath: socketPath)
                 return LocalMcpClientRegistrationStatus(
                     id: client.rawValue,
                     displayName: client.displayName,
@@ -257,7 +268,7 @@ struct LocalMcpClientRegistrar {
                         : "Codex has a stable user-owned MCP config surface and can be registered automatically.",
                     configPath: client.configPath,
                     supportsAutomaticRegistration: true,
-                    manualSnippet: configSnippet(for: client, commandPath: commandPath)
+                    manualSnippet: configSnippet(for: client, commandPath: commandPath, socketPath: socketPath)
                 )
             } catch {
                 return LocalMcpClientRegistrationStatus(
@@ -268,7 +279,7 @@ struct LocalMcpClientRegistrar {
                     detail: "Codex config could not be read: \(error.localizedDescription)",
                     configPath: client.configPath,
                     supportsAutomaticRegistration: true,
-                    manualSnippet: configSnippet(for: client, commandPath: commandPath)
+                    manualSnippet: configSnippet(for: client, commandPath: commandPath, socketPath: socketPath)
                 )
             }
         case .chatgpt:
@@ -280,7 +291,7 @@ struct LocalMcpClientRegistrar {
                 detail: "\(client.displayName) is installed, but Aetower does not know a stable writable MCP config surface for it yet. Use the generic MCP snippet when that client exposes MCP settings.",
                 configPath: client.configPath ?? client.supportMarkerPath,
                 supportsAutomaticRegistration: false,
-                manualSnippet: configSnippet(for: client, commandPath: commandPath)
+                manualSnippet: configSnippet(for: client, commandPath: commandPath, socketPath: socketPath)
             )
         }
     }
@@ -322,7 +333,7 @@ struct LocalMcpClientRegistrar {
         return fileManager.isExecutableFile(atPath: helperPath) ? helperPath : nil
     }
 
-    private static func upsertClaudeRegistration(commandPath: String, fileManager: FileManager) throws -> Bool {
+    private static func upsertClaudeRegistration(commandPath: String, socketPath: String, fileManager: FileManager) throws -> Bool {
         let path = try requiredConfigPath(for: .claudeDesktop)
         let url = URL(fileURLWithPath: path)
         let parentURL = url.deletingLastPathComponent()
@@ -330,12 +341,15 @@ struct LocalMcpClientRegistrar {
 
         var root = try loadJsonObject(at: url)
         var mcpServers = root["mcpServers"] as? [String: Any] ?? [:]
-        let existingCommand = (mcpServers["aetower"] as? [String: Any])?["command"] as? String
-        if existingCommand == commandPath {
+        let existing = mcpServers["aetower"] as? [String: Any]
+        let existingCommand = existing?["command"] as? String
+        let existingArgs = existing?["args"] as? [String]
+        if existingCommand == commandPath && existingArgs == [socketPath] {
             return false
         }
         mcpServers["aetower"] = [
             "command": commandPath,
+            "args": [socketPath],
         ]
         root["mcpServers"] = mcpServers
 
@@ -344,15 +358,15 @@ struct LocalMcpClientRegistrar {
         return true
     }
 
-    private static func upsertClaudeCliRegistration(commandPath: String) throws -> Bool {
-        let currentState = try claudeCliRegistrationState(commandPath: commandPath)
+    private static func upsertClaudeCliRegistration(commandPath: String, socketPath: String) throws -> Bool {
+        let currentState = try claudeCliRegistrationState(commandPath: commandPath, socketPath: socketPath)
         if currentState == .registered {
             return false
         }
 
         _ = try? runCommand(arguments: ["claude", "mcp", "remove", "aetower"], timeout: 5)
         let result = try runCommand(
-            arguments: ["claude", "mcp", "add", "--scope", "user", "aetower", "--", commandPath],
+            arguments: ["claude", "mcp", "add", "--scope", "user", "aetower", "--", commandPath, socketPath],
             timeout: 10
         )
         guard result.exitCode == 0 else {
@@ -361,7 +375,7 @@ struct LocalMcpClientRegistrar {
         return true
     }
 
-    private static func upsertCodexRegistration(commandPath: String, fileManager: FileManager) throws -> Bool {
+    private static func upsertCodexRegistration(commandPath: String, socketPath: String, fileManager: FileManager) throws -> Bool {
         let path = try requiredConfigPath(for: .codex)
         let url = URL(fileURLWithPath: path)
         let parentURL = url.deletingLastPathComponent()
@@ -373,6 +387,7 @@ struct LocalMcpClientRegistrar {
 
 [mcp_servers.aetower]
 command = "\(commandPath)"
+args = ["\(socketPath)"]
 """
 
         if let sectionRange = content.range(of: sectionHeader) {
@@ -400,7 +415,7 @@ command = "\(commandPath)"
         return true
     }
 
-    private static func claudeRegistrationState(commandPath: String) throws -> LocalMcpClientRegistrationState {
+    private static func claudeRegistrationState(commandPath: String, socketPath: String) throws -> LocalMcpClientRegistrationState {
         let path = try requiredConfigPath(for: .claudeDesktop)
         let url = URL(fileURLWithPath: path)
         let root = try loadJsonObject(at: url)
@@ -410,13 +425,20 @@ command = "\(commandPath)"
         else {
             return .availableForAutomaticRegistration
         }
-        return configuredCommand == commandPath ? .registered : .availableForAutomaticRegistration
+        let configuredArgs = aetower["args"] as? [String]
+        return (configuredCommand == commandPath && configuredArgs == [socketPath])
+            ? .registered
+            : .availableForAutomaticRegistration
     }
 
-    private static func claudeCliRegistrationState(commandPath: String) throws -> LocalMcpClientRegistrationState {
+    private static func claudeCliRegistrationState(commandPath: String, socketPath: String) throws -> LocalMcpClientRegistrationState {
         let result = try runCommand(arguments: ["claude", "mcp", "get", "aetower"], timeout: 5)
         if result.exitCode == 0 {
-            return result.combinedOutput.contains(commandPath) || result.combinedOutput.contains("aetower:")
+            let output = result.combinedOutput
+            // Require both the command path and the socket-path argument: a
+            // legacy no-args registration must re-register to pick up the
+            // socket.
+            return (output.contains(commandPath) && output.contains(socketPath))
                 ? .registered
                 : .availableForAutomaticRegistration
         }
@@ -426,7 +448,7 @@ command = "\(commandPath)"
         throw RegistrationError.commandFailed("claude mcp get aetower", result.combinedOutput)
     }
 
-    private static func codexRegistrationState(commandPath: String) throws -> LocalMcpClientRegistrationState {
+    private static func codexRegistrationState(commandPath: String, socketPath: String) throws -> LocalMcpClientRegistrationState {
         let path = try requiredConfigPath(for: .codex)
         let url = URL(fileURLWithPath: path)
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -440,8 +462,11 @@ command = "\(commandPath)"
         let nextSectionRange = remainder.range(of: "\n[")
         let blockEnd = nextSectionRange.map { $0.lowerBound } ?? content.endIndex
         let block = String(content[sectionRange.lowerBound..<blockEnd])
-        let expectedLine = "command = \"\(commandPath)\""
-        return block.contains(expectedLine) ? .registered : .availableForAutomaticRegistration
+        let expectedCommand = "command = \"\(commandPath)\""
+        let expectedArgs = "args = [\"\(socketPath)\"]"
+        return (block.contains(expectedCommand) && block.contains(expectedArgs))
+            ? .registered
+            : .availableForAutomaticRegistration
     }
 
     private static func loadJsonObject(at url: URL) throws -> [String: Any] {
@@ -466,24 +491,26 @@ command = "\(commandPath)"
         return path
     }
 
-    private static func configSnippet(for client: Client, commandPath: String) -> String {
+    private static func configSnippet(for client: Client, commandPath: String, socketPath: String) -> String {
         switch client {
         case .claudeDesktop, .chatgpt:
             let payload: [String: Any] = [
                 "mcpServers": [
                     "aetower": [
                         "command": commandPath,
+                        "args": [socketPath],
                     ],
                 ],
             ]
             let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
             return String(data: data ?? Data(), encoding: .utf8) ?? ""
         case .claudeCli:
-            return "claude mcp add --scope user aetower -- \(commandPath)"
+            return "claude mcp add --scope user aetower -- \(commandPath) \(socketPath)"
         case .codex:
             return """
             [mcp_servers.aetower]
             command = "\(commandPath)"
+            args = ["\(socketPath)"]
             """
         }
     }

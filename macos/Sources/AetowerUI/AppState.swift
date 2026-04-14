@@ -156,7 +156,7 @@ public final class AppState {
     @ObservationIgnored
     private let localMcpHealthCheckInterval: TimeInterval = 30
     @ObservationIgnored
-    private let localMcpSocketPath = NSHomeDirectory() + "/.aetower/mcp.sock"
+    private let localMcpSocketPath = LocalMcpClientRegistrar.defaultSocketPath()
     @ObservationIgnored
     private var automaticLocalMcpRegistrationAttempted = false
     @ObservationIgnored
