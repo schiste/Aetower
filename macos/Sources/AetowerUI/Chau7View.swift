@@ -65,6 +65,10 @@ public struct Chau7View: View {
         let status: String?
         let sessionId: String?
         let detail: String
+        let appVersion: String?
+        let buildSha: String?
+        let buildTimestamp: String?
+        let buildChannel: String?
     }
 
     private struct ApprovalItem: Identifiable {
@@ -997,7 +1001,11 @@ public struct Chau7View: View {
         return Chau7SessionInfo(
             status: component.adapterContext?.status,
             sessionId: component.adapterContext?.sessionId,
-            detail: component.detail
+            detail: component.detail,
+            appVersion: component.adapterContext?.appVersion,
+            buildSha: component.adapterContext?.buildSha,
+            buildTimestamp: component.adapterContext?.buildTimestamp,
+            buildChannel: component.adapterContext?.buildChannel
         )
     }
 
@@ -1020,6 +1028,15 @@ public struct Chau7View: View {
                 if entity.badges.contains("shell-loading") {
                     stateBadge("Shell loading", color: AetowerDesign.Status.warning)
                 }
+                if let version = info.appVersion, !version.isEmpty {
+                    stateBadge("v\(version)", color: AetowerDesign.Tone.memory)
+                }
+                if let channel = info.buildChannel, !channel.isEmpty {
+                    stateBadge(channel.capitalized, color: AetowerDesign.Status.ready)
+                }
+                if let buildSha = info.buildSha, !buildSha.isEmpty {
+                    stateBadge("#\(shortBuildSha(buildSha))", color: AetowerDesign.Status.warning)
+                }
             }
 
             if !info.detail.isEmpty {
@@ -1028,12 +1045,22 @@ public struct Chau7View: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let buildTimestamp = info.buildTimestamp, !buildTimestamp.isEmpty {
+                Text("Observed Chau7 build: \(buildTimestamp)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
             if !entity.attributionNotes.isEmpty {
                 Text(entity.attributionNotes.prefix(2).joined(separator: " "))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    private func shortBuildSha(_ value: String) -> String {
+        String(value.prefix(7))
     }
 
     private func trendStripSection(for entity: EntitySnapshot) -> some View {

@@ -520,6 +520,13 @@ public struct EntityDetailView: View {
                             Text(component.detail)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            if let adapterContext = component.adapterContext,
+                               let buildLine = chau7BuildLine(adapterContext)
+                            {
+                                Text(buildLine)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
                             if let repoRoot = component.adapterContext?.repoRoot {
                                 Text(repoRoot)
                                     .font(.caption2)
@@ -552,6 +559,23 @@ public struct EntityDetailView: View {
 
     private func extractSessionId() -> String? {
         entity.badges.first(where: { $0.hasPrefix("ai-session:") })?.replacingOccurrences(of: "ai-session:", with: "")
+    }
+
+    private func chau7BuildLine(_ context: AdapterContextSnapshot) -> String? {
+        var parts = [String]()
+        if let version = context.appVersion, !version.isEmpty {
+            parts.append("v\(version)")
+        }
+        if let channel = context.buildChannel, !channel.isEmpty {
+            parts.append(channel)
+        }
+        if let buildSha = context.buildSha, !buildSha.isEmpty {
+            parts.append("#\(String(buildSha.prefix(7)))")
+        }
+        if let buildTimestamp = context.buildTimestamp, !buildTimestamp.isEmpty {
+            parts.append(buildTimestamp)
+        }
+        return parts.isEmpty ? nil : "Chau7 build: \(parts.joined(separator: " · "))"
     }
 
     private var whatAetowerSees: some View {

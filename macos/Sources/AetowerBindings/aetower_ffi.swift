@@ -1107,6 +1107,10 @@ public struct AdapterContextSnapshot {
     public var repoRoot: String?
     public var imageName: String?
     public var sessionId: String?
+    public var appVersion: String?
+    public var buildSha: String?
+    public var buildTimestamp: String?
+    public var buildChannel: String?
     public var networkReceiveBps: UInt64
     public var networkSendBps: UInt64
     public var diskReadBps: UInt64
@@ -1122,7 +1126,7 @@ public struct AdapterContextSnapshot {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: AdapterContextKind, status: String?, url: String?, workspacePath: String?, repoRoot: String?, imageName: String?, sessionId: String?, networkReceiveBps: UInt64, networkSendBps: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, memoryLimitBytes: UInt64, jsHeapTotalBytes: UInt64, domNodes: UInt64, documents: UInt64, frames: UInt64, processCount: UInt32?, connectionCount: UInt32?, ports: [String]) {
+    public init(kind: AdapterContextKind, status: String?, url: String?, workspacePath: String?, repoRoot: String?, imageName: String?, sessionId: String?, appVersion: String?, buildSha: String?, buildTimestamp: String?, buildChannel: String?, networkReceiveBps: UInt64, networkSendBps: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, memoryLimitBytes: UInt64, jsHeapTotalBytes: UInt64, domNodes: UInt64, documents: UInt64, frames: UInt64, processCount: UInt32?, connectionCount: UInt32?, ports: [String]) {
         self.kind = kind
         self.status = status
         self.url = url
@@ -1130,6 +1134,10 @@ public struct AdapterContextSnapshot {
         self.repoRoot = repoRoot
         self.imageName = imageName
         self.sessionId = sessionId
+        self.appVersion = appVersion
+        self.buildSha = buildSha
+        self.buildTimestamp = buildTimestamp
+        self.buildChannel = buildChannel
         self.networkReceiveBps = networkReceiveBps
         self.networkSendBps = networkSendBps
         self.diskReadBps = diskReadBps
@@ -1171,6 +1179,18 @@ extension AdapterContextSnapshot: Equatable, Hashable {
             return false
         }
         if lhs.sessionId != rhs.sessionId {
+            return false
+        }
+        if lhs.appVersion != rhs.appVersion {
+            return false
+        }
+        if lhs.buildSha != rhs.buildSha {
+            return false
+        }
+        if lhs.buildTimestamp != rhs.buildTimestamp {
+            return false
+        }
+        if lhs.buildChannel != rhs.buildChannel {
             return false
         }
         if lhs.networkReceiveBps != rhs.networkReceiveBps {
@@ -1220,6 +1240,10 @@ extension AdapterContextSnapshot: Equatable, Hashable {
         hasher.combine(repoRoot)
         hasher.combine(imageName)
         hasher.combine(sessionId)
+        hasher.combine(appVersion)
+        hasher.combine(buildSha)
+        hasher.combine(buildTimestamp)
+        hasher.combine(buildChannel)
         hasher.combine(networkReceiveBps)
         hasher.combine(networkSendBps)
         hasher.combine(diskReadBps)
@@ -1251,6 +1275,10 @@ public struct FfiConverterTypeAdapterContextSnapshot: FfiConverterRustBuffer {
                 repoRoot: FfiConverterOptionString.read(from: &buf), 
                 imageName: FfiConverterOptionString.read(from: &buf), 
                 sessionId: FfiConverterOptionString.read(from: &buf), 
+                appVersion: FfiConverterOptionString.read(from: &buf), 
+                buildSha: FfiConverterOptionString.read(from: &buf), 
+                buildTimestamp: FfiConverterOptionString.read(from: &buf), 
+                buildChannel: FfiConverterOptionString.read(from: &buf), 
                 networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
                 networkSendBps: FfiConverterUInt64.read(from: &buf), 
                 diskReadBps: FfiConverterUInt64.read(from: &buf), 
@@ -1274,6 +1302,10 @@ public struct FfiConverterTypeAdapterContextSnapshot: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.repoRoot, into: &buf)
         FfiConverterOptionString.write(value.imageName, into: &buf)
         FfiConverterOptionString.write(value.sessionId, into: &buf)
+        FfiConverterOptionString.write(value.appVersion, into: &buf)
+        FfiConverterOptionString.write(value.buildSha, into: &buf)
+        FfiConverterOptionString.write(value.buildTimestamp, into: &buf)
+        FfiConverterOptionString.write(value.buildChannel, into: &buf)
         FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)
         FfiConverterUInt64.write(value.networkSendBps, into: &buf)
         FfiConverterUInt64.write(value.diskReadBps, into: &buf)
