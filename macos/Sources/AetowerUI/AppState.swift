@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import Observation
 import OSLog
@@ -610,9 +611,13 @@ public final class AppState {
         }
         lastLocalMcpHealthCheckDate = now
 
-        let socketExists = FileManager.default.fileExists(atPath: localMcpSocketPath)
-        localMcpServerHealthy = localMcpServerStarted && socketExists
-        guard force || !localMcpServerStarted || !socketExists else {
+        // Actually try to connect to the socket. File-existence alone is a
+        // false-positive on a stale socket left behind by a previous run,
+        // and a false-negative during the brief window after bind() but
+        // before the accept loop hits its first poll.
+        let socketReachable = isLocalMcpSocketReachable()
+        localMcpServerHealthy = localMcpServerStarted && socketReachable
+        guard force || !localMcpServerStarted || !socketReachable else {
             return
         }
 
@@ -622,7 +627,7 @@ public final class AppState {
             lastError = error
         } else {
             localMcpServerStarted = true
-            localMcpServerHealthy = FileManager.default.fileExists(atPath: localMcpSocketPath)
+            localMcpServerHealthy = isLocalMcpSocketReachable()
             refreshLocalMcpClientStatuses()
         }
     }
@@ -639,7 +644,57 @@ public final class AppState {
             UInt64(Date().timeIntervalSince1970 * 1000)
         )
         historyStoreSummary = bridge.historyRangeSummary(startMillis: 0, endMillis: endMillis)
-        localMcpServerHealthy = localMcpServerStarted && FileManager.default.fileExists(atPath: localMcpSocketPath)
+        localMcpServerHealthy = localMcpServerStarted && isLocalMcpSocketReachable()
+    }
+
+    /// Liveness probe: try a brief non-blocking connect to the MCP socket.
+    /// Returns true only when a peer is actually accepting; a stale socket
+    /// file on disk returns false, and a healthy listener returns true even
+    /// inside the narrow window where FileManager wouldn't yet see the file.
+    private func isLocalMcpSocketReachable() -> Bool {
+        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { Darwin.close(fd) }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(localMcpSocketPath.utf8)
+        let maxLen = MemoryLayout.size(ofValue: addr.sun_path) - 1
+        guard pathBytes.count <= maxLen else { return false }
+        withUnsafeMutablePointer(to: &addr.sun_path) { rawPath in
+            rawPath.withMemoryRebound(to: CChar.self, capacity: pathBytes.count + 1) { dest in
+                for (index, byte) in pathBytes.enumerated() {
+                    dest[index] = CChar(bitPattern: byte)
+                }
+                dest[pathBytes.count] = 0
+            }
+        }
+        let sockLen = socklen_t(MemoryLayout<sockaddr_un>.size)
+
+        let flags = fcntl(fd, F_GETFL, 0)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+
+        let connectResult = withUnsafePointer(to: &addr) { ptr -> Int32 in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sap in
+                Darwin.connect(fd, sap, sockLen)
+            }
+        }
+        if connectResult == 0 {
+            return true
+        }
+        if errno != EINPROGRESS {
+            return false
+        }
+        var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        let polled = poll(&pfd, 1, 500 /* ms */)
+        guard polled > 0 else { return false }
+
+        var soError: Int32 = 0
+        var errLen = socklen_t(MemoryLayout<Int32>.size)
+        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &errLen) == 0 else {
+            return false
+        }
+        return soError == 0
     }
 
     private func ensureAutomaticLocalMcpClientRegistration() {
