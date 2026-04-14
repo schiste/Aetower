@@ -127,6 +127,10 @@ public final class EngineBridge: @unchecked Sendable {
         return result.isEmpty ? nil : result
     }
 
+    public func stopLocalMcpServer() {
+        engine.stopLocalMcpServer()
+    }
+
     public func diffSnapshotsJSON(
         beforeMillis: UInt64,
         afterMillis: UInt64,

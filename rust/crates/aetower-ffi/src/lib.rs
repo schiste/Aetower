@@ -1070,6 +1070,17 @@ impl MonitorEngine {
         serde_json::to_string_pretty(&snapshot).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
     }
 
+    /// Explicit teardown for the local MCP server. Dropping the handle
+    /// signals the accept loop, joins client threads, and unlinks the
+    /// socket file. Callers should invoke this from their app-lifecycle
+    /// shutdown hook (e.g. applicationWillTerminate) because SwiftUI
+    /// @State drop is not guaranteed to run under NSApp.terminate().
+    pub fn stop_local_mcp_server(&self) {
+        if let Ok(mut slot) = self.mcp_server.lock() {
+            let _ = slot.take();
+        }
+    }
+
     pub fn start_local_mcp_server(&self, socket_path: Option<String>) -> String {
         let resolved_path = socket_path
             .map(std::path::PathBuf::from)

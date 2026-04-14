@@ -96,6 +96,20 @@ struct AetowerApp: App {
                 state.startLocalMcpServer()
                 state.applyNotificationSettings(settings)
                 state.applyIntegrationSettings(settings)
+                // NSApplication.terminate exits before SwiftUI @State deinit,
+                // so rely on the will-terminate notification to tear down the
+                // MCP socket explicitly — otherwise the socket file lingers
+                // between runs and the next launch must rebind over a stale
+                // entry.
+                NotificationCenter.default.addObserver(
+                    forName: NSApplication.willTerminateNotification,
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    MainActor.assumeIsolated {
+                        state.stopLocalMcpServer()
+                    }
+                }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 state.start(refreshInterval: settings.refreshIntervalSeconds)
             }

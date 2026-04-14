@@ -265,6 +265,15 @@ public final class AppState {
         ensureAutomaticLocalMcpClientRegistration()
     }
 
+    /// Tear down the in-process MCP server explicitly so the Unix socket
+    /// file at `localMcpSocketPath` is unlinked before the process exits.
+    /// Safe to call multiple times; subsequent calls are no-ops.
+    public func stopLocalMcpServer() {
+        bridge.stopLocalMcpServer()
+        localMcpServerStarted = false
+        localMcpServerHealthy = false
+    }
+
     public func start(refreshInterval: Double) {
         stop()
         startLocalMcpServer()

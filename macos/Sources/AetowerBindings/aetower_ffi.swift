@@ -629,6 +629,15 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func stopAgentSession(sessionId: String, force: Bool)  -> String
     
+    /**
+     * Explicit teardown for the local MCP server. Dropping the handle
+     * signals the accept loop, joins client threads, and unlinks the
+     * socket file. Callers should invoke this from their app-lifecycle
+     * shutdown hook (e.g. applicationWillTerminate) because SwiftUI
+     * @State drop is not guaranteed to run under NSApp.terminate().
+     */
+    func stopLocalMcpServer() 
+    
     func updateFrontmostAppState(state: FrontmostAppState) 
     
     func updateUiLagMetrics(metrics: UiLagMetrics) 
@@ -1000,6 +1009,19 @@ open func stopAgentSession(sessionId: String, force: Bool) -> String  {
         FfiConverterBool.lower(force),$0
     )
 })
+}
+    
+    /**
+     * Explicit teardown for the local MCP server. Dropping the handle
+     * signals the accept loop, joins client threads, and unlinks the
+     * socket file. Callers should invoke this from their app-lifecycle
+     * shutdown hook (e.g. applicationWillTerminate) because SwiftUI
+     * @State drop is not guaranteed to run under NSApp.terminate().
+     */
+open func stopLocalMcpServer()  {try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_stop_local_mcp_server(self.uniffiClonePointer(),$0
+    )
+}
 }
     
 open func updateFrontmostAppState(state: FrontmostAppState)  {try! rustCall() {
@@ -8527,6 +8549,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_stop_agent_session() != 46014) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_stop_local_mcp_server() != 53847) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_update_frontmost_app_state() != 57149) {
