@@ -341,16 +341,18 @@ struct LocalMcpClientRegistrar {
 
         var root = try loadJsonObject(at: url)
         var mcpServers = root["mcpServers"] as? [String: Any] ?? [:]
-        let existing = mcpServers["aetower"] as? [String: Any]
-        let existingCommand = existing?["command"] as? String
-        let existingArgs = existing?["args"] as? [String]
+        // Preserve any unknown sibling keys the user may have set on the
+        // "aetower" entry (e.g. env, type, cwd). We only overwrite command
+        // and args; everything else is carried through untouched.
+        var entry = mcpServers["aetower"] as? [String: Any] ?? [:]
+        let existingCommand = entry["command"] as? String
+        let existingArgs = entry["args"] as? [String]
         if existingCommand == commandPath && existingArgs == [socketPath] {
             return false
         }
-        mcpServers["aetower"] = [
-            "command": commandPath,
-            "args": [socketPath],
-        ]
+        entry["command"] = commandPath
+        entry["args"] = [socketPath]
+        mcpServers["aetower"] = entry
         root["mcpServers"] = mcpServers
 
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
