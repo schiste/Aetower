@@ -394,7 +394,7 @@ impl AdapterManager {
 
     pub fn configure_chau7_endpoint(&self, socket_path: Option<String>) {
         let mut guard = self.state.lock();
-        guard.chau7_socket_path = socket_path.filter(|value| !value.trim().is_empty());
+        guard.chau7_socket_path = sanitize_chau7_socket_path(socket_path);
         guard.cached_chau7_snapshot = None;
         guard.last_chau7_fetch_millis = 0;
         guard.last_chau7_success_millis = 0;
@@ -531,7 +531,7 @@ impl AdapterManager {
                     let is_stale = now.saturating_sub(guard.last_chau7_fetch_millis)
                         >= CHAU7_REFRESH_INTERVAL_MILLIS;
                     if is_stale {
-                        guard.chau7_socket_path.clone()
+                        resolved_chau7_socket_path(&guard)
                     } else {
                         None
                     }
@@ -1491,8 +1491,8 @@ fn capability_status(state: &AdapterState, kind: &CapabilityKind) -> (Capability
                 )
             }
         }
-        CapabilityKind::Chau7 => match state.chau7_socket_path.as_deref() {
-            Some(path) if Path::new(path).exists() => (
+        CapabilityKind::Chau7 => match resolved_chau7_socket_path(state) {
+            Some(path) if Path::new(&path).exists() => (
                 CapabilityState::Granted,
                 format!(
                     "Chau7 MCP socket detected at {path}. {}",
@@ -1610,8 +1610,7 @@ fn capability_health(state: &AdapterState, kind: &CapabilityKind, now: u64) -> C
             }
         }
         CapabilityKind::Chau7 => {
-            if state
-                .chau7_socket_path
+            if resolved_chau7_socket_path(state)
                 .as_deref()
                 .is_none_or(|path| !Path::new(path).exists())
             {
@@ -1824,6 +1823,16 @@ fn adapter_health_kind(
 
 fn docker_socket_path() -> String {
     env::var("AETOWER_DOCKER_SOCKET").unwrap_or_else(|_| "/var/run/docker.sock".to_owned())
+}
+
+fn sanitize_chau7_socket_path(socket_path: Option<String>) -> Option<String> {
+    socket_path
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn resolved_chau7_socket_path(state: &AdapterState) -> Option<String> {
+    sanitize_chau7_socket_path(state.chau7_socket_path.clone()).or_else(chau7_socket_path)
 }
 
 fn chau7_socket_path() -> Option<String> {
@@ -3126,7 +3135,8 @@ mod tests {
         EndpointSecurityLifecycleEvent, EndpointSecuritySample, EndpointSecurityStatusSnapshot,
         adapter_runtime_detail, capability_status, docker_block_io_totals, docker_cpu_percent,
         docker_network_totals, endpoint_security_runtime_detail, enrich_vscode_entity,
-        enrich_with_endpoint_security, parse_http_endpoint, workspace_hint_from_command_line,
+        enrich_with_endpoint_security, parse_http_endpoint, resolved_chau7_socket_path,
+        sanitize_chau7_socket_path, workspace_hint_from_command_line,
     };
 
     #[test]
@@ -3301,6 +3311,28 @@ mod tests {
         assert_eq!(
             workspace_hint_from_command_line(command).as_deref(),
             Some("/Users/test/src/project")
+        );
+    }
+
+    #[test]
+    fn sanitize_chau7_socket_path_treats_blank_as_unset() {
+        assert_eq!(sanitize_chau7_socket_path(None), None);
+        assert_eq!(sanitize_chau7_socket_path(Some("  ".to_owned())), None);
+        assert_eq!(
+            sanitize_chau7_socket_path(Some(" /tmp/chau7.sock ".to_owned())),
+            Some("/tmp/chau7.sock".to_owned())
+        );
+    }
+
+    #[test]
+    fn resolved_chau7_socket_path_prefers_explicit_path() {
+        let state = AdapterState {
+            chau7_socket_path: Some("/tmp/custom.sock".to_owned()),
+            ..AdapterState::default()
+        };
+        assert_eq!(
+            resolved_chau7_socket_path(&state),
+            Some("/tmp/custom.sock".to_owned())
         );
     }
 
