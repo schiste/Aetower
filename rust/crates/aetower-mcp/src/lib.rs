@@ -1416,6 +1416,8 @@ impl AetowerMcpServer {
         #[derive(Serialize)]
         struct Response {
             captured_at_millis: u64,
+            history_status: &'static str,
+            history_warning: Option<String>,
             summary: AiRuntimeSummary,
             burden_leaders: Vec<AiBurdenLeaderReport>,
             runtime_groups: Vec<AiRuntimeGroupReport>,
@@ -1431,18 +1433,21 @@ impl AetowerMcpServer {
         let history_start = snapshot
             .captured_at_millis
             .saturating_sub(args.history_window_hours.saturating_mul(60 * 60 * 1000));
-        let history = self
-            .data_source
-            .load_history_page(
-                history_start,
-                snapshot.captured_at_millis,
-                None,
-                args.history_limit,
-            )
-            .map_err(tool_error)?;
+        let (history, history_warning) = load_ai_runtime_history(
+            self.data_source.as_ref(),
+            history_start,
+            snapshot.captured_at_millis,
+            args.history_limit,
+        );
         let report = build_ai_runtime_report(&snapshot, &history);
         tool_json(Response {
             captured_at_millis: snapshot.captured_at_millis,
+            history_status: if history_warning.is_some() {
+                "degraded"
+            } else {
+                "ok"
+            },
+            history_warning,
             summary: report.summary,
             burden_leaders: report.burden_leaders,
             runtime_groups: report.runtime_groups,
@@ -4368,6 +4373,23 @@ fn build_ai_runtime_report(
     }
 }
 
+fn load_ai_runtime_history(
+    data_source: &dyn AetowerMcpDataSource,
+    start_millis: u64,
+    end_millis: u64,
+    limit: u32,
+) -> (Vec<SystemSnapshot>, Option<String>) {
+    match data_source.load_history_page(start_millis, end_millis, None, limit) {
+        Ok(history) => (history, None),
+        Err(error) => (
+            Vec::new(),
+            Some(format!(
+                "Historical AI runtime trends are temporarily unavailable: {error}"
+            )),
+        ),
+    }
+}
+
 fn build_export_query_response(
     data_source: &dyn AetowerMcpDataSource,
     mut snapshot: SystemSnapshot,
@@ -4453,17 +4475,19 @@ fn build_export_query_response(
     }
 
     if options.include_ai_runtime_report {
-        let history_page = data_source.load_history_page(
+        let (history_page, history_warning) = load_ai_runtime_history(
+            data_source,
             options.start_millis,
             options.end_millis,
-            None,
             options.history_limit,
-        )?;
+        );
         let report = build_ai_runtime_report(&snapshot, &history_page);
         payload.insert(
             "aiRuntimeReport".to_owned(),
             export_controlled_json(
                 serde_json::to_value(json!({
+                    "historyStatus": if history_warning.is_some() { "degraded" } else { "ok" },
+                    "historyWarning": history_warning,
                     "summary": report.summary,
                     "burdenLeaders": report.burden_leaders,
                     "runtimeGroups": report.runtime_groups,
@@ -6340,6 +6364,58 @@ mod tests {
         }
     }
 
+    struct HistoryBrokenSource;
+
+    impl AetowerMcpDataSource for HistoryBrokenSource {
+        fn latest_snapshot(&self) -> Result<SystemSnapshot, String> {
+            FakeSource.latest_snapshot()
+        }
+
+        fn latest_snapshot_if_newer(
+            &self,
+            last_sequence: u64,
+        ) -> Result<Option<SystemSnapshot>, String> {
+            FakeSource.latest_snapshot_if_newer(last_sequence)
+        }
+
+        fn latest_sequence(&self) -> Result<u64, String> {
+            FakeSource.latest_sequence()
+        }
+
+        fn latest_runtime_lag_metrics(&self) -> Result<RuntimeLagMetrics, String> {
+            FakeSource.latest_runtime_lag_metrics()
+        }
+
+        fn history_range_summary(
+            &self,
+            start_millis: u64,
+            end_millis: u64,
+        ) -> Result<HistorySummaryResponse, String> {
+            FakeSource.history_range_summary(start_millis, end_millis)
+        }
+
+        fn load_history_page(
+            &self,
+            _start_millis: u64,
+            _end_millis: u64,
+            _before_millis_exclusive: Option<u64>,
+            _limit: u32,
+        ) -> Result<Vec<SystemSnapshot>, String> {
+            Err("bincode envelope deserialize: tag for enum is not valid, found 23".to_owned())
+        }
+
+        fn diagnostics_overview(&self) -> Result<DiagnosticsOverview, String> {
+            FakeSource.diagnostics_overview()
+        }
+
+        fn query_diagnostics(
+            &self,
+            query: DiagnosticsQuery,
+        ) -> Result<Vec<DiagnosticsEvent>, String> {
+            FakeSource.query_diagnostics(query)
+        }
+    }
+
     #[derive(Clone, Default)]
     struct SharedWriter(Arc<Mutex<Vec<u8>>>);
 
@@ -6360,6 +6436,13 @@ mod tests {
     fn fake_server() -> AetowerMcpServer {
         AetowerMcpServer {
             data_source: Arc::new(FakeSource),
+            dynamic_mode: DynamicExecutionMode::Local,
+        }
+    }
+
+    fn history_broken_server() -> AetowerMcpServer {
+        AetowerMcpServer {
+            data_source: Arc::new(HistoryBrokenSource),
             dynamic_mode: DynamicExecutionMode::Local,
         }
     }
@@ -6566,6 +6649,39 @@ mod tests {
         assert!(content.get("summary").is_some());
         assert!(content.get("runtime_groups").is_some());
         assert!(content.get("burden_leaders").is_some());
+    }
+
+    #[test]
+    fn ai_runtime_report_degrades_gracefully_when_history_decode_fails() {
+        let response = match history_broken_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_ai_runtime_report",
+                "arguments": {}
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        let content = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .cloned()
+            .unwrap_or_else(|| panic!("structuredContent"));
+        assert_eq!(
+            content.get("history_status").and_then(Value::as_str),
+            Some("degraded")
+        );
+        assert!(
+            content
+                .get("history_warning")
+                .and_then(Value::as_str)
+                .is_some()
+        );
+        assert!(content.get("summary").is_some());
+        assert!(content.get("runtime_groups").is_some());
     }
 
     #[test]
