@@ -32,7 +32,11 @@ const DOCKER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
 const PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
 const CHROMIUM_FETCH_BUDGET: Duration = Duration::from_millis(750);
 const DOCKER_FETCH_BUDGET: Duration = Duration::from_millis(750);
-const CHAU7_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
+// 30 s instead of 10 s: the chau7 adapter fires ~40 serial JSON-RPC calls per
+// refresh against Chau7's single-threaded MCP server, and at 10 s tick we left
+// no quiet windows for Chau7 to GC, persist async, or unload state. 30 s cuts
+// observer-induced pressure by 3x while keeping snapshot freshness reasonable.
+const CHAU7_REFRESH_INTERVAL_MILLIS: u64 = 30_000;
 const ENDPOINT_SECURITY_REFRESH_INTERVAL_MILLIS: u64 = 30_000;
 const MAX_CHROMIUM_TARGETS: usize = 5;
 const MAX_DOCKER_CONTAINERS: usize = 5;

@@ -337,20 +337,12 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
         }
         next_id += 1;
 
-        if let Ok(raw) = rpc_tool_call(
-            &mut writer,
-            &mut reader,
-            next_id,
-            "runtime_session_children",
-            json!({ "session_id": session_id, "recursive": true, "include_stopped": false }),
-        ) && let Ok(children) = serde_json::from_value::<Vec<Chau7SessionChild>>(raw)
-        {
-            merged.child_session_count = children
-                .into_iter()
-                .filter(|child| !child.session_id.is_empty())
-                .count() as u32;
-        }
-        next_id += 1;
+        // Skip runtime_session_children: it forces Chau7 to do a recursive
+        // tree walk over a JSON-RPC boundary on every adapter tick, and was
+        // identified as the single biggest contributor to observer-induced
+        // load. child_session_count stays at 0 for now; if we need it back,
+        // expose it as a counter on Chau7's side instead of asking the
+        // server to recompute it on every poll.
 
         runtime_sessions.insert(session_id.to_owned(), merged);
     }
