@@ -64,6 +64,7 @@ pub struct HistoryRetentionPolicy {
     pub soft_max_store_bytes: u64,
     pub hard_max_store_bytes: u64,
     pub max_wal_bytes: u64,
+    pub target_snapshot_count: u64,
     pub soft_max_snapshot_count: u64,
     pub hard_max_snapshot_count: u64,
     pub aggressive_quarantine_rows: u64,
@@ -488,7 +489,26 @@ impl HistoryStore {
             })
             .map(|count| count as u64)
             .map_err(|e| format!("snapshot count after maintenance: {e}"))?;
-        if snapshot_count_after > policy.hard_max_snapshot_count {
+        let should_trim_to_target = report.store_bytes_after > policy.soft_max_store_bytes
+            || report.wal_bytes_after > policy.max_wal_bytes
+            || snapshot_count_after > policy.soft_max_snapshot_count;
+        if should_trim_to_target && snapshot_count_after > policy.target_snapshot_count {
+            let deleted = self
+                .writer
+                .prune_keep_latest(policy.target_snapshot_count)?;
+            report.pruned_rows = report.pruned_rows.saturating_add(deleted);
+            let mut reasons = report.aggressive_reason.take().unwrap_or_default();
+            if !reasons.is_empty() {
+                reasons.push(',');
+            }
+            reasons.push_str("target-snapshot-cap");
+            report.aggressive_reason = Some(reasons);
+            let post_trim = self.maintain_storage(true)?;
+            report.store_bytes_after = post_trim.store_bytes_after;
+            report.wal_bytes_after = post_trim.wal_bytes_after;
+            report.vacuumed = report.vacuumed || post_trim.vacuumed;
+            report.checkpointed = report.checkpointed || post_trim.checkpointed;
+        } else if snapshot_count_after > policy.hard_max_snapshot_count {
             let deleted = self
                 .writer
                 .prune_keep_latest(policy.hard_max_snapshot_count)?;
@@ -1340,6 +1360,7 @@ mod tests {
                 soft_max_store_bytes: u64::MAX,
                 hard_max_store_bytes: u64::MAX,
                 max_wal_bytes: u64::MAX,
+                target_snapshot_count: u64::MAX,
                 soft_max_snapshot_count: u64::MAX,
                 hard_max_snapshot_count: u64::MAX,
                 aggressive_quarantine_rows: u64::MAX,
@@ -1395,6 +1416,7 @@ mod tests {
                 soft_max_store_bytes: u64::MAX,
                 hard_max_store_bytes: u64::MAX,
                 max_wal_bytes: u64::MAX,
+                target_snapshot_count: 3,
                 soft_max_snapshot_count: 4,
                 hard_max_snapshot_count: 5,
                 aggressive_quarantine_rows: 4,
@@ -1402,11 +1424,11 @@ mod tests {
             })
             .unwrap_or_else(|error| panic!("maintain_with_policy: {error}"));
 
-        assert!(report.pruned_rows >= 6);
+        assert!(report.pruned_rows >= 8);
         let remaining = store
             .load_range(0, 20_000)
             .unwrap_or_else(|error| panic!("load_range: {error}"));
-        assert_eq!(remaining.len(), 5);
+        assert_eq!(remaining.len(), 3);
         let remaining_quarantine = store
             .conn
             .query_row("SELECT COUNT(*) FROM snapshot_quarantine", [], |row| {

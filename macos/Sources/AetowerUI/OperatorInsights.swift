@@ -514,14 +514,14 @@ private func operatorWakeupBand(_ wakeupsPerSecond: Float) -> OperatorSeverity {
 }
 
 private func operatorHistorySeverity(_ history: HistoryRangeSummary) -> OperatorSeverity {
-    if history.storeBytes >= 2 * 1024 * 1024 * 1024
+    if history.storeBytes >= 1024 * 1024 * 1024
         || history.walBytes >= 128 * 1024 * 1024
         || history.quarantineCount >= 128
     {
         return .critical
     }
-    if history.storeBytes >= 1024 * 1024 * 1024
-        || history.walBytes >= 64 * 1024 * 1024
+    if history.storeBytes >= 512 * 1024 * 1024
+        || history.walBytes >= 32 * 1024 * 1024
         || history.quarantineCount >= 64
     {
         return .warning

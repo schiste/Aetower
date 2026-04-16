@@ -31,13 +31,14 @@ use crate::{
 const ADAPTER_IDLE_SLEEP: Duration = Duration::from_secs(5);
 const TELEMETRY_DISABLED_SLEEP: Duration = Duration::from_secs(30);
 const RUNTIME_HEARTBEAT_INTERVAL_MILLIS: u64 = 10 * 60 * 1000;
-const DEFAULT_HISTORY_RETENTION_MILLIS: u64 = 24 * 60 * 60 * 1000;
-const EMERGENCY_HISTORY_RETENTION_MILLIS: u64 = 6 * 60 * 60 * 1000;
-const HISTORY_SOFT_MAX_BYTES: u64 = 1024 * 1024 * 1024;
-const HISTORY_HARD_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-const HISTORY_MAX_WAL_BYTES: u64 = 64 * 1024 * 1024;
-const HISTORY_SOFT_MAX_SNAPSHOT_COUNT: u64 = 8_000;
-const HISTORY_HARD_MAX_SNAPSHOT_COUNT: u64 = 12_000;
+const DEFAULT_HISTORY_RETENTION_MILLIS: u64 = 12 * 60 * 60 * 1000;
+const EMERGENCY_HISTORY_RETENTION_MILLIS: u64 = 3 * 60 * 60 * 1000;
+const HISTORY_SOFT_MAX_BYTES: u64 = 512 * 1024 * 1024;
+const HISTORY_HARD_MAX_BYTES: u64 = 1024 * 1024 * 1024;
+const HISTORY_MAX_WAL_BYTES: u64 = 32 * 1024 * 1024;
+const HISTORY_TARGET_SNAPSHOT_COUNT: u64 = 2_000;
+const HISTORY_SOFT_MAX_SNAPSHOT_COUNT: u64 = 3_000;
+const HISTORY_HARD_MAX_SNAPSHOT_COUNT: u64 = 5_000;
 const HISTORY_AGGRESSIVE_QUARANTINE_ROWS: u64 = 64;
 const HISTORY_HARD_MAX_QUARANTINE_ROWS: u64 = 128;
 const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 12 * 60 * 60 * 1000;
@@ -1155,6 +1156,7 @@ fn emit_sensor_availability_transitions(
     );
     check_capability_transition(
         diagnostics,
+        target_snapshot_count: HISTORY_TARGET_SNAPSHOT_COUNT,
         &mut state.cpu_temperatures_available,
         !host.cpu_temperatures.is_empty(),
         "sensor-cpu-temperatures",
