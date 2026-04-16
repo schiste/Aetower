@@ -136,6 +136,7 @@ dependencies = [
  "aetower-model",
  "aetower-persistence",
  "dirs",
+ "libc",
  "serde",
  "serde_json",
 ]

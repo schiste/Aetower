@@ -3,6 +3,7 @@ use std::{
     env, fs,
     io::{Read, Write},
     net::Shutdown,
+    os::fd::AsRawFd,
     os::unix::{
         fs::{FileTypeExt, PermissionsExt},
         net::{UnixListener, UnixStream},
@@ -30,6 +31,7 @@ const INITIAL_SNAPSHOT_POLL: Duration = Duration::from_millis(100);
 const SOCKET_DIR_MODE: u32 = 0o700;
 const SOCKET_FILE_MODE: u32 = 0o600;
 const MCP_READ_TIMEOUT: Duration = Duration::from_millis(250);
+const PROXY_POLL_TIMEOUT: Duration = Duration::from_millis(250);
 const MAX_INLINE_TEXT_BYTES: usize = 8 * 1024;
 const DEFAULT_PROFILE_DURATION_SECONDS: u64 = 3;
 const MAX_PROFILE_DURATION_SECONDS: u64 = 15;
@@ -666,9 +668,10 @@ fn reap_finished_client_threads(handles: &mut Vec<thread::JoinHandle<()>>) {
 }
 
 pub fn proxy_stdio_to_socket(socket_path: impl AsRef<Path>) -> Result<(), String> {
-    proxy_streams_to_socket(std::io::stdin(), std::io::stdout(), socket_path)
+    proxy_stdio_to_socket_polling(socket_path)
 }
 
+#[cfg(test)]
 fn proxy_streams_to_socket<R, W>(
     mut input: R,
     output: W,
@@ -736,6 +739,144 @@ where
         .join()
         .map_err(|_| "stdout proxy thread panicked".to_string())??;
     Ok(())
+}
+
+fn proxy_stdio_to_socket_polling(socket_path: impl AsRef<Path>) -> Result<(), String> {
+    let socket_path = socket_path.as_ref();
+    let mut stream = UnixStream::connect(socket_path)
+        .map_err(|error| format!("connect MCP socket {}: {error}", socket_path.display()))?;
+    stream
+        .set_nonblocking(true)
+        .map_err(|error| format!("set MCP socket nonblocking: {error}"))?;
+
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+
+    let stdin_fd = input.as_raw_fd();
+    let socket_fd = stream.as_raw_fd();
+    let original_parent_pid = current_parent_pid();
+    let mut stdin_open = true;
+    let mut write_half_open = true;
+    let mut stdin_buffer = [0u8; 8192];
+    let mut socket_buffer = [0u8; 8192];
+
+    loop {
+        if parent_exited(original_parent_pid) {
+            break;
+        }
+
+        let mut fds = [
+            libc::pollfd {
+                fd: stdin_fd,
+                events: if stdin_open { libc::POLLIN } else { 0 },
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: socket_fd,
+                events: libc::POLLIN | libc::POLLHUP | libc::POLLERR,
+                revents: 0,
+            },
+        ];
+
+        let poll_result = unsafe {
+            libc::poll(
+                fds.as_mut_ptr(),
+                fds.len() as libc::nfds_t,
+                PROXY_POLL_TIMEOUT.as_millis() as i32,
+            )
+        };
+        if poll_result < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(format!("poll MCP proxy fds: {error}"));
+        }
+        if poll_result == 0 {
+            continue;
+        }
+
+        if stdin_open && (fds[0].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0) {
+            match input.read(&mut stdin_buffer) {
+                Ok(0) => {
+                    stdin_open = false;
+                    if write_half_open {
+                        match stream.shutdown(Shutdown::Write) {
+                            Ok(()) => {
+                                write_half_open = false;
+                            }
+                            Err(ref err) if is_graceful_peer_close(err) => {
+                                write_half_open = false;
+                            }
+                            Err(err) => {
+                                return Err(format!("shutdown MCP socket write-half: {err}"));
+                            }
+                        }
+                    }
+                }
+                Ok(bytes_read) => {
+                    let mut written = 0;
+                    while written < bytes_read {
+                        match stream.write(&stdin_buffer[written..bytes_read]) {
+                            Ok(0) => break,
+                            Ok(count) => written += count,
+                            Err(ref err)
+                                if err.kind() == std::io::ErrorKind::WouldBlock
+                                    || err.kind() == std::io::ErrorKind::Interrupted =>
+                            {
+                                thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(ref err) if is_graceful_peer_close(err) => return Ok(()),
+                            Err(err) => {
+                                return Err(format!("write stdin payload to MCP socket: {err}"));
+                            }
+                        }
+                    }
+                }
+                Err(ref err)
+                    if err.kind() == std::io::ErrorKind::WouldBlock
+                        || err.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(err) => return Err(format!("read stdin for MCP proxy: {err}")),
+            }
+        }
+
+        if fds[1].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+            loop {
+                match stream.read(&mut socket_buffer) {
+                    Ok(0) => return Ok(()),
+                    Ok(bytes_read) => {
+                        output
+                            .write_all(&socket_buffer[..bytes_read])
+                            .map_err(|err| format!("write MCP socket to stdout: {err}"))?;
+                        output
+                            .flush()
+                            .map_err(|err| format!("flush stdout: {err}"))?;
+                    }
+                    Err(ref err)
+                        if err.kind() == std::io::ErrorKind::WouldBlock
+                            || err.kind() == std::io::ErrorKind::Interrupted =>
+                    {
+                        break;
+                    }
+                    Err(ref err) if is_graceful_peer_close(err) => return Ok(()),
+                    Err(err) => return Err(format!("read MCP socket: {err}")),
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn current_parent_pid() -> libc::pid_t {
+    unsafe { libc::getppid() }
+}
+
+fn parent_exited(original_parent_pid: libc::pid_t) -> bool {
+    let current = current_parent_pid();
+    current <= 1 || current != original_parent_pid
 }
 
 fn is_graceful_peer_close(error: &std::io::Error) -> bool {
