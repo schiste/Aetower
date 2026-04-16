@@ -61,6 +61,9 @@ const DIAGNOSTICS_WARN_WARNING: u32 = 200;
 const DIAGNOSTICS_WARN_CRITICAL: u32 = 800;
 const DIAGNOSTICS_ERROR_WARNING: u32 = 10;
 const DIAGNOSTICS_ERROR_CRITICAL: u32 = 50;
+const MCP_HELPER_WARNING_COUNT: u32 = 4;
+const MCP_HELPER_CRITICAL_COUNT: u32 = 8;
+const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MessageFraming {
@@ -1723,6 +1726,10 @@ impl AetowerMcpServer {
             .data_source
             .diagnostics_overview()
             .map_err(tool_error)?;
+        let runtime = self
+            .data_source
+            .latest_runtime_lag_metrics()
+            .map_err(tool_error)?;
         let history = self
             .data_source
             .history_range_summary(
@@ -1732,7 +1739,8 @@ impl AetowerMcpServer {
                 snapshot.captured_at_millis,
             )
             .map_err(tool_error)?;
-        let recommendations = build_recommendations(&snapshot, &diagnostics, &history, args.limit);
+        let recommendations =
+            build_recommendations(&snapshot, &diagnostics, &runtime, &history, args.limit);
         tool_json(Response {
             captured_at_millis: snapshot.captured_at_millis,
             recommendations,
@@ -3992,6 +4000,7 @@ fn build_support_bundle_manifest(
 fn build_recommendations(
     snapshot: &SystemSnapshot,
     diagnostics: &DiagnosticsOverview,
+    runtime: &RuntimeLagMetrics,
     history: &HistorySummaryResponse,
     limit: usize,
 ) -> Vec<RecommendationItem> {
@@ -4061,6 +4070,22 @@ fn build_recommendations(
             expected_benefit: "Cleaner operator signal and less noisy support output.".to_owned(),
         });
     }
+    if mcp_helper_severity(runtime) != SeverityBand::Info {
+        recommendations.push(RecommendationItem {
+            severity: mcp_helper_severity(runtime),
+            title: "Clean up stale MCP helper processes".to_owned(),
+            detail: format!(
+                "{} helper processes are currently visible, {} of them older than {} minutes.",
+                runtime.mcp_helper_count,
+                runtime.stale_mcp_helper_count,
+                MCP_HELPER_STALE_MILLIS / 60_000
+            ),
+            entity_id: None,
+            source: "mcp".to_owned(),
+            expected_benefit: "Lower idle overhead and more trustworthy local-MCP session health."
+                .to_owned(),
+        });
+    }
     for entity in top_entities(snapshot, limit) {
         for recommendation in entity.recommendations.iter().take(2) {
             recommendations.push(RecommendationItem {
@@ -4105,12 +4130,14 @@ fn build_session_health_checks(
                 runtime.engine_tick_millis, runtime.target_tick_millis
             ),
             detail: format!(
-                "Collect {:.1} ms, history {:.1} ms, persist {:.1} ms, history queue {}, diagnostics queue {}.",
+                "Collect {:.1} ms, history {:.1} ms, persist {:.1} ms, history queue {}, diagnostics queue {}, MCP helpers {} ({} stale).",
                 runtime.collect_millis,
                 runtime.history_millis,
                 runtime.persist_millis,
                 runtime.history_queue_depth,
-                runtime.diagnostics_queue_depth
+                runtime.diagnostics_queue_depth,
+                runtime.mcp_helper_count,
+                runtime.stale_mcp_helper_count
             ),
         },
         SessionHealthCheck {
@@ -4180,12 +4207,26 @@ fn build_session_health_checks(
         },
         SessionHealthCheck {
             key: "mcp".to_owned(),
-            severity: SeverityBand::Info,
-            summary: "The local in-app MCP server is serving the current app-owned engine state."
-                .to_owned(),
-            detail:
+            severity: mcp_helper_severity(runtime),
+            summary: if runtime.mcp_helper_count == 0 {
+                "The local in-app MCP server is serving the current app-owned engine state."
+                    .to_owned()
+            } else {
+                format!(
+                    "The local in-app MCP server is serving current engine state with {} helper processes ({} stale).",
+                    runtime.mcp_helper_count, runtime.stale_mcp_helper_count
+                )
+            },
+            detail: if runtime.stale_mcp_helper_count > 0 {
+                format!(
+                    "{} helper processes have been alive for at least {} minutes; helpers should exit when clients disconnect.",
+                    runtime.stale_mcp_helper_count,
+                    MCP_HELPER_STALE_MILLIS / 60_000
+                )
+            } else {
                 "Agents should consume these tools instead of starting a second collector process."
-                    .to_owned(),
+                    .to_owned()
+            },
         },
     ]
 }
@@ -5268,6 +5309,16 @@ fn runtime_severity(runtime: &RuntimeLagMetrics) -> SeverityBand {
     } else if runtime.target_tick_millis > 0.0
         && runtime.engine_tick_millis >= runtime.target_tick_millis * 0.35
     {
+        SeverityBand::Warning
+    } else {
+        SeverityBand::Info
+    }
+}
+
+fn mcp_helper_severity(runtime: &RuntimeLagMetrics) -> SeverityBand {
+    if runtime.stale_mcp_helper_count > 0 || runtime.mcp_helper_count >= MCP_HELPER_CRITICAL_COUNT {
+        SeverityBand::Critical
+    } else if runtime.mcp_helper_count >= MCP_HELPER_WARNING_COUNT {
         SeverityBand::Warning
     } else {
         SeverityBand::Info

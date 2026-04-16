@@ -314,6 +314,12 @@ pub struct RuntimeLagMetrics {
     #[serde(default)]
     pub diagnostics_queue_depth: u32,
     #[serde(default)]
+    pub mcp_helper_count: u32,
+    #[serde(default)]
+    pub stale_mcp_helper_count: u32,
+    #[serde(default)]
+    pub oldest_mcp_helper_age_millis: u64,
+    #[serde(default)]
     pub bridge_fetch_millis: f32,
     #[serde(default)]
     pub ui_refresh_millis: f32,

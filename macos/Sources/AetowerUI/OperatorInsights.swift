@@ -308,9 +308,11 @@ func buildSelfHealthChecks(
             title: "Runtime",
             value: operatorRuntimeSeverity(runtime).label,
             detail: String(
-                format: "tick %.1f ms vs target %.1f ms",
+                format: "tick %.1f ms vs target %.1f ms · helpers %u (%u stale)",
                 runtime.engineTickMillis,
-                runtime.targetTickMillis
+                runtime.targetTickMillis,
+                runtime.mcpHelperCount,
+                runtime.staleMcpHelperCount
             ),
             severity: operatorRuntimeSeverity(runtime)
         ),
@@ -333,9 +335,9 @@ func buildSelfHealthChecks(
             title: "Local MCP",
             value: localMcpServerHealthy ? "Live" : "Down",
             detail: localMcpServerHealthy
-                ? "The in-app MCP socket is available for local agents."
+                ? mcpHelperHealthDetail(runtime)
                 : "The in-app MCP socket is not currently reachable.",
-            severity: localMcpServerHealthy ? .info : .warning
+            severity: localMcpServerHealthy ? mcpHelperHealthSeverity(runtime) : .warning
         ),
     ]
 
@@ -545,13 +547,39 @@ private func operatorDiagnosticsSeverity(_ diagnostics: DiagnosticsOverview) -> 
 }
 
 private func operatorRuntimeSeverity(_ runtime: RuntimeLagMetrics) -> OperatorSeverity {
-    if runtime.engineTickMillis >= 100 || runtime.snapshotToRenderMillis >= 120 {
+    if runtime.engineTickMillis >= 100
+        || runtime.snapshotToRenderMillis >= 120
+        || runtime.staleMcpHelperCount > 0
+    {
         return .critical
     }
-    if runtime.engineTickMillis >= 40 || runtime.snapshotToRenderMillis >= 60 {
+    if runtime.engineTickMillis >= 40
+        || runtime.snapshotToRenderMillis >= 60
+        || runtime.mcpHelperCount >= 4
+    {
         return .warning
     }
     return .info
+}
+
+private func mcpHelperHealthSeverity(_ runtime: RuntimeLagMetrics) -> OperatorSeverity {
+    if runtime.staleMcpHelperCount > 0 || runtime.mcpHelperCount >= 8 {
+        return .critical
+    }
+    if runtime.mcpHelperCount >= 4 {
+        return .warning
+    }
+    return .info
+}
+
+private func mcpHelperHealthDetail(_ runtime: RuntimeLagMetrics) -> String {
+    if runtime.staleMcpHelperCount > 0 {
+        return "\(runtime.staleMcpHelperCount) helper process(es) have been alive for more than 15 minutes. Helpers should exit when clients disconnect."
+    }
+    if runtime.mcpHelperCount > 0 {
+        return "\(runtime.mcpHelperCount) helper process(es) are currently attached to local MCP clients."
+    }
+    return "The in-app MCP socket is available for local agents."
 }
 
 // operatorFormatBytes/Rate/Wakeups removed — use the shared

@@ -5049,6 +5049,9 @@ public struct RuntimeLagMetrics {
     public var targetTickMillis: Float
     public var historyQueueDepth: UInt32
     public var diagnosticsQueueDepth: UInt32
+    public var mcpHelperCount: UInt32
+    public var staleMcpHelperCount: UInt32
+    public var oldestMcpHelperAgeMillis: UInt64
     public var bridgeFetchMillis: Float
     public var uiRefreshMillis: Float
     public var snapshotToUiMillis: Float
@@ -5063,7 +5066,7 @@ public struct RuntimeLagMetrics {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(updatedAtMillis: UInt64, engineTickMillis: Float, collectMillis: Float, identityMillis: Float, attributionMillis: Float, frictionMillis: Float, enrichMillis: Float, historyMillis: Float, persistMillis: Float, gpuSampleMillis: Float, targetTickMillis: Float, historyQueueDepth: UInt32, diagnosticsQueueDepth: UInt32, bridgeFetchMillis: Float, uiRefreshMillis: Float, snapshotToUiMillis: Float, snapshotToRenderMillis: Float, renderCommitMillis: Float, displayFrameIntervalMillis: Float, displayRefreshHz: Float, displayDroppedFrames: UInt64, inputAvgLatencyMillis: Float, inputMaxLatencyMillis: Float, inputSampleCount: UInt32) {
+    public init(updatedAtMillis: UInt64, engineTickMillis: Float, collectMillis: Float, identityMillis: Float, attributionMillis: Float, frictionMillis: Float, enrichMillis: Float, historyMillis: Float, persistMillis: Float, gpuSampleMillis: Float, targetTickMillis: Float, historyQueueDepth: UInt32, diagnosticsQueueDepth: UInt32, mcpHelperCount: UInt32, staleMcpHelperCount: UInt32, oldestMcpHelperAgeMillis: UInt64, bridgeFetchMillis: Float, uiRefreshMillis: Float, snapshotToUiMillis: Float, snapshotToRenderMillis: Float, renderCommitMillis: Float, displayFrameIntervalMillis: Float, displayRefreshHz: Float, displayDroppedFrames: UInt64, inputAvgLatencyMillis: Float, inputMaxLatencyMillis: Float, inputSampleCount: UInt32) {
         self.updatedAtMillis = updatedAtMillis
         self.engineTickMillis = engineTickMillis
         self.collectMillis = collectMillis
@@ -5077,6 +5080,9 @@ public struct RuntimeLagMetrics {
         self.targetTickMillis = targetTickMillis
         self.historyQueueDepth = historyQueueDepth
         self.diagnosticsQueueDepth = diagnosticsQueueDepth
+        self.mcpHelperCount = mcpHelperCount
+        self.staleMcpHelperCount = staleMcpHelperCount
+        self.oldestMcpHelperAgeMillis = oldestMcpHelperAgeMillis
         self.bridgeFetchMillis = bridgeFetchMillis
         self.uiRefreshMillis = uiRefreshMillis
         self.snapshotToUiMillis = snapshotToUiMillis
@@ -5137,6 +5143,15 @@ extension RuntimeLagMetrics: Equatable, Hashable {
         if lhs.diagnosticsQueueDepth != rhs.diagnosticsQueueDepth {
             return false
         }
+        if lhs.mcpHelperCount != rhs.mcpHelperCount {
+            return false
+        }
+        if lhs.staleMcpHelperCount != rhs.staleMcpHelperCount {
+            return false
+        }
+        if lhs.oldestMcpHelperAgeMillis != rhs.oldestMcpHelperAgeMillis {
+            return false
+        }
         if lhs.bridgeFetchMillis != rhs.bridgeFetchMillis {
             return false
         }
@@ -5187,6 +5202,9 @@ extension RuntimeLagMetrics: Equatable, Hashable {
         hasher.combine(targetTickMillis)
         hasher.combine(historyQueueDepth)
         hasher.combine(diagnosticsQueueDepth)
+        hasher.combine(mcpHelperCount)
+        hasher.combine(staleMcpHelperCount)
+        hasher.combine(oldestMcpHelperAgeMillis)
         hasher.combine(bridgeFetchMillis)
         hasher.combine(uiRefreshMillis)
         hasher.combine(snapshotToUiMillis)
@@ -5223,6 +5241,9 @@ public struct FfiConverterTypeRuntimeLagMetrics: FfiConverterRustBuffer {
                 targetTickMillis: FfiConverterFloat.read(from: &buf), 
                 historyQueueDepth: FfiConverterUInt32.read(from: &buf), 
                 diagnosticsQueueDepth: FfiConverterUInt32.read(from: &buf), 
+                mcpHelperCount: FfiConverterUInt32.read(from: &buf), 
+                staleMcpHelperCount: FfiConverterUInt32.read(from: &buf), 
+                oldestMcpHelperAgeMillis: FfiConverterUInt64.read(from: &buf), 
                 bridgeFetchMillis: FfiConverterFloat.read(from: &buf), 
                 uiRefreshMillis: FfiConverterFloat.read(from: &buf), 
                 snapshotToUiMillis: FfiConverterFloat.read(from: &buf), 
@@ -5251,6 +5272,9 @@ public struct FfiConverterTypeRuntimeLagMetrics: FfiConverterRustBuffer {
         FfiConverterFloat.write(value.targetTickMillis, into: &buf)
         FfiConverterUInt32.write(value.historyQueueDepth, into: &buf)
         FfiConverterUInt32.write(value.diagnosticsQueueDepth, into: &buf)
+        FfiConverterUInt32.write(value.mcpHelperCount, into: &buf)
+        FfiConverterUInt32.write(value.staleMcpHelperCount, into: &buf)
+        FfiConverterUInt64.write(value.oldestMcpHelperAgeMillis, into: &buf)
         FfiConverterFloat.write(value.bridgeFetchMillis, into: &buf)
         FfiConverterFloat.write(value.uiRefreshMillis, into: &buf)
         FfiConverterFloat.write(value.snapshotToUiMillis, into: &buf)

@@ -41,6 +41,7 @@ const HISTORY_SOFT_MAX_SNAPSHOT_COUNT: u64 = 3_000;
 const HISTORY_HARD_MAX_SNAPSHOT_COUNT: u64 = 5_000;
 const HISTORY_AGGRESSIVE_QUARANTINE_ROWS: u64 = 64;
 const HISTORY_HARD_MAX_QUARANTINE_ROWS: u64 = 128;
+const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
 const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 12 * 60 * 60 * 1000;
 const SYSTEM_MARKER_PREDICATE: &str = "(eventMessage CONTAINS[c] \"Previous shutdown cause\") OR (eventMessage CONTAINS[c] \"Entering Sleep state\") OR (eventMessage CONTAINS[c] \"Wake reason\") OR (eventMessage CONTAINS[c] \"Wake from\") OR (eventMessage CONTAINS[c] \"panic(cpu\") OR (eventMessage CONTAINS[c] \"userspace watchdog timeout\") OR (eventMessage CONTAINS[c] \"thermal pressure\") OR (eventMessage CONTAINS[c] \"low power mode\")";
 const HOST_INCIDENT_PERSIST_INTERVAL_MILLIS: u64 = 15 * 60 * 1000;
@@ -350,6 +351,8 @@ impl Engine {
                 let collect_started = Instant::now();
                 let raw = collector.collect();
                 let collect_millis = collect_started.elapsed().as_secs_f64() * 1000.0;
+                let (mcp_helper_count, stale_mcp_helper_count, oldest_mcp_helper_age_millis) =
+                    summarize_mcp_helpers(&raw.processes, captured_at_millis);
                 let (frontmost_app_state, capabilities, runtime_lag_metrics) = {
                     let mut guard = state.lock();
                     refresh_adapter_capabilities(&mut guard, &adapters, captured_at_millis);
@@ -541,6 +544,9 @@ impl Engine {
                     history_queue_depth.min(u32::MAX as u64) as u32;
                 runtime_lag_metrics.diagnostics_queue_depth =
                     diagnostics.pending_writes().min(u32::MAX as u64) as u32;
+                runtime_lag_metrics.mcp_helper_count = mcp_helper_count;
+                runtime_lag_metrics.stale_mcp_helper_count = stale_mcp_helper_count;
+                runtime_lag_metrics.oldest_mcp_helper_age_millis = oldest_mcp_helper_age_millis;
                 let sequence = guard.latest_snapshot.sequence;
                 let entity_count = guard.latest_snapshot.entities.len();
                 let target_tick = runtime_config
@@ -619,6 +625,8 @@ impl Engine {
                             "diagnostics_queue_depth",
                             diagnostics.pending_writes().min(u32::MAX as u64),
                         )
+                        .field("mcp_helper_count", mcp_helper_count)
+                        .field("stale_mcp_helper_count", stale_mcp_helper_count)
                         .build(),
                     );
                     guard.last_runtime_heartbeat_millis = captured_at_millis;
@@ -1113,6 +1121,34 @@ impl Default for Engine {
     }
 }
 
+fn summarize_mcp_helpers(
+    processes: &[crate::collector::RawProcessSample],
+    captured_at_millis: u64,
+) -> (u32, u32, u64) {
+    let mut total = 0u32;
+    let mut stale = 0u32;
+    let mut oldest_age = 0u64;
+
+    for process in processes {
+        let is_helper = process.name == "aetower-mcp"
+            || process
+                .exe
+                .as_deref()
+                .is_some_and(|exe| exe.ends_with("/aetower-mcp"));
+        if !is_helper {
+            continue;
+        }
+        total = total.saturating_add(1);
+        let age = captured_at_millis.saturating_sub(process.start_time_millis);
+        oldest_age = oldest_age.max(age);
+        if age >= MCP_HELPER_STALE_MILLIS {
+            stale = stale.saturating_add(1);
+        }
+    }
+
+    (total, stale, oldest_age)
+}
+
 fn default_history_retention_policy() -> aetower_persistence::HistoryRetentionPolicy {
     aetower_persistence::HistoryRetentionPolicy {
         max_age_millis: DEFAULT_HISTORY_RETENTION_MILLIS,
@@ -1120,6 +1156,7 @@ fn default_history_retention_policy() -> aetower_persistence::HistoryRetentionPo
         soft_max_store_bytes: HISTORY_SOFT_MAX_BYTES,
         hard_max_store_bytes: HISTORY_HARD_MAX_BYTES,
         max_wal_bytes: HISTORY_MAX_WAL_BYTES,
+        target_snapshot_count: HISTORY_TARGET_SNAPSHOT_COUNT,
         soft_max_snapshot_count: HISTORY_SOFT_MAX_SNAPSHOT_COUNT,
         hard_max_snapshot_count: HISTORY_HARD_MAX_SNAPSHOT_COUNT,
         aggressive_quarantine_rows: HISTORY_AGGRESSIVE_QUARANTINE_ROWS,
@@ -1156,7 +1193,6 @@ fn emit_sensor_availability_transitions(
     );
     check_capability_transition(
         diagnostics,
-        target_snapshot_count: HISTORY_TARGET_SNAPSHOT_COUNT,
         &mut state.cpu_temperatures_available,
         !host.cpu_temperatures.is_empty(),
         "sensor-cpu-temperatures",
@@ -1784,5 +1820,47 @@ mod tests {
                 .iter()
                 .any(|incident| incident.key == "memory-pressure")
         );
+    }
+
+    #[test]
+    fn summarizes_mcp_helpers_and_flags_stale_ones() {
+        let processes = vec![
+            crate::collector::RawProcessSample {
+                pid: 11,
+                parent_pid: Some(1),
+                start_time_millis: 1_000,
+                name: "aetower-mcp".to_owned(),
+                exe: Some("/tmp/aetower-mcp".to_owned()),
+                cmd: Vec::new(),
+                cpu_percent: 0.0,
+                memory_bytes: 0,
+                disk_read_bytes: 0,
+                disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
+                energy_nj_per_s: 0.0,
+                cwd: None,
+                user: None,
+            },
+            crate::collector::RawProcessSample {
+                pid: 12,
+                parent_pid: Some(1),
+                start_time_millis: 800_000,
+                name: "aetower-mcp".to_owned(),
+                exe: Some("/tmp/aetower-mcp".to_owned()),
+                cmd: Vec::new(),
+                cpu_percent: 0.0,
+                memory_bytes: 0,
+                disk_read_bytes: 0,
+                disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
+                energy_nj_per_s: 0.0,
+                cwd: None,
+                user: None,
+            },
+        ];
+        let (total, stale, oldest_age) = summarize_mcp_helpers(&processes, 1_000_000);
+        assert_eq!(total, 2);
+        assert_eq!(stale, 1);
+        assert_eq!(oldest_age, 999_000);
     }
 }
