@@ -5,7 +5,7 @@ use aetower_model::{
     NetworkInterfaceSnapshot, ThermalState,
 };
 use serde::{Deserialize, Serialize};
-use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System, Users};
+use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, Users};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CollectorConfig {
@@ -109,6 +109,8 @@ struct NetworkInterfaceIdentitySample {
 
 const USER_DIRECTORY_INITIAL_REFRESH_TICKS: u8 = 10;
 const USER_DIRECTORY_REFRESH_INTERVAL_TICKS: u8 = 120;
+const PROCESS_DISCOVERY_INTERVAL_TICKS: u8 = 30;
+const PROCESS_MEMORY_REFRESH_INTERVAL_TICKS: u8 = 5;
 /// Fixed collector cadence in seconds — the engine drives `Collector::collect()`
 /// on this interval, so deltas reported by `sysinfo` can be divided by it to
 /// convert bytes-per-tick into bytes-per-second.
@@ -199,21 +201,31 @@ impl Collector {
         self.system.refresh_cpu_all();
         self.system.refresh_memory();
         self.networks.refresh(true);
-        // Full PID scan every 10th tick (~20s); selective refresh in between.
-        let full_scan =
-            self.config.full_collection || self.process_metadata_tick.is_multiple_of(10);
-        if full_scan || self.known_pids.is_empty() {
+        // Separate process discovery from memory refresh. Enumerating the full
+        // process table is the expensive step, so do it on a much slower
+        // cadence while still refreshing memory on known PIDs regularly.
+        let discovery_scan = self.config.full_collection
+            || self.known_pids.is_empty()
+            || self
+                .process_metadata_tick
+                .is_multiple_of(PROCESS_DISCOVERY_INTERVAL_TICKS);
+        let refresh_memory = self.config.full_collection
+            || discovery_scan
+            || self
+                .process_metadata_tick
+                .is_multiple_of(PROCESS_MEMORY_REFRESH_INTERVAL_TICKS);
+        if discovery_scan {
             self.system.refresh_processes_specifics(
                 ProcessesToUpdate::All,
                 true,
-                process_refresh_kind(full_scan || self.known_pids.is_empty()),
+                process_refresh_kind(true, true),
             );
             self.known_pids = self.system.processes().keys().copied().collect();
         } else {
             self.system.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&self.known_pids),
                 false,
-                process_refresh_kind(false),
+                process_refresh_kind(false, refresh_memory),
             );
         }
         self.process_metadata_tick = self.process_metadata_tick.wrapping_add(1);
@@ -270,11 +282,11 @@ impl Collector {
         self.first_network_tick = false;
 
         let metadata_refresh =
-            self.config.full_collection || self.process_metadata_tick == 1 || full_scan;
+            self.config.full_collection || self.process_metadata_tick == 1 || discovery_scan;
         let sample_wakeups =
             self.config.full_collection || self.wakeups_sample_tick.is_multiple_of(3);
         self.wakeups_sample_tick = self.wakeups_sample_tick.wrapping_add(1);
-        let mut user_directory_refreshed = self.should_refresh_user_directory(full_scan);
+        let mut user_directory_refreshed = self.should_refresh_user_directory(discovery_scan);
         if user_directory_refreshed {
             self.users.refresh();
         }
@@ -573,12 +585,18 @@ impl Collector {
     }
 }
 
-fn process_refresh_kind(full_scan: bool) -> ProcessRefreshKind {
-    if full_scan {
-        ProcessRefreshKind::everything()
-    } else {
-        ProcessRefreshKind::nothing().with_cpu().with_disk_usage()
+fn process_refresh_kind(discovery_scan: bool, refresh_memory: bool) -> ProcessRefreshKind {
+    let mut kind = ProcessRefreshKind::nothing().with_cpu().with_disk_usage();
+    if refresh_memory {
+        kind = kind.with_memory();
     }
+    if discovery_scan {
+        kind = kind
+            .with_user(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet)
+            .with_exe(UpdateKind::OnlyIfNotSet);
+    }
+    kind
 }
 
 fn path_to_string(path: &std::path::Path) -> Option<String> {
@@ -2164,7 +2182,7 @@ mod top_level_tests {
     use super::{
         NetworkInterfaceIdentitySample, build_network_interface_snapshots, process_refresh_kind,
     };
-    use sysinfo::{Networks, ProcessRefreshKind, UpdateKind};
+    use sysinfo::{Networks, UpdateKind};
 
     /// Regression: the first `collect()` call on a freshly-constructed
     /// `Collector` must not report non-zero per-interface bps. Before
@@ -2228,14 +2246,28 @@ mod top_level_tests {
     }
 
     #[test]
-    fn full_scan_requests_full_process_refresh() {
-        let kind = process_refresh_kind(true);
-        assert_eq!(kind, ProcessRefreshKind::everything());
+    fn discovery_scan_refreshes_memory_and_identity_once() {
+        let kind = process_refresh_kind(true, true);
+        assert!(kind.cpu());
+        assert!(kind.disk_usage());
+        assert!(kind.memory());
+        assert_eq!(kind.user(), UpdateKind::OnlyIfNotSet);
+        assert_eq!(kind.cmd(), UpdateKind::OnlyIfNotSet);
+        assert_eq!(kind.exe(), UpdateKind::OnlyIfNotSet);
     }
 
     #[test]
-    fn selective_scan_stays_on_cpu_and_disk_only() {
-        let kind = process_refresh_kind(false);
+    fn selective_scan_can_refresh_memory_without_identity() {
+        let kind = process_refresh_kind(false, true);
+        assert!(kind.cpu());
+        assert!(kind.disk_usage());
+        assert!(kind.memory());
+        assert_eq!(kind.user(), UpdateKind::Never);
+    }
+
+    #[test]
+    fn selective_scan_without_memory_stays_on_cpu_and_disk_only() {
+        let kind = process_refresh_kind(false, false);
         assert!(kind.cpu());
         assert!(kind.disk_usage());
         assert!(!kind.memory());
