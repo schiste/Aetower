@@ -23,6 +23,8 @@ public final class AppState {
     public private(set) var historyLastLoadDurationMillis = 0.0
     private(set) var historySnapshotDiff: SnapshotDiffReportModel?
     private(set) var historySnapshotDiffError: String?
+    public private(set) var historyCompareBeforeMillis: UInt64?
+    public private(set) var historyCompareAfterMillis: UInt64?
     public private(set) var monitorFocusEntityID: String?
     public private(set) var diagnosticsEvents: [DiagnosticsEvent] = []
     public private(set) var diagnosticsRecentWarningCount = 0
@@ -392,6 +394,8 @@ public final class AppState {
         historyLastLoadDurationMillis = 0
         historySnapshotDiff = nil
         historySnapshotDiffError = nil
+        historyCompareBeforeMillis = nil
+        historyCompareAfterMillis = nil
         loadDiagnostics(force: true)
     }
 
@@ -910,21 +914,7 @@ public final class AppState {
             } else {
                 pageResult = HistoryPageLoadResult(snapshots: [], errorMessage: nil)
             }
-            let snapshots = pageResult.snapshots
-            let diffResult: JsonQueryResult
-            if let oldestMillis = snapshots.map(\.capturedAtMillis).min(),
-               let newestMillis = snapshots.map(\.capturedAtMillis).max(),
-               oldestMillis != newestMillis
-            {
-                diffResult = bridge.diffSnapshotsJSON(
-                    beforeMillis: oldestMillis,
-                    afterMillis: newestMillis,
-                    entityIds: [],
-                    limit: 12
-                )
-            } else {
-                diffResult = JsonQueryResult(json: nil, errorMessage: nil)
-            }
+            let snapshots = pageResult.snapshots.sorted { $0.capturedAtMillis < $1.capturedAtMillis }
             await MainActor.run {
                 guard let self else { return }
                 let durationMillis = (CFAbsoluteTimeGetCurrent() - loadStarted) * 1000.0
@@ -940,11 +930,8 @@ public final class AppState {
                     rangeSummary: summary,
                     loadedCount: snapshots.count
                 )
-                self.historySnapshotDiff = self.decodeJsonQueryResult(diffResult, as: SnapshotDiffReportModel.self)
-                self.historySnapshotDiffError = self.jsonQueryErrorMessage(
-                    diffResult,
-                    fallback: snapshots.count >= 2 ? "Persisted diff analysis could not be prepared." : nil
-                )
+                self.resetHistoryComparisonIfNeeded()
+                self.refreshHistorySnapshotDiff()
                 self.historyLoadStatus = self.historyStatusMessage(
                     summary: summary,
                     loadedCount: snapshots.count,
@@ -1009,12 +996,15 @@ public final class AppState {
                 let existing = Set(self.historySnapshots.map(\.sequence))
                 let uniqueOlder = olderSnapshots.filter { !existing.contains($0.sequence) }
                 self.historySnapshots.insert(contentsOf: uniqueOlder, at: 0)
+                self.historySnapshots.sort { $0.capturedAtMillis < $1.capturedAtMillis }
                 self.historyLastLoadDurationMillis = durationMillis
                 let rangeCount = self.historyRangeSummary?.rangeCount ?? 0
                 let appendedUniqueSamples = !uniqueOlder.isEmpty
                 self.historyHasMore = UInt64(self.historySnapshots.count) < rangeCount && appendedUniqueSamples
                 self.historyIsLoadingMore = false
                 self.historyLoadError = nil
+                self.resetHistoryComparisonIfNeeded()
+                self.refreshHistorySnapshotDiff()
                 if olderSnapshots.isEmpty {
                     self.historyLoadStatus = "Reached the beginning of readable persisted history for this range."
                 } else if !appendedUniqueSamples {
@@ -1030,6 +1020,54 @@ public final class AppState {
                 }
             }
         }
+    }
+
+    public func setHistoryComparison(beforeMillis: UInt64?, afterMillis: UInt64?) {
+        historyCompareBeforeMillis = beforeMillis
+        historyCompareAfterMillis = afterMillis
+        refreshHistorySnapshotDiff()
+    }
+
+    private func resetHistoryComparisonIfNeeded() {
+        let available = Set(historySnapshots.map(\.capturedAtMillis))
+        if historyCompareBeforeMillis == nil || !available.contains(historyCompareBeforeMillis ?? 0) {
+            historyCompareBeforeMillis = historySnapshots.first?.capturedAtMillis
+        }
+        if historyCompareAfterMillis == nil || !available.contains(historyCompareAfterMillis ?? 0) {
+            historyCompareAfterMillis = historySnapshots.last?.capturedAtMillis
+        }
+        if let before = historyCompareBeforeMillis,
+           let after = historyCompareAfterMillis,
+           before > after
+        {
+            historyCompareBeforeMillis = after
+            historyCompareAfterMillis = before
+        }
+    }
+
+    private func refreshHistorySnapshotDiff(limit: UInt32 = 12) {
+        guard let beforeMillis = historyCompareBeforeMillis,
+              let afterMillis = historyCompareAfterMillis,
+              beforeMillis != afterMillis
+        else {
+            historySnapshotDiff = nil
+            historySnapshotDiffError = historySnapshots.count >= 2
+                ? "Select two different persisted samples to compare."
+                : nil
+            return
+        }
+
+        let result = bridge.diffSnapshotsJSON(
+            beforeMillis: min(beforeMillis, afterMillis),
+            afterMillis: max(beforeMillis, afterMillis),
+            entityIds: [],
+            limit: limit
+        )
+        historySnapshotDiff = decodeJsonQueryResult(result, as: SnapshotDiffReportModel.self)
+        historySnapshotDiffError = jsonQueryErrorMessage(
+            result,
+            fallback: historySnapshots.count >= 2 ? "Persisted diff analysis could not be prepared." : nil
+        )
     }
 
     public func loadDiagnostics(force: Bool = false, limit: UInt32 = 500) {
