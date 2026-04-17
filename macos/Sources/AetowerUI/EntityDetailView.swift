@@ -117,13 +117,23 @@ private struct ComponentCard: View {
 
             LazyVGrid(columns: detailMetricColumns, alignment: .leading, spacing: 12) {
                 TrendMetricCard(
-                    title: "Memory",
+                    title: "Resident",
                     value: formatBytes(component.memoryBytes),
-                    subtitle: "component footprint",
+                    subtitle: "component resident memory",
                     samples: component.memoryBytes > 0 ? [Double(component.memoryBytes), Double(component.memoryBytes)] : [],
                     style: .memory,
                     minHeight: 124
                 )
+                if component.memoryPhysicalFootprintBytes > 0 {
+                    TrendMetricCard(
+                        title: "Footprint",
+                        value: formatBytes(component.memoryPhysicalFootprintBytes),
+                        subtitle: "macOS task footprint",
+                        samples: [Double(component.memoryPhysicalFootprintBytes)],
+                        style: .memory,
+                        minHeight: 124
+                    )
+                }
                 TrendMetricCard(
                     title: "CPU",
                     value: String(format: "%.1f%%", component.cpuPercent),
@@ -321,6 +331,7 @@ public struct EntityDetailView: View {
                 }
                 anomalyExplanation
                 hero
+                memorySemantics
                 if let cost = entity.agentCost {
                     GroupBox("AI Agent Cost") {
                         VStack(alignment: .leading, spacing: 8) {
@@ -369,13 +380,23 @@ public struct EntityDetailView: View {
                     minHeight: 124
                 )
                 TrendMetricCard(
-                    title: "Memory Footprint",
+                    title: "Resident Memory",
                     value: formatBytes(entity.metrics.memoryResidentBytes),
                     subtitle: "\(entity.metrics.processCount) grouped processes · \(trendWindowLabel(sampleCount: entity.trend.memoryResidentBytes.count))",
                     samples: entity.trend.memoryResidentBytes.map(Double.init),
                     style: .memory,
                     minHeight: 124
                 )
+                if entity.metrics.memoryPhysicalFootprintBytes > 0 {
+                    TrendMetricCard(
+                        title: "Physical Footprint",
+                        value: formatBytes(entity.metrics.memoryPhysicalFootprintBytes),
+                        subtitle: "macOS task footprint across grouped processes",
+                        samples: [Double(entity.metrics.memoryPhysicalFootprintBytes)],
+                        style: .memory,
+                        minHeight: 124
+                    )
+                }
                 TrendMetricCard(
                     title: "Disk Activity",
                     value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
@@ -409,6 +430,27 @@ public struct EntityDetailView: View {
                     minHeight: 124
                 )
             }
+        }
+    }
+
+    private var memorySemantics: some View {
+        GroupBox("Memory semantics") {
+            VStack(alignment: .leading, spacing: 8) {
+                LabeledContent("Resident", value: formatBytes(entity.metrics.memoryResidentBytes))
+                if entity.metrics.memoryPhysicalFootprintBytes > 0 {
+                    LabeledContent("Physical footprint", value: formatBytes(entity.metrics.memoryPhysicalFootprintBytes))
+                }
+                Text(
+                    memoryMetricNote(
+                        residentBytes: entity.metrics.memoryResidentBytes,
+                        footprintBytes: entity.metrics.memoryPhysicalFootprintBytes
+                    )
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 4)
         }
     }
 
@@ -795,9 +837,17 @@ public struct EntityDetailView: View {
                 } content: {
                     if let breakdown = state.entityMemoryBreakdowns[entity.entityId] {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Resident \(formatBytes(breakdown.residentBytes)) across \(breakdown.processIds.count) processes.")
+                            Text(
+                                breakdown.physicalFootprintBytes > 0
+                                    ? "Resident \(formatBytes(breakdown.residentBytes)) · footprint \(formatBytes(breakdown.physicalFootprintBytes)) across \(breakdown.processIds.count) processes."
+                                    : "Resident \(formatBytes(breakdown.residentBytes)) across \(breakdown.processIds.count) processes."
+                            )
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            Text(breakdown.memoryMetricNote)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
                             ForEach(breakdown.regions.prefix(6)) { region in
                                 HStack {
                                     Text(region.regionType)

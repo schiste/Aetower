@@ -31,7 +31,7 @@ private enum SortKey: String, CaseIterable, Identifiable {
         switch self {
         case .friction: return "Friction"
         case .cpu: return "CPU"
-        case .memory: return "Memory"
+        case .memory: return "Resident"
         case .disk: return "Disk"
         case .network: return "Network"
         case .energy: return "Energy"
@@ -1214,7 +1214,7 @@ public struct MainListView: View {
         case .cpu:
             return "\(entity.displayName) is currently highest by CPU usage at \(String(format: "%.1f%%", entity.metrics.cpuPercent))."
         case .memory:
-            return "\(entity.displayName) is currently highest by memory load at \(String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes)))."
+            return "\(entity.displayName) is currently highest by resident-memory load at \(String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes)))."
         case .disk:
             return "\(entity.displayName) is currently highest by disk activity at \(formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))."
         case .network:

@@ -98,7 +98,20 @@ func cpuTrendSummary(_ entity: EntitySnapshot) -> String {
 }
 
 func memoryTrendSummary(_ entity: EntitySnapshot) -> String {
-    "\(formatBytes(entity.metrics.memoryResidentBytes)) · \(trendWindowLabel(sampleCount: entity.trend.memoryResidentBytes.count))"
+    if entity.metrics.memoryPhysicalFootprintBytes > 0 {
+        return "resident \(formatBytes(entity.metrics.memoryResidentBytes)) · footprint \(formatBytes(entity.metrics.memoryPhysicalFootprintBytes))"
+    }
+    return "resident \(formatBytes(entity.metrics.memoryResidentBytes)) · \(trendWindowLabel(sampleCount: entity.trend.memoryResidentBytes.count))"
+}
+
+func memoryMetricNote(residentBytes: UInt64, footprintBytes: UInt64) -> String {
+    if footprintBytes > 0 {
+        if footprintBytes == residentBytes {
+            return "Resident and footprint currently align."
+        }
+        return "Resident is the live in-memory set. Footprint follows macOS task footprint and can include graphics and other charged memory."
+    }
+    return "Resident is available. Footprint is unavailable for this sample."
 }
 
 func diskTrendSummary(_ entity: EntitySnapshot) -> String {
