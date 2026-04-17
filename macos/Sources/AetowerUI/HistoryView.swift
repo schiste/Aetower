@@ -337,12 +337,45 @@ public struct HistoryView: View {
                         label: "Persisted diff",
                         confidence: .persisted,
                         overhead: .low,
-                        detail: "Compares the oldest and newest persisted snapshots loaded for the selected range."
+                        detail: "Compares the selected persisted snapshots loaded for the current range."
                     ),
                     trailing: range.detail
                 )
 
+                if historyCompareChoices.count >= 2 {
+                    HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                        LabeledContent("Before") {
+                            Picker("Before", selection: historyCompareBeforeBinding) {
+                                ForEach(historyCompareChoices) { choice in
+                                    Text(choice.label).tag(Optional(choice.millis))
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(minWidth: 180)
+                        }
+
+                        LabeledContent("After") {
+                            Picker("After", selection: historyCompareAfterBinding) {
+                                ForEach(historyCompareChoices) { choice in
+                                    Text(choice.label).tag(Optional(choice.millis))
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(minWidth: 180)
+                        }
+                    }
+                }
+
                 if let diff = state.historySnapshotDiff {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(diff.summary.hostSummary)
+                            .font(.subheadline.weight(.medium))
+                        Text(diff.summary.entitySummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     LazyVGrid(columns: columns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                         HistoryDeltaMetricCard(
                             title: "Friction",
@@ -585,5 +618,52 @@ private func historyEntityDeltaSummary(_ entity: SnapshotEntityDeltaReport) -> S
     let cpu = String(format: "%+.1f%%", entity.cpuPercent.delta)
     let wakeups = String(format: "%+.0f/s", entity.wakeupsPerSecond.delta)
     let memory = formatBytes(UInt64(max(0, entity.memoryBytes.after)))
-    return "friction \(friction) · CPU \(cpu) · wakeups \(wakeups) · now \(memory)"
+    let footprint = entity.memoryPhysicalFootprintBytes.after > 0
+        ? " · footprint \(formatBytes(UInt64(max(0, entity.memoryPhysicalFootprintBytes.after))))"
+        : ""
+    return "friction \(friction) · CPU \(cpu) · wakeups \(wakeups) · resident \(memory)\(footprint)"
+}
+
+private struct HistoryCompareChoice: Identifiable {
+    let millis: UInt64
+    let label: String
+
+    var id: UInt64 { millis }
+}
+
+private extension HistoryView {
+    var historyCompareChoices: [HistoryCompareChoice] {
+        state.historySnapshots
+            .sorted { $0.capturedAtMillis < $1.capturedAtMillis }
+            .map {
+                HistoryCompareChoice(
+                    millis: $0.capturedAtMillis,
+                    label: "\($0.sequence) · \(historyTimestamp($0.capturedAtMillis))"
+                )
+            }
+    }
+
+    var historyCompareBeforeBinding: Binding<UInt64?> {
+        Binding(
+            get: { state.historyCompareBeforeMillis },
+            set: { newValue in
+                state.setHistoryComparison(
+                    beforeMillis: newValue,
+                    afterMillis: state.historyCompareAfterMillis
+                )
+            }
+        )
+    }
+
+    var historyCompareAfterBinding: Binding<UInt64?> {
+        Binding(
+            get: { state.historyCompareAfterMillis },
+            set: { newValue in
+                state.setHistoryComparison(
+                    beforeMillis: state.historyCompareBeforeMillis,
+                    afterMillis: newValue
+                )
+            }
+        )
+    }
 }
