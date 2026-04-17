@@ -186,6 +186,8 @@ struct EntityMemoryBreakdownReportModel: Codable {
     let displayName: String
     let processIds: [UInt32]
     let residentBytes: UInt64
+    let physicalFootprintBytes: UInt64
+    let memoryMetricNote: String
     let regions: [MemoryRegionBreakdownReportModel]
 }
 

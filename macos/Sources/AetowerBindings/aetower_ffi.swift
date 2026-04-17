@@ -1454,6 +1454,7 @@ public func FfiConverterTypeAgentCostSummary_lower(_ value: AgentCostSummary) ->
 public struct AggregateMetrics {
     public var cpuPercent: Float
     public var memoryResidentBytes: UInt64
+    public var memoryPhysicalFootprintBytes: UInt64
     public var diskReadBps: UInt64
     public var diskWriteBps: UInt64
     public var networkReceiveBps: UInt64
@@ -1476,7 +1477,7 @@ public struct AggregateMetrics {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryResidentBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, 
+    public init(cpuPercent: Float, memoryResidentBytes: UInt64, memoryPhysicalFootprintBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, 
         /**
          * Per-second energy draw in nanojoules (= nanowatts), summed across
          * all processes belonging to this entity. Zero when the kernel does
@@ -1489,6 +1490,7 @@ public struct AggregateMetrics {
          */estimatedGpuPercent: Float, processCount: UInt32, isForeground: Bool) {
         self.cpuPercent = cpuPercent
         self.memoryResidentBytes = memoryResidentBytes
+        self.memoryPhysicalFootprintBytes = memoryPhysicalFootprintBytes
         self.diskReadBps = diskReadBps
         self.diskWriteBps = diskWriteBps
         self.networkReceiveBps = networkReceiveBps
@@ -1512,6 +1514,9 @@ extension AggregateMetrics: Equatable, Hashable {
             return false
         }
         if lhs.memoryResidentBytes != rhs.memoryResidentBytes {
+            return false
+        }
+        if lhs.memoryPhysicalFootprintBytes != rhs.memoryPhysicalFootprintBytes {
             return false
         }
         if lhs.diskReadBps != rhs.diskReadBps {
@@ -1547,6 +1552,7 @@ extension AggregateMetrics: Equatable, Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(cpuPercent)
         hasher.combine(memoryResidentBytes)
+        hasher.combine(memoryPhysicalFootprintBytes)
         hasher.combine(diskReadBps)
         hasher.combine(diskWriteBps)
         hasher.combine(networkReceiveBps)
@@ -1570,6 +1576,7 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
             try AggregateMetrics(
                 cpuPercent: FfiConverterFloat.read(from: &buf), 
                 memoryResidentBytes: FfiConverterUInt64.read(from: &buf), 
+                memoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf), 
                 diskReadBps: FfiConverterUInt64.read(from: &buf), 
                 diskWriteBps: FfiConverterUInt64.read(from: &buf), 
                 networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
@@ -1585,6 +1592,7 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
     public static func write(_ value: AggregateMetrics, into buf: inout [UInt8]) {
         FfiConverterFloat.write(value.cpuPercent, into: &buf)
         FfiConverterUInt64.write(value.memoryResidentBytes, into: &buf)
+        FfiConverterUInt64.write(value.memoryPhysicalFootprintBytes, into: &buf)
         FfiConverterUInt64.write(value.diskReadBps, into: &buf)
         FfiConverterUInt64.write(value.diskWriteBps, into: &buf)
         FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)
@@ -2117,12 +2125,13 @@ public struct ComponentSnapshot {
     public var launchedBy: String?
     public var cpuPercent: Float
     public var memoryBytes: UInt64
+    public var memoryPhysicalFootprintBytes: UInt64
     public var cwd: String?
     public var user: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: ComponentKind, title: String, detail: String, adapterContext: AdapterContextSnapshot?, provenance: ProvenanceSnapshot?, processId: UInt32?, startTimeMillis: UInt64, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, cwd: String?, user: String?) {
+    public init(kind: ComponentKind, title: String, detail: String, adapterContext: AdapterContextSnapshot?, provenance: ProvenanceSnapshot?, processId: UInt32?, startTimeMillis: UInt64, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, memoryPhysicalFootprintBytes: UInt64, cwd: String?, user: String?) {
         self.kind = kind
         self.title = title
         self.detail = detail
@@ -2136,6 +2145,7 @@ public struct ComponentSnapshot {
         self.launchedBy = launchedBy
         self.cpuPercent = cpuPercent
         self.memoryBytes = memoryBytes
+        self.memoryPhysicalFootprintBytes = memoryPhysicalFootprintBytes
         self.cwd = cwd
         self.user = user
     }
@@ -2187,6 +2197,9 @@ extension ComponentSnapshot: Equatable, Hashable {
         if lhs.memoryBytes != rhs.memoryBytes {
             return false
         }
+        if lhs.memoryPhysicalFootprintBytes != rhs.memoryPhysicalFootprintBytes {
+            return false
+        }
         if lhs.cwd != rhs.cwd {
             return false
         }
@@ -2210,6 +2223,7 @@ extension ComponentSnapshot: Equatable, Hashable {
         hasher.combine(launchedBy)
         hasher.combine(cpuPercent)
         hasher.combine(memoryBytes)
+        hasher.combine(memoryPhysicalFootprintBytes)
         hasher.combine(cwd)
         hasher.combine(user)
     }
@@ -2237,6 +2251,7 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
                 launchedBy: FfiConverterOptionString.read(from: &buf), 
                 cpuPercent: FfiConverterFloat.read(from: &buf), 
                 memoryBytes: FfiConverterUInt64.read(from: &buf), 
+                memoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf), 
                 cwd: FfiConverterOptionString.read(from: &buf), 
                 user: FfiConverterOptionString.read(from: &buf)
         )
@@ -2256,6 +2271,7 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.launchedBy, into: &buf)
         FfiConverterFloat.write(value.cpuPercent, into: &buf)
         FfiConverterUInt64.write(value.memoryBytes, into: &buf)
+        FfiConverterUInt64.write(value.memoryPhysicalFootprintBytes, into: &buf)
         FfiConverterOptionString.write(value.cwd, into: &buf)
         FfiConverterOptionString.write(value.user, into: &buf)
     }

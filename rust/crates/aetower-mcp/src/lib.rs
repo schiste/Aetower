@@ -446,6 +446,8 @@ struct EntityMemoryBreakdown {
     display_name: String,
     process_ids: Vec<u32>,
     resident_bytes: u64,
+    physical_footprint_bytes: u64,
+    memory_metric_note: String,
     regions: Vec<MemoryRegionBreakdown>,
 }
 
@@ -3244,6 +3246,12 @@ fn build_entity_memory_breakdown(
         display_name: entity.display_name.clone(),
         process_ids,
         resident_bytes: entity.metrics.memory_resident_bytes,
+        physical_footprint_bytes: entity.metrics.memory_physical_footprint_bytes,
+        memory_metric_note: if entity.metrics.memory_physical_footprint_bytes > 0 {
+            "resident_bytes is the current resident set; physical_footprint_bytes follows macOS task footprint when available and may exceed resident because it includes graphics and other charged memory.".to_owned()
+        } else {
+            "resident_bytes is the current resident set; physical_footprint_bytes is unavailable for this entity on the current platform or sample.".to_owned()
+        },
         regions,
     })
 }
@@ -7204,6 +7212,7 @@ mod tests {
                         process_id: Some(10),
                         cpu_percent: 5.0,
                         memory_bytes: 100,
+                        memory_physical_footprint_bytes: 0,
                         ..aetower_model::ComponentSnapshot::default()
                     },
                     aetower_model::ComponentSnapshot {
@@ -7212,6 +7221,7 @@ mod tests {
                         parent_summary: Some("Root proc pid 10".to_owned()),
                         cpu_percent: 2.0,
                         memory_bytes: 50,
+                        memory_physical_footprint_bytes: 0,
                         ..aetower_model::ComponentSnapshot::default()
                     },
                 ],
