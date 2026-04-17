@@ -70,6 +70,11 @@ struct AetowerApp: App {
 
                 Chau7View(state: state)
                     .tabItem {
+                        Label("Chau7", systemImage: "terminal")
+                    }
+
+                AIAgentsView(state: state)
+                    .tabItem {
                         Label("AI Agents", systemImage: "cpu")
                     }
 
