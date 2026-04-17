@@ -288,9 +288,16 @@ struct SnapshotEntityDelta {
     friction: SnapshotMetricDelta,
     cpu_percent: SnapshotMetricDelta,
     memory_bytes: SnapshotMetricDelta,
+    memory_physical_footprint_bytes: SnapshotMetricDelta,
     wakeups_per_second: SnapshotMetricDelta,
     process_count: SnapshotMetricDelta,
     recent_change_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SnapshotDiffSummary {
+    host_summary: String,
+    entity_summary: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -304,6 +311,7 @@ struct SnapshotDiffReport {
     after_boot_time_millis: Option<u64>,
     before_previous_shutdown: Option<aetower_model::RebootCauseSnapshot>,
     after_previous_shutdown: Option<aetower_model::RebootCauseSnapshot>,
+    summary: SnapshotDiffSummary,
     host: BTreeMap<String, SnapshotMetricDelta>,
     entities: Vec<SnapshotEntityDelta>,
 }
@@ -2100,6 +2108,16 @@ fn build_snapshot_diff_report_with_diagnostics(
                         .map(|metrics| metrics.memory_resident_bytes as f64)
                         .unwrap_or(0.0),
                 ),
+                memory_physical_footprint_bytes: metric_delta(
+                    before_metrics
+                        .map(|metrics| metrics.memory_physical_footprint_bytes)
+                        .map(|value| value as f64)
+                        .unwrap_or(0.0),
+                    after_metrics
+                        .map(|metrics| metrics.memory_physical_footprint_bytes)
+                        .map(|value| value as f64)
+                        .unwrap_or(0.0),
+                ),
                 wakeups_per_second: metric_delta(
                     before_metrics
                         .map(|metrics| metrics.wakeups_per_second as f64)
@@ -2144,6 +2162,55 @@ fn build_snapshot_diff_report_with_diagnostics(
         entities.truncate(limit.max(1));
     }
 
+    let cpu_delta = host
+        .get("cpu_percent")
+        .map(|metric| format_signed_decimal(metric.delta, "%"))
+        .unwrap_or_else(|| "n/a".to_owned());
+    let memory_delta = host
+        .get("memory_used_bytes")
+        .map(|metric| format_signed_bytes(metric.delta))
+        .unwrap_or_else(|| "n/a".to_owned());
+    let wakeup_delta = host
+        .get("wakeups_per_second")
+        .map(|metric| format_signed_rate(metric.delta))
+        .unwrap_or_else(|| "n/a".to_owned());
+    let host_summary = if crossed_boot_boundary {
+        format!(
+            "Crossed a reboot boundary. CPU {}, memory {}, wakeups {} across the selected window.",
+            cpu_delta, memory_delta, wakeup_delta
+        )
+    } else {
+        format!(
+            "CPU {}, memory {}, wakeups {} across the selected window.",
+            cpu_delta, memory_delta, wakeup_delta
+        )
+    };
+
+    let appeared = entities
+        .iter()
+        .filter(|entity| !entity.before_present && entity.after_present)
+        .count();
+    let disappeared = entities
+        .iter()
+        .filter(|entity| entity.before_present && !entity.after_present)
+        .count();
+    let changed = entities
+        .iter()
+        .filter(|entity| entity.before_present && entity.after_present)
+        .count();
+    let entity_summary = if let Some(top_entity) = entities.first() {
+        format!(
+            "{} changed, {} appeared, {} disappeared. Largest shift: {} (friction {}).",
+            changed,
+            appeared,
+            disappeared,
+            top_entity.display_name,
+            format_signed_decimal(top_entity.friction.delta, "")
+        )
+    } else {
+        "No entity deltas were available for the selected window.".to_owned()
+    };
+
     SnapshotDiffReport {
         before_snapshot_millis: before.captured_at_millis,
         after_snapshot_millis: after.captured_at_millis,
@@ -2170,8 +2237,46 @@ fn build_snapshot_diff_report_with_diagnostics(
                     after.captured_at_millis.saturating_add(5 * 60 * 1000),
                 )
             }),
+        summary: SnapshotDiffSummary {
+            host_summary,
+            entity_summary,
+        },
         host,
         entities,
+    }
+}
+
+fn format_signed_decimal(value: f64, suffix: &str) -> String {
+    let formatted = format!("{:.1}{suffix}", value.abs());
+    if value > 0.0 {
+        format!("+{formatted}")
+    } else if value < 0.0 {
+        format!("-{formatted}")
+    } else {
+        formatted
+    }
+}
+
+fn format_signed_bytes(value: f64) -> String {
+    let bytes = value.abs().round() as u64;
+    let formatted = format_bytes(bytes);
+    if value > 0.0 {
+        format!("+{formatted}")
+    } else if value < 0.0 {
+        format!("-{formatted}")
+    } else {
+        formatted
+    }
+}
+
+fn format_signed_rate(value: f64) -> String {
+    let formatted = format!("{:.0}/s", value.abs());
+    if value > 0.0 {
+        format!("+{formatted}")
+    } else if value < 0.0 {
+        format!("-{formatted}")
+    } else {
+        formatted
     }
 }
 

@@ -84,6 +84,7 @@ struct SnapshotEntityDeltaReport: Codable, Identifiable {
     let friction: SnapshotMetricDeltaReport
     let cpuPercent: SnapshotMetricDeltaReport
     let memoryBytes: SnapshotMetricDeltaReport
+    let memoryPhysicalFootprintBytes: SnapshotMetricDeltaReport
     let wakeupsPerSecond: SnapshotMetricDeltaReport
     let processCount: SnapshotMetricDeltaReport
     let recentChangeSummary: String?
@@ -91,9 +92,15 @@ struct SnapshotEntityDeltaReport: Codable, Identifiable {
     var id: String { entityId }
 }
 
+struct SnapshotDiffSummaryReport: Codable {
+    let hostSummary: String
+    let entitySummary: String
+}
+
 struct SnapshotDiffReportModel: Codable {
     let beforeSnapshotMillis: UInt64
     let afterSnapshotMillis: UInt64
+    let summary: SnapshotDiffSummaryReport
     let host: [String: SnapshotMetricDeltaReport]
     let entities: [SnapshotEntityDeltaReport]
 }
