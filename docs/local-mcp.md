@@ -145,7 +145,10 @@ labels.
 quarantine count, thresholds, and recent history diagnostics.
 
 `aetower_memory_breakdown` asks the running app to collect a `vmmap`-style
-memory region breakdown for one entity.
+memory region breakdown for one entity. The response now distinguishes
+`resident_bytes` from `physical_footprint_bytes` when macOS task-footprint
+data is available, and includes a short `memory_metric_note` explaining the
+difference.
 
 `aetower_profile_entity` asks the running app to run a short sampled profile
 for one entity and summarize hot threads, queues, and stacks.
