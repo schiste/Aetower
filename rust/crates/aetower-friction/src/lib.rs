@@ -444,6 +444,7 @@ mod tests {
             AggregateMetrics {
                 cpu_percent: 60.0,
                 memory_resident_bytes: 3 * 1024 * 1024 * 1024,
+                memory_physical_footprint_bytes: 0,
                 disk_read_bps: 12 * 1024 * 1024,
                 network_receive_bps: 10 * 1024 * 1024,
                 wakeups_per_second: 220.0,

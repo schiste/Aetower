@@ -347,6 +347,8 @@ pub struct RuntimeLagMetrics {
 pub struct AggregateMetrics {
     pub cpu_percent: f32,
     pub memory_resident_bytes: u64,
+    #[serde(default)]
+    pub memory_physical_footprint_bytes: u64,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
     pub network_receive_bps: u64,
@@ -418,6 +420,8 @@ pub struct ComponentSnapshot {
     pub launched_by: Option<String>,
     pub cpu_percent: f32,
     pub memory_bytes: u64,
+    #[serde(default)]
+    pub memory_physical_footprint_bytes: u64,
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]

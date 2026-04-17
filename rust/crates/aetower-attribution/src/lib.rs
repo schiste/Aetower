@@ -42,6 +42,10 @@ pub fn build_entities(
             .metrics
             .memory_resident_bytes
             .saturating_add(process.memory_bytes);
+        entry.metrics.memory_physical_footprint_bytes = entry
+            .metrics
+            .memory_physical_footprint_bytes
+            .saturating_add(process.memory_physical_footprint_bytes);
         entry.metrics.disk_read_bps = entry
             .metrics
             .disk_read_bps
@@ -77,6 +81,7 @@ pub fn build_entities(
             launched_by: launched_by(process, &seed.entity_id, &process_index, identity),
             cpu_percent: process.cpu_percent,
             memory_bytes: process.memory_bytes,
+            memory_physical_footprint_bytes: process.memory_physical_footprint_bytes,
             cwd: process.cwd.clone(),
             user: process.user.clone(),
         });
@@ -531,6 +536,7 @@ mod tests {
                 cmd: Vec::new(),
                 cpu_percent: 10.0,
                 memory_bytes: 128,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 100,
                 disk_write_bytes: 200,
@@ -548,6 +554,7 @@ mod tests {
                 cmd: Vec::new(),
                 cpu_percent: 5.0,
                 memory_bytes: 256,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 300,
                 disk_write_bytes: 400,
@@ -627,6 +634,7 @@ mod tests {
                 cmd: vec!["/Applications/Test.app/Contents/MacOS/Test".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 128,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -647,6 +655,7 @@ mod tests {
                 ],
                 cpu_percent: 5.0,
                 memory_bytes: 256,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -664,6 +673,7 @@ mod tests {
                 cmd: vec!["/sbin/launchd".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -751,6 +761,7 @@ mod tests {
                 cmd: vec!["-zsh".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -768,6 +779,7 @@ mod tests {
                 cmd: vec!["python3".to_owned(), "server.py".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -788,6 +800,7 @@ mod tests {
                 cmd: vec!["Terminal".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -834,6 +847,7 @@ mod tests {
                 cmd: vec!["/usr/libexec/sync-agent".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -851,6 +865,7 @@ mod tests {
                 cmd: vec!["/sbin/launchd".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -898,6 +913,7 @@ mod tests {
                 cmd: vec!["MenuBarExtra".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -915,6 +931,7 @@ mod tests {
                 cmd: vec!["/usr/libexec/xpcproxy".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -935,6 +952,7 @@ mod tests {
                 cmd: vec!["loginwindow".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -952,6 +970,7 @@ mod tests {
                 cmd: vec!["/sbin/launchd".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
 
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
@@ -1001,6 +1020,7 @@ mod tests {
                 cmd: vec!["helper-a".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
+                memory_physical_footprint_bytes: 0,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -1017,6 +1037,7 @@ mod tests {
                 cmd: vec!["helper-b".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
+                memory_physical_footprint_bytes: 0,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -1033,6 +1054,7 @@ mod tests {
                 cmd: vec!["/sbin/launchd".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,
@@ -1049,6 +1071,7 @@ mod tests {
                 cmd: vec!["-zsh".to_owned()],
                 cpu_percent: 0.0,
                 memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
                 disk_read_bytes: 0,
                 disk_write_bytes: 0,
                 wakeups_per_second: 0.0,

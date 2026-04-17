@@ -946,6 +946,7 @@ impl AdapterManager {
                             launched_by: None,
                             cpu_percent: target.cpu_percent,
                             memory_bytes: target.js_heap_used_bytes,
+                            memory_physical_footprint_bytes: 0,
                             cwd: None,
                             user: None,
                         });
@@ -1019,6 +1020,7 @@ impl AdapterManager {
                             launched_by: None,
                             cpu_percent: container.cpu_percent,
                             memory_bytes: container.memory_usage_bytes,
+                            memory_physical_footprint_bytes: 0,
                             cwd: None,
                             user: None,
                         });
@@ -1081,6 +1083,7 @@ impl AdapterManager {
                         launched_by: None,
                         cpu_percent: 0.0,
                         memory_bytes: 0,
+                        memory_physical_footprint_bytes: 0,
                         cwd: None,
                         user: None,
                     });
@@ -1222,6 +1225,7 @@ impl AdapterManager {
                         launched_by: None,
                         cpu_percent: 0.0,
                         memory_bytes: 0,
+                        memory_physical_footprint_bytes: 0,
                         cwd: None,
                         user: None,
                     });
@@ -2938,6 +2942,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             launched_by: None,
             cpu_percent: 0.0,
             memory_bytes: 0,
+            memory_physical_footprint_bytes: 0,
             cwd: None,
             user: None,
         });
@@ -2982,6 +2987,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             launched_by: None,
             cpu_percent: 0.0,
             memory_bytes: 0,
+            memory_physical_footprint_bytes: 0,
             cwd: None,
             user: None,
         });
@@ -3040,6 +3046,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             launched_by: None,
             cpu_percent: 0.0,
             memory_bytes: 0,
+            memory_physical_footprint_bytes: 0,
             cwd: None,
             user: None,
         });
@@ -3438,6 +3445,7 @@ mod tests {
                     launched_by: None,
                     cpu_percent: 0.0,
                     memory_bytes: 0,
+                    memory_physical_footprint_bytes: 0,
                     cwd: None,
                     user: None,
                 },
@@ -3457,6 +3465,7 @@ mod tests {
                     launched_by: None,
                     cpu_percent: 0.0,
                     memory_bytes: 0,
+                    memory_physical_footprint_bytes: 0,
                     cwd: None,
                     user: None,
                 },
@@ -3535,6 +3544,7 @@ mod tests {
                 launched_by: None,
                 cpu_percent: 0.0,
                 memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
                 cwd: None,
                 user: None,
             }],
@@ -3753,6 +3763,7 @@ mod tests {
                 launched_by: None,
                 cpu_percent: 0.0,
                 memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
                 cwd: None,
                 user: None,
             }],

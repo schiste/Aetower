@@ -22,6 +22,8 @@ pub struct RawProcessSample {
     pub cmd: Vec<String>,
     pub cpu_percent: f32,
     pub memory_bytes: u64,
+    #[serde(default)]
+    pub memory_physical_footprint_bytes: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
     #[serde(default)]
@@ -85,6 +87,7 @@ struct ProcessCounterSample {
     start_time_millis: u64,
     wakeups: u64,
     energy_nj: u64,
+    physical_footprint_bytes: u64,
     disk_read_bytes: u64,
     disk_write_bytes: u64,
     wakeups_per_second: f32,
@@ -308,18 +311,31 @@ impl Collector {
                 // (`proc_pid_rusage`). We sample them on the same cadence
                 // (every 3rd tick) to avoid per-process syscall overhead
                 // on every tick, but always read the counters for new PIDs.
-                let (wakeups, energy_nj) = if sample_wakeups || previous.is_none() {
+                let sample_rusage = sample_wakeups || refresh_memory || previous.is_none();
+                let (wakeups, energy_nj, physical_footprint_bytes) = if sample_rusage {
                     platform::process_counters(pid)
-                        .map(|counters| (counters.wakeups, counters.energy_nj))
+                        .map(|counters| {
+                            (
+                                counters.wakeups,
+                                counters.energy_nj,
+                                counters.physical_footprint_bytes,
+                            )
+                        })
                         .unwrap_or_else(|| {
                             let prev_wakeups = previous.map(|prev| prev.wakeups).unwrap_or(0);
                             let prev_energy = previous.map(|prev| prev.energy_nj).unwrap_or(0);
-                            (prev_wakeups, prev_energy)
+                            let prev_footprint = previous
+                                .map(|prev| prev.physical_footprint_bytes)
+                                .unwrap_or(0);
+                            (prev_wakeups, prev_energy, prev_footprint)
                         })
                 } else {
                     (
                         previous.map(|prev| prev.wakeups).unwrap_or(0),
                         previous.map(|prev| prev.energy_nj).unwrap_or(0),
+                        previous
+                            .map(|prev| prev.physical_footprint_bytes)
+                            .unwrap_or(0),
                     )
                 };
                 let disk_read_total = process.disk_usage().read_bytes;
@@ -357,6 +373,7 @@ impl Collector {
                         start_time_millis,
                         wakeups,
                         energy_nj,
+                        physical_footprint_bytes,
                         disk_read_bytes: disk_read_total,
                         disk_write_bytes: disk_write_total,
                         wakeups_per_second,
@@ -409,6 +426,7 @@ impl Collector {
                     cmd: identity.cmd,
                     cpu_percent: process.cpu_usage(),
                     memory_bytes: process.memory(),
+                    memory_physical_footprint_bytes: physical_footprint_bytes,
                     disk_read_bytes: disk_read_delta,
                     disk_write_bytes: disk_write_delta,
                     wakeups_per_second,
@@ -828,6 +846,7 @@ mod platform {
     pub struct ProcessRusageCounters {
         pub wakeups: u64,
         pub energy_nj: u64,
+        pub physical_footprint_bytes: u64,
     }
 
     /// Read wakeup count and cumulative energy (nanojoules) for a
@@ -851,6 +870,7 @@ mod platform {
                 .ri_interrupt_wkups
                 .saturating_add(info.ri_pkg_idle_wkups),
             energy_nj: info.ri_billed_energy,
+            physical_footprint_bytes: info.ri_phys_footprint,
         })
     }
 
@@ -2154,6 +2174,7 @@ mod platform {
     pub struct ProcessRusageCounters {
         pub wakeups: u64,
         pub energy_nj: u64,
+        pub physical_footprint_bytes: u64,
     }
 
     pub fn process_counters(_pid: u32) -> Option<ProcessRusageCounters> {

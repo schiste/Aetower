@@ -1731,6 +1731,7 @@ mod tests {
             metrics: AggregateMetrics {
                 cpu_percent: 45.0,
                 memory_resident_bytes: 512 * 1024 * 1024,
+                memory_physical_footprint_bytes: 0,
                 disk_read_bps: 24 * 1024 * 1024,
                 disk_write_bps: 8 * 1024 * 1024,
                 network_receive_bps: 0,
@@ -1756,6 +1757,7 @@ mod tests {
                 launched_by: Some(name.to_owned()),
                 cpu_percent: 45.0,
                 memory_bytes: 128 * 1024 * 1024,
+                memory_physical_footprint_bytes: 0,
                 cwd: None,
                 user: None,
             }],
@@ -1795,6 +1797,7 @@ mod tests {
                 launched_by: Some(name.to_owned()),
                 cpu_percent: 45.0,
                 memory_bytes: 128 * 1024 * 1024,
+                memory_physical_footprint_bytes: 0,
                 cwd: None,
                 user: None,
             })
