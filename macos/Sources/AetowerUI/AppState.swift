@@ -282,7 +282,7 @@ public final class AppState {
 
     public func start(refreshInterval: Double) {
         stop()
-        startLocalMcpServer()
+        ensureLocalMcpServer()
         observeWorkspaceActivation()
         publishFrontmostState(force: true)
         refresh(force: true)
