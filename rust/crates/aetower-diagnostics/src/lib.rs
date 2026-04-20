@@ -827,6 +827,8 @@ fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)>
     let window_millis = match event.event_type.as_str() {
         "host-incident-snapshot" => 15 * 60 * 1000,
         "adapter-refresh-failed" => 15 * 60 * 1000,
+        "history-store-busy" | "history-write-backpressure" => 5 * 60 * 1000,
+        "history-maintenance-over-budget" | "history-maintenance-failed" => 15 * 60 * 1000,
         "tick-over-budget" => 5 * 60 * 1000,
         "mcp-helper-reaped" => 5 * 60 * 1000,
         "tick-started" | "tick-completed" | "snapshot-published" | "gpu-sample-read" => 60 * 1000,

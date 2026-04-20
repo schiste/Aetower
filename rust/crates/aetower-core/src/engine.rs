@@ -30,6 +30,8 @@ use crate::{
 
 const ADAPTER_IDLE_SLEEP: Duration = Duration::from_secs(5);
 const TELEMETRY_DISABLED_SLEEP: Duration = Duration::from_secs(30);
+const HISTORY_MAINTENANCE_INITIAL_DELAY: Duration = Duration::from_secs(45);
+const HISTORY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const RUNTIME_HEARTBEAT_INTERVAL_MILLIS: u64 = 10 * 60 * 1000;
 const DEFAULT_HISTORY_RETENTION_MILLIS: u64 = 12 * 60 * 60 * 1000;
 const EMERGENCY_HISTORY_RETENTION_MILLIS: u64 = 3 * 60 * 60 * 1000;
@@ -226,6 +228,7 @@ pub struct Engine {
     worker: Option<JoinHandle<()>>,
     adapter_worker: Option<JoinHandle<()>>,
     telemetry_worker: Option<JoinHandle<()>>,
+    history_maintenance_worker: Option<JoinHandle<()>>,
     system_marker_worker: Option<JoinHandle<()>>,
 }
 
@@ -266,9 +269,6 @@ impl Engine {
                 store.set_diagnostics(diagnostics.clone());
                 store
             });
-        if let Some(store) = persistence.as_ref() {
-            let _ = store.maintain_with_policy(default_history_retention_policy());
-        }
         let mut telemetry_exporter = TelemetryExporter::new(telemetry_config_from_env());
         telemetry_exporter.set_diagnostics(diagnostics.clone());
         diagnostics.emit(
@@ -301,6 +301,7 @@ impl Engine {
             worker: None,
             adapter_worker: None,
             telemetry_worker: None,
+            history_maintenance_worker: None,
             system_marker_worker: None,
         }
     }
@@ -550,13 +551,33 @@ impl Engine {
                 );
                 // Persist snapshot (best-effort, throttled by write_interval).
                 let persist_started = Instant::now();
-                let history_queue_depth = persistence
-                    .lock()
-                    .as_ref()
-                    .map(|store| store.pending_writes())
-                    .unwrap_or(0);
-                if let Some(store) = persistence.lock().as_mut() {
-                    store.maybe_store(&guard.latest_snapshot);
+                let mut history_store_busy = false;
+                let history_queue_depth =
+                    if let Some(mut persistence_guard) = persistence.try_lock() {
+                        let history_queue_depth = persistence_guard
+                            .as_ref()
+                            .map(|store| store.pending_writes())
+                            .unwrap_or(0);
+                        if let Some(store) = persistence_guard.as_mut() {
+                            store.maybe_store(&guard.latest_snapshot);
+                        }
+                        history_queue_depth
+                    } else {
+                        history_store_busy = true;
+                        0
+                    };
+                if history_store_busy {
+                    diagnostics.emit(
+                        DiagnosticsEvent::builder(
+                            DiagnosticsLevel::Warn,
+                            DiagnosticsSubsystem::Persistence,
+                            "history-store-busy",
+                            "Skipped a history write because maintenance held the store lock.",
+                        )
+                        .timestamp_millis(captured_at_millis)
+                        .sequence(guard.latest_snapshot.sequence)
+                        .build(),
+                    );
                 }
                 let persist_millis = persist_started.elapsed().as_secs_f64() * 1000.0;
                 runtime_lag_metrics.persist_millis = persist_millis as f32;
@@ -608,9 +629,6 @@ impl Engine {
                     guard.last_runtime_heartbeat_millis,
                     captured_at_millis,
                 ) {
-                    if let Some(store) = persistence.lock().as_ref() {
-                        let _ = store.maintain_with_policy(default_history_retention_policy());
-                    }
                     let top_entity = guard.latest_snapshot.entities.first();
                     diagnostics.emit(
                         DiagnosticsEvent::builder(
@@ -767,6 +785,56 @@ impl Engine {
             }
         }));
 
+        let persistence = Arc::clone(&self.persistence);
+        let diagnostics = self.diagnostics.clone();
+        let running = Arc::clone(&self.running);
+        self.history_maintenance_worker = Some(thread::spawn(move || {
+            sleep_with_stop(&running, HISTORY_MAINTENANCE_INITIAL_DELAY);
+            while running.load(Ordering::SeqCst) {
+                let started = Instant::now();
+                let result = {
+                    let guard = persistence.lock();
+                    guard
+                        .as_ref()
+                        .map(|store| store.maintain_with_policy(default_history_retention_policy()))
+                };
+                let elapsed_millis = started.elapsed().as_millis();
+                match result {
+                    Some(Ok(report)) => {
+                        if elapsed_millis >= 5_000 {
+                            diagnostics.emit(
+                                DiagnosticsEvent::builder(
+                                    DiagnosticsLevel::Warn,
+                                    DiagnosticsSubsystem::Persistence,
+                                    "history-maintenance-over-budget",
+                                    "Persisted history maintenance took longer than expected.",
+                                )
+                                .field("elapsed_millis", elapsed_millis)
+                                .field("store_bytes_after", report.store_bytes_after)
+                                .field("wal_bytes_after", report.wal_bytes_after)
+                                .field("pruned_rows", report.pruned_rows)
+                                .build(),
+                            );
+                        }
+                    }
+                    Some(Err(error)) => {
+                        diagnostics.emit(
+                            DiagnosticsEvent::builder(
+                                DiagnosticsLevel::Error,
+                                DiagnosticsSubsystem::Persistence,
+                                "history-maintenance-failed",
+                                "Persisted history maintenance failed.",
+                            )
+                            .field("error", error)
+                            .build(),
+                        );
+                    }
+                    None => {}
+                }
+                sleep_with_stop(&running, HISTORY_MAINTENANCE_INTERVAL);
+            }
+        }));
+
         let diagnostics = self.diagnostics.clone();
         let running = Arc::clone(&self.running);
         self.system_marker_worker = Some(thread::spawn(move || {
@@ -787,6 +855,9 @@ impl Engine {
             let _ = worker.join();
         }
         if let Some(worker) = self.telemetry_worker.take() {
+            let _ = worker.join();
+        }
+        if let Some(worker) = self.history_maintenance_worker.take() {
             let _ = worker.join();
         }
         // System-marker ingestion is best-effort and can be slow on machines

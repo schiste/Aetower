@@ -17,6 +17,8 @@ use rusqlite::{Connection, OpenFlags, params};
 use serde::{Deserialize, Serialize};
 
 const SNAPSHOT_FORMAT_VERSION: i64 = 2;
+const MAX_PENDING_HISTORY_WRITES: u64 = 64;
+const MIN_SIZE_PRESSURE_SNAPSHOT_TARGET: u64 = 120;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedSnapshotEnvelope {
@@ -132,6 +134,22 @@ impl HistoryStore {
             return;
         }
         self.write_counter = 0;
+        let pending_writes = self.writer.pending_writes();
+        if pending_writes >= MAX_PENDING_HISTORY_WRITES {
+            if let Some(diagnostics) = self.diagnostics.as_ref() {
+                diagnostics.emit(
+                    DiagnosticsEvent::builder(
+                        DiagnosticsLevel::Warn,
+                        DiagnosticsSubsystem::Persistence,
+                        "history-write-backpressure",
+                        "Skipped a persisted history write because the writer queue is backed up.",
+                    )
+                    .field("pending_writes", pending_writes)
+                    .build(),
+                );
+            }
+            return;
+        }
         let _ = self.writer.store(snapshot.clone());
     }
 
@@ -489,19 +507,32 @@ impl HistoryStore {
             })
             .map(|count| count as u64)
             .map_err(|e| format!("snapshot count after maintenance: {e}"))?;
+        let size_pressure_target = size_pressure_snapshot_target(
+            snapshot_count_after,
+            report.store_bytes_after,
+            policy.soft_max_store_bytes,
+        );
         let should_trim_to_target = report.store_bytes_after > policy.soft_max_store_bytes
             || report.wal_bytes_after > policy.max_wal_bytes
             || snapshot_count_after > policy.soft_max_snapshot_count;
-        if should_trim_to_target && snapshot_count_after > policy.target_snapshot_count {
-            let deleted = self
-                .writer
-                .prune_keep_latest(policy.target_snapshot_count)?;
+        let target_keep =
+            if should_trim_to_target && snapshot_count_after > policy.target_snapshot_count {
+                Some(policy.target_snapshot_count)
+            } else {
+                size_pressure_target
+            };
+        if let Some(target_keep) = target_keep.filter(|target| snapshot_count_after > *target) {
+            let deleted = self.writer.prune_keep_latest(target_keep)?;
             report.pruned_rows = report.pruned_rows.saturating_add(deleted);
             let mut reasons = report.aggressive_reason.take().unwrap_or_default();
             if !reasons.is_empty() {
                 reasons.push(',');
             }
-            reasons.push_str("target-snapshot-cap");
+            if size_pressure_target == Some(target_keep) {
+                reasons.push_str("size-pressure-snapshot-cap");
+            } else {
+                reasons.push_str("target-snapshot-cap");
+            }
             report.aggressive_reason = Some(reasons);
             let post_trim = self.maintain_storage(true)?;
             report.store_bytes_after = post_trim.store_bytes_after;
@@ -1016,6 +1047,22 @@ impl HistoryWriter {
     }
 }
 
+fn size_pressure_snapshot_target(
+    snapshot_count: u64,
+    store_bytes: u64,
+    soft_max_store_bytes: u64,
+) -> Option<u64> {
+    if snapshot_count <= MIN_SIZE_PRESSURE_SNAPSHOT_TARGET || store_bytes <= soft_max_store_bytes {
+        return None;
+    }
+    let proportional_target = ((snapshot_count as u128 * soft_max_store_bytes as u128)
+        / store_bytes.max(1) as u128) as u64;
+    let target = proportional_target
+        .max(MIN_SIZE_PRESSURE_SNAPSHOT_TARGET)
+        .min(snapshot_count.saturating_sub(1));
+    (target < snapshot_count).then_some(target)
+}
+
 fn configure_connection(conn: &Connection) -> Result<(), String> {
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| format!("WAL: {e}"))?;
@@ -1437,6 +1484,57 @@ mod tests {
             .map(|count| count as u64)
             .unwrap_or_else(|error| panic!("count quarantine: {error}"));
         assert_eq!(remaining_quarantine, 3);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn maintain_with_policy_trims_under_byte_pressure_below_count_target() {
+        let path = temp_db();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+
+        for i in 0..130 {
+            store.maybe_store(&SystemSnapshot {
+                sequence: i,
+                captured_at_millis: (i + 1) * 1_000,
+                ..Default::default()
+            });
+            if i % 40 == 39 {
+                store
+                    .writer
+                    .flush()
+                    .unwrap_or_else(|error| panic!("flush: {error}"));
+            }
+        }
+
+        let report = store
+            .maintain_with_policy(HistoryRetentionPolicy {
+                max_age_millis: u64::MAX,
+                emergency_max_age_millis: u64::MAX,
+                soft_max_store_bytes: 1,
+                hard_max_store_bytes: u64::MAX,
+                max_wal_bytes: u64::MAX,
+                target_snapshot_count: 1_000,
+                soft_max_snapshot_count: 1_000,
+                hard_max_snapshot_count: 1_000,
+                aggressive_quarantine_rows: u64::MAX,
+                hard_max_quarantine_rows: u64::MAX,
+            })
+            .unwrap_or_else(|error| panic!("maintain_with_policy: {error}"));
+
+        assert!(report.pruned_rows >= 10);
+        assert!(
+            report
+                .aggressive_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("size-pressure-snapshot-cap")
+        );
+        let remaining = store
+            .load_range(0, 200_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
+        assert_eq!(remaining.len(), MIN_SIZE_PRESSURE_SNAPSHOT_TARGET as usize);
 
         std::fs::remove_file(&path).ok();
     }
