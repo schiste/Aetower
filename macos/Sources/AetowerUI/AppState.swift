@@ -197,6 +197,10 @@ public final class AppState {
     @ObservationIgnored
     private let historyLoadMorePageSize: UInt32 = 240
     @ObservationIgnored
+    private let historyMaxRetainedSamples = 720
+    @ObservationIgnored
+    private let diagnosticsMaxRetainedEvents: UInt32 = 500
+    @ObservationIgnored
     private let operatorStateRefreshInterval: TimeInterval = 30.0
     @ObservationIgnored
     private let entityStaticAnalysisReloadInterval: TimeInterval = 15.0
@@ -898,8 +902,6 @@ public final class AppState {
         historyLoadError = nil
         historyLoadTask = Task(priority: .utility) { [weak self] in
             let loadStarted = CFAbsoluteTimeGetCurrent()
-            let maintenance = bridge.maintainHistoryStore(aggressive: false)
-            guard !Task.isCancelled else { return }
             let summaryResult = bridge.historyRangeSummaryResult(startMillis: startMillis, endMillis: endMillis)
             guard !Task.isCancelled else { return }
             let summary = summaryResult.summary
@@ -918,25 +920,26 @@ public final class AppState {
             await MainActor.run {
                 guard let self else { return }
                 let durationMillis = (CFAbsoluteTimeGetCurrent() - loadStarted) * 1000.0
-                self.historyMaintenanceReport = maintenance
+                let cappedSnapshots = Array(snapshots.suffix(self.historyMaxRetainedSamples))
                 self.historyRangeSummary = summary
                 self.historyStoreSummary = summary
-                self.historySnapshots = snapshots
+                self.historySnapshots = cappedSnapshots
                 self.historyLastLoadDurationMillis = durationMillis
-                self.historyHasMore = UInt64(snapshots.count) < (summary?.rangeCount ?? 0)
+                self.historyHasMore = UInt64(cappedSnapshots.count) < (summary?.rangeCount ?? 0)
+                    && cappedSnapshots.count < self.historyMaxRetainedSamples
                 self.historyLoadError = self.historyLoadErrorMessage(
                     summaryError: summaryResult.errorMessage,
                     pageError: pageResult.errorMessage,
                     rangeSummary: summary,
-                    loadedCount: snapshots.count
+                    loadedCount: cappedSnapshots.count
                 )
                 self.resetHistoryComparisonIfNeeded()
                 self.refreshHistorySnapshotDiff()
                 self.historyLoadStatus = self.historyStatusMessage(
                     summary: summary,
-                    loadedCount: snapshots.count,
+                    loadedCount: cappedSnapshots.count,
                     durationMillis: durationMillis,
-                    maintenance: maintenance,
+                    maintenance: nil,
                     isLoadMore: false
                 )
                 self.historyIsLoading = false
@@ -947,12 +950,11 @@ public final class AppState {
                     message: "Loaded persisted history into the History view.",
                     fields: [
                         DiagnosticsField(key: "duration_millis", value: String(format: "%.1f", durationMillis)),
-                        DiagnosticsField(key: "loaded_count", value: String(snapshots.count)),
+                        DiagnosticsField(key: "loaded_count", value: String(cappedSnapshots.count)),
                         DiagnosticsField(key: "range_count", value: String(summary?.rangeCount ?? 0)),
                         DiagnosticsField(key: "store_bytes", value: String(summary?.storeBytes ?? 0)),
                         DiagnosticsField(key: "wal_bytes", value: String(summary?.walBytes ?? 0)),
-                        DiagnosticsField(key: "checkpointed", value: String(maintenance?.checkpointed ?? false)),
-                        DiagnosticsField(key: "vacuumed", value: String(maintenance?.vacuumed ?? false)),
+                        DiagnosticsField(key: "retained_cap", value: String(self.historyMaxRetainedSamples)),
                     ]
                 )
             }
@@ -971,6 +973,12 @@ public final class AppState {
         let startMillis = historyRangeStartMillis
         let endMillis = historyRangeEndMillis
         let bridge = self.bridge
+        let remainingCapacity = max(0, historyMaxRetainedSamples - historySnapshots.count)
+        guard remainingCapacity > 0 else {
+            historyHasMore = false
+            historyLoadStatus = "Loaded history is capped at \(historyMaxRetainedSamples) retained samples to protect UI memory."
+            return
+        }
         historyIsLoadingMore = true
         historyLoadStatus = "Loading older persisted samples…"
         historyLoadTask?.cancel()
@@ -980,7 +988,7 @@ public final class AppState {
                 startMillis: startMillis,
                 endMillis: endMillis,
                 beforeMillisExclusive: oldestMillis,
-                limit: self?.historyLoadMorePageSize ?? 240
+                limit: min(self?.historyLoadMorePageSize ?? 240, UInt32(remainingCapacity))
             )
             let olderSnapshots = pageResult.snapshots
             guard !Task.isCancelled else { return }
@@ -1000,12 +1008,16 @@ public final class AppState {
                 self.historyLastLoadDurationMillis = durationMillis
                 let rangeCount = self.historyRangeSummary?.rangeCount ?? 0
                 let appendedUniqueSamples = !uniqueOlder.isEmpty
-                self.historyHasMore = UInt64(self.historySnapshots.count) < rangeCount && appendedUniqueSamples
+                self.historyHasMore = UInt64(self.historySnapshots.count) < rangeCount
+                    && appendedUniqueSamples
+                    && self.historySnapshots.count < self.historyMaxRetainedSamples
                 self.historyIsLoadingMore = false
                 self.historyLoadError = nil
                 self.resetHistoryComparisonIfNeeded()
                 self.refreshHistorySnapshotDiff()
-                if olderSnapshots.isEmpty {
+                if self.historySnapshots.count >= self.historyMaxRetainedSamples {
+                    self.historyLoadStatus = "Loaded history is capped at \(self.historyMaxRetainedSamples) retained samples to protect UI memory."
+                } else if olderSnapshots.isEmpty {
                     self.historyLoadStatus = "Reached the beginning of readable persisted history for this range."
                 } else if !appendedUniqueSamples {
                     self.historyLoadStatus = "No additional unique persisted samples were returned for this range."
@@ -1014,7 +1026,7 @@ public final class AppState {
                         summary: self.historyRangeSummary,
                         loadedCount: self.historySnapshots.count,
                         durationMillis: durationMillis,
-                        maintenance: self.historyMaintenanceReport,
+                        maintenance: nil,
                         isLoadMore: true
                     )
                 }
@@ -1091,6 +1103,7 @@ public final class AppState {
         }
         lastDiagnosticsLoadDate = now
         let bridge = self.bridge
+        let boundedQuery = cappedDiagnosticsQuery(query)
         let shouldAnalyzeSessionLogs = force || now.timeIntervalSince(lastSessionLogAnalysisDate) >= sessionLogAnalysisInterval
         if shouldAnalyzeSessionLogs {
             lastSessionLogAnalysisDate = now
@@ -1111,7 +1124,7 @@ public final class AppState {
         )
         diagnosticsLoadTask?.cancel()
         diagnosticsLoadTask = Task(priority: .utility) { [weak self] in
-            let events = bridge.queryDiagnostics(query)
+            let events = bridge.queryDiagnostics(boundedQuery)
             let overview = bridge.diagnosticsOverview()
             let runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
             let healthWindowEvents = bridge.queryDiagnostics(healthQuery)
@@ -1119,7 +1132,7 @@ public final class AppState {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self else { return }
-                self.diagnosticsEvents = events
+                self.diagnosticsEvents = Array(events.prefix(Int(self.diagnosticsMaxRetainedEvents)))
                 self.diagnosticsRecentWarningCount = healthWindowEvents.filter { $0.level == .warn }.count
                 self.diagnosticsRecentErrorCount = healthWindowEvents.filter { $0.level == .error }.count
                 self.diagnosticsOverview = overview
@@ -1141,6 +1154,17 @@ public final class AppState {
                 self.flushSuppressedAnomalySummaryIfNeeded()
             }
         }
+    }
+
+    private func cappedDiagnosticsQuery(_ query: DiagnosticsQuery) -> DiagnosticsQuery {
+        DiagnosticsQuery(
+            limit: min(query.limit, diagnosticsMaxRetainedEvents),
+            minimumLevel: query.minimumLevel,
+            subsystem: query.subsystem,
+            search: query.search,
+            sinceMillis: query.sinceMillis,
+            includePersisted: query.includePersisted
+        )
     }
 
     private func updateLagMonitoringState() {
