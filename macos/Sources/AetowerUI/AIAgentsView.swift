@@ -1368,9 +1368,14 @@ package struct AIAgentsView: View {
             )
         })
 
+        var deduped: [String: AgentNarrative] = [:]
+        deduped.reserveCapacity(items.count)
+        for item in items {
+            deduped[item.id] = item
+        }
+
         return Array(
-            Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
-                .values
+            deduped.values
                 .sorted { $0.timestampMillis > $1.timestampMillis }
                 .prefix(6)
         )
