@@ -23,6 +23,31 @@ public final class PermissionCoordinator {
 
     public init() {}
 
+    public func currentStatus(_ capability: CapabilityKind) -> PermissionResult {
+        switch capability {
+        case .accessibility:
+            let trusted = isAccessibilityTrusted()
+            return PermissionResult(
+                state: trusted ? .granted : .denied,
+                detail: trusted
+                    ? "Accessibility access is currently granted."
+                    : "Accessibility access is not granted. Use Request to open the macOS prompt."
+            )
+        case .fullDiskAccess:
+            return currentFullDiskAccessStatus()
+        case .appleAutomation:
+            return PermissionResult(
+                state: .requested,
+                detail: "Automation is not probed automatically to avoid triggering Apple Events prompts. Use Request to run an explicit probe."
+            )
+        default:
+            return PermissionResult(
+                state: .requested,
+                detail: "Capability status is managed by the runtime adapter."
+            )
+        }
+    }
+
     public func request(_ capability: CapabilityKind) -> PermissionResult {
         switch capability {
         case .accessibility:
@@ -147,6 +172,33 @@ public final class PermissionCoordinator {
             return
         }
         NSWorkspace.shared.open(url)
+    }
+
+    private func currentFullDiskAccessStatus() -> PermissionResult {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let protectedPaths = [
+            home.appendingPathComponent("Library/Mail").path,
+            home.appendingPathComponent("Library/Safari").path,
+            home.appendingPathComponent("Library/Messages").path,
+        ]
+        let existingProtectedPaths = protectedPaths.filter {
+            FileManager.default.fileExists(atPath: $0)
+        }
+        guard !existingProtectedPaths.isEmpty else {
+            return PermissionResult(
+                state: .requested,
+                detail: "No standard protected user-data path was available for a non-prompting Full Disk Access probe."
+            )
+        }
+        let readable = existingProtectedPaths.contains {
+            (try? FileManager.default.contentsOfDirectory(atPath: $0)) != nil
+        }
+        return PermissionResult(
+            state: readable ? .granted : .denied,
+            detail: readable
+                ? "A protected user-data path is readable; Full Disk Access appears available."
+                : "Protected user-data paths are not readable. Use Request to open Full Disk Access settings."
+        )
     }
 
     private func currentFocusedWindowTitle(

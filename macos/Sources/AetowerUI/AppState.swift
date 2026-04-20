@@ -287,6 +287,7 @@ public final class AppState {
     public func start(refreshInterval: Double) {
         stop()
         ensureLocalMcpServer()
+        refreshLocalPermissionCapabilities()
         observeWorkspaceActivation()
         publishFrontmostState(force: true)
         refresh(force: true)
@@ -322,6 +323,13 @@ public final class AppState {
         let result = permissionCoordinator.request(capability.kind)
         bridge.setCapability(capability.kind, state: result.state, detail: result.detail)
         refresh(force: true)
+    }
+
+    private func refreshLocalPermissionCapabilities() {
+        for kind in [CapabilityKind.accessibility, .fullDiskAccess, .appleAutomation] {
+            let result = permissionCoordinator.currentStatus(kind)
+            bridge.setCapability(kind, state: result.state, detail: result.detail)
+        }
     }
 
     public func stopAgentSession(sessionId: String, force: Bool) {
