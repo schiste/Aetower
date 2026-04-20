@@ -7,6 +7,8 @@ use aetower_model::{
     EntitySnapshot, FrontmostAppState, ProvenanceKind, ProvenanceSnapshot,
 };
 
+const MAX_COMPONENT_DETAIL_CHARS: usize = 160;
+
 pub fn build_entities(
     processes: &[RawProcessSample],
     identity: &IdentityMap,
@@ -274,12 +276,24 @@ fn summarize_process(process: &RawProcessSample) -> String {
     if process.cmd.is_empty() {
         format!("pid {}", process.pid)
     } else {
-        process.cmd.join(" ")
+        compact_component_detail(&process.cmd.join(" "))
     }
 }
 
 fn command_line(process: &RawProcessSample) -> Option<String> {
     (!process.cmd.is_empty()).then(|| process.cmd.join(" "))
+}
+
+fn compact_component_detail(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.chars().count() <= MAX_COMPONENT_DETAIL_CHARS {
+        return trimmed.to_owned();
+    }
+    let head: String = trimmed
+        .chars()
+        .take(MAX_COMPONENT_DETAIL_CHARS.saturating_sub(3))
+        .collect();
+    format!("{head}...")
 }
 
 fn parent_summary(
@@ -747,6 +761,37 @@ mod tests {
                 .map(|value| value.rule.as_str()),
             Some("same-entity ancestor lineage")
         );
+    }
+
+    #[test]
+    fn process_detail_is_compacted_but_command_line_stays_complete() {
+        let long_argument = "x".repeat(240);
+        let process = RawProcessSample {
+            pid: 10,
+            parent_pid: None,
+            start_time_millis: 1,
+            name: "python3".to_owned(),
+            exe: Some("/opt/homebrew/bin/python3".to_owned()),
+            cmd: vec!["python3".to_owned(), long_argument.clone()],
+            cpu_percent: 0.0,
+            memory_bytes: 0,
+            memory_physical_footprint_bytes: 0,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
+            wakeups_per_second: 0.0,
+            energy_nj_per_s: 0.0,
+            cwd: None,
+            user: None,
+        };
+
+        let detail = summarize_process(&process);
+        let Some(command_line) = command_line(&process) else {
+            panic!("command line should be present");
+        };
+
+        assert!(detail.len() <= MAX_COMPONENT_DETAIL_CHARS);
+        assert!(detail.ends_with("..."));
+        assert_eq!(command_line, format!("python3 {long_argument}"));
     }
 
     #[test]

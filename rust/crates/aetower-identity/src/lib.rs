@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use aetower_collector::{RawProcessSample, index_processes};
 use aetower_model::EntityKind;
 
+const MAX_DISPLAY_NAME_CHARS: usize = 80;
+
 #[derive(Debug, Clone)]
 pub struct EntitySeed {
     pub entity_id: String,
@@ -313,14 +315,27 @@ fn terminal_session_seed(shell: &RawProcessSample) -> EntitySeed {
 }
 
 fn shell_session_title(shell: &RawProcessSample) -> String {
-    shell
+    let title = shell
         .cmd
         .iter()
         .skip(1)
         .find(|segment| !segment.starts_with('-'))
         .cloned()
         .filter(|segment| segment != &shell.name)
-        .unwrap_or_else(|| format!("{} session", shell.name))
+        .unwrap_or_else(|| format!("{} session", shell.name));
+    compact_display_name(&title)
+}
+
+fn compact_display_name(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.chars().count() <= MAX_DISPLAY_NAME_CHARS {
+        return trimmed.to_owned();
+    }
+    let head: String = trimmed
+        .chars()
+        .take(MAX_DISPLAY_NAME_CHARS.saturating_sub(3))
+        .collect();
+    format!("{head}...")
 }
 
 fn root_bundle_process<'a>(
@@ -436,6 +451,7 @@ mod tests {
             cmd: cmd.iter().map(|value| (*value).to_owned()).collect(),
             cpu_percent: 0.0,
             memory_bytes: 0,
+            memory_physical_footprint_bytes: 0,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
             wakeups_per_second: 0.0,
@@ -539,6 +555,23 @@ mod tests {
         assert_eq!(entity.entity_kind, EntityKind::TerminalSession);
         assert_eq!(entity.entity_id, "terminal:20");
         assert_eq!(entity.display_name, "zsh session");
+    }
+
+    #[test]
+    fn shell_session_title_compacts_long_commands() {
+        let long_command = format!("{} {}", "git".repeat(40), "--stat");
+        let shell = sample(
+            20,
+            Some(10),
+            "zsh",
+            Some("/bin/zsh"),
+            &["zsh", long_command.as_str()],
+        );
+
+        let title = shell_session_title(&shell);
+
+        assert!(title.len() <= MAX_DISPLAY_NAME_CHARS);
+        assert!(title.ends_with("..."));
     }
 
     #[test]
