@@ -857,9 +857,10 @@ impl Engine {
         if let Some(worker) = self.telemetry_worker.take() {
             let _ = worker.join();
         }
-        if let Some(worker) = self.history_maintenance_worker.take() {
-            let _ = worker.join();
-        }
+        // Persisted history maintenance can be inside SQLite checkpoint/VACUUM/trim work on
+        // large stores. The worker observes `running` between passes, but shutdown/relaunch
+        // should not block on best-effort maintenance finishing first.
+        let _ = self.history_maintenance_worker.take();
         // System-marker ingestion is best-effort and can be slow on machines
         // with large unified-log stores. Never block engine shutdown on it.
         let _ = self.system_marker_worker.take();
