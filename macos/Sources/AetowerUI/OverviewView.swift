@@ -38,33 +38,30 @@ private struct OverviewIncidentBanner: View {
     let incident: HostIncidentSummary
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: incident.severity == .critical ? "exclamationmark.triangle.fill" : "waveform.path.ecg")
-                    .foregroundStyle(incident.severity.color)
-                Text(incident.title)
-                    .font(.title3.weight(.semibold))
-                Spacer()
-                Text(incident.severity.label)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(incident.severity.color)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(incident.severity.color.opacity(0.10), in: Capsule())
+        HStack(alignment: .top, spacing: 12) {
+            Rectangle()
+                .fill(incident.severity.color)
+                .frame(width: 3)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: incident.severity == .critical ? "exclamationmark.triangle.fill" : "waveform.path.ecg")
+                        .foregroundStyle(incident.severity.color)
+                    Text(incident.title)
+                        .font(.title3.weight(.semibold))
+                    Spacer()
+                    Text(incident.severity.label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(incident.severity.color)
+                }
+                Text(incident.summary)
+                    .font(.subheadline)
+                Text(incident.action)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Text(incident.summary)
-                .font(.subheadline)
-            Text(incident.action)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
-        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(incident.severity.color.opacity(0.08), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
-                .stroke(incident.severity.color.opacity(0.18), lineWidth: 1)
-        )
     }
 }
 
@@ -99,9 +96,7 @@ private struct OverviewPanel<Content: View>: View {
             OverviewSectionHeader(title: title, subtitle: subtitle)
             content
         }
-        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.lg, style: .continuous))
     }
 }
 
@@ -128,13 +123,8 @@ private struct OverviewListCard: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(14)
         .frame(maxWidth: .infinity, minHeight: 124, alignment: .leading)
         .contentShape(Rectangle())
-        .overlay(
-            RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
-                .stroke(Color.secondary.opacity(0.10), lineWidth: 1)
-        )
     }
 }
 
