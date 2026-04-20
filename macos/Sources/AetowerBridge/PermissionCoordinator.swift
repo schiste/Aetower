@@ -37,7 +37,7 @@ public final class PermissionCoordinator {
             return currentFullDiskAccessStatus()
         case .appleAutomation:
             return PermissionResult(
-                state: .requested,
+                state: .unavailable,
                 detail: "Automation is not probed automatically to avoid triggering Apple Events prompts. Use Request to run an explicit probe."
             )
         default:
