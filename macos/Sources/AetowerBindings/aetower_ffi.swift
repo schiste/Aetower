@@ -3569,10 +3569,12 @@ public struct HistoryMaintenanceReport {
     public var vacuumed: Bool
     public var prunedRows: UInt64
     public var aggressiveReason: String?
+    public var cancelled: Bool
+    public var elapsedMillis: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(storeBytesBefore: UInt64, walBytesBefore: UInt64, storeBytesAfter: UInt64, walBytesAfter: UInt64, checkpointed: Bool, vacuumed: Bool, prunedRows: UInt64, aggressiveReason: String?) {
+    public init(storeBytesBefore: UInt64, walBytesBefore: UInt64, storeBytesAfter: UInt64, walBytesAfter: UInt64, checkpointed: Bool, vacuumed: Bool, prunedRows: UInt64, aggressiveReason: String?, cancelled: Bool, elapsedMillis: UInt64) {
         self.storeBytesBefore = storeBytesBefore
         self.walBytesBefore = walBytesBefore
         self.storeBytesAfter = storeBytesAfter
@@ -3581,6 +3583,8 @@ public struct HistoryMaintenanceReport {
         self.vacuumed = vacuumed
         self.prunedRows = prunedRows
         self.aggressiveReason = aggressiveReason
+        self.cancelled = cancelled
+        self.elapsedMillis = elapsedMillis
     }
 }
 
@@ -3615,6 +3619,12 @@ extension HistoryMaintenanceReport: Equatable, Hashable {
         if lhs.aggressiveReason != rhs.aggressiveReason {
             return false
         }
+        if lhs.cancelled != rhs.cancelled {
+            return false
+        }
+        if lhs.elapsedMillis != rhs.elapsedMillis {
+            return false
+        }
         return true
     }
 
@@ -3627,6 +3637,8 @@ extension HistoryMaintenanceReport: Equatable, Hashable {
         hasher.combine(vacuumed)
         hasher.combine(prunedRows)
         hasher.combine(aggressiveReason)
+        hasher.combine(cancelled)
+        hasher.combine(elapsedMillis)
     }
 }
 
@@ -3646,7 +3658,9 @@ public struct FfiConverterTypeHistoryMaintenanceReport: FfiConverterRustBuffer {
                 checkpointed: FfiConverterBool.read(from: &buf), 
                 vacuumed: FfiConverterBool.read(from: &buf), 
                 prunedRows: FfiConverterUInt64.read(from: &buf), 
-                aggressiveReason: FfiConverterOptionString.read(from: &buf)
+                aggressiveReason: FfiConverterOptionString.read(from: &buf), 
+                cancelled: FfiConverterBool.read(from: &buf), 
+                elapsedMillis: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -3659,6 +3673,8 @@ public struct FfiConverterTypeHistoryMaintenanceReport: FfiConverterRustBuffer {
         FfiConverterBool.write(value.vacuumed, into: &buf)
         FfiConverterUInt64.write(value.prunedRows, into: &buf)
         FfiConverterOptionString.write(value.aggressiveReason, into: &buf)
+        FfiConverterBool.write(value.cancelled, into: &buf)
+        FfiConverterUInt64.write(value.elapsedMillis, into: &buf)
     }
 }
 
