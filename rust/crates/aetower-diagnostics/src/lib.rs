@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
@@ -182,7 +182,14 @@ struct DiagnosticsState {
     capacity: usize,
     next_id: u64,
     dropped_events: u64,
+    coalesced_events: BTreeMap<String, DiagnosticsCoalesceState>,
     persistence: Option<PersistedDiagnostics>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DiagnosticsCoalesceState {
+    last_emitted_millis: u64,
+    window_millis: u64,
 }
 
 #[derive(Debug)]
@@ -215,6 +222,7 @@ impl DiagnosticsStore {
                 capacity: capacity.max(1),
                 next_id: 1,
                 dropped_events: 0,
+                coalesced_events: BTreeMap::new(),
                 persistence: None,
             })),
         }
@@ -237,6 +245,7 @@ impl DiagnosticsStore {
             .saturating_add(1);
         Ok(Self {
             inner: Arc::new(Mutex::new(DiagnosticsState {
+                coalesced_events: seed_coalescing_state(&events),
                 events,
                 capacity,
                 next_id,
@@ -250,6 +259,9 @@ impl DiagnosticsStore {
         let mut guard = self.inner.lock();
         if event.timestamp_millis == 0 {
             event.timestamp_millis = now_millis();
+        }
+        if should_coalesce_event(&mut guard, &event) {
+            return;
         }
         event.id = format!("diag-{}", guard.next_id);
         guard.next_id = guard.next_id.saturating_add(1);
@@ -419,6 +431,7 @@ impl DiagnosticsStore {
     pub fn clear(&self) -> io::Result<()> {
         let mut guard = self.inner.lock();
         guard.events.clear();
+        guard.coalesced_events.clear();
         guard.next_id = 1;
         guard.dropped_events = 0;
         if let Some(persistence) = guard.persistence.as_mut() {
@@ -755,6 +768,95 @@ fn diagnostics_event_matches(
     true
 }
 
+fn seed_coalescing_state(
+    events: &VecDeque<DiagnosticsEvent>,
+) -> BTreeMap<String, DiagnosticsCoalesceState> {
+    let mut state = BTreeMap::new();
+    for event in events {
+        let Some((key, window_millis)) = diagnostics_coalescing_key(event) else {
+            continue;
+        };
+        state
+            .entry(key)
+            .and_modify(|existing: &mut DiagnosticsCoalesceState| {
+                existing.last_emitted_millis =
+                    existing.last_emitted_millis.max(event.timestamp_millis);
+            })
+            .or_insert(DiagnosticsCoalesceState {
+                last_emitted_millis: event.timestamp_millis,
+                window_millis,
+            });
+    }
+    state
+}
+
+fn should_coalesce_event(state: &mut DiagnosticsState, event: &DiagnosticsEvent) -> bool {
+    let Some((key, window_millis)) = diagnostics_coalescing_key(event) else {
+        return false;
+    };
+    state.coalesced_events.retain(|_, previous| {
+        event
+            .timestamp_millis
+            .saturating_sub(previous.last_emitted_millis)
+            < previous.window_millis.saturating_mul(4)
+    });
+
+    if let Some(previous) = state.coalesced_events.get_mut(&key) {
+        let elapsed = event
+            .timestamp_millis
+            .saturating_sub(previous.last_emitted_millis);
+        if elapsed < window_millis {
+            return true;
+        }
+        previous.last_emitted_millis = event.timestamp_millis;
+        previous.window_millis = window_millis;
+        return false;
+    }
+
+    state.coalesced_events.insert(
+        key,
+        DiagnosticsCoalesceState {
+            last_emitted_millis: event.timestamp_millis,
+            window_millis,
+        },
+    );
+    false
+}
+
+fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)> {
+    let window_millis = match event.event_type.as_str() {
+        "host-incident-snapshot" => 15 * 60 * 1000,
+        "adapter-refresh-failed" => 15 * 60 * 1000,
+        "tick-over-budget" => 5 * 60 * 1000,
+        "mcp-helper-reaped" => 5 * 60 * 1000,
+        "tick-started" | "tick-completed" | "snapshot-published" | "gpu-sample-read" => 60 * 1000,
+        _ => return None,
+    };
+
+    let identity_fields = ["incident_key", "error", "path", "capability", "adapter"];
+    let mut parts = vec![
+        format!("{:?}", event.level),
+        format!("{:?}", event.subsystem),
+        event.event_type.clone(),
+    ];
+    if let Some(adapter) = event.adapter.as_deref() {
+        parts.push(format!("adapter={adapter}"));
+    }
+    if let Some(capability) = event.capability.as_deref() {
+        parts.push(format!("capability={capability}"));
+    }
+    if let Some(entity_id) = event.entity_id.as_deref() {
+        parts.push(format!("entity={entity_id}"));
+    }
+    for field in &event.fields {
+        if identity_fields.contains(&field.key.as_str()) {
+            parts.push(format!("{}={}", field.key, field.value));
+        }
+    }
+
+    Some((parts.join("|"), window_millis))
+}
+
 fn should_persist_event(event: &DiagnosticsEvent) -> bool {
     match event.level {
         DiagnosticsLevel::Warn | DiagnosticsLevel::Error => true,
@@ -902,6 +1004,73 @@ mod tests {
         assert!(persisted.contains("history-load-failed"));
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn repeated_diagnostics_noise_is_coalesced() {
+        let store = DiagnosticsStore::new(16);
+
+        for timestamp_millis in [1_000, 2_000, 3_000] {
+            store.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Warn,
+                    DiagnosticsSubsystem::AdapterChau7,
+                    "adapter-refresh-failed",
+                    "Chau7 adapter refresh failed.",
+                )
+                .timestamp_millis(timestamp_millis)
+                .field("error", "timeout")
+                .build(),
+            );
+        }
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Warn,
+                DiagnosticsSubsystem::AdapterChau7,
+                "adapter-refresh-failed",
+                "Chau7 adapter refresh failed.",
+            )
+            .timestamp_millis(16 * 60 * 1000)
+            .field("error", "timeout")
+            .build(),
+        );
+
+        let events = store.recent(10);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].timestamp_millis, 16 * 60 * 1000);
+        assert_eq!(events[1].timestamp_millis, 1_000);
+    }
+
+    #[test]
+    fn coalescing_keeps_distinct_incident_severities() {
+        let store = DiagnosticsStore::new(16);
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Warn,
+                DiagnosticsSubsystem::History,
+                "host-incident-snapshot",
+                "Host memory pressure warning.",
+            )
+            .timestamp_millis(1_000)
+            .field("incident_key", "memory-pressure")
+            .build(),
+        );
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Error,
+                DiagnosticsSubsystem::History,
+                "host-incident-snapshot",
+                "Critical host memory pressure.",
+            )
+            .timestamp_millis(2_000)
+            .field("incident_key", "memory-pressure")
+            .build(),
+        );
+
+        let events = store.recent(10);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].level, DiagnosticsLevel::Error);
+        assert_eq!(events[1].level, DiagnosticsLevel::Warn);
     }
 
     #[test]
