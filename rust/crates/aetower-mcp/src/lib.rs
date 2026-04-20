@@ -46,6 +46,9 @@ const DEFAULT_INVESTIGATION_WINDOW_MINUTES: u64 = 30;
 const DEFAULT_INVESTIGATION_ENTITY_LIMIT: usize = 5;
 const DEFAULT_INVESTIGATION_DIAGNOSTICS_LIMIT: usize = 128;
 const DEFAULT_INVESTIGATION_HISTORY_LIMIT: usize = 512;
+const DEFAULT_HISTORY_EXPECTED_INTERVAL_MILLIS: u64 = 10_000;
+const DEFAULT_HISTORY_QUALITY_MAX_SNAPSHOTS: usize = 4096;
+const HISTORY_DATA_GAP_MULTIPLIER: u64 = 3;
 const DEFAULT_EXPORT_HISTORY_LIMIT: u32 = 120;
 const MEMORY_PRESSURE_WARNING_RATIO: f64 = 0.80;
 const MEMORY_PRESSURE_CRITICAL_RATIO: f64 = 0.90;
@@ -245,7 +248,29 @@ struct HistoryStoreHealth {
     summary: String,
     range: HistorySummaryResponse,
     thresholds: BTreeMap<String, Value>,
+    data_quality: Option<HistoryDataQualityReport>,
     recent_history_events: Vec<DiagnosticsEvent>,
+    recommendations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct HistoryDataQualityReport {
+    severity: SeverityBand,
+    summary: String,
+    window_start_millis: u64,
+    window_end_millis: u64,
+    sampled_snapshots: usize,
+    oldest_millis: Option<u64>,
+    newest_millis: Option<u64>,
+    coverage_millis: u64,
+    coverage_ratio: f64,
+    expected_interval_millis: u64,
+    gap_threshold_millis: u64,
+    largest_gap_millis: u64,
+    gap_count: usize,
+    duplicate_timestamp_count: usize,
+    sequence_regression_count: usize,
+    boot_boundary_count: usize,
     recommendations: Vec<String>,
 }
 
@@ -1108,6 +1133,7 @@ impl AetowerMcpServer {
             "aetower_history_summary" => self.tool_history_summary(arguments),
             "aetower_history_page" => self.tool_history_page(arguments),
             "aetower_history_store_health" => self.tool_history_store_health(arguments),
+            "aetower_history_data_quality" => self.tool_history_data_quality(arguments),
             "aetower_memory_breakdown" => self.tool_memory_breakdown(arguments),
             "aetower_profile_entity" => self.tool_profile_entity(arguments),
             "aetower_wakeup_attribution" => self.tool_wakeup_attribution(arguments),
@@ -1814,7 +1840,57 @@ impl AetowerMcpServer {
                 include_persisted: true,
             })
             .map_err(tool_error)?;
-        tool_json(build_history_store_health(summary, recent_history_events))
+        let data_quality = load_history_snapshots_raw(
+            &*self.data_source,
+            start_millis,
+            snapshot.captured_at_millis,
+            DEFAULT_HISTORY_QUALITY_MAX_SNAPSHOTS,
+        )
+        .ok()
+        .map(|snapshots| {
+            build_history_data_quality_report(
+                &snapshots,
+                start_millis,
+                snapshot.captured_at_millis,
+                DEFAULT_HISTORY_EXPECTED_INTERVAL_MILLIS,
+            )
+        });
+        tool_json(build_history_store_health(
+            summary,
+            recent_history_events,
+            data_quality,
+        ))
+    }
+
+    fn tool_history_data_quality(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_history_window_hours")]
+            window_hours: u64,
+            #[serde(default = "default_history_expected_interval_millis")]
+            expected_interval_millis: u64,
+            #[serde(default = "default_history_quality_max_snapshots")]
+            max_snapshots: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let start_millis = snapshot
+            .captured_at_millis
+            .saturating_sub(args.window_hours.saturating_mul(60 * 60 * 1000));
+        let snapshots = load_history_snapshots_raw(
+            &*self.data_source,
+            start_millis,
+            snapshot.captured_at_millis,
+            args.max_snapshots.max(1),
+        )
+        .map_err(tool_error)?;
+        tool_json(build_history_data_quality_report(
+            &snapshots,
+            start_millis,
+            snapshot.captured_at_millis,
+            args.expected_interval_millis.max(1),
+        ))
     }
 
     fn tool_memory_breakdown(&self, arguments: Value) -> Result<Value, Value> {
@@ -2169,6 +2245,14 @@ fn default_investigation_entity_limit() -> usize {
 
 fn default_investigation_diagnostics_limit() -> usize {
     DEFAULT_INVESTIGATION_DIAGNOSTICS_LIMIT
+}
+
+fn default_history_expected_interval_millis() -> u64 {
+    DEFAULT_HISTORY_EXPECTED_INTERVAL_MILLIS
+}
+
+fn default_history_quality_max_snapshots() -> usize {
+    DEFAULT_HISTORY_QUALITY_MAX_SNAPSHOTS
 }
 
 fn default_history_window_hours() -> u64 {
@@ -2667,6 +2751,20 @@ fn load_history_snapshots(
     end_millis: u64,
     max_snapshots: usize,
 ) -> Result<Vec<SystemSnapshot>, String> {
+    let mut snapshots =
+        load_history_snapshots_raw(data_source, start_millis, end_millis, max_snapshots)?;
+    snapshots.dedup_by(|left, right| {
+        left.captured_at_millis == right.captured_at_millis && left.sequence == right.sequence
+    });
+    Ok(snapshots)
+}
+
+fn load_history_snapshots_raw(
+    data_source: &dyn AetowerMcpDataSource,
+    start_millis: u64,
+    end_millis: u64,
+    max_snapshots: usize,
+) -> Result<Vec<SystemSnapshot>, String> {
     let mut before_cursor = None;
     let mut snapshots = Vec::new();
     let page_limit = 256u32;
@@ -2676,20 +2774,162 @@ fn load_history_snapshots(
         if page.is_empty() {
             break;
         }
-        before_cursor = page
+        let next_before_cursor = page
             .last()
             .map(|snapshot| snapshot.captured_at_millis)
             .and_then(|captured_at| captured_at.checked_sub(1));
+        if next_before_cursor == before_cursor {
+            break;
+        }
+        before_cursor = next_before_cursor;
         snapshots.extend(page);
         if snapshots.len() >= max_snapshots {
             break;
         }
     }
     snapshots.sort_by_key(|snapshot| snapshot.captured_at_millis);
-    snapshots.dedup_by(|left, right| {
-        left.captured_at_millis == right.captured_at_millis && left.sequence == right.sequence
-    });
     Ok(snapshots)
+}
+
+fn build_history_data_quality_report(
+    snapshots: &[SystemSnapshot],
+    window_start_millis: u64,
+    window_end_millis: u64,
+    expected_interval_millis: u64,
+) -> HistoryDataQualityReport {
+    let expected_interval_millis = expected_interval_millis.max(1);
+    let gap_threshold_millis = expected_interval_millis.saturating_mul(HISTORY_DATA_GAP_MULTIPLIER);
+    let sampled_snapshots = snapshots.len();
+    let oldest_millis = snapshots
+        .first()
+        .map(|snapshot| snapshot.captured_at_millis);
+    let newest_millis = snapshots.last().map(|snapshot| snapshot.captured_at_millis);
+    let coverage_millis = newest_millis
+        .zip(oldest_millis)
+        .map(|(newest, oldest)| newest.saturating_sub(oldest))
+        .unwrap_or(0);
+    let requested_window_millis = window_end_millis.saturating_sub(window_start_millis);
+    let coverage_ratio = if requested_window_millis == 0 {
+        0.0
+    } else {
+        (coverage_millis as f64 / requested_window_millis as f64).clamp(0.0, 1.0)
+    };
+
+    let mut timestamp_counts = BTreeMap::<u64, usize>::new();
+    for snapshot in snapshots {
+        *timestamp_counts
+            .entry(snapshot.captured_at_millis)
+            .or_default() += 1;
+    }
+    let duplicate_timestamp_count = timestamp_counts
+        .values()
+        .map(|count| count.saturating_sub(1))
+        .sum();
+
+    let mut largest_gap_millis = 0u64;
+    let mut gap_count = 0usize;
+    let mut sequence_regression_count = 0usize;
+    let mut boot_boundary_count = 0usize;
+    for pair in snapshots.windows(2) {
+        let before = &pair[0];
+        let after = &pair[1];
+        let gap_millis = after
+            .captured_at_millis
+            .saturating_sub(before.captured_at_millis);
+        largest_gap_millis = largest_gap_millis.max(gap_millis);
+        if gap_millis > gap_threshold_millis {
+            gap_count += 1;
+        }
+        if after.sequence < before.sequence {
+            sequence_regression_count += 1;
+        }
+        if snapshot_boot_key(&before.host) != snapshot_boot_key(&after.host) {
+            boot_boundary_count += 1;
+        }
+    }
+
+    let severity = if sampled_snapshots == 0
+        || sequence_regression_count > 0
+        || largest_gap_millis >= 60 * 60 * 1000
+        || duplicate_timestamp_count >= 64
+    {
+        SeverityBand::Critical
+    } else if sampled_snapshots < 2 || gap_count > 0 || duplicate_timestamp_count > 0 {
+        SeverityBand::Warning
+    } else {
+        SeverityBand::Info
+    };
+
+    let mut recommendations = Vec::new();
+    if sampled_snapshots == 0 {
+        recommendations.push(
+            "History has no readable snapshots in this window; verify writer startup, SQLite path, and quarantine diagnostics."
+                .to_owned(),
+        );
+    }
+    if gap_count > 0 {
+        recommendations.push(format!(
+            "Investigate {} history coverage gap(s) above {}.",
+            gap_count,
+            format_duration_millis(gap_threshold_millis)
+        ));
+    }
+    if duplicate_timestamp_count > 0 {
+        recommendations.push(
+            "Audit history writer idempotency; duplicate captured_at timestamps should be rare."
+                .to_owned(),
+        );
+    }
+    if sequence_regression_count > 0 {
+        recommendations.push(
+            "Sequence numbers regressed in timestamp order; preserve monotonic sequence writes across engine restarts."
+                .to_owned(),
+        );
+    }
+    if recommendations.is_empty() {
+        recommendations
+            .push("History ordering and coverage look healthy for this window.".to_owned());
+    }
+
+    HistoryDataQualityReport {
+        severity,
+        summary: match severity {
+            SeverityBand::Info => format!(
+                "{} snapshots sampled; largest gap {}; no ordering issues detected.",
+                sampled_snapshots,
+                format_duration_millis(largest_gap_millis)
+            ),
+            SeverityBand::Warning => format!(
+                "{} snapshots sampled; {} gap(s), {} duplicate timestamp(s), largest gap {}.",
+                sampled_snapshots,
+                gap_count,
+                duplicate_timestamp_count,
+                format_duration_millis(largest_gap_millis)
+            ),
+            SeverityBand::Critical => format!(
+                "{} snapshots sampled; {} sequence regression(s), {} gap(s), largest gap {}.",
+                sampled_snapshots,
+                sequence_regression_count,
+                gap_count,
+                format_duration_millis(largest_gap_millis)
+            ),
+        },
+        window_start_millis,
+        window_end_millis,
+        sampled_snapshots,
+        oldest_millis,
+        newest_millis,
+        coverage_millis,
+        coverage_ratio,
+        expected_interval_millis,
+        gap_threshold_millis,
+        largest_gap_millis,
+        gap_count,
+        duplicate_timestamp_count,
+        sequence_regression_count,
+        boot_boundary_count,
+        recommendations,
+    }
 }
 
 fn select_investigation_entity_ids(
@@ -4320,8 +4560,18 @@ fn build_capability_status(snapshot: &SystemSnapshot) -> Vec<CapabilityStatusIte
 fn build_history_store_health(
     summary: HistorySummaryResponse,
     recent_history_events: Vec<DiagnosticsEvent>,
+    data_quality: Option<HistoryDataQualityReport>,
 ) -> HistoryStoreHealth {
-    let severity = history_store_severity(&summary);
+    let severity = data_quality
+        .as_ref()
+        .map(|quality| {
+            if quality.severity.score() > history_store_severity(&summary).score() {
+                quality.severity
+            } else {
+                history_store_severity(&summary)
+            }
+        })
+        .unwrap_or_else(|| history_store_severity(&summary));
     let mut thresholds = BTreeMap::new();
     thresholds.insert(
         "warning_store_bytes".to_owned(),
@@ -4366,6 +4616,11 @@ fn build_history_store_health(
                 .to_owned(),
         );
     }
+    if let Some(quality) = data_quality.as_ref()
+        && quality.severity != SeverityBand::Info
+    {
+        recommendations.extend(quality.recommendations.clone());
+    }
     HistoryStoreHealth {
         severity,
         summary: format!(
@@ -4377,6 +4632,7 @@ fn build_history_store_health(
         ),
         range: summary,
         thresholds,
+        data_quality,
         recent_history_events,
         recommendations,
     }
@@ -6063,6 +6319,18 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+fn format_duration_millis(millis: u64) -> String {
+    if millis < 1_000 {
+        format!("{millis} ms")
+    } else if millis < 60_000 {
+        format!("{:.1} s", millis as f64 / 1_000.0)
+    } else if millis < 60 * 60_000 {
+        format!("{:.1} min", millis as f64 / 60_000.0)
+    } else {
+        format!("{:.1} h", millis as f64 / (60.0 * 60_000.0))
+    }
+}
+
 fn tool_error(message: impl Into<String>) -> Value {
     json!({
         "content": [
@@ -6298,6 +6566,19 @@ fn tool_definitions() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "window_hours": { "type": "integer", "minimum": 1, "maximum": 720 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_history_data_quality",
+            "description": "Analyze persisted snapshot ordering and coverage for gaps, duplicate timestamps, sequence regressions, and boot boundaries.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "window_hours": { "type": "integer", "minimum": 1, "maximum": 720 },
+                    "expected_interval_millis": { "type": "integer", "minimum": 1, "maximum": 3600000 },
+                    "max_snapshots": { "type": "integer", "minimum": 1, "maximum": 20000 }
                 },
                 "additionalProperties": false
             }
@@ -7012,6 +7293,7 @@ mod tests {
             "aetower_recent_changes",
             "aetower_capability_status",
             "aetower_history_store_health",
+            "aetower_history_data_quality",
             "aetower_memory_breakdown",
             "aetower_profile_entity",
             "aetower_wakeup_attribution",
@@ -7667,6 +7949,79 @@ mod tests {
                 .as_ref()
                 .and_then(|cause| cause.code.as_deref()),
             Some("-128")
+        );
+    }
+
+    #[test]
+    fn history_data_quality_flags_gaps_duplicates_and_regressions() {
+        fn snapshot(captured_at_millis: u64, sequence: u64, boot_id: &str) -> SystemSnapshot {
+            SystemSnapshot {
+                captured_at_millis,
+                sequence,
+                host: aetower_model::HostSnapshot {
+                    boot_session: Some(aetower_model::BootSessionSnapshot {
+                        boot_id: Some(boot_id.to_owned()),
+                        boot_time_millis: None,
+                        host_uptime_millis: None,
+                        previous_shutdown: None,
+                    }),
+                    ..aetower_model::HostSnapshot::default()
+                },
+                ..SystemSnapshot::default()
+            }
+        }
+
+        let snapshots = vec![
+            snapshot(0, 10, "boot-a"),
+            snapshot(10_000, 11, "boot-a"),
+            snapshot(10_000, 12, "boot-a"),
+            snapshot(120_000, 9, "boot-a"),
+            snapshot(130_000, 13, "boot-b"),
+        ];
+
+        let report = build_history_data_quality_report(&snapshots, 0, 130_000, 10_000);
+        assert_eq!(report.severity, SeverityBand::Critical);
+        assert_eq!(report.duplicate_timestamp_count, 1);
+        assert_eq!(report.sequence_regression_count, 1);
+        assert_eq!(report.gap_count, 1);
+        assert_eq!(report.largest_gap_millis, 110_000);
+        assert_eq!(report.boot_boundary_count, 1);
+        assert!(
+            report
+                .recommendations
+                .iter()
+                .any(|recommendation| recommendation.contains("Sequence numbers regressed"))
+        );
+    }
+
+    #[test]
+    fn history_data_quality_tool_returns_structured_report() {
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 16,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_history_data_quality",
+                "arguments": { "window_hours": 1 }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        let content = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .cloned()
+            .unwrap_or_else(|| panic!("structuredContent"));
+        assert_eq!(
+            content.get("sampled_snapshots").and_then(Value::as_u64),
+            Some(1)
+        );
+        assert!(
+            content
+                .get("recommendations")
+                .and_then(Value::as_array)
+                .is_some_and(|recommendations| !recommendations.is_empty())
         );
     }
 

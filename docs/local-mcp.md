@@ -26,6 +26,7 @@ agent-facing summaries:
 - `aetower_history_summary`
 - `aetower_history_page`
 - `aetower_history_store_health`
+- `aetower_history_data_quality`
 - `aetower_memory_breakdown`
 - `aetower_profile_entity`
 - `aetower_wakeup_attribution`
@@ -169,6 +170,11 @@ labels.
 
 `aetower_history_store_health` surfaces persisted store size, WAL size,
 quarantine count, thresholds, and recent history diagnostics.
+
+`aetower_history_data_quality` checks persisted snapshot ordering and coverage:
+gaps, duplicate timestamps, sequence regressions, boot-boundary count, and
+coverage ratio for a requested window. `aetower_history_store_health` embeds
+the same quality report when it can load the relevant history page.
 
 `aetower_memory_breakdown` asks the running app to collect a `vmmap`-style
 memory region breakdown for one entity. The response now distinguishes
