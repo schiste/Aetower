@@ -18,6 +18,7 @@ agent-facing summaries:
 - `aetower_entity_process_tree`
 - `aetower_top_findings`
 - `aetower_host_alerts`
+- `aetower_investigation_bundle`
 - `aetower_entity_group_tree`
 - `aetower_ai_runtime_report`
 - `aetower_recent_changes`
@@ -123,6 +124,11 @@ that the running Aetower app is required.
 `aetower_top_findings` and `aetower_host_alerts` provide ranked machine-level
 operator context so agents do not have to rebuild urgency heuristics from raw
 host counters.
+
+`aetower_investigation_bundle` returns a focused crash/freeze bundle for a
+time window: current host alerts, top findings, recent changes, diagnostics,
+history diff, selected entity IDs, and optional process trees. This is the
+preferred first call after a freeze, crash, reboot, or major pressure spike.
 
 `aetower_diff_snapshots` compares two persisted time points and returns host
 and per-entity deltas. When the comparison crosses a reboot boundary it also

@@ -42,6 +42,10 @@ const DEFAULT_FINDINGS_LIMIT: usize = 10;
 const DEFAULT_RECENT_CHANGES_LIMIT: usize = 25;
 const DEFAULT_RECENT_CHANGES_WINDOW_MILLIS: u64 = 30 * 60 * 1000;
 const DEFAULT_HISTORY_WINDOW_MILLIS: u64 = 72 * 60 * 60 * 1000;
+const DEFAULT_INVESTIGATION_WINDOW_MINUTES: u64 = 30;
+const DEFAULT_INVESTIGATION_ENTITY_LIMIT: usize = 5;
+const DEFAULT_INVESTIGATION_DIAGNOSTICS_LIMIT: usize = 128;
+const DEFAULT_INVESTIGATION_HISTORY_LIMIT: usize = 512;
 const DEFAULT_EXPORT_HISTORY_LIMIT: u32 = 120;
 const MEMORY_PRESSURE_WARNING_RATIO: f64 = 0.80;
 const MEMORY_PRESSURE_CRITICAL_RATIO: f64 = 0.90;
@@ -417,6 +421,22 @@ struct ProcessTreeReport {
     expanded_process_count: u32,
     grouping_reasons: Vec<String>,
     roots: Vec<ProcessTreeNodeReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct InvestigationBundleReport {
+    captured_at_millis: u64,
+    window_start_millis: u64,
+    window_end_millis: u64,
+    window_minutes: u64,
+    entity_ids: Vec<String>,
+    host_alerts: Vec<HostAlert>,
+    top_findings: Vec<TopFinding>,
+    recent_changes: Vec<RecentChangeItem>,
+    diagnostics: Vec<DiagnosticsEvent>,
+    history_diff: Option<SnapshotDiffReport>,
+    process_trees: Vec<ProcessTreeReport>,
+    caveats: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1080,6 +1100,7 @@ impl AetowerMcpServer {
             "aetower_entity_process_tree" => self.tool_entity_process_tree(arguments),
             "aetower_top_findings" => self.tool_top_findings(arguments),
             "aetower_host_alerts" => self.tool_host_alerts(arguments),
+            "aetower_investigation_bundle" => self.tool_investigation_bundle(arguments),
             "aetower_entity_group_tree" => self.tool_entity_group_tree(arguments),
             "aetower_ai_runtime_report" => self.tool_ai_runtime_report(arguments),
             "aetower_recent_changes" => self.tool_recent_changes(arguments),
@@ -1384,6 +1405,148 @@ impl AetowerMcpServer {
         tool_json(Response {
             captured_at_millis: snapshot.captured_at_millis,
             alerts: build_host_alerts(&snapshot, args.top_entities),
+        })
+    }
+
+    fn tool_investigation_bundle(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_investigation_window_minutes")]
+            window_minutes: u64,
+            #[serde(default)]
+            start_millis: Option<u64>,
+            #[serde(default)]
+            end_millis: Option<u64>,
+            #[serde(default)]
+            entity_ids: Vec<String>,
+            #[serde(default = "default_findings_limit")]
+            findings_limit: usize,
+            #[serde(default = "default_investigation_entity_limit")]
+            entity_limit: usize,
+            #[serde(default = "default_investigation_diagnostics_limit")]
+            diagnostics_limit: usize,
+            #[serde(default = "default_include_true")]
+            include_process_trees: bool,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let requested_end_millis = args.end_millis.unwrap_or(snapshot.captured_at_millis);
+        let requested_start_millis = args.start_millis.unwrap_or_else(|| {
+            requested_end_millis
+                .saturating_sub(args.window_minutes.max(1).saturating_mul(60 * 1000))
+        });
+        let window_start_millis = requested_start_millis.min(requested_end_millis);
+        let window_end_millis = requested_start_millis.max(requested_end_millis);
+        let window_minutes =
+            ((window_end_millis.saturating_sub(window_start_millis)) / (60 * 1000)).max(1);
+        let mut caveats = Vec::new();
+
+        let diagnostics_overview = match self.data_source.diagnostics_overview() {
+            Ok(overview) => overview,
+            Err(error) => {
+                caveats.push(format!("Diagnostics overview unavailable: {error}"));
+                DiagnosticsOverview::default()
+            }
+        };
+        let history_summary = match self
+            .data_source
+            .history_range_summary(window_start_millis, window_end_millis)
+        {
+            Ok(summary) => summary,
+            Err(error) => {
+                caveats.push(format!("History summary unavailable: {error}"));
+                empty_history_summary()
+            }
+        };
+        let mut diagnostics = match self.data_source.query_diagnostics(DiagnosticsQuery {
+            limit: args.diagnostics_limit.max(1),
+            minimum_level: None,
+            subsystem: None,
+            search: None,
+            since_millis: Some(window_start_millis),
+            include_persisted: true,
+        }) {
+            Ok(events) => events,
+            Err(error) => {
+                caveats.push(format!("Diagnostics events unavailable: {error}"));
+                Vec::new()
+            }
+        };
+        diagnostics.retain(|event| event.timestamp_millis <= window_end_millis);
+        diagnostics.sort_by(|left, right| {
+            right
+                .timestamp_millis
+                .cmp(&left.timestamp_millis)
+                .then(left.id.cmp(&right.id))
+        });
+        diagnostics.truncate(args.diagnostics_limit.max(1));
+
+        let host_alerts = build_host_alerts(&snapshot, DEFAULT_HOST_ALERT_TOP_ENTITIES);
+        let top_findings = build_top_findings(
+            &snapshot,
+            &diagnostics_overview,
+            &history_summary,
+            args.findings_limit.max(1),
+        );
+        let entity_ids = select_investigation_entity_ids(
+            &snapshot,
+            &args.entity_ids,
+            &host_alerts,
+            args.entity_limit.max(1),
+        );
+        let recent_changes = build_recent_changes(
+            &snapshot,
+            window_end_millis.saturating_sub(window_start_millis),
+            DEFAULT_RECENT_CHANGES_LIMIT,
+        );
+
+        let history_snapshots = match load_history_snapshots(
+            &*self.data_source,
+            window_start_millis,
+            window_end_millis,
+            DEFAULT_INVESTIGATION_HISTORY_LIMIT,
+        ) {
+            Ok(snapshots) => snapshots,
+            Err(error) => {
+                caveats.push(format!("Persisted history unavailable: {error}"));
+                Vec::new()
+            }
+        };
+        let history_diff = investigation_history_diff(
+            &snapshot,
+            &history_snapshots,
+            &entity_ids,
+            args.findings_limit.max(1),
+            &diagnostics,
+            &mut caveats,
+        );
+
+        let mut process_trees = Vec::new();
+        if args.include_process_trees {
+            for entity_id in &entity_ids {
+                match build_process_tree_report(&snapshot, entity_id) {
+                    Ok(report) => process_trees.push(report),
+                    Err(error) => caveats.push(format!(
+                        "Process tree unavailable for entity {entity_id}: {error}"
+                    )),
+                }
+            }
+        }
+
+        tool_json(InvestigationBundleReport {
+            captured_at_millis: snapshot.captured_at_millis,
+            window_start_millis,
+            window_end_millis,
+            window_minutes,
+            entity_ids,
+            host_alerts,
+            top_findings,
+            recent_changes,
+            diagnostics,
+            history_diff,
+            process_trees,
+            caveats,
         })
     }
 
@@ -1996,6 +2159,18 @@ fn default_recent_changes_window_minutes() -> u64 {
     DEFAULT_RECENT_CHANGES_WINDOW_MILLIS / (60 * 1000)
 }
 
+fn default_investigation_window_minutes() -> u64 {
+    DEFAULT_INVESTIGATION_WINDOW_MINUTES
+}
+
+fn default_investigation_entity_limit() -> usize {
+    DEFAULT_INVESTIGATION_ENTITY_LIMIT
+}
+
+fn default_investigation_diagnostics_limit() -> usize {
+    DEFAULT_INVESTIGATION_DIAGNOSTICS_LIMIT
+}
+
 fn default_history_window_hours() -> u64 {
     DEFAULT_HISTORY_WINDOW_MILLIS / (60 * 60 * 1000)
 }
@@ -2022,6 +2197,19 @@ fn default_top_regions() -> usize {
 
 fn default_include_true() -> bool {
     true
+}
+
+fn empty_history_summary() -> HistorySummaryResponse {
+    HistorySummaryResponse {
+        store_bytes: 0,
+        wal_bytes: 0,
+        snapshot_count: 0,
+        quarantine_count: 0,
+        range_count: 0,
+        oldest_millis: None,
+        newest_millis: None,
+        pending_writes: 0,
+    }
 }
 
 fn snapshot_at_or_before(
@@ -2502,6 +2690,73 @@ fn load_history_snapshots(
         left.captured_at_millis == right.captured_at_millis && left.sequence == right.sequence
     });
     Ok(snapshots)
+}
+
+fn select_investigation_entity_ids(
+    snapshot: &SystemSnapshot,
+    requested_entity_ids: &[String],
+    host_alerts: &[HostAlert],
+    limit: usize,
+) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut selected = Vec::new();
+    let mut push_id = |entity_id: &str| {
+        if !entity_id.is_empty() && seen.insert(entity_id.to_owned()) {
+            selected.push(entity_id.to_owned());
+        }
+    };
+
+    if requested_entity_ids.is_empty() {
+        for alert in host_alerts {
+            for entity_id in &alert.entity_ids {
+                push_id(entity_id);
+            }
+        }
+        for entity in top_entities(snapshot, limit) {
+            push_id(&entity.entity_id);
+        }
+    } else {
+        for entity_id in requested_entity_ids {
+            push_id(entity_id);
+        }
+    }
+
+    selected.truncate(limit.max(1));
+    selected
+}
+
+fn investigation_history_diff(
+    latest: &SystemSnapshot,
+    history_snapshots: &[SystemSnapshot],
+    entity_ids: &[String],
+    limit: usize,
+    diagnostics: &[DiagnosticsEvent],
+    caveats: &mut Vec<String>,
+) -> Option<SnapshotDiffReport> {
+    let Some(before) = history_snapshots.first() else {
+        caveats.push(
+            "No persisted snapshots were available inside the investigation window.".to_owned(),
+        );
+        return None;
+    };
+    let after = history_snapshots
+        .last()
+        .filter(|after| after.captured_at_millis >= before.captured_at_millis)
+        .unwrap_or(latest);
+    if before.captured_at_millis == after.captured_at_millis && before.sequence == after.sequence {
+        caveats.push(
+            "Only one persisted snapshot was available inside the investigation window; history diff omitted."
+                .to_owned(),
+        );
+        return None;
+    }
+    Some(build_snapshot_diff_report_with_diagnostics(
+        before,
+        after,
+        entity_ids,
+        limit,
+        diagnostics,
+    ))
 }
 
 fn build_reboot_session_report(session: &[SystemSnapshot]) -> Option<RebootSessionReport> {
@@ -5946,6 +6201,24 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "aetower_investigation_bundle",
+            "description": "Return a focused crash/freeze investigation bundle with current pressure, recent changes, diagnostics, history diff, and optional process trees.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "window_minutes": { "type": "integer", "minimum": 1, "maximum": 1440 },
+                    "start_millis": { "type": "integer", "minimum": 0 },
+                    "end_millis": { "type": "integer", "minimum": 0 },
+                    "entity_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 100 },
+                    "findings_limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+                    "entity_limit": { "type": "integer", "minimum": 1, "maximum": 25 },
+                    "diagnostics_limit": { "type": "integer", "minimum": 1, "maximum": 5000 },
+                    "include_process_trees": { "type": "boolean" }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "aetower_entity_group_tree",
             "description": "Return a grouped entity family view for one entity_id using runtime/session/repo relationships.",
             "inputSchema": {
@@ -6733,6 +7006,7 @@ mod tests {
             "aetower_entity_process_tree",
             "aetower_top_findings",
             "aetower_host_alerts",
+            "aetower_investigation_bundle",
             "aetower_entity_group_tree",
             "aetower_ai_runtime_report",
             "aetower_recent_changes",
@@ -6886,6 +7160,59 @@ mod tests {
             None => panic!("findings array"),
         };
         assert!(!findings.is_empty());
+    }
+
+    #[test]
+    fn investigation_bundle_returns_current_pressure_context() {
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_investigation_bundle",
+                "arguments": {
+                    "start_millis": 0,
+                    "end_millis": 1800000,
+                    "window_minutes": 30
+                }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        let content = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .cloned()
+            .unwrap_or_else(|| panic!("structuredContent"));
+        assert_eq!(
+            content.get("window_minutes").and_then(Value::as_u64),
+            Some(30)
+        );
+        assert!(
+            content
+                .get("host_alerts")
+                .and_then(Value::as_array)
+                .is_some_and(|alerts| !alerts.is_empty())
+        );
+        assert!(
+            content
+                .get("top_findings")
+                .and_then(Value::as_array)
+                .is_some_and(|findings| !findings.is_empty())
+        );
+        assert!(
+            content
+                .get("diagnostics")
+                .and_then(Value::as_array)
+                .is_some_and(|events| !events.is_empty())
+        );
+        assert!(
+            content
+                .get("process_trees")
+                .and_then(Value::as_array)
+                .is_some_and(|trees| !trees.is_empty())
+        );
     }
 
     #[test]
