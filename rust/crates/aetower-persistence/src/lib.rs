@@ -3,10 +3,11 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
     thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
 use aetower_diagnostics::{
@@ -57,6 +58,8 @@ pub struct HistoryMaintenanceReport {
     pub vacuumed: bool,
     pub pruned_rows: u64,
     pub aggressive_reason: Option<String>,
+    pub cancelled: bool,
+    pub elapsed_millis: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -363,6 +366,23 @@ impl HistoryStore {
     }
 
     pub fn maintain_storage(&self, aggressive: bool) -> Result<HistoryMaintenanceReport, String> {
+        self.maintain_storage_inner(aggressive, None)
+    }
+
+    pub fn maintain_storage_cancellable(
+        &self,
+        aggressive: bool,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<HistoryMaintenanceReport, String> {
+        self.maintain_storage_inner(aggressive, Some(&cancel))
+    }
+
+    fn maintain_storage_inner(
+        &self,
+        aggressive: bool,
+        cancel: Option<&Arc<AtomicBool>>,
+    ) -> Result<HistoryMaintenanceReport, String> {
+        let started = Instant::now();
         self.writer.flush()?;
         let (store_bytes_before, wal_bytes_before) = self.store_file_sizes();
         let aggressive_reason = if aggressive {
@@ -370,14 +390,68 @@ impl HistoryStore {
         } else {
             None
         };
-        self.conn
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;")
-            .map_err(|e| format!("checkpoint history store: {e}"))?;
+        if cancellation_requested(cancel) {
+            return Ok(cancelled_maintenance_report(
+                started,
+                store_bytes_before,
+                wal_bytes_before,
+                aggressive_reason,
+            ));
+        }
+        let checkpoint_cancelled = self.execute_batch_cancellable(
+            "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;",
+            cancel,
+            "checkpoint history store",
+        )?;
+        if checkpoint_cancelled {
+            let (store_bytes_after, wal_bytes_after) = self.store_file_sizes();
+            return Ok(HistoryMaintenanceReport {
+                store_bytes_before,
+                wal_bytes_before,
+                store_bytes_after,
+                wal_bytes_after,
+                checkpointed: false,
+                vacuumed: false,
+                pruned_rows: 0,
+                aggressive_reason,
+                cancelled: true,
+                elapsed_millis: started.elapsed().as_millis() as u64,
+            });
+        }
         let mut vacuumed = false;
         if aggressive && self.should_vacuum()? {
-            self.conn
-                .execute_batch("VACUUM;")
-                .map_err(|e| format!("vacuum history store: {e}"))?;
+            if cancellation_requested(cancel) {
+                let (store_bytes_after, wal_bytes_after) = self.store_file_sizes();
+                return Ok(HistoryMaintenanceReport {
+                    store_bytes_before,
+                    wal_bytes_before,
+                    store_bytes_after,
+                    wal_bytes_after,
+                    checkpointed: true,
+                    vacuumed: false,
+                    pruned_rows: 0,
+                    aggressive_reason,
+                    cancelled: true,
+                    elapsed_millis: started.elapsed().as_millis() as u64,
+                });
+            }
+            let vacuum_cancelled =
+                self.execute_batch_cancellable("VACUUM;", cancel, "vacuum history store")?;
+            if vacuum_cancelled {
+                let (store_bytes_after, wal_bytes_after) = self.store_file_sizes();
+                return Ok(HistoryMaintenanceReport {
+                    store_bytes_before,
+                    wal_bytes_before,
+                    store_bytes_after,
+                    wal_bytes_after,
+                    checkpointed: true,
+                    vacuumed: false,
+                    pruned_rows: 0,
+                    aggressive_reason,
+                    cancelled: true,
+                    elapsed_millis: started.elapsed().as_millis() as u64,
+                });
+            }
             vacuumed = true;
         }
         let (store_bytes_after, wal_bytes_after) = self.store_file_sizes();
@@ -396,6 +470,8 @@ impl HistoryStore {
                 .field("wal_bytes_before", wal_bytes_before)
                 .field("store_bytes_after", store_bytes_after)
                 .field("wal_bytes_after", wal_bytes_after)
+                .field("cancelled", false)
+                .field("elapsed_millis", started.elapsed().as_millis())
                 .build(),
             );
         }
@@ -408,6 +484,8 @@ impl HistoryStore {
             vacuumed,
             pruned_rows: 0,
             aggressive_reason,
+            cancelled: false,
+            elapsed_millis: started.elapsed().as_millis() as u64,
         })
     }
 
@@ -415,8 +493,33 @@ impl HistoryStore {
         &self,
         policy: HistoryRetentionPolicy,
     ) -> Result<HistoryMaintenanceReport, String> {
+        self.maintain_with_policy_inner(policy, None)
+    }
+
+    pub fn maintain_with_policy_cancellable(
+        &self,
+        policy: HistoryRetentionPolicy,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<HistoryMaintenanceReport, String> {
+        self.maintain_with_policy_inner(policy, Some(&cancel))
+    }
+
+    fn maintain_with_policy_inner(
+        &self,
+        policy: HistoryRetentionPolicy,
+        cancel: Option<&Arc<AtomicBool>>,
+    ) -> Result<HistoryMaintenanceReport, String> {
+        let started = Instant::now();
         self.writer.flush()?;
         let (store_bytes_before, wal_bytes_before) = self.store_file_sizes();
+        if cancellation_requested(cancel) {
+            return Ok(cancelled_maintenance_report(
+                started,
+                store_bytes_before,
+                wal_bytes_before,
+                None,
+            ));
+        }
         let quarantine_count = self
             .conn
             .query_row("SELECT COUNT(*) FROM snapshot_quarantine", [], |row| {
@@ -443,6 +546,14 @@ impl HistoryStore {
 
         if let Some(newest_millis) = newest_millis {
             let cutoff = policy.cutoff_for(newest_millis, policy.max_age_millis);
+            if cancellation_requested(cancel) {
+                return Ok(cancelled_maintenance_report(
+                    started,
+                    store_bytes_before,
+                    wal_bytes_before,
+                    None,
+                ));
+            }
             let deleted = self.writer.prune(cutoff)?;
             if deleted > 0 {
                 pruned_rows = pruned_rows.saturating_add(deleted);
@@ -470,7 +581,11 @@ impl HistoryStore {
             aggressive_reasons.push("quarantine-rows".to_owned());
         }
 
-        let mut report = self.maintain_storage(threshold_aggressive)?;
+        let mut report = self.maintain_storage_inner(threshold_aggressive, cancel)?;
+        report.elapsed_millis = started.elapsed().as_millis() as u64;
+        if report.cancelled {
+            return Ok(report);
+        }
         report.pruned_rows = pruned_rows;
         report.aggressive_reason = if aggressive_reasons.is_empty() {
             None
@@ -483,6 +598,11 @@ impl HistoryStore {
         {
             let emergency_cutoff =
                 policy.cutoff_for(newest_millis, policy.emergency_max_age_millis);
+            if cancellation_requested(cancel) {
+                report.cancelled = true;
+                report.elapsed_millis = started.elapsed().as_millis() as u64;
+                return Ok(report);
+            }
             let deleted = self.writer.prune(emergency_cutoff)?;
             if deleted > 0 {
                 report.pruned_rows = report.pruned_rows.saturating_add(deleted);
@@ -493,11 +613,16 @@ impl HistoryStore {
                 reasons.push_str("emergency-retention");
                 report.aggressive_reason = Some(reasons);
             }
-            let post_emergency = self.maintain_storage(true)?;
+            let post_emergency = self.maintain_storage_inner(true, cancel)?;
             report.store_bytes_after = post_emergency.store_bytes_after;
             report.wal_bytes_after = post_emergency.wal_bytes_after;
             report.vacuumed = report.vacuumed || post_emergency.vacuumed;
             report.checkpointed = report.checkpointed || post_emergency.checkpointed;
+            report.cancelled = post_emergency.cancelled;
+            report.elapsed_millis = started.elapsed().as_millis() as u64;
+            if report.cancelled {
+                return Ok(report);
+            }
         }
 
         let snapshot_count_after = self
@@ -534,12 +659,22 @@ impl HistoryStore {
                 reasons.push_str("target-snapshot-cap");
             }
             report.aggressive_reason = Some(reasons);
-            let post_trim = self.maintain_storage(true)?;
+            let post_trim = self.maintain_storage_inner(true, cancel)?;
             report.store_bytes_after = post_trim.store_bytes_after;
             report.wal_bytes_after = post_trim.wal_bytes_after;
             report.vacuumed = report.vacuumed || post_trim.vacuumed;
             report.checkpointed = report.checkpointed || post_trim.checkpointed;
+            report.cancelled = post_trim.cancelled;
+            report.elapsed_millis = started.elapsed().as_millis() as u64;
+            if report.cancelled {
+                return Ok(report);
+            }
         } else if snapshot_count_after > policy.hard_max_snapshot_count {
+            if cancellation_requested(cancel) {
+                report.cancelled = true;
+                report.elapsed_millis = started.elapsed().as_millis() as u64;
+                return Ok(report);
+            }
             let deleted = self
                 .writer
                 .prune_keep_latest(policy.hard_max_snapshot_count)?;
@@ -550,14 +685,24 @@ impl HistoryStore {
             }
             reasons.push_str("snapshot-hard-cap");
             report.aggressive_reason = Some(reasons);
-            let post_trim = self.maintain_storage(true)?;
+            let post_trim = self.maintain_storage_inner(true, cancel)?;
             report.store_bytes_after = post_trim.store_bytes_after;
             report.wal_bytes_after = post_trim.wal_bytes_after;
             report.vacuumed = report.vacuumed || post_trim.vacuumed;
             report.checkpointed = report.checkpointed || post_trim.checkpointed;
+            report.cancelled = post_trim.cancelled;
+            report.elapsed_millis = started.elapsed().as_millis() as u64;
+            if report.cancelled {
+                return Ok(report);
+            }
         }
 
         if quarantine_count > policy.hard_max_quarantine_rows {
+            if cancellation_requested(cancel) {
+                report.cancelled = true;
+                report.elapsed_millis = started.elapsed().as_millis() as u64;
+                return Ok(report);
+            }
             let deleted = self
                 .writer
                 .trim_quarantine_keep_latest(policy.hard_max_quarantine_rows)?;
@@ -589,6 +734,8 @@ impl HistoryStore {
                 .field("pruned_rows", report.pruned_rows)
                 .field("checkpointed", report.checkpointed)
                 .field("vacuumed", report.vacuumed)
+                .field("cancelled", report.cancelled)
+                .field("elapsed_millis", started.elapsed().as_millis())
                 .field("snapshot_count", snapshot_count)
                 .field("quarantine_count", quarantine_count)
                 .field(
@@ -602,6 +749,7 @@ impl HistoryStore {
             );
         }
 
+        report.elapsed_millis = started.elapsed().as_millis() as u64;
         Ok(report)
     }
 
@@ -761,6 +909,67 @@ impl HistoryStore {
         Ok(store_bytes >= 512 * 1024 * 1024
             && wal_bytes <= 64 * 1024 * 1024
             && fragmentation_ratio >= 0.25)
+    }
+
+    fn execute_batch_cancellable(
+        &self,
+        sql: &str,
+        cancel: Option<&Arc<AtomicBool>>,
+        context: &str,
+    ) -> Result<bool, String> {
+        if cancellation_requested(cancel) {
+            return Ok(true);
+        }
+        let mut cancel_watcher = None;
+        let cancel_watcher_done = Arc::new(AtomicBool::new(false));
+        if let Some(cancel) = cancel {
+            let cancel = Arc::clone(cancel);
+            let done = Arc::clone(&cancel_watcher_done);
+            let interrupt = self.conn.get_interrupt_handle();
+            cancel_watcher = Some(thread::spawn(move || {
+                while !done.load(Ordering::Relaxed) {
+                    if cancel.load(Ordering::Relaxed) {
+                        interrupt.interrupt();
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(20));
+                }
+            }));
+        }
+        let result = self.conn.execute_batch(sql);
+        cancel_watcher_done.store(true, Ordering::Relaxed);
+        if let Some(watcher) = cancel_watcher {
+            let _ = watcher.join();
+        }
+        match result {
+            Ok(()) => Ok(false),
+            Err(error) if cancellation_requested(cancel) => Ok(true),
+            Err(error) => Err(format!("{context}: {error}")),
+        }
+    }
+}
+
+fn cancellation_requested(cancel: Option<&Arc<AtomicBool>>) -> bool {
+    cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+}
+
+fn cancelled_maintenance_report(
+    started: Instant,
+    store_bytes: u64,
+    wal_bytes: u64,
+    aggressive_reason: Option<String>,
+) -> HistoryMaintenanceReport {
+    HistoryMaintenanceReport {
+        store_bytes_before: store_bytes,
+        wal_bytes_before: wal_bytes,
+        store_bytes_after: store_bytes,
+        wal_bytes_after: wal_bytes,
+        checkpointed: false,
+        vacuumed: false,
+        pruned_rows: 0,
+        aggressive_reason,
+        cancelled: true,
+        elapsed_millis: started.elapsed().as_millis() as u64,
     }
 }
 
@@ -1415,6 +1624,8 @@ mod tests {
             })
             .unwrap_or_else(|error| panic!("maintain_with_policy: {error}"));
 
+        assert!(!report.cancelled);
+        assert!(report.checkpointed);
         assert_eq!(report.pruned_rows, 3);
         let remaining = store
             .load_range(0, 10_000)
@@ -1424,6 +1635,49 @@ mod tests {
             .map(|snapshot| snapshot.sequence)
             .collect();
         assert_eq!(sequences, vec![3, 4, 5]);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn cancellable_maintenance_stops_before_sql_work() {
+        let path = temp_db();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+        store.maybe_store(&SystemSnapshot {
+            sequence: 1,
+            captured_at_millis: 1_000,
+            ..Default::default()
+        });
+        let cancel = Arc::new(AtomicBool::new(true));
+
+        let report = store
+            .maintain_with_policy_cancellable(
+                HistoryRetentionPolicy {
+                    max_age_millis: u64::MAX,
+                    emergency_max_age_millis: u64::MAX,
+                    soft_max_store_bytes: u64::MAX,
+                    hard_max_store_bytes: u64::MAX,
+                    max_wal_bytes: u64::MAX,
+                    target_snapshot_count: u64::MAX,
+                    soft_max_snapshot_count: u64::MAX,
+                    hard_max_snapshot_count: u64::MAX,
+                    aggressive_quarantine_rows: u64::MAX,
+                    hard_max_quarantine_rows: u64::MAX,
+                },
+                cancel,
+            )
+            .unwrap_or_else(|error| panic!("maintain_with_policy_cancellable: {error}"));
+
+        assert!(report.cancelled);
+        assert!(!report.checkpointed);
+        assert!(!report.vacuumed);
+        assert_eq!(report.pruned_rows, 0);
+
+        let remaining = store
+            .load_range(0, 10_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
+        assert_eq!(remaining.len(), 1);
 
         std::fs::remove_file(&path).ok();
     }

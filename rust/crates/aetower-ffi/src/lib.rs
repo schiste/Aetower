@@ -702,6 +702,8 @@ pub struct HistoryMaintenanceReport {
     pub vacuumed: bool,
     pub pruned_rows: u64,
     pub aggressive_reason: Option<String>,
+    pub cancelled: bool,
+    pub elapsed_millis: u64,
 }
 
 #[derive(uniffi::Object)]
@@ -1618,6 +1620,8 @@ impl From<aetower_persistence::HistoryMaintenanceReport> for HistoryMaintenanceR
             vacuumed: value.vacuumed,
             pruned_rows: value.pruned_rows,
             aggressive_reason: value.aggressive_reason,
+            cancelled: value.cancelled,
+            elapsed_millis: value.elapsed_millis,
         }
     }
 }

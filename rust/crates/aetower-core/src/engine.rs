@@ -223,6 +223,7 @@ pub struct Engine {
     adapters: AdapterManager,
     persistence: Arc<Mutex<Option<aetower_persistence::HistoryStore>>>,
     telemetry: Arc<Mutex<TelemetryExporter>>,
+    history_maintenance_cancel: Arc<AtomicBool>,
     diagnostics: DiagnosticsStore,
     running: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
@@ -296,6 +297,7 @@ impl Engine {
             adapters,
             persistence: Arc::new(Mutex::new(persistence)),
             telemetry: Arc::new(Mutex::new(telemetry_exporter)),
+            history_maintenance_cancel: Arc::new(AtomicBool::new(false)),
             diagnostics,
             running: Arc::new(AtomicBool::new(false)),
             worker: None,
@@ -310,6 +312,8 @@ impl Engine {
         if self.running.swap(true, Ordering::SeqCst) {
             return;
         }
+        self.history_maintenance_cancel
+            .store(false, Ordering::SeqCst);
 
         let state = Arc::clone(&self.state);
         let adapters = self.adapters.clone();
@@ -788,20 +792,38 @@ impl Engine {
         let persistence = Arc::clone(&self.persistence);
         let diagnostics = self.diagnostics.clone();
         let running = Arc::clone(&self.running);
+        let maintenance_cancel = Arc::clone(&self.history_maintenance_cancel);
         self.history_maintenance_worker = Some(thread::spawn(move || {
             sleep_with_stop(&running, HISTORY_MAINTENANCE_INITIAL_DELAY);
             while running.load(Ordering::SeqCst) {
                 let started = Instant::now();
                 let result = {
                     let guard = persistence.lock();
-                    guard
-                        .as_ref()
-                        .map(|store| store.maintain_with_policy(default_history_retention_policy()))
+                    guard.as_ref().map(|store| {
+                        store.maintain_with_policy_cancellable(
+                            default_history_retention_policy(),
+                            Arc::clone(&maintenance_cancel),
+                        )
+                    })
                 };
                 let elapsed_millis = started.elapsed().as_millis();
                 match result {
                     Some(Ok(report)) => {
-                        if elapsed_millis >= 5_000 {
+                        if report.cancelled {
+                            diagnostics.emit(
+                                DiagnosticsEvent::builder(
+                                    DiagnosticsLevel::Info,
+                                    DiagnosticsSubsystem::Persistence,
+                                    "history-maintenance-cancelled",
+                                    "Cancelled persisted history maintenance during shutdown.",
+                                )
+                                .field("elapsed_millis", elapsed_millis)
+                                .field("store_bytes_after", report.store_bytes_after)
+                                .field("wal_bytes_after", report.wal_bytes_after)
+                                .field("pruned_rows", report.pruned_rows)
+                                .build(),
+                            );
+                        } else if elapsed_millis >= 5_000 {
                             diagnostics.emit(
                                 DiagnosticsEvent::builder(
                                     DiagnosticsLevel::Warn,
@@ -848,6 +870,8 @@ impl Engine {
 
     pub fn stop(&mut self) {
         self.running.store(false, Ordering::SeqCst);
+        self.history_maintenance_cancel
+            .store(true, Ordering::SeqCst);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -857,10 +881,9 @@ impl Engine {
         if let Some(worker) = self.telemetry_worker.take() {
             let _ = worker.join();
         }
-        // Persisted history maintenance can be inside SQLite checkpoint/VACUUM/trim work on
-        // large stores. The worker observes `running` between passes, but shutdown/relaunch
-        // should not block on best-effort maintenance finishing first.
-        let _ = self.history_maintenance_worker.take();
+        if let Some(worker) = self.history_maintenance_worker.take() {
+            let _ = worker.join();
+        }
         // System-marker ingestion is best-effort and can be slow on machines
         // with large unified-log stores. Never block engine shutdown on it.
         let _ = self.system_marker_worker.take();
