@@ -42,6 +42,7 @@ const HISTORY_HARD_MAX_SNAPSHOT_COUNT: u64 = 5_000;
 const HISTORY_AGGRESSIVE_QUARANTINE_ROWS: u64 = 64;
 const HISTORY_HARD_MAX_QUARANTINE_ROWS: u64 = 128;
 const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
+const MCP_HELPER_REAP_RETRY_MILLIS: u64 = 60 * 1000;
 const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 12 * 60 * 60 * 1000;
 const SYSTEM_MARKER_PREDICATE: &str = "(eventMessage CONTAINS[c] \"Previous shutdown cause\") OR (eventMessage CONTAINS[c] \"Entering Sleep state\") OR (eventMessage CONTAINS[c] \"Wake reason\") OR (eventMessage CONTAINS[c] \"Wake from\") OR (eventMessage CONTAINS[c] \"panic(cpu\") OR (eventMessage CONTAINS[c] \"userspace watchdog timeout\") OR (eventMessage CONTAINS[c] \"thermal pressure\") OR (eventMessage CONTAINS[c] \"low power mode\")";
 const HOST_INCIDENT_PERSIST_INTERVAL_MILLIS: u64 = 15 * 60 * 1000;
@@ -329,6 +330,7 @@ impl Engine {
             let mut last_boot_session_key: Option<String> = None;
             let mut host_incident_state =
                 BTreeMap::<&'static str, PersistedHostIncidentState>::new();
+            let mut recently_reaped_mcp_helpers = BTreeMap::<u32, u64>::new();
 
             while running.load(Ordering::SeqCst) {
                 let tick_started = Instant::now();
@@ -353,6 +355,25 @@ impl Engine {
                 let collect_millis = collect_started.elapsed().as_secs_f64() * 1000.0;
                 let (mcp_helper_count, stale_mcp_helper_count, oldest_mcp_helper_age_millis) =
                     summarize_mcp_helpers(&raw.processes, captured_at_millis);
+                let reaped_mcp_helpers = reap_stale_mcp_helpers(
+                    &raw.processes,
+                    captured_at_millis,
+                    &mut recently_reaped_mcp_helpers,
+                );
+                if reaped_mcp_helpers > 0 {
+                    diagnostics.emit(
+                        DiagnosticsEvent::builder(
+                            DiagnosticsLevel::Warn,
+                            DiagnosticsSubsystem::Engine,
+                            "mcp-helper-reaped",
+                            "Terminated orphaned local MCP helper process(es).",
+                        )
+                        .timestamp_millis(captured_at_millis)
+                        .field("reaped_count", reaped_mcp_helpers)
+                        .field("stale_mcp_helper_count", stale_mcp_helper_count)
+                        .build(),
+                    );
+                }
                 let (frontmost_app_state, capabilities, runtime_lag_metrics) = {
                     let mut guard = state.lock();
                     refresh_adapter_capabilities(&mut guard, &adapters, captured_at_millis);
@@ -1125,28 +1146,98 @@ fn summarize_mcp_helpers(
     processes: &[crate::collector::RawProcessSample],
     captured_at_millis: u64,
 ) -> (u32, u32, u64) {
+    let process_ids = process_id_set(processes);
     let mut total = 0u32;
     let mut stale = 0u32;
     let mut oldest_age = 0u64;
 
     for process in processes {
-        let is_helper = process.name == "aetower-mcp"
-            || process
-                .exe
-                .as_deref()
-                .is_some_and(|exe| exe.ends_with("/aetower-mcp"));
-        if !is_helper {
+        if !is_mcp_helper_process(process) {
             continue;
         }
         total = total.saturating_add(1);
         let age = captured_at_millis.saturating_sub(process.start_time_millis);
         oldest_age = oldest_age.max(age);
-        if age >= MCP_HELPER_STALE_MILLIS {
+        if age >= MCP_HELPER_STALE_MILLIS && is_orphaned_process(process, &process_ids) {
             stale = stale.saturating_add(1);
         }
     }
 
     (total, stale, oldest_age)
+}
+
+fn reap_stale_mcp_helpers(
+    processes: &[crate::collector::RawProcessSample],
+    captured_at_millis: u64,
+    recently_reaped: &mut BTreeMap<u32, u64>,
+) -> u32 {
+    recently_reaped.retain(|_, last_attempt| {
+        captured_at_millis.saturating_sub(*last_attempt) < MCP_HELPER_REAP_RETRY_MILLIS
+    });
+    let process_ids = process_id_set(processes);
+    let mut reaped = 0u32;
+
+    for process in processes {
+        if !is_mcp_helper_process(process) {
+            continue;
+        }
+        let age = captured_at_millis.saturating_sub(process.start_time_millis);
+        if age < MCP_HELPER_STALE_MILLIS || !is_orphaned_process(process, &process_ids) {
+            continue;
+        }
+        if recently_reaped.contains_key(&process.pid) {
+            continue;
+        }
+        recently_reaped.insert(process.pid, captured_at_millis);
+        if terminate_process(process.pid) {
+            reaped = reaped.saturating_add(1);
+        }
+    }
+
+    reaped
+}
+
+fn process_id_set(
+    processes: &[crate::collector::RawProcessSample],
+) -> std::collections::BTreeSet<u32> {
+    processes.iter().map(|process| process.pid).collect()
+}
+
+fn is_mcp_helper_process(process: &crate::collector::RawProcessSample) -> bool {
+    process.name == "aetower-mcp"
+        || process
+            .exe
+            .as_deref()
+            .is_some_and(|exe| exe.ends_with("/aetower-mcp"))
+}
+
+fn is_orphaned_process(
+    process: &crate::collector::RawProcessSample,
+    process_ids: &std::collections::BTreeSet<u32>,
+) -> bool {
+    match process.parent_pid {
+        None => true,
+        Some(0 | 1) => true,
+        Some(parent_pid) => !process_ids.contains(&parent_pid),
+    }
+}
+
+#[cfg(unix)]
+fn terminate_process(pid: u32) -> bool {
+    const SIGTERM: i32 = 15;
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+
+    if pid <= 1 || pid > i32::MAX as u32 {
+        return false;
+    }
+    unsafe { kill(pid as i32, SIGTERM) == 0 }
+}
+
+#[cfg(not(unix))]
+fn terminate_process(_pid: u32) -> bool {
+    false
 }
 
 fn default_history_retention_policy() -> aetower_persistence::HistoryRetentionPolicy {
@@ -1823,45 +1914,40 @@ mod tests {
     }
 
     #[test]
-    fn summarizes_mcp_helpers_and_flags_stale_ones() {
+    fn summarizes_mcp_helpers_and_flags_only_orphaned_stale_ones() {
+        fn sample(
+            pid: u32,
+            parent_pid: Option<u32>,
+            start_time_millis: u64,
+            name: &str,
+        ) -> crate::collector::RawProcessSample {
+            crate::collector::RawProcessSample {
+                pid,
+                parent_pid,
+                start_time_millis,
+                name: name.to_owned(),
+                exe: Some(format!("/tmp/{name}")),
+                cmd: Vec::new(),
+                cpu_percent: 0.0,
+                memory_bytes: 0,
+                memory_physical_footprint_bytes: 0,
+                disk_read_bytes: 0,
+                disk_write_bytes: 0,
+                wakeups_per_second: 0.0,
+                energy_nj_per_s: 0.0,
+                cwd: None,
+                user: None,
+            }
+        }
+
         let processes = vec![
-            crate::collector::RawProcessSample {
-                pid: 11,
-                parent_pid: Some(1),
-                start_time_millis: 1_000,
-                name: "aetower-mcp".to_owned(),
-                exe: Some("/tmp/aetower-mcp".to_owned()),
-                cmd: Vec::new(),
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-            },
-            crate::collector::RawProcessSample {
-                pid: 12,
-                parent_pid: Some(1),
-                start_time_millis: 800_000,
-                name: "aetower-mcp".to_owned(),
-                exe: Some("/tmp/aetower-mcp".to_owned()),
-                cmd: Vec::new(),
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-            },
+            sample(10, Some(1), 1_000, "parent-client"),
+            sample(11, Some(1), 1_000, "aetower-mcp"),
+            sample(12, Some(1), 800_000, "aetower-mcp"),
+            sample(13, Some(10), 1_000, "aetower-mcp"),
         ];
         let (total, stale, oldest_age) = summarize_mcp_helpers(&processes, 1_000_000);
-        assert_eq!(total, 2);
+        assert_eq!(total, 3);
         assert_eq!(stale, 1);
         assert_eq!(oldest_age, 999_000);
     }
