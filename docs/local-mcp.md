@@ -73,6 +73,26 @@ That command does not start another Aetower engine. It serves from Aetower’s
 app-written cache and asks the running app to perform deeper profiling when a
 tool needs `vmmap`/`sample` access.
 
+## Discovery smoke test
+
+Use the smoke script when an agent says "Aetower is running but `/mcp` cannot
+see it". It validates the proxy path, optionally handshakes with the live app
+socket, and can verify Claude CLI or Codex registration without starting a
+second engine:
+
+```sh
+sh scripts/mcp-discovery-smoke.sh
+sh scripts/mcp-discovery-smoke.sh --require-live
+sh scripts/mcp-discovery-smoke.sh --check-claude
+sh scripts/mcp-discovery-smoke.sh --check-codex
+```
+
+The live check talks to `AETOWER_MCP_SOCKET_PATH` when set, otherwise
+`~/.aetower/mcp.sock`. The Claude check expects `claude mcp get aetower` to
+point at the same `aetower-mcp` helper. The Codex check expects
+`~/.codex/config.toml` to contain a `[mcp_servers.aetower]` block with that
+helper as `command`.
+
 ## Example MCP client config
 
 ```json
