@@ -37,6 +37,10 @@ const DOCKER_FETCH_BUDGET: Duration = Duration::from_millis(750);
 // no quiet windows for Chau7 to GC, persist async, or unload state. 30 s cuts
 // observer-induced pressure by 3x while keeping snapshot freshness reasonable.
 const CHAU7_REFRESH_INTERVAL_MILLIS: u64 = 30_000;
+const CHAU7_DEEP_REFRESH_INTERVAL_MILLIS: u64 = 120_000;
+const CHAU7_LIGHT_MAX_AI_TABS: usize = 4;
+const CHAU7_DEEP_MAX_AI_TABS: usize = 8;
+const CHAU7_DEEP_MAX_REPOS: usize = 3;
 const ENDPOINT_SECURITY_REFRESH_INTERVAL_MILLIS: u64 = 30_000;
 const MAX_CHROMIUM_TARGETS: usize = 5;
 const MAX_DOCKER_CONTAINERS: usize = 5;
@@ -74,9 +78,16 @@ struct AdapterState {
     cached_endpoint_security_sample: Option<EndpointSecuritySample>,
     chau7_socket_path: Option<String>,
     last_chau7_fetch_millis: u64,
+    last_chau7_deep_fetch_millis: u64,
     last_chau7_success_millis: u64,
     chau7_last_error: Option<String>,
     cached_chau7_snapshot: Option<crate::chau7::Chau7Snapshot>,
+}
+
+struct Chau7FetchPlan {
+    socket_path: String,
+    options: crate::chau7::Chau7FetchOptions,
+    mode: &'static str,
 }
 
 #[derive(Debug, Clone)]
@@ -271,6 +282,7 @@ impl Default for AdapterManager {
                 cached_endpoint_security_sample: None,
                 chau7_socket_path: chau7_socket_path(),
                 last_chau7_fetch_millis: 0,
+                last_chau7_deep_fetch_millis: 0,
                 last_chau7_success_millis: 0,
                 chau7_last_error: None,
                 cached_chau7_snapshot: None,
@@ -401,6 +413,7 @@ impl AdapterManager {
         guard.chau7_socket_path = sanitize_chau7_socket_path(socket_path);
         guard.cached_chau7_snapshot = None;
         guard.last_chau7_fetch_millis = 0;
+        guard.last_chau7_deep_fetch_millis = 0;
         guard.last_chau7_success_millis = 0;
         guard.chau7_last_error = None;
     }
@@ -534,10 +547,33 @@ impl AdapterManager {
                 .and_then(|_| {
                     let is_stale = now.saturating_sub(guard.last_chau7_fetch_millis)
                         >= CHAU7_REFRESH_INTERVAL_MILLIS;
-                    if is_stale {
-                        resolved_chau7_socket_path(&guard)
+                    if !is_stale {
+                        return None;
+                    }
+                    let socket_path = resolved_chau7_socket_path(&guard)?;
+                    let needs_deep_refresh = guard.cached_chau7_snapshot.is_none()
+                        || now.saturating_sub(guard.last_chau7_deep_fetch_millis)
+                            >= CHAU7_DEEP_REFRESH_INTERVAL_MILLIS;
+                    if needs_deep_refresh {
+                        Some(Chau7FetchPlan {
+                            socket_path,
+                            mode: "deep",
+                            options: crate::chau7::Chau7FetchOptions {
+                                max_ai_tabs: CHAU7_DEEP_MAX_AI_TABS,
+                                max_repos: CHAU7_DEEP_MAX_REPOS,
+                                include_deep_context: true,
+                            },
+                        })
                     } else {
-                        None
+                        Some(Chau7FetchPlan {
+                            socket_path,
+                            mode: "light",
+                            options: crate::chau7::Chau7FetchOptions {
+                                max_ai_tabs: CHAU7_LIGHT_MAX_AI_TABS,
+                                max_repos: 0,
+                                include_deep_context: false,
+                            },
+                        })
                     }
                 });
 
@@ -563,8 +599,12 @@ impl AdapterManager {
                 .map(|path| s.spawn(move || fetch_privileged_helper_sample(&path)));
             let endpoint_security_handle = endpoint_security_fetch_path
                 .map(|path| s.spawn(move || fetch_endpoint_security_sample(&path)));
-            let chau7_handle =
-                chau7_fetch_path.map(|path| s.spawn(move || crate::chau7::fetch_snapshot(&path)));
+            let chau7_handle = chau7_fetch_path.map(|plan| {
+                s.spawn(move || {
+                    crate::chau7::fetch_snapshot_with_options(&plan.socket_path, plan.options)
+                        .map(|snapshot| (snapshot, plan.mode))
+                })
+            });
 
             if let Some(handle) = chromium_handle {
                 emit_adapter_refresh_event(
@@ -795,10 +835,18 @@ impl AdapterManager {
                     |builder| builder.adapter("chau7"),
                 );
                 match handle.join().expect("chau7 thread panicked") {
-                    Ok(fetched) => {
+                    Ok((mut fetched, mode)) => {
                         let mut guard = self.state.lock();
+                        if mode == "light"
+                            && let Some(previous) = guard.cached_chau7_snapshot.as_ref()
+                        {
+                            fetched.inherit_deep_context_from(previous);
+                        }
                         guard.cached_chau7_snapshot = Some(fetched);
                         guard.last_chau7_fetch_millis = now;
+                        if mode == "deep" {
+                            guard.last_chau7_deep_fetch_millis = now;
+                        }
                         guard.last_chau7_success_millis = now;
                         guard.chau7_last_error = None;
                         let item_count = guard
@@ -814,7 +862,12 @@ impl AdapterManager {
                             "adapter-refresh-succeeded",
                             "Chau7 adapter refresh succeeded.",
                             now,
-                            |builder| builder.adapter("chau7").field("item_count", item_count),
+                            |builder| {
+                                builder
+                                    .adapter("chau7")
+                                    .field("item_count", item_count)
+                                    .field("mode", mode)
+                            },
                         );
                     }
                     Err(error) => {

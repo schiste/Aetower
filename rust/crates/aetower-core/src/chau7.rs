@@ -200,6 +200,23 @@ pub struct Chau7Snapshot {
     pub repo_events: BTreeMap<String, Vec<Chau7RepoEvent>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Chau7FetchOptions {
+    pub max_ai_tabs: usize,
+    pub max_repos: usize,
+    pub include_deep_context: bool,
+}
+
+impl Default for Chau7FetchOptions {
+    fn default() -> Self {
+        Self {
+            max_ai_tabs: 8,
+            max_repos: 3,
+            include_deep_context: true,
+        }
+    }
+}
+
 impl Chau7Tab {
     /// Whether this tab is running an AI agent (has a recognized provider).
     pub fn is_ai_agent(&self) -> bool {
@@ -212,13 +229,78 @@ impl Chau7Tab {
     }
 }
 
+impl Chau7Snapshot {
+    pub fn inherit_deep_context_from(&mut self, previous: &Self) {
+        if self.runtime_info.is_none() {
+            self.runtime_info = previous.runtime_info.clone();
+        }
+        let active_tab_ids = self
+            .tabs
+            .iter()
+            .map(|tab| tab.tab_id.clone())
+            .collect::<BTreeSet<_>>();
+        for (tab_id, status) in &previous.tab_statuses {
+            if active_tab_ids.contains(tab_id) && !self.tab_statuses.contains_key(tab_id) {
+                self.tab_statuses.insert(tab_id.clone(), status.clone());
+            }
+        }
+
+        let active_session_ids = self
+            .tabs
+            .iter()
+            .filter_map(|tab| tab.ai_session_id.clone())
+            .chain(
+                self.sessions
+                    .iter()
+                    .map(|session| session.session_id.clone()),
+            )
+            .collect::<BTreeSet<_>>();
+        for (session_id, session) in &previous.runtime_sessions {
+            if active_session_ids.contains(session_id)
+                && !self.runtime_sessions.contains_key(session_id)
+            {
+                self.runtime_sessions
+                    .insert(session_id.clone(), session.clone());
+            }
+        }
+
+        let active_repos = self
+            .tabs
+            .iter()
+            .filter_map(|tab| tab.repo_root.clone())
+            .collect::<BTreeSet<_>>();
+        for repo in &active_repos {
+            if !self.repo_stats.contains_key(repo)
+                && let Some(stats) = previous.repo_stats.get(repo)
+            {
+                self.repo_stats.insert(repo.clone(), stats.clone());
+            }
+            if !self.repo_events.contains_key(repo)
+                && let Some(events) = previous.repo_events.get(repo)
+            {
+                self.repo_events.insert(repo.clone(), events.clone());
+            }
+        }
+        if self.recent_runs.is_empty() {
+            self.recent_runs = previous.recent_runs.clone();
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // MCP JSON-RPC 2.0 client (line-delimited over Unix socket)
 // ---------------------------------------------------------------------------
 
-/// Connect to Chau7's MCP socket, run the initialize handshake, call
-/// `tab_list` and `session_list`, then return the combined snapshot.
-pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
+/// Connect to Chau7's MCP socket and fetch a snapshot with explicit bounds for
+/// expensive adapter calls.
+///
+/// The adapter uses this to alternate cheap, frequent identity refreshes with
+/// less frequent deep context pulls. That keeps Chau7 context useful without
+/// forcing Chau7 to recompute repo/runtime detail on every Aetower tick.
+pub fn fetch_snapshot_with_options(
+    socket_path: &str,
+    options: Chau7FetchOptions,
+) -> Result<Chau7Snapshot, String> {
     let stream =
         UnixStream::connect(socket_path).map_err(|e| format!("connect {socket_path}: {e}"))?;
     stream
@@ -273,7 +355,11 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
     let mut tab_statuses = BTreeMap::new();
     let mut runtime_sessions = BTreeMap::new();
     let mut seen_sessions = BTreeSet::new();
-    for tab in tabs.iter().filter(|t| t.is_ai_agent()).take(8) {
+    for tab in tabs
+        .iter()
+        .filter(|t| t.is_ai_agent())
+        .take(options.max_ai_tabs)
+    {
         if let Ok(raw) = rpc_tool_call(
             &mut writer,
             &mut reader,
@@ -308,34 +394,36 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
         });
         next_id += 1;
 
-        if let Ok(raw) = rpc_tool_call(
-            &mut writer,
-            &mut reader,
-            next_id,
-            "runtime_turn_status",
-            json!({ "session_id": session_id }),
-        ) && let Ok(turn_status) = serde_json::from_value::<Chau7RuntimeSessionStatus>(raw)
-        {
-            if merged.state.is_empty() {
-                merged.state = turn_status.state;
+        if options.include_deep_context {
+            if let Ok(raw) = rpc_tool_call(
+                &mut writer,
+                &mut reader,
+                next_id,
+                "runtime_turn_status",
+                json!({ "session_id": session_id }),
+            ) && let Ok(turn_status) = serde_json::from_value::<Chau7RuntimeSessionStatus>(raw)
+            {
+                if merged.state.is_empty() {
+                    merged.state = turn_status.state;
+                }
+                if merged.pending_approval.is_none() {
+                    merged.pending_approval = turn_status.pending_approval;
+                }
+                if merged.active_run.is_none() {
+                    merged.active_run = turn_status.active_run;
+                }
+                if merged.last_exit_reason.is_none() {
+                    merged.last_exit_reason = turn_status.last_exit_reason;
+                }
+                if merged.turn_count == 0 {
+                    merged.turn_count = turn_status.turn_count;
+                }
+                if merged.last_completed_turn_id.is_none() {
+                    merged.last_completed_turn_id = turn_status.last_completed_turn_id;
+                }
             }
-            if merged.pending_approval.is_none() {
-                merged.pending_approval = turn_status.pending_approval;
-            }
-            if merged.active_run.is_none() {
-                merged.active_run = turn_status.active_run;
-            }
-            if merged.last_exit_reason.is_none() {
-                merged.last_exit_reason = turn_status.last_exit_reason;
-            }
-            if merged.turn_count == 0 {
-                merged.turn_count = turn_status.turn_count;
-            }
-            if merged.last_completed_turn_id.is_none() {
-                merged.last_completed_turn_id = turn_status.last_completed_turn_id;
-            }
+            next_id += 1;
         }
-        next_id += 1;
 
         // Skip runtime_session_children: it forces Chau7 to do a recursive
         // tree walk over a JSON-RPC boundary on every adapter tick, and was
@@ -347,54 +435,61 @@ pub fn fetch_snapshot(socket_path: &str) -> Result<Chau7Snapshot, String> {
         runtime_sessions.insert(session_id.to_owned(), merged);
     }
 
-    // Fetch repo stats for active repos (best-effort, limit 3 repos).
+    // Fetch repo stats for active repos (best-effort, bounded by options).
     let mut repo_stats = BTreeMap::new();
     let mut repo_events = BTreeMap::new();
     let mut seen_repos = BTreeSet::new();
-    for tab in tabs.iter().filter(|t| t.is_ai_agent()) {
-        if let Some(repo) = tab.repo_root.as_deref() {
-            if !seen_repos.insert(repo.to_owned()) || seen_repos.len() > 3 {
-                continue;
-            }
-            if let Ok(raw) = rpc_tool_call(
-                &mut writer,
-                &mut reader,
-                next_id,
-                "repo_get_metadata",
-                json!({ "repo_path": repo }),
-            ) && let Some(stats) = raw.get("stats")
-                && let Ok(parsed) = serde_json::from_value::<Chau7RepoStats>(stats.clone())
-            {
-                repo_stats.insert(repo.to_owned(), parsed);
-            }
-            next_id += 1;
+    if options.include_deep_context && options.max_repos > 0 {
+        for tab in tabs.iter().filter(|t| t.is_ai_agent()) {
+            if let Some(repo) = tab.repo_root.as_deref() {
+                if !seen_repos.insert(repo.to_owned()) || seen_repos.len() > options.max_repos {
+                    continue;
+                }
+                if let Ok(raw) = rpc_tool_call(
+                    &mut writer,
+                    &mut reader,
+                    next_id,
+                    "repo_get_metadata",
+                    json!({ "repo_path": repo }),
+                ) && let Some(stats) = raw.get("stats")
+                    && let Ok(parsed) = serde_json::from_value::<Chau7RepoStats>(stats.clone())
+                {
+                    repo_stats.insert(repo.to_owned(), parsed);
+                }
+                next_id += 1;
 
-            if let Ok(raw) = rpc_tool_call(
-                &mut writer,
-                &mut reader,
-                next_id,
-                "repo_get_events",
-                json!({ "repo_path": repo, "limit": 12 }),
-            ) && let Some(events) = raw.get("events")
-                && let Ok(parsed) = serde_json::from_value::<Vec<Chau7RepoEvent>>(events.clone())
-            {
-                repo_events.insert(repo.to_owned(), parsed);
+                if let Ok(raw) = rpc_tool_call(
+                    &mut writer,
+                    &mut reader,
+                    next_id,
+                    "repo_get_events",
+                    json!({ "repo_path": repo, "limit": 12 }),
+                ) && let Some(events) = raw.get("events")
+                    && let Ok(parsed) =
+                        serde_json::from_value::<Vec<Chau7RepoEvent>>(events.clone())
+                {
+                    repo_events.insert(repo.to_owned(), parsed);
+                }
+                next_id += 1;
             }
-            next_id += 1;
         }
     }
 
     // Fetch recent runs for session markers (best-effort, limit 10).
-    let recent_runs = rpc_tool_call(
-        &mut writer,
-        &mut reader,
-        next_id,
-        "run_list",
-        json!({ "limit": 10 }),
-    )
-    .ok()
-    .and_then(|v| serde_json::from_value::<Vec<Chau7Run>>(v).ok())
-    .unwrap_or_default();
+    let recent_runs = if options.include_deep_context {
+        rpc_tool_call(
+            &mut writer,
+            &mut reader,
+            next_id,
+            "run_list",
+            json!({ "limit": 10 }),
+        )
+        .ok()
+        .and_then(|v| serde_json::from_value::<Vec<Chau7Run>>(v).ok())
+        .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     Ok(Chau7Snapshot {
         tabs,
@@ -708,5 +803,118 @@ mod tests {
             Some("2026-04-14T11:41:49Z")
         );
         assert_eq!(runtime_info.build_channel.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn light_snapshot_inherits_deep_context_for_active_items() {
+        let mut previous = Chau7Snapshot {
+            runtime_info: Some(Chau7RuntimeInfo {
+                app_version: Some("1.4.2".to_owned()),
+                build_sha: Some("abc123".to_owned()),
+                build_timestamp: None,
+                build_channel: Some("dev".to_owned()),
+            }),
+            recent_runs: vec![Chau7Run {
+                id: "run-1".to_owned(),
+                started_at: "2026-04-20T08:00:00Z".to_owned(),
+                ended_at: None,
+                session_id: Some("sess-1".to_owned()),
+                provider: "claude".to_owned(),
+                duration_ms: Some(42),
+            }],
+            ..Chau7Snapshot::default()
+        };
+        previous.tab_statuses.insert(
+            "tab-1".to_owned(),
+            Chau7TabStatus {
+                tab_id: "tab-1".to_owned(),
+                status: "ready".to_owned(),
+                ..Chau7TabStatus::default()
+            },
+        );
+        previous.runtime_sessions.insert(
+            "sess-1".to_owned(),
+            Chau7RuntimeSessionStatus {
+                session_id: "sess-1".to_owned(),
+                state: "ready".to_owned(),
+                turn_count: 7,
+                ..Chau7RuntimeSessionStatus::default()
+            },
+        );
+        previous.repo_stats.insert(
+            "/repo".to_owned(),
+            Chau7RepoStats {
+                total_runs: 3,
+                total_tokens: 1_234,
+                total_cost: 0.42,
+                total_turns: 9,
+                providers: vec!["claude".to_owned()],
+            },
+        );
+        previous.repo_stats.insert(
+            "/stale".to_owned(),
+            Chau7RepoStats {
+                total_runs: 99,
+                ..Chau7RepoStats::default()
+            },
+        );
+        previous.repo_events.insert(
+            "/repo".to_owned(),
+            vec![Chau7RepoEvent {
+                event_type: "permission".to_owned(),
+                message: "approval required".to_owned(),
+                ..Chau7RepoEvent::default()
+            }],
+        );
+
+        let mut light = Chau7Snapshot {
+            tabs: vec![Chau7Tab {
+                tab_id: "tab-1".to_owned(),
+                title: "Agent".to_owned(),
+                cwd: "/repo".to_owned(),
+                repo_root: Some("/repo".to_owned()),
+                git_branch: Some("main".to_owned()),
+                ai_provider: Some("claude".to_owned()),
+                ai_session_id: Some("sess-1".to_owned()),
+                status: "running".to_owned(),
+                active_app: Some("Claude".to_owned()),
+                window_id: 1,
+            }],
+            ..Chau7Snapshot::default()
+        };
+
+        light.inherit_deep_context_from(&previous);
+
+        assert_eq!(
+            light
+                .runtime_info
+                .as_ref()
+                .and_then(|info| info.app_version.as_deref()),
+            Some("1.4.2")
+        );
+        assert_eq!(
+            light
+                .tab_statuses
+                .get("tab-1")
+                .map(|status| status.status.as_str()),
+            Some("ready")
+        );
+        assert_eq!(
+            light
+                .runtime_sessions
+                .get("sess-1")
+                .map(|session| session.turn_count),
+            Some(7)
+        );
+        assert_eq!(
+            light
+                .repo_stats
+                .get("/repo")
+                .map(|stats| stats.total_tokens),
+            Some(1_234)
+        );
+        assert!(!light.repo_stats.contains_key("/stale"));
+        assert_eq!(light.repo_events.get("/repo").map(Vec::len), Some(1));
+        assert_eq!(light.recent_runs.len(), 1);
     }
 }
