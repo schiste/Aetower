@@ -320,6 +320,26 @@ pub struct RuntimeLagMetrics {
     #[serde(default)]
     pub oldest_mcp_helper_age_millis: u64,
     #[serde(default)]
+    pub self_cpu_percent: f32,
+    #[serde(default)]
+    pub self_memory_bytes: u64,
+    #[serde(default)]
+    pub self_memory_physical_footprint_bytes: u64,
+    #[serde(default)]
+    pub self_wakeups_per_second: f32,
+    #[serde(default)]
+    pub self_energy_nj_per_s: f64,
+    #[serde(default)]
+    pub mcp_total_connections: u64,
+    #[serde(default)]
+    pub mcp_active_client_count: u32,
+    #[serde(default)]
+    pub mcp_total_requests: u64,
+    #[serde(default)]
+    pub mcp_requests_per_second: f32,
+    #[serde(default)]
+    pub mcp_observed_at_millis: u64,
+    #[serde(default)]
     pub bridge_fetch_millis: f32,
     #[serde(default)]
     pub ui_refresh_millis: f32,

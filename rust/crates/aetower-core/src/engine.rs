@@ -593,6 +593,14 @@ impl Engine {
                 runtime_lag_metrics.mcp_helper_count = mcp_helper_count;
                 runtime_lag_metrics.stale_mcp_helper_count = stale_mcp_helper_count;
                 runtime_lag_metrics.oldest_mcp_helper_age_millis = oldest_mcp_helper_age_millis;
+                if let Some(self_process) = raw.self_process.as_ref() {
+                    runtime_lag_metrics.self_cpu_percent = self_process.cpu_percent;
+                    runtime_lag_metrics.self_memory_bytes = self_process.memory_bytes;
+                    runtime_lag_metrics.self_memory_physical_footprint_bytes =
+                        self_process.memory_physical_footprint_bytes;
+                    runtime_lag_metrics.self_wakeups_per_second = self_process.wakeups_per_second;
+                    runtime_lag_metrics.self_energy_nj_per_s = self_process.energy_nj_per_s;
+                }
                 let sequence = guard.latest_snapshot.sequence;
                 let entity_count = guard.latest_snapshot.entities.len();
                 let target_tick = runtime_config
@@ -941,6 +949,30 @@ impl Engine {
 
     pub fn record_diagnostics_event(&self, event: DiagnosticsEvent) {
         self.diagnostics.emit(event);
+    }
+
+    pub fn record_mcp_runtime_observation(
+        &self,
+        total_connections: u64,
+        active_client_count: u64,
+        total_requests: u64,
+    ) {
+        let now = aet_time::now_millis();
+        let mut guard = self.state.lock();
+        let previous_total = guard.runtime_lag_metrics.mcp_total_requests;
+        let previous_millis = guard.runtime_lag_metrics.mcp_observed_at_millis;
+        let elapsed_seconds = now.saturating_sub(previous_millis) as f32 / 1_000.0;
+        guard.runtime_lag_metrics.mcp_requests_per_second =
+            if previous_millis > 0 && elapsed_seconds > 0.0 && total_requests >= previous_total {
+                (total_requests - previous_total) as f32 / elapsed_seconds
+            } else {
+                0.0
+            };
+        guard.runtime_lag_metrics.mcp_total_connections = total_connections;
+        guard.runtime_lag_metrics.mcp_active_client_count =
+            active_client_count.min(u32::MAX as u64) as u32;
+        guard.runtime_lag_metrics.mcp_total_requests = total_requests;
+        guard.runtime_lag_metrics.mcp_observed_at_millis = now;
     }
 
     pub fn update_ui_lag_metrics(&self, metrics: RuntimeLagMetrics) {

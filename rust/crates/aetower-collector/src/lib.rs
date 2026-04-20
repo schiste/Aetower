@@ -74,6 +74,8 @@ pub struct RawHostSample {
 pub struct RawSnapshot {
     pub host: RawHostSample,
     pub processes: Vec<RawProcessSample>,
+    #[serde(default)]
+    pub self_process: Option<RawProcessSample>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -295,11 +297,10 @@ impl Collector {
         }
 
         let mut next_process_counters = HashMap::with_capacity(self.system.processes().len());
-        let processes: Vec<_> = self
+        let all_processes: Vec<_> = self
             .system
             .processes()
             .values()
-            .filter(|process| process.pid().as_u32() != self.self_pid)
             .map(|process| {
                 let pid = process.pid().as_u32();
                 let start_time_millis = process.start_time().saturating_mul(1_000);
@@ -451,19 +452,29 @@ impl Collector {
                 }
             })
             .collect();
+        let self_process = all_processes
+            .iter()
+            .find(|process| process.pid == self.self_pid)
+            .cloned();
+        let processes = all_processes
+            .iter()
+            .filter(|process| process.pid != self.self_pid)
+            .cloned()
+            .collect::<Vec<_>>();
         self.previous_process_counters = next_process_counters;
 
         // Update CWD cache: insert fresh values, prune dead PIDs.
         if self.config.full_collection || self.process_metadata_tick.is_multiple_of(2) {
-            let alive: std::collections::HashSet<u32> = processes.iter().map(|p| p.pid).collect();
+            let alive: std::collections::HashSet<u32> =
+                all_processes.iter().map(|p| p.pid).collect();
             self.cwd_cache.retain(|pid, _| alive.contains(pid));
             self.process_identity_cache.retain(|pid, cached| {
                 alive.contains(pid)
-                    && processes
+                    && all_processes
                         .iter()
                         .any(|p| p.pid == *pid && p.start_time_millis == cached.start_time_millis)
             });
-            for process in &processes {
+            for process in &all_processes {
                 if let Some(ref cwd) = process.cwd {
                     self.cwd_cache.insert(process.pid, cwd.clone());
                 }
@@ -509,7 +520,11 @@ impl Collector {
         };
         self.previous_network_totals = network_totals;
 
-        RawSnapshot { host, processes }
+        RawSnapshot {
+            host,
+            processes,
+            self_process,
+        }
     }
 }
 

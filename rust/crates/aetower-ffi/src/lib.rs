@@ -1333,6 +1333,21 @@ impl AetowerMcpDataSource for MonitorEngineDataSource {
             .map_err(|_| "engine lock poisoned".to_owned())?;
         Ok(engine.query_diagnostics(query))
     }
+
+    fn record_mcp_runtime_observation(
+        &self,
+        total_connections: u64,
+        active_client_count: u64,
+        total_requests: u64,
+    ) {
+        if let Ok(engine) = self.engine.lock() {
+            engine.record_mcp_runtime_observation(
+                total_connections,
+                active_client_count,
+                total_requests,
+            );
+        }
+    }
 }
 
 fn json_query_result(result: Result<String, String>) -> JsonQueryResult {

@@ -12,7 +12,7 @@ use std::{
     process::Command,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -529,6 +529,13 @@ pub trait AetowerMcpDataSource: Send + Sync + 'static {
     ) -> Result<Vec<SystemSnapshot>, String>;
     fn diagnostics_overview(&self) -> Result<DiagnosticsOverview, String>;
     fn query_diagnostics(&self, query: DiagnosticsQuery) -> Result<Vec<DiagnosticsEvent>, String>;
+    fn record_mcp_runtime_observation(
+        &self,
+        _total_connections: u64,
+        _active_client_count: u64,
+        _total_requests: u64,
+    ) {
+    }
 }
 
 pub struct LocalMcpServerHandle {
@@ -536,12 +543,43 @@ pub struct LocalMcpServerHandle {
     join_handle: Option<thread::JoinHandle<()>>,
     client_threads: Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
     socket_path: PathBuf,
+    stats: Arc<McpRuntimeStats>,
 }
 
 impl LocalMcpServerHandle {
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
     }
+
+    pub fn stats(&self) -> (u64, u64, u64) {
+        self.stats.snapshot()
+    }
+}
+
+#[derive(Default)]
+struct McpRuntimeStats {
+    total_connections: AtomicU64,
+    active_clients: AtomicUsize,
+    total_requests: AtomicU64,
+}
+
+impl McpRuntimeStats {
+    fn snapshot(&self) -> (u64, u64, u64) {
+        (
+            self.total_connections.load(Ordering::Relaxed),
+            self.active_clients.load(Ordering::Relaxed) as u64,
+            self.total_requests.load(Ordering::Relaxed),
+        )
+    }
+}
+
+fn publish_mcp_runtime_stats(data_source: &Arc<dyn AetowerMcpDataSource>, stats: &McpRuntimeStats) {
+    let (total_connections, active_client_count, total_requests) = stats.snapshot();
+    data_source.record_mcp_runtime_observation(
+        total_connections,
+        active_client_count,
+        total_requests,
+    );
 }
 
 impl Drop for LocalMcpServerHandle {
@@ -620,10 +658,12 @@ pub fn start_local_socket_server(
         },
     )?;
     let running = Arc::new(AtomicBool::new(true));
+    let stats = Arc::new(McpRuntimeStats::default());
     let thread_running = Arc::clone(&running);
     let thread_socket_path = socket_path.clone();
     let client_threads: Arc<Mutex<Vec<thread::JoinHandle<()>>>> = Arc::new(Mutex::new(Vec::new()));
     let thread_client_threads = Arc::clone(&client_threads);
+    let thread_stats = Arc::clone(&stats);
     let join_handle = thread::spawn(move || {
         while thread_running.load(Ordering::SeqCst) {
             match listener.accept() {
@@ -633,11 +673,21 @@ pub fn start_local_socket_server(
                     }
                     let source = Arc::clone(&data_source);
                     let connection_running = Arc::clone(&thread_running);
+                    thread_stats
+                        .total_connections
+                        .fetch_add(1, Ordering::Relaxed);
+                    thread_stats.active_clients.fetch_add(1, Ordering::Relaxed);
+                    publish_mcp_runtime_stats(&source, &thread_stats);
+                    let stats = Arc::clone(&thread_stats);
                     let dynamic_mode = DynamicExecutionMode::Local;
                     let join_handle = thread::spawn(move || {
-                        if let Err(err) =
-                            handle_connection(stream, source, dynamic_mode, connection_running)
-                        {
+                        if let Err(err) = handle_connection(
+                            stream,
+                            Arc::clone(&source),
+                            dynamic_mode,
+                            connection_running,
+                            Arc::clone(&stats),
+                        ) {
                             // Surface per-connection failures — handle_connection
                             // returns Ok on clean peer close, so reaching here
                             // means a real transport/framing fault the operator
@@ -645,6 +695,8 @@ pub fn start_local_socket_server(
                             // while silently dropping every request.
                             eprintln!("aetower-mcp socket: handle_connection: {err}");
                         }
+                        stats.active_clients.fetch_sub(1, Ordering::Relaxed);
+                        publish_mcp_runtime_stats(&source, &stats);
                     });
                     if let Ok(mut handles) = thread_client_threads.lock() {
                         reap_finished_client_threads(&mut handles);
@@ -665,6 +717,7 @@ pub fn start_local_socket_server(
         join_handle: Some(join_handle),
         client_threads,
         socket_path,
+        stats,
     })
 }
 
@@ -906,6 +959,7 @@ fn handle_connection(
     data_source: Arc<dyn AetowerMcpDataSource>,
     dynamic_mode: DynamicExecutionMode,
     running: Arc<AtomicBool>,
+    stats: Arc<McpRuntimeStats>,
 ) -> Result<(), String> {
     let mut reader = stream
         .try_clone()
@@ -917,6 +971,7 @@ fn handle_connection(
     let server = AetowerMcpServer {
         data_source,
         dynamic_mode,
+        mcp_stats: Some(stats),
     };
     let mut framing = None;
 
@@ -949,10 +1004,15 @@ enum ReadMessageOutcome {
 struct AetowerMcpServer {
     data_source: Arc<dyn AetowerMcpDataSource>,
     dynamic_mode: DynamicExecutionMode,
+    mcp_stats: Option<Arc<McpRuntimeStats>>,
 }
 
 impl AetowerMcpServer {
     fn handle_message(&self, message: Value) -> Option<Value> {
+        if let Some(stats) = self.mcp_stats.as_ref() {
+            stats.total_requests.fetch_add(1, Ordering::Relaxed);
+            publish_mcp_runtime_stats(&self.data_source, stats);
+        }
         let id = message.get("id").cloned().unwrap_or(Value::Null);
         let Some(method) = message.get("method").and_then(Value::as_str) else {
             return Some(json!({
@@ -4199,6 +4259,24 @@ fn build_recommendations(
                 .to_owned(),
         });
     }
+    if self_runtime_severity(runtime) != SeverityBand::Info {
+        recommendations.push(RecommendationItem {
+            severity: self_runtime_severity(runtime),
+            title: "Reduce Aetower observer overhead".to_owned(),
+            detail: format!(
+                "Aetower self telemetry is CPU {:.1}%, memory {}, wakeups {:.0}/s, MCP {:.1} req/s.",
+                runtime.self_cpu_percent,
+                format_bytes(runtime.self_memory_bytes),
+                runtime.self_wakeups_per_second,
+                runtime.mcp_requests_per_second
+            ),
+            entity_id: None,
+            source: "aetower-self".to_owned(),
+            expected_benefit:
+                "Lower observer-induced load and more trustworthy performance investigations."
+                    .to_owned(),
+        });
+    }
     for entity in top_entities(snapshot, limit) {
         for recommendation in entity.recommendations.iter().take(2) {
             recommendations.push(RecommendationItem {
@@ -4243,14 +4321,17 @@ fn build_session_health_checks(
                 runtime.engine_tick_millis, runtime.target_tick_millis
             ),
             detail: format!(
-                "Collect {:.1} ms, history {:.1} ms, persist {:.1} ms, history queue {}, diagnostics queue {}, MCP helpers {} ({} stale).",
+                "Collect {:.1} ms, history {:.1} ms, persist {:.1} ms, history queue {}, diagnostics queue {}, MCP helpers {} ({} stale). Aetower self: CPU {:.1}%, memory {}, wakeups {:.0}/s.",
                 runtime.collect_millis,
                 runtime.history_millis,
                 runtime.persist_millis,
                 runtime.history_queue_depth,
                 runtime.diagnostics_queue_depth,
                 runtime.mcp_helper_count,
-                runtime.stale_mcp_helper_count
+                runtime.stale_mcp_helper_count,
+                runtime.self_cpu_percent,
+                format_bytes(runtime.self_memory_bytes),
+                runtime.self_wakeups_per_second
             ),
         },
         SessionHealthCheck {
@@ -4322,12 +4403,16 @@ fn build_session_health_checks(
             key: "mcp".to_owned(),
             severity: mcp_helper_severity(runtime),
             summary: if runtime.mcp_helper_count == 0 {
-                "The local in-app MCP server is serving the current app-owned engine state."
-                    .to_owned()
+                format!(
+                    "The local in-app MCP server is serving the current app-owned engine state with {} active client(s).",
+                    runtime.mcp_active_client_count
+                )
             } else {
                 format!(
-                    "The local in-app MCP server is serving current engine state with {} helper processes ({} stale).",
-                    runtime.mcp_helper_count, runtime.stale_mcp_helper_count
+                    "The local in-app MCP server is serving current engine state with {} helper processes ({} stale) and {} active client(s).",
+                    runtime.mcp_helper_count,
+                    runtime.stale_mcp_helper_count,
+                    runtime.mcp_active_client_count
                 )
             },
             detail: if runtime.stale_mcp_helper_count > 0 {
@@ -4337,8 +4422,10 @@ fn build_session_health_checks(
                     MCP_HELPER_STALE_MILLIS / 60_000
                 )
             } else {
-                "Agents should consume these tools instead of starting a second collector process."
-                    .to_owned()
+                format!(
+                    "Agents should consume these tools instead of starting a second collector process. Total MCP requests: {}, current rate: {:.1}/s.",
+                    runtime.mcp_total_requests, runtime.mcp_requests_per_second
+                )
             },
         },
     ]
@@ -5438,6 +5525,24 @@ fn mcp_helper_severity(runtime: &RuntimeLagMetrics) -> SeverityBand {
     }
 }
 
+fn self_runtime_severity(runtime: &RuntimeLagMetrics) -> SeverityBand {
+    if runtime.self_cpu_percent >= 25.0
+        || runtime.self_memory_bytes >= 768 * 1024 * 1024
+        || runtime.self_wakeups_per_second >= 1_000.0
+        || runtime.mcp_requests_per_second >= 25.0
+    {
+        SeverityBand::Critical
+    } else if runtime.self_cpu_percent >= 10.0
+        || runtime.self_memory_bytes >= 384 * 1024 * 1024
+        || runtime.self_wakeups_per_second >= 300.0
+        || runtime.mcp_requests_per_second >= 10.0
+    {
+        SeverityBand::Warning
+    } else {
+        SeverityBand::Info
+    }
+}
+
 fn host_load_severity(snapshot: &SystemSnapshot) -> SeverityBand {
     memory_pressure_finding(snapshot)
         .map(|finding| finding.severity)
@@ -6505,6 +6610,71 @@ mod tests {
         }
     }
 
+    struct ObservingSource {
+        observations: Arc<Mutex<Vec<(u64, u64, u64)>>>,
+    }
+
+    impl AetowerMcpDataSource for ObservingSource {
+        fn latest_snapshot(&self) -> Result<SystemSnapshot, String> {
+            FakeSource.latest_snapshot()
+        }
+
+        fn latest_snapshot_if_newer(
+            &self,
+            last_sequence: u64,
+        ) -> Result<Option<SystemSnapshot>, String> {
+            FakeSource.latest_snapshot_if_newer(last_sequence)
+        }
+
+        fn latest_sequence(&self) -> Result<u64, String> {
+            FakeSource.latest_sequence()
+        }
+
+        fn latest_runtime_lag_metrics(&self) -> Result<RuntimeLagMetrics, String> {
+            FakeSource.latest_runtime_lag_metrics()
+        }
+
+        fn history_range_summary(
+            &self,
+            start_millis: u64,
+            end_millis: u64,
+        ) -> Result<HistorySummaryResponse, String> {
+            FakeSource.history_range_summary(start_millis, end_millis)
+        }
+
+        fn load_history_page(
+            &self,
+            start_millis: u64,
+            end_millis: u64,
+            before_millis_exclusive: Option<u64>,
+            limit: u32,
+        ) -> Result<Vec<SystemSnapshot>, String> {
+            FakeSource.load_history_page(start_millis, end_millis, before_millis_exclusive, limit)
+        }
+
+        fn diagnostics_overview(&self) -> Result<DiagnosticsOverview, String> {
+            FakeSource.diagnostics_overview()
+        }
+
+        fn query_diagnostics(
+            &self,
+            query: DiagnosticsQuery,
+        ) -> Result<Vec<DiagnosticsEvent>, String> {
+            FakeSource.query_diagnostics(query)
+        }
+
+        fn record_mcp_runtime_observation(
+            &self,
+            total_connections: u64,
+            active_client_count: u64,
+            total_requests: u64,
+        ) {
+            if let Ok(mut observations) = self.observations.lock() {
+                observations.push((total_connections, active_client_count, total_requests));
+            }
+        }
+    }
+
     #[derive(Clone, Default)]
     struct SharedWriter(Arc<Mutex<Vec<u8>>>);
 
@@ -6526,6 +6696,7 @@ mod tests {
         AetowerMcpServer {
             data_source: Arc::new(FakeSource),
             dynamic_mode: DynamicExecutionMode::Local,
+            mcp_stats: None,
         }
     }
 
@@ -6533,6 +6704,7 @@ mod tests {
         AetowerMcpServer {
             data_source: Arc::new(HistoryBrokenSource),
             dynamic_mode: DynamicExecutionMode::Local,
+            mcp_stats: None,
         }
     }
 
@@ -6824,6 +6996,7 @@ mod tests {
         let response = AetowerMcpServer {
             data_source: Arc::new(BrokenSource),
             dynamic_mode: DynamicExecutionMode::Local,
+            mcp_stats: None,
         }
         .handle_message(json!({
             "jsonrpc": "2.0",
@@ -6961,6 +7134,73 @@ mod tests {
                 .is_some()
         );
 
+        drop(handle);
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn socket_server_reports_connection_and_request_stats() {
+        let parent =
+            std::env::temp_dir().join(format!("aetower-mcp-stats-test-{}", std::process::id()));
+        let socket_path = parent.join("mcp.sock");
+        let _ = fs::remove_file(&socket_path);
+        let _ = fs::remove_dir_all(&parent);
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let handle = match start_local_socket_server(
+            Arc::new(ObservingSource {
+                observations: Arc::clone(&observations),
+            }),
+            &socket_path,
+        ) {
+            Ok(handle) => handle,
+            Err(error) => panic!("server: {error}"),
+        };
+
+        let initialize = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "1" }
+            }
+        });
+        let tool_list = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list"
+        });
+        let mut framed = Vec::new();
+        for message in [initialize, tool_list] {
+            let body = match serde_json::to_vec(&message) {
+                Ok(body) => body,
+                Err(error) => panic!("serialize request: {error}"),
+            };
+            if let Err(error) = write!(&mut framed, "Content-Length: {}\r\n\r\n", body.len()) {
+                panic!("frame header: {error}");
+            }
+            framed.extend_from_slice(&body);
+        }
+        let output = Arc::new(Mutex::new(Vec::new()));
+        proxy_streams_to_socket(Cursor::new(framed), SharedWriter(output), &socket_path)
+            .map_err(|error| panic!("proxy roundtrip: {error}"))
+            .ok();
+
+        let recorded = observations
+            .lock()
+            .map(|observations| observations.clone())
+            .unwrap_or_default();
+        assert!(
+            recorded
+                .iter()
+                .any(|(connections, active, requests)| *connections >= 1
+                    && *active >= 1
+                    && *requests >= 2),
+            "missing active request observation: {recorded:?}"
+        );
+        assert_eq!(handle.stats().0, 1);
+        assert!(handle.stats().2 >= 2);
         drop(handle);
         let _ = fs::remove_dir_all(&parent);
     }
