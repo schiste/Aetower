@@ -270,6 +270,7 @@ struct HistoryDataQualityReport {
     gap_count: usize,
     duplicate_timestamp_count: usize,
     sequence_regression_count: usize,
+    sequence_reset_count: usize,
     boot_boundary_count: usize,
     recommendations: Vec<String>,
 }
@@ -2836,6 +2837,7 @@ fn build_history_data_quality_report(
     let mut largest_gap_millis = 0u64;
     let mut gap_count = 0usize;
     let mut sequence_regression_count = 0usize;
+    let mut sequence_reset_count = 0usize;
     let mut boot_boundary_count = 0usize;
     for pair in snapshots.windows(2) {
         let before = &pair[0];
@@ -2848,7 +2850,11 @@ fn build_history_data_quality_report(
             gap_count += 1;
         }
         if after.sequence < before.sequence {
-            sequence_regression_count += 1;
+            if gap_millis > gap_threshold_millis {
+                sequence_reset_count += 1;
+            } else {
+                sequence_regression_count += 1;
+            }
         }
         if snapshot_boot_key(&before.host) != snapshot_boot_key(&after.host) {
             boot_boundary_count += 1;
@@ -2889,7 +2895,13 @@ fn build_history_data_quality_report(
     }
     if sequence_regression_count > 0 {
         recommendations.push(
-            "Sequence numbers regressed in timestamp order; preserve monotonic sequence writes across engine restarts."
+            "Sequence numbers regressed inside a continuous history stream; audit writer ordering and flush concurrency."
+                .to_owned(),
+        );
+    }
+    if sequence_reset_count > 0 {
+        recommendations.push(
+            "Sequence numbers reset after a coverage gap, which usually indicates an app restart; correlate with engine diagnostics before treating it as corruption."
                 .to_owned(),
         );
     }
@@ -2907,14 +2919,15 @@ fn build_history_data_quality_report(
                 format_duration_millis(largest_gap_millis)
             ),
             SeverityBand::Warning => format!(
-                "{} snapshots sampled; {} gap(s), {} duplicate timestamp(s), largest gap {}.",
+                "{} snapshots sampled; {} gap(s), {} duplicate timestamp(s), {} sequence reset(s), largest gap {}.",
                 sampled_snapshots,
                 gap_count,
                 duplicate_timestamp_count,
+                sequence_reset_count,
                 format_duration_millis(largest_gap_millis)
             ),
             SeverityBand::Critical => format!(
-                "{} snapshots sampled; {} sequence regression(s), {} gap(s), largest gap {}.",
+                "{} snapshots sampled; {} in-stream sequence regression(s), {} gap(s), largest gap {}.",
                 sampled_snapshots,
                 sequence_regression_count,
                 gap_count,
@@ -2934,6 +2947,7 @@ fn build_history_data_quality_report(
         gap_count,
         duplicate_timestamp_count,
         sequence_regression_count,
+        sequence_reset_count,
         boot_boundary_count,
         recommendations,
     }
@@ -8093,14 +8107,16 @@ mod tests {
             snapshot(0, 10, "boot-a"),
             snapshot(10_000, 11, "boot-a"),
             snapshot(10_000, 12, "boot-a"),
-            snapshot(120_000, 9, "boot-a"),
-            snapshot(130_000, 13, "boot-b"),
+            snapshot(20_000, 9, "boot-a"),
+            snapshot(130_000, 13, "boot-a"),
+            snapshot(140_000, 14, "boot-b"),
         ];
 
-        let report = build_history_data_quality_report(&snapshots, 0, 130_000, 10_000);
+        let report = build_history_data_quality_report(&snapshots, 0, 140_000, 10_000);
         assert_eq!(report.severity, SeverityBand::Critical);
         assert_eq!(report.duplicate_timestamp_count, 1);
         assert_eq!(report.sequence_regression_count, 1);
+        assert_eq!(report.sequence_reset_count, 0);
         assert_eq!(report.gap_count, 1);
         assert_eq!(report.largest_gap_millis, 110_000);
         assert_eq!(report.boot_boundary_count, 1);
@@ -8109,6 +8125,27 @@ mod tests {
                 .recommendations
                 .iter()
                 .any(|recommendation| recommendation.contains("Sequence numbers regressed"))
+        );
+    }
+
+    #[test]
+    fn history_data_quality_treats_restart_sequence_reset_as_gap_not_corruption() {
+        let snapshots = vec![
+            test_history_snapshot(0, 100),
+            test_history_snapshot(120_000, 1),
+        ];
+
+        let report = build_history_data_quality_report(&snapshots, 0, 120_000, 10_000);
+
+        assert_eq!(report.severity, SeverityBand::Warning);
+        assert_eq!(report.sequence_regression_count, 0);
+        assert_eq!(report.sequence_reset_count, 1);
+        assert_eq!(report.gap_count, 1);
+        assert!(
+            report
+                .recommendations
+                .iter()
+                .any(|recommendation| recommendation.contains("usually indicates an app restart"))
         );
     }
 
