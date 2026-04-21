@@ -891,6 +891,7 @@ fn should_persist_event(event: &DiagnosticsEvent) -> bool {
                 | "session-log-tcc-churn"
                 | "session-log-cursor-noise"
                 | "session-log-view-bridge-cancelled"
+                | "session-log-invalid-display-identifier"
                 | "session-log-window-noise"
                 | "session-log-metal-error"
                 | "session-log-analysis-failed"

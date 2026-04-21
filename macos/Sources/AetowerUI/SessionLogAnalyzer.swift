@@ -2,6 +2,8 @@ import Foundation
 import OSLog
 
 public struct SessionLogSummary {
+    public static let invalidDisplayIdentifierWarningThreshold = 3
+
     public let windowMinutes: Int
     public let notificationLogEntries: Int
     public let notificationAuthorizationFailures: Int
@@ -10,6 +12,7 @@ public struct SessionLogSummary {
     public let cursorUiEntries: Int
     public let tccAccessRequests: Int
     public let viewBridgeCancellationCount: Int
+    public let invalidDisplayIdentifierCount: Int
 
     var fingerprint: String {
         [
@@ -21,6 +24,7 @@ public struct SessionLogSummary {
             String(cursorUiEntries),
             String(tccAccessRequests),
             String(viewBridgeCancellationCount),
+            String(invalidDisplayIdentifierCount),
         ].joined(separator: ":")
     }
 }
@@ -43,6 +47,7 @@ enum SessionLogAnalyzer {
         var cursorUiEntries = 0
         var tccAccessRequests = 0
         var viewBridgeCancellationCount = 0
+        var invalidDisplayIdentifierCount = 0
 
         for case let entry as OSLogEntryLog in entries {
             if entry.subsystem == "com.apple.TextInputUI" && entry.category == "CursorUI" {
@@ -50,6 +55,11 @@ enum SessionLogAnalyzer {
                 continue
             }
             let message = entry.composedMessage
+            if entry.subsystem == "com.apple.SkyLight"
+                && message.localizedCaseInsensitiveContains("invalid display identifier")
+            {
+                invalidDisplayIdentifierCount += 1
+            }
             if entry.subsystem == "com.apple.UserNotifications"
                 && entry.category == "Connections"
             {
@@ -80,7 +90,8 @@ enum SessionLogAnalyzer {
             nonActiveWindowWarnings: nonActiveWindowWarnings,
             cursorUiEntries: cursorUiEntries,
             tccAccessRequests: tccAccessRequests,
-            viewBridgeCancellationCount: viewBridgeCancellationCount
+            viewBridgeCancellationCount: viewBridgeCancellationCount,
+            invalidDisplayIdentifierCount: invalidDisplayIdentifierCount
         )
     }
 }

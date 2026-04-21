@@ -1602,6 +1602,19 @@ public final class AppState {
                     ]
                 )
             }
+            if summary.invalidDisplayIdentifierCount >= SessionLogSummary.invalidDisplayIdentifierWarningThreshold {
+                recordLocalDiagnosticsEvent(
+                    level: .warn,
+                    subsystem: .ui,
+                    eventType: "session-log-invalid-display-identifier",
+                    message: "Unified logs recorded repeated SkyLight invalid display identifier errors.",
+                    fields: [
+                        DiagnosticsField(key: "count", value: String(summary.invalidDisplayIdentifierCount)),
+                        DiagnosticsField(key: "window_minutes", value: String(summary.windowMinutes)),
+                        DiagnosticsField(key: "log_subsystem", value: "com.apple.SkyLight"),
+                    ]
+                )
+            }
             if summary.nonActiveWindowWarnings > 0 {
                 recordLocalDiagnosticsEvent(
                     level: .info,
@@ -1863,6 +1876,7 @@ public final class AppState {
                     "cursorUiEntries": summary.cursorUiEntries,
                     "tccAccessRequests": summary.tccAccessRequests,
                     "viewBridgeCancellationCount": summary.viewBridgeCancellationCount,
+                    "invalidDisplayIdentifierCount": summary.invalidDisplayIdentifierCount,
                 ]
             }),
         ]

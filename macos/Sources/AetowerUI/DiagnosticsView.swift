@@ -577,7 +577,9 @@ public struct DiagnosticsView: View {
         guard let summary = state.sessionLogSummary else {
             return "Pending"
         }
-        if summary.metalLoadFailures > 0 {
+        if summary.metalLoadFailures > 0
+            || summary.invalidDisplayIdentifierCount >= SessionLogSummary.invalidDisplayIdentifierWarningThreshold
+        {
             return "Investigate"
         }
         if summary.cursorUiEntries >= 120 || summary.viewBridgeCancellationCount > 0 {
@@ -596,7 +598,7 @@ public struct DiagnosticsView: View {
         guard let summary = state.sessionLogSummary else {
             return "Unified log analysis is starting…"
         }
-        return "\(summary.cursorUiEntries) cursor updates, \(summary.metalLoadFailures) Metal errors, \(summary.viewBridgeCancellationCount) view bridge cancellations · \(sessionLogFreshnessLabel)"
+        return "\(summary.cursorUiEntries) cursor updates, \(summary.metalLoadFailures) Metal errors, \(summary.viewBridgeCancellationCount) view bridge cancellations, \(summary.invalidDisplayIdentifierCount) invalid display identifiers · \(sessionLogFreshnessLabel)"
     }
 
     private var permissionHealthTitle: String {
