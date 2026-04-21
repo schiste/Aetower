@@ -895,6 +895,7 @@ fn should_persist_event(event: &DiagnosticsEvent) -> bool {
                 | "session-log-window-noise"
                 | "session-log-metal-error"
                 | "session-log-analysis-failed"
+                | "process-action"
                 | "mcp-server-started"
                 | "mcp-helper-lifecycle"
                 | "boot-session-observed"
@@ -1013,7 +1014,10 @@ mod tests {
         );
         store.flush_persistence().expect("flush");
 
-        let persisted = std::fs::read_to_string(&path).expect("persisted file");
+        let persisted = match std::fs::read_to_string(&path) {
+            Ok(persisted) => persisted,
+            Err(error) => panic!("persisted file: {error}"),
+        };
         assert!(!persisted.contains("tick-completed"));
         assert!(persisted.contains("history-load-failed"));
 
@@ -1187,7 +1191,10 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "history-load-failed");
 
-        let persisted = std::fs::read_to_string(&path).expect("persisted file");
+        let persisted = match std::fs::read_to_string(&path) {
+            Ok(persisted) => persisted,
+            Err(error) => panic!("persisted file: {error}"),
+        };
         assert!(!persisted.contains("anomaly-notifications-suppressed"));
         assert!(persisted.contains("history-load-failed"));
 
@@ -1354,6 +1361,42 @@ mod tests {
 
         let persisted = std::fs::read_to_string(&path).expect("persisted file");
         assert!(persisted.contains("runtime-heartbeat"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn process_action_info_events_persist() {
+        let path = std::env::temp_dir().join(format!(
+            "aetower-diag-process-action-{}.ndjson",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let store = match DiagnosticsStore::with_persistence(4, &path, 16) {
+            Ok(store) => store,
+            Err(error) => panic!("store: {error}"),
+        };
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Engine,
+                "process-action",
+                "Sent TERM to process 42.",
+            )
+            .field("pid", 42)
+            .field("action", "terminate")
+            .build(),
+        );
+        if let Err(error) = store.flush_persistence() {
+            panic!("flush: {error}");
+        }
+
+        let persisted = match std::fs::read_to_string(&path) {
+            Ok(persisted) => persisted,
+            Err(error) => panic!("persisted file: {error}"),
+        };
+        assert!(persisted.contains("process-action"));
 
         let _ = std::fs::remove_file(&path);
     }

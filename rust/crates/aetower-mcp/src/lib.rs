@@ -19,7 +19,7 @@ use std::{
 };
 
 use aetower_diagnostics::{
-    DiagnosticsEvent, DiagnosticsLevel, DiagnosticsOverview, DiagnosticsQuery,
+    DiagnosticsEvent, DiagnosticsLevel, DiagnosticsOverview, DiagnosticsQuery, DiagnosticsSubsystem,
 };
 use aetower_model::{RuntimeLagMetrics, SystemSnapshot};
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,9 @@ const MAX_INLINE_TEXT_BYTES: usize = 8 * 1024;
 const DEFAULT_PROFILE_DURATION_SECONDS: u64 = 3;
 const MAX_PROFILE_DURATION_SECONDS: u64 = 15;
 const DEFAULT_TOP_STACKS: usize = 5;
+const DEFAULT_OPEN_RESOURCE_LIMIT: usize = 80;
+const DEFAULT_PROCESS_ACTION_HISTORY_LIMIT: usize = 25;
+const DEFAULT_PROCESS_ACTION_HISTORY_WINDOW_MINUTES: u64 = 60;
 const DEFAULT_TOP_REGIONS: usize = 10;
 const DEFAULT_HOST_ALERT_TOP_ENTITIES: usize = 5;
 const DEFAULT_FINDINGS_LIMIT: usize = 10;
@@ -528,6 +531,28 @@ enum DynamicToolRequest {
         duration_seconds: u64,
         top_stacks: usize,
     },
+    ProcessInspect {
+        pid: u32,
+    },
+    ProcessOpenResources {
+        pid: u32,
+        limit: usize,
+    },
+    ProcessSample {
+        pid: u32,
+        duration_seconds: u64,
+        top_stacks: usize,
+    },
+    ProcessAction {
+        pid: u32,
+        action: String,
+        dry_run: bool,
+        reason: Option<String>,
+    },
+    ProcessActionHistory {
+        window_minutes: u64,
+        limit: usize,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -585,6 +610,108 @@ struct WakeupAttributionReport {
     caveats: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ProcessPsSummary {
+    parent_pid: Option<u32>,
+    user: Option<String>,
+    status: Option<String>,
+    cpu_percent: Option<f32>,
+    resident_bytes: Option<u64>,
+    command: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessInspectionReport {
+    captured_at_millis: u64,
+    pid: u32,
+    alive: bool,
+    entity_id: Option<String>,
+    display_name: Option<String>,
+    component_title: Option<String>,
+    component_kind: Option<String>,
+    executable_path: Option<String>,
+    command_line: Option<String>,
+    cwd: Option<String>,
+    user: Option<String>,
+    parent_pid: Option<u32>,
+    parent_summary: Option<String>,
+    cpu_percent: Option<f32>,
+    memory_bytes: Option<u64>,
+    memory_physical_footprint_bytes: Option<u64>,
+    start_time_millis: Option<u64>,
+    child_pids: Vec<u32>,
+    sibling_process_count: u32,
+    ps: Option<ProcessPsSummary>,
+    safety_notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessOpenResource {
+    fd: String,
+    resource_type: String,
+    name: String,
+    detail: Option<String>,
+    is_socket: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessOpenResourcesReport {
+    captured_at_millis: u64,
+    pid: u32,
+    resource_count: usize,
+    returned: usize,
+    file_count: usize,
+    socket_count: usize,
+    resources: Vec<ProcessOpenResource>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessSampleReport {
+    captured_at_millis: u64,
+    pid: u32,
+    duration_seconds: u64,
+    thread_count: usize,
+    top_stacks: Vec<SampledStackReport>,
+    summary: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessActionReport {
+    captured_at_millis: u64,
+    pid: u32,
+    action: String,
+    signal: String,
+    dry_run: bool,
+    executed: bool,
+    success: bool,
+    command: String,
+    reason: Option<String>,
+    entity_id: Option<String>,
+    display_name: Option<String>,
+    message: String,
+    safety_notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessActionHistoryItem {
+    timestamp_millis: u64,
+    pid: Option<u32>,
+    action: Option<String>,
+    signal: Option<String>,
+    success: bool,
+    reason: Option<String>,
+    entity_id: Option<String>,
+    display_name: Option<String>,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessActionHistoryReport {
+    window_minutes: u64,
+    returned: usize,
+    actions: Vec<ProcessActionHistoryItem>,
+}
+
 struct ExportQueryOptions<'a> {
     privacy_tier: ExportPrivacyTier,
     entity_ids: &'a [String],
@@ -621,6 +748,7 @@ pub trait AetowerMcpDataSource: Send + Sync + 'static {
     ) -> Result<Vec<SystemSnapshot>, String>;
     fn diagnostics_overview(&self) -> Result<DiagnosticsOverview, String>;
     fn query_diagnostics(&self, query: DiagnosticsQuery) -> Result<Vec<DiagnosticsEvent>, String>;
+    fn record_diagnostics_event(&self, _event: DiagnosticsEvent) {}
     fn record_mcp_runtime_observation(
         &self,
         _total_connections: u64,
@@ -1184,6 +1312,11 @@ impl AetowerMcpServer {
             "aetower_memory_breakdown" => self.tool_memory_breakdown(arguments),
             "aetower_profile_entity" => self.tool_profile_entity(arguments),
             "aetower_wakeup_attribution" => self.tool_wakeup_attribution(arguments),
+            "aetower_process_inspect" => self.tool_process_inspect(arguments),
+            "aetower_process_open_resources" => self.tool_process_open_resources(arguments),
+            "aetower_process_sample" => self.tool_process_sample(arguments),
+            "aetower_process_action" => self.tool_process_action(arguments),
+            "aetower_process_action_history" => self.tool_process_action_history(arguments),
             "aetower_diagnostics_overview" => self.tool_diagnostics_overview(),
             "aetower_diagnostics_summary" => self.tool_diagnostics_summary(arguments),
             "aetower_query_diagnostics" => self.tool_query_diagnostics(arguments),
@@ -2045,6 +2178,95 @@ impl AetowerMcpServer {
         Ok(result)
     }
 
+    fn tool_process_inspect(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            pid: u32,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let request = DynamicToolRequest::ProcessInspect { pid: args.pid };
+        let result = self.execute_dynamic_request(&request).map_err(tool_error)?;
+        Ok(result)
+    }
+
+    fn tool_process_open_resources(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            pid: u32,
+            #[serde(default = "default_open_resource_limit")]
+            limit: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let request = DynamicToolRequest::ProcessOpenResources {
+            pid: args.pid,
+            limit: args.limit.clamp(1, 500),
+        };
+        let result = self.execute_dynamic_request(&request).map_err(tool_error)?;
+        Ok(result)
+    }
+
+    fn tool_process_sample(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            pid: u32,
+            #[serde(default = "default_profile_duration_seconds")]
+            duration_seconds: u64,
+            #[serde(default = "default_top_stacks")]
+            top_stacks: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let request = DynamicToolRequest::ProcessSample {
+            pid: args.pid,
+            duration_seconds: args.duration_seconds.clamp(1, MAX_PROFILE_DURATION_SECONDS),
+            top_stacks: args.top_stacks.max(1),
+        };
+        let result = self.execute_dynamic_request(&request).map_err(tool_error)?;
+        Ok(result)
+    }
+
+    fn tool_process_action(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            pid: u32,
+            action: String,
+            #[serde(default = "default_include_true")]
+            dry_run: bool,
+            #[serde(default)]
+            reason: Option<String>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let request = DynamicToolRequest::ProcessAction {
+            pid: args.pid,
+            action: args.action,
+            dry_run: args.dry_run,
+            reason: args.reason,
+        };
+        let result = self.execute_dynamic_request(&request).map_err(tool_error)?;
+        Ok(result)
+    }
+
+    fn tool_process_action_history(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_process_action_history_window_minutes")]
+            window_minutes: u64,
+            #[serde(default = "default_process_action_history_limit")]
+            limit: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let request = DynamicToolRequest::ProcessActionHistory {
+            window_minutes: args.window_minutes.max(1),
+            limit: args.limit.clamp(1, 200),
+        };
+        let result = self.execute_dynamic_request(&request).map_err(tool_error)?;
+        Ok(result)
+    }
+
     fn tool_support_bundle_manifest(&self, arguments: Value) -> Result<Value, Value> {
         #[derive(Deserialize)]
         struct Args {
@@ -2372,6 +2594,18 @@ fn default_top_stacks() -> usize {
 
 fn default_top_regions() -> usize {
     DEFAULT_TOP_REGIONS
+}
+
+fn default_open_resource_limit() -> usize {
+    DEFAULT_OPEN_RESOURCE_LIMIT
+}
+
+fn default_process_action_history_limit() -> usize {
+    DEFAULT_PROCESS_ACTION_HISTORY_LIMIT
+}
+
+fn default_process_action_history_window_minutes() -> u64 {
+    DEFAULT_PROCESS_ACTION_HISTORY_WINDOW_MINUTES
 }
 
 fn default_include_true() -> bool {
@@ -3968,6 +4202,46 @@ fn process_dynamic_tool_request(
             *top_stacks,
         )?)
         .map_err(|error| extract_tool_error_message(&error)),
+        DynamicToolRequest::ProcessInspect { pid } => {
+            tool_json(build_process_inspection(data_source, *pid)?)
+                .map_err(|error| extract_tool_error_message(&error))
+        }
+        DynamicToolRequest::ProcessOpenResources { pid, limit } => {
+            tool_json(build_process_open_resources(*pid, *limit)?)
+                .map_err(|error| extract_tool_error_message(&error))
+        }
+        DynamicToolRequest::ProcessSample {
+            pid,
+            duration_seconds,
+            top_stacks,
+        } => tool_json(build_process_sample(
+            *pid,
+            (*duration_seconds).clamp(1, MAX_PROFILE_DURATION_SECONDS),
+            *top_stacks,
+        )?)
+        .map_err(|error| extract_tool_error_message(&error)),
+        DynamicToolRequest::ProcessAction {
+            pid,
+            action,
+            dry_run,
+            reason,
+        } => tool_json(build_process_action(
+            data_source,
+            *pid,
+            action,
+            *dry_run,
+            reason.clone(),
+        )?)
+        .map_err(|error| extract_tool_error_message(&error)),
+        DynamicToolRequest::ProcessActionHistory {
+            window_minutes,
+            limit,
+        } => tool_json(build_process_action_history(
+            data_source,
+            *window_minutes,
+            *limit,
+        )?)
+        .map_err(|error| extract_tool_error_message(&error)),
     }
 }
 
@@ -4187,6 +4461,315 @@ pub fn wakeup_attribution_json(
     serde_json::to_string(&report).map_err(|error| error.to_string())
 }
 
+#[derive(Debug, Clone)]
+struct ProcessComponentContext {
+    entity_id: String,
+    display_name: String,
+    component_title: String,
+    component_kind: String,
+    executable_path: Option<String>,
+    command_line: Option<String>,
+    cwd: Option<String>,
+    user: Option<String>,
+    parent_summary: Option<String>,
+    cpu_percent: f32,
+    memory_bytes: u64,
+    memory_physical_footprint_bytes: u64,
+    start_time_millis: u64,
+    sibling_process_count: u32,
+}
+
+fn build_process_inspection(
+    data_source: &dyn AetowerMcpDataSource,
+    pid: u32,
+) -> Result<ProcessInspectionReport, String> {
+    validate_pid(pid)?;
+    let snapshot = data_source.latest_snapshot()?;
+    let context = process_component_context(&snapshot, pid);
+    let ps = process_ps_summary(pid).ok();
+    let alive = ps.is_some() || process_exists(pid);
+    let child_pids = process_child_pids(&snapshot, pid);
+    let parent_pid = context
+        .as_ref()
+        .and_then(|context| extract_parent_pid(context.parent_summary.as_deref()))
+        .or_else(|| ps.as_ref().and_then(|summary| summary.parent_pid));
+    let mut safety_notes = Vec::new();
+    if pid == std::process::id() {
+        safety_notes.push(
+            "This is the running Aetower process; destructive actions are blocked.".to_owned(),
+        );
+    }
+    if context.is_none() {
+        safety_notes.push(
+            "This PID is not currently attributed to an Aetower entity; live ps data may still exist."
+                .to_owned(),
+        );
+    }
+    if !alive {
+        safety_notes.push("The process is not visible to ps right now.".to_owned());
+    }
+
+    Ok(ProcessInspectionReport {
+        captured_at_millis: snapshot.captured_at_millis,
+        pid,
+        alive,
+        entity_id: context.as_ref().map(|context| context.entity_id.clone()),
+        display_name: context.as_ref().map(|context| context.display_name.clone()),
+        component_title: context
+            .as_ref()
+            .map(|context| context.component_title.clone()),
+        component_kind: context
+            .as_ref()
+            .map(|context| context.component_kind.clone()),
+        executable_path: context
+            .as_ref()
+            .and_then(|context| context.executable_path.clone()),
+        command_line: context
+            .as_ref()
+            .and_then(|context| context.command_line.clone())
+            .or_else(|| ps.as_ref().and_then(|summary| summary.command.clone())),
+        cwd: context.as_ref().and_then(|context| context.cwd.clone()),
+        user: context
+            .as_ref()
+            .and_then(|context| context.user.clone())
+            .or_else(|| ps.as_ref().and_then(|summary| summary.user.clone())),
+        parent_pid,
+        parent_summary: context
+            .as_ref()
+            .and_then(|context| context.parent_summary.clone()),
+        cpu_percent: context
+            .as_ref()
+            .map(|context| context.cpu_percent)
+            .or_else(|| ps.as_ref().and_then(|summary| summary.cpu_percent)),
+        memory_bytes: context
+            .as_ref()
+            .map(|context| context.memory_bytes)
+            .or_else(|| ps.as_ref().and_then(|summary| summary.resident_bytes)),
+        memory_physical_footprint_bytes: context
+            .as_ref()
+            .map(|context| context.memory_physical_footprint_bytes),
+        start_time_millis: context.as_ref().map(|context| context.start_time_millis),
+        child_pids,
+        sibling_process_count: context
+            .as_ref()
+            .map(|context| context.sibling_process_count)
+            .unwrap_or(0),
+        ps,
+        safety_notes,
+    })
+}
+
+pub fn process_inspect_json(
+    data_source: &dyn AetowerMcpDataSource,
+    pid: u32,
+) -> Result<String, String> {
+    let report = build_process_inspection(data_source, pid)?;
+    serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
+fn build_process_open_resources(
+    pid: u32,
+    limit: usize,
+) -> Result<ProcessOpenResourcesReport, String> {
+    validate_pid(pid)?;
+    let output = run_os_command(
+        "/usr/sbin/lsof",
+        &["-nP".to_owned(), "-p".to_owned(), pid.to_string()],
+    )?;
+    let mut resources = parse_lsof_resources(&output);
+    let resource_count = resources.len();
+    let socket_count = resources
+        .iter()
+        .filter(|resource| resource.is_socket)
+        .count();
+    let file_count = resource_count.saturating_sub(socket_count);
+    resources.truncate(limit.max(1));
+    Ok(ProcessOpenResourcesReport {
+        captured_at_millis: current_unix_millis().unwrap_or_default(),
+        pid,
+        resource_count,
+        returned: resources.len(),
+        file_count,
+        socket_count,
+        resources,
+    })
+}
+
+pub fn process_open_resources_json(pid: u32, limit: usize) -> Result<String, String> {
+    let report = build_process_open_resources(pid, limit)?;
+    serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
+fn build_process_sample(
+    pid: u32,
+    duration_seconds: u64,
+    top_stacks: usize,
+) -> Result<ProcessSampleReport, String> {
+    validate_pid(pid)?;
+    if !process_exists(pid) {
+        return Err(format!("Process {pid} is not visible to ps right now."));
+    }
+    let output = run_os_command(
+        "/usr/bin/sample",
+        &[
+            pid.to_string(),
+            duration_seconds.to_string(),
+            "1".to_owned(),
+        ],
+    )?;
+    let mut stack_reports = parse_sample_threads(&output);
+    stack_reports.sort_by(|left, right| right.sample_count.cmp(&left.sample_count));
+    stack_reports.truncate(top_stacks.max(1));
+    let summary = if let Some(first) = stack_reports.first() {
+        format!(
+            "Top sampled thread {} accounted for {} samples and is classified as {}.",
+            first.thread_label, first.sample_count, first.classification
+        )
+    } else {
+        "No non-empty sampled stacks were captured.".to_owned()
+    };
+    Ok(ProcessSampleReport {
+        captured_at_millis: current_unix_millis().unwrap_or_default(),
+        pid,
+        duration_seconds,
+        thread_count: stack_reports.len(),
+        top_stacks: stack_reports,
+        summary,
+    })
+}
+
+pub fn process_sample_json(
+    pid: u32,
+    duration_seconds: u64,
+    top_stacks: usize,
+) -> Result<String, String> {
+    let report = build_process_sample(
+        pid,
+        duration_seconds.clamp(1, MAX_PROFILE_DURATION_SECONDS),
+        top_stacks.max(1),
+    )?;
+    serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
+fn build_process_action(
+    data_source: &dyn AetowerMcpDataSource,
+    pid: u32,
+    action: &str,
+    dry_run: bool,
+    reason: Option<String>,
+) -> Result<ProcessActionReport, String> {
+    validate_pid(pid)?;
+    let (normalized_action, signal) = process_action_signal(action)?;
+    let snapshot = data_source.latest_snapshot().ok();
+    let context = snapshot
+        .as_ref()
+        .and_then(|snapshot| process_component_context(snapshot, pid));
+    let command = format!("/bin/kill -{signal} {pid}");
+    let mut safety_notes = Vec::new();
+    if pid == std::process::id() {
+        safety_notes.push("Aetower refuses to signal its own running process.".to_owned());
+        if !dry_run {
+            return Err("Refusing to signal the running Aetower process.".to_owned());
+        }
+    }
+    if !dry_run && !process_exists(pid) {
+        return Err(format!("Process {pid} is not visible to ps right now."));
+    }
+
+    if dry_run {
+        return Ok(ProcessActionReport {
+            captured_at_millis: current_unix_millis().unwrap_or_default(),
+            pid,
+            action: normalized_action.to_owned(),
+            signal: signal.to_owned(),
+            dry_run,
+            executed: false,
+            success: true,
+            command,
+            reason,
+            entity_id: context.as_ref().map(|context| context.entity_id.clone()),
+            display_name: context.as_ref().map(|context| context.display_name.clone()),
+            message: "Dry run only; no signal was sent.".to_owned(),
+            safety_notes,
+        });
+    }
+
+    let status = Command::new("/bin/kill")
+        .arg(format!("-{signal}"))
+        .arg(pid.to_string())
+        .status()
+        .map_err(|error| format!("run /bin/kill: {error}"))?;
+    let success = status.success();
+    let message = if success {
+        format!("Sent {signal} to process {pid}.")
+    } else {
+        format!("/bin/kill exited with status {status}.")
+    };
+    let report = ProcessActionReport {
+        captured_at_millis: current_unix_millis().unwrap_or_default(),
+        pid,
+        action: normalized_action.to_owned(),
+        signal: signal.to_owned(),
+        dry_run,
+        executed: true,
+        success,
+        command,
+        reason: reason.clone(),
+        entity_id: context.as_ref().map(|context| context.entity_id.clone()),
+        display_name: context.as_ref().map(|context| context.display_name.clone()),
+        message,
+        safety_notes,
+    };
+    data_source.record_diagnostics_event(process_action_diagnostics_event(&report));
+    Ok(report)
+}
+
+pub fn process_action_json(
+    data_source: &dyn AetowerMcpDataSource,
+    pid: u32,
+    action: &str,
+    dry_run: bool,
+    reason: Option<String>,
+) -> Result<String, String> {
+    let report = build_process_action(data_source, pid, action, dry_run, reason)?;
+    serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
+fn build_process_action_history(
+    data_source: &dyn AetowerMcpDataSource,
+    window_minutes: u64,
+    limit: usize,
+) -> Result<ProcessActionHistoryReport, String> {
+    let now = current_unix_millis().unwrap_or_default();
+    let events = data_source.query_diagnostics(DiagnosticsQuery {
+        limit: limit.saturating_mul(4).max(limit).max(1),
+        search: Some("process-action".to_owned()),
+        since_millis: Some(now.saturating_sub(window_minutes.saturating_mul(60 * 1000))),
+        include_persisted: true,
+        ..DiagnosticsQuery::default()
+    })?;
+    let actions = events
+        .into_iter()
+        .filter(|event| event.event_type == "process-action")
+        .take(limit.max(1))
+        .map(process_action_history_item)
+        .collect::<Vec<_>>();
+    Ok(ProcessActionHistoryReport {
+        window_minutes,
+        returned: actions.len(),
+        actions,
+    })
+}
+
+pub fn process_action_history_json(
+    data_source: &dyn AetowerMcpDataSource,
+    window_minutes: u64,
+    limit: usize,
+) -> Result<String, String> {
+    let report = build_process_action_history(data_source, window_minutes.max(1), limit.max(1))?;
+    serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
 fn entity_process_ids(entity: &aetower_model::EntitySnapshot) -> Vec<u32> {
     let mut process_ids = entity
         .components
@@ -4200,6 +4783,210 @@ fn entity_process_ids(entity: &aetower_model::EntitySnapshot) -> Vec<u32> {
     process_ids.sort_unstable();
     process_ids.dedup();
     process_ids
+}
+
+fn process_component_context(
+    snapshot: &SystemSnapshot,
+    pid: u32,
+) -> Option<ProcessComponentContext> {
+    for entity in &snapshot.entities {
+        for component in &entity.components {
+            if component.process_id != Some(pid) {
+                continue;
+            }
+            let sibling_process_count = entity_process_ids(entity).len() as u32;
+            return Some(ProcessComponentContext {
+                entity_id: entity.entity_id.clone(),
+                display_name: entity.display_name.clone(),
+                component_title: component.title.clone(),
+                component_kind: format!("{:?}", component.kind),
+                executable_path: component.executable_path.clone(),
+                command_line: component.command_line.clone(),
+                cwd: component.cwd.clone(),
+                user: component.user.clone(),
+                parent_summary: component.parent_summary.clone(),
+                cpu_percent: component.cpu_percent,
+                memory_bytes: component.memory_bytes,
+                memory_physical_footprint_bytes: component.memory_physical_footprint_bytes,
+                start_time_millis: component.start_time_millis,
+                sibling_process_count,
+            });
+        }
+    }
+    None
+}
+
+fn process_child_pids(snapshot: &SystemSnapshot, pid: u32) -> Vec<u32> {
+    let mut child_pids = snapshot
+        .entities
+        .iter()
+        .flat_map(|entity| &entity.components)
+        .filter(|component| extract_parent_pid(component.parent_summary.as_deref()) == Some(pid))
+        .filter_map(|component| component.process_id)
+        .collect::<Vec<_>>();
+    child_pids.sort_unstable();
+    child_pids.dedup();
+    child_pids
+}
+
+fn validate_pid(pid: u32) -> Result<(), String> {
+    if pid <= 1 {
+        Err(format!(
+            "Refusing to inspect or signal protected pid {pid}."
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn process_exists(pid: u32) -> bool {
+    Command::new("/bin/ps")
+        .arg("-p")
+        .arg(pid.to_string())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn process_ps_summary(pid: u32) -> Result<ProcessPsSummary, String> {
+    let output = run_os_command(
+        "/bin/ps",
+        &[
+            "-p".to_owned(),
+            pid.to_string(),
+            "-o".to_owned(),
+            "ppid=".to_owned(),
+            "-o".to_owned(),
+            "user=".to_owned(),
+            "-o".to_owned(),
+            "stat=".to_owned(),
+            "-o".to_owned(),
+            "pcpu=".to_owned(),
+            "-o".to_owned(),
+            "rss=".to_owned(),
+            "-o".to_owned(),
+            "command=".to_owned(),
+        ],
+    )?;
+    parse_ps_summary(&output)
+}
+
+fn parse_ps_summary(output: &str) -> Result<ProcessPsSummary, String> {
+    let line = output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| "ps returned no process rows".to_owned())?;
+    let parts = line.split_whitespace().collect::<Vec<_>>();
+    if parts.len() < 5 {
+        return Err(format!("ps row had too few columns: {line}"));
+    }
+    Ok(ProcessPsSummary {
+        parent_pid: parts[0].parse::<u32>().ok(),
+        user: Some(parts[1].to_owned()),
+        status: Some(parts[2].to_owned()),
+        cpu_percent: parts[3].parse::<f32>().ok(),
+        resident_bytes: parts[4]
+            .parse::<u64>()
+            .ok()
+            .map(|rss_kib| rss_kib.saturating_mul(1024)),
+        command: (parts.len() > 5).then(|| parts[5..].join(" ")),
+    })
+}
+
+fn parse_lsof_resources(output: &str) -> Vec<ProcessOpenResource> {
+    output
+        .lines()
+        .skip(1)
+        .filter_map(parse_lsof_resource_line)
+        .collect()
+}
+
+fn parse_lsof_resource_line(line: &str) -> Option<ProcessOpenResource> {
+    let parts = line.split_whitespace().collect::<Vec<_>>();
+    if parts.len() < 9 {
+        return None;
+    }
+    let resource_type = parts[4].to_owned();
+    let name = parts[8..].join(" ");
+    let is_socket = matches!(resource_type.as_str(), "IPv4" | "IPv6" | "unix")
+        || name.contains("TCP ")
+        || name.contains("UDP ")
+        || name.contains("->");
+    Some(ProcessOpenResource {
+        fd: parts[3].to_owned(),
+        resource_type,
+        name,
+        detail: Some(parts[5..8].join(" ")),
+        is_socket,
+    })
+}
+
+fn process_action_signal(action: &str) -> Result<(&'static str, &'static str), String> {
+    match action.trim().to_ascii_lowercase().as_str() {
+        "terminate" | "term" | "sigterm" => Ok(("terminate", "TERM")),
+        "force-kill" | "force_kill" | "kill" | "sigkill" => Ok(("force-kill", "KILL")),
+        "suspend" | "stop" | "sigstop" => Ok(("suspend", "STOP")),
+        "resume" | "continue" | "cont" | "sigcont" => Ok(("resume", "CONT")),
+        _ => Err(format!(
+            "Unsupported process action '{action}'. Use terminate, force-kill, suspend, or resume."
+        )),
+    }
+}
+
+fn process_action_diagnostics_event(report: &ProcessActionReport) -> DiagnosticsEvent {
+    let mut builder = DiagnosticsEvent::builder(
+        if report.success {
+            DiagnosticsLevel::Info
+        } else {
+            DiagnosticsLevel::Warn
+        },
+        DiagnosticsSubsystem::Engine,
+        "process-action",
+        report.message.clone(),
+    )
+    .field("pid", report.pid)
+    .field("action", report.action.clone())
+    .field("signal", report.signal.clone())
+    .field("success", report.success)
+    .field("command", report.command.clone());
+    if let Some(reason) = report.reason.as_ref() {
+        builder = builder.field("reason", reason);
+    }
+    if let Some(entity_id) = report.entity_id.as_ref() {
+        builder = builder.entity_id(entity_id.clone());
+    }
+    if let Some(display_name) = report.display_name.as_ref() {
+        builder = builder.field("display_name", display_name);
+    }
+    builder.build()
+}
+
+fn process_action_history_item(event: DiagnosticsEvent) -> ProcessActionHistoryItem {
+    let display_name = diagnostics_field(&event, "display_name").map(str::to_owned);
+    ProcessActionHistoryItem {
+        timestamp_millis: event.timestamp_millis,
+        pid: diagnostics_field(&event, "pid").and_then(|value| value.parse::<u32>().ok()),
+        action: diagnostics_field(&event, "action").map(str::to_owned),
+        signal: diagnostics_field(&event, "signal").map(str::to_owned),
+        success: diagnostics_field(&event, "success")
+            .and_then(|value| value.parse::<bool>().ok())
+            .unwrap_or(
+                event.level != DiagnosticsLevel::Warn && event.level != DiagnosticsLevel::Error,
+            ),
+        reason: diagnostics_field(&event, "reason").map(str::to_owned),
+        entity_id: event.entity_id,
+        display_name,
+        message: event.message,
+    }
+}
+
+fn diagnostics_field<'a>(event: &'a DiagnosticsEvent, key: &str) -> Option<&'a str> {
+    event
+        .fields
+        .iter()
+        .find(|field| field.key == key)
+        .map(|field| field.value.as_str())
 }
 
 fn run_os_command(program: &str, args: &[String]) -> Result<String, String> {
@@ -7166,6 +7953,72 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "aetower_process_inspect",
+            "description": "Inspect one running process by PID with current attribution, ps state, children, and safety notes.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "minimum": 2 }
+                },
+                "required": ["pid"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_process_open_resources",
+            "description": "List open files and sockets for one process using lsof with a bounded result limit.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "minimum": 2 },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 500 }
+                },
+                "required": ["pid"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_process_sample",
+            "description": "Run a short bounded sample for one process and summarize the hottest sampled threads.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "minimum": 2 },
+                    "duration_seconds": { "type": "integer", "minimum": 1, "maximum": 15 },
+                    "top_stacks": { "type": "integer", "minimum": 1, "maximum": 20 }
+                },
+                "required": ["pid"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_process_action",
+            "description": "Preview or execute a guarded process action. Defaults to dry_run=true; set dry_run=false only after explicit operator approval.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "minimum": 2 },
+                    "action": { "type": "string", "enum": ["terminate", "force-kill", "suspend", "resume"] },
+                    "dry_run": { "type": "boolean" },
+                    "reason": { "type": "string" }
+                },
+                "required": ["pid", "action"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "aetower_process_action_history",
+            "description": "Return recent operator process actions recorded by Aetower diagnostics.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "window_minutes": { "type": "integer", "minimum": 1, "maximum": 10080 },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "aetower_diagnostics_overview",
             "description": "Return diagnostics ring and persisted diagnostics health.",
             "inputSchema": {
@@ -7986,6 +8839,11 @@ mod tests {
             "aetower_memory_breakdown",
             "aetower_profile_entity",
             "aetower_wakeup_attribution",
+            "aetower_process_inspect",
+            "aetower_process_open_resources",
+            "aetower_process_sample",
+            "aetower_process_action",
+            "aetower_process_action_history",
             "aetower_diagnostics_summary",
             "aetower_support_bundle_manifest",
             "aetower_recommendations",
@@ -9227,6 +10085,61 @@ mod tests {
             build_process_tree_report(&snapshot, "root").unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(report.roots.len(), 1);
         assert_eq!(report.roots[0].children.len(), 1);
+    }
+
+    #[test]
+    fn process_action_dry_run_does_not_signal() {
+        let report =
+            build_process_action(&FakeSource, 42, "terminate", true, Some("test".to_owned()))
+                .unwrap_or_else(|error| panic!("{error}"));
+
+        assert!(!report.executed);
+        assert!(report.success);
+        assert_eq!(report.signal, "TERM");
+        assert_eq!(report.command, "/bin/kill -TERM 42");
+        assert_eq!(report.reason.as_deref(), Some("test"));
+    }
+
+    #[test]
+    fn parse_lsof_resources_classifies_sockets() {
+        let output = r#"COMMAND   PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+zsh       42 user  cwd    DIR               1,17      640    2 /Users/user/repo
+node      42 user   12u  IPv4 0x123456789abcdef      0t0  TCP 127.0.0.1:3000 (LISTEN)
+"#;
+
+        let resources = parse_lsof_resources(output);
+
+        assert_eq!(resources.len(), 2);
+        assert!(!resources[0].is_socket);
+        assert!(resources[1].is_socket);
+        assert!(resources[1].name.contains("127.0.0.1:3000"));
+    }
+
+    #[test]
+    fn process_action_history_item_extracts_fields() {
+        let event = DiagnosticsEvent::builder(
+            DiagnosticsLevel::Info,
+            DiagnosticsSubsystem::Engine,
+            "process-action",
+            "Sent TERM to process 42.",
+        )
+        .timestamp_millis(123)
+        .entity_id("entity")
+        .field("pid", 42)
+        .field("action", "terminate")
+        .field("signal", "TERM")
+        .field("success", true)
+        .field("reason", "test")
+        .field("display_name", "Example")
+        .build();
+
+        let item = process_action_history_item(event);
+
+        assert_eq!(item.timestamp_millis, 123);
+        assert_eq!(item.pid, Some(42));
+        assert_eq!(item.action.as_deref(), Some("terminate"));
+        assert_eq!(item.display_name.as_deref(), Some("Example"));
+        assert!(item.success);
     }
 
     #[test]
