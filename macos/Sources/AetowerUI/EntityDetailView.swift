@@ -3,6 +3,26 @@ import AetowerBridge
 
 private let detailMetricColumns = [GridItem(.adaptive(minimum: 170), spacing: 8)]
 
+private enum EntityDetailSection: String, CaseIterable, Identifiable {
+    case summary
+    case why
+    case processes
+    case analysis
+    case components
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .summary: return "Summary"
+        case .why: return "Why"
+        case .processes: return "Processes"
+        case .analysis: return "Analysis"
+        case .components: return "Components"
+        }
+    }
+}
+
 private struct ComponentMetadataLine: View {
     let title: String
     let value: String
@@ -271,6 +291,7 @@ public struct EntityDetailView: View {
     let entity: EntitySnapshot
     let state: AppState
     let processTreeSeedEntities: [EntitySnapshot]
+    @State private var selectedSection: EntityDetailSection = .summary
 
     public init(
         entity: EntitySnapshot,
@@ -285,79 +306,112 @@ public struct EntityDetailView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if entity.anomalyDetected {
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                        Text("Anomaly detected — friction is unusually high for this entity right now.")
-                            .font(.callout)
-                    }
-                    .padding(8)
-                    .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-                    .transition(.push(from: .top))
-                }
-                if let thermal = entity.thermalContribution {
-                    HStack(spacing: 8) {
-                        Image(systemName: "flame.fill")
-                            .foregroundStyle(.red)
-                        Text(thermal)
-                            .font(.callout)
-                    }
-                    .padding(8)
-                    .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-                    .transition(.push(from: .top))
-                }
-                if let grouping = entity.groupingSuggestion {
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.triangle.merge")
-                            .foregroundStyle(.blue)
-                        Text(grouping)
-                            .font(.callout)
-                    }
-                    .padding(8)
-                    .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-                    .transition(.push(from: .top))
-                }
-                if let recentChangeSummary = entity.recentChangeSummary {
-                    HStack(spacing: 8) {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .foregroundStyle(.teal)
-                        Text(recentChangeSummary)
-                            .font(.callout)
-                    }
-                    .padding(8)
-                    .background(Color.teal.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-                    .transition(.push(from: .top))
-                }
-                anomalyExplanation
+                alertStack
                 hero
-                memorySemantics
-                if let cost = entity.agentCost {
-                    GroupBox("AI Agent Cost") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            LabeledContent("Total tokens", value: "\(cost.totalInputTokens + cost.totalOutputTokens)")
-                            LabeledContent("Estimated cost", value: String(format: "$%.2f", cost.costUsd))
-                            LabeledContent("Total runs", value: "\(cost.totalRuns)")
-                        }
-                        .padding(.top, 4)
-                    }
-                }
-                if entity.entityKind == .aiAgent { aiAgentSession }
-                whyItMatters
-                recommendedNextActions
-                attributionCaveats
-                whatAetowerSees
-                processTree
                 ProcessOperatorPanel(entity: entity, state: state)
-                deepAnalysis
-                components
+                sectionPicker
+                selectedSectionContent
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(entity.displayName)
         .task(id: entity.entityId) {
+            selectedSection = .summary
             state.loadEntityStaticAnalysis(entityID: entity.entityId)
+        }
+    }
+
+    @ViewBuilder
+    private var alertStack: some View {
+        if entity.anomalyDetected {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Anomaly detected — friction is unusually high for this entity right now.")
+                    .font(.callout)
+            }
+            .padding(8)
+            .background(AetowerDesign.Surface.alertWarning, in: RoundedRectangle(cornerRadius: 8))
+            .transition(.push(from: .top))
+        }
+        if let thermal = entity.thermalContribution {
+            HStack(spacing: 8) {
+                Image(systemName: "flame.fill")
+                    .foregroundStyle(.red)
+                Text(thermal)
+                    .font(.callout)
+            }
+            .padding(8)
+            .background(AetowerDesign.Surface.alertCritical, in: RoundedRectangle(cornerRadius: 8))
+            .transition(.push(from: .top))
+        }
+        if let grouping = entity.groupingSuggestion {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.merge")
+                    .foregroundStyle(.blue)
+                Text(grouping)
+                    .font(.callout)
+            }
+            .padding(8)
+            .background(AetowerDesign.Surface.alertInfo, in: RoundedRectangle(cornerRadius: 8))
+            .transition(.push(from: .top))
+        }
+        if let recentChangeSummary = entity.recentChangeSummary {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .foregroundStyle(.teal)
+                Text(recentChangeSummary)
+                    .font(.callout)
+            }
+            .padding(8)
+            .background(AetowerDesign.Tone.network.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+            .transition(.push(from: .top))
+        }
+    }
+
+    private var sectionPicker: some View {
+        Picker("Detail section", selection: $selectedSection) {
+            ForEach(EntityDetailSection.allCases) { section in
+                Text(section.title).tag(section)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    @ViewBuilder
+    private var selectedSectionContent: some View {
+        switch selectedSection {
+        case .summary:
+            memorySemantics
+            aiCostSummary
+            if entity.entityKind == .aiAgent { aiAgentSession }
+            whatAetowerSees
+        case .why:
+            anomalyExplanation
+            whyItMatters
+            recommendedNextActions
+            attributionCaveats
+        case .processes:
+            processTree
+        case .analysis:
+            deepAnalysis
+        case .components:
+            components
+        }
+    }
+
+    @ViewBuilder
+    private var aiCostSummary: some View {
+        if let cost = entity.agentCost {
+            GroupBox("AI Agent Cost") {
+                VStack(alignment: .leading, spacing: 8) {
+                    LabeledContent("Total tokens", value: "\(cost.totalInputTokens + cost.totalOutputTokens)")
+                    LabeledContent("Estimated cost", value: String(format: "$%.2f", cost.costUsd))
+                    LabeledContent("Total runs", value: "\(cost.totalRuns)")
+                }
+                .padding(.top, 4)
+            }
         }
     }
 
