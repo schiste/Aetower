@@ -18,7 +18,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use aetower_diagnostics::{DiagnosticsEvent, DiagnosticsOverview, DiagnosticsQuery};
+use aetower_diagnostics::{
+    DiagnosticsEvent, DiagnosticsLevel, DiagnosticsOverview, DiagnosticsQuery,
+};
 use aetower_model::{RuntimeLagMetrics, SystemSnapshot};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -45,6 +47,8 @@ const DEFAULT_HISTORY_WINDOW_MILLIS: u64 = 72 * 60 * 60 * 1000;
 const DEFAULT_INVESTIGATION_WINDOW_MINUTES: u64 = 30;
 const DEFAULT_INVESTIGATION_ENTITY_LIMIT: usize = 5;
 const DEFAULT_INVESTIGATION_DIAGNOSTICS_LIMIT: usize = 128;
+const DEFAULT_DIAGNOSTICS_SUMMARY_LIMIT: usize = 25;
+const DEFAULT_DIAGNOSTICS_SUMMARY_QUERY_LIMIT: usize = 5000;
 const DEFAULT_INVESTIGATION_HISTORY_LIMIT: usize = 512;
 const DEFAULT_HISTORY_EXPECTED_INTERVAL_MILLIS: u64 = 10_000;
 const DEFAULT_HISTORY_QUALITY_MAX_SNAPSHOTS: usize = 4096;
@@ -299,6 +303,43 @@ struct SessionHealthCheck {
     severity: SeverityBand,
     summary: String,
     detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DiagnosticsSummaryGroup {
+    subsystem: String,
+    event_type: String,
+    level: String,
+    count: usize,
+    first_millis: u64,
+    latest_millis: u64,
+    latest_message: String,
+    latest_detail: Option<String>,
+    sample_fields: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DiagnosticsSummaryReport {
+    overview: DiagnosticsOverview,
+    event_count: usize,
+    limit: usize,
+    since_millis: Option<u64>,
+    include_persisted: bool,
+    minimum_level: Option<DiagnosticsLevel>,
+    subsystem: Option<aetower_diagnostics::DiagnosticsSubsystem>,
+    search: Option<String>,
+    groups: Vec<DiagnosticsSummaryGroup>,
+    recommendations: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct DiagnosticsSummaryOptions {
+    limit: usize,
+    since_millis: Option<u64>,
+    include_persisted: bool,
+    minimum_level: Option<DiagnosticsLevel>,
+    subsystem: Option<aetower_diagnostics::DiagnosticsSubsystem>,
+    search: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1139,6 +1180,7 @@ impl AetowerMcpServer {
             "aetower_profile_entity" => self.tool_profile_entity(arguments),
             "aetower_wakeup_attribution" => self.tool_wakeup_attribution(arguments),
             "aetower_diagnostics_overview" => self.tool_diagnostics_overview(),
+            "aetower_diagnostics_summary" => self.tool_diagnostics_summary(arguments),
             "aetower_query_diagnostics" => self.tool_query_diagnostics(arguments),
             "aetower_support_bundle_manifest" => self.tool_support_bundle_manifest(arguments),
             "aetower_recommendations" => self.tool_recommendations(arguments),
@@ -1802,6 +1844,54 @@ impl AetowerMcpServer {
                 .diagnostics_overview()
                 .map_err(tool_error)?,
         )
+    }
+
+    fn tool_diagnostics_summary(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            limit: Option<usize>,
+            query_limit: Option<usize>,
+            since_millis: Option<u64>,
+            include_persisted: Option<bool>,
+            minimum_level: Option<DiagnosticsLevel>,
+            subsystem: Option<aetower_diagnostics::DiagnosticsSubsystem>,
+            search: Option<String>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let limit = args.limit.unwrap_or(DEFAULT_DIAGNOSTICS_SUMMARY_LIMIT);
+        let query_limit = args
+            .query_limit
+            .unwrap_or(DEFAULT_DIAGNOSTICS_SUMMARY_QUERY_LIMIT);
+        let include_persisted = args.include_persisted.unwrap_or(true);
+        let query = DiagnosticsQuery {
+            limit: query_limit,
+            minimum_level: args.minimum_level.clone(),
+            subsystem: args.subsystem.clone(),
+            search: args.search.clone(),
+            since_millis: args.since_millis,
+            include_persisted,
+        };
+        let overview = self
+            .data_source
+            .diagnostics_overview()
+            .map_err(tool_error)?;
+        let events = self
+            .data_source
+            .query_diagnostics(query)
+            .map_err(tool_error)?;
+        tool_json(build_diagnostics_summary_report(
+            overview,
+            events,
+            DiagnosticsSummaryOptions {
+                limit,
+                since_millis: args.since_millis,
+                include_persisted,
+                minimum_level: args.minimum_level,
+                subsystem: args.subsystem,
+                search: args.search,
+            },
+        ))
     }
 
     fn tool_query_diagnostics(&self, arguments: Value) -> Result<Value, Value> {
@@ -4702,6 +4792,158 @@ fn build_support_bundle_manifest(
     Ok(sections)
 }
 
+fn build_diagnostics_summary_report(
+    overview: DiagnosticsOverview,
+    events: Vec<DiagnosticsEvent>,
+    options: DiagnosticsSummaryOptions,
+) -> DiagnosticsSummaryReport {
+    let event_count = events.len();
+    let mut groups = BTreeMap::<(String, String, String), DiagnosticsSummaryGroup>::new();
+
+    for event in events {
+        let subsystem_label = diagnostics_subsystem_label(&event.subsystem);
+        let level_label = diagnostics_level_label(&event.level);
+        let key = (
+            subsystem_label.clone(),
+            event.event_type.clone(),
+            level_label.clone(),
+        );
+        let detail = diagnostic_field_value(&event, "detail");
+        let sample_fields = diagnostic_sample_fields(&event);
+        groups
+            .entry(key)
+            .and_modify(|group| {
+                group.count = group.count.saturating_add(1);
+                group.first_millis = group.first_millis.min(event.timestamp_millis);
+                if event.timestamp_millis >= group.latest_millis {
+                    group.latest_millis = event.timestamp_millis;
+                    group.latest_message = event.message.clone();
+                    group.latest_detail = detail.clone();
+                    group.sample_fields = sample_fields.clone();
+                }
+            })
+            .or_insert_with(|| DiagnosticsSummaryGroup {
+                subsystem: subsystem_label,
+                event_type: event.event_type,
+                level: level_label,
+                count: 1,
+                first_millis: event.timestamp_millis,
+                latest_millis: event.timestamp_millis,
+                latest_message: event.message,
+                latest_detail: detail,
+                sample_fields,
+            });
+    }
+
+    let mut groups = groups.into_values().collect::<Vec<_>>();
+    groups.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| right.latest_millis.cmp(&left.latest_millis))
+            .then_with(|| left.event_type.cmp(&right.event_type))
+    });
+    groups.truncate(options.limit.max(1));
+    let recommendations = diagnostics_summary_recommendations(&overview, event_count, &groups);
+
+    DiagnosticsSummaryReport {
+        overview,
+        event_count,
+        limit: options.limit.max(1),
+        since_millis: options.since_millis,
+        include_persisted: options.include_persisted,
+        minimum_level: options.minimum_level,
+        subsystem: options.subsystem,
+        search: options.search,
+        groups,
+        recommendations,
+    }
+}
+
+fn diagnostics_summary_recommendations(
+    overview: &DiagnosticsOverview,
+    event_count: usize,
+    groups: &[DiagnosticsSummaryGroup],
+) -> Vec<String> {
+    let mut recommendations = Vec::new();
+    if overview.error_count >= DIAGNOSTICS_ERROR_WARNING {
+        recommendations.push(format!(
+            "{} retained diagnostics errors are present; start with the top error-level group before paging raw rows.",
+            overview.error_count
+        ));
+    }
+    if overview.warn_count >= DIAGNOSTICS_WARN_WARNING {
+        recommendations.push(format!(
+            "{} retained diagnostics warnings are present; use the grouped summary to separate repeated noise from new failures.",
+            overview.warn_count
+        ));
+    }
+    if let Some(group) = groups.first()
+        && group.count.saturating_mul(2) >= event_count.max(1)
+    {
+        recommendations.push(format!(
+            "{}:{} dominates the sampled diagnostics with {} of {} event(s).",
+            group.subsystem, group.event_type, group.count, event_count
+        ));
+    }
+    if groups
+        .iter()
+        .any(|group| group.event_type == "host-incident-snapshot")
+    {
+        recommendations.push(
+            "Host incident snapshots are present; correlate them with host alerts and top external burden leaders before blaming Aetower."
+                .to_owned(),
+        );
+    }
+    if groups
+        .iter()
+        .any(|group| group.event_type == "mcp-helper-reaped")
+    {
+        recommendations.push(
+            "MCP helper reaping appeared in diagnostics; verify clients disconnect cleanly and watch helper count in session health."
+                .to_owned(),
+        );
+    }
+    if recommendations.is_empty() {
+        recommendations.push(
+            "Diagnostics groups are currently low-signal; query raw diagnostics only for the event types that matter."
+                .to_owned(),
+        );
+    }
+    recommendations
+}
+
+fn diagnostics_level_label(level: &DiagnosticsLevel) -> String {
+    serde_json::to_value(level)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{level:?}").to_ascii_lowercase())
+}
+
+fn diagnostics_subsystem_label(subsystem: &aetower_diagnostics::DiagnosticsSubsystem) -> String {
+    serde_json::to_value(subsystem)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{subsystem:?}").to_ascii_lowercase())
+}
+
+fn diagnostic_field_value(event: &DiagnosticsEvent, key: &str) -> Option<String> {
+    event
+        .fields
+        .iter()
+        .find(|field| field.key == key)
+        .map(|field| field.value.clone())
+}
+
+fn diagnostic_sample_fields(event: &DiagnosticsEvent) -> BTreeMap<String, String> {
+    event
+        .fields
+        .iter()
+        .take(8)
+        .map(|field| (field.key.clone(), field.value.clone()))
+        .collect()
+}
+
 fn build_recommendations(
     snapshot: &SystemSnapshot,
     diagnostics: &DiagnosticsOverview,
@@ -6655,6 +6897,43 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "aetower_diagnostics_summary",
+            "description": "Return diagnostics grouped by subsystem, event type, and level with counts, latest samples, and noise-reduction recommendations.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+                    "query_limit": { "type": "integer", "minimum": 1, "maximum": 5000 },
+                    "minimum_level": { "type": "string", "enum": ["trace", "debug", "info", "warn", "error"] },
+                    "subsystem": {
+                        "type": "string",
+                        "enum": [
+                            "engine",
+                            "collector",
+                            "identity",
+                            "attribution",
+                            "friction",
+                            "history",
+                            "persistence",
+                            "telemetry",
+                            "gpu",
+                            "ffi",
+                            "ui",
+                            "adapter-chromium",
+                            "adapter-docker",
+                            "adapter-helper",
+                            "adapter-chau7",
+                            "adapter-vscode"
+                        ]
+                    },
+                    "search": { "type": "string" },
+                    "since_millis": { "type": "integer", "minimum": 0 },
+                    "include_persisted": { "type": "boolean" }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "aetower_query_diagnostics",
             "description": "Query recent or persisted diagnostics by level, subsystem, text, and time window.",
             "inputSchema": {
@@ -7429,6 +7708,7 @@ mod tests {
             "aetower_memory_breakdown",
             "aetower_profile_entity",
             "aetower_wakeup_attribution",
+            "aetower_diagnostics_summary",
             "aetower_support_bundle_manifest",
             "aetower_recommendations",
             "aetower_session_health",
@@ -7439,6 +7719,65 @@ mod tests {
                 "missing tool {expected}"
             );
         }
+    }
+
+    #[test]
+    fn diagnostics_summary_groups_events_by_subsystem_type_and_level() {
+        let report = build_diagnostics_summary_report(
+            DiagnosticsOverview {
+                warn_count: 2,
+                persisted_events: 3,
+                ..DiagnosticsOverview::default()
+            },
+            vec![
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Warn,
+                    aetower_diagnostics::DiagnosticsSubsystem::History,
+                    "host-incident-snapshot",
+                    "Host memory pressure incident snapshot recorded.",
+                )
+                .timestamp_millis(1_000)
+                .field("detail", "memory pressure")
+                .build(),
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Warn,
+                    aetower_diagnostics::DiagnosticsSubsystem::History,
+                    "host-incident-snapshot",
+                    "Host wakeup storm incident snapshot recorded.",
+                )
+                .timestamp_millis(2_000)
+                .field("detail", "wakeup storm")
+                .build(),
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Error,
+                    aetower_diagnostics::DiagnosticsSubsystem::AdapterChau7,
+                    "adapter-refresh-failed",
+                    "Chau7 adapter refresh failed.",
+                )
+                .timestamp_millis(3_000)
+                .field("error", "timeout")
+                .build(),
+            ],
+            DiagnosticsSummaryOptions {
+                limit: 10,
+                since_millis: Some(500),
+                include_persisted: true,
+                minimum_level: None,
+                subsystem: None,
+                search: None,
+            },
+        );
+
+        assert_eq!(report.event_count, 3);
+        assert_eq!(report.groups[0].event_type, "host-incident-snapshot");
+        assert_eq!(report.groups[0].count, 2);
+        assert_eq!(
+            report.groups[0].latest_detail.as_deref(),
+            Some("wakeup storm")
+        );
+        assert!(report.recommendations.iter().any(|recommendation| {
+            recommendation.contains("Host incident snapshots are present")
+        }));
     }
 
     #[test]

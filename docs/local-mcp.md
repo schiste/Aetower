@@ -31,6 +31,7 @@ agent-facing summaries:
 - `aetower_profile_entity`
 - `aetower_wakeup_attribution`
 - `aetower_diagnostics_overview`
+- `aetower_diagnostics_summary`
 - `aetower_query_diagnostics`
 - `aetower_support_bundle_manifest`
 - `aetower_recommendations`
@@ -190,6 +191,11 @@ for one entity and summarize hot threads, queues, and stacks.
 `aetower_wakeup_attribution` asks the running app for a sampled wakeup
 attribution report by thread, queue, and dominant sampled cause. It is
 explicitly heuristic, not kernel-exact wakeup accounting.
+
+`aetower_diagnostics_summary` groups recent or persisted diagnostics by
+subsystem, event type, and level. Use it before `aetower_query_diagnostics`
+when an agent needs to identify repeated noise, dominant failure categories, or
+the event types worth drilling into.
 
 `aetower_query_diagnostics` accepts the same filter fields Aetower already uses
 internally:
