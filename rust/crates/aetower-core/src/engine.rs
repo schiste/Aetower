@@ -45,6 +45,7 @@ const HISTORY_AGGRESSIVE_QUARANTINE_ROWS: u64 = 64;
 const HISTORY_HARD_MAX_QUARANTINE_ROWS: u64 = 128;
 const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
 const MCP_HELPER_REAP_RETRY_MILLIS: u64 = 60 * 1000;
+const MCP_HELPER_LIFECYCLE_AGE_BUCKET_MILLIS: u64 = 15 * 60 * 1000;
 const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 12 * 60 * 60 * 1000;
 const SYSTEM_MARKER_PREDICATE: &str = "(eventMessage CONTAINS[c] \"Previous shutdown cause\") OR (eventMessage CONTAINS[c] \"Entering Sleep state\") OR (eventMessage CONTAINS[c] \"Wake reason\") OR (eventMessage CONTAINS[c] \"Wake from\") OR (eventMessage CONTAINS[c] \"panic(cpu\") OR (eventMessage CONTAINS[c] \"userspace watchdog timeout\") OR (eventMessage CONTAINS[c] \"thermal pressure\") OR (eventMessage CONTAINS[c] \"low power mode\")";
 const HOST_INCIDENT_PERSIST_INTERVAL_MILLIS: u64 = 60 * 60 * 1000;
@@ -196,6 +197,14 @@ struct PersistedHostIncidentState {
     suppressed_count: u32,
 }
 
+#[derive(Debug, Clone, Default)]
+struct McpHelperLifecycleState {
+    initialized: bool,
+    helper_count: u32,
+    stale_helper_count: u32,
+    oldest_age_bucket: u64,
+}
+
 #[derive(Debug, Clone)]
 struct HostIncidentSnapshot {
     key: &'static str,
@@ -338,6 +347,7 @@ impl Engine {
             let mut host_incident_state =
                 BTreeMap::<&'static str, PersistedHostIncidentState>::new();
             let mut recently_reaped_mcp_helpers = BTreeMap::<u32, u64>::new();
+            let mut mcp_helper_lifecycle = McpHelperLifecycleState::default();
 
             while running.load(Ordering::SeqCst) {
                 let tick_started = Instant::now();
@@ -608,6 +618,15 @@ impl Engine {
                 let target_tick = runtime_config
                     .target_tick(&guard.latest_snapshot.host, &guard.latest_snapshot.entities);
                 runtime_lag_metrics.target_tick_millis = target_tick.as_millis() as f32;
+                emit_mcp_helper_lifecycle(
+                    &diagnostics,
+                    captured_at_millis,
+                    sequence,
+                    mcp_helper_count,
+                    stale_mcp_helper_count,
+                    oldest_mcp_helper_age_millis,
+                    &mut mcp_helper_lifecycle,
+                );
                 diagnostics.emit(
                     DiagnosticsEvent::builder(
                         DiagnosticsLevel::Info,
@@ -1293,6 +1312,63 @@ fn summarize_mcp_helpers(
     }
 
     (total, stale, oldest_age)
+}
+
+fn emit_mcp_helper_lifecycle(
+    diagnostics: &DiagnosticsStore,
+    captured_at_millis: u64,
+    sequence: u64,
+    helper_count: u32,
+    stale_helper_count: u32,
+    oldest_age_millis: u64,
+    state: &mut McpHelperLifecycleState,
+) {
+    let oldest_age_bucket = oldest_age_millis / MCP_HELPER_LIFECYCLE_AGE_BUCKET_MILLIS.max(1);
+    let count_changed = state.helper_count != helper_count;
+    let stale_changed = state.stale_helper_count != stale_helper_count;
+    let age_bucket_changed = state.oldest_age_bucket != oldest_age_bucket;
+    let should_emit = if !state.initialized {
+        helper_count > 0
+    } else {
+        count_changed || stale_changed || (helper_count > 0 && age_bucket_changed)
+    };
+
+    state.initialized = true;
+    state.helper_count = helper_count;
+    state.stale_helper_count = stale_helper_count;
+    state.oldest_age_bucket = oldest_age_bucket;
+
+    if !should_emit {
+        return;
+    }
+
+    let level = if stale_helper_count > 0 {
+        DiagnosticsLevel::Warn
+    } else {
+        DiagnosticsLevel::Info
+    };
+    let message = if helper_count == 0 {
+        "Local MCP helper processes drained."
+    } else if stale_helper_count > 0 {
+        "Local MCP helper lifecycle reported stale helper process(es)."
+    } else {
+        "Local MCP helper lifecycle changed."
+    };
+    diagnostics.emit(
+        DiagnosticsEvent::builder(
+            level,
+            DiagnosticsSubsystem::Engine,
+            "mcp-helper-lifecycle",
+            message,
+        )
+        .timestamp_millis(captured_at_millis)
+        .sequence(sequence)
+        .field("mcp_helper_count", helper_count)
+        .field("stale_mcp_helper_count", stale_helper_count)
+        .field("oldest_mcp_helper_age_millis", oldest_age_millis)
+        .field("age_bucket_minutes", oldest_age_bucket.saturating_mul(15))
+        .build(),
+    );
 }
 
 fn reap_stale_mcp_helpers(
@@ -2112,6 +2188,41 @@ mod tests {
                 .iter()
                 .any(|field| field.key == "suppressed_count" && field.value == "1")
         );
+    }
+
+    #[test]
+    fn mcp_helper_lifecycle_emits_on_count_and_age_changes() {
+        let diagnostics = DiagnosticsStore::new(16);
+        let mut state = McpHelperLifecycleState::default();
+
+        emit_mcp_helper_lifecycle(&diagnostics, 1_000, 1, 0, 0, 0, &mut state);
+        emit_mcp_helper_lifecycle(&diagnostics, 2_000, 2, 2, 0, 5 * 60 * 1000, &mut state);
+        emit_mcp_helper_lifecycle(&diagnostics, 3_000, 3, 2, 0, 6 * 60 * 1000, &mut state);
+        emit_mcp_helper_lifecycle(
+            &diagnostics,
+            16 * 60 * 1000,
+            4,
+            2,
+            0,
+            16 * 60 * 1000,
+            &mut state,
+        );
+        emit_mcp_helper_lifecycle(
+            &diagnostics,
+            17 * 60 * 1000,
+            5,
+            2,
+            1,
+            17 * 60 * 1000,
+            &mut state,
+        );
+
+        let events = diagnostics.recent(10);
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].level, DiagnosticsLevel::Warn);
+        assert_eq!(events[0].event_type, "mcp-helper-lifecycle");
+        assert_eq!(events[1].sequence, Some(4));
+        assert_eq!(events[2].sequence, Some(2));
     }
 
     #[test]

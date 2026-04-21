@@ -4895,12 +4895,11 @@ fn diagnostics_summary_recommendations(
                 .to_owned(),
         );
     }
-    if groups
-        .iter()
-        .any(|group| group.event_type == "mcp-helper-reaped")
-    {
+    if groups.iter().any(|group| {
+        group.event_type == "mcp-helper-reaped" || group.event_type == "mcp-helper-lifecycle"
+    }) {
         recommendations.push(
-            "MCP helper reaping appeared in diagnostics; verify clients disconnect cleanly and watch helper count in session health."
+            "MCP helper lifecycle diagnostics appeared; verify clients disconnect cleanly and watch helper count plus oldest-helper age in session health."
                 .to_owned(),
         );
     }
@@ -5191,9 +5190,18 @@ fn build_session_health_checks(
             },
             detail: if runtime.stale_mcp_helper_count > 0 {
                 format!(
-                    "{} helper processes have been alive for at least {} minutes; helpers should exit when clients disconnect.",
+                    "{} helper processes have been alive for at least {} minutes; oldest helper age is {}. Helpers should exit when clients disconnect.",
                     runtime.stale_mcp_helper_count,
-                    MCP_HELPER_STALE_MILLIS / 60_000
+                    MCP_HELPER_STALE_MILLIS / 60_000,
+                    format_duration_millis(runtime.oldest_mcp_helper_age_millis)
+                )
+            } else if runtime.mcp_helper_count > 0 {
+                format!(
+                    "Oldest helper age is {}; helpers older than {} minutes become lifecycle signals. Total MCP requests: {}, current rate: {:.1}/s.",
+                    format_duration_millis(runtime.oldest_mcp_helper_age_millis),
+                    MCP_HELPER_STALE_MILLIS / 60_000,
+                    runtime.mcp_total_requests,
+                    runtime.mcp_requests_per_second
                 )
             } else {
                 format!(

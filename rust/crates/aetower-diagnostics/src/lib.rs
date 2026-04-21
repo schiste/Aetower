@@ -831,6 +831,7 @@ fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)>
         "history-store-busy" | "history-write-backpressure" => 5 * 60 * 1000,
         "history-maintenance-over-budget" | "history-maintenance-failed" => 15 * 60 * 1000,
         "tick-over-budget" => 5 * 60 * 1000,
+        "mcp-helper-lifecycle" => 60 * 1000,
         "mcp-helper-reaped" => 5 * 60 * 1000,
         "tick-started" | "tick-completed" | "snapshot-published" | "gpu-sample-read" => 60 * 1000,
         _ => return None,
@@ -894,6 +895,7 @@ fn should_persist_event(event: &DiagnosticsEvent) -> bool {
                 | "session-log-metal-error"
                 | "session-log-analysis-failed"
                 | "mcp-server-started"
+                | "mcp-helper-lifecycle"
                 | "boot-session-observed"
                 | "system-previous-shutdown-cause"
                 | "system-sleep-marker"
