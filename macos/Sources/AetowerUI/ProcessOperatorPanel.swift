@@ -70,7 +70,7 @@ struct ProcessOperatorPanel: View {
             }
         } message: {
             if let pendingAction, let selectedPID {
-                Text("Send \(pendingAction.rawValue) to PID \(selectedPID). This can disrupt active work.")
+                Text("\(pendingAction.confirmationDetail) Target PID: \(selectedPID). This is recorded in diagnostics history.")
             }
         }
     }
@@ -146,14 +146,25 @@ struct ProcessOperatorPanel: View {
                 Spacer()
             }
 
-            HStack(spacing: 8) {
-                ForEach(ProcessActionKind.allCases) { action in
-                    Button(role: action.isDestructive ? .destructive : nil) {
-                        pendingAction = action
-                    } label: {
-                        Label(action.label, systemImage: action.systemImage)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Signals")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LazyVGrid(columns: actionColumns, alignment: .leading, spacing: 8) {
+                    ForEach(signalActions) { action in
+                        actionButton(action, pid: pid)
                     }
-                    .disabled(isLoading(pid, .processAction))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Scheduling and process trees")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LazyVGrid(columns: actionColumns, alignment: .leading, spacing: 8) {
+                    ForEach(schedulingAndTreeActions) { action in
+                        actionButton(action, pid: pid)
+                    }
                 }
             }
 
@@ -166,7 +177,7 @@ struct ProcessOperatorPanel: View {
                 StatusLine(
                     icon: report.success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
                     color: report.success ? .green : .orange,
-                    text: "\(report.message) · \(report.command)"
+                    text: "\(targetSummary(report.targetPids, fallbackPID: report.pid)) · \(report.message) · \(report.command)"
                 )
             }
 
@@ -258,7 +269,7 @@ struct ProcessOperatorPanel: View {
                             .foregroundStyle(action.success ? .green : .orange)
                         Text(action.action ?? "process-action")
                             .font(.caption)
-                        Text(action.pid.map { "PID \($0)" } ?? "unknown PID")
+                        Text(targetSummary(action.targetPids, fallbackPID: action.pid))
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -291,6 +302,38 @@ struct ProcessOperatorPanel: View {
 
     private var operatorColumns: [GridItem] {
         [GridItem(.adaptive(minimum: 140), spacing: 10)]
+    }
+
+    private var actionColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 138), spacing: 8)]
+    }
+
+    private var signalActions: [ProcessActionKind] {
+        [.suspend, .resume, .terminate, .forceKill]
+    }
+
+    private var schedulingAndTreeActions: [ProcessActionKind] {
+        [.lowerPriority, .normalPriority, .terminateTree, .forceKillTree]
+    }
+
+    private func actionButton(_ action: ProcessActionKind, pid: UInt32) -> some View {
+        Button(role: action.isDestructive ? .destructive : nil) {
+            pendingAction = action
+        } label: {
+            Label(action.label, systemImage: action.systemImage)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .disabled(isLoading(pid, .processAction))
+    }
+
+    private func targetSummary(_ targetPids: [UInt32], fallbackPID: UInt32?) -> String {
+        if targetPids.count > 1 {
+            return "\(targetPids.count) targets"
+        }
+        if let targetPID = targetPids.first ?? fallbackPID {
+            return "PID \(targetPID)"
+        }
+        return "unknown PID"
     }
 
     private func isLoading(_ pid: UInt32, _ kind: EntityAnalysisKind) -> Bool {

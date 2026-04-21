@@ -114,6 +114,10 @@ enum ProcessActionKind: String, CaseIterable, Identifiable {
     case suspend
     case resume
     case forceKill = "force-kill"
+    case terminateTree = "terminate-tree"
+    case forceKillTree = "force-kill-tree"
+    case lowerPriority = "lower-priority"
+    case normalPriority = "normal-priority"
 
     var id: String { rawValue }
 
@@ -123,6 +127,10 @@ enum ProcessActionKind: String, CaseIterable, Identifiable {
         case .suspend: return "Suspend"
         case .resume: return "Resume"
         case .forceKill: return "Force kill"
+        case .terminateTree: return "Terminate tree"
+        case .forceKillTree: return "Force kill tree"
+        case .lowerPriority: return "Lower priority"
+        case .normalPriority: return "Normal priority"
         }
     }
 
@@ -132,11 +140,36 @@ enum ProcessActionKind: String, CaseIterable, Identifiable {
         case .suspend: return "pause.circle"
         case .resume: return "play.circle"
         case .forceKill: return "exclamationmark.octagon"
+        case .terminateTree: return "xmark.circle.fill"
+        case .forceKillTree: return "exclamationmark.octagon.fill"
+        case .lowerPriority: return "speedometer"
+        case .normalPriority: return "arrow.counterclockwise.circle"
         }
     }
 
     var isDestructive: Bool {
-        self == .terminate || self == .forceKill
+        self == .terminate || self == .forceKill || self == .terminateTree || self == .forceKillTree
+    }
+
+    var confirmationDetail: String {
+        switch self {
+        case .terminate:
+            return "Send SIGTERM to the selected process."
+        case .forceKill:
+            return "Send SIGKILL to the selected process. Unsaved work can be lost."
+        case .suspend:
+            return "Pause the selected process with SIGSTOP."
+        case .resume:
+            return "Resume the selected process with SIGCONT."
+        case .terminateTree:
+            return "Send SIGTERM to the selected process and known child processes."
+        case .forceKillTree:
+            return "Send SIGKILL to the selected process and known child processes. Unsaved work can be lost."
+        case .lowerPriority:
+            return "Renice the selected process to a lower scheduling priority."
+        case .normalPriority:
+            return "Request normal scheduling priority for the selected process. macOS may require privileges."
+        }
     }
 }
 
@@ -369,6 +402,7 @@ struct ProcessSampleReportModel: Codable {
 struct ProcessActionReportModel: Codable {
     let capturedAtMillis: UInt64
     let pid: UInt32
+    let targetPids: [UInt32]
     let action: String
     let signal: String
     let dryRun: Bool
@@ -385,6 +419,7 @@ struct ProcessActionReportModel: Codable {
 struct ProcessActionHistoryItemModel: Codable, Identifiable {
     let timestampMillis: UInt64
     let pid: UInt32?
+    let targetPids: [UInt32]
     let action: String?
     let signal: String?
     let success: Bool
