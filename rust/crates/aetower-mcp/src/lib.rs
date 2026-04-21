@@ -72,6 +72,7 @@ const DIAGNOSTICS_WARN_WARNING: u32 = 200;
 const DIAGNOSTICS_WARN_CRITICAL: u32 = 800;
 const DIAGNOSTICS_ERROR_WARNING: u32 = 10;
 const DIAGNOSTICS_ERROR_CRITICAL: u32 = 50;
+const DIAGNOSTICS_ACTIVE_ERROR_WINDOW_MILLIS: u64 = 10 * 60 * 1000;
 const MCP_HELPER_WARNING_COUNT: u32 = 4;
 const MCP_HELPER_CRITICAL_COUNT: u32 = 8;
 const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
@@ -6261,7 +6262,13 @@ fn diagnostics_finding(diagnostics: &DiagnosticsOverview) -> Option<TopFinding> 
     (severity != SeverityBand::Info).then(|| TopFinding {
         id: "diagnostics-health".to_owned(),
         severity,
-        title: "Diagnostics signal is noisy".to_owned(),
+        title: if diagnostics_active_error_message(diagnostics).is_some()
+            || diagnostics.persistence_error.is_some()
+        {
+            "Diagnostics signal is active".to_owned()
+        } else {
+            "Diagnostics signal contains retained noise".to_owned()
+        },
         detail: format!(
             "{} warnings, {} errors, {} persisted events.",
             diagnostics.warn_count, diagnostics.error_count, diagnostics.persisted_events
@@ -6269,7 +6276,13 @@ fn diagnostics_finding(diagnostics: &DiagnosticsOverview) -> Option<TopFinding> 
         source: "diagnostics".to_owned(),
         entity_ids: Vec::new(),
         recommendation: diagnostics_active_error_message(diagnostics)
-            .or_else(|| Some("No active retained error is attached.".to_owned())),
+            .or_else(|| diagnostics.persistence_error.clone())
+            .or_else(|| {
+                Some(
+                    "Retained diagnostics are stale; keep them visible for cleanup, but do not treat them as current failure pressure."
+                        .to_owned(),
+                )
+            }),
     })
 }
 
@@ -6456,12 +6469,20 @@ fn history_store_severity(history: &HistorySummaryResponse) -> SeverityBand {
 }
 
 fn diagnostics_severity(diagnostics: &DiagnosticsOverview) -> SeverityBand {
-    if diagnostics.error_count >= DIAGNOSTICS_ERROR_CRITICAL
-        || diagnostics.warn_count >= DIAGNOSTICS_WARN_CRITICAL
+    if diagnostics.persistence_error.is_some() {
+        return SeverityBand::Critical;
+    }
+
+    let has_recent_error = diagnostics_recent_error_age_millis(diagnostics).is_some();
+    if has_recent_error
+        && (diagnostics.error_count >= DIAGNOSTICS_ERROR_CRITICAL
+            || diagnostics.warn_count >= DIAGNOSTICS_WARN_CRITICAL)
     {
         SeverityBand::Critical
     } else if diagnostics.error_count >= DIAGNOSTICS_ERROR_WARNING
         || diagnostics.warn_count >= DIAGNOSTICS_WARN_WARNING
+        || diagnostics.error_count >= DIAGNOSTICS_ERROR_CRITICAL
+        || diagnostics.warn_count >= DIAGNOSTICS_WARN_CRITICAL
     {
         SeverityBand::Warning
     } else {
@@ -6470,18 +6491,22 @@ fn diagnostics_severity(diagnostics: &DiagnosticsOverview) -> SeverityBand {
 }
 
 fn diagnostics_active_error_message(diagnostics: &DiagnosticsOverview) -> Option<String> {
-    let last_error_millis = diagnostics.last_error_millis?;
     let last_error_message = diagnostics.last_error_message.clone()?;
-    let now_millis = std::time::SystemTime::now()
+    diagnostics_recent_error_age_millis(diagnostics).map(|_| last_error_message)
+}
+
+fn diagnostics_recent_error_age_millis(diagnostics: &DiagnosticsOverview) -> Option<u64> {
+    let last_error_millis = diagnostics.last_error_millis?;
+    let now_millis = current_unix_millis().unwrap_or(last_error_millis);
+    let age_millis = now_millis.saturating_sub(last_error_millis);
+    (age_millis <= DIAGNOSTICS_ACTIVE_ERROR_WINDOW_MILLIS).then_some(age_millis)
+}
+
+fn current_unix_millis() -> Option<u64> {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(last_error_millis);
-    let age_millis = now_millis.saturating_sub(last_error_millis);
-    if age_millis <= 10 * 60 * 1000 {
-        Some(last_error_message)
-    } else {
-        None
-    }
+        .ok()
 }
 
 fn runtime_severity(runtime: &RuntimeLagMetrics) -> SeverityBand {
@@ -7987,6 +8012,39 @@ mod tests {
         assert!(report.recommendations.iter().any(|recommendation| {
             recommendation.contains("Host incident snapshots are present")
         }));
+    }
+
+    #[test]
+    fn diagnostics_severity_keeps_recent_error_pressure_critical() {
+        let now = current_unix_millis().unwrap_or(1_000_000);
+        let diagnostics = DiagnosticsOverview {
+            warn_count: DIAGNOSTICS_WARN_CRITICAL,
+            error_count: DIAGNOSTICS_ERROR_CRITICAL,
+            last_error_millis: Some(now),
+            last_error_message: Some("recent persistence error".to_owned()),
+            ..DiagnosticsOverview::default()
+        };
+
+        assert_eq!(diagnostics_severity(&diagnostics), SeverityBand::Critical);
+        assert_eq!(
+            diagnostics_active_error_message(&diagnostics).as_deref(),
+            Some("recent persistence error")
+        );
+    }
+
+    #[test]
+    fn diagnostics_severity_downgrades_stale_retained_errors() {
+        let now = current_unix_millis().unwrap_or(20 * 60 * 1000);
+        let diagnostics = DiagnosticsOverview {
+            warn_count: DIAGNOSTICS_WARN_CRITICAL,
+            error_count: DIAGNOSTICS_ERROR_CRITICAL,
+            last_error_millis: Some(now.saturating_sub(DIAGNOSTICS_ACTIVE_ERROR_WINDOW_MILLIS + 1)),
+            last_error_message: Some("old retained error".to_owned()),
+            ..DiagnosticsOverview::default()
+        };
+
+        assert_eq!(diagnostics_severity(&diagnostics), SeverityBand::Warning);
+        assert!(diagnostics_active_error_message(&diagnostics).is_none());
     }
 
     #[test]
