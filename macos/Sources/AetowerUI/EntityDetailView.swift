@@ -291,16 +291,19 @@ public struct EntityDetailView: View {
     let entity: EntitySnapshot
     let state: AppState
     let processTreeSeedEntities: [EntitySnapshot]
+    let processOperatorRequest: ProcessOperatorRequest?
     @State private var selectedSection: EntityDetailSection = .summary
 
     public init(
         entity: EntitySnapshot,
         state: AppState,
-        processTreeSeedEntities: [EntitySnapshot]? = nil
+        processTreeSeedEntities: [EntitySnapshot]? = nil,
+        processOperatorRequest: ProcessOperatorRequest? = nil
     ) {
         self.entity = entity
         self.state = state
         self.processTreeSeedEntities = processTreeSeedEntities ?? [entity]
+        self.processOperatorRequest = processOperatorRequest
     }
 
     public var body: some View {
@@ -308,7 +311,12 @@ public struct EntityDetailView: View {
             VStack(alignment: .leading, spacing: 14) {
                 alertStack
                 hero
-                ProcessOperatorPanel(entity: entity, state: state)
+                ProcessOperatorPanel(
+                    entity: entity,
+                    state: state,
+                    processEntities: processTreeSeedEntities,
+                    quickRequest: processOperatorRequest
+                )
                 sectionPicker
                 selectedSectionContent
             }

@@ -3,11 +3,25 @@ import AetowerBridge
 
 struct ProcessOperatorPanel: View {
     let entity: EntitySnapshot
+    let processEntities: [EntitySnapshot]
     let state: AppState
+    let quickRequest: ProcessOperatorRequest?
 
     @State private var selectedPID: UInt32?
     @State private var pendingAction: ProcessActionKind?
     @State private var actionReason = ""
+
+    init(
+        entity: EntitySnapshot,
+        state: AppState,
+        processEntities: [EntitySnapshot]? = nil,
+        quickRequest: ProcessOperatorRequest? = nil
+    ) {
+        self.entity = entity
+        self.processEntities = processEntities ?? [entity]
+        self.state = state
+        self.quickRequest = quickRequest
+    }
 
     var body: some View {
         GroupBox("Process operator") {
@@ -37,6 +51,11 @@ struct ProcessOperatorPanel: View {
             if selectedPID == nil {
                 selectedPID = processes.first?.id
             }
+            if quickRequest != nil {
+                applyQuickRequest()
+                state.refreshProcessActionHistory()
+                return
+            }
             if let pid = selectedPID {
                 state.runProcessInspection(pid: pid)
             }
@@ -45,6 +64,9 @@ struct ProcessOperatorPanel: View {
         .onChange(of: selectedPID) { _, pid in
             guard let pid else { return }
             state.runProcessInspection(pid: pid)
+        }
+        .onChange(of: quickRequest?.id) { _, _ in
+            applyQuickRequest()
         }
     }
 
@@ -94,6 +116,33 @@ struct ProcessOperatorPanel: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .contextMenu {
+                    processContextMenu(for: process.id)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func processContextMenu(for pid: UInt32) -> some View {
+        Button("Inspect PID \(pid)") {
+            selectedPID = pid
+            state.runProcessInspection(pid: pid)
+        }
+        Button("Open files & sockets") {
+            selectedPID = pid
+            state.runProcessOpenResources(pid: pid)
+        }
+        Button("Run 3s sample") {
+            selectedPID = pid
+            state.runProcessSample(pid: pid)
+        }
+        Divider()
+        Menu("Preview action") {
+            ForEach(quickPreviewActions) { action in
+                Button(action.label, role: action.isDestructive ? .destructive : nil) {
+                    previewAction(action, pid: pid)
+                }
             }
         }
     }
@@ -307,11 +356,18 @@ struct ProcessOperatorPanel: View {
     }
 
     private var processes: [OperatorProcess] {
-        entity.components
+        processEntities.flatMap(\.components)
             .filter { $0.kind != .adapterContext }
             .compactMap { component in
                 component.processId.map { OperatorProcess(id: $0, component: component) }
             }
+            .reduce(into: [UInt32: OperatorProcess]()) { processes, process in
+                let existing = processes[process.id]
+                if existing == nil || process.component.cpuPercent > (existing?.component.cpuPercent ?? 0) {
+                    processes[process.id] = process
+                }
+            }
+            .values
             .sorted {
                 if $0.component.cpuPercent != $1.component.cpuPercent {
                     return $0.component.cpuPercent > $1.component.cpuPercent
@@ -336,19 +392,43 @@ struct ProcessOperatorPanel: View {
         [.lowerPriority, .normalPriority, .terminateTree, .forceKillTree]
     }
 
+    private var quickPreviewActions: [ProcessActionKind] {
+        [.suspend, .resume, .lowerPriority, .normalPriority, .terminate, .forceKill, .terminateTree, .forceKillTree]
+    }
+
     private func actionButton(_ action: ProcessActionKind, pid: UInt32) -> some View {
         Button(role: action.isDestructive ? .destructive : nil) {
-            pendingAction = action
-            state.runProcessActionPreview(
-                pid: pid,
-                action: action,
-                reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-            )
+            previewAction(action, pid: pid)
         } label: {
             Label(action.label, systemImage: action.systemImage)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .disabled(isLoading(pid, .processAction))
+    }
+
+    private func previewAction(_ action: ProcessActionKind, pid: UInt32) {
+        selectedPID = pid
+        pendingAction = action
+        state.runProcessActionPreview(
+            pid: pid,
+            action: action,
+            reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        )
+    }
+
+    private func applyQuickRequest() {
+        guard let quickRequest else { return }
+        selectedPID = quickRequest.pid
+        switch quickRequest.operation {
+        case .inspect:
+            state.runProcessInspection(pid: quickRequest.pid)
+        case .resources:
+            state.runProcessOpenResources(pid: quickRequest.pid)
+        case .sample:
+            state.runProcessSample(pid: quickRequest.pid)
+        case .previewAction(let action):
+            previewAction(action, pid: quickRequest.pid)
+        }
     }
 
     private func targetSummary(_ targetPids: [UInt32], fallbackPID: UInt32?) -> String {

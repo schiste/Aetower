@@ -264,24 +264,6 @@ private struct EntityRow: View {
         .onHover { isHovered = $0 }
         .help(rowHelpText)
         .animation(AetowerDesign.Motion.quick, value: isHovered)
-        .contextMenu {
-            Button("Copy Process IDs") {
-                let pids = entity.components.compactMap(\.processId).map(String.init).joined(separator: ", ")
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(pids, forType: .string)
-            }
-            if entity.executablePath?.contains(".app/") == true {
-                Button("Show in Finder") {
-                    if let path = entity.executablePath {
-                        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
-                    }
-                }
-            }
-            Button("Copy Name") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(entity.displayName, forType: .string)
-            }
-        }
     }
 
     private var aiAgentDotColor: Color {
@@ -769,6 +751,7 @@ public struct MainListView: View {
     @State private var displayedGroupedEntities: [EntityGroup] = []
     @State private var groupingTask: Task<[EntityGroup], Never>?
     @State private var isGrouping = false
+    @State private var processOperatorRequest: ProcessOperatorRequest?
     @FocusState private var searchFieldFocused: Bool
 
     public init(state: AppState) {
@@ -890,7 +873,8 @@ public struct MainListView: View {
             EntityDetailView(
                 entity: entity,
                 state: state,
-                processTreeSeedEntities: selectedProcessTreeEntities(for: entity)
+                processTreeSeedEntities: selectedProcessTreeEntities(for: entity),
+                processOperatorRequest: processOperatorRequest
             )
         }
     }
@@ -1036,6 +1020,9 @@ public struct MainListView: View {
                                 )
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                monitorContextMenu(for: group.root, members: group.members)
+                            }
                         }
                     } else {
                         ForEach(filteredEntities, id: \.entityId) { entity in
@@ -1052,18 +1039,7 @@ public struct MainListView: View {
                             }
                             .buttonStyle(.plain)
                             .contextMenu {
-                                Button("Copy Process IDs") {
-                                    let pids = entity.components.compactMap { $0.processId }.map(String.init).joined(separator: ", ")
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(pids, forType: .string)
-                                }
-                                if entity.executablePath?.contains(".app/") == true {
-                                    Button("Show in Finder") {
-                                        if let path = entity.executablePath {
-                                            NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
-                                        }
-                                    }
-                                }
+                                monitorContextMenu(for: entity, members: [entity])
                             }
                         }
                     }
@@ -1073,6 +1049,97 @@ public struct MainListView: View {
                 .animation(nil, value: state.snapshot.sequence)
             }
         }
+    }
+
+    @ViewBuilder
+    private func monitorContextMenu(for entity: EntitySnapshot, members: [EntitySnapshot]) -> some View {
+        Button("Open Detail") {
+            selectEntity(entity.entityId)
+        }
+
+        if let pid = primaryProcessID(in: members) {
+            Divider()
+            Button("Inspect PID \(pid)") {
+                requestProcessOperation(entityID: entity.entityId, pid: pid, operation: .inspect)
+            }
+            Button("Open files & sockets") {
+                requestProcessOperation(entityID: entity.entityId, pid: pid, operation: .resources)
+            }
+            Button("Run 3s sample") {
+                requestProcessOperation(entityID: entity.entityId, pid: pid, operation: .sample)
+            }
+            Menu("Preview action") {
+                ForEach(contextPreviewActions) { action in
+                    Button(action.label, role: action.isDestructive ? .destructive : nil) {
+                        requestProcessOperation(
+                            entityID: entity.entityId,
+                            pid: pid,
+                            operation: .previewAction(action)
+                        )
+                    }
+                }
+            }
+        }
+
+        Divider()
+        Button("Copy Process IDs") {
+            let pids = members
+                .flatMap(\.components)
+                .compactMap(\.processId)
+                .map(String.init)
+                .joined(separator: ", ")
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(pids, forType: .string)
+        }
+        Button("Copy Name") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(entity.displayName, forType: .string)
+        }
+        if entity.executablePath?.contains(".app/") == true {
+            Button("Show in Finder") {
+                if let path = entity.executablePath {
+                    NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+                }
+            }
+        }
+    }
+
+    private var contextPreviewActions: [ProcessActionKind] {
+        [.suspend, .resume, .lowerPriority, .normalPriority, .terminate, .forceKill, .terminateTree, .forceKillTree]
+    }
+
+    private func selectEntity(_ entityID: String) {
+        searchFieldFocused = false
+        withAnimation(AetowerDesign.Motion.standard) {
+            selectedEntityID = entityID
+        }
+    }
+
+    private func requestProcessOperation(
+        entityID: String,
+        pid: UInt32,
+        operation: ProcessOperatorQuickOperation
+    ) {
+        selectEntity(entityID)
+        processOperatorRequest = ProcessOperatorRequest(pid: pid, operation: operation)
+    }
+
+    private func primaryProcessID(in members: [EntitySnapshot]) -> UInt32? {
+        members
+            .flatMap(\.components)
+            .filter { $0.kind != .adapterContext }
+            .compactMap { component -> (pid: UInt32, cpu: Float, memory: UInt64)? in
+                guard let pid = component.processId else { return nil }
+                return (pid, component.cpuPercent, component.memoryBytes)
+            }
+            .sorted {
+                if $0.cpu != $1.cpu {
+                    return $0.cpu > $1.cpu
+                }
+                return $0.memory > $1.memory
+            }
+            .first?
+            .pid
     }
 
     private var monitorHeader: some View {

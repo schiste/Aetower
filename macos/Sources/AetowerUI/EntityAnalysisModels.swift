@@ -109,7 +109,7 @@ enum EntityAnalysisKind: String, CaseIterable, Hashable {
     }
 }
 
-enum ProcessActionKind: String, CaseIterable, Identifiable {
+public enum ProcessActionKind: String, CaseIterable, Identifiable {
     case terminate
     case suspend
     case resume
@@ -119,7 +119,7 @@ enum ProcessActionKind: String, CaseIterable, Identifiable {
     case lowerPriority = "lower-priority"
     case normalPriority = "normal-priority"
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
     var label: String {
         switch self {
@@ -171,6 +171,19 @@ enum ProcessActionKind: String, CaseIterable, Identifiable {
             return "Request normal scheduling priority for the selected process. macOS may require privileges."
         }
     }
+}
+
+public enum ProcessOperatorQuickOperation: Equatable {
+    case inspect
+    case resources
+    case sample
+    case previewAction(ProcessActionKind)
+}
+
+public struct ProcessOperatorRequest: Identifiable, Equatable {
+    public let id = UUID()
+    let pid: UInt32
+    let operation: ProcessOperatorQuickOperation
 }
 
 struct SnapshotMetricDeltaReport: Codable {
