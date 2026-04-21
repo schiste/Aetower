@@ -603,6 +603,16 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func memoryBreakdownJson(entityId: String, topRegions: UInt32)  -> JsonQueryResult
     
+    func processActionHistoryJson(windowMinutes: UInt32, limit: UInt32)  -> JsonQueryResult
+    
+    func processActionJson(pid: UInt32, action: String, dryRun: Bool, reason: String?)  -> JsonQueryResult
+    
+    func processInspectJson(pid: UInt32)  -> JsonQueryResult
+    
+    func processOpenResourcesJson(pid: UInt32, limit: UInt32)  -> JsonQueryResult
+    
+    func processSampleJson(pid: UInt32, durationSeconds: UInt32, topStacks: UInt32)  -> JsonQueryResult
+    
     func profileEntityJson(entityId: String, durationSeconds: UInt32, topStacks: UInt32)  -> JsonQueryResult
     
     func queryDiagnostics(query: DiagnosticsQuery)  -> [DiagnosticsEvent]
@@ -929,6 +939,53 @@ open func memoryBreakdownJson(entityId: String, topRegions: UInt32) -> JsonQuery
     uniffi_aetower_ffi_fn_method_monitorengine_memory_breakdown_json(self.uniffiClonePointer(),
         FfiConverterString.lower(entityId),
         FfiConverterUInt32.lower(topRegions),$0
+    )
+})
+}
+    
+open func processActionHistoryJson(windowMinutes: UInt32, limit: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_process_action_history_json(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(windowMinutes),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+    
+open func processActionJson(pid: UInt32, action: String, dryRun: Bool, reason: String?) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_process_action_json(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(pid),
+        FfiConverterString.lower(action),
+        FfiConverterBool.lower(dryRun),
+        FfiConverterOptionString.lower(reason),$0
+    )
+})
+}
+    
+open func processInspectJson(pid: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_process_inspect_json(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(pid),$0
+    )
+})
+}
+    
+open func processOpenResourcesJson(pid: UInt32, limit: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_process_open_resources_json(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(pid),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+    
+open func processSampleJson(pid: UInt32, durationSeconds: UInt32, topStacks: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_process_sample_json(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(pid),
+        FfiConverterUInt32.lower(durationSeconds),
+        FfiConverterUInt32.lower(topStacks),$0
     )
 })
 }
@@ -8581,6 +8638,21 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_memory_breakdown_json() != 26789) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_process_action_history_json() != 26790) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_process_action_json() != 65333) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_process_inspect_json() != 56320) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_process_open_resources_json() != 44890) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_process_sample_json() != 24048) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_profile_entity_json() != 30295) {

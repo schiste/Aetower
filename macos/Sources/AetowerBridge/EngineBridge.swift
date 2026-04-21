@@ -189,6 +189,50 @@ public final class EngineBridge: @unchecked Sendable {
         )
     }
 
+    public func processInspectJSON(pid: UInt32) -> JsonQueryResult {
+        engine.processInspectJson(pid: pid)
+    }
+
+    public func processOpenResourcesJSON(pid: UInt32, limit: UInt32 = 80) -> JsonQueryResult {
+        engine.processOpenResourcesJson(pid: pid, limit: limit)
+    }
+
+    public func processSampleJSON(
+        pid: UInt32,
+        durationSeconds: UInt32 = 3,
+        topStacks: UInt32 = 6
+    ) -> JsonQueryResult {
+        engine.processSampleJson(
+            pid: pid,
+            durationSeconds: durationSeconds,
+            topStacks: topStacks
+        )
+    }
+
+    public func processActionJSON(
+        pid: UInt32,
+        action: String,
+        dryRun: Bool = true,
+        reason: String? = nil
+    ) -> JsonQueryResult {
+        engine.processActionJson(
+            pid: pid,
+            action: action,
+            dryRun: dryRun,
+            reason: reason
+        )
+    }
+
+    public func processActionHistoryJSON(
+        windowMinutes: UInt32 = 60,
+        limit: UInt32 = 25
+    ) -> JsonQueryResult {
+        engine.processActionHistoryJson(
+            windowMinutes: windowMinutes,
+            limit: limit
+        )
+    }
+
     public func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSnapshot] {
         engine.loadHistoryRange(startMillis: startMillis, endMillis: endMillis)
     }

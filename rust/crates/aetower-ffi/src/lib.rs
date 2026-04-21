@@ -5,7 +5,9 @@ use aetower_diagnostics as diagnostics;
 use aetower_mcp::{
     AetowerMcpDataSource, HistorySummaryResponse, LocalMcpServerHandle, default_socket_path,
     diff_snapshots_json, entity_process_tree_json, explain_anomalies_json, memory_breakdown_json,
-    profile_entity_json, start_local_socket_server, wakeup_attribution_json,
+    process_action_history_json, process_action_json, process_inspect_json,
+    process_open_resources_json, process_sample_json, profile_entity_json,
+    start_local_socket_server, wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1225,6 +1227,60 @@ impl MonitorEngine {
             top_stacks as usize,
         ))
     }
+
+    pub fn process_inspect_json(&self, pid: u32) -> JsonQueryResult {
+        let data_source = MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        };
+        json_query_result(process_inspect_json(&data_source, pid))
+    }
+
+    pub fn process_open_resources_json(&self, pid: u32, limit: u32) -> JsonQueryResult {
+        json_query_result(process_open_resources_json(pid, limit as usize))
+    }
+
+    pub fn process_sample_json(
+        &self,
+        pid: u32,
+        duration_seconds: u32,
+        top_stacks: u32,
+    ) -> JsonQueryResult {
+        json_query_result(process_sample_json(
+            pid,
+            duration_seconds as u64,
+            top_stacks as usize,
+        ))
+    }
+
+    pub fn process_action_json(
+        &self,
+        pid: u32,
+        action: String,
+        dry_run: bool,
+        reason: Option<String>,
+    ) -> JsonQueryResult {
+        let data_source = MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        };
+        json_query_result(process_action_json(
+            &data_source,
+            pid,
+            &action,
+            dry_run,
+            reason,
+        ))
+    }
+
+    pub fn process_action_history_json(&self, window_minutes: u32, limit: u32) -> JsonQueryResult {
+        let data_source = MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        };
+        json_query_result(process_action_history_json(
+            &data_source,
+            window_minutes as u64,
+            limit as usize,
+        ))
+    }
 }
 
 impl Drop for MonitorEngine {
@@ -1332,6 +1388,12 @@ impl AetowerMcpDataSource for MonitorEngineDataSource {
             .lock()
             .map_err(|_| "engine lock poisoned".to_owned())?;
         Ok(engine.query_diagnostics(query))
+    }
+
+    fn record_diagnostics_event(&self, event: diagnostics::DiagnosticsEvent) {
+        if let Ok(engine) = self.engine.lock() {
+            engine.record_diagnostics_event(event);
+        }
     }
 
     fn record_mcp_runtime_observation(
