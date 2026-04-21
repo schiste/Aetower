@@ -76,6 +76,10 @@ const DIAGNOSTICS_ACTIVE_ERROR_WINDOW_MILLIS: u64 = 10 * 60 * 1000;
 const MCP_HELPER_WARNING_COUNT: u32 = 4;
 const MCP_HELPER_CRITICAL_COUNT: u32 = 8;
 const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
+const MCP_REQUEST_WARNING_RATE: f32 = 10.0;
+const MCP_REQUEST_CRITICAL_RATE: f32 = 25.0;
+const MCP_REQUEST_BURST_CLIENT_LIMIT: u32 = 3;
+const MCP_REQUEST_BURST_HELPER_LIMIT: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MessageFraming {
@@ -5134,13 +5138,7 @@ fn build_recommendations(
         recommendations.push(RecommendationItem {
             severity: self_runtime_severity(runtime),
             title: "Reduce Aetower observer overhead".to_owned(),
-            detail: format!(
-                "Aetower self telemetry is CPU {:.1}%, memory {}, wakeups {:.0}/s, MCP {:.1} req/s.",
-                runtime.self_cpu_percent,
-                format_bytes(runtime.self_memory_bytes),
-                runtime.self_wakeups_per_second,
-                runtime.mcp_requests_per_second
-            ),
+            detail: self_runtime_recommendation_detail(runtime),
             entity_id: None,
             source: "aetower-self".to_owned(),
             expected_benefit:
@@ -6534,21 +6532,67 @@ fn mcp_helper_severity(runtime: &RuntimeLagMetrics) -> SeverityBand {
 }
 
 fn self_runtime_severity(runtime: &RuntimeLagMetrics) -> SeverityBand {
-    if runtime.self_cpu_percent >= 25.0
+    let self_resource_severity = if runtime.self_cpu_percent >= 25.0
         || runtime.self_memory_bytes >= 768 * 1024 * 1024
         || runtime.self_wakeups_per_second >= 1_000.0
-        || runtime.mcp_requests_per_second >= 25.0
     {
         SeverityBand::Critical
     } else if runtime.self_cpu_percent >= 10.0
         || runtime.self_memory_bytes >= 384 * 1024 * 1024
         || runtime.self_wakeups_per_second >= 300.0
-        || runtime.mcp_requests_per_second >= 10.0
     {
         SeverityBand::Warning
     } else {
         SeverityBand::Info
+    };
+
+    self_resource_severity.max(mcp_request_pressure_severity(runtime))
+}
+
+fn mcp_request_pressure_severity(runtime: &RuntimeLagMetrics) -> SeverityBand {
+    if runtime.mcp_requests_per_second >= MCP_REQUEST_CRITICAL_RATE {
+        if mcp_pressure_looks_like_agent_burst(runtime) {
+            SeverityBand::Warning
+        } else {
+            SeverityBand::Critical
+        }
+    } else if runtime.mcp_requests_per_second >= MCP_REQUEST_WARNING_RATE {
+        if mcp_pressure_looks_like_agent_burst(runtime) {
+            SeverityBand::Info
+        } else {
+            SeverityBand::Warning
+        }
+    } else {
+        SeverityBand::Info
     }
+}
+
+fn mcp_pressure_looks_like_agent_burst(runtime: &RuntimeLagMetrics) -> bool {
+    runtime.mcp_requests_per_second >= MCP_REQUEST_WARNING_RATE
+        && runtime.stale_mcp_helper_count == 0
+        && runtime.mcp_active_client_count <= MCP_REQUEST_BURST_CLIENT_LIMIT
+        && runtime.mcp_helper_count <= MCP_REQUEST_BURST_HELPER_LIMIT
+        && runtime.oldest_mcp_helper_age_millis < MCP_HELPER_STALE_MILLIS
+}
+
+fn self_runtime_recommendation_detail(runtime: &RuntimeLagMetrics) -> String {
+    let mut detail = format!(
+        "Aetower self telemetry is CPU {:.1}%, memory {}, wakeups {:.0}/s, MCP {:.1} req/s.",
+        runtime.self_cpu_percent,
+        format_bytes(runtime.self_memory_bytes),
+        runtime.self_wakeups_per_second,
+        runtime.mcp_requests_per_second
+    );
+    if mcp_pressure_looks_like_agent_burst(runtime) {
+        detail.push_str(
+            " MCP pressure currently looks like a short active-agent audit burst, not sustained helper pressure; watch it if clients/helpers stay elevated.",
+        );
+    } else if mcp_request_pressure_severity(runtime) != SeverityBand::Info {
+        detail.push_str(
+            " MCP pressure looks sustained because request rate is elevated without a short-burst helper/client profile.",
+        );
+    }
+    detail
 }
 
 fn host_load_severity(snapshot: &SystemSnapshot) -> SeverityBand {
@@ -8045,6 +8089,34 @@ mod tests {
 
         assert_eq!(diagnostics_severity(&diagnostics), SeverityBand::Warning);
         assert!(diagnostics_active_error_message(&diagnostics).is_none());
+    }
+
+    #[test]
+    fn self_runtime_classifies_short_mcp_bursts_as_warning() {
+        let runtime = RuntimeLagMetrics {
+            mcp_requests_per_second: MCP_REQUEST_CRITICAL_RATE * 4.0,
+            mcp_active_client_count: MCP_REQUEST_BURST_CLIENT_LIMIT,
+            mcp_helper_count: MCP_REQUEST_BURST_HELPER_LIMIT,
+            oldest_mcp_helper_age_millis: 60_000,
+            ..RuntimeLagMetrics::default()
+        };
+
+        assert_eq!(self_runtime_severity(&runtime), SeverityBand::Warning);
+        assert!(self_runtime_recommendation_detail(&runtime).contains("active-agent audit burst"));
+    }
+
+    #[test]
+    fn self_runtime_classifies_sustained_mcp_pressure_as_critical() {
+        let runtime = RuntimeLagMetrics {
+            mcp_requests_per_second: MCP_REQUEST_CRITICAL_RATE * 4.0,
+            mcp_active_client_count: MCP_REQUEST_BURST_CLIENT_LIMIT + 1,
+            mcp_helper_count: MCP_REQUEST_BURST_HELPER_LIMIT + 1,
+            oldest_mcp_helper_age_millis: MCP_HELPER_STALE_MILLIS + 1,
+            ..RuntimeLagMetrics::default()
+        };
+
+        assert_eq!(self_runtime_severity(&runtime), SeverityBand::Critical);
+        assert!(self_runtime_recommendation_detail(&runtime).contains("looks sustained"));
     }
 
     #[test]
