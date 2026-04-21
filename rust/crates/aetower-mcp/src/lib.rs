@@ -4482,10 +4482,17 @@ fn build_host_alerts(snapshot: &SystemSnapshot, top_entity_limit: usize) -> Vec<
     } else {
         snapshot.host.memory_used_bytes as f64 / snapshot.host.memory_total_bytes as f64
     };
-    let top_memory_entities = top_entities(snapshot, top_entity_limit)
-        .into_iter()
-        .map(|entity| entity.display_name.clone())
-        .collect::<Vec<_>>();
+    let top_memory_entities = top_memory_entities(snapshot, top_entity_limit);
+    let top_external_memory = top_external_memory_entities(snapshot, top_entity_limit);
+    let top_memory_entity_labels = if top_external_memory.is_empty() {
+        format_entity_burden_labels(&top_memory_entities, |entity| {
+            format_bytes(entity.metrics.memory_resident_bytes)
+        })
+    } else {
+        format_entity_burden_labels(&top_external_memory, |entity| {
+            format_bytes(entity.metrics.memory_resident_bytes)
+        })
+    };
     if used_ratio >= MEMORY_PRESSURE_WARNING_RATIO
         || snapshot.host.compressed_memory_bytes >= COMPRESSED_MEMORY_WARNING_BYTES
         || snapshot.host.swap_used_bytes >= SWAP_WARNING_BYTES
@@ -4526,17 +4533,25 @@ fn build_host_alerts(snapshot: &SystemSnapshot, top_entity_limit: usize) -> Vec<
                 format_bytes(snapshot.host.memory_total_bytes),
                 format_bytes(snapshot.host.compressed_memory_bytes),
                 format_bytes(snapshot.host.swap_used_bytes),
-                if top_memory_entities.is_empty() {
+                if top_memory_entity_labels.is_empty() {
                     "none".to_owned()
+                } else if top_external_memory.is_empty() {
+                    format!(
+                        "no non-Aetower leader visible; current leaders {top_memory_entity_labels}"
+                    )
                 } else {
-                    top_memory_entities.join(", ")
+                    format!("external leaders {top_memory_entity_labels}")
                 }
             ),
             metrics,
-            entity_ids: top_entities(snapshot, top_entity_limit)
-                .into_iter()
-                .map(|entity| entity.entity_id.clone())
-                .collect(),
+            entity_ids: if top_external_memory.is_empty() {
+                top_memory_entities
+            } else {
+                top_external_memory
+            }
+            .into_iter()
+            .map(|entity| entity.entity_id.clone())
+            .collect(),
         });
     }
 
@@ -4546,12 +4561,12 @@ fn build_host_alerts(snapshot: &SystemSnapshot, top_entity_limit: usize) -> Vec<
         } else {
             SeverityBand::Warning
         };
-        let leader = snapshot.entities.iter().max_by(|left, right| {
-            left.metrics
-                .wakeups_per_second
-                .partial_cmp(&right.metrics.wakeups_per_second)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let external_wakeup_leaders = top_external_wakeup_entities(snapshot, top_entity_limit);
+        let wakeup_leaders = top_wakeup_entities(snapshot, top_entity_limit);
+        let leader = external_wakeup_leaders
+            .first()
+            .copied()
+            .or_else(|| wakeup_leaders.first().copied());
         let mut metrics = BTreeMap::new();
         metrics.insert(
             "host_wakeups_per_second".to_owned(),
@@ -4574,12 +4589,20 @@ fn build_host_alerts(snapshot: &SystemSnapshot, top_entity_limit: usize) -> Vec<
                     snapshot.host.wakeups_per_second
                 ),
                 |leader| {
-                    format!(
-                        "Host wakeups are {:.0}/s. {} is currently the top wakeup leader at {:.0}/s.",
-                        snapshot.host.wakeups_per_second,
-                        leader.display_name,
-                        leader.metrics.wakeups_per_second
-                    )
+                    if is_aetower_entity(leader) {
+                        format!(
+                            "Host wakeups are {:.0}/s. No non-Aetower wakeup leader is visible; Aetower leads at {:.0}/s, so check self telemetry and MCP request rate.",
+                            snapshot.host.wakeups_per_second,
+                            leader.metrics.wakeups_per_second
+                        )
+                    } else {
+                        format!(
+                            "Host wakeups are {:.0}/s. External leader {} is at {:.0}/s.",
+                            snapshot.host.wakeups_per_second,
+                            leader.display_name,
+                            leader.metrics.wakeups_per_second
+                        )
+                    }
                 },
             ),
             metrics,
@@ -4943,6 +4966,86 @@ fn diagnostic_sample_fields(event: &DiagnosticsEvent) -> BTreeMap<String, String
         .collect()
 }
 
+fn host_memory_pressure_guidance(snapshot: &SystemSnapshot, runtime: &RuntimeLagMetrics) -> String {
+    let external = top_external_memory_entities(snapshot, 4);
+    let external_labels = format_entity_burden_labels(&external, |entity| {
+        format_bytes(entity.metrics.memory_resident_bytes)
+    });
+    let observer_context = format!(
+        "Aetower self is CPU {:.1}%, memory {}, wakeups {:.0}/s.",
+        runtime.self_cpu_percent,
+        format_bytes(runtime.self_memory_bytes),
+        runtime.self_wakeups_per_second
+    );
+    if external_labels.is_empty() {
+        format!(
+            "Compression ({}) and swap ({}) are elevated. No non-Aetower memory leader is visible in the current snapshot; inspect host-level pressure and only then Aetower self. {}",
+            format_bytes(snapshot.host.compressed_memory_bytes),
+            format_bytes(snapshot.host.swap_used_bytes),
+            observer_context
+        )
+    } else {
+        format!(
+            "Compression ({}) and swap ({}) are elevated. Start with external memory leaders: {}. {}",
+            format_bytes(snapshot.host.compressed_memory_bytes),
+            format_bytes(snapshot.host.swap_used_bytes),
+            external_labels,
+            observer_context
+        )
+    }
+}
+
+fn host_wakeup_guidance(snapshot: &SystemSnapshot, runtime: &RuntimeLagMetrics) -> String {
+    let external = top_external_wakeup_entities(snapshot, 4);
+    let external_labels = format_entity_burden_labels(&external, |entity| {
+        format!("{:.0}/s", entity.metrics.wakeups_per_second)
+    });
+    let observer_context = format!(
+        "Aetower self wakeups are {:.0}/s with MCP {:.1} req/s.",
+        runtime.self_wakeups_per_second, runtime.mcp_requests_per_second
+    );
+    if external_labels.is_empty() {
+        format!(
+            "Host wakeups are {:.0}/s. No non-Aetower wakeup leader is visible; inspect system services and Aetower self telemetry next. {}",
+            snapshot.host.wakeups_per_second, observer_context
+        )
+    } else {
+        format!(
+            "Host wakeups are {:.0}/s. Start with external wakeup leaders: {}. {}",
+            snapshot.host.wakeups_per_second, external_labels, observer_context
+        )
+    }
+}
+
+fn host_load_detail(snapshot: &SystemSnapshot) -> String {
+    let external = top_entities(snapshot, snapshot.entities.len().max(1))
+        .into_iter()
+        .filter(|entity| !is_aetower_entity(entity))
+        .take(3)
+        .collect::<Vec<_>>();
+    if external.is_empty() {
+        let fallback = top_entities(snapshot, 3)
+            .into_iter()
+            .map(|entity| entity.display_name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if fallback.is_empty() {
+            "No current burden leaders are visible.".to_owned()
+        } else {
+            format!("No non-Aetower burden leader is visible. Current leaders: {fallback}.")
+        }
+    } else {
+        format!(
+            "Top non-Aetower burden leaders: {}.",
+            external
+                .into_iter()
+                .map(|entity| entity.display_name.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
 fn build_recommendations(
     snapshot: &SystemSnapshot,
     diagnostics: &DiagnosticsOverview,
@@ -4955,36 +5058,30 @@ fn build_recommendations(
         recommendations.push(RecommendationItem {
             severity: SeverityBand::Critical,
             title: "Reduce current memory pressure".to_owned(),
-            detail: format!(
-                "Compression ({}) and swap ({}) are elevated. Focus on the top memory-heavy groups first.",
-                format_bytes(snapshot.host.compressed_memory_bytes),
-                format_bytes(snapshot.host.swap_used_bytes)
-            ),
-            entity_id: snapshot.entities.first().map(|entity| entity.entity_id.clone()),
+            detail: host_memory_pressure_guidance(snapshot, runtime),
+            entity_id: top_external_memory_entities(snapshot, 1)
+                .into_iter()
+                .next()
+                .or_else(|| top_memory_entities(snapshot, 1).into_iter().next())
+                .map(|entity| entity.entity_id.clone()),
             source: "host".to_owned(),
-            expected_benefit: "Lower swap, better responsiveness, and less battery drain.".to_owned(),
+            expected_benefit: "Lower swap, better responsiveness, and less battery drain."
+                .to_owned(),
         });
     }
     if wakeup_finding(snapshot).is_some() {
         recommendations.push(RecommendationItem {
             severity: SeverityBand::Warning,
             title: "Reduce wakeup-heavy workloads".to_owned(),
-            detail: format!(
-                "Host wakeups are {:.0}/s. Investigate the top wakeup leader and background pollers.",
-                snapshot.host.wakeups_per_second
-            ),
-            entity_id: snapshot
-                .entities
-                .iter()
-                .max_by(|left, right| {
-                    left.metrics
-                        .wakeups_per_second
-                        .partial_cmp(&right.metrics.wakeups_per_second)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
+            detail: host_wakeup_guidance(snapshot, runtime),
+            entity_id: top_external_wakeup_entities(snapshot, 1)
+                .into_iter()
+                .next()
+                .or_else(|| top_wakeup_entities(snapshot, 1).into_iter().next())
                 .map(|entity| entity.entity_id.clone()),
             source: "host".to_owned(),
-            expected_benefit: "Lower battery drain and smoother foreground interactivity.".to_owned(),
+            expected_benefit: "Lower battery drain and smoother foreground interactivity."
+                .to_owned(),
         });
     }
     if history_store_finding(history).is_some() {
@@ -5166,11 +5263,7 @@ fn build_session_health_checks(
                 format_bytes(snapshot.host.swap_used_bytes),
                 snapshot.host.wakeups_per_second
             ),
-            detail: top_entities(snapshot, 3)
-                .into_iter()
-                .map(|entity| entity.display_name.clone())
-                .collect::<Vec<_>>()
-                .join(", "),
+            detail: host_load_detail(snapshot),
         },
         SessionHealthCheck {
             key: "mcp".to_owned(),
@@ -5442,6 +5535,86 @@ fn top_entities(snapshot: &SystemSnapshot, limit: usize) -> Vec<&aetower_model::
     });
     entities.truncate(limit.max(1));
     entities
+}
+
+fn top_memory_entities(
+    snapshot: &SystemSnapshot,
+    limit: usize,
+) -> Vec<&aetower_model::EntitySnapshot> {
+    let mut entities = snapshot
+        .entities
+        .iter()
+        .filter(|entity| entity.metrics.memory_resident_bytes > 0)
+        .collect::<Vec<_>>();
+    entities.sort_by(|left, right| {
+        right
+            .metrics
+            .memory_resident_bytes
+            .cmp(&left.metrics.memory_resident_bytes)
+    });
+    entities.truncate(limit.max(1));
+    entities
+}
+
+fn top_external_memory_entities(
+    snapshot: &SystemSnapshot,
+    limit: usize,
+) -> Vec<&aetower_model::EntitySnapshot> {
+    let mut entities = top_memory_entities(snapshot, snapshot.entities.len().max(1))
+        .into_iter()
+        .filter(|entity| !is_aetower_entity(entity))
+        .collect::<Vec<_>>();
+    entities.truncate(limit.max(1));
+    entities
+}
+
+fn top_wakeup_entities(
+    snapshot: &SystemSnapshot,
+    limit: usize,
+) -> Vec<&aetower_model::EntitySnapshot> {
+    let mut entities = snapshot
+        .entities
+        .iter()
+        .filter(|entity| entity.metrics.wakeups_per_second > 0.0)
+        .collect::<Vec<_>>();
+    entities.sort_by(|left, right| {
+        right
+            .metrics
+            .wakeups_per_second
+            .partial_cmp(&left.metrics.wakeups_per_second)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    entities.truncate(limit.max(1));
+    entities
+}
+
+fn top_external_wakeup_entities(
+    snapshot: &SystemSnapshot,
+    limit: usize,
+) -> Vec<&aetower_model::EntitySnapshot> {
+    let mut entities = top_wakeup_entities(snapshot, snapshot.entities.len().max(1))
+        .into_iter()
+        .filter(|entity| !is_aetower_entity(entity))
+        .collect::<Vec<_>>();
+    entities.truncate(limit.max(1));
+    entities
+}
+
+fn format_entity_burden_labels<F>(entities: &[&aetower_model::EntitySnapshot], metric: F) -> String
+where
+    F: Fn(&aetower_model::EntitySnapshot) -> String,
+{
+    entities
+        .iter()
+        .map(|entity| format!("{} ({})", entity.display_name, metric(entity)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn is_aetower_entity(entity: &aetower_model::EntitySnapshot) -> bool {
+    let display_name = entity.display_name.to_ascii_lowercase();
+    let entity_id = entity.entity_id.to_ascii_lowercase();
+    display_name.contains("aetower") || entity_id.contains("aetower")
 }
 
 fn ai_provider_label(entity: &aetower_model::EntitySnapshot) -> String {
@@ -5971,6 +6144,17 @@ fn memory_pressure_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
     } else {
         SeverityBand::Warning
     };
+    let external = top_external_memory_entities(snapshot, 3);
+    let external_labels = format_entity_burden_labels(&external, |entity| {
+        format_bytes(entity.metrics.memory_resident_bytes)
+    });
+    let recommendation = if external_labels.is_empty() {
+        "No non-Aetower memory leader is visible; inspect host pressure and Aetower self telemetry only after checking system services.".to_owned()
+    } else {
+        format!(
+            "Start with external memory leaders: {external_labels}. Then verify Aetower self telemetry if pressure remains unexplained."
+        )
+    };
     Some(TopFinding {
         id: "host-memory-pressure".to_owned(),
         severity,
@@ -5983,14 +6167,15 @@ fn memory_pressure_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
             format_bytes(snapshot.host.swap_used_bytes)
         ),
         source: "host".to_owned(),
-        entity_ids: top_entities(snapshot, 3)
-            .into_iter()
-            .map(|entity| entity.entity_id.clone())
-            .collect(),
-        recommendation: Some(
-            "Reduce the top memory-heavy groups first; compression and swap are already active."
-                .to_owned(),
-        ),
+        entity_ids: if external.is_empty() {
+            top_memory_entities(snapshot, 3)
+        } else {
+            external
+        }
+        .into_iter()
+        .map(|entity| entity.entity_id.clone())
+        .collect(),
+        recommendation: Some(recommendation),
     })
 }
 
@@ -5998,12 +6183,19 @@ fn wakeup_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
     if snapshot.host.wakeups_per_second < WAKEUPS_WARNING {
         return None;
     }
-    let leader = snapshot.entities.iter().max_by(|left, right| {
-        left.metrics
-            .wakeups_per_second
-            .partial_cmp(&right.metrics.wakeups_per_second)
-            .unwrap_or(std::cmp::Ordering::Equal)
+    let wakeup_leaders = top_wakeup_entities(snapshot, 1);
+    let leader = wakeup_leaders.first().copied();
+    let external = top_external_wakeup_entities(snapshot, 3);
+    let external_labels = format_entity_burden_labels(&external, |entity| {
+        format!("{:.0}/s", entity.metrics.wakeups_per_second)
     });
+    let recommendation = if external_labels.is_empty() {
+        "No non-Aetower wakeup leader is visible; inspect system services and Aetower self telemetry next.".to_owned()
+    } else {
+        format!(
+            "Start with external wakeup leaders: {external_labels}. Then inspect Aetower self telemetry if wakeups remain elevated."
+        )
+    };
     Some(TopFinding {
         id: "host-wakeups".to_owned(),
         severity: if snapshot.host.wakeups_per_second >= WAKEUPS_CRITICAL {
@@ -6013,7 +6205,12 @@ fn wakeup_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
         },
         title: "Wakeups are high".to_owned(),
         detail: leader.map_or_else(
-            || format!("Host wakeups are {:.0}/s.", snapshot.host.wakeups_per_second),
+            || {
+                format!(
+                    "Host wakeups are {:.0}/s.",
+                    snapshot.host.wakeups_per_second
+                )
+            },
             |leader| {
                 format!(
                     "Host wakeups are {:.0}/s. {} leads at {:.0}/s.",
@@ -6024,13 +6221,17 @@ fn wakeup_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
             },
         ),
         source: "host".to_owned(),
-        entity_ids: leader
-            .map(|entity| vec![entity.entity_id.clone()])
-            .unwrap_or_default(),
-        recommendation: Some(
-            "Investigate polling-heavy groups and background helpers; wakeups directly affect battery life."
-                .to_owned(),
-        ),
+        entity_ids: if external.is_empty() {
+            leader
+                .map(|entity| vec![entity.entity_id.clone()])
+                .unwrap_or_default()
+        } else {
+            external
+                .into_iter()
+                .map(|entity| entity.entity_id.clone())
+                .collect()
+        },
+        recommendation: Some(recommendation),
     })
 }
 
@@ -7921,6 +8122,64 @@ mod tests {
             None => panic!("findings array"),
         };
         assert!(!findings.is_empty());
+    }
+
+    #[test]
+    fn host_pressure_guidance_prefers_external_burden_leaders() {
+        fn entity(
+            id: &str,
+            name: &str,
+            memory_resident_bytes: u64,
+            wakeups_per_second: f32,
+        ) -> aetower_model::EntitySnapshot {
+            aetower_model::EntitySnapshot {
+                entity_id: id.to_owned(),
+                display_name: name.to_owned(),
+                metrics: aetower_model::AggregateMetrics {
+                    memory_resident_bytes,
+                    wakeups_per_second,
+                    ..aetower_model::AggregateMetrics::default()
+                },
+                friction: aetower_model::FrictionBreakdown {
+                    total_score: 10.0,
+                    ..aetower_model::FrictionBreakdown::default()
+                },
+                ..aetower_model::EntitySnapshot::default()
+            }
+        }
+
+        let snapshot = SystemSnapshot {
+            host: aetower_model::HostSnapshot {
+                memory_used_bytes: 15 * 1024 * 1024 * 1024,
+                memory_total_bytes: 16 * 1024 * 1024 * 1024,
+                compressed_memory_bytes: 7 * 1024 * 1024 * 1024,
+                swap_used_bytes: 18 * 1024 * 1024 * 1024,
+                wakeups_per_second: 31_000.0,
+                ..aetower_model::HostSnapshot::default()
+            },
+            entities: vec![
+                entity("aetower", "Aetower", 100 * 1024 * 1024, 500.0),
+                entity("chau7", "Chau7", 3 * 1024 * 1024 * 1024, 12_000.0),
+                entity("chrome", "Google Chrome", 2 * 1024 * 1024 * 1024, 8_000.0),
+            ],
+            ..SystemSnapshot::default()
+        };
+        let runtime = RuntimeLagMetrics {
+            self_memory_bytes: 100 * 1024 * 1024,
+            self_wakeups_per_second: 500.0,
+            ..RuntimeLagMetrics::default()
+        };
+        let memory = memory_pressure_finding(&snapshot).unwrap_or_else(|| panic!("memory finding"));
+        let wakeups = wakeup_finding(&snapshot).unwrap_or_else(|| panic!("wakeup finding"));
+
+        assert!(memory.recommendation.as_deref().is_some_and(|value| {
+            value.contains("external memory leaders: Chau7") && value.contains("Aetower self")
+        }));
+        assert!(wakeups.recommendation.as_deref().is_some_and(|value| {
+            value.contains("external wakeup leaders: Chau7") && value.contains("Aetower self")
+        }));
+        assert!(host_memory_pressure_guidance(&snapshot, &runtime).contains("Chau7"));
+        assert!(host_wakeup_guidance(&snapshot, &runtime).contains("Chau7"));
     }
 
     #[test]
