@@ -92,6 +92,7 @@ public final class AppState {
     private(set) var processInspections: [UInt32: ProcessInspectionReportModel] = [:]
     private(set) var processOpenResources: [UInt32: ProcessOpenResourcesReportModel] = [:]
     private(set) var processSamples: [UInt32: ProcessSampleReportModel] = [:]
+    private(set) var processActionPreviewReports: [String: ProcessActionReportModel] = [:]
     private(set) var processActionReports: [UInt32: ProcessActionReportModel] = [:]
     private(set) var processActionHistory: ProcessActionHistoryReportModel?
     public var lastError: String?
@@ -990,6 +991,45 @@ public final class AppState {
         }
     }
 
+    func runProcessActionPreview(
+        pid: UInt32,
+        action: ProcessActionKind,
+        reason: String? = nil
+    ) {
+        let bridge = self.bridge
+        let previewKey = processActionPreviewKey(pid: pid, action: action)
+        setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processAction, isLoading: true)
+        Task(priority: .utility) { [weak self] in
+            let result = bridge.processActionJSON(
+                pid: pid,
+                action: action.rawValue,
+                dryRun: true,
+                reason: reason
+            )
+            await MainActor.run {
+                guard let self else { return }
+                self.processActionPreviewReports[previewKey] = self.decodeJsonQueryResult(
+                    result,
+                    as: ProcessActionReportModel.self
+                )
+                self.finishEntityAnalysis(
+                    self.processAnalysisKey(pid),
+                    kind: .processAction,
+                    result: result,
+                    fallback: "Process action preview failed."
+                )
+            }
+        }
+    }
+
+    func processActionPreview(pid: UInt32, action: ProcessActionKind) -> ProcessActionReportModel? {
+        processActionPreviewReports[processActionPreviewKey(pid: pid, action: action)]
+    }
+
+    func clearProcessActionPreview(pid: UInt32, action: ProcessActionKind) {
+        processActionPreviewReports.removeValue(forKey: processActionPreviewKey(pid: pid, action: action))
+    }
+
     func refreshProcessActionHistory(windowMinutes: UInt32 = 60, limit: UInt32 = 25) {
         let bridge = self.bridge
         setEntityAnalysisLoading("process-actions", kind: .processActionHistory, isLoading: true)
@@ -1012,6 +1052,10 @@ public final class AppState {
                 )
             }
         }
+    }
+
+    private func processActionPreviewKey(pid: UInt32, action: ProcessActionKind) -> String {
+        "\(pid)|\(action.rawValue)"
     }
 
     public func loadHistory(force: Bool = false) {

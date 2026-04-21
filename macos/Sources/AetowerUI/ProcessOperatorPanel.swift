@@ -46,33 +46,6 @@ struct ProcessOperatorPanel: View {
             guard let pid else { return }
             state.runProcessInspection(pid: pid)
         }
-        .confirmationDialog(
-            "Confirm process action",
-            isPresented: Binding(
-                get: { pendingAction != nil },
-                set: { if !$0 { pendingAction = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            if let pendingAction, let selectedPID {
-                Button(pendingAction.label, role: pendingAction.isDestructive ? .destructive : nil) {
-                    state.runProcessAction(
-                        pid: selectedPID,
-                        action: pendingAction,
-                        reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-                    )
-                    self.pendingAction = nil
-                    actionReason = ""
-                }
-            }
-            Button("Cancel", role: .cancel) {
-                pendingAction = nil
-            }
-        } message: {
-            if let pendingAction, let selectedPID {
-                Text("\(pendingAction.confirmationDetail) Target PID: \(selectedPID). This is recorded in diagnostics history.")
-            }
-        }
     }
 
     private var header: some View {
@@ -173,6 +146,10 @@ struct ProcessOperatorPanel: View {
                 .font(.caption)
                 .aetowerUtilityTextInput()
 
+            if let pendingAction {
+                actionPreview(pid: pid, action: pendingAction)
+            }
+
             if let report = state.processActionReports[pid] {
                 StatusLine(
                     icon: report.success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
@@ -184,6 +161,49 @@ struct ProcessOperatorPanel: View {
             if let error = state.entityAnalysisError(processAnalysisKey(pid), kind: .processAction) {
                 StatusLine(icon: "exclamationmark.triangle.fill", color: .red, text: error)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func actionPreview(pid: UInt32, action: ProcessActionKind) -> some View {
+        if let preview = state.processActionPreview(pid: pid, action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader("Action preview", detail: action.label)
+                Text(action.confirmationDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                MetricLabel("Targets", targetList(preview.targetPids, fallbackPID: preview.pid))
+                MonospaceBlock(preview.command)
+                ForEach(preview.safetyNotes, id: \.self) { note in
+                    StatusLine(icon: "shield.lefthalf.filled", color: .orange, text: note)
+                }
+                HStack {
+                    Button(action.label, role: action.isDestructive ? .destructive : nil) {
+                        state.runProcessAction(
+                            pid: pid,
+                            action: action,
+                            reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                        )
+                        state.clearProcessActionPreview(pid: pid, action: action)
+                        pendingAction = nil
+                        actionReason = ""
+                    }
+                    .disabled(isLoading(pid, .processAction))
+
+                    Button("Cancel") {
+                        state.clearProcessActionPreview(pid: pid, action: action)
+                        pendingAction = nil
+                    }
+                    .buttonStyle(.borderless)
+
+                    Spacer()
+                }
+            }
+            .padding(10)
+            .background(AetowerDesign.Surface.alertInfo, in: RoundedRectangle(cornerRadius: 10))
+        } else if isLoading(pid, .processAction) {
+            ProgressView("Previewing \(action.label.lowercased()) targets…")
         }
     }
 
@@ -319,6 +339,11 @@ struct ProcessOperatorPanel: View {
     private func actionButton(_ action: ProcessActionKind, pid: UInt32) -> some View {
         Button(role: action.isDestructive ? .destructive : nil) {
             pendingAction = action
+            state.runProcessActionPreview(
+                pid: pid,
+                action: action,
+                reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            )
         } label: {
             Label(action.label, systemImage: action.systemImage)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -334,6 +359,18 @@ struct ProcessOperatorPanel: View {
             return "PID \(targetPID)"
         }
         return "unknown PID"
+    }
+
+    private func targetList(_ targetPids: [UInt32], fallbackPID: UInt32?) -> String {
+        let targets = targetPids.isEmpty ? fallbackPID.map { [$0] } ?? [] : targetPids
+        if targets.isEmpty {
+            return "unknown PID"
+        }
+        if targets.count <= 8 {
+            return targets.map { "PID \($0)" }.joined(separator: ", ")
+        }
+        let visible = targets.prefix(8).map { "PID \($0)" }.joined(separator: ", ")
+        return "\(visible), +\(targets.count - 8) more"
     }
 
     private func isLoading(_ pid: UInt32, _ kind: EntityAnalysisKind) -> Bool {
