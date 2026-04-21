@@ -27,6 +27,11 @@ enum EntityAnalysisKind: String, CaseIterable, Hashable {
     case memoryBreakdown
     case profile
     case wakeupAttribution
+    case processInspect
+    case processResources
+    case processSample
+    case processAction
+    case processActionHistory
 
     var descriptor: AnalysisDescriptor {
         switch self {
@@ -65,7 +70,73 @@ enum EntityAnalysisKind: String, CaseIterable, Hashable {
                 overhead: .high,
                 detail: "Heuristic sampled attribution. Useful for direction, not exact kernel wakeup accounting."
             )
+        case .processInspect:
+            return AnalysisDescriptor(
+                label: "Process inspection",
+                confidence: .measured,
+                overhead: .low,
+                detail: "Combines current Aetower attribution with live ps state for one PID."
+            )
+        case .processResources:
+            return AnalysisDescriptor(
+                label: "Open files & sockets",
+                confidence: .sampled,
+                overhead: .medium,
+                detail: "Uses lsof for one process with a bounded result limit."
+            )
+        case .processSample:
+            return AnalysisDescriptor(
+                label: "Process sample",
+                confidence: .sampled,
+                overhead: .high,
+                detail: "Runs a short live sample for one PID and summarizes hot stacks."
+            )
+        case .processAction:
+            return AnalysisDescriptor(
+                label: "Process action",
+                confidence: .measured,
+                overhead: .low,
+                detail: "Sends an explicit operator-approved signal to one process."
+            )
+        case .processActionHistory:
+            return AnalysisDescriptor(
+                label: "Action history",
+                confidence: .persisted,
+                overhead: .low,
+                detail: "Reads recent process actions from diagnostics history."
+            )
         }
+    }
+}
+
+enum ProcessActionKind: String, CaseIterable, Identifiable {
+    case terminate
+    case suspend
+    case resume
+    case forceKill = "force-kill"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .terminate: return "Terminate"
+        case .suspend: return "Suspend"
+        case .resume: return "Resume"
+        case .forceKill: return "Force kill"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .terminate: return "xmark.circle"
+        case .suspend: return "pause.circle"
+        case .resume: return "play.circle"
+        case .forceKill: return "exclamationmark.octagon"
+        }
+    }
+
+    var isDestructive: Bool {
+        self == .terminate || self == .forceKill
     }
 }
 
@@ -231,4 +302,104 @@ struct WakeupAttributionReportModel: Codable {
     let dominantCause: String?
     let attributionMode: String
     let caveats: [String]
+}
+
+struct ProcessPsSummaryModel: Codable {
+    let parentPid: UInt32?
+    let user: String?
+    let status: String?
+    let cpuPercent: Float?
+    let residentBytes: UInt64?
+    let command: String?
+}
+
+struct ProcessInspectionReportModel: Codable {
+    let capturedAtMillis: UInt64
+    let pid: UInt32
+    let alive: Bool
+    let entityId: String?
+    let displayName: String?
+    let componentTitle: String?
+    let componentKind: String?
+    let executablePath: String?
+    let commandLine: String?
+    let cwd: String?
+    let user: String?
+    let parentPid: UInt32?
+    let parentSummary: String?
+    let cpuPercent: Float?
+    let memoryBytes: UInt64?
+    let memoryPhysicalFootprintBytes: UInt64?
+    let startTimeMillis: UInt64?
+    let childPids: [UInt32]
+    let siblingProcessCount: UInt32
+    let ps: ProcessPsSummaryModel?
+    let safetyNotes: [String]
+}
+
+struct ProcessOpenResourceModel: Codable, Identifiable {
+    let fd: String
+    let resourceType: String
+    let name: String
+    let detail: String?
+    let isSocket: Bool
+
+    var id: String { "\(fd)-\(resourceType)-\(name)" }
+}
+
+struct ProcessOpenResourcesReportModel: Codable {
+    let capturedAtMillis: UInt64
+    let pid: UInt32
+    let resourceCount: Int
+    let returned: Int
+    let fileCount: Int
+    let socketCount: Int
+    let resources: [ProcessOpenResourceModel]
+}
+
+struct ProcessSampleReportModel: Codable {
+    let capturedAtMillis: UInt64
+    let pid: UInt32
+    let durationSeconds: UInt64
+    let threadCount: Int
+    let topStacks: [SampledStackReportModel]
+    let summary: String
+}
+
+struct ProcessActionReportModel: Codable {
+    let capturedAtMillis: UInt64
+    let pid: UInt32
+    let action: String
+    let signal: String
+    let dryRun: Bool
+    let executed: Bool
+    let success: Bool
+    let command: String
+    let reason: String?
+    let entityId: String?
+    let displayName: String?
+    let message: String
+    let safetyNotes: [String]
+}
+
+struct ProcessActionHistoryItemModel: Codable, Identifiable {
+    let timestampMillis: UInt64
+    let pid: UInt32?
+    let action: String?
+    let signal: String?
+    let success: Bool
+    let reason: String?
+    let entityId: String?
+    let displayName: String?
+    let message: String
+
+    var id: String {
+        "\(timestampMillis)-\(pid.map(String.init) ?? "unknown")-\(action ?? "action")"
+    }
+}
+
+struct ProcessActionHistoryReportModel: Codable {
+    let windowMinutes: UInt64
+    let returned: Int
+    let actions: [ProcessActionHistoryItemModel]
 }

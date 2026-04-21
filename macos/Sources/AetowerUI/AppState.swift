@@ -89,6 +89,11 @@ public final class AppState {
     private(set) var entityMemoryBreakdowns: [String: EntityMemoryBreakdownReportModel] = [:]
     private(set) var entityProfiles: [String: EntityProfileReportModel] = [:]
     private(set) var entityWakeupAttributions: [String: WakeupAttributionReportModel] = [:]
+    private(set) var processInspections: [UInt32: ProcessInspectionReportModel] = [:]
+    private(set) var processOpenResources: [UInt32: ProcessOpenResourcesReportModel] = [:]
+    private(set) var processSamples: [UInt32: ProcessSampleReportModel] = [:]
+    private(set) var processActionReports: [UInt32: ProcessActionReportModel] = [:]
+    private(set) var processActionHistory: ProcessActionHistoryReportModel?
     public var lastError: String?
 
     @ObservationIgnored
@@ -878,6 +883,132 @@ public final class AppState {
                     kind: .wakeupAttribution,
                     result: result,
                     fallback: "Wakeup attribution could not be collected."
+                )
+            }
+        }
+    }
+
+    func runProcessInspection(pid: UInt32) {
+        let bridge = self.bridge
+        setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processInspect, isLoading: true)
+        Task(priority: .utility) { [weak self] in
+            let result = bridge.processInspectJSON(pid: pid)
+            await MainActor.run {
+                guard let self else { return }
+                self.processInspections[pid] = self.decodeJsonQueryResult(
+                    result,
+                    as: ProcessInspectionReportModel.self
+                )
+                self.finishEntityAnalysis(
+                    self.processAnalysisKey(pid),
+                    kind: .processInspect,
+                    result: result,
+                    fallback: "Process inspection could not be collected."
+                )
+            }
+        }
+    }
+
+    func runProcessOpenResources(pid: UInt32, limit: UInt32 = 80) {
+        let bridge = self.bridge
+        setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processResources, isLoading: true)
+        Task(priority: .utility) { [weak self] in
+            let result = bridge.processOpenResourcesJSON(pid: pid, limit: limit)
+            await MainActor.run {
+                guard let self else { return }
+                self.processOpenResources[pid] = self.decodeJsonQueryResult(
+                    result,
+                    as: ProcessOpenResourcesReportModel.self
+                )
+                self.finishEntityAnalysis(
+                    self.processAnalysisKey(pid),
+                    kind: .processResources,
+                    result: result,
+                    fallback: "Open files and sockets could not be collected."
+                )
+            }
+        }
+    }
+
+    func runProcessSample(pid: UInt32, durationSeconds: UInt32 = 3, topStacks: UInt32 = 6) {
+        let bridge = self.bridge
+        setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processSample, isLoading: true)
+        Task(priority: .utility) { [weak self] in
+            let result = bridge.processSampleJSON(
+                pid: pid,
+                durationSeconds: durationSeconds,
+                topStacks: topStacks
+            )
+            await MainActor.run {
+                guard let self else { return }
+                self.processSamples[pid] = self.decodeJsonQueryResult(
+                    result,
+                    as: ProcessSampleReportModel.self
+                )
+                self.finishEntityAnalysis(
+                    self.processAnalysisKey(pid),
+                    kind: .processSample,
+                    result: result,
+                    fallback: "Process sample could not be collected."
+                )
+            }
+        }
+    }
+
+    func runProcessAction(
+        pid: UInt32,
+        action: ProcessActionKind,
+        reason: String? = nil
+    ) {
+        let bridge = self.bridge
+        setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processAction, isLoading: true)
+        Task(priority: .utility) { [weak self] in
+            let result = bridge.processActionJSON(
+                pid: pid,
+                action: action.rawValue,
+                dryRun: false,
+                reason: reason
+            )
+            let historyResult = bridge.processActionHistoryJSON()
+            await MainActor.run {
+                guard let self else { return }
+                self.processActionReports[pid] = self.decodeJsonQueryResult(
+                    result,
+                    as: ProcessActionReportModel.self
+                )
+                self.finishEntityAnalysis(
+                    self.processAnalysisKey(pid),
+                    kind: .processAction,
+                    result: result,
+                    fallback: "Process action failed."
+                )
+                self.processActionHistory = self.decodeJsonQueryResult(
+                    historyResult,
+                    as: ProcessActionHistoryReportModel.self
+                )
+            }
+        }
+    }
+
+    func refreshProcessActionHistory(windowMinutes: UInt32 = 60, limit: UInt32 = 25) {
+        let bridge = self.bridge
+        setEntityAnalysisLoading("process-actions", kind: .processActionHistory, isLoading: true)
+        Task(priority: .utility) { [weak self] in
+            let result = bridge.processActionHistoryJSON(
+                windowMinutes: windowMinutes,
+                limit: limit
+            )
+            await MainActor.run {
+                guard let self else { return }
+                self.processActionHistory = self.decodeJsonQueryResult(
+                    result,
+                    as: ProcessActionHistoryReportModel.self
+                )
+                self.finishEntityAnalysis(
+                    "process-actions",
+                    kind: .processActionHistory,
+                    result: result,
+                    fallback: "Process action history could not be loaded."
                 )
             }
         }
@@ -1923,6 +2054,10 @@ public final class AppState {
 
     private func entityAnalysisKey(_ entityID: String, kind: EntityAnalysisKind) -> String {
         "\(entityID)|\(kind.rawValue)"
+    }
+
+    private func processAnalysisKey(_ pid: UInt32) -> String {
+        "pid:\(pid)"
     }
 
     private func setEntityAnalysisLoading(_ entityID: String, kind: EntityAnalysisKind, isLoading: Bool) {

@@ -348,6 +348,7 @@ public struct EntityDetailView: View {
                 attributionCaveats
                 whatAetowerSees
                 processTree
+                ProcessOperatorPanel(entity: entity, state: state)
                 deepAnalysis
                 components
             }
