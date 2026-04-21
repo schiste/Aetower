@@ -20,6 +20,8 @@ use serde::{Deserialize, Serialize};
 const SNAPSHOT_FORMAT_VERSION: i64 = 2;
 const MAX_PENDING_HISTORY_WRITES: u64 = 64;
 const MIN_SIZE_PRESSURE_SNAPSHOT_TARGET: u64 = 120;
+const HISTORY_MAINTENANCE_WARN_MILLIS: u64 = 5_000;
+const HISTORY_MAINTENANCE_WAL_WARNING_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedSnapshotEnvelope {
@@ -715,14 +717,12 @@ impl HistoryStore {
             report.aggressive_reason = Some(reasons);
         }
 
+        report.elapsed_millis = started.elapsed().as_millis() as u64;
+
         if let Some(diagnostics) = self.diagnostics.as_ref() {
             diagnostics.emit(
                 DiagnosticsEvent::builder(
-                    if report.pruned_rows > 0 || report.vacuumed {
-                        DiagnosticsLevel::Warn
-                    } else {
-                        DiagnosticsLevel::Info
-                    },
+                    history_retention_maintenance_level(&report, &policy, quarantine_count),
                     DiagnosticsSubsystem::Persistence,
                     "history-retention-maintained",
                     "Applied persisted history retention and maintenance policy.",
@@ -735,7 +735,7 @@ impl HistoryStore {
                 .field("checkpointed", report.checkpointed)
                 .field("vacuumed", report.vacuumed)
                 .field("cancelled", report.cancelled)
-                .field("elapsed_millis", started.elapsed().as_millis())
+                .field("elapsed_millis", report.elapsed_millis)
                 .field("snapshot_count", snapshot_count)
                 .field("quarantine_count", quarantine_count)
                 .field(
@@ -749,7 +749,6 @@ impl HistoryStore {
             );
         }
 
-        report.elapsed_millis = started.elapsed().as_millis() as u64;
         Ok(report)
     }
 
@@ -970,6 +969,23 @@ fn cancelled_maintenance_report(
         aggressive_reason,
         cancelled: true,
         elapsed_millis: started.elapsed().as_millis() as u64,
+    }
+}
+
+fn history_retention_maintenance_level(
+    report: &HistoryMaintenanceReport,
+    policy: &HistoryRetentionPolicy,
+    quarantine_count: u64,
+) -> DiagnosticsLevel {
+    let slow = report.elapsed_millis >= HISTORY_MAINTENANCE_WARN_MILLIS;
+    let wal_unexpected = report.wal_bytes_after > policy.max_wal_bytes
+        || (report.wal_bytes_after >= HISTORY_MAINTENANCE_WAL_WARNING_BYTES
+            && report.wal_bytes_after >= report.wal_bytes_before);
+
+    if report.cancelled || slow || quarantine_count > 0 || wal_unexpected {
+        DiagnosticsLevel::Warn
+    } else {
+        DiagnosticsLevel::Info
     }
 }
 
@@ -1376,6 +1392,72 @@ mod tests {
         std::fs::create_dir_all(&dir).ok();
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         dir.join(format!("history-{}-{n}.db", std::process::id()))
+    }
+
+    fn test_retention_policy() -> HistoryRetentionPolicy {
+        HistoryRetentionPolicy {
+            max_age_millis: u64::MAX,
+            emergency_max_age_millis: u64::MAX,
+            soft_max_store_bytes: u64::MAX,
+            hard_max_store_bytes: u64::MAX,
+            max_wal_bytes: u64::MAX,
+            target_snapshot_count: u64::MAX,
+            soft_max_snapshot_count: u64::MAX,
+            hard_max_snapshot_count: u64::MAX,
+            aggressive_quarantine_rows: u64::MAX,
+            hard_max_quarantine_rows: u64::MAX,
+        }
+    }
+
+    #[test]
+    fn retention_maintenance_successful_pruning_is_info() {
+        let report = HistoryMaintenanceReport {
+            pruned_rows: 42,
+            checkpointed: true,
+            vacuumed: true,
+            elapsed_millis: 25,
+            ..HistoryMaintenanceReport::default()
+        };
+
+        assert_eq!(
+            history_retention_maintenance_level(&report, &test_retention_policy(), 0),
+            DiagnosticsLevel::Info
+        );
+    }
+
+    #[test]
+    fn retention_maintenance_warns_for_operational_risk() {
+        let policy = test_retention_policy();
+        let cancelled = HistoryMaintenanceReport {
+            cancelled: true,
+            ..HistoryMaintenanceReport::default()
+        };
+        let slow = HistoryMaintenanceReport {
+            elapsed_millis: HISTORY_MAINTENANCE_WARN_MILLIS,
+            ..HistoryMaintenanceReport::default()
+        };
+        let large_wal = HistoryMaintenanceReport {
+            wal_bytes_before: HISTORY_MAINTENANCE_WAL_WARNING_BYTES,
+            wal_bytes_after: HISTORY_MAINTENANCE_WAL_WARNING_BYTES,
+            ..HistoryMaintenanceReport::default()
+        };
+
+        assert_eq!(
+            history_retention_maintenance_level(&cancelled, &policy, 0),
+            DiagnosticsLevel::Warn
+        );
+        assert_eq!(
+            history_retention_maintenance_level(&slow, &policy, 0),
+            DiagnosticsLevel::Warn
+        );
+        assert_eq!(
+            history_retention_maintenance_level(&large_wal, &policy, 0),
+            DiagnosticsLevel::Warn
+        );
+        assert_eq!(
+            history_retention_maintenance_level(&HistoryMaintenanceReport::default(), &policy, 1),
+            DiagnosticsLevel::Warn
+        );
     }
 
     #[test]
