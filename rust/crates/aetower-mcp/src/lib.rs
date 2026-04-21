@@ -1787,8 +1787,7 @@ impl AetowerMcpServer {
                 args.limit.unwrap_or(120),
             )
             .map_err(tool_error)?;
-        let next_before_millis_exclusive =
-            snapshots.last().map(|snapshot| snapshot.captured_at_millis);
+        let next_before_millis_exclusive = older_page_cursor(&snapshots);
         tool_json(HistoryPageResponse {
             returned: snapshots.len(),
             snapshots,
@@ -2774,21 +2773,29 @@ fn load_history_snapshots_raw(
         if page.is_empty() {
             break;
         }
-        let next_before_cursor = page
-            .last()
-            .map(|snapshot| snapshot.captured_at_millis)
-            .and_then(|captured_at| captured_at.checked_sub(1));
-        if next_before_cursor == before_cursor {
+        let next_before_cursor = older_page_cursor(&page);
+        if before_cursor.is_some() && next_before_cursor == before_cursor {
             break;
         }
-        before_cursor = next_before_cursor;
         snapshots.extend(page);
+        let Some(next_before_cursor) = next_before_cursor else {
+            break;
+        };
+        before_cursor = Some(next_before_cursor);
         if snapshots.len() >= max_snapshots {
             break;
         }
     }
     snapshots.sort_by_key(|snapshot| snapshot.captured_at_millis);
     Ok(snapshots)
+}
+
+fn older_page_cursor(snapshots: &[SystemSnapshot]) -> Option<u64> {
+    snapshots
+        .iter()
+        .map(|snapshot| snapshot.captured_at_millis)
+        .min()
+        .and_then(|captured_at| captured_at.checked_sub(1))
 }
 
 fn build_history_data_quality_report(
@@ -7229,6 +7236,117 @@ mod tests {
         }
     }
 
+    struct PagingHistorySource {
+        snapshots: Vec<SystemSnapshot>,
+    }
+
+    fn test_history_snapshot(captured_at_millis: u64, sequence: u64) -> SystemSnapshot {
+        SystemSnapshot {
+            captured_at_millis,
+            sequence,
+            ..SystemSnapshot::default()
+        }
+    }
+
+    impl AetowerMcpDataSource for PagingHistorySource {
+        fn latest_snapshot(&self) -> Result<SystemSnapshot, String> {
+            self.snapshots
+                .last()
+                .cloned()
+                .ok_or_else(|| "missing snapshot".to_owned())
+        }
+
+        fn latest_snapshot_if_newer(
+            &self,
+            last_sequence: u64,
+        ) -> Result<Option<SystemSnapshot>, String> {
+            self.latest_snapshot()?
+                .sequence
+                .gt(&last_sequence)
+                .then(|| self.latest_snapshot())
+                .transpose()
+        }
+
+        fn latest_sequence(&self) -> Result<u64, String> {
+            Ok(self
+                .snapshots
+                .last()
+                .map(|snapshot| snapshot.sequence)
+                .unwrap_or(0))
+        }
+
+        fn latest_runtime_lag_metrics(&self) -> Result<RuntimeLagMetrics, String> {
+            Ok(RuntimeLagMetrics::default())
+        }
+
+        fn history_range_summary(
+            &self,
+            start_millis: u64,
+            end_millis: u64,
+        ) -> Result<HistorySummaryResponse, String> {
+            let in_range = self
+                .snapshots
+                .iter()
+                .filter(|snapshot| {
+                    snapshot.captured_at_millis >= start_millis
+                        && snapshot.captured_at_millis <= end_millis
+                })
+                .collect::<Vec<_>>();
+            Ok(HistorySummaryResponse {
+                store_bytes: 1,
+                wal_bytes: 0,
+                snapshot_count: self.snapshots.len() as u64,
+                quarantine_count: 0,
+                range_count: in_range.len() as u64,
+                oldest_millis: in_range
+                    .iter()
+                    .map(|snapshot| snapshot.captured_at_millis)
+                    .min(),
+                newest_millis: in_range
+                    .iter()
+                    .map(|snapshot| snapshot.captured_at_millis)
+                    .max(),
+                pending_writes: 0,
+            })
+        }
+
+        fn load_history_page(
+            &self,
+            start_millis: u64,
+            end_millis: u64,
+            before_millis_exclusive: Option<u64>,
+            limit: u32,
+        ) -> Result<Vec<SystemSnapshot>, String> {
+            let mut page = self
+                .snapshots
+                .iter()
+                .filter(|snapshot| {
+                    snapshot.captured_at_millis >= start_millis
+                        && snapshot.captured_at_millis <= end_millis
+                        && before_millis_exclusive
+                            .map(|before| snapshot.captured_at_millis < before)
+                            .unwrap_or(true)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            page.sort_by(|left, right| right.captured_at_millis.cmp(&left.captured_at_millis));
+            page.truncate(limit.max(1) as usize);
+            page.reverse();
+            Ok(page)
+        }
+
+        fn diagnostics_overview(&self) -> Result<DiagnosticsOverview, String> {
+            Ok(DiagnosticsOverview::default())
+        }
+
+        fn query_diagnostics(
+            &self,
+            _query: DiagnosticsQuery,
+        ) -> Result<Vec<DiagnosticsEvent>, String> {
+            Ok(Vec::new())
+        }
+    }
+
     #[derive(Clone, Default)]
     struct SharedWriter(Arc<Mutex<Vec<u8>>>);
 
@@ -8022,6 +8140,82 @@ mod tests {
                 .get("recommendations")
                 .and_then(Value::as_array)
                 .is_some_and(|recommendations| !recommendations.is_empty())
+        );
+    }
+
+    #[test]
+    fn history_loader_uses_oldest_timestamp_cursor_for_ascending_pages() {
+        let source = PagingHistorySource {
+            snapshots: (1..=5)
+                .map(|index| test_history_snapshot(index * 1_000, index))
+                .collect(),
+        };
+
+        let snapshots = load_history_snapshots_raw(&source, 0, 5_000, 10)
+            .unwrap_or_else(|error| panic!("load history: {error}"));
+
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|snapshot| snapshot.captured_at_millis)
+                .collect::<Vec<_>>(),
+            vec![1_000, 2_000, 3_000, 4_000, 5_000]
+        );
+        let unique_timestamps = snapshots
+            .iter()
+            .map(|snapshot| snapshot.captured_at_millis)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(unique_timestamps.len(), snapshots.len());
+    }
+
+    #[test]
+    fn history_page_next_cursor_points_to_oldest_returned_snapshot() {
+        let server = AetowerMcpServer {
+            data_source: Arc::new(PagingHistorySource {
+                snapshots: (1..=5)
+                    .map(|index| test_history_snapshot(index * 1_000, index))
+                    .collect(),
+            }),
+            dynamic_mode: DynamicExecutionMode::Local,
+            mcp_stats: None,
+        };
+        let response = match server.handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 17,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_history_page",
+                "arguments": {
+                    "start_millis": 0,
+                    "end_millis": 5000,
+                    "limit": 2
+                }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        let content = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .cloned()
+            .unwrap_or_else(|| panic!("structuredContent"));
+
+        assert_eq!(content.get("returned").and_then(Value::as_u64), Some(2));
+        assert_eq!(
+            content
+                .get("next_before_millis_exclusive")
+                .and_then(Value::as_u64),
+            Some(3_999)
+        );
+        assert_eq!(
+            content
+                .get("snapshots")
+                .and_then(Value::as_array)
+                .and_then(|snapshots| snapshots.first())
+                .and_then(|snapshot| snapshot.get("captured_at_millis"))
+                .and_then(Value::as_u64),
+            Some(4_000)
         );
     }
 

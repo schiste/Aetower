@@ -166,7 +166,9 @@ Raw snapshot/entity tools surface the same optional Chau7 build fields on
 `aetower_capability_status` gives operator-grade permission and adapter state
 labels.
 
-`aetower_history_page` is paged and returns newest snapshots first.
+`aetower_history_page` is paged and returns snapshots in chronological order.
+Use `next_before_millis_exclusive` from the response to fetch the next older
+page without overlapping the current page.
 
 `aetower_history_store_health` surfaces persisted store size, WAL size,
 quarantine count, thresholds, and recent history diagnostics.
