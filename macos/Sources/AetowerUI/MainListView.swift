@@ -55,19 +55,6 @@ private enum SortKey: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Sort keys that have a meaningful grouped-mode sort implementation.
-    /// Keys that return false silently degrade to friction sort in
-    /// `sortGroups` — the UI should disable or badge them so the user
-    /// knows their selection is not applied.
-    var supportsGroupedMode: Bool {
-        switch self {
-        case .friction, .cpu, .memory, .alphabeticalAsc, .alphabeticalDesc:
-            return true
-        case .disk, .network, .energy, .oldestFirst, .newestFirst:
-            return false
-        }
-    }
-
     var usesMetricValue: Bool {
         switch self {
         case .friction, .cpu, .memory, .disk, .network, .energy:
@@ -230,19 +217,16 @@ private struct EntityRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 52, alignment: .trailing)
 
-            // User — from first component
-            Text(entityUser)
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .frame(width: 60, alignment: .trailing)
+            Text(formatWakeups(entity.metrics.wakeupsPerSecond))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 56, alignment: .trailing)
 
-            // Parent — from first component
-            Text(entityParent)
-                .font(.system(size: 10))
+            Label("\(entityProcessCount)", systemImage: "number")
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .frame(width: 80, alignment: .trailing)
+                .labelStyle(.titleAndIcon)
+                .frame(width: 44, alignment: .trailing)
 
             // Friction score — bold, colored
             HStack(spacing: 2) {
@@ -256,6 +240,11 @@ private struct EntityRow: View {
                     .contentTransition(.numericText())
             }
             .frame(width: 50, alignment: .trailing)
+
+            Image(systemName: "sidebar.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(isSelected || isHovered ? Color.accentColor : Color.secondary.opacity(0.55))
+                .frame(width: 16)
         }
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, AetowerDesign.Spacing.xs)
@@ -292,14 +281,6 @@ private struct EntityRow: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(entity.displayName, forType: .string)
             }
-            Divider()
-            Button("Terminate Processes", role: .destructive) {
-                for component in entity.components {
-                    if let pid = component.processId {
-                        kill(Int32(pid), SIGTERM)
-                    }
-                }
-            }
         }
     }
 
@@ -326,6 +307,10 @@ private struct EntityRow: View {
 
     private var rowHelpText: String {
         [
+            entityUser.isEmpty ? nil : "User: \(entityUser)",
+            entityParent.isEmpty ? nil : "Parent: \(entityParent)",
+            "Processes: \(entityProcessCount)",
+            "Wakeups: \(formatWakeups(entity.metrics.wakeupsPerSecond))",
             entity.recentChangeSummary,
             entity.launcherSummary.map { "Launch lineage: \($0)" },
             entity.attributionNotes.first,
@@ -336,6 +321,10 @@ private struct EntityRow: View {
 
     private var entityParent: String {
         entity.components.first?.parentSummary ?? ""
+    }
+
+    private var entityProcessCount: Int {
+        entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
     }
 
     private var entityIcon: String {
@@ -374,9 +363,15 @@ private struct EntityGroup {
     let members: [EntitySnapshot]
     let cpuPercent: Float
     let memoryBytes: UInt64
+    let wakeupsPerSecond: Float
+    let diskBps: UInt64
+    let networkBps: UInt64
+    let energyScore: Float
     let frictionScore: Float
     let processCount: Int
     let userSummary: String
+    let oldestStartMillis: UInt64
+    let newestStartMillis: UInt64
 
     var id: String { root.entityId }
 }
@@ -423,17 +418,16 @@ private struct GroupedEntityRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 52, alignment: .trailing)
 
-            Text(group.userSummary)
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .frame(width: 60, alignment: .trailing)
+            Text(formatWakeups(group.wakeupsPerSecond))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 56, alignment: .trailing)
 
-            Text(groupSummaryText)
-                .font(.system(size: 10))
+            Label("\(group.processCount)", systemImage: "number")
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .frame(width: 80, alignment: .trailing)
+                .labelStyle(.titleAndIcon)
+                .frame(width: 44, alignment: .trailing)
 
             HStack(spacing: 2) {
                 Image(systemName: "arrow.triangle.branch")
@@ -445,6 +439,11 @@ private struct GroupedEntityRow: View {
                     .contentTransition(.numericText())
             }
             .frame(width: 50, alignment: .trailing)
+
+            Image(systemName: "sidebar.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(isSelected || isHovered ? Color.accentColor : Color.secondary.opacity(0.55))
+                .frame(width: 16)
         }
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, AetowerDesign.Spacing.xs)
@@ -480,26 +479,15 @@ private struct GroupedEntityRow: View {
 
     private var helpText: String {
         let names = group.members.prefix(6).map(\.displayName).joined(separator: ", ")
+        let user = group.userSummary.isEmpty ? "" : " · user \(group.userSummary)"
+        let metrics = "\(formatWakeups(group.wakeupsPerSecond)) · \(formatRate(group.diskBps)) disk · \(formatRate(group.networkBps)) network\(user)"
         if group.members.count > 6 {
-            return "Collapsed entities: \(names), +\(group.members.count - 6) more · \(group.processCount) grouped processes"
+            return "Collapsed entities: \(names), +\(group.members.count - 6) more · \(group.processCount) grouped processes · \(metrics)"
         }
         if group.members.count > 1 {
-            return "Collapsed entities: \(names) · \(group.processCount) grouped processes"
+            return "Collapsed entities: \(names) · \(group.processCount) grouped processes · \(metrics)"
         }
-        return "Entity footprint: \(group.processCount) grouped processes"
-    }
-
-    private var groupSummaryText: String {
-        let entityCount = group.members.count
-        let entityText = entityCount == 1 ? "1 ent" : "\(entityCount) ent"
-        if entityCount <= 1 {
-            return entityText
-        }
-        if group.processCount <= 1 {
-            return entityText
-        }
-        let processText = group.processCount == 1 ? "1 proc" : "\(group.processCount) proc"
-        return "\(entityText) · \(processText)"
+        return "Entity footprint: \(group.processCount) grouped processes · \(metrics)"
     }
 
     private var frictionBackgroundOpacity: Double {
@@ -673,18 +661,28 @@ private func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup]
     let grouped = Dictionary(grouping: entities) { rootID(for: $0) }
     return grouped.compactMap { rootID, members in
         guard let root = entityByID[rootID] ?? members.first else { return nil }
+        let sortedMembers = members.sorted { $0.friction.totalScore > $1.friction.totalScore }
+        let startTimes = members
+            .map(\.oldestProcessStartMillis)
+            .filter { $0 > 0 }
         return EntityGroup(
             root: root,
-            members: members.sorted { $0.friction.totalScore > $1.friction.totalScore },
+            members: sortedMembers,
             cpuPercent: members.reduce(0) { $0 + $1.metrics.cpuPercent },
             memoryBytes: members.reduce(0) { $0 + $1.metrics.memoryResidentBytes },
+            wakeupsPerSecond: members.reduce(0) { $0 + $1.metrics.wakeupsPerSecond },
+            diskBps: members.reduce(0) { $0 + $1.metrics.diskReadBps + $1.metrics.diskWriteBps },
+            networkBps: members.reduce(0) { $0 + $1.metrics.networkReceiveBps + $1.metrics.networkSendBps },
+            energyScore: members.reduce(0) { $0 + $1.friction.energyImpactScore },
             frictionScore: members.reduce(0) { $0 + $1.friction.totalScore },
             processCount: members.reduce(0) { total, entity in
                 total + entity.components.reduce(0) { componentTotal, component in
                     componentTotal + (component.kind == .adapterContext ? 0 : 1)
                 }
             },
-            userSummary: groupUserSummary(for: members)
+            userSummary: groupUserSummary(for: members),
+            oldestStartMillis: startTimes.min() ?? 0,
+            newestStartMillis: members.map(\.newestProcessStartMillis).max() ?? 0
         )
     }
 }
@@ -725,12 +723,24 @@ private func sortGroups(_ groups: [EntityGroup], by sortKey: SortKey) -> [Entity
         return groups.sorted { $0.cpuPercent > $1.cpuPercent }
     case .memory:
         return groups.sorted { $0.memoryBytes > $1.memoryBytes }
+    case .disk:
+        return groups.sorted { $0.diskBps > $1.diskBps }
+    case .network:
+        return groups.sorted { $0.networkBps > $1.networkBps }
+    case .energy:
+        return groups.sorted { $0.energyScore > $1.energyScore }
     case .alphabeticalAsc:
         return groups.sorted { $0.root.displayName.localizedCaseInsensitiveCompare($1.root.displayName) == .orderedAscending }
     case .alphabeticalDesc:
         return groups.sorted { $0.root.displayName.localizedCaseInsensitiveCompare($1.root.displayName) == .orderedDescending }
-    default:
-        return groups.sorted { $0.frictionScore > $1.frictionScore }
+    case .oldestFirst:
+        return groups.sorted {
+            let leftStart = $0.oldestStartMillis == 0 ? UInt64.max : $0.oldestStartMillis
+            let rightStart = $1.oldestStartMillis == 0 ? UInt64.max : $1.oldestStartMillis
+            return leftStart < rightStart
+        }
+    case .newestFirst:
+        return groups.sorted { $0.newestStartMillis > $1.newestStartMillis }
     }
 }
 
@@ -899,8 +909,9 @@ public struct MainListView: View {
     }
 
     private var rankedEntitiesSection: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            // Compact sort + search bar
+        VStack(alignment: .leading, spacing: 6) {
+            monitorHeader
+
             HStack(spacing: 6) {
                 Picker(selection: $listMode) {
                     ForEach(ListMode.allCases) { mode in
@@ -917,12 +928,6 @@ public struct MainListView: View {
                     if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
                         self.selectedEntityID = nil
                     }
-                    // Reset unsupported sort keys when switching to grouped
-                    // mode so the user doesn't silently get friction sort
-                    // while the menu shows "Disk".
-                    if newMode == .grouped && !sortKey.supportsGroupedMode {
-                        sortKey = .friction
-                    }
                 }
 
                 Menu {
@@ -932,18 +937,12 @@ public struct MainListView: View {
                         } label: {
                             HStack {
                                 Text(key.title)
-                                if isGroupedMode && !key.supportsGroupedMode {
-                                    Text("(flat only)")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                }
                                 if key == sortKey {
                                     Spacer()
                                     Image(systemName: "checkmark")
                                 }
                             }
                         }
-                        .disabled(isGroupedMode && !key.supportsGroupedMode)
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -992,7 +991,6 @@ public struct MainListView: View {
             .padding(.horizontal, AetowerDesign.Spacing.sm)
             .padding(.bottom, 2)
 
-            // Column headers
             HStack(spacing: 6) {
                 Text("")
                     .frame(width: 16)
@@ -1002,12 +1000,14 @@ public struct MainListView: View {
                     .frame(width: 48, alignment: .trailing)
                 Text("MEM")
                     .frame(width: 52, alignment: .trailing)
-                Text("User")
-                    .frame(width: 60, alignment: .trailing)
-                Text("Parent")
-                    .frame(width: 80, alignment: .trailing)
+                Text("Wake")
+                    .frame(width: 56, alignment: .trailing)
+                Text("PIDs")
+                    .frame(width: 44, alignment: .trailing)
                 Text("Friction")
                     .frame(width: 50, alignment: .trailing)
+                Text("")
+                    .frame(width: 16)
             }
             .font(.system(size: 9, weight: .semibold))
             .foregroundStyle(.tertiary)
@@ -1064,14 +1064,6 @@ public struct MainListView: View {
                                         }
                                     }
                                 }
-                                Divider()
-                                Button("Terminate Processes", role: .destructive) {
-                                    for component in entity.components {
-                                        if let pid = component.processId {
-                                            kill(Int32(pid), SIGTERM)
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
@@ -1081,6 +1073,30 @@ public struct MainListView: View {
                 .animation(nil, value: state.snapshot.sequence)
             }
         }
+    }
+
+    private var monitorHeader: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Live control center")
+                    .font(.headline)
+                Text("Rank live apps, agents, and process groups by current resource burden.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text("\(visibleEntityIDs.count) \(isGroupedMode ? "groups" : "entities")")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+
+            Text("\(visibleProcessCount) PIDs")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+        .padding(.top, AetowerDesign.Spacing.xs)
     }
 
     private var filteredEntities: [EntitySnapshot] {
@@ -1104,6 +1120,15 @@ public struct MainListView: View {
 
     private var visibleEntityIDs: [String] {
         isGroupedMode ? groupedEntities.map(\.root.entityId) : filteredEntities.map(\.entityId)
+    }
+
+    private var visibleProcessCount: Int {
+        if isGroupedMode {
+            return groupedEntities.reduce(0) { $0 + $1.processCount }
+        }
+        return filteredEntities.reduce(0) { total, entity in
+            total + entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
+        }
     }
 
     private var groupedEntities: [EntityGroup] {
