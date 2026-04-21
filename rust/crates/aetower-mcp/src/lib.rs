@@ -679,6 +679,7 @@ struct ProcessSampleReport {
 struct ProcessActionReport {
     captured_at_millis: u64,
     pid: u32,
+    target_pids: Vec<u32>,
     action: String,
     signal: String,
     dry_run: bool,
@@ -692,10 +693,23 @@ struct ProcessActionReport {
     safety_notes: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct ProcessActionPlan {
+    normalized_action: String,
+    signal: String,
+    command: String,
+    program: String,
+    args: Vec<String>,
+    target_pids: Vec<u32>,
+    dry_run_message: String,
+    success_message: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct ProcessActionHistoryItem {
     timestamp_millis: u64,
     pid: Option<u32>,
+    target_pids: Vec<u32>,
     action: Option<String>,
     signal: Option<String>,
     success: bool,
@@ -4659,61 +4673,71 @@ fn build_process_action(
     reason: Option<String>,
 ) -> Result<ProcessActionReport, String> {
     validate_pid(pid)?;
-    let (normalized_action, signal) = process_action_signal(action)?;
     let snapshot = data_source.latest_snapshot().ok();
+    let plan = process_action_plan(snapshot.as_ref(), pid, action)?;
     let context = snapshot
         .as_ref()
         .and_then(|snapshot| process_component_context(snapshot, pid));
-    let command = format!("/bin/kill -{signal} {pid}");
     let mut safety_notes = Vec::new();
-    if pid == std::process::id() {
-        safety_notes.push("Aetower refuses to signal its own running process.".to_owned());
+    if plan.target_pids.contains(&std::process::id()) {
+        safety_notes.push("Aetower refuses to target its own running process.".to_owned());
         if !dry_run {
-            return Err("Refusing to signal the running Aetower process.".to_owned());
+            return Err("Refusing to target the running Aetower process.".to_owned());
         }
     }
-    if !dry_run && !process_exists(pid) {
-        return Err(format!("Process {pid} is not visible to ps right now."));
+    if !dry_run {
+        let missing_pids = plan
+            .target_pids
+            .iter()
+            .copied()
+            .filter(|target_pid| !process_exists(*target_pid))
+            .collect::<Vec<_>>();
+        if !missing_pids.is_empty() {
+            return Err(format!(
+                "Target process(es) are not visible to ps right now: {missing_pids:?}."
+            ));
+        }
     }
 
     if dry_run {
         return Ok(ProcessActionReport {
             captured_at_millis: current_unix_millis().unwrap_or_default(),
             pid,
-            action: normalized_action.to_owned(),
-            signal: signal.to_owned(),
+            target_pids: plan.target_pids,
+            action: plan.normalized_action,
+            signal: plan.signal,
             dry_run,
             executed: false,
             success: true,
-            command,
+            command: plan.command,
             reason,
             entity_id: context.as_ref().map(|context| context.entity_id.clone()),
             display_name: context.as_ref().map(|context| context.display_name.clone()),
-            message: "Dry run only; no signal was sent.".to_owned(),
+            message: plan.dry_run_message,
             safety_notes,
         });
     }
 
-    let status = Command::new("/bin/kill")
-        .arg(format!("-{signal}"))
-        .arg(pid.to_string())
+    let status = Command::new(&plan.program)
+        .args(&plan.args)
         .status()
-        .map_err(|error| format!("run /bin/kill: {error}"))?;
+        .map_err(|error| format!("run {}: {error}", plan.program))?;
     let success = status.success();
     let message = if success {
-        format!("Sent {signal} to process {pid}.")
+        plan.success_message.clone()
     } else {
-        format!("/bin/kill exited with status {status}.")
+        format!("{} exited with status {status}.", plan.program)
     };
     let report = ProcessActionReport {
         captured_at_millis: current_unix_millis().unwrap_or_default(),
         pid,
-        action: normalized_action.to_owned(),
-        signal: signal.to_owned(),
+        target_pids: plan.target_pids,
+        action: plan.normalized_action,
+        signal: plan.signal,
         dry_run,
         executed: true,
         success,
-        command,
+        command: plan.command,
         reason: reason.clone(),
         entity_id: context.as_ref().map(|context| context.entity_id.clone()),
         display_name: context.as_ref().map(|context| context.display_name.clone()),
@@ -4922,16 +4946,141 @@ fn parse_lsof_resource_line(line: &str) -> Option<ProcessOpenResource> {
     })
 }
 
-fn process_action_signal(action: &str) -> Result<(&'static str, &'static str), String> {
+fn process_action_plan(
+    snapshot: Option<&SystemSnapshot>,
+    pid: u32,
+    action: &str,
+) -> Result<ProcessActionPlan, String> {
     match action.trim().to_ascii_lowercase().as_str() {
-        "terminate" | "term" | "sigterm" => Ok(("terminate", "TERM")),
-        "force-kill" | "force_kill" | "kill" | "sigkill" => Ok(("force-kill", "KILL")),
-        "suspend" | "stop" | "sigstop" => Ok(("suspend", "STOP")),
-        "resume" | "continue" | "cont" | "sigcont" => Ok(("resume", "CONT")),
+        "terminate" | "term" | "sigterm" => Ok(signal_process_action_plan(
+            "terminate",
+            "TERM",
+            vec![pid],
+            "Dry run only; no terminate signal was sent.",
+            format!("Sent TERM to process {pid}."),
+        )),
+        "force-kill" | "force_kill" | "kill" | "sigkill" => Ok(signal_process_action_plan(
+            "force-kill",
+            "KILL",
+            vec![pid],
+            "Dry run only; no force-kill signal was sent.",
+            format!("Sent KILL to process {pid}."),
+        )),
+        "suspend" | "stop" | "sigstop" => Ok(signal_process_action_plan(
+            "suspend",
+            "STOP",
+            vec![pid],
+            "Dry run only; no suspend signal was sent.",
+            format!("Sent STOP to process {pid}."),
+        )),
+        "resume" | "continue" | "cont" | "sigcont" => Ok(signal_process_action_plan(
+            "resume",
+            "CONT",
+            vec![pid],
+            "Dry run only; no resume signal was sent.",
+            format!("Sent CONT to process {pid}."),
+        )),
+        "terminate-tree" | "tree-terminate" | "sigterm-tree" => Ok(signal_process_action_plan(
+            "terminate-tree",
+            "TERM",
+            process_tree_target_pids(snapshot, pid),
+            "Dry run only; no terminate-tree signal was sent.",
+            format!("Sent TERM to process tree rooted at {pid}."),
+        )),
+        "force-kill-tree" | "tree-kill" | "tree-force-kill" | "sigkill-tree" => {
+            Ok(signal_process_action_plan(
+                "force-kill-tree",
+                "KILL",
+                process_tree_target_pids(snapshot, pid),
+                "Dry run only; no force-kill-tree signal was sent.",
+                format!("Sent KILL to process tree rooted at {pid}."),
+            ))
+        }
+        "lower-priority" | "renice-background" | "background" => Ok(renice_process_action_plan(
+            "lower-priority",
+            10,
+            pid,
+            "Dry run only; priority was not changed.",
+            format!("Requested lower priority for process {pid} with nice value 10."),
+        )),
+        "normal-priority" | "restore-priority" | "renice-normal" => Ok(renice_process_action_plan(
+            "normal-priority",
+            0,
+            pid,
+            "Dry run only; priority was not changed.",
+            format!("Requested normal priority for process {pid} with nice value 0."),
+        )),
         _ => Err(format!(
-            "Unsupported process action '{action}'. Use terminate, force-kill, suspend, or resume."
+            "Unsupported process action '{action}'. Use terminate, force-kill, suspend, resume, terminate-tree, force-kill-tree, lower-priority, or normal-priority."
         )),
     }
+}
+
+fn signal_process_action_plan(
+    normalized_action: &str,
+    signal: &str,
+    target_pids: Vec<u32>,
+    dry_run_message: &str,
+    success_message: String,
+) -> ProcessActionPlan {
+    let mut args = vec![format!("-{signal}")];
+    args.extend(target_pids.iter().map(u32::to_string));
+    ProcessActionPlan {
+        normalized_action: normalized_action.to_owned(),
+        signal: signal.to_owned(),
+        command: format!("/bin/kill {}", args.join(" ")),
+        program: "/bin/kill".to_owned(),
+        args,
+        target_pids,
+        dry_run_message: dry_run_message.to_owned(),
+        success_message,
+    }
+}
+
+fn renice_process_action_plan(
+    normalized_action: &str,
+    nice_value: i32,
+    pid: u32,
+    dry_run_message: &str,
+    success_message: String,
+) -> ProcessActionPlan {
+    let args = vec![nice_value.to_string(), "-p".to_owned(), pid.to_string()];
+    ProcessActionPlan {
+        normalized_action: normalized_action.to_owned(),
+        signal: format!("renice:{nice_value}"),
+        command: format!("/usr/bin/renice {}", args.join(" ")),
+        program: "/usr/bin/renice".to_owned(),
+        args,
+        target_pids: vec![pid],
+        dry_run_message: dry_run_message.to_owned(),
+        success_message,
+    }
+}
+
+fn process_tree_target_pids(snapshot: Option<&SystemSnapshot>, pid: u32) -> Vec<u32> {
+    let mut target_pids = snapshot
+        .map(|snapshot| process_descendant_pids(snapshot, pid))
+        .unwrap_or_default();
+    target_pids.push(pid);
+    target_pids.sort_unstable();
+    target_pids.dedup();
+    target_pids.retain(|target_pid| *target_pid != 0);
+    target_pids
+}
+
+fn process_descendant_pids(snapshot: &SystemSnapshot, pid: u32) -> Vec<u32> {
+    let mut descendants = Vec::new();
+    let mut stack = vec![pid];
+    while let Some(parent_pid) = stack.pop() {
+        for child_pid in process_child_pids(snapshot, parent_pid) {
+            if descendants.contains(&child_pid) {
+                continue;
+            }
+            descendants.push(child_pid);
+            stack.push(child_pid);
+        }
+    }
+    descendants
 }
 
 fn process_action_diagnostics_event(report: &ProcessActionReport) -> DiagnosticsEvent {
@@ -4946,6 +5095,16 @@ fn process_action_diagnostics_event(report: &ProcessActionReport) -> Diagnostics
         report.message.clone(),
     )
     .field("pid", report.pid)
+    .field(
+        "target_pids",
+        report
+            .target_pids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(","),
+    )
+    .field("target_count", report.target_pids.len())
     .field("action", report.action.clone())
     .field("signal", report.signal.clone())
     .field("success", report.success)
@@ -4967,6 +5126,9 @@ fn process_action_history_item(event: DiagnosticsEvent) -> ProcessActionHistoryI
     ProcessActionHistoryItem {
         timestamp_millis: event.timestamp_millis,
         pid: diagnostics_field(&event, "pid").and_then(|value| value.parse::<u32>().ok()),
+        target_pids: diagnostics_field(&event, "target_pids")
+            .map(parse_pid_list)
+            .unwrap_or_default(),
         action: diagnostics_field(&event, "action").map(str::to_owned),
         signal: diagnostics_field(&event, "signal").map(str::to_owned),
         success: diagnostics_field(&event, "success")
@@ -4979,6 +5141,13 @@ fn process_action_history_item(event: DiagnosticsEvent) -> ProcessActionHistoryI
         display_name,
         message: event.message,
     }
+}
+
+fn parse_pid_list(value: &str) -> Vec<u32> {
+    value
+        .split(',')
+        .filter_map(|part| part.trim().parse::<u32>().ok())
+        .collect()
 }
 
 fn diagnostics_field<'a>(event: &'a DiagnosticsEvent, key: &str) -> Option<&'a str> {
@@ -7998,7 +8167,19 @@ fn tool_definitions() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "pid": { "type": "integer", "minimum": 2 },
-                    "action": { "type": "string", "enum": ["terminate", "force-kill", "suspend", "resume"] },
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "terminate",
+                            "force-kill",
+                            "suspend",
+                            "resume",
+                            "terminate-tree",
+                            "force-kill-tree",
+                            "lower-priority",
+                            "normal-priority"
+                        ]
+                    },
                     "dry_run": { "type": "boolean" },
                     "reason": { "type": "string" }
                 },
@@ -10095,9 +10276,61 @@ mod tests {
 
         assert!(!report.executed);
         assert!(report.success);
+        assert_eq!(report.target_pids, vec![42]);
         assert_eq!(report.signal, "TERM");
         assert_eq!(report.command, "/bin/kill -TERM 42");
         assert_eq!(report.reason.as_deref(), Some("test"));
+    }
+
+    #[test]
+    fn process_action_plan_builds_renice_command() {
+        let plan = process_action_plan(None, 42, "lower-priority")
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(plan.normalized_action, "lower-priority");
+        assert_eq!(plan.signal, "renice:10");
+        assert_eq!(plan.target_pids, vec![42]);
+        assert_eq!(plan.command, "/usr/bin/renice 10 -p 42");
+        assert_eq!(plan.program, "/usr/bin/renice");
+        assert_eq!(plan.args, vec!["10", "-p", "42"]);
+    }
+
+    #[test]
+    fn process_action_plan_expands_process_tree_from_snapshot() {
+        let snapshot = SystemSnapshot {
+            entities: vec![aetower_model::EntitySnapshot {
+                entity_id: "tree".to_owned(),
+                display_name: "Tree".to_owned(),
+                components: vec![
+                    aetower_model::ComponentSnapshot {
+                        title: "Root proc".to_owned(),
+                        process_id: Some(10),
+                        ..aetower_model::ComponentSnapshot::default()
+                    },
+                    aetower_model::ComponentSnapshot {
+                        title: "Child proc".to_owned(),
+                        process_id: Some(11),
+                        parent_summary: Some("Root proc pid 10".to_owned()),
+                        ..aetower_model::ComponentSnapshot::default()
+                    },
+                    aetower_model::ComponentSnapshot {
+                        title: "Grandchild proc".to_owned(),
+                        process_id: Some(12),
+                        parent_summary: Some("Child proc pid 11".to_owned()),
+                        ..aetower_model::ComponentSnapshot::default()
+                    },
+                ],
+                ..aetower_model::EntitySnapshot::default()
+            }],
+            ..SystemSnapshot::default()
+        };
+        let plan = process_action_plan(Some(&snapshot), 10, "terminate-tree")
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(plan.normalized_action, "terminate-tree");
+        assert_eq!(plan.signal, "TERM");
+        assert_eq!(plan.target_pids, vec![10, 11, 12]);
+        assert_eq!(plan.command, "/bin/kill -TERM 10 11 12");
     }
 
     #[test]
@@ -10126,6 +10359,7 @@ node      42 user   12u  IPv4 0x123456789abcdef      0t0  TCP 127.0.0.1:3000 (LI
         .timestamp_millis(123)
         .entity_id("entity")
         .field("pid", 42)
+        .field("target_pids", "42,43")
         .field("action", "terminate")
         .field("signal", "TERM")
         .field("success", true)
@@ -10137,6 +10371,7 @@ node      42 user   12u  IPv4 0x123456789abcdef      0t0  TCP 127.0.0.1:3000 (LI
 
         assert_eq!(item.timestamp_millis, 123);
         assert_eq!(item.pid, Some(42));
+        assert_eq!(item.target_pids, vec![42, 43]);
         assert_eq!(item.action.as_deref(), Some("terminate"));
         assert_eq!(item.display_name.as_deref(), Some("Example"));
         assert!(item.success);
