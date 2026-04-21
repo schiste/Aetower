@@ -825,7 +825,8 @@ fn should_coalesce_event(state: &mut DiagnosticsState, event: &DiagnosticsEvent)
 
 fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)> {
     let window_millis = match event.event_type.as_str() {
-        "host-incident-snapshot" => 15 * 60 * 1000,
+        "host-incident-snapshot" => 60 * 60 * 1000,
+        "system-previous-shutdown-cause" => 12 * 60 * 60 * 1000,
         "adapter-refresh-failed" => 15 * 60 * 1000,
         "history-store-busy" | "history-write-backpressure" => 5 * 60 * 1000,
         "history-maintenance-over-budget" | "history-maintenance-failed" => 15 * 60 * 1000,
@@ -835,7 +836,14 @@ fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)>
         _ => return None,
     };
 
-    let identity_fields = ["incident_key", "error", "path", "capability", "adapter"];
+    let identity_fields = [
+        "incident_key",
+        "marker_key",
+        "error",
+        "path",
+        "capability",
+        "adapter",
+    ];
     let mut parts = vec![
         format!("{:?}", event.level),
         format!("{:?}", event.subsystem),
@@ -887,6 +895,7 @@ fn should_persist_event(event: &DiagnosticsEvent) -> bool {
                 | "session-log-analysis-failed"
                 | "mcp-server-started"
                 | "boot-session-observed"
+                | "system-previous-shutdown-cause"
                 | "system-sleep-marker"
                 | "system-wake-marker"
                 | "system-power-marker"
@@ -1073,6 +1082,44 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].level, DiagnosticsLevel::Error);
         assert_eq!(events[1].level, DiagnosticsLevel::Warn);
+    }
+
+    #[test]
+    fn previous_shutdown_markers_coalesce_by_code() {
+        let store = DiagnosticsStore::new(16);
+        for timestamp_millis in [1_000, 2_000] {
+            store.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Info,
+                    DiagnosticsSubsystem::Engine,
+                    "system-previous-shutdown-cause",
+                    "Observed a previous shutdown cause marker in the recent system log.",
+                )
+                .timestamp_millis(timestamp_millis)
+                .field("marker_key", "previous-shutdown-cause:-128")
+                .build(),
+            );
+        }
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Engine,
+                "system-previous-shutdown-cause",
+                "Observed a previous shutdown cause marker in the recent system log.",
+            )
+            .timestamp_millis(3_000)
+            .field("marker_key", "previous-shutdown-cause:-20")
+            .build(),
+        );
+
+        let events = store.recent(10);
+        assert_eq!(events.len(), 2);
+        assert!(events[0].fields.iter().any(|field| {
+            field.key == "marker_key" && field.value == "previous-shutdown-cause:-20"
+        }));
+        assert!(events[1].fields.iter().any(|field| {
+            field.key == "marker_key" && field.value == "previous-shutdown-cause:-128"
+        }));
     }
 
     #[test]

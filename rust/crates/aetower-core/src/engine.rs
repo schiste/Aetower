@@ -47,7 +47,7 @@ const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
 const MCP_HELPER_REAP_RETRY_MILLIS: u64 = 60 * 1000;
 const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 12 * 60 * 60 * 1000;
 const SYSTEM_MARKER_PREDICATE: &str = "(eventMessage CONTAINS[c] \"Previous shutdown cause\") OR (eventMessage CONTAINS[c] \"Entering Sleep state\") OR (eventMessage CONTAINS[c] \"Wake reason\") OR (eventMessage CONTAINS[c] \"Wake from\") OR (eventMessage CONTAINS[c] \"panic(cpu\") OR (eventMessage CONTAINS[c] \"userspace watchdog timeout\") OR (eventMessage CONTAINS[c] \"thermal pressure\") OR (eventMessage CONTAINS[c] \"low power mode\")";
-const HOST_INCIDENT_PERSIST_INTERVAL_MILLIS: u64 = 15 * 60 * 1000;
+const HOST_INCIDENT_PERSIST_INTERVAL_MILLIS: u64 = 60 * 60 * 1000;
 const MEMORY_PRESSURE_WARNING_RATIO: f64 = 0.80;
 const MEMORY_PRESSURE_CRITICAL_RATIO: f64 = 0.90;
 const COMPRESSED_MEMORY_WARNING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
@@ -186,12 +186,14 @@ struct SystemMarker {
     message: &'static str,
     detail: String,
     category: &'static str,
+    marker_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 struct PersistedHostIncidentState {
     severity: DiagnosticsLevel,
     last_emitted_millis: u64,
+    suppressed_count: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -1622,17 +1624,18 @@ fn emit_host_incident_snapshots(
     state.retain(|key, _| active_keys.iter().any(|active| active == key));
 
     for incident in incidents {
-        let should_emit = match state.get(incident.key) {
-            Some(previous) => {
-                previous.severity != incident.severity
-                    || captured_at_millis.saturating_sub(previous.last_emitted_millis)
-                        >= HOST_INCIDENT_PERSIST_INTERVAL_MILLIS
+        let suppressed_count = match state.get_mut(incident.key) {
+            Some(previous)
+                if previous.severity == incident.severity
+                    && captured_at_millis.saturating_sub(previous.last_emitted_millis)
+                        < HOST_INCIDENT_PERSIST_INTERVAL_MILLIS =>
+            {
+                previous.suppressed_count = previous.suppressed_count.saturating_add(1);
+                continue;
             }
-            None => true,
+            Some(previous) => previous.suppressed_count,
+            None => 0,
         };
-        if !should_emit {
-            continue;
-        }
 
         let mut event = DiagnosticsEvent::builder(
             incident.severity.clone(),
@@ -1643,6 +1646,7 @@ fn emit_host_incident_snapshots(
         .timestamp_millis(captured_at_millis)
         .sequence(snapshot.sequence)
         .field("incident_key", incident.key)
+        .field("suppressed_count", suppressed_count)
         .field(
             "severity",
             match incident.severity {
@@ -1686,6 +1690,7 @@ fn emit_host_incident_snapshots(
             PersistedHostIncidentState {
                 severity: incident.severity,
                 last_emitted_millis: captured_at_millis,
+                suppressed_count: 0,
             },
         );
     }
@@ -1843,18 +1848,19 @@ fn ingest_recent_system_markers(
         if !running.load(Ordering::SeqCst) {
             break;
         }
-        diagnostics.emit(
-            DiagnosticsEvent::builder(
-                marker.level,
-                DiagnosticsSubsystem::Engine,
-                marker.event_type,
-                marker.message,
-            )
-            .timestamp_millis(marker.timestamp_millis)
-            .field("category", marker.category)
-            .field("detail", marker.detail)
-            .build(),
-        );
+        let mut event = DiagnosticsEvent::builder(
+            marker.level,
+            DiagnosticsSubsystem::Engine,
+            marker.event_type,
+            marker.message,
+        )
+        .timestamp_millis(marker.timestamp_millis)
+        .field("category", marker.category)
+        .field("detail", marker.detail);
+        if let Some(marker_key) = marker.marker_key {
+            event = event.field("marker_key", marker_key);
+        }
+        diagnostics.emit(event.build());
     }
 }
 
@@ -1901,13 +1907,15 @@ fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
     let detail = entry.event_message?;
     let normalized = detail.to_ascii_lowercase();
     if normalized.contains("previous shutdown cause") {
+        let marker_key = shutdown_marker_key(&detail);
         return Some(SystemMarker {
             timestamp_millis: timestamp,
-            level: DiagnosticsLevel::Warn,
+            level: DiagnosticsLevel::Info,
             event_type: "system-previous-shutdown-cause",
             message: "Observed a previous shutdown cause marker in the recent system log.",
             detail,
             category: "shutdown",
+            marker_key: Some(marker_key),
         });
     }
     if normalized.contains("panic(cpu") || normalized.contains("userspace watchdog timeout") {
@@ -1918,6 +1926,7 @@ fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
             message: "Observed a panic or watchdog marker in the recent system log.",
             detail,
             category: "panic",
+            marker_key: None,
         });
     }
     if normalized.contains("wake reason")
@@ -1931,6 +1940,7 @@ fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
             message: "Observed a recent system wake marker.",
             detail,
             category: "wake",
+            marker_key: None,
         });
     }
     if normalized.contains("entering sleep state") || normalized.contains("previous sleep cause") {
@@ -1941,6 +1951,7 @@ fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
             message: "Observed a recent system sleep marker.",
             detail,
             category: "sleep",
+            marker_key: None,
         });
     }
     if normalized.contains("thermal pressure") {
@@ -1951,6 +1962,7 @@ fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
             message: "Observed a recent thermal pressure marker.",
             detail,
             category: "thermal",
+            marker_key: None,
         });
     }
     if normalized.contains("low power mode") {
@@ -1961,9 +1973,19 @@ fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
             message: "Observed a recent power-state marker.",
             detail,
             category: "power",
+            marker_key: None,
         });
     }
     None
+}
+
+fn shutdown_marker_key(detail: &str) -> String {
+    detail
+        .split_once(':')
+        .map(|(_, code)| code.trim())
+        .filter(|code| !code.is_empty())
+        .map(|code| format!("previous-shutdown-cause:{code}"))
+        .unwrap_or_else(|| "previous-shutdown-cause:unknown".to_owned())
 }
 
 fn parse_unified_log_timestamp(value: &str) -> Option<u64> {
@@ -2020,6 +2042,22 @@ mod tests {
     }
 
     #[test]
+    fn classifies_previous_shutdown_as_low_noise_marker_keyed_by_code() {
+        let marker = classify_system_marker(UnifiedLogEntry {
+            timestamp: Some("2026-04-13 19:03:09.753950+0200".to_owned()),
+            event_message: Some("Previous shutdown cause: -128".to_owned()),
+        })
+        .unwrap_or_else(|| panic!("shutdown marker"));
+
+        assert_eq!(marker.event_type, "system-previous-shutdown-cause");
+        assert_eq!(marker.level, DiagnosticsLevel::Info);
+        assert_eq!(
+            marker.marker_key.as_deref(),
+            Some("previous-shutdown-cause:-128")
+        );
+    }
+
+    #[test]
     fn collects_memory_pressure_incident() {
         let snapshot = SystemSnapshot {
             captured_at_millis: 100,
@@ -2037,6 +2075,42 @@ mod tests {
             incidents
                 .iter()
                 .any(|incident| incident.key == "memory-pressure")
+        );
+    }
+
+    #[test]
+    fn host_incident_snapshots_aggregate_repeated_pressure() {
+        let diagnostics = DiagnosticsStore::new(16);
+        let mut state = BTreeMap::<&'static str, PersistedHostIncidentState>::new();
+        let mut snapshot = SystemSnapshot {
+            sequence: 1,
+            captured_at_millis: 1_000,
+            host: HostSnapshot {
+                memory_used_bytes: 15 * 1024 * 1024 * 1024,
+                memory_total_bytes: 16 * 1024 * 1024 * 1024,
+                compressed_memory_bytes: 7 * 1024 * 1024 * 1024,
+                swap_used_bytes: 20 * 1024 * 1024 * 1024,
+                ..HostSnapshot::default()
+            },
+            ..SystemSnapshot::default()
+        };
+
+        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state);
+        snapshot.sequence = 2;
+        snapshot.captured_at_millis = 2_000;
+        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state);
+        snapshot.sequence = 3;
+        snapshot.captured_at_millis = 61 * 60 * 1000;
+        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state);
+
+        let events = diagnostics.recent(10);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].sequence, Some(3));
+        assert!(
+            events[0]
+                .fields
+                .iter()
+                .any(|field| field.key == "suppressed_count" && field.value == "1")
         );
     }
 
