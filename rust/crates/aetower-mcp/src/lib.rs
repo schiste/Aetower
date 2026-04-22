@@ -62,6 +62,8 @@ const MAX_SELF_WATCH_DURATION_SECONDS: u64 = 300;
 const DEFAULT_SELF_WATCH_INTERVAL_MILLIS: u64 = 1_000;
 const MIN_SELF_WATCH_INTERVAL_MILLIS: u64 = 250;
 const MAX_SELF_WATCH_INTERVAL_MILLIS: u64 = 60_000;
+const DEFAULT_RUNTIME_BURST_WINDOW_MINUTES: u64 = 10;
+const DEFAULT_RUNTIME_BURST_EVENT_LIMIT: usize = 64;
 const MEMORY_PRESSURE_WARNING_RATIO: f64 = 0.80;
 const MEMORY_PRESSURE_CRITICAL_RATIO: f64 = 0.90;
 const COMPRESSED_MEMORY_WARNING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
@@ -665,6 +667,46 @@ struct SelfRuntimeWatchReport {
     averages: SelfRuntimeWatchAverages,
     memory: SelfRuntimeMemoryAttribution,
     samples: Vec<SelfRuntimeWatchSample>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeBurstDriver {
+    key: String,
+    severity: SeverityBand,
+    metric: String,
+    value: String,
+    detail: String,
+    recommendation: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeBurstCorrelatedEvent {
+    timestamp_millis: u64,
+    level: String,
+    subsystem: String,
+    event_type: String,
+    message: String,
+    detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeBurstExplanation {
+    captured_at_millis: u64,
+    window_minutes: u64,
+    severity: SeverityBand,
+    summary: String,
+    drivers: Vec<RuntimeBurstDriver>,
+    correlated_events: Vec<RuntimeBurstCorrelatedEvent>,
+    recommendations: Vec<String>,
+}
+
+struct RuntimeBurstThreshold<'a> {
+    key: &'a str,
+    metric: &'a str,
+    warning_threshold: f32,
+    critical_threshold: f32,
+    detail: &'a str,
+    recommendation: &'a str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1400,6 +1442,7 @@ impl AetowerMcpServer {
             "aetower_entity_details" => self.tool_entity_details(arguments),
             "aetower_runtime_lag" => self.tool_runtime_lag(),
             "aetower_watch_self" => self.tool_watch_self(arguments),
+            "aetower_runtime_burst_explanation" => self.tool_runtime_burst_explanation(arguments),
             "aetower_diff_snapshots" => self.tool_diff_snapshots(arguments),
             "aetower_reboot_report" => self.tool_reboot_report(arguments),
             "aetower_explain_anomalies" => self.tool_explain_anomalies(arguments),
@@ -1591,6 +1634,41 @@ impl AetowerMcpServer {
         )
         .map_err(tool_error)?;
         tool_json(report)
+    }
+
+    fn tool_runtime_burst_explanation(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_runtime_burst_window_minutes")]
+            window_minutes: u64,
+            #[serde(default = "default_runtime_burst_event_limit")]
+            event_limit: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let window_minutes = args.window_minutes.clamp(1, 120);
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let runtime = self
+            .data_source
+            .latest_runtime_lag_metrics()
+            .map_err(tool_error)?;
+        let start_millis = snapshot
+            .captured_at_millis
+            .saturating_sub(window_minutes.saturating_mul(60 * 1000));
+        let events = self
+            .data_source
+            .query_diagnostics(runtime_diagnostics_query(
+                start_millis,
+                args.event_limit
+                    .clamp(1, DEFAULT_RUNTIME_BURST_EVENT_LIMIT * 4),
+            ))
+            .map_err(tool_error)?;
+        tool_json(build_runtime_burst_explanation(
+            snapshot.captured_at_millis,
+            window_minutes,
+            &runtime,
+            &events,
+        ))
     }
 
     fn tool_diff_snapshots(&self, arguments: Value) -> Result<Value, Value> {
@@ -2546,12 +2624,22 @@ impl AetowerMcpServer {
                 64,
             ))
             .map_err(tool_error)?;
+        let runtime_events = self
+            .data_source
+            .query_diagnostics(runtime_diagnostics_query(
+                snapshot
+                    .captured_at_millis
+                    .saturating_sub(args.history_window_hours.saturating_mul(60 * 60 * 1000)),
+                DEFAULT_RUNTIME_BURST_EVENT_LIMIT,
+            ))
+            .map_err(tool_error)?;
         let checks = build_session_health_checks(
             &snapshot,
             &diagnostics,
             &runtime,
             &history,
             &history_events,
+            &runtime_events,
         );
         let overall = checks
             .iter()
@@ -2754,6 +2842,14 @@ fn default_self_watch_interval_millis() -> u64 {
     DEFAULT_SELF_WATCH_INTERVAL_MILLIS
 }
 
+fn default_runtime_burst_window_minutes() -> u64 {
+    DEFAULT_RUNTIME_BURST_WINDOW_MINUTES
+}
+
+fn default_runtime_burst_event_limit() -> usize {
+    DEFAULT_RUNTIME_BURST_EVENT_LIMIT
+}
+
 fn default_process_action_history_limit() -> usize {
     DEFAULT_PROCESS_ACTION_HISTORY_LIMIT
 }
@@ -2787,6 +2883,17 @@ fn history_diagnostics_query(start_millis: u64, limit: usize) -> DiagnosticsQuer
         minimum_level: Some(aetower_diagnostics::DiagnosticsLevel::Info),
         subsystem: None,
         search: Some("history".to_owned()),
+        since_millis: Some(start_millis),
+        include_persisted: true,
+    }
+}
+
+fn runtime_diagnostics_query(start_millis: u64, limit: usize) -> DiagnosticsQuery {
+    DiagnosticsQuery {
+        limit,
+        minimum_level: Some(aetower_diagnostics::DiagnosticsLevel::Info),
+        subsystem: None,
+        search: None,
         since_millis: Some(start_millis),
         include_persisted: true,
     }
@@ -6301,6 +6408,297 @@ fn diagnostics_field_value<'a>(event: &'a DiagnosticsEvent, key: &str) -> Option
         .map(|field| field.value.as_str())
 }
 
+fn build_runtime_burst_explanation(
+    captured_at_millis: u64,
+    window_minutes: u64,
+    runtime: &RuntimeLagMetrics,
+    events: &[DiagnosticsEvent],
+) -> RuntimeBurstExplanation {
+    let mut drivers = Vec::new();
+    let target_tick = runtime.target_tick_millis.max(1.0);
+    if runtime.engine_tick_millis >= target_tick * 0.75 {
+        drivers.push(runtime_burst_driver(
+            "engine-tick",
+            SeverityBand::Critical,
+            "engine_tick_millis",
+            format!("{:.1} ms", runtime.engine_tick_millis),
+            format!(
+                "Engine tick is using {:.0}% of the active target cadence.",
+                runtime.engine_tick_millis / target_tick * 100.0
+            ),
+            "Inspect collector and UI/render drivers before lowering cadence further.",
+        ));
+    } else if runtime.engine_tick_millis >= target_tick * 0.35 {
+        drivers.push(runtime_burst_driver(
+            "engine-tick",
+            SeverityBand::Warning,
+            "engine_tick_millis",
+            format!("{:.1} ms", runtime.engine_tick_millis),
+            format!(
+                "Engine tick is using {:.0}% of the active target cadence.",
+                runtime.engine_tick_millis / target_tick * 100.0
+            ),
+            "Watch for repeated over-budget ticks and correlate with adapter or history work.",
+        ));
+    }
+
+    push_threshold_driver(
+        &mut drivers,
+        runtime.collect_millis,
+        RuntimeBurstThreshold {
+            key: "collect",
+            metric: "collect_millis",
+            warning_threshold: 75.0,
+            critical_threshold: 150.0,
+            detail: "Collector work is a visible part of this runtime sample.",
+            recommendation: "Reduce scan breadth or increase cadence when live investigation does not need full collection.",
+        },
+    );
+    push_threshold_driver(
+        &mut drivers,
+        runtime.history_millis,
+        RuntimeBurstThreshold {
+            key: "history",
+            metric: "history_millis",
+            warning_threshold: 50.0,
+            critical_threshold: 100.0,
+            detail: "History/timeline update work is elevated.",
+            recommendation: "Inspect history efficiency and retention diagnostics before increasing persisted write rate.",
+        },
+    );
+    push_threshold_driver(
+        &mut drivers,
+        runtime.persist_millis,
+        RuntimeBurstThreshold {
+            key: "persist",
+            metric: "persist_millis",
+            warning_threshold: 20.0,
+            critical_threshold: 50.0,
+            detail: "SQLite persistence work is elevated.",
+            recommendation: "Check pending writes, WAL pressure, and checkpoint status.",
+        },
+    );
+    push_threshold_driver(
+        &mut drivers,
+        runtime.snapshot_to_render_millis,
+        RuntimeBurstThreshold {
+            key: "ui-render",
+            metric: "snapshot_to_render_millis",
+            warning_threshold: 60.0,
+            critical_threshold: 120.0,
+            detail: "Snapshot-to-render latency is elevated.",
+            recommendation: "Inspect expensive SwiftUI sections and avoid refreshing hidden tabs.",
+        },
+    );
+    push_threshold_driver(
+        &mut drivers,
+        runtime.self_cpu_percent,
+        RuntimeBurstThreshold {
+            key: "self-cpu",
+            metric: "self_cpu_percent",
+            warning_threshold: 10.0,
+            critical_threshold: 25.0,
+            detail: "Aetower self CPU is elevated.",
+            recommendation: "Run aetower_watch_self and correlate peaks with collector, adapter, history, and UI timings.",
+        },
+    );
+    push_threshold_driver(
+        &mut drivers,
+        runtime.self_wakeups_per_second,
+        RuntimeBurstThreshold {
+            key: "self-wakeups",
+            metric: "self_wakeups_per_second",
+            warning_threshold: 300.0,
+            critical_threshold: 1_000.0,
+            detail: "Aetower self wakeups are elevated.",
+            recommendation: "Audit polling, UI refresh, and MCP request bursts before adding more timers.",
+        },
+    );
+
+    let mcp_severity = mcp_request_pressure_severity(runtime);
+    if mcp_severity != SeverityBand::Info {
+        drivers.push(runtime_burst_driver(
+            "mcp-requests",
+            mcp_severity,
+            "mcp_requests_per_second",
+            format!("{:.1}/s", runtime.mcp_requests_per_second),
+            format!(
+                "{} active client(s), {} helper(s), oldest helper {}.",
+                runtime.mcp_active_client_count,
+                runtime.mcp_helper_count,
+                format_duration_millis(runtime.oldest_mcp_helper_age_millis)
+            ),
+            "Prefer persistent client sessions and avoid repeated short-lived MCP polling.",
+        ));
+    }
+    if runtime.history_queue_depth > 0 || runtime.diagnostics_queue_depth > 0 {
+        let queue_depth = runtime
+            .history_queue_depth
+            .saturating_add(runtime.diagnostics_queue_depth);
+        drivers.push(runtime_burst_driver(
+            "queues",
+            if queue_depth >= 10 {
+                SeverityBand::Critical
+            } else {
+                SeverityBand::Warning
+            },
+            "queue_depth",
+            queue_depth.to_string(),
+            format!(
+                "History queue {}, diagnostics queue {}.",
+                runtime.history_queue_depth, runtime.diagnostics_queue_depth
+            ),
+            "Keep write queues near zero; sustained backlog means observer work is falling behind.",
+        ));
+    }
+
+    let adapter_refresh_count = events
+        .iter()
+        .filter(|event| event.event_type.starts_with("adapter-refresh"))
+        .count();
+    let adapter_failed_count = events
+        .iter()
+        .filter(|event| event.event_type == "adapter-refresh-failed")
+        .count();
+    if adapter_failed_count > 0 || adapter_refresh_count >= 20 {
+        drivers.push(runtime_burst_driver(
+            "adapter-refresh",
+            if adapter_failed_count > 0 {
+                SeverityBand::Warning
+            } else {
+                SeverityBand::Info
+            },
+            "adapter_refresh_events",
+            adapter_refresh_count.to_string(),
+            format!(
+                "{} adapter refresh event(s), {} failure(s), in the selected window.",
+                adapter_refresh_count, adapter_failed_count
+            ),
+            "If collection time spikes align with adapter refreshes, lengthen adapter cadence or cache expensive adapter calls.",
+        ));
+    }
+
+    let mut correlated_events = events
+        .iter()
+        .filter(|event| runtime_event_is_correlated(event))
+        .take(20)
+        .map(runtime_correlated_event)
+        .collect::<Vec<_>>();
+    correlated_events.sort_by(|left, right| right.timestamp_millis.cmp(&left.timestamp_millis));
+    drivers.sort_by(|left, right| {
+        right
+            .severity
+            .score()
+            .cmp(&left.severity.score())
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    let severity = drivers
+        .iter()
+        .map(|driver| driver.severity)
+        .max_by_key(|severity| severity.score())
+        .unwrap_or(SeverityBand::Info);
+    let mut recommendations = Vec::new();
+    for driver in &drivers {
+        if !recommendations.contains(&driver.recommendation) {
+            recommendations.push(driver.recommendation.clone());
+        }
+    }
+    RuntimeBurstExplanation {
+        captured_at_millis,
+        window_minutes,
+        severity,
+        summary: if let Some(driver) = drivers.first() {
+            format!(
+                "{} runtime burst driver(s); strongest signal is {} at {}.",
+                drivers.len(),
+                driver.metric,
+                driver.value
+            )
+        } else {
+            "No dominant runtime burst driver is visible in the current sample.".to_owned()
+        },
+        drivers,
+        correlated_events,
+        recommendations,
+    }
+}
+
+fn push_threshold_driver(
+    drivers: &mut Vec<RuntimeBurstDriver>,
+    value: f32,
+    threshold: RuntimeBurstThreshold<'_>,
+) {
+    if value >= threshold.critical_threshold {
+        drivers.push(runtime_burst_driver(
+            threshold.key,
+            SeverityBand::Critical,
+            threshold.metric,
+            format!("{value:.1}"),
+            threshold.detail,
+            threshold.recommendation,
+        ));
+    } else if value >= threshold.warning_threshold {
+        drivers.push(runtime_burst_driver(
+            threshold.key,
+            SeverityBand::Warning,
+            threshold.metric,
+            format!("{value:.1}"),
+            threshold.detail,
+            threshold.recommendation,
+        ));
+    }
+}
+
+fn runtime_burst_driver(
+    key: &str,
+    severity: SeverityBand,
+    metric: &str,
+    value: String,
+    detail: impl Into<String>,
+    recommendation: &str,
+) -> RuntimeBurstDriver {
+    RuntimeBurstDriver {
+        key: key.to_owned(),
+        severity,
+        metric: metric.to_owned(),
+        value,
+        detail: detail.into(),
+        recommendation: recommendation.to_owned(),
+    }
+}
+
+fn runtime_event_is_correlated(event: &DiagnosticsEvent) -> bool {
+    matches!(
+        event.subsystem,
+        DiagnosticsSubsystem::Engine
+            | DiagnosticsSubsystem::History
+            | DiagnosticsSubsystem::Persistence
+            | DiagnosticsSubsystem::Ui
+            | DiagnosticsSubsystem::AdapterChromium
+            | DiagnosticsSubsystem::AdapterDocker
+            | DiagnosticsSubsystem::AdapterHelper
+            | DiagnosticsSubsystem::AdapterChau7
+            | DiagnosticsSubsystem::AdapterVsCode
+    ) || event.event_type.contains("mcp")
+        || event.event_type.contains("history")
+        || event.event_type.contains("adapter-refresh")
+}
+
+fn runtime_correlated_event(event: &DiagnosticsEvent) -> RuntimeBurstCorrelatedEvent {
+    RuntimeBurstCorrelatedEvent {
+        timestamp_millis: event.timestamp_millis,
+        level: format!("{:?}", event.level),
+        subsystem: format!("{:?}", event.subsystem),
+        event_type: event.event_type.clone(),
+        message: event.message.clone(),
+        detail: event
+            .fields
+            .iter()
+            .find(|field| field.key == "error" || field.key == "aggressive_reason")
+            .map(|field| field.value.clone()),
+    }
+}
+
 fn build_support_bundle_manifest(
     privacy_tier: ExportPrivacyTier,
     snapshot: SystemSnapshot,
@@ -6705,9 +7103,16 @@ fn build_session_health_checks(
     runtime: &RuntimeLagMetrics,
     history: &HistorySummaryResponse,
     history_events: &[DiagnosticsEvent],
+    runtime_events: &[DiagnosticsEvent],
 ) -> Vec<SessionHealthCheck> {
     let history_efficiency = build_history_efficiency_diagnostics(history, history_events);
-    vec![
+    let runtime_burst = build_runtime_burst_explanation(
+        snapshot.captured_at_millis,
+        DEFAULT_RUNTIME_BURST_WINDOW_MINUTES,
+        runtime,
+        runtime_events,
+    );
+    let mut checks = vec![
         SessionHealthCheck {
             key: "runtime".to_owned(),
             severity: runtime_severity(runtime),
@@ -6833,7 +7238,23 @@ fn build_session_health_checks(
                 )
             },
         },
-    ]
+    ];
+    checks.push(SessionHealthCheck {
+        key: "runtime-bursts".to_owned(),
+        severity: runtime_burst.severity,
+        summary: runtime_burst.summary,
+        detail: if runtime_burst.drivers.is_empty() {
+            "No dominant Aetower runtime burst driver is visible in the current sample.".to_owned()
+        } else {
+            runtime_burst
+                .drivers
+                .iter()
+                .map(|driver| format!("{}: {}", driver.metric, driver.detail))
+                .collect::<Vec<_>>()
+                .join(" ")
+        },
+    });
+    checks
 }
 
 struct AiRuntimeReportData {
@@ -6994,12 +7415,17 @@ fn build_export_query_response(
             data_source.history_range_summary(options.start_millis, options.end_millis)?;
         let history_events =
             data_source.query_diagnostics(history_diagnostics_query(options.start_millis, 64))?;
+        let runtime_events = data_source.query_diagnostics(runtime_diagnostics_query(
+            options.start_millis,
+            DEFAULT_RUNTIME_BURST_EVENT_LIMIT,
+        ))?;
         let checks = build_session_health_checks(
             &snapshot,
             &diagnostics,
             &runtime,
             &history,
             &history_events,
+            &runtime_events,
         );
         payload.insert(
             "sessionHealth".to_owned(),
@@ -8499,6 +8925,28 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "aetower_runtime_burst_explanation",
+            "description": "Explain current Aetower observer overhead by correlating runtime lag, self CPU/wakeups, UI render latency, MCP request pressure, history work, and recent adapter diagnostics.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "window_minutes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 120,
+                        "default": DEFAULT_RUNTIME_BURST_WINDOW_MINUTES
+                    },
+                    "event_limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 256,
+                        "default": DEFAULT_RUNTIME_BURST_EVENT_LIMIT
+                    }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "aetower_diff_snapshots",
             "description": "Compare two persisted time points and return host plus per-entity deltas for friction, CPU, memory, wakeups, and process count, including boot-boundary metadata when the snapshots span a reboot.",
             "inputSchema": {
@@ -9623,6 +10071,7 @@ mod tests {
             "aetower_explain_anomalies",
             "aetower_entity_process_tree",
             "aetower_watch_self",
+            "aetower_runtime_burst_explanation",
             "aetower_top_findings",
             "aetower_host_alerts",
             "aetower_investigation_bundle",
@@ -9831,6 +10280,60 @@ mod tests {
                 .any(|caveat| caveat.contains("skipped"))
         );
         assert!(summary.contains("peak footprint"));
+    }
+
+    #[test]
+    fn runtime_burst_explanation_correlates_runtime_and_adapter_events() {
+        let runtime = RuntimeLagMetrics {
+            engine_tick_millis: 900.0,
+            target_tick_millis: 1_000.0,
+            collect_millis: 180.0,
+            history_millis: 120.0,
+            snapshot_to_render_millis: 150.0,
+            self_cpu_percent: 32.0,
+            self_wakeups_per_second: 1_200.0,
+            mcp_requests_per_second: MCP_REQUEST_CRITICAL_RATE + 1.0,
+            mcp_active_client_count: 5,
+            mcp_helper_count: 5,
+            oldest_mcp_helper_age_millis: MCP_HELPER_STALE_MILLIS + 1,
+            ..RuntimeLagMetrics::default()
+        };
+        let events = vec![
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Warn,
+                DiagnosticsSubsystem::AdapterChau7,
+                "adapter-refresh-failed",
+                "Chau7 adapter refresh failed.",
+            )
+            .field("error", "timeout")
+            .build(),
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Persistence,
+                "history-retention-maintained",
+                "Applied persisted history retention and maintenance policy.",
+            )
+            .field("checkpointed", true)
+            .build(),
+        ];
+
+        let explanation = build_runtime_burst_explanation(123, 10, &runtime, &events);
+
+        assert_eq!(explanation.severity, SeverityBand::Critical);
+        assert!(
+            explanation
+                .drivers
+                .iter()
+                .any(|driver| driver.key == "engine-tick")
+        );
+        assert!(
+            explanation
+                .drivers
+                .iter()
+                .any(|driver| driver.key == "adapter-refresh")
+        );
+        assert_eq!(explanation.correlated_events.len(), 2);
+        assert!(explanation.summary.contains("strongest signal"));
     }
 
     #[test]
