@@ -32,6 +32,17 @@ Each run writes artifacts under `tmp/runtime-profile/<timestamp>/`:
 - `store-summary.txt`: diagnostics/history store size, growth deltas, diagnostics error delta during the run, and `tick-over-budget` delta
 - `session-log-summary.txt`: compact unified-log noise summary for the profiled app PID when available
 
+## MCP runtime diagnostics
+
+Agents should prefer the in-app MCP tools when investigating a live Aetower session, because those tools read the app-owned engine state instead of starting a second collector:
+
+- `aetower_watch_self`: bounded live watch of Aetower self overhead. Use this for longer studies; it returns sampled runtime lag, MCP pressure, self CPU/wakeups, current and peak memory, and optional self `vmmap` region attribution.
+- `aetower_runtime_burst_explanation`: one-shot explanation of the current observer overhead. It correlates engine tick, collector/history/persist timings, UI render latency, self CPU/wakeups, MCP request pressure, and recent adapter diagnostics.
+- `aetower_session_health`: merged health view. The response includes the exact `runtime_lag` sample used to generate health checks so target cadence and health text can be compared from the same sample.
+- `aetower_history_store_health`: persisted-history efficiency report. It includes write rate, average snapshot size, WAL age, checkpoint status, pressure percentages, time-to-quota estimates, and history data-quality notes.
+
+Use shell profiling only when you need OS-level stack samples or when the MCP server is unavailable.
+
 ## How to use it
 
 Use this after major runtime changes, especially around:
