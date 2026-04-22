@@ -2592,6 +2592,7 @@ impl AetowerMcpServer {
         #[derive(Serialize)]
         struct Response {
             captured_at_millis: u64,
+            runtime_lag: RuntimeLagMetrics,
             overall: SeverityBand,
             checks: Vec<SessionHealthCheck>,
         }
@@ -2648,6 +2649,7 @@ impl AetowerMcpServer {
             .unwrap_or(SeverityBand::Info);
         tool_json(Response {
             captured_at_millis: snapshot.captured_at_millis,
+            runtime_lag: runtime,
             overall,
             checks,
         })
@@ -7121,7 +7123,8 @@ fn build_session_health_checks(
                 runtime.engine_tick_millis, runtime.target_tick_millis
             ),
             detail: format!(
-                "Collect {:.1} ms, history {:.1} ms, persist {:.1} ms, history queue {}, diagnostics queue {}, MCP helpers {} ({} stale). Aetower self: CPU {:.1}%, memory {}, wakeups {:.0}/s.",
+                "Runtime sample {}, collect {:.1} ms, history {:.1} ms, persist {:.1} ms, history queue {}, diagnostics queue {}, MCP helpers {} ({} stale). Aetower self: CPU {:.1}%, memory {}, wakeups {:.0}/s.",
+                runtime.updated_at_millis,
                 runtime.collect_millis,
                 runtime.history_millis,
                 runtime.persist_millis,
@@ -9670,6 +9673,7 @@ mod tests {
         fn latest_runtime_lag_metrics(&self) -> Result<RuntimeLagMetrics, String> {
             Ok(RuntimeLagMetrics {
                 updated_at_millis: 123,
+                target_tick_millis: 2_000.0,
                 ..RuntimeLagMetrics::default()
             })
         }
@@ -10334,6 +10338,40 @@ mod tests {
         );
         assert_eq!(explanation.correlated_events.len(), 2);
         assert!(explanation.summary.contains("strongest signal"));
+    }
+
+    #[test]
+    fn session_health_returns_exact_runtime_lag_sample_used_for_checks() {
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 25,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_session_health",
+                "arguments": { "history_window_hours": 1 }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        let content = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .cloned()
+            .unwrap_or_else(|| panic!("structuredContent"));
+
+        assert_eq!(
+            content
+                .pointer("/runtime_lag/updated_at_millis")
+                .and_then(Value::as_u64),
+            Some(123)
+        );
+        assert_eq!(
+            content
+                .pointer("/runtime_lag/target_tick_millis")
+                .and_then(Value::as_f64),
+            Some(2_000.0)
+        );
     }
 
     #[test]
