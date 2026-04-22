@@ -1354,6 +1354,8 @@ impl AetowerMcpDataSource for MonitorEngineDataSource {
                 oldest_millis: summary.oldest_millis,
                 newest_millis: summary.newest_millis,
                 pending_writes: summary.pending_writes,
+                store_modified_millis: summary.store_modified_millis,
+                wal_modified_millis: summary.wal_modified_millis,
             })
     }
 

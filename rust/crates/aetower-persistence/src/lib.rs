@@ -48,6 +48,8 @@ pub struct HistoryRangeSummary {
     pub oldest_millis: Option<u64>,
     pub newest_millis: Option<u64>,
     pub pending_writes: u64,
+    pub store_modified_millis: Option<u64>,
+    pub wal_modified_millis: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -364,6 +366,8 @@ impl HistoryStore {
             oldest_millis,
             newest_millis,
             pending_writes: self.writer.pending_writes(),
+            store_modified_millis: file_modified_millis(&self.db_path),
+            wal_modified_millis: file_modified_millis(&self.wal_path()),
         })
     }
 
@@ -952,6 +956,14 @@ fn cancellation_requested(cancel: Option<&Arc<AtomicBool>>) -> bool {
     cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed))
 }
 
+fn file_modified_millis(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+}
+
 fn cancelled_maintenance_report(
     started: Instant,
     store_bytes: u64,
@@ -1084,9 +1096,8 @@ pub fn range_summary_read_only(
         .map(|count| count as u64)
         .map_err(|e| format!("read-only quarantine count: {e}"))?;
     let store_bytes = fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
-    let wal_bytes = fs::metadata(PathBuf::from(format!("{}-wal", path.display())))
-        .map(|meta| meta.len())
-        .unwrap_or(0);
+    let wal_path = PathBuf::from(format!("{}-wal", path.display()));
+    let wal_bytes = fs::metadata(&wal_path).map(|meta| meta.len()).unwrap_or(0);
 
     Ok(HistoryRangeSummary {
         store_bytes,
@@ -1097,6 +1108,8 @@ pub fn range_summary_read_only(
         oldest_millis,
         newest_millis,
         pending_writes: 0,
+        store_modified_millis: file_modified_millis(path),
+        wal_modified_millis: file_modified_millis(&wal_path),
     })
 }
 

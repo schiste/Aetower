@@ -74,6 +74,8 @@ const HISTORY_STORE_WARNING_BYTES: u64 = 512 * 1024 * 1024;
 const HISTORY_STORE_CRITICAL_BYTES: u64 = 1024 * 1024 * 1024;
 const HISTORY_WAL_WARNING_BYTES: u64 = 32 * 1024 * 1024;
 const HISTORY_WAL_CRITICAL_BYTES: u64 = 128 * 1024 * 1024;
+const HISTORY_SNAPSHOT_WARNING_COUNT: u64 = 3_000;
+const HISTORY_SNAPSHOT_CRITICAL_COUNT: u64 = 5_000;
 const HISTORY_QUARANTINE_WARNING: u64 = 64;
 const HISTORY_QUARANTINE_CRITICAL: u64 = 256;
 const DIAGNOSTICS_WARN_WARNING: u32 = 200;
@@ -105,6 +107,8 @@ pub struct HistorySummaryResponse {
     pub oldest_millis: Option<u64>,
     pub newest_millis: Option<u64>,
     pub pending_writes: u64,
+    pub store_modified_millis: Option<u64>,
+    pub wal_modified_millis: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -264,9 +268,28 @@ struct HistoryStoreHealth {
     severity: SeverityBand,
     summary: String,
     range: HistorySummaryResponse,
+    efficiency: HistoryEfficiencyDiagnostics,
     thresholds: BTreeMap<String, Value>,
     data_quality: Option<HistoryDataQualityReport>,
     recent_history_events: Vec<DiagnosticsEvent>,
+    recommendations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct HistoryEfficiencyDiagnostics {
+    severity: SeverityBand,
+    summary: String,
+    window_millis: u64,
+    write_rate_per_minute: f64,
+    estimated_bytes_per_minute: f64,
+    average_snapshot_bytes: u64,
+    store_pressure_percent: f64,
+    wal_pressure_percent: f64,
+    snapshot_count_pressure_percent: f64,
+    wal_age_millis: Option<u64>,
+    checkpoint_status: String,
+    estimated_minutes_to_store_warning: Option<f64>,
+    estimated_minutes_to_wal_warning: Option<f64>,
     recommendations: Vec<String>,
 }
 
@@ -2174,14 +2197,7 @@ impl AetowerMcpServer {
             .map_err(tool_error)?;
         let recent_history_events = self
             .data_source
-            .query_diagnostics(DiagnosticsQuery {
-                limit: 32,
-                minimum_level: Some(aetower_diagnostics::DiagnosticsLevel::Info),
-                subsystem: Some(aetower_diagnostics::DiagnosticsSubsystem::History),
-                search: None,
-                since_millis: Some(start_millis),
-                include_persisted: true,
-            })
+            .query_diagnostics(history_diagnostics_query(start_millis, 64))
             .map_err(tool_error)?;
         let data_quality = load_history_snapshots_raw(
             &*self.data_source,
@@ -2521,7 +2537,22 @@ impl AetowerMcpServer {
                 snapshot.captured_at_millis,
             )
             .map_err(tool_error)?;
-        let checks = build_session_health_checks(&snapshot, &diagnostics, &runtime, &history);
+        let history_events = self
+            .data_source
+            .query_diagnostics(history_diagnostics_query(
+                snapshot
+                    .captured_at_millis
+                    .saturating_sub(args.history_window_hours.saturating_mul(60 * 60 * 1000)),
+                64,
+            ))
+            .map_err(tool_error)?;
+        let checks = build_session_health_checks(
+            &snapshot,
+            &diagnostics,
+            &runtime,
+            &history,
+            &history_events,
+        );
         let overall = checks
             .iter()
             .map(|check| check.severity)
@@ -2745,6 +2776,19 @@ fn empty_history_summary() -> HistorySummaryResponse {
         oldest_millis: None,
         newest_millis: None,
         pending_writes: 0,
+        store_modified_millis: None,
+        wal_modified_millis: None,
+    }
+}
+
+fn history_diagnostics_query(start_millis: u64, limit: usize) -> DiagnosticsQuery {
+    DiagnosticsQuery {
+        limit,
+        minimum_level: Some(aetower_diagnostics::DiagnosticsLevel::Info),
+        subsystem: None,
+        search: Some("history".to_owned()),
+        since_millis: Some(start_millis),
+        include_persisted: true,
     }
 }
 
@@ -6008,16 +6052,20 @@ fn build_history_store_health(
     recent_history_events: Vec<DiagnosticsEvent>,
     data_quality: Option<HistoryDataQualityReport>,
 ) -> HistoryStoreHealth {
+    let efficiency = build_history_efficiency_diagnostics(&summary, &recent_history_events);
     let severity = data_quality
         .as_ref()
         .map(|quality| {
-            if quality.severity.score() > history_store_severity(&summary).score() {
-                quality.severity
-            } else {
-                history_store_severity(&summary)
-            }
+            [
+                history_store_severity(&summary),
+                efficiency.severity,
+                quality.severity,
+            ]
+            .into_iter()
+            .max_by_key(|severity| severity.score())
+            .unwrap_or(SeverityBand::Info)
         })
-        .unwrap_or_else(|| history_store_severity(&summary));
+        .unwrap_or_else(|| history_store_severity(&summary).max(efficiency.severity));
     let mut thresholds = BTreeMap::new();
     thresholds.insert(
         "warning_store_bytes".to_owned(),
@@ -6067,6 +6115,7 @@ fn build_history_store_health(
     {
         recommendations.extend(quality.recommendations.clone());
     }
+    recommendations.extend(efficiency.recommendations.clone());
     HistoryStoreHealth {
         severity,
         summary: format!(
@@ -6077,11 +6126,179 @@ fn build_history_store_health(
             summary.quarantine_count
         ),
         range: summary,
+        efficiency,
         thresholds,
         data_quality,
         recent_history_events,
         recommendations,
     }
+}
+
+fn build_history_efficiency_diagnostics(
+    summary: &HistorySummaryResponse,
+    recent_history_events: &[DiagnosticsEvent],
+) -> HistoryEfficiencyDiagnostics {
+    let window_millis = match (summary.oldest_millis, summary.newest_millis) {
+        (Some(oldest), Some(newest)) if newest > oldest => newest - oldest,
+        _ => 0,
+    };
+    let window_minutes = (window_millis as f64 / 60_000.0).max(0.0);
+    let write_rate_per_minute = if window_minutes > 0.0 {
+        summary.range_count as f64 / window_minutes
+    } else {
+        0.0
+    };
+    let average_snapshot_bytes = if summary.snapshot_count > 0 {
+        summary.store_bytes / summary.snapshot_count.max(1)
+    } else {
+        0
+    };
+    let estimated_bytes_per_minute = write_rate_per_minute * average_snapshot_bytes as f64;
+    let store_pressure_percent = pressure_percent(summary.store_bytes, HISTORY_STORE_WARNING_BYTES);
+    let wal_pressure_percent = pressure_percent(summary.wal_bytes, HISTORY_WAL_WARNING_BYTES);
+    let snapshot_count_pressure_percent =
+        pressure_percent(summary.snapshot_count, HISTORY_SNAPSHOT_WARNING_COUNT);
+    let wal_age_millis = summary
+        .wal_modified_millis
+        .and_then(|modified| current_unix_millis().map(|now| now.saturating_sub(modified)));
+    let checkpoint_status = latest_history_checkpoint_status(recent_history_events);
+    let estimated_minutes_to_store_warning = estimated_minutes_to_limit(
+        summary.store_bytes,
+        HISTORY_STORE_WARNING_BYTES,
+        estimated_bytes_per_minute,
+    );
+    let estimated_minutes_to_wal_warning = estimated_minutes_to_limit(
+        summary.wal_bytes,
+        HISTORY_WAL_WARNING_BYTES,
+        estimated_bytes_per_minute,
+    );
+
+    let mut recommendations = Vec::new();
+    if summary.pending_writes > 0 {
+        recommendations.push(format!(
+            "{} history write(s) are currently queued; watch for backlog before raising retention.",
+            summary.pending_writes
+        ));
+    }
+    if store_pressure_percent >= 80.0 {
+        recommendations.push(
+            "History DB is approaching its soft byte budget; shorten retention or increase checkpoint/trim cadence before it reaches the warning threshold."
+                .to_owned(),
+        );
+    }
+    if wal_pressure_percent >= 80.0 {
+        recommendations.push(
+            "History WAL is approaching its checkpoint budget; confirm maintenance is checkpointing under sustained write pressure."
+                .to_owned(),
+        );
+    }
+    if snapshot_count_pressure_percent >= 80.0 {
+        recommendations.push(
+            "Persisted snapshot count is approaching its soft cap; reduce write cadence or trim older samples."
+                .to_owned(),
+        );
+    }
+    if checkpoint_status.contains("No checkpoint") && summary.wal_bytes > 0 {
+        recommendations.push(
+            "No recent checkpoint event was found in diagnostics; keep persistence diagnostics enabled to prove WAL control."
+                .to_owned(),
+        );
+    }
+
+    let severity = if store_pressure_percent >= 100.0
+        || wal_pressure_percent >= 100.0
+        || summary.snapshot_count >= HISTORY_SNAPSHOT_CRITICAL_COUNT
+    {
+        SeverityBand::Critical
+    } else if store_pressure_percent >= 80.0
+        || wal_pressure_percent >= 80.0
+        || snapshot_count_pressure_percent >= 80.0
+        || summary.pending_writes > 0
+    {
+        SeverityBand::Warning
+    } else {
+        SeverityBand::Info
+    };
+
+    HistoryEfficiencyDiagnostics {
+        severity,
+        summary: format!(
+            "{:.1} persisted sample(s)/min, average snapshot {}, DB pressure {:.0}%, WAL pressure {:.0}%.",
+            write_rate_per_minute,
+            format_bytes(average_snapshot_bytes),
+            store_pressure_percent,
+            wal_pressure_percent
+        ),
+        window_millis,
+        write_rate_per_minute,
+        estimated_bytes_per_minute,
+        average_snapshot_bytes,
+        store_pressure_percent,
+        wal_pressure_percent,
+        snapshot_count_pressure_percent,
+        wal_age_millis,
+        checkpoint_status,
+        estimated_minutes_to_store_warning,
+        estimated_minutes_to_wal_warning,
+        recommendations,
+    }
+}
+
+fn pressure_percent(current: u64, warning_limit: u64) -> f64 {
+    if warning_limit == 0 {
+        0.0
+    } else {
+        current as f64 / warning_limit as f64 * 100.0
+    }
+}
+
+fn estimated_minutes_to_limit(current: u64, limit: u64, bytes_per_minute: f64) -> Option<f64> {
+    if current >= limit {
+        Some(0.0)
+    } else if bytes_per_minute > 0.0 {
+        Some((limit - current) as f64 / bytes_per_minute)
+    } else {
+        None
+    }
+}
+
+fn latest_history_checkpoint_status(events: &[DiagnosticsEvent]) -> String {
+    let checkpoint_event = events.iter().find(|event| {
+        matches!(
+            event.event_type.as_str(),
+            "history-retention-maintained" | "history-maintained"
+        )
+    });
+    let Some(event) = checkpoint_event else {
+        return "No checkpoint event found in the selected diagnostics window.".to_owned();
+    };
+    let checkpointed = diagnostics_field_value(event, "checkpointed")
+        .map(|value| value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let wal_after = diagnostics_field_value(event, "wal_bytes_after")
+        .and_then(|value| value.parse::<u64>().ok());
+    if checkpointed {
+        format!(
+            "Checkpointed at {}; WAL after maintenance {}.",
+            event.timestamp_millis,
+            wal_after
+                .map(format_bytes)
+                .unwrap_or_else(|| "unknown".to_owned())
+        )
+    } else {
+        format!(
+            "Maintenance ran at {} but did not report a checkpoint.",
+            event.timestamp_millis
+        )
+    }
+}
+
+fn diagnostics_field_value<'a>(event: &'a DiagnosticsEvent, key: &str) -> Option<&'a str> {
+    event
+        .fields
+        .iter()
+        .find(|field| field.key == key)
+        .map(|field| field.value.as_str())
 }
 
 fn build_support_bundle_manifest(
@@ -6487,7 +6704,9 @@ fn build_session_health_checks(
     diagnostics: &DiagnosticsOverview,
     runtime: &RuntimeLagMetrics,
     history: &HistorySummaryResponse,
+    history_events: &[DiagnosticsEvent],
 ) -> Vec<SessionHealthCheck> {
+    let history_efficiency = build_history_efficiency_diagnostics(history, history_events);
     vec![
         SessionHealthCheck {
             key: "runtime".to_owned(),
@@ -6527,16 +6746,21 @@ fn build_session_health_checks(
         },
         SessionHealthCheck {
             key: "history-store".to_owned(),
-            severity: history_store_severity(history),
+            severity: history_store_severity(history).max(history_efficiency.severity),
             summary: format!(
-                "{} DB, {} WAL, {} persisted snapshots.",
+                "{} DB, {} WAL, {} persisted snapshots, {:.1} samples/min.",
                 format_bytes(history.store_bytes),
                 format_bytes(history.wal_bytes),
-                history.snapshot_count
+                history.snapshot_count,
+                history_efficiency.write_rate_per_minute
             ),
             detail: format!(
-                "{} quarantined rows across the current store window.",
-                history.quarantine_count
+                "{} quarantined rows, average snapshot {}, DB pressure {:.0}%, WAL pressure {:.0}%, checkpoint: {}",
+                history.quarantine_count,
+                format_bytes(history_efficiency.average_snapshot_bytes),
+                history_efficiency.store_pressure_percent,
+                history_efficiency.wal_pressure_percent,
+                history_efficiency.checkpoint_status
             ),
         },
         SessionHealthCheck {
@@ -6768,7 +6992,15 @@ fn build_export_query_response(
         let runtime = data_source.latest_runtime_lag_metrics()?;
         let history =
             data_source.history_range_summary(options.start_millis, options.end_millis)?;
-        let checks = build_session_health_checks(&snapshot, &diagnostics, &runtime, &history);
+        let history_events =
+            data_source.query_diagnostics(history_diagnostics_query(options.start_millis, 64))?;
+        let checks = build_session_health_checks(
+            &snapshot,
+            &diagnostics,
+            &runtime,
+            &history,
+            &history_events,
+        );
         payload.insert(
             "sessionHealth".to_owned(),
             export_controlled_json(
@@ -9008,6 +9240,8 @@ mod tests {
                 oldest_millis: Some(1),
                 newest_millis: Some(2),
                 pending_writes: 0,
+                store_modified_millis: Some(2),
+                wal_modified_millis: Some(2),
             })
         }
 
@@ -9287,6 +9521,11 @@ mod tests {
                     .map(|snapshot| snapshot.captured_at_millis)
                     .max(),
                 pending_writes: 0,
+                store_modified_millis: in_range
+                    .iter()
+                    .map(|snapshot| snapshot.captured_at_millis)
+                    .max(),
+                wal_modified_millis: None,
             })
         }
 
@@ -10392,6 +10631,41 @@ mod tests {
     }
 
     #[test]
+    fn history_efficiency_reports_growth_and_checkpoint_status() {
+        let summary = HistorySummaryResponse {
+            store_bytes: HISTORY_STORE_WARNING_BYTES * 9 / 10,
+            wal_bytes: HISTORY_WAL_WARNING_BYTES / 2,
+            snapshot_count: 900,
+            quarantine_count: 0,
+            range_count: 60,
+            oldest_millis: Some(0),
+            newest_millis: Some(60 * 60 * 1000),
+            pending_writes: 1,
+            store_modified_millis: Some(60 * 60 * 1000),
+            wal_modified_millis: Some(60 * 60 * 1000),
+        };
+        let events = vec![
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::Persistence,
+                "history-retention-maintained",
+                "Applied persisted history retention and maintenance policy.",
+            )
+            .field("checkpointed", true)
+            .field("wal_bytes_after", summary.wal_bytes)
+            .build(),
+        ];
+
+        let efficiency = build_history_efficiency_diagnostics(&summary, &events);
+
+        assert_eq!(efficiency.severity, SeverityBand::Warning);
+        assert!(efficiency.write_rate_per_minute > 0.0);
+        assert!(efficiency.store_pressure_percent >= 89.0);
+        assert!(efficiency.checkpoint_status.contains("Checkpointed"));
+        assert!(efficiency.estimated_minutes_to_store_warning.is_some());
+    }
+
+    #[test]
     fn history_loader_uses_oldest_timestamp_cursor_for_ascending_pages() {
         let source = PagingHistorySource {
             snapshots: (1..=5)
@@ -10517,6 +10791,11 @@ mod tests {
                         .last()
                         .map(|snapshot| snapshot.captured_at_millis),
                     pending_writes: 0,
+                    store_modified_millis: self
+                        .snapshots
+                        .last()
+                        .map(|snapshot| snapshot.captured_at_millis),
+                    wal_modified_millis: None,
                 })
             }
             fn load_history_page(
