@@ -5141,6 +5141,16 @@ public struct RuntimeLagMetrics {
     public var mcpHelperCount: UInt32
     public var staleMcpHelperCount: UInt32
     public var oldestMcpHelperAgeMillis: UInt64
+    public var selfCpuPercent: Float
+    public var selfMemoryBytes: UInt64
+    public var selfMemoryPhysicalFootprintBytes: UInt64
+    public var selfWakeupsPerSecond: Float
+    public var selfEnergyNjPerS: Double
+    public var mcpTotalConnections: UInt64
+    public var mcpActiveClientCount: UInt32
+    public var mcpTotalRequests: UInt64
+    public var mcpRequestsPerSecond: Float
+    public var mcpObservedAtMillis: UInt64
     public var bridgeFetchMillis: Float
     public var uiRefreshMillis: Float
     public var snapshotToUiMillis: Float
@@ -5155,7 +5165,7 @@ public struct RuntimeLagMetrics {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(updatedAtMillis: UInt64, engineTickMillis: Float, collectMillis: Float, identityMillis: Float, attributionMillis: Float, frictionMillis: Float, enrichMillis: Float, historyMillis: Float, persistMillis: Float, gpuSampleMillis: Float, targetTickMillis: Float, historyQueueDepth: UInt32, diagnosticsQueueDepth: UInt32, mcpHelperCount: UInt32, staleMcpHelperCount: UInt32, oldestMcpHelperAgeMillis: UInt64, bridgeFetchMillis: Float, uiRefreshMillis: Float, snapshotToUiMillis: Float, snapshotToRenderMillis: Float, renderCommitMillis: Float, displayFrameIntervalMillis: Float, displayRefreshHz: Float, displayDroppedFrames: UInt64, inputAvgLatencyMillis: Float, inputMaxLatencyMillis: Float, inputSampleCount: UInt32) {
+    public init(updatedAtMillis: UInt64, engineTickMillis: Float, collectMillis: Float, identityMillis: Float, attributionMillis: Float, frictionMillis: Float, enrichMillis: Float, historyMillis: Float, persistMillis: Float, gpuSampleMillis: Float, targetTickMillis: Float, historyQueueDepth: UInt32, diagnosticsQueueDepth: UInt32, mcpHelperCount: UInt32, staleMcpHelperCount: UInt32, oldestMcpHelperAgeMillis: UInt64, selfCpuPercent: Float, selfMemoryBytes: UInt64, selfMemoryPhysicalFootprintBytes: UInt64, selfWakeupsPerSecond: Float, selfEnergyNjPerS: Double, mcpTotalConnections: UInt64, mcpActiveClientCount: UInt32, mcpTotalRequests: UInt64, mcpRequestsPerSecond: Float, mcpObservedAtMillis: UInt64, bridgeFetchMillis: Float, uiRefreshMillis: Float, snapshotToUiMillis: Float, snapshotToRenderMillis: Float, renderCommitMillis: Float, displayFrameIntervalMillis: Float, displayRefreshHz: Float, displayDroppedFrames: UInt64, inputAvgLatencyMillis: Float, inputMaxLatencyMillis: Float, inputSampleCount: UInt32) {
         self.updatedAtMillis = updatedAtMillis
         self.engineTickMillis = engineTickMillis
         self.collectMillis = collectMillis
@@ -5172,6 +5182,16 @@ public struct RuntimeLagMetrics {
         self.mcpHelperCount = mcpHelperCount
         self.staleMcpHelperCount = staleMcpHelperCount
         self.oldestMcpHelperAgeMillis = oldestMcpHelperAgeMillis
+        self.selfCpuPercent = selfCpuPercent
+        self.selfMemoryBytes = selfMemoryBytes
+        self.selfMemoryPhysicalFootprintBytes = selfMemoryPhysicalFootprintBytes
+        self.selfWakeupsPerSecond = selfWakeupsPerSecond
+        self.selfEnergyNjPerS = selfEnergyNjPerS
+        self.mcpTotalConnections = mcpTotalConnections
+        self.mcpActiveClientCount = mcpActiveClientCount
+        self.mcpTotalRequests = mcpTotalRequests
+        self.mcpRequestsPerSecond = mcpRequestsPerSecond
+        self.mcpObservedAtMillis = mcpObservedAtMillis
         self.bridgeFetchMillis = bridgeFetchMillis
         self.uiRefreshMillis = uiRefreshMillis
         self.snapshotToUiMillis = snapshotToUiMillis
@@ -5241,6 +5261,36 @@ extension RuntimeLagMetrics: Equatable, Hashable {
         if lhs.oldestMcpHelperAgeMillis != rhs.oldestMcpHelperAgeMillis {
             return false
         }
+        if lhs.selfCpuPercent != rhs.selfCpuPercent {
+            return false
+        }
+        if lhs.selfMemoryBytes != rhs.selfMemoryBytes {
+            return false
+        }
+        if lhs.selfMemoryPhysicalFootprintBytes != rhs.selfMemoryPhysicalFootprintBytes {
+            return false
+        }
+        if lhs.selfWakeupsPerSecond != rhs.selfWakeupsPerSecond {
+            return false
+        }
+        if lhs.selfEnergyNjPerS != rhs.selfEnergyNjPerS {
+            return false
+        }
+        if lhs.mcpTotalConnections != rhs.mcpTotalConnections {
+            return false
+        }
+        if lhs.mcpActiveClientCount != rhs.mcpActiveClientCount {
+            return false
+        }
+        if lhs.mcpTotalRequests != rhs.mcpTotalRequests {
+            return false
+        }
+        if lhs.mcpRequestsPerSecond != rhs.mcpRequestsPerSecond {
+            return false
+        }
+        if lhs.mcpObservedAtMillis != rhs.mcpObservedAtMillis {
+            return false
+        }
         if lhs.bridgeFetchMillis != rhs.bridgeFetchMillis {
             return false
         }
@@ -5294,6 +5344,16 @@ extension RuntimeLagMetrics: Equatable, Hashable {
         hasher.combine(mcpHelperCount)
         hasher.combine(staleMcpHelperCount)
         hasher.combine(oldestMcpHelperAgeMillis)
+        hasher.combine(selfCpuPercent)
+        hasher.combine(selfMemoryBytes)
+        hasher.combine(selfMemoryPhysicalFootprintBytes)
+        hasher.combine(selfWakeupsPerSecond)
+        hasher.combine(selfEnergyNjPerS)
+        hasher.combine(mcpTotalConnections)
+        hasher.combine(mcpActiveClientCount)
+        hasher.combine(mcpTotalRequests)
+        hasher.combine(mcpRequestsPerSecond)
+        hasher.combine(mcpObservedAtMillis)
         hasher.combine(bridgeFetchMillis)
         hasher.combine(uiRefreshMillis)
         hasher.combine(snapshotToUiMillis)
@@ -5333,6 +5393,16 @@ public struct FfiConverterTypeRuntimeLagMetrics: FfiConverterRustBuffer {
                 mcpHelperCount: FfiConverterUInt32.read(from: &buf), 
                 staleMcpHelperCount: FfiConverterUInt32.read(from: &buf), 
                 oldestMcpHelperAgeMillis: FfiConverterUInt64.read(from: &buf), 
+                selfCpuPercent: FfiConverterFloat.read(from: &buf), 
+                selfMemoryBytes: FfiConverterUInt64.read(from: &buf), 
+                selfMemoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf), 
+                selfWakeupsPerSecond: FfiConverterFloat.read(from: &buf), 
+                selfEnergyNjPerS: FfiConverterDouble.read(from: &buf), 
+                mcpTotalConnections: FfiConverterUInt64.read(from: &buf), 
+                mcpActiveClientCount: FfiConverterUInt32.read(from: &buf), 
+                mcpTotalRequests: FfiConverterUInt64.read(from: &buf), 
+                mcpRequestsPerSecond: FfiConverterFloat.read(from: &buf), 
+                mcpObservedAtMillis: FfiConverterUInt64.read(from: &buf), 
                 bridgeFetchMillis: FfiConverterFloat.read(from: &buf), 
                 uiRefreshMillis: FfiConverterFloat.read(from: &buf), 
                 snapshotToUiMillis: FfiConverterFloat.read(from: &buf), 
@@ -5364,6 +5434,16 @@ public struct FfiConverterTypeRuntimeLagMetrics: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.mcpHelperCount, into: &buf)
         FfiConverterUInt32.write(value.staleMcpHelperCount, into: &buf)
         FfiConverterUInt64.write(value.oldestMcpHelperAgeMillis, into: &buf)
+        FfiConverterFloat.write(value.selfCpuPercent, into: &buf)
+        FfiConverterUInt64.write(value.selfMemoryBytes, into: &buf)
+        FfiConverterUInt64.write(value.selfMemoryPhysicalFootprintBytes, into: &buf)
+        FfiConverterFloat.write(value.selfWakeupsPerSecond, into: &buf)
+        FfiConverterDouble.write(value.selfEnergyNjPerS, into: &buf)
+        FfiConverterUInt64.write(value.mcpTotalConnections, into: &buf)
+        FfiConverterUInt32.write(value.mcpActiveClientCount, into: &buf)
+        FfiConverterUInt64.write(value.mcpTotalRequests, into: &buf)
+        FfiConverterFloat.write(value.mcpRequestsPerSecond, into: &buf)
+        FfiConverterUInt64.write(value.mcpObservedAtMillis, into: &buf)
         FfiConverterFloat.write(value.bridgeFetchMillis, into: &buf)
         FfiConverterFloat.write(value.uiRefreshMillis, into: &buf)
         FfiConverterFloat.write(value.snapshotToUiMillis, into: &buf)

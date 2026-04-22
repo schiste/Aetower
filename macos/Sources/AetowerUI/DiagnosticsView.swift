@@ -76,6 +76,7 @@ public struct DiagnosticsView: View {
 
                 controls
                 sessionHealth
+                mcpLifecycle
                 overview
                 eventStream
             }
@@ -378,6 +379,52 @@ public struct DiagnosticsView: View {
         }
     }
 
+    private var mcpLifecycle: some View {
+        let runtime = state.runtimeLagMetrics
+        return GroupBox("MCP helper lifecycle") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                LazyVGrid(columns: overviewColumns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    diagnosticsMetric(
+                        title: "Active clients",
+                        value: "\(runtime.mcpActiveClientCount)",
+                        subtitle: "\(runtime.mcpHelperCount) helper processes · \(runtime.staleMcpHelperCount) stale",
+                        valueColor: mcpLifecycleColor
+                    )
+                    diagnosticsMetric(
+                        title: "Oldest helper",
+                        value: durationLabel(runtime.oldestMcpHelperAgeMillis),
+                        subtitle: "stale threshold \(durationLabel(15 * 60 * 1000))"
+                    )
+                    diagnosticsMetric(
+                        title: "Request rate",
+                        value: String(format: "%.1f/s", runtime.mcpRequestsPerSecond),
+                        subtitle: "\(runtime.mcpTotalRequests) total requests · \(runtime.mcpTotalConnections) connections"
+                    )
+                    diagnosticsMetric(
+                        title: "Owner attribution",
+                        value: "Unavailable",
+                        subtitle: "MCP protocol exposes counts, not stable client identities yet"
+                    )
+                    diagnosticsMetric(
+                        title: "Aetower self",
+                        value: String(format: "%.1f%% CPU", runtime.selfCpuPercent),
+                        subtitle: "\(byteCount(runtime.selfMemoryBytes)) resident · \(String(format: "%.0f/s", runtime.selfWakeupsPerSecond)) wakeups"
+                    )
+                    diagnosticsMetric(
+                        title: "Last MCP observation",
+                        value: runtime.mcpObservedAtMillis == 0 ? "Pending" : relativeTimeLabel(from: runtime.mcpObservedAtMillis),
+                        subtitle: "updated by in-app MCP runtime stats"
+                    )
+                }
+
+                Text(mcpLifecycleGuidance)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
     private var eventStream: some View {
         let clusters = eventClusters
         return GroupBox("Event stream") {
@@ -660,6 +707,30 @@ public struct DiagnosticsView: View {
         )
     }
 
+    private var mcpLifecycleColor: Color? {
+        if state.runtimeLagMetrics.staleMcpHelperCount > 0 || state.runtimeLagMetrics.mcpHelperCount >= 8 {
+            return AetowerDesign.Status.error
+        }
+        if state.runtimeLagMetrics.mcpHelperCount >= 4 || state.runtimeLagMetrics.mcpRequestsPerSecond >= 10 {
+            return AetowerDesign.Status.warning
+        }
+        return AetowerDesign.Status.success
+    }
+
+    private var mcpLifecycleGuidance: String {
+        let runtime = state.runtimeLagMetrics
+        if runtime.staleMcpHelperCount > 0 {
+            return "\(runtime.staleMcpHelperCount) helper process(es) crossed the stale threshold. Check agents that kept stdio sessions open after disconnect."
+        }
+        if runtime.mcpRequestsPerSecond >= 10 {
+            return "MCP request pressure is elevated. Prefer persistent clients and avoid reconnect/poll loops when agents run longer audits."
+        }
+        if runtime.mcpHelperCount > 0 {
+            return "Helpers are expected while clients are connected. They should drain when agents disconnect; Aetower can currently count clients but cannot identify individual owners."
+        }
+        return "No helper process is currently visible. Local agents should use the bundled helper, which proxies to this app-owned engine."
+    }
+
     private var diagnosticsErrorSubtitle: String {
         if let message = recentDiagnosticsErrorMessage {
             return message
@@ -792,6 +863,17 @@ private func relativeTimeLabel(from timestampMillis: UInt64) -> String {
 
 private func relativeTimeLabel(from date: Date) -> String {
     relativeTimeLabel(from: UInt64(date.timeIntervalSince1970 * 1000))
+}
+
+private func durationLabel(_ millis: UInt64) -> String {
+    let seconds = millis / 1000
+    if seconds < 60 {
+        return "\(seconds)s"
+    }
+    if seconds < 3600 {
+        return "\(seconds / 60)m"
+    }
+    return "\(seconds / 3600)h \(seconds % 3600 / 60)m"
 }
 
 private func subsystemLabel(_ subsystem: DiagnosticsSubsystem) -> String {
