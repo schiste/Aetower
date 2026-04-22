@@ -57,6 +57,11 @@ const DEFAULT_HISTORY_EXPECTED_INTERVAL_MILLIS: u64 = 10_000;
 const DEFAULT_HISTORY_QUALITY_MAX_SNAPSHOTS: usize = 4096;
 const HISTORY_DATA_GAP_MULTIPLIER: u64 = 3;
 const DEFAULT_EXPORT_HISTORY_LIMIT: u32 = 120;
+const DEFAULT_SELF_WATCH_DURATION_SECONDS: u64 = 30;
+const MAX_SELF_WATCH_DURATION_SECONDS: u64 = 300;
+const DEFAULT_SELF_WATCH_INTERVAL_MILLIS: u64 = 1_000;
+const MIN_SELF_WATCH_INTERVAL_MILLIS: u64 = 250;
+const MAX_SELF_WATCH_INTERVAL_MILLIS: u64 = 60_000;
 const MEMORY_PRESSURE_WARNING_RATIO: f64 = 0.80;
 const MEMORY_PRESSURE_CRITICAL_RATIO: f64 = 0.90;
 const COMPRESSED_MEMORY_WARNING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
@@ -574,6 +579,69 @@ struct EntityMemoryBreakdown {
     physical_footprint_bytes: u64,
     memory_metric_note: String,
     regions: Vec<MemoryRegionBreakdown>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SelfRuntimeWatchSample {
+    observed_at_millis: u64,
+    engine_tick_millis: f32,
+    target_tick_millis: f32,
+    collect_millis: f32,
+    history_millis: f32,
+    persist_millis: f32,
+    bridge_fetch_millis: f32,
+    ui_refresh_millis: f32,
+    snapshot_to_render_millis: f32,
+    render_commit_millis: f32,
+    self_cpu_percent: f32,
+    self_memory_bytes: u64,
+    self_memory_physical_footprint_bytes: u64,
+    self_wakeups_per_second: f32,
+    mcp_requests_per_second: f32,
+    mcp_active_client_count: u32,
+    mcp_helper_count: u32,
+    stale_mcp_helper_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SelfRuntimeWatchAverages {
+    engine_tick_millis: f32,
+    collect_millis: f32,
+    history_millis: f32,
+    persist_millis: f32,
+    self_cpu_percent: f32,
+    self_wakeups_per_second: f32,
+    mcp_requests_per_second: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SelfRuntimeMemoryAttribution {
+    current_resident_bytes: u64,
+    current_physical_footprint_bytes: u64,
+    peak_resident_bytes: u64,
+    peak_physical_footprint_bytes: u64,
+    peak_at_millis: Option<u64>,
+    peak_delta_from_current_bytes: i64,
+    self_process_id: u32,
+    self_entity_id: Option<String>,
+    self_display_name: Option<String>,
+    process_ids: Vec<u32>,
+    regions: Vec<MemoryRegionBreakdown>,
+    note: String,
+    caveats: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SelfRuntimeWatchReport {
+    started_at_millis: u64,
+    ended_at_millis: u64,
+    duration_seconds: u64,
+    interval_millis: u64,
+    sample_count: usize,
+    summary: String,
+    averages: SelfRuntimeWatchAverages,
+    memory: SelfRuntimeMemoryAttribution,
+    samples: Vec<SelfRuntimeWatchSample>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1308,6 +1376,7 @@ impl AetowerMcpServer {
             "aetower_host_summary" => self.tool_host_summary(arguments),
             "aetower_entity_details" => self.tool_entity_details(arguments),
             "aetower_runtime_lag" => self.tool_runtime_lag(),
+            "aetower_watch_self" => self.tool_watch_self(arguments),
             "aetower_diff_snapshots" => self.tool_diff_snapshots(arguments),
             "aetower_reboot_report" => self.tool_reboot_report(arguments),
             "aetower_explain_anomalies" => self.tool_explain_anomalies(arguments),
@@ -1467,6 +1536,38 @@ impl AetowerMcpServer {
                 .latest_runtime_lag_metrics()
                 .map_err(tool_error)?,
         )
+    }
+
+    fn tool_watch_self(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default = "default_self_watch_duration_seconds")]
+            duration_seconds: u64,
+            #[serde(default = "default_self_watch_interval_millis")]
+            interval_millis: u64,
+            #[serde(default = "default_include_true")]
+            include_memory_breakdown: bool,
+            #[serde(default = "default_top_regions")]
+            top_regions: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let duration_seconds = args
+            .duration_seconds
+            .clamp(1, MAX_SELF_WATCH_DURATION_SECONDS);
+        let interval_millis = args.interval_millis.clamp(
+            MIN_SELF_WATCH_INTERVAL_MILLIS,
+            MAX_SELF_WATCH_INTERVAL_MILLIS,
+        );
+        let report = build_self_runtime_watch_report(
+            &*self.data_source,
+            duration_seconds,
+            interval_millis,
+            args.include_memory_breakdown,
+            args.top_regions.max(1),
+        )
+        .map_err(tool_error)?;
+        tool_json(report)
     }
 
     fn tool_diff_snapshots(&self, arguments: Value) -> Result<Value, Value> {
@@ -2612,6 +2713,14 @@ fn default_top_regions() -> usize {
 
 fn default_open_resource_limit() -> usize {
     DEFAULT_OPEN_RESOURCE_LIMIT
+}
+
+fn default_self_watch_duration_seconds() -> u64 {
+    DEFAULT_SELF_WATCH_DURATION_SECONDS
+}
+
+fn default_self_watch_interval_millis() -> u64 {
+    DEFAULT_SELF_WATCH_INTERVAL_MILLIS
 }
 
 fn default_process_action_history_limit() -> usize {
@@ -4277,8 +4386,29 @@ fn build_entity_memory_breakdown(
             entity.display_name
         ));
     }
+    let regions = vmmap_regions_for_processes(&process_ids, top_regions.max(1))?;
+    Ok(EntityMemoryBreakdown {
+        captured_at_millis: snapshot.captured_at_millis,
+        entity_id: entity.entity_id.clone(),
+        display_name: entity.display_name.clone(),
+        process_ids,
+        resident_bytes: entity.metrics.memory_resident_bytes,
+        physical_footprint_bytes: entity.metrics.memory_physical_footprint_bytes,
+        memory_metric_note: if entity.metrics.memory_physical_footprint_bytes > 0 {
+            "resident_bytes is the current resident set; physical_footprint_bytes follows macOS task footprint when available and may exceed resident because it includes graphics and other charged memory.".to_owned()
+        } else {
+            "resident_bytes is the current resident set; physical_footprint_bytes is unavailable for this entity on the current platform or sample.".to_owned()
+        },
+        regions,
+    })
+}
+
+fn vmmap_regions_for_processes(
+    process_ids: &[u32],
+    top_regions: usize,
+) -> Result<Vec<MemoryRegionBreakdown>, String> {
     let mut regions_by_type = BTreeMap::<String, MemoryRegionBreakdown>::new();
-    for pid in &process_ids {
+    for pid in process_ids {
         let output = run_os_command("/usr/bin/vmmap", &[pid.to_string()])?;
         for region in parse_vmmap_regions(&output) {
             let entry = regions_by_type.entry(region.region_type.clone()).or_insert(
@@ -4304,20 +4434,7 @@ fn build_entity_memory_breakdown(
             .then_with(|| right.virtual_bytes.cmp(&left.virtual_bytes))
     });
     regions.truncate(top_regions.max(1));
-    Ok(EntityMemoryBreakdown {
-        captured_at_millis: snapshot.captured_at_millis,
-        entity_id: entity.entity_id.clone(),
-        display_name: entity.display_name.clone(),
-        process_ids,
-        resident_bytes: entity.metrics.memory_resident_bytes,
-        physical_footprint_bytes: entity.metrics.memory_physical_footprint_bytes,
-        memory_metric_note: if entity.metrics.memory_physical_footprint_bytes > 0 {
-            "resident_bytes is the current resident set; physical_footprint_bytes follows macOS task footprint when available and may exceed resident because it includes graphics and other charged memory.".to_owned()
-        } else {
-            "resident_bytes is the current resident set; physical_footprint_bytes is unavailable for this entity on the current platform or sample.".to_owned()
-        },
-        regions,
-    })
+    Ok(regions)
 }
 
 pub fn memory_breakdown_json(
@@ -4327,6 +4444,240 @@ pub fn memory_breakdown_json(
 ) -> Result<String, String> {
     let report = build_entity_memory_breakdown(data_source, entity_id, top_regions.max(1))?;
     serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
+fn build_self_runtime_watch_report(
+    data_source: &dyn AetowerMcpDataSource,
+    duration_seconds: u64,
+    interval_millis: u64,
+    include_memory_breakdown: bool,
+    top_regions: usize,
+) -> Result<SelfRuntimeWatchReport, String> {
+    let started_at_millis = current_unix_millis().unwrap_or_default();
+    let started = Instant::now();
+    let duration = Duration::from_secs(duration_seconds);
+    let interval = Duration::from_millis(interval_millis);
+    let mut samples = Vec::new();
+
+    loop {
+        let runtime = data_source.latest_runtime_lag_metrics()?;
+        samples.push(self_runtime_watch_sample(&runtime));
+        if started.elapsed() >= duration {
+            break;
+        }
+        let remaining = duration.saturating_sub(started.elapsed());
+        thread::sleep(interval.min(remaining));
+    }
+
+    let ended_at_millis = current_unix_millis().unwrap_or(started_at_millis);
+    let averages = self_runtime_watch_averages(&samples);
+    let memory = build_self_runtime_memory_attribution(
+        data_source,
+        &samples,
+        include_memory_breakdown,
+        top_regions,
+    );
+    let summary = self_runtime_watch_summary(&samples, &averages, &memory);
+
+    Ok(SelfRuntimeWatchReport {
+        started_at_millis,
+        ended_at_millis,
+        duration_seconds,
+        interval_millis,
+        sample_count: samples.len(),
+        summary,
+        averages,
+        memory,
+        samples,
+    })
+}
+
+fn self_runtime_watch_sample(runtime: &RuntimeLagMetrics) -> SelfRuntimeWatchSample {
+    SelfRuntimeWatchSample {
+        observed_at_millis: current_unix_millis()
+            .unwrap_or(runtime.updated_at_millis)
+            .max(runtime.updated_at_millis),
+        engine_tick_millis: runtime.engine_tick_millis,
+        target_tick_millis: runtime.target_tick_millis,
+        collect_millis: runtime.collect_millis,
+        history_millis: runtime.history_millis,
+        persist_millis: runtime.persist_millis,
+        bridge_fetch_millis: runtime.bridge_fetch_millis,
+        ui_refresh_millis: runtime.ui_refresh_millis,
+        snapshot_to_render_millis: runtime.snapshot_to_render_millis,
+        render_commit_millis: runtime.render_commit_millis,
+        self_cpu_percent: runtime.self_cpu_percent,
+        self_memory_bytes: runtime.self_memory_bytes,
+        self_memory_physical_footprint_bytes: runtime.self_memory_physical_footprint_bytes,
+        self_wakeups_per_second: runtime.self_wakeups_per_second,
+        mcp_requests_per_second: runtime.mcp_requests_per_second,
+        mcp_active_client_count: runtime.mcp_active_client_count,
+        mcp_helper_count: runtime.mcp_helper_count,
+        stale_mcp_helper_count: runtime.stale_mcp_helper_count,
+    }
+}
+
+fn self_runtime_watch_averages(samples: &[SelfRuntimeWatchSample]) -> SelfRuntimeWatchAverages {
+    let count = samples.len().max(1) as f32;
+    SelfRuntimeWatchAverages {
+        engine_tick_millis: samples
+            .iter()
+            .map(|sample| sample.engine_tick_millis)
+            .sum::<f32>()
+            / count,
+        collect_millis: samples
+            .iter()
+            .map(|sample| sample.collect_millis)
+            .sum::<f32>()
+            / count,
+        history_millis: samples
+            .iter()
+            .map(|sample| sample.history_millis)
+            .sum::<f32>()
+            / count,
+        persist_millis: samples
+            .iter()
+            .map(|sample| sample.persist_millis)
+            .sum::<f32>()
+            / count,
+        self_cpu_percent: samples
+            .iter()
+            .map(|sample| sample.self_cpu_percent)
+            .sum::<f32>()
+            / count,
+        self_wakeups_per_second: samples
+            .iter()
+            .map(|sample| sample.self_wakeups_per_second)
+            .sum::<f32>()
+            / count,
+        mcp_requests_per_second: samples
+            .iter()
+            .map(|sample| sample.mcp_requests_per_second)
+            .sum::<f32>()
+            / count,
+    }
+}
+
+fn build_self_runtime_memory_attribution(
+    data_source: &dyn AetowerMcpDataSource,
+    samples: &[SelfRuntimeWatchSample],
+    include_memory_breakdown: bool,
+    top_regions: usize,
+) -> SelfRuntimeMemoryAttribution {
+    let current = samples.last();
+    let peak_resident = samples
+        .iter()
+        .max_by_key(|sample| sample.self_memory_bytes)
+        .map(|sample| sample.self_memory_bytes)
+        .unwrap_or_default();
+    let peak_footprint_sample = samples
+        .iter()
+        .max_by_key(|sample| sample.self_memory_physical_footprint_bytes);
+    let peak_footprint = peak_footprint_sample
+        .map(|sample| sample.self_memory_physical_footprint_bytes)
+        .unwrap_or_default();
+    let peak_at_millis = peak_footprint_sample.map(|sample| sample.observed_at_millis);
+    let current_footprint = current
+        .map(|sample| sample.self_memory_physical_footprint_bytes)
+        .unwrap_or_default();
+    let current_resident = current
+        .map(|sample| sample.self_memory_bytes)
+        .unwrap_or_default();
+    let self_process_id = std::process::id();
+    let mut self_entity_id = None;
+    let mut self_display_name = None;
+    let mut process_ids = vec![self_process_id];
+    let mut regions = Vec::new();
+    let mut caveats = Vec::new();
+
+    if include_memory_breakdown {
+        match data_source.latest_snapshot() {
+            Ok(snapshot) => {
+                if let Some(entity) = self_entity_in_snapshot(&snapshot, self_process_id) {
+                    self_entity_id = Some(entity.entity_id.clone());
+                    self_display_name = Some(entity.display_name.clone());
+                    process_ids = entity_process_ids(entity);
+                } else {
+                    caveats.push(
+                        "Current Aetower process was not attributed to an entity; vmmap used the app PID directly."
+                            .to_owned(),
+                    );
+                }
+            }
+            Err(error) => caveats.push(format!(
+                "Could not load the current snapshot for self entity attribution: {error}."
+            )),
+        }
+
+        match vmmap_regions_for_processes(&process_ids, top_regions.max(1)) {
+            Ok(value) => regions = value,
+            Err(error) => caveats.push(format!("Could not collect self vmmap regions: {error}.")),
+        }
+    } else {
+        caveats.push("VM region breakdown was skipped by request.".to_owned());
+    }
+
+    SelfRuntimeMemoryAttribution {
+        current_resident_bytes: current_resident,
+        current_physical_footprint_bytes: current_footprint,
+        peak_resident_bytes: peak_resident,
+        peak_physical_footprint_bytes: peak_footprint,
+        peak_at_millis,
+        peak_delta_from_current_bytes: signed_byte_delta(peak_footprint, current_footprint),
+        self_process_id,
+        self_entity_id,
+        self_display_name,
+        process_ids,
+        regions,
+        note: "Resident bytes come from Aetower self telemetry; physical footprint follows macOS task footprint when available. VM regions are a point-in-time vmmap attribution for the app process or attributed self entity.".to_owned(),
+        caveats,
+    }
+}
+
+fn self_runtime_watch_summary(
+    samples: &[SelfRuntimeWatchSample],
+    averages: &SelfRuntimeWatchAverages,
+    memory: &SelfRuntimeMemoryAttribution,
+) -> String {
+    let peak_tick = samples
+        .iter()
+        .map(|sample| sample.engine_tick_millis)
+        .fold(0.0, f32::max);
+    let peak_cpu = samples
+        .iter()
+        .map(|sample| sample.self_cpu_percent)
+        .fold(0.0, f32::max);
+    let peak_wakeups = samples
+        .iter()
+        .map(|sample| sample.self_wakeups_per_second)
+        .fold(0.0, f32::max);
+    format!(
+        "{} samples: avg tick {:.1} ms, peak tick {:.1} ms, avg CPU {:.1}%, peak CPU {:.1}%, peak wakeups {:.0}/s, peak footprint {}.",
+        samples.len(),
+        averages.engine_tick_millis,
+        peak_tick,
+        averages.self_cpu_percent,
+        peak_cpu,
+        peak_wakeups,
+        format_bytes(memory.peak_physical_footprint_bytes)
+    )
+}
+
+fn self_entity_in_snapshot(
+    snapshot: &SystemSnapshot,
+    self_process_id: u32,
+) -> Option<&aetower_model::EntitySnapshot> {
+    snapshot.entities.iter().find(|entity| {
+        entity
+            .components
+            .iter()
+            .any(|component| component.process_id == Some(self_process_id))
+    })
+}
+
+fn signed_byte_delta(after: u64, before: u64) -> i64 {
+    let delta = after as i128 - before as i128;
+    delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
 fn build_entity_profile(
@@ -7892,6 +8243,30 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "aetower_watch_self",
+            "description": "Run a bounded live watch of Aetower's own runtime overhead, memory peak, MCP pressure, UI latency, and optional self vmmap attribution.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "duration_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 300,
+                        "default": DEFAULT_SELF_WATCH_DURATION_SECONDS
+                    },
+                    "interval_millis": {
+                        "type": "integer",
+                        "minimum": 250,
+                        "maximum": 60000,
+                        "default": DEFAULT_SELF_WATCH_INTERVAL_MILLIS
+                    },
+                    "include_memory_breakdown": { "type": "boolean", "default": true },
+                    "top_regions": { "type": "integer", "minimum": 1, "maximum": 50 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "aetower_diff_snapshots",
             "description": "Compare two persisted time points and return host plus per-entity deltas for friction, CPU, memory, wakeups, and process count, including boot-boundary metadata when the snapshots span a reboot.",
             "inputSchema": {
@@ -9008,6 +9383,7 @@ mod tests {
             "aetower_reboot_report",
             "aetower_explain_anomalies",
             "aetower_entity_process_tree",
+            "aetower_watch_self",
             "aetower_top_findings",
             "aetower_host_alerts",
             "aetower_investigation_bundle",
@@ -9156,6 +9532,66 @@ mod tests {
 
         assert_eq!(self_runtime_severity(&runtime), SeverityBand::Critical);
         assert!(self_runtime_recommendation_detail(&runtime).contains("looks sustained"));
+    }
+
+    #[test]
+    fn self_runtime_watch_reports_peak_memory_without_vmmap() {
+        let samples = vec![
+            SelfRuntimeWatchSample {
+                observed_at_millis: 1,
+                engine_tick_millis: 40.0,
+                target_tick_millis: 2_000.0,
+                collect_millis: 20.0,
+                history_millis: 10.0,
+                persist_millis: 1.0,
+                bridge_fetch_millis: 0.0,
+                ui_refresh_millis: 0.0,
+                snapshot_to_render_millis: 0.0,
+                render_commit_millis: 0.0,
+                self_cpu_percent: 5.0,
+                self_memory_bytes: 100,
+                self_memory_physical_footprint_bytes: 200,
+                self_wakeups_per_second: 20.0,
+                mcp_requests_per_second: 1.0,
+                mcp_active_client_count: 1,
+                mcp_helper_count: 1,
+                stale_mcp_helper_count: 0,
+            },
+            SelfRuntimeWatchSample {
+                observed_at_millis: 2,
+                engine_tick_millis: 80.0,
+                target_tick_millis: 2_000.0,
+                collect_millis: 40.0,
+                history_millis: 20.0,
+                persist_millis: 3.0,
+                bridge_fetch_millis: 0.0,
+                ui_refresh_millis: 0.0,
+                snapshot_to_render_millis: 0.0,
+                render_commit_millis: 0.0,
+                self_cpu_percent: 15.0,
+                self_memory_bytes: 300,
+                self_memory_physical_footprint_bytes: 700,
+                self_wakeups_per_second: 40.0,
+                mcp_requests_per_second: 3.0,
+                mcp_active_client_count: 1,
+                mcp_helper_count: 1,
+                stale_mcp_helper_count: 0,
+            },
+        ];
+        let averages = self_runtime_watch_averages(&samples);
+        let memory = build_self_runtime_memory_attribution(&FakeSource, &samples, false, 3);
+        let summary = self_runtime_watch_summary(&samples, &averages, &memory);
+
+        assert_eq!(averages.engine_tick_millis, 60.0);
+        assert_eq!(memory.current_physical_footprint_bytes, 700);
+        assert_eq!(memory.peak_physical_footprint_bytes, 700);
+        assert!(
+            memory
+                .caveats
+                .iter()
+                .any(|caveat| caveat.contains("skipped"))
+        );
+        assert!(summary.contains("peak footprint"));
     }
 
     #[test]
