@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::{BufRead, BufReader, ErrorKind, Write},
+    net::Shutdown,
     os::unix::net::UnixStream,
     time::Duration,
 };
@@ -291,6 +292,134 @@ impl Chau7Snapshot {
 // MCP JSON-RPC 2.0 client (line-delimited over Unix socket)
 // ---------------------------------------------------------------------------
 
+struct McpUnixClient {
+    reader: BufReader<UnixStream>,
+}
+
+impl McpUnixClient {
+    fn connect(socket_path: &str) -> Result<Self, String> {
+        let stream =
+            UnixStream::connect(socket_path).map_err(|e| format!("connect {socket_path}: {e}"))?;
+        stream
+            .set_read_timeout(Some(SOCKET_TIMEOUT))
+            .map_err(|e| format!("set_read_timeout: {e}"))?;
+        stream
+            .set_write_timeout(Some(SOCKET_TIMEOUT))
+            .map_err(|e| format!("set_write_timeout: {e}"))?;
+        Ok(Self {
+            reader: BufReader::new(stream),
+        })
+    }
+
+    fn rpc_tool_call(
+        &mut self,
+        id: u64,
+        tool_name: &str,
+        arguments: Value,
+    ) -> Result<Value, String> {
+        let result = self.rpc_call(
+            id,
+            "tools/call",
+            json!({ "name": tool_name, "arguments": arguments }),
+        )?;
+
+        let text = result
+            .get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("text"))
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| format!("unexpected tool response shape for {tool_name}"))?;
+
+        serde_json::from_str(text).map_err(|e| format!("parse tool text for {tool_name}: {e}"))
+    }
+
+    fn rpc_call(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+
+        let mut line = serde_json::to_string(&request).map_err(|e| format!("serialize: {e}"))?;
+        line.push('\n');
+        let writer = self.reader.get_mut();
+        writer
+            .write_all(line.as_bytes())
+            .map_err(|e| format!("write {method}: {e}"))?;
+        writer.flush().map_err(|e| format!("flush {method}: {e}"))?;
+
+        for _ in 0..MAX_RPC_LINES {
+            let mut response_line = String::new();
+            match self.reader.read_line(&mut response_line) {
+                Ok(_) => {}
+                Err(error) if is_transient_read_error(&error) => {
+                    continue;
+                }
+                Err(error) => return Err(format!("read {method}: {error}")),
+            }
+
+            if response_line.trim().is_empty() {
+                continue;
+            }
+
+            let response: Value =
+                serde_json::from_str(&response_line).map_err(|e| format!("parse response: {e}"))?;
+
+            if response.get("id").is_none() || response.get("id") == Some(&Value::Null) {
+                continue;
+            }
+
+            if let Some(err) = response.get("error") {
+                return Err(format!(
+                    "rpc error for {method}: {}",
+                    serde_json::to_string(err).unwrap_or_default()
+                ));
+            }
+
+            return response
+                .get("result")
+                .cloned()
+                .ok_or_else(|| format!("missing result for {method}"));
+        }
+
+        Err(format!(
+            "no response for {method} after {MAX_RPC_LINES} lines (all were notifications or transient timeouts)"
+        ))
+    }
+
+    fn send_notification(&mut self, method: &str, params: Value) -> Result<(), String> {
+        let notification = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+
+        let mut line =
+            serde_json::to_string(&notification).map_err(|e| format!("serialize notif: {e}"))?;
+        line.push('\n');
+        let writer = self.reader.get_mut();
+        writer
+            .write_all(line.as_bytes())
+            .map_err(|e| format!("write notif {method}: {e}"))?;
+        writer
+            .flush()
+            .map_err(|e| format!("flush notif {method}: {e}"))?;
+        Ok(())
+    }
+
+    fn shutdown(&mut self) {
+        let _ = self.reader.get_mut().shutdown(Shutdown::Both);
+    }
+}
+
+impl Drop for McpUnixClient {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 /// Connect to Chau7's MCP socket and fetch a snapshot with explicit bounds for
 /// expensive adapter calls.
 ///
@@ -301,22 +430,10 @@ pub fn fetch_snapshot_with_options(
     socket_path: &str,
     options: Chau7FetchOptions,
 ) -> Result<Chau7Snapshot, String> {
-    let stream =
-        UnixStream::connect(socket_path).map_err(|e| format!("connect {socket_path}: {e}"))?;
-    stream
-        .set_read_timeout(Some(SOCKET_TIMEOUT))
-        .map_err(|e| format!("set_read_timeout: {e}"))?;
-    stream
-        .set_write_timeout(Some(SOCKET_TIMEOUT))
-        .map_err(|e| format!("set_write_timeout: {e}"))?;
-
-    let mut reader = BufReader::new(stream.try_clone().map_err(|e| format!("clone: {e}"))?);
-    let mut writer = stream;
+    let mut client = McpUnixClient::connect(socket_path)?;
 
     // MCP handshake: initialize + initialized notification.
-    let _init_result = rpc_call(
-        &mut writer,
-        &mut reader,
+    let _init_result = client.rpc_call(
         1,
         "initialize",
         json!({
@@ -326,22 +443,23 @@ pub fn fetch_snapshot_with_options(
         }),
     )?;
 
-    send_notification(&mut writer, "notifications/initialized", json!({}))?;
+    client.send_notification("notifications/initialized", json!({}))?;
 
     // Fetch tab list.
-    let tabs_raw = rpc_tool_call(&mut writer, &mut reader, 2, "tab_list", json!({}))?;
+    let tabs_raw = client.rpc_tool_call(2, "tab_list", json!({}))?;
     let tabs: Vec<Chau7Tab> =
         serde_json::from_value(tabs_raw).map_err(|e| format!("parse tabs: {e}"))?;
 
     // Fetch session list.
-    let sessions_raw = rpc_tool_call(&mut writer, &mut reader, 3, "session_list", json!({}))?;
+    let sessions_raw = client.rpc_tool_call(3, "session_list", json!({}))?;
     let sessions: Vec<Chau7Session> =
         serde_json::from_value(sessions_raw).map_err(|e| format!("parse sessions: {e}"))?;
 
     let mut next_id: u64 = 4;
     let mut runtime_info = None;
     for tool_name in ["chau7_runtime_info", "runtime_info"] {
-        let parsed = rpc_tool_call(&mut writer, &mut reader, next_id, tool_name, json!({}))
+        let parsed = client
+            .rpc_tool_call(next_id, tool_name, json!({}))
             .ok()
             .and_then(|raw| serde_json::from_value::<Chau7RuntimeInfo>(raw).ok());
         next_id += 1;
@@ -360,13 +478,9 @@ pub fn fetch_snapshot_with_options(
         .filter(|t| t.is_ai_agent())
         .take(options.max_ai_tabs)
     {
-        if let Ok(raw) = rpc_tool_call(
-            &mut writer,
-            &mut reader,
-            next_id,
-            "tab_status",
-            json!({ "tab_id": &tab.tab_id }),
-        ) && let Ok(status) = serde_json::from_value::<Chau7TabStatus>(raw)
+        if let Ok(raw) =
+            client.rpc_tool_call(next_id, "tab_status", json!({ "tab_id": &tab.tab_id }))
+            && let Ok(status) = serde_json::from_value::<Chau7TabStatus>(raw)
         {
             tab_statuses.insert(tab.tab_id.clone(), status);
         }
@@ -379,25 +493,22 @@ pub fn fetch_snapshot_with_options(
             continue;
         }
 
-        let mut merged = rpc_tool_call(
-            &mut writer,
-            &mut reader,
-            next_id,
-            "runtime_session_get",
-            json!({ "session_id": session_id }),
-        )
-        .ok()
-        .and_then(|raw| serde_json::from_value::<Chau7RuntimeSessionStatus>(raw).ok())
-        .unwrap_or_else(|| Chau7RuntimeSessionStatus {
-            session_id: session_id.to_owned(),
-            ..Chau7RuntimeSessionStatus::default()
-        });
+        let mut merged = client
+            .rpc_tool_call(
+                next_id,
+                "runtime_session_get",
+                json!({ "session_id": session_id }),
+            )
+            .ok()
+            .and_then(|raw| serde_json::from_value::<Chau7RuntimeSessionStatus>(raw).ok())
+            .unwrap_or_else(|| Chau7RuntimeSessionStatus {
+                session_id: session_id.to_owned(),
+                ..Chau7RuntimeSessionStatus::default()
+            });
         next_id += 1;
 
         if options.include_deep_context {
-            if let Ok(raw) = rpc_tool_call(
-                &mut writer,
-                &mut reader,
+            if let Ok(raw) = client.rpc_tool_call(
                 next_id,
                 "runtime_turn_status",
                 json!({ "session_id": session_id }),
@@ -445,22 +556,16 @@ pub fn fetch_snapshot_with_options(
                 if !seen_repos.insert(repo.to_owned()) || seen_repos.len() > options.max_repos {
                     continue;
                 }
-                if let Ok(raw) = rpc_tool_call(
-                    &mut writer,
-                    &mut reader,
-                    next_id,
-                    "repo_get_metadata",
-                    json!({ "repo_path": repo }),
-                ) && let Some(stats) = raw.get("stats")
+                if let Ok(raw) =
+                    client.rpc_tool_call(next_id, "repo_get_metadata", json!({ "repo_path": repo }))
+                    && let Some(stats) = raw.get("stats")
                     && let Ok(parsed) = serde_json::from_value::<Chau7RepoStats>(stats.clone())
                 {
                     repo_stats.insert(repo.to_owned(), parsed);
                 }
                 next_id += 1;
 
-                if let Ok(raw) = rpc_tool_call(
-                    &mut writer,
-                    &mut reader,
+                if let Ok(raw) = client.rpc_tool_call(
                     next_id,
                     "repo_get_events",
                     json!({ "repo_path": repo, "limit": 12 }),
@@ -477,19 +582,16 @@ pub fn fetch_snapshot_with_options(
 
     // Fetch recent runs for session markers (best-effort, limit 10).
     let recent_runs = if options.include_deep_context {
-        rpc_tool_call(
-            &mut writer,
-            &mut reader,
-            next_id,
-            "run_list",
-            json!({ "limit": 10 }),
-        )
-        .ok()
-        .and_then(|v| serde_json::from_value::<Vec<Chau7Run>>(v).ok())
-        .unwrap_or_default()
+        client
+            .rpc_tool_call(next_id, "run_list", json!({ "limit": 10 }))
+            .ok()
+            .and_then(|v| serde_json::from_value::<Vec<Chau7Run>>(v).ok())
+            .unwrap_or_default()
     } else {
         Vec::new()
     };
+
+    client.shutdown();
 
     Ok(Chau7Snapshot {
         tabs,
@@ -505,21 +607,9 @@ pub fn fetch_snapshot_with_options(
 
 /// Stop a Chau7 runtime session via the `runtime_session_stop` MCP tool.
 pub fn stop_session(socket_path: &str, session_id: &str, force: bool) -> Result<(), String> {
-    let stream =
-        UnixStream::connect(socket_path).map_err(|e| format!("connect {socket_path}: {e}"))?;
-    stream
-        .set_read_timeout(Some(SOCKET_TIMEOUT))
-        .map_err(|e| format!("set_read_timeout: {e}"))?;
-    stream
-        .set_write_timeout(Some(SOCKET_TIMEOUT))
-        .map_err(|e| format!("set_write_timeout: {e}"))?;
+    let mut client = McpUnixClient::connect(socket_path)?;
 
-    let mut reader = BufReader::new(stream.try_clone().map_err(|e| format!("clone: {e}"))?);
-    let mut writer = stream;
-
-    let _init = rpc_call(
-        &mut writer,
-        &mut reader,
+    let _init = client.rpc_call(
         1,
         "initialize",
         json!({
@@ -529,116 +619,21 @@ pub fn stop_session(socket_path: &str, session_id: &str, force: bool) -> Result<
         }),
     )?;
 
-    send_notification(&mut writer, "notifications/initialized", json!({}))?;
+    client.send_notification("notifications/initialized", json!({}))?;
 
-    let _result = rpc_tool_call(
-        &mut writer,
-        &mut reader,
+    let _result = client.rpc_tool_call(
         2,
         "runtime_session_stop",
         json!({ "session_id": session_id, "force": force }),
     )?;
 
+    client.shutdown();
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // JSON-RPC helpers
 // ---------------------------------------------------------------------------
-
-/// Send a `tools/call` request and unwrap the double-wrapped MCP content
-/// envelope: `result.content[0].text` → parsed JSON value.
-fn rpc_tool_call(
-    writer: &mut UnixStream,
-    reader: &mut BufReader<UnixStream>,
-    id: u64,
-    tool_name: &str,
-    arguments: Value,
-) -> Result<Value, String> {
-    let result = rpc_call(
-        writer,
-        reader,
-        id,
-        "tools/call",
-        json!({ "name": tool_name, "arguments": arguments }),
-    )?;
-
-    // MCP wraps tool output in {"content": [{"type":"text","text":"..."}]}.
-    let text = result
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|item| item.get("text"))
-        .and_then(|t| t.as_str())
-        .ok_or_else(|| format!("unexpected tool response shape for {tool_name}"))?;
-
-    serde_json::from_str(text).map_err(|e| format!("parse tool text for {tool_name}: {e}"))
-}
-
-/// Low-level JSON-RPC 2.0 request → response over a line-delimited stream.
-fn rpc_call(
-    writer: &mut UnixStream,
-    reader: &mut BufReader<UnixStream>,
-    id: u64,
-    method: &str,
-    params: Value,
-) -> Result<Value, String> {
-    let request = json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": method,
-        "params": params,
-    });
-
-    let mut line = serde_json::to_string(&request).map_err(|e| format!("serialize: {e}"))?;
-    line.push('\n');
-    writer
-        .write_all(line.as_bytes())
-        .map_err(|e| format!("write {method}: {e}"))?;
-    writer.flush().map_err(|e| format!("flush {method}: {e}"))?;
-
-    // Read lines until we get a response with a matching id.
-    // MCP servers may send notifications (no "id" field) at any time;
-    // we skip those to avoid mistaking them for the response.
-    for _ in 0..MAX_RPC_LINES {
-        let mut response_line = String::new();
-        match reader.read_line(&mut response_line) {
-            Ok(_) => {}
-            Err(error) if is_transient_read_error(&error) => {
-                continue;
-            }
-            Err(error) => return Err(format!("read {method}: {error}")),
-        }
-
-        if response_line.trim().is_empty() {
-            continue;
-        }
-
-        let response: Value =
-            serde_json::from_str(&response_line).map_err(|e| format!("parse response: {e}"))?;
-
-        // Skip server-initiated notifications (no "id" field).
-        if response.get("id").is_none() || response.get("id") == Some(&Value::Null) {
-            continue;
-        }
-
-        if let Some(err) = response.get("error") {
-            return Err(format!(
-                "rpc error for {method}: {}",
-                serde_json::to_string(err).unwrap_or_default()
-            ));
-        }
-
-        return response
-            .get("result")
-            .cloned()
-            .ok_or_else(|| format!("missing result for {method}"));
-    }
-
-    Err(format!(
-        "no response for {method} after {MAX_RPC_LINES} lines (all were notifications or transient timeouts)"
-    ))
-}
 
 fn is_transient_read_error(error: &std::io::Error) -> bool {
     matches!(
@@ -647,28 +642,22 @@ fn is_transient_read_error(error: &std::io::Error) -> bool {
     ) || error.raw_os_error() == Some(35)
 }
 
-/// Send a JSON-RPC notification (no id, no response expected).
-fn send_notification(writer: &mut UnixStream, method: &str, params: Value) -> Result<(), String> {
-    let notification = json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-    });
-
-    let mut line =
-        serde_json::to_string(&notification).map_err(|e| format!("serialize notif: {e}"))?;
-    line.push('\n');
-    writer
-        .write_all(line.as_bytes())
-        .map_err(|e| format!("write notif {method}: {e}"))?;
-    writer
-        .flush()
-        .map_err(|e| format!("flush notif {method}: {e}"))?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        io::{BufRead, BufReader, Write},
+        os::unix::net::UnixListener,
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        },
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
+
     use super::*;
 
     #[test]
@@ -916,5 +905,134 @@ mod tests {
         assert!(!light.repo_stats.contains_key("/stale"));
         assert_eq!(light.repo_events.get("/repo").map(Vec::len), Some(1));
         assert_eq!(light.recent_runs.len(), 1);
+    }
+
+    #[test]
+    fn repeated_fetches_close_chau7_socket_connections() {
+        let socket_path = unique_test_socket_path("aetower-chau7-client-close");
+        let parent = socket_path
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| panic!("socket parent"));
+        fs::create_dir_all(&parent).unwrap_or_else(|error| panic!("mkdirs: {error}"));
+        let _ = fs::remove_file(&socket_path);
+        let listener =
+            UnixListener::bind(&socket_path).unwrap_or_else(|error| panic!("bind: {error}"));
+
+        let active_connections = Arc::new(AtomicUsize::new(0));
+        let active_connections_server = Arc::clone(&active_connections);
+        let (closed_tx, closed_rx) = mpsc::channel();
+
+        let server = thread::spawn(move || {
+            for _ in 0..3 {
+                let (stream, _) = listener
+                    .accept()
+                    .unwrap_or_else(|error| panic!("accept: {error}"));
+                active_connections_server.fetch_add(1, Ordering::SeqCst);
+                let mut reader = BufReader::new(
+                    stream
+                        .try_clone()
+                        .unwrap_or_else(|error| panic!("clone: {error}")),
+                );
+                let mut writer = stream;
+                loop {
+                    let mut line = String::new();
+                    let bytes = reader
+                        .read_line(&mut line)
+                        .unwrap_or_else(|error| panic!("read_line: {error}"));
+                    if bytes == 0 {
+                        active_connections_server.fetch_sub(1, Ordering::SeqCst);
+                        closed_tx
+                            .send(())
+                            .unwrap_or_else(|error| panic!("send: {error}"));
+                        break;
+                    }
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+
+                    let request: Value = serde_json::from_str(&line)
+                        .unwrap_or_else(|error| panic!("parse: {error}"));
+                    let Some(method) = request.get("method").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let Some(id) = request.get("id").cloned() else {
+                        continue;
+                    };
+
+                    let result = match method {
+                        "initialize" => json!({
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {},
+                            "serverInfo": { "name": "chau7-test", "version": "0" }
+                        }),
+                        "tools/call" => {
+                            let tool_name = request["params"]["name"]
+                                .as_str()
+                                .unwrap_or_else(|| panic!("tool name"));
+                            let payload = match tool_name {
+                                "tab_list" => json!([]),
+                                "session_list" => json!([]),
+                                "chau7_runtime_info" | "runtime_info" => json!({
+                                    "app_version": "test"
+                                }),
+                                "run_list" => json!([]),
+                                other => panic!("unexpected tool {other}"),
+                            };
+                            json!({
+                                "content": [{
+                                    "type": "text",
+                                    "text": serde_json::to_string(&payload)
+                                        .unwrap_or_else(|error| panic!("serialize payload: {error}"))
+                                }]
+                            })
+                        }
+                        other => panic!("unexpected method {other}"),
+                    };
+
+                    let response = json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": result,
+                    });
+                    let mut encoded = serde_json::to_string(&response)
+                        .unwrap_or_else(|error| panic!("serialize response: {error}"));
+                    encoded.push('\n');
+                    writer
+                        .write_all(encoded.as_bytes())
+                        .unwrap_or_else(|error| panic!("write: {error}"));
+                    writer
+                        .flush()
+                        .unwrap_or_else(|error| panic!("flush: {error}"));
+                }
+            }
+        });
+
+        for _ in 0..3 {
+            let snapshot = fetch_snapshot_with_options(
+                socket_path
+                    .to_str()
+                    .unwrap_or_else(|| panic!("socket path utf8")),
+                Chau7FetchOptions::default(),
+            )
+            .unwrap_or_else(|error| panic!("fetch snapshot: {error}"));
+            assert!(snapshot.tabs.is_empty());
+            closed_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap_or_else(|error| panic!("wait close: {error}"));
+            assert_eq!(active_connections.load(Ordering::SeqCst), 0);
+        }
+
+        server.join().unwrap_or_else(|_| panic!("server join"));
+        let _ = fs::remove_file(&socket_path);
+        let _ = fs::remove_dir(&parent);
+    }
+
+    fn unique_test_socket_path(prefix: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|error| panic!("clock: {error}"))
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{suffix}.sock"))
     }
 }
