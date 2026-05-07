@@ -17,6 +17,8 @@ private enum SortKey: String, CaseIterable, Identifiable {
     case friction
     case cpu
     case memory
+    case wakeups
+    case processCount
     case disk
     case network
     case energy
@@ -32,6 +34,8 @@ private enum SortKey: String, CaseIterable, Identifiable {
         case .friction: return "Friction"
         case .cpu: return "CPU"
         case .memory: return "Resident"
+        case .wakeups: return "Wakeups"
+        case .processCount: return "Process count"
         case .disk: return "Disk"
         case .network: return "Network"
         case .energy: return "Energy"
@@ -47,6 +51,8 @@ private enum SortKey: String, CaseIterable, Identifiable {
         case .friction: return .orange
         case .cpu: return .blue
         case .memory: return .green
+        case .wakeups: return .mint
+        case .processCount: return .indigo
         case .disk: return .pink
         case .network: return .teal
         case .energy: return .yellow
@@ -57,10 +63,96 @@ private enum SortKey: String, CaseIterable, Identifiable {
 
     var usesMetricValue: Bool {
         switch self {
-        case .friction, .cpu, .memory, .disk, .network, .energy:
+        case .friction, .cpu, .memory, .wakeups, .processCount, .disk, .network, .energy:
             return true
         case .alphabeticalAsc, .alphabeticalDesc, .oldestFirst, .newestFirst:
             return false
+        }
+    }
+}
+
+private enum MonitorSortColumn {
+    case name
+    case cpu
+    case memory
+    case wakeups
+    case processCount
+    case friction
+
+    var title: String {
+        switch self {
+        case .name: return "Name"
+        case .cpu: return "CPU"
+        case .memory: return "MEM"
+        case .wakeups: return "Wake"
+        case .processCount: return "PIDs"
+        case .friction: return "Friction"
+        }
+    }
+
+    var width: CGFloat? {
+        switch self {
+        case .name: return nil
+        case .cpu: return 48
+        case .memory: return 52
+        case .wakeups: return 56
+        case .processCount: return 44
+        case .friction: return 50
+        }
+    }
+
+    var alignment: Alignment {
+        switch self {
+        case .name:
+            return .leading
+        case .cpu, .memory, .wakeups, .processCount, .friction:
+            return .trailing
+        }
+    }
+}
+
+private struct MonitorHeaderButton: View {
+    let column: MonitorSortColumn
+    let isActive: Bool
+    let indicatorSymbol: String?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Text(column.title)
+                    .lineLimit(1)
+                if let indicatorSymbol {
+                    Image(systemName: indicatorSymbol)
+                        .font(.system(size: 7, weight: .bold))
+                }
+            }
+            .frame(
+                maxWidth: column.width == nil ? .infinity : nil,
+                alignment: column.alignment
+            )
+            .frame(width: column.width, alignment: column.alignment)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isActive ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.tertiary))
+        .help(helpText)
+    }
+
+    private var helpText: String {
+        switch column {
+        case .name:
+            return "Click to toggle alphabetical order."
+        case .cpu:
+            return "Sort by highest CPU usage."
+        case .memory:
+            return "Sort by highest resident memory."
+        case .wakeups:
+            return "Sort by highest wakeup rate."
+        case .processCount:
+            return "Sort by most live PIDs."
+        case .friction:
+            return "Sort by highest friction score."
         }
     }
 }
@@ -705,6 +797,10 @@ private func sortGroups(_ groups: [EntityGroup], by sortKey: SortKey) -> [Entity
         return groups.sorted { $0.cpuPercent > $1.cpuPercent }
     case .memory:
         return groups.sorted { $0.memoryBytes > $1.memoryBytes }
+    case .wakeups:
+        return groups.sorted { $0.wakeupsPerSecond > $1.wakeupsPerSecond }
+    case .processCount:
+        return groups.sorted { $0.processCount > $1.processCount }
     case .disk:
         return groups.sorted { $0.diskBps > $1.diskBps }
     case .network:
@@ -978,18 +1074,42 @@ public struct MainListView: View {
             HStack(spacing: 6) {
                 Text("")
                     .frame(width: 16)
-                Text("Name")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text("CPU")
-                    .frame(width: 48, alignment: .trailing)
-                Text("MEM")
-                    .frame(width: 52, alignment: .trailing)
-                Text("Wake")
-                    .frame(width: 56, alignment: .trailing)
-                Text("PIDs")
-                    .frame(width: 44, alignment: .trailing)
-                Text("Friction")
-                    .frame(width: 50, alignment: .trailing)
+                MonitorHeaderButton(
+                    column: .name,
+                    isActive: isActiveSortColumn(.name),
+                    indicatorSymbol: sortIndicatorSymbol(for: .name),
+                    action: { applySort(for: .name) }
+                )
+                MonitorHeaderButton(
+                    column: .cpu,
+                    isActive: isActiveSortColumn(.cpu),
+                    indicatorSymbol: sortIndicatorSymbol(for: .cpu),
+                    action: { applySort(for: .cpu) }
+                )
+                MonitorHeaderButton(
+                    column: .memory,
+                    isActive: isActiveSortColumn(.memory),
+                    indicatorSymbol: sortIndicatorSymbol(for: .memory),
+                    action: { applySort(for: .memory) }
+                )
+                MonitorHeaderButton(
+                    column: .wakeups,
+                    isActive: isActiveSortColumn(.wakeups),
+                    indicatorSymbol: sortIndicatorSymbol(for: .wakeups),
+                    action: { applySort(for: .wakeups) }
+                )
+                MonitorHeaderButton(
+                    column: .processCount,
+                    isActive: isActiveSortColumn(.processCount),
+                    indicatorSymbol: sortIndicatorSymbol(for: .processCount),
+                    action: { applySort(for: .processCount) }
+                )
+                MonitorHeaderButton(
+                    column: .friction,
+                    isActive: isActiveSortColumn(.friction),
+                    indicatorSymbol: sortIndicatorSymbol(for: .friction),
+                    action: { applySort(for: .friction) }
+                )
                 Text("")
                     .frame(width: 16)
             }
@@ -1172,6 +1292,50 @@ public struct MainListView: View {
         }
     }
 
+    private func applySort(for column: MonitorSortColumn) {
+        switch column {
+        case .name:
+            sortKey = sortKey == .alphabeticalAsc ? .alphabeticalDesc : .alphabeticalAsc
+        case .cpu:
+            sortKey = .cpu
+        case .memory:
+            sortKey = .memory
+        case .wakeups:
+            sortKey = .wakeups
+        case .processCount:
+            sortKey = .processCount
+        case .friction:
+            sortKey = .friction
+        }
+    }
+
+    private func isActiveSortColumn(_ column: MonitorSortColumn) -> Bool {
+        switch column {
+        case .name:
+            return sortKey == .alphabeticalAsc || sortKey == .alphabeticalDesc
+        case .cpu:
+            return sortKey == .cpu
+        case .memory:
+            return sortKey == .memory
+        case .wakeups:
+            return sortKey == .wakeups
+        case .processCount:
+            return sortKey == .processCount
+        case .friction:
+            return sortKey == .friction
+        }
+    }
+
+    private func sortIndicatorSymbol(for column: MonitorSortColumn) -> String? {
+        guard isActiveSortColumn(column) else { return nil }
+        switch column {
+        case .name:
+            return sortKey == .alphabeticalAsc ? "arrow.up" : "arrow.down"
+        case .cpu, .memory, .wakeups, .processCount, .friction:
+            return "arrow.down"
+        }
+    }
+
     // Resolves from the full snapshot so the detail pane persists even
     // when the entity is filtered out by search. Eliminates one
     // redundant filteredEntities evaluation per render cycle.
@@ -1307,6 +1471,10 @@ public struct MainListView: View {
             return "\(entity.displayName) is currently highest by CPU usage at \(String(format: "%.1f%%", entity.metrics.cpuPercent))."
         case .memory:
             return "\(entity.displayName) is currently highest by resident-memory load at \(String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes)))."
+        case .wakeups:
+            return "\(entity.displayName) is currently highest by wakeup rate at \(formatWakeups(entity.metrics.wakeupsPerSecond))."
+        case .processCount:
+            return "\(entity.displayName) currently owns the widest live process footprint at \(liveProcessCount(for: entity)) PIDs."
         case .disk:
             return "\(entity.displayName) is currently highest by disk activity at \(formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps))."
         case .network:
@@ -1334,6 +1502,10 @@ private func compareEntities(_ left: EntitySnapshot, _ right: EntitySnapshot, by
         return Double(left.metrics.cpuPercent) > Double(right.metrics.cpuPercent)
     case .memory:
         return left.metrics.memoryResidentBytes > right.metrics.memoryResidentBytes
+    case .wakeups:
+        return Double(left.metrics.wakeupsPerSecond) > Double(right.metrics.wakeupsPerSecond)
+    case .processCount:
+        return liveProcessCount(for: left) > liveProcessCount(for: right)
     case .disk:
         return (left.metrics.diskReadBps + left.metrics.diskWriteBps) > (right.metrics.diskReadBps + right.metrics.diskWriteBps)
     case .network:
@@ -1351,6 +1523,10 @@ private func compareEntities(_ left: EntitySnapshot, _ right: EntitySnapshot, by
     case .newestFirst:
         return left.newestProcessStartMillis > right.newestProcessStartMillis
     }
+}
+
+private func liveProcessCount(for entity: EntitySnapshot) -> Int {
+    entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
 }
 
 
