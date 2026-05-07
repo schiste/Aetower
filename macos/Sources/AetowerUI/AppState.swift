@@ -7,6 +7,11 @@ import UniformTypeIdentifiers
 import UserNotifications
 import AetowerBridge
 
+private struct LocalMcpSocketProbe {
+    let reachable: Bool
+    let detail: String
+}
+
 @MainActor
 @Observable
 public final class AppState {
@@ -96,6 +101,13 @@ public final class AppState {
     public private(set) var localMcpClientStatuses: [LocalMcpClientRegistrationStatus] = []
     public private(set) var localMcpRegistrationStatusMessage: String?
     public private(set) var localMcpServerHealthy = false
+    public private(set) var localMcpLastHealthCheckDate: Date?
+    public private(set) var localMcpLastStartAttemptDate: Date?
+    public private(set) var localMcpLastStartSucceededDate: Date?
+    public private(set) var localMcpLastStartError: String?
+    public private(set) var localMcpLastProbeDetail: String?
+    public private(set) var localMcpRestartCount = 0
+    public private(set) var localMcpConsecutiveProbeFailures = 0
     private(set) var entityAnomalyExplanations: [String: AnomalyExplanationReport] = [:]
     private(set) var entityProcessTreeReports: [String: EntityProcessTreeReportModel] = [:]
     private(set) var entityMemoryBreakdowns: [String: EntityMemoryBreakdownReportModel] = [:]
@@ -187,7 +199,11 @@ public final class AppState {
     @ObservationIgnored
     private var lastLocalMcpHealthCheckDate = Date.distantPast
     @ObservationIgnored
-    private let localMcpHealthCheckInterval: TimeInterval = 30
+    private let localMcpHealthyHealthCheckInterval: TimeInterval = 30
+    @ObservationIgnored
+    private let localMcpUnhealthyHealthCheckInterval: TimeInterval = 5
+    @ObservationIgnored
+    private let localMcpRestartFailureThreshold = 2
     @ObservationIgnored
     private let localMcpSocketPath = LocalMcpClientRegistrar.defaultSocketPath()
     @ObservationIgnored
@@ -296,6 +312,10 @@ public final class AppState {
         start(refreshInterval: 1.0)
     }
 
+    public var localMcpSocketPathDisplay: String {
+        localMcpSocketPath
+    }
+
     public func startLocalMcpServer() {
         ensureLocalMcpServer(force: true)
         refreshLocalMcpClientStatuses()
@@ -309,6 +329,7 @@ public final class AppState {
         bridge.stopLocalMcpServer()
         localMcpServerStarted = false
         localMcpServerHealthy = false
+        localMcpLastProbeDetail = "listener stopped"
     }
 
     public func start(refreshInterval: Double) {
@@ -660,28 +681,61 @@ public final class AppState {
 
     private func ensureLocalMcpServer(force: Bool = false) {
         let now = Date()
-        guard force || now.timeIntervalSince(lastLocalMcpHealthCheckDate) >= localMcpHealthCheckInterval else {
+        let healthCheckInterval = localMcpServerHealthy
+            ? localMcpHealthyHealthCheckInterval
+            : localMcpUnhealthyHealthCheckInterval
+        guard force || now.timeIntervalSince(lastLocalMcpHealthCheckDate) >= healthCheckInterval else {
             return
         }
         lastLocalMcpHealthCheckDate = now
+        localMcpLastHealthCheckDate = now
 
-        // Actually try to connect to the socket. File-existence alone is a
-        // false-positive on a stale socket left behind by a previous run,
-        // and a false-negative during the brief window after bind() but
-        // before the accept loop hits its first poll.
-        let socketReachable = isLocalMcpSocketReachable()
-        localMcpServerHealthy = localMcpServerStarted && socketReachable
-        guard force || !localMcpServerStarted || !socketReachable else {
+        let probe = probeLocalMcpSocket()
+        localMcpLastProbeDetail = probe.detail
+        if localMcpServerStarted && probe.reachable {
+            localMcpServerHealthy = true
+            localMcpConsecutiveProbeFailures = 0
+        } else if localMcpServerStarted {
+            localMcpServerHealthy = false
+            localMcpConsecutiveProbeFailures += 1
+        } else {
+            localMcpServerHealthy = false
+            localMcpConsecutiveProbeFailures = 0
+        }
+
+        let shouldRestart = force
+            || !localMcpServerStarted
+            || (localMcpServerStarted && !probe.reachable && localMcpConsecutiveProbeFailures >= localMcpRestartFailureThreshold)
+        guard shouldRestart else {
             return
         }
 
+        let wasStarted = localMcpServerStarted
+        localMcpLastStartAttemptDate = now
         if let error = bridge.startLocalMcpServer() {
             localMcpServerStarted = false
             localMcpServerHealthy = false
+            localMcpLastStartError = error
             lastError = error
         } else {
             localMcpServerStarted = true
-            localMcpServerHealthy = isLocalMcpSocketReachable()
+            if wasStarted || localMcpLastStartSucceededDate != nil {
+                localMcpRestartCount += 1
+            }
+            let postStartProbe = waitForLocalMcpSocketReachability()
+            localMcpServerHealthy = postStartProbe.reachable
+            localMcpLastProbeDetail = postStartProbe.detail
+            localMcpConsecutiveProbeFailures = postStartProbe.reachable
+                ? 0
+                : max(localMcpConsecutiveProbeFailures, 1)
+            localMcpLastStartError = postStartProbe.reachable
+                ? nil
+                : "listener did not become reachable after startup (\(postStartProbe.detail))"
+            if postStartProbe.reachable {
+                localMcpLastStartSucceededDate = now
+            } else {
+                lastError = localMcpLastStartError
+            }
             refreshLocalMcpClientStatuses()
         }
     }
@@ -698,23 +752,29 @@ public final class AppState {
             UInt64(Date().timeIntervalSince1970 * 1000)
         )
         historyStoreSummary = bridge.historyRangeSummary(startMillis: 0, endMillis: endMillis)
-        localMcpServerHealthy = localMcpServerStarted && isLocalMcpSocketReachable()
+        let probe = probeLocalMcpSocket()
+        localMcpLastHealthCheckDate = now
+        localMcpLastProbeDetail = probe.detail
+        localMcpServerHealthy = localMcpServerStarted && probe.reachable
     }
 
     /// Liveness probe: try a brief non-blocking connect to the MCP socket.
-    /// Returns true only when a peer is actually accepting; a stale socket
-    /// file on disk returns false, and a healthy listener returns true even
-    /// inside the narrow window where FileManager wouldn't yet see the file.
-    private func isLocalMcpSocketReachable() -> Bool {
+    /// Returns a human-readable detail so Diagnostics can distinguish a live
+    /// listener from a stale socket path or a timed-out accept loop.
+    private func probeLocalMcpSocket() -> LocalMcpSocketProbe {
         let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return false }
+        guard fd >= 0 else {
+            return LocalMcpSocketProbe(reachable: false, detail: "socket creation failed: \(socketErrorDetail(errno))")
+        }
         defer { Darwin.close(fd) }
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = Array(localMcpSocketPath.utf8)
         let maxLen = MemoryLayout.size(ofValue: addr.sun_path) - 1
-        guard pathBytes.count <= maxLen else { return false }
+        guard pathBytes.count <= maxLen else {
+            return LocalMcpSocketProbe(reachable: false, detail: "socket path is too long")
+        }
         withUnsafeMutablePointer(to: &addr.sun_path) { rawPath in
             rawPath.withMemoryRebound(to: CChar.self, capacity: pathBytes.count + 1) { dest in
                 for (index, byte) in pathBytes.enumerated() {
@@ -734,21 +794,65 @@ public final class AppState {
             }
         }
         if connectResult == 0 {
-            return true
+            return LocalMcpSocketProbe(reachable: true, detail: "listener accepted a local socket connection")
         }
-        if errno != EINPROGRESS {
-            return false
+        let connectErrno = errno
+        if connectErrno != EINPROGRESS {
+            return LocalMcpSocketProbe(
+                reachable: false,
+                detail: "connect failed: \(socketErrorDetail(connectErrno))"
+            )
         }
         var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-        let polled = poll(&pfd, 1, 500 /* ms */)
-        guard polled > 0 else { return false }
+        let timeoutMillis: Int32 = 120
+        let polled = poll(&pfd, 1, timeoutMillis)
+        if polled == 0 {
+            return LocalMcpSocketProbe(
+                reachable: false,
+                detail: "connect timed out after \(timeoutMillis) ms"
+            )
+        }
+        if polled < 0 {
+            return LocalMcpSocketProbe(
+                reachable: false,
+                detail: "poll failed: \(socketErrorDetail(errno))"
+            )
+        }
 
         var soError: Int32 = 0
         var errLen = socklen_t(MemoryLayout<Int32>.size)
         guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &errLen) == 0 else {
-            return false
+            return LocalMcpSocketProbe(
+                reachable: false,
+                detail: "getsockopt failed: \(socketErrorDetail(errno))"
+            )
         }
-        return soError == 0
+        if soError == 0 {
+            return LocalMcpSocketProbe(reachable: true, detail: "listener accepted a local socket connection")
+        }
+        return LocalMcpSocketProbe(
+            reachable: false,
+            detail: "connect completed with error: \(socketErrorDetail(soError))"
+        )
+    }
+
+    private func waitForLocalMcpSocketReachability(attempts: Int = 3) -> LocalMcpSocketProbe {
+        var probe = probeLocalMcpSocket()
+        guard !probe.reachable else {
+            return probe
+        }
+        for _ in 1..<attempts {
+            usleep(50_000)
+            probe = probeLocalMcpSocket()
+            if probe.reachable {
+                return probe
+            }
+        }
+        return probe
+    }
+
+    private func socketErrorDetail(_ errorNumber: Int32) -> String {
+        String(cString: strerror(errorNumber))
     }
 
     private func ensureAutomaticLocalMcpClientRegistration() {

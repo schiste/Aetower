@@ -4,10 +4,11 @@ use aetower_core::{Engine, RuntimeCollectionSettings};
 use aetower_diagnostics as diagnostics;
 use aetower_mcp::{
     AetowerMcpDataSource, HistorySummaryResponse, LocalMcpServerHandle, default_socket_path,
-    diff_snapshots_json, entity_process_tree_json, explain_anomalies_json, memory_breakdown_json,
-    process_action_history_json, process_action_json, process_inspect_json,
-    process_open_resources_json, process_sample_json, profile_entity_json,
-    self_memory_attribution_json, start_local_socket_server, wakeup_attribution_json,
+    diff_snapshots_json, entity_process_tree_json, explain_anomalies_json,
+    is_socket_listener_reachable, memory_breakdown_json, process_action_history_json,
+    process_action_json, process_inspect_json, process_open_resources_json, process_sample_json,
+    profile_entity_json, self_memory_attribution_json, start_local_socket_server,
+    wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1105,6 +1106,12 @@ impl MonitorEngine {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(default_socket_path);
         if let Ok(mut slot) = self.mcp_server.lock() {
+            if let Some(existing) = slot.as_ref()
+                && existing.socket_path() == resolved_path.as_path()
+                && is_socket_listener_reachable(&resolved_path)
+            {
+                return String::new();
+            }
             let _ = slot.take();
         }
         let data_source = Arc::new(MonitorEngineDataSource {
@@ -2373,6 +2380,36 @@ mod tests {
         }
 
         assert!(socket_path.exists(), "expected socket at {}", socket_string);
+        drop(engine);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn monitor_engine_reuses_live_local_mcp_server() {
+        let dir = std::env::temp_dir().join(format!("aetower-mcp-reuse-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let socket_path = dir.join("mcp.sock");
+        let socket_string = socket_path.display().to_string();
+        let engine = MonitorEngine::new();
+
+        let first = engine.start_local_mcp_server(Some(socket_string.clone()));
+        assert!(first.is_empty(), "{first}");
+        for _ in 0..50 {
+            if socket_path.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(socket_path.exists(), "expected socket at {}", socket_string);
+
+        let second = engine.start_local_mcp_server(Some(socket_string.clone()));
+        assert!(second.is_empty(), "{second}");
+        assert!(
+            socket_path.exists(),
+            "expected socket to remain live at {}",
+            socket_string
+        );
+
         drop(engine);
         let _ = fs::remove_dir_all(&dir);
     }

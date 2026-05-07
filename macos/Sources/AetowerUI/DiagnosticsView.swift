@@ -77,6 +77,7 @@ public struct DiagnosticsView: View {
                 controls
                 sessionHealth
                 selfMemoryAttribution
+                localMcpServerState
                 mcpLifecycle
                 overview
                 uiPayloadDiagnostics
@@ -431,6 +432,109 @@ public struct DiagnosticsView: View {
                 Text(mcpLifecycleGuidance)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
+    private var localMcpServerState: some View {
+        let statuses = state.localMcpClientStatuses
+        let installedAutomaticClients = statuses.filter { $0.isInstalled && $0.supportsAutomaticRegistration }
+        let registeredAutomaticClients = installedAutomaticClients.filter { $0.state == .registered }
+        let runtime = state.runtimeLagMetrics
+        let listenerValue: String = {
+            if state.localMcpServerHealthy {
+                return "Live"
+            }
+            if let lastStartError = state.localMcpLastStartError, !lastStartError.isEmpty {
+                return "Failed"
+            }
+            if state.localMcpLastStartAttemptDate != nil {
+                return "Starting"
+            }
+            return "Down"
+        }()
+
+        let listenerSubtitle: String = {
+            if let detail = state.localMcpLastProbeDetail, !detail.isEmpty {
+                return detail
+            }
+            if let lastStartError = state.localMcpLastStartError, !lastStartError.isEmpty {
+                return lastStartError
+            }
+            return "No listener probe has completed yet."
+        }()
+
+        return GroupBox("Local MCP server") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                LazyVGrid(columns: overviewColumns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    diagnosticsMetric(
+                        title: "Listener",
+                        value: listenerValue,
+                        subtitle: listenerSubtitle,
+                        valueColor: healthColor(listenerValue)
+                    )
+                    diagnosticsMetric(
+                        title: "Socket path",
+                        value: "Configured",
+                        subtitle: state.localMcpSocketPathDisplay
+                    )
+                    diagnosticsMetric(
+                        title: "Registrations",
+                        value: "\(registeredAutomaticClients.count)/\(installedAutomaticClients.count)",
+                        subtitle: "\(statuses.count) known local clients inspected"
+                    )
+                    diagnosticsMetric(
+                        title: "Clients now",
+                        value: "\(runtime.mcpActiveClientCount)",
+                        subtitle: "\(runtime.mcpHelperCount) helper processes · \(runtime.mcpTotalConnections) total connections"
+                    )
+                    diagnosticsMetric(
+                        title: "Last start",
+                        value: state.localMcpLastStartSucceededDate.map(relativeTimeLabel(from:)) ?? "Pending",
+                        subtitle: state.localMcpLastStartAttemptDate.map(relativeTimeLabel(from:)) ?? "no start attempt yet"
+                    )
+                    diagnosticsMetric(
+                        title: "Probe failures",
+                        value: "\(state.localMcpConsecutiveProbeFailures)",
+                        subtitle: "\(state.localMcpRestartCount) restart attempts since launch"
+                    )
+                    diagnosticsMetric(
+                        title: "Last accepted client",
+                        value: runtime.mcpObservedAtMillis == 0 ? "Unknown" : relativeTimeLabel(from: runtime.mcpObservedAtMillis),
+                        subtitle: "Protocol currently exposes counts and timestamps, not stable client identities"
+                    )
+                }
+
+                if let lastStartError = state.localMcpLastStartError, !lastStartError.isEmpty {
+                    Text(lastStartError)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .textSelection(.enabled)
+                }
+
+                if !statuses.isEmpty {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                        Text("Client registration state")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        ForEach(statuses) { status in
+                            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                                Text(status.displayName)
+                                    .font(.caption.weight(.medium))
+                                    .frame(width: 110, alignment: .leading)
+                                Text(status.state.rawValue.replacingOccurrences(of: "([A-Z])", with: " $1", options: .regularExpression).capitalized)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(status.state == .registered ? .green : .secondary)
+                                    .frame(width: 150, alignment: .leading)
+                                Text(status.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
             }
             .padding(.top, AetowerDesign.Spacing.xs)
         }
@@ -1084,9 +1188,9 @@ private func subsystemLabel(_ subsystem: DiagnosticsSubsystem) -> String {
 /// text with no color signal.
 private func healthColor(_ title: String) -> Color? {
     switch title {
-    case "Clean", "Quiet", "Stable", "Bounded", "Verified", "Enabled":
+    case "Clean", "Quiet", "Stable", "Bounded", "Verified", "Enabled", "Live":
         return AetowerDesign.Status.success
-    case "Watch", "Noisy", "Chatty", "Stale", "Pending", "Unknown":
+    case "Watch", "Noisy", "Chatty", "Stale", "Pending", "Unknown", "Starting", "Down":
         return AetowerDesign.Status.warning
     case "Degraded", "Denied", "Failed", "Hot", "Investigate":
         return AetowerDesign.Status.error

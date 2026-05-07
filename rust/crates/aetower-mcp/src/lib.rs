@@ -965,6 +965,10 @@ impl Drop for LocalMcpServerHandle {
     }
 }
 
+pub fn is_socket_listener_reachable(socket_path: impl AsRef<Path>) -> bool {
+    UnixStream::connect(socket_path.as_ref()).is_ok()
+}
+
 #[derive(Clone)]
 enum DynamicExecutionMode {
     Local,
