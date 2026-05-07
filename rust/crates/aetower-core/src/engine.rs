@@ -348,6 +348,8 @@ impl Engine {
                 BTreeMap::<&'static str, PersistedHostIncidentState>::new();
             let mut recently_reaped_mcp_helpers = BTreeMap::<u32, u64>::new();
             let mut mcp_helper_lifecycle = McpHelperLifecycleState::default();
+            let mut deferred_history_snapshot: Option<SystemSnapshot> = None;
+            let mut history_store_busy_since_millis: Option<u64> = None;
 
             while running.load(Ordering::SeqCst) {
                 let tick_started = Instant::now();
@@ -568,30 +570,58 @@ impl Engine {
                 // Persist snapshot (best-effort, throttled by write_interval).
                 let persist_started = Instant::now();
                 let mut history_store_busy = false;
+                let mut deferred_history_recovered = false;
+                let mut deferred_history_age_millis = 0u64;
                 let history_queue_depth =
                     if let Some(mut persistence_guard) = persistence.try_lock() {
-                        let history_queue_depth = persistence_guard
-                            .as_ref()
-                            .map(|store| store.pending_writes())
-                            .unwrap_or(0);
                         if let Some(store) = persistence_guard.as_mut() {
+                            if let Some(deferred_snapshot) = deferred_history_snapshot.take() {
+                                deferred_history_age_millis = captured_at_millis
+                                    .saturating_sub(deferred_snapshot.captured_at_millis);
+                                store.store_immediately(&deferred_snapshot);
+                                deferred_history_recovered = true;
+                                history_store_busy_since_millis = None;
+                            }
                             store.maybe_store(&guard.latest_snapshot);
+                            store.pending_writes()
+                        } else {
+                            0
                         }
-                        history_queue_depth
                     } else {
                         history_store_busy = true;
-                        0
+                        deferred_history_snapshot = Some(guard.latest_snapshot.clone());
+                        history_store_busy_since_millis.get_or_insert(captured_at_millis);
+                        u64::from(deferred_history_snapshot.is_some())
                     };
                 if history_store_busy {
+                    let deferred_for_millis = history_store_busy_since_millis
+                        .map(|since| captured_at_millis.saturating_sub(since))
+                        .unwrap_or(0);
                     diagnostics.emit(
                         DiagnosticsEvent::builder(
                             DiagnosticsLevel::Warn,
                             DiagnosticsSubsystem::Persistence,
                             "history-store-busy",
-                            "Skipped a history write because maintenance held the store lock.",
+                            "Deferred the latest history write because maintenance held the store lock.",
                         )
                         .timestamp_millis(captured_at_millis)
                         .sequence(guard.latest_snapshot.sequence)
+                        .field("deferred_snapshot", true)
+                        .field("deferred_for_millis", deferred_for_millis)
+                        .build(),
+                    );
+                } else if deferred_history_recovered {
+                    diagnostics.emit(
+                        DiagnosticsEvent::builder(
+                            DiagnosticsLevel::Info,
+                            DiagnosticsSubsystem::Persistence,
+                            "history-store-recovered",
+                            "Flushed a deferred history write after store maintenance released the lock.",
+                        )
+                        .timestamp_millis(captured_at_millis)
+                        .sequence(guard.latest_snapshot.sequence)
+                        .field("deferred_age_millis", deferred_history_age_millis)
+                        .field("pending_writes", history_queue_depth)
                         .build(),
                     );
                 }
@@ -639,6 +669,32 @@ impl Engine {
                     .field("entity_count", entity_count)
                     .field("process_count", raw.processes.len())
                     .field("collect_millis", format!("{collect_millis:.3}"))
+                    .field(
+                        "collect_host_refresh_millis",
+                        format!("{:.3}", raw.timings.host_refresh_millis),
+                    )
+                    .field(
+                        "collect_process_refresh_millis",
+                        format!("{:.3}", raw.timings.process_refresh_millis),
+                    )
+                    .field(
+                        "collect_process_sampling_millis",
+                        format!("{:.3}", raw.timings.process_sampling_millis),
+                    )
+                    .field(
+                        "collect_storage_refresh_millis",
+                        format!("{:.3}", raw.timings.storage_refresh_millis),
+                    )
+                    .field(
+                        "collect_environment_refresh_millis",
+                        format!("{:.3}", raw.timings.environment_refresh_millis),
+                    )
+                    .field(
+                        "collect_post_process_millis",
+                        format!("{:.3}", raw.timings.post_process_millis),
+                    )
+                    .field("collect_discovery_scan", raw.timings.discovery_scan)
+                    .field("collect_sampled_rusage", raw.timings.sampled_rusage)
                     .field(
                         "identity_millis",
                         format!("{:.3}", pipeline_timings.identity_millis),
@@ -692,6 +748,32 @@ impl Engine {
                         .field("target_tick_millis", target_tick.as_millis())
                         .field("tick_millis", tick_millis)
                         .field("collect_millis", format!("{collect_millis:.3}"))
+                        .field(
+                            "collect_host_refresh_millis",
+                            format!("{:.3}", raw.timings.host_refresh_millis),
+                        )
+                        .field(
+                            "collect_process_refresh_millis",
+                            format!("{:.3}", raw.timings.process_refresh_millis),
+                        )
+                        .field(
+                            "collect_process_sampling_millis",
+                            format!("{:.3}", raw.timings.process_sampling_millis),
+                        )
+                        .field(
+                            "collect_storage_refresh_millis",
+                            format!("{:.3}", raw.timings.storage_refresh_millis),
+                        )
+                        .field(
+                            "collect_environment_refresh_millis",
+                            format!("{:.3}", raw.timings.environment_refresh_millis),
+                        )
+                        .field(
+                            "collect_post_process_millis",
+                            format!("{:.3}", raw.timings.post_process_millis),
+                        )
+                        .field("collect_discovery_scan", raw.timings.discovery_scan)
+                        .field("collect_sampled_rusage", raw.timings.sampled_rusage)
                         .field("history_queue_depth", history_queue_depth)
                         .field(
                             "diagnostics_queue_depth",
@@ -732,6 +814,32 @@ impl Engine {
                     .field("entity_count", entity_count)
                     .field("process_count", raw.processes.len())
                     .field("collect_millis", format!("{collect_millis:.3}"))
+                    .field(
+                        "collect_host_refresh_millis",
+                        format!("{:.3}", raw.timings.host_refresh_millis),
+                    )
+                    .field(
+                        "collect_process_refresh_millis",
+                        format!("{:.3}", raw.timings.process_refresh_millis),
+                    )
+                    .field(
+                        "collect_process_sampling_millis",
+                        format!("{:.3}", raw.timings.process_sampling_millis),
+                    )
+                    .field(
+                        "collect_storage_refresh_millis",
+                        format!("{:.3}", raw.timings.storage_refresh_millis),
+                    )
+                    .field(
+                        "collect_environment_refresh_millis",
+                        format!("{:.3}", raw.timings.environment_refresh_millis),
+                    )
+                    .field(
+                        "collect_post_process_millis",
+                        format!("{:.3}", raw.timings.post_process_millis),
+                    )
+                    .field("collect_discovery_scan", raw.timings.discovery_scan)
+                    .field("collect_sampled_rusage", raw.timings.sampled_rusage)
                     .field(
                         "identity_millis",
                         format!("{:.3}", pipeline_timings.identity_millis),
@@ -826,14 +934,15 @@ impl Engine {
             sleep_with_stop(&running, HISTORY_MAINTENANCE_INITIAL_DELAY);
             while running.load(Ordering::SeqCst) {
                 let started = Instant::now();
-                let result = {
-                    let guard = persistence.lock();
+                let result = if let Some(guard) = persistence.try_lock() {
                     guard.as_ref().map(|store| {
                         store.maintain_with_policy_cancellable(
                             default_history_retention_policy(),
                             Arc::clone(&maintenance_cancel),
                         )
                     })
+                } else {
+                    None
                 };
                 let elapsed_millis = started.elapsed().as_millis();
                 match result {
@@ -1982,7 +2091,13 @@ fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
     let timestamp = parse_unified_log_timestamp(entry.timestamp.as_deref()?)?;
     let detail = entry.event_message?;
     let normalized = detail.to_ascii_lowercase();
-    if normalized.contains("previous shutdown cause") {
+    if is_system_marker_noise(&normalized) {
+        return None;
+    }
+    if normalized
+        .trim_start()
+        .starts_with("previous shutdown cause:")
+    {
         let marker_key = shutdown_marker_key(&detail);
         return Some(SystemMarker {
             timestamp_millis: timestamp,
@@ -2033,7 +2148,7 @@ fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
     if normalized.contains("thermal pressure") {
         return Some(SystemMarker {
             timestamp_millis: timestamp,
-            level: DiagnosticsLevel::Warn,
+            level: thermal_marker_level(&normalized),
             event_type: "system-thermal-marker",
             message: "Observed a recent thermal pressure marker.",
             detail,
@@ -2053,6 +2168,24 @@ fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
         });
     }
     None
+}
+
+fn is_system_marker_noise(normalized_detail: &str) -> bool {
+    normalized_detail.contains("polling for the states of screen")
+        || normalized_detail.contains("reachability status")
+        || normalized_detail.contains("current thermal pressure level=0")
+        || normalized_detail.contains("current thermal pressure level = 0")
+}
+
+fn thermal_marker_level(normalized_detail: &str) -> DiagnosticsLevel {
+    if normalized_detail.contains("level=0")
+        || normalized_detail.contains("level = 0")
+        || normalized_detail.contains("nominal")
+    {
+        DiagnosticsLevel::Info
+    } else {
+        DiagnosticsLevel::Warn
+    }
 }
 
 fn shutdown_marker_key(detail: &str) -> String {
@@ -2131,6 +2264,44 @@ mod tests {
             marker.marker_key.as_deref(),
             Some("previous-shutdown-cause:-128")
         );
+    }
+
+    #[test]
+    fn ignores_marker_polling_noise_and_non_marker_shutdown_mentions() {
+        assert!(classify_system_marker(UnifiedLogEntry {
+            timestamp: Some("2026-04-13 19:03:09.753950+0200".to_owned()),
+            event_message: Some(
+                "#I Polling for the states of screen, locks, reachability status, ringer state, battery saver mode, thermal pressure level & in metro status".to_owned()
+            ),
+        })
+        .is_none());
+
+        assert!(
+            classify_system_marker(UnifiedLogEntry {
+                timestamp: Some("2026-04-13 19:03:09.753950+0200".to_owned()),
+                event_message: Some(
+                    "Command line: /usr/bin/log show --predicate previous shutdown cause"
+                        .to_owned()
+                ),
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn downgrades_nominal_thermal_markers() {
+        let marker = classify_system_marker(UnifiedLogEntry {
+            timestamp: Some("2026-04-13 19:03:09.753950+0200".to_owned()),
+            event_message: Some("current thermal pressure level=0".to_owned()),
+        });
+        assert!(marker.is_none());
+
+        let nominal = classify_system_marker(UnifiedLogEntry {
+            timestamp: Some("2026-04-13 19:03:09.753950+0200".to_owned()),
+            event_message: Some("Thermal pressure changed to nominal".to_owned()),
+        })
+        .unwrap_or_else(|| panic!("thermal marker"));
+        assert_eq!(nominal.level, DiagnosticsLevel::Info);
     }
 
     #[test]

@@ -828,7 +828,9 @@ fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)>
         "host-incident-snapshot" => 60 * 60 * 1000,
         "system-previous-shutdown-cause" => 12 * 60 * 60 * 1000,
         "adapter-refresh-failed" => 15 * 60 * 1000,
-        "history-store-busy" | "history-write-backpressure" => 5 * 60 * 1000,
+        "history-store-busy"
+        | "history-write-backpressure"
+        | "history-deferred-write-backpressure" => 5 * 60 * 1000,
         "history-maintenance-over-budget" | "history-maintenance-failed" => 15 * 60 * 1000,
         "tick-over-budget" => 5 * 60 * 1000,
         "mcp-helper-lifecycle" => 60 * 1000,

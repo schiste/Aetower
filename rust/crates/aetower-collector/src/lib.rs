@@ -76,6 +76,28 @@ pub struct RawSnapshot {
     pub processes: Vec<RawProcessSample>,
     #[serde(default)]
     pub self_process: Option<RawProcessSample>,
+    #[serde(default)]
+    pub timings: CollectorTimings,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CollectorTimings {
+    #[serde(default)]
+    pub host_refresh_millis: f32,
+    #[serde(default)]
+    pub process_refresh_millis: f32,
+    #[serde(default)]
+    pub environment_refresh_millis: f32,
+    #[serde(default)]
+    pub process_sampling_millis: f32,
+    #[serde(default)]
+    pub post_process_millis: f32,
+    #[serde(default)]
+    pub storage_refresh_millis: f32,
+    #[serde(default)]
+    pub discovery_scan: bool,
+    #[serde(default)]
+    pub sampled_rusage: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -203,9 +225,11 @@ impl Collector {
     }
 
     pub fn collect(&mut self) -> RawSnapshot {
+        let host_refresh_started = std::time::Instant::now();
         self.system.refresh_cpu_all();
         self.system.refresh_memory();
         self.networks.refresh(true);
+        let host_refresh_millis = host_refresh_started.elapsed().as_secs_f64() * 1000.0;
         // Separate process discovery from memory refresh. Enumerating the full
         // process table is the expensive step, so do it on a much slower
         // cadence while still refreshing memory on known PIDs regularly.
@@ -219,6 +243,7 @@ impl Collector {
             || self
                 .process_metadata_tick
                 .is_multiple_of(PROCESS_MEMORY_REFRESH_INTERVAL_TICKS);
+        let process_refresh_started = std::time::Instant::now();
         if discovery_scan {
             self.system.refresh_processes_specifics(
                 ProcessesToUpdate::All,
@@ -233,9 +258,11 @@ impl Collector {
                 process_refresh_kind(false, refresh_memory),
             );
         }
+        let process_refresh_millis = process_refresh_started.elapsed().as_secs_f64() * 1000.0;
         self.process_metadata_tick = self.process_metadata_tick.wrapping_add(1);
         self.user_directory_refresh_tick = self.user_directory_refresh_tick.wrapping_add(1);
         let refresh_host_environment = self.host_environment_refresh_tick == 0;
+        let environment_refresh_started = std::time::Instant::now();
         if refresh_host_environment {
             self.cached_host_environment = read_environment();
         }
@@ -247,6 +274,8 @@ impl Collector {
         if self.config.full_collection || refresh_host_environment {
             self.cached_network_interfaces = collect_network_interface_metadata(&self.networks);
         }
+        let environment_refresh_millis =
+            environment_refresh_started.elapsed().as_secs_f64() * 1000.0;
 
         // Disk SMART data is sampled on an even slower cadence: shelling out
         // to `diskutil` is the main cost, and the values change over hours
@@ -263,6 +292,7 @@ impl Collector {
         // Bluetooth peripheral battery is on its own cadence — fast enough
         // that "just connected" devices show up within half a minute, slow
         // enough that we're not invoking `ioreg` every tick.
+        let storage_refresh_started = std::time::Instant::now();
         let refresh_bluetooth = self.cached_bluetooth_devices.is_empty()
             || self.config.full_collection
             || self.bluetooth_refresh_tick == 0;
@@ -271,6 +301,7 @@ impl Collector {
         }
         self.bluetooth_refresh_tick =
             (self.bluetooth_refresh_tick + 1) % BLUETOOTH_REFRESH_INTERVAL_TICKS;
+        let storage_refresh_millis = storage_refresh_started.elapsed().as_secs_f64() * 1000.0;
 
         let mut network_totals = NetworkTotals::default();
         for (_name, data) in &self.networks {
@@ -296,6 +327,7 @@ impl Collector {
             self.users.refresh();
         }
 
+        let process_sampling_started = std::time::Instant::now();
         let mut next_process_counters = HashMap::with_capacity(self.system.processes().len());
         let all_processes: Vec<_> = self
             .system
@@ -452,6 +484,7 @@ impl Collector {
                 }
             })
             .collect();
+        let process_sampling_millis = process_sampling_started.elapsed().as_secs_f64() * 1000.0;
         let self_process = all_processes
             .iter()
             .find(|process| process.pid == self.self_pid)
@@ -481,6 +514,7 @@ impl Collector {
             }
         }
 
+        let post_process_started = std::time::Instant::now();
         let host_disk_read_bps = processes.iter().fold(0u64, |total, process| {
             total.saturating_add(process.disk_read_bytes)
         });
@@ -518,12 +552,23 @@ impl Collector {
             disks: self.cached_disks.clone(),
             bluetooth_devices: self.cached_bluetooth_devices.clone(),
         };
+        let post_process_millis = post_process_started.elapsed().as_secs_f64() * 1000.0;
         self.previous_network_totals = network_totals;
 
         RawSnapshot {
             host,
             processes,
             self_process,
+            timings: CollectorTimings {
+                host_refresh_millis: host_refresh_millis as f32,
+                process_refresh_millis: process_refresh_millis as f32,
+                environment_refresh_millis: environment_refresh_millis as f32,
+                process_sampling_millis: process_sampling_millis as f32,
+                post_process_millis: post_process_millis as f32,
+                storage_refresh_millis: storage_refresh_millis as f32,
+                discovery_scan,
+                sampled_rusage: sample_wakeups || refresh_memory,
+            },
         }
     }
 }

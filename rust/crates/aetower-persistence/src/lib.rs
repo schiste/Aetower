@@ -141,6 +141,18 @@ impl HistoryStore {
             return;
         }
         self.write_counter = 0;
+        self.enqueue_store(snapshot, "history-write-backpressure");
+    }
+
+    /// Queue a snapshot immediately, bypassing the tick-based write interval.
+    /// This is used to flush the latest deferred snapshot after brief store
+    /// contention, so maintenance windows do not permanently drop the newest
+    /// history point.
+    pub fn store_immediately(&mut self, snapshot: &SystemSnapshot) {
+        self.enqueue_store(snapshot, "history-deferred-write-backpressure");
+    }
+
+    fn enqueue_store(&mut self, snapshot: &SystemSnapshot, event_type: &'static str) {
         let pending_writes = self.writer.pending_writes();
         if pending_writes >= MAX_PENDING_HISTORY_WRITES {
             if let Some(diagnostics) = self.diagnostics.as_ref() {
@@ -148,7 +160,7 @@ impl HistoryStore {
                     DiagnosticsEvent::builder(
                         DiagnosticsLevel::Warn,
                         DiagnosticsSubsystem::Persistence,
-                        "history-write-backpressure",
+                        event_type,
                         "Skipped a persisted history write because the writer queue is backed up.",
                     )
                     .field("pending_writes", pending_writes)
@@ -1507,6 +1519,32 @@ mod tests {
 
         let loaded = store.load_range(0, 100_000).unwrap();
         assert_eq!(loaded.len(), 3); // writes at tick 3, 6, 9
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn immediate_store_bypasses_write_interval() {
+        let path = temp_db();
+        let mut store =
+            HistoryStore::open(&path, 10).unwrap_or_else(|error| panic!("open store: {error}"));
+
+        store.maybe_store(&SystemSnapshot {
+            sequence: 1,
+            captured_at_millis: 1_000,
+            ..Default::default()
+        });
+        store.store_immediately(&SystemSnapshot {
+            sequence: 2,
+            captured_at_millis: 2_000,
+            ..Default::default()
+        });
+
+        let loaded = store
+            .load_range(0, 10_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].sequence, 2);
 
         std::fs::remove_file(&path).ok();
     }
