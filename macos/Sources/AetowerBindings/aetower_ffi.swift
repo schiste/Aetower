@@ -2178,6 +2178,236 @@ public func FfiConverterTypeCapabilitySnapshot_lower(_ value: CapabilitySnapshot
 }
 
 
+public struct Chau7SessionSummary {
+    public var id: String
+    public var tabId: String?
+    public var sessionId: String?
+    public var title: String
+    public var provider: String
+    public var status: String
+    public var workspacePath: String?
+    public var repoRoot: String?
+    public var gitBranch: String?
+    public var activeApp: String?
+    public var windowId: UInt32
+    public var runCount: UInt32
+    public var lastActive: String
+    public var turnCount: UInt32
+    public var childSessionCount: UInt32
+    public var pendingApprovalDescription: String?
+    public var lastExitReason: String?
+    public var activeRunDurationMillis: UInt64
+    public var isAtPrompt: Bool
+    public var shellLoading: Bool
+    public var ctoActive: Bool
+    public var linkedEntityIds: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, tabId: String?, sessionId: String?, title: String, provider: String, status: String, workspacePath: String?, repoRoot: String?, gitBranch: String?, activeApp: String?, windowId: UInt32, runCount: UInt32, lastActive: String, turnCount: UInt32, childSessionCount: UInt32, pendingApprovalDescription: String?, lastExitReason: String?, activeRunDurationMillis: UInt64, isAtPrompt: Bool, shellLoading: Bool, ctoActive: Bool, linkedEntityIds: [String]) {
+        self.id = id
+        self.tabId = tabId
+        self.sessionId = sessionId
+        self.title = title
+        self.provider = provider
+        self.status = status
+        self.workspacePath = workspacePath
+        self.repoRoot = repoRoot
+        self.gitBranch = gitBranch
+        self.activeApp = activeApp
+        self.windowId = windowId
+        self.runCount = runCount
+        self.lastActive = lastActive
+        self.turnCount = turnCount
+        self.childSessionCount = childSessionCount
+        self.pendingApprovalDescription = pendingApprovalDescription
+        self.lastExitReason = lastExitReason
+        self.activeRunDurationMillis = activeRunDurationMillis
+        self.isAtPrompt = isAtPrompt
+        self.shellLoading = shellLoading
+        self.ctoActive = ctoActive
+        self.linkedEntityIds = linkedEntityIds
+    }
+}
+
+#if compiler(>=6)
+extension Chau7SessionSummary: Sendable {}
+#endif
+
+
+extension Chau7SessionSummary: Equatable, Hashable {
+    public static func ==(lhs: Chau7SessionSummary, rhs: Chau7SessionSummary) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.tabId != rhs.tabId {
+            return false
+        }
+        if lhs.sessionId != rhs.sessionId {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.provider != rhs.provider {
+            return false
+        }
+        if lhs.status != rhs.status {
+            return false
+        }
+        if lhs.workspacePath != rhs.workspacePath {
+            return false
+        }
+        if lhs.repoRoot != rhs.repoRoot {
+            return false
+        }
+        if lhs.gitBranch != rhs.gitBranch {
+            return false
+        }
+        if lhs.activeApp != rhs.activeApp {
+            return false
+        }
+        if lhs.windowId != rhs.windowId {
+            return false
+        }
+        if lhs.runCount != rhs.runCount {
+            return false
+        }
+        if lhs.lastActive != rhs.lastActive {
+            return false
+        }
+        if lhs.turnCount != rhs.turnCount {
+            return false
+        }
+        if lhs.childSessionCount != rhs.childSessionCount {
+            return false
+        }
+        if lhs.pendingApprovalDescription != rhs.pendingApprovalDescription {
+            return false
+        }
+        if lhs.lastExitReason != rhs.lastExitReason {
+            return false
+        }
+        if lhs.activeRunDurationMillis != rhs.activeRunDurationMillis {
+            return false
+        }
+        if lhs.isAtPrompt != rhs.isAtPrompt {
+            return false
+        }
+        if lhs.shellLoading != rhs.shellLoading {
+            return false
+        }
+        if lhs.ctoActive != rhs.ctoActive {
+            return false
+        }
+        if lhs.linkedEntityIds != rhs.linkedEntityIds {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(tabId)
+        hasher.combine(sessionId)
+        hasher.combine(title)
+        hasher.combine(provider)
+        hasher.combine(status)
+        hasher.combine(workspacePath)
+        hasher.combine(repoRoot)
+        hasher.combine(gitBranch)
+        hasher.combine(activeApp)
+        hasher.combine(windowId)
+        hasher.combine(runCount)
+        hasher.combine(lastActive)
+        hasher.combine(turnCount)
+        hasher.combine(childSessionCount)
+        hasher.combine(pendingApprovalDescription)
+        hasher.combine(lastExitReason)
+        hasher.combine(activeRunDurationMillis)
+        hasher.combine(isAtPrompt)
+        hasher.combine(shellLoading)
+        hasher.combine(ctoActive)
+        hasher.combine(linkedEntityIds)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChau7SessionSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Chau7SessionSummary {
+        return
+            try Chau7SessionSummary(
+                id: FfiConverterString.read(from: &buf), 
+                tabId: FfiConverterOptionString.read(from: &buf), 
+                sessionId: FfiConverterOptionString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                provider: FfiConverterString.read(from: &buf), 
+                status: FfiConverterString.read(from: &buf), 
+                workspacePath: FfiConverterOptionString.read(from: &buf), 
+                repoRoot: FfiConverterOptionString.read(from: &buf), 
+                gitBranch: FfiConverterOptionString.read(from: &buf), 
+                activeApp: FfiConverterOptionString.read(from: &buf), 
+                windowId: FfiConverterUInt32.read(from: &buf), 
+                runCount: FfiConverterUInt32.read(from: &buf), 
+                lastActive: FfiConverterString.read(from: &buf), 
+                turnCount: FfiConverterUInt32.read(from: &buf), 
+                childSessionCount: FfiConverterUInt32.read(from: &buf), 
+                pendingApprovalDescription: FfiConverterOptionString.read(from: &buf), 
+                lastExitReason: FfiConverterOptionString.read(from: &buf), 
+                activeRunDurationMillis: FfiConverterUInt64.read(from: &buf), 
+                isAtPrompt: FfiConverterBool.read(from: &buf), 
+                shellLoading: FfiConverterBool.read(from: &buf), 
+                ctoActive: FfiConverterBool.read(from: &buf), 
+                linkedEntityIds: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Chau7SessionSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterOptionString.write(value.tabId, into: &buf)
+        FfiConverterOptionString.write(value.sessionId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.provider, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterOptionString.write(value.workspacePath, into: &buf)
+        FfiConverterOptionString.write(value.repoRoot, into: &buf)
+        FfiConverterOptionString.write(value.gitBranch, into: &buf)
+        FfiConverterOptionString.write(value.activeApp, into: &buf)
+        FfiConverterUInt32.write(value.windowId, into: &buf)
+        FfiConverterUInt32.write(value.runCount, into: &buf)
+        FfiConverterString.write(value.lastActive, into: &buf)
+        FfiConverterUInt32.write(value.turnCount, into: &buf)
+        FfiConverterUInt32.write(value.childSessionCount, into: &buf)
+        FfiConverterOptionString.write(value.pendingApprovalDescription, into: &buf)
+        FfiConverterOptionString.write(value.lastExitReason, into: &buf)
+        FfiConverterUInt64.write(value.activeRunDurationMillis, into: &buf)
+        FfiConverterBool.write(value.isAtPrompt, into: &buf)
+        FfiConverterBool.write(value.shellLoading, into: &buf)
+        FfiConverterBool.write(value.ctoActive, into: &buf)
+        FfiConverterSequenceString.write(value.linkedEntityIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChau7SessionSummary_lift(_ buf: RustBuffer) throws -> Chau7SessionSummary {
+    return try FfiConverterTypeChau7SessionSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChau7SessionSummary_lower(_ value: Chau7SessionSummary) -> RustBuffer {
+    return FfiConverterTypeChau7SessionSummary.lower(value)
+}
+
+
 public struct ComponentSnapshot {
     public var kind: ComponentKind
     public var title: String
@@ -5571,10 +5801,11 @@ public struct SystemSnapshot {
     public var entities: [EntitySnapshot]
     public var timeline: [TimelineEvent]
     public var aiRepoSummaries: [AiRepoSummary]
+    public var chau7Sessions: [Chau7SessionSummary]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sequence: UInt64, capturedAtMillis: UInt64, host: HostSnapshot, hostTrend: HostTrend, capabilities: [CapabilitySnapshot], entities: [EntitySnapshot], timeline: [TimelineEvent], aiRepoSummaries: [AiRepoSummary]) {
+    public init(sequence: UInt64, capturedAtMillis: UInt64, host: HostSnapshot, hostTrend: HostTrend, capabilities: [CapabilitySnapshot], entities: [EntitySnapshot], timeline: [TimelineEvent], aiRepoSummaries: [AiRepoSummary], chau7Sessions: [Chau7SessionSummary]) {
         self.sequence = sequence
         self.capturedAtMillis = capturedAtMillis
         self.host = host
@@ -5583,6 +5814,7 @@ public struct SystemSnapshot {
         self.entities = entities
         self.timeline = timeline
         self.aiRepoSummaries = aiRepoSummaries
+        self.chau7Sessions = chau7Sessions
     }
 }
 
@@ -5617,6 +5849,9 @@ extension SystemSnapshot: Equatable, Hashable {
         if lhs.aiRepoSummaries != rhs.aiRepoSummaries {
             return false
         }
+        if lhs.chau7Sessions != rhs.chau7Sessions {
+            return false
+        }
         return true
     }
 
@@ -5629,6 +5864,7 @@ extension SystemSnapshot: Equatable, Hashable {
         hasher.combine(entities)
         hasher.combine(timeline)
         hasher.combine(aiRepoSummaries)
+        hasher.combine(chau7Sessions)
     }
 }
 
@@ -5648,7 +5884,8 @@ public struct FfiConverterTypeSystemSnapshot: FfiConverterRustBuffer {
                 capabilities: FfiConverterSequenceTypeCapabilitySnapshot.read(from: &buf), 
                 entities: FfiConverterSequenceTypeEntitySnapshot.read(from: &buf), 
                 timeline: FfiConverterSequenceTypeTimelineEvent.read(from: &buf), 
-                aiRepoSummaries: FfiConverterSequenceTypeAiRepoSummary.read(from: &buf)
+                aiRepoSummaries: FfiConverterSequenceTypeAiRepoSummary.read(from: &buf), 
+                chau7Sessions: FfiConverterSequenceTypeChau7SessionSummary.read(from: &buf)
         )
     }
 
@@ -5661,6 +5898,7 @@ public struct FfiConverterTypeSystemSnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeEntitySnapshot.write(value.entities, into: &buf)
         FfiConverterSequenceTypeTimelineEvent.write(value.timeline, into: &buf)
         FfiConverterSequenceTypeAiRepoSummary.write(value.aiRepoSummaries, into: &buf)
+        FfiConverterSequenceTypeChau7SessionSummary.write(value.chau7Sessions, into: &buf)
     }
 }
 
@@ -8276,6 +8514,31 @@ fileprivate struct FfiConverterSequenceTypeCapabilitySnapshot: FfiConverterRustB
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeCapabilitySnapshot.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeChau7SessionSummary: FfiConverterRustBuffer {
+    typealias SwiftType = [Chau7SessionSummary]
+
+    public static func write(_ value: [Chau7SessionSummary], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeChau7SessionSummary.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Chau7SessionSummary] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Chau7SessionSummary]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeChau7SessionSummary.read(from: &buf))
         }
         return seq
     }

@@ -300,7 +300,8 @@ public final class AppState {
             capabilities: [],
             entities: [],
             timeline: [],
-            aiRepoSummaries: []
+            aiRepoSummaries: [],
+            chau7Sessions: []
         )
         self.bridge = bridge
         self.permissionCoordinator = permissionCoordinator

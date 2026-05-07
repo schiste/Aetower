@@ -270,6 +270,7 @@ impl Engine {
             host_trend: HostTrend::default(),
             timeline: Vec::new(),
             ai_repo_summaries: Vec::new(),
+            chau7_sessions: Vec::new(),
         };
 
         // Open persistence database (best-effort — app works without it).
@@ -547,6 +548,7 @@ impl Engine {
                 let history_millis = history_started.elapsed().as_secs_f64() * 1000.0;
                 runtime_lag_metrics.history_millis = history_millis as f32;
                 guard.sequence += 1;
+                let chau7_sessions = adapters.chau7_session_summaries(&entities);
                 guard.latest_snapshot = SystemSnapshot {
                     sequence: guard.sequence,
                     captured_at_millis,
@@ -556,6 +558,7 @@ impl Engine {
                     entities,
                     timeline,
                     ai_repo_summaries: adapters.ai_repo_summaries(),
+                    chau7_sessions,
                 };
                 emit_boot_session_observed(
                     &diagnostics,

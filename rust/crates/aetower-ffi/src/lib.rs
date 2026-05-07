@@ -605,6 +605,7 @@ pub struct SystemSnapshot {
     pub entities: Vec<EntitySnapshot>,
     pub timeline: Vec<TimelineEvent>,
     pub ai_repo_summaries: Vec<AiRepoSummary>,
+    pub chau7_sessions: Vec<Chau7SessionSummary>,
 }
 
 /// Per-repository AI cost summary from the Chau7 adapter.
@@ -616,6 +617,32 @@ pub struct AiRepoSummary {
     pub total_tokens: u64,
     pub total_cost_usd: f32,
     pub providers: Vec<String>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct Chau7SessionSummary {
+    pub id: String,
+    pub tab_id: Option<String>,
+    pub session_id: Option<String>,
+    pub title: String,
+    pub provider: String,
+    pub status: String,
+    pub workspace_path: Option<String>,
+    pub repo_root: Option<String>,
+    pub git_branch: Option<String>,
+    pub active_app: Option<String>,
+    pub window_id: u32,
+    pub run_count: u32,
+    pub last_active: String,
+    pub turn_count: u32,
+    pub child_session_count: u32,
+    pub pending_approval_description: Option<String>,
+    pub last_exit_reason: Option<String>,
+    pub active_run_duration_millis: u64,
+    pub is_at_prompt: bool,
+    pub shell_loading: bool,
+    pub cto_active: bool,
+    pub linked_entity_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -2308,6 +2335,7 @@ impl From<model::SystemSnapshot> for SystemSnapshot {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
+            chau7_sessions: value.chau7_sessions.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -2321,6 +2349,35 @@ impl From<model::AiRepoSummary> for AiRepoSummary {
             total_tokens: value.total_tokens,
             total_cost_usd: value.total_cost_usd,
             providers: value.providers,
+        }
+    }
+}
+
+impl From<model::Chau7SessionSummary> for Chau7SessionSummary {
+    fn from(value: model::Chau7SessionSummary) -> Self {
+        Self {
+            id: value.id,
+            tab_id: value.tab_id,
+            session_id: value.session_id,
+            title: value.title,
+            provider: value.provider,
+            status: value.status,
+            workspace_path: value.workspace_path,
+            repo_root: value.repo_root,
+            git_branch: value.git_branch,
+            active_app: value.active_app,
+            window_id: value.window_id,
+            run_count: value.run_count,
+            last_active: value.last_active,
+            turn_count: value.turn_count,
+            child_session_count: value.child_session_count,
+            pending_approval_description: value.pending_approval_description,
+            last_exit_reason: value.last_exit_reason,
+            active_run_duration_millis: value.active_run_duration_millis,
+            is_at_prompt: value.is_at_prompt,
+            shell_loading: value.shell_loading,
+            cto_active: value.cto_active,
+            linked_entity_ids: value.linked_entity_ids,
         }
     }
 }

@@ -569,6 +569,10 @@ pub struct SystemSnapshot {
     /// Empty when Chau7 is not connected or no repos have been tracked.
     #[serde(default)]
     pub ai_repo_summaries: Vec<AiRepoSummary>,
+    /// Raw Chau7 tab/session summaries, preserved even when process
+    /// attribution is incomplete so the UI can show every active tab/session.
+    #[serde(default)]
+    pub chau7_sessions: Vec<Chau7SessionSummary>,
 }
 
 /// Aggregated cost/usage data for one repository tracked by Chau7.
@@ -585,6 +589,54 @@ pub struct AiRepoSummary {
     pub total_tokens: u64,
     pub total_cost_usd: f32,
     pub providers: Vec<String>,
+}
+
+/// Live Chau7 tab/session summary sourced from the adapter's cached snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Chau7SessionSummary {
+    pub id: String,
+    #[serde(default)]
+    pub tab_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+    #[serde(default)]
+    pub repo_root: Option<String>,
+    #[serde(default)]
+    pub git_branch: Option<String>,
+    #[serde(default)]
+    pub active_app: Option<String>,
+    #[serde(default)]
+    pub window_id: u32,
+    #[serde(default)]
+    pub run_count: u32,
+    #[serde(default)]
+    pub last_active: String,
+    #[serde(default)]
+    pub turn_count: u32,
+    #[serde(default)]
+    pub child_session_count: u32,
+    #[serde(default)]
+    pub pending_approval_description: Option<String>,
+    #[serde(default)]
+    pub last_exit_reason: Option<String>,
+    #[serde(default)]
+    pub active_run_duration_millis: u64,
+    #[serde(default)]
+    pub is_at_prompt: bool,
+    #[serde(default)]
+    pub shell_loading: bool,
+    #[serde(default)]
+    pub cto_active: bool,
+    #[serde(default)]
+    pub linked_entity_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

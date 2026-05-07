@@ -440,6 +440,229 @@ impl AdapterManager {
             .collect()
     }
 
+    /// Extract the live Chau7 tab/session catalog from the cached adapter
+    /// snapshot and attach any currently linked Aetower entity ids.
+    pub fn chau7_session_summaries(
+        &self,
+        entities: &[EntitySnapshot],
+    ) -> Vec<aetower_model::Chau7SessionSummary> {
+        let snapshot = {
+            let guard = self.state.lock();
+            guard.cached_chau7_snapshot.clone()
+        };
+        let Some(snapshot) = snapshot else {
+            return Vec::new();
+        };
+
+        let mut entity_ids_by_session = BTreeMap::<String, BTreeSet<String>>::new();
+        let mut entity_ids_by_repo = BTreeMap::<String, BTreeSet<String>>::new();
+
+        for entity in entities {
+            let mut session_ids = BTreeSet::new();
+            let mut repo_paths = BTreeSet::new();
+
+            for badge in &entity.badges {
+                if let Some(session_id) = badge.strip_prefix("ai-session:")
+                    && !session_id.is_empty()
+                {
+                    session_ids.insert(session_id.to_owned());
+                }
+            }
+
+            for component in &entity.components {
+                if let Some(context) = component.adapter_context.as_ref() {
+                    if let Some(session_id) = context.session_id.as_deref()
+                        && !session_id.is_empty()
+                    {
+                        session_ids.insert(session_id.to_owned());
+                    }
+                    if let Some(repo_root) = context.repo_root.as_deref()
+                        && !repo_root.is_empty()
+                    {
+                        repo_paths.insert(repo_root.to_owned());
+                    }
+                    if let Some(workspace_path) = context.workspace_path.as_deref()
+                        && !workspace_path.is_empty()
+                    {
+                        repo_paths.insert(workspace_path.to_owned());
+                    }
+                }
+                if let Some(cwd) = component.cwd.as_deref()
+                    && !cwd.is_empty()
+                {
+                    repo_paths.insert(cwd.to_owned());
+                }
+            }
+
+            for session_id in session_ids {
+                entity_ids_by_session
+                    .entry(session_id)
+                    .or_default()
+                    .insert(entity.entity_id.clone());
+            }
+            for repo_path in repo_paths {
+                entity_ids_by_repo
+                    .entry(repo_path)
+                    .or_default()
+                    .insert(entity.entity_id.clone());
+            }
+        }
+
+        let mut summaries = Vec::new();
+        let mut seen_session_ids = BTreeSet::new();
+
+        for tab in &snapshot.tabs {
+            let tab_status = snapshot.tab_statuses.get(&tab.tab_id);
+            let session_state = tab
+                .ai_session_id
+                .as_deref()
+                .and_then(|session_id| snapshot.runtime_sessions.get(session_id));
+            let session = tab.ai_session_id.as_deref().and_then(|session_id| {
+                snapshot
+                    .sessions
+                    .iter()
+                    .find(|item| item.session_id == session_id)
+            });
+            if let Some(session_id) = tab.ai_session_id.as_deref() {
+                seen_session_ids.insert(session_id.to_owned());
+            }
+
+            let linked_entity_ids = linked_chau7_entity_ids(
+                &entity_ids_by_session,
+                &entity_ids_by_repo,
+                tab.ai_session_id.as_deref(),
+                tab.repo_root.as_deref(),
+                Some(tab.cwd.as_str()),
+            );
+
+            summaries.push(aetower_model::Chau7SessionSummary {
+                id: format!("tab:{}", tab.tab_id),
+                tab_id: Some(tab.tab_id.clone()),
+                session_id: tab.ai_session_id.clone(),
+                title: chau7_catalog_title(
+                    tab_status.and_then(|status| {
+                        (!status.title.is_empty()).then_some(status.title.as_str())
+                    }),
+                    (!tab.title.is_empty()).then_some(tab.title.as_str()),
+                    tab.active_app.as_deref(),
+                    tab.ai_session_id.as_deref(),
+                ),
+                provider: tab
+                    .ai_provider
+                    .clone()
+                    .filter(|value| !value.is_empty())
+                    .or_else(|| {
+                        session
+                            .map(|item| item.provider.clone())
+                            .filter(|value| !value.is_empty())
+                    })
+                    .unwrap_or_default(),
+                status: chau7_catalog_status(tab, tab_status, session_state),
+                workspace_path: (!tab.cwd.is_empty()).then(|| tab.cwd.clone()),
+                repo_root: tab.repo_root.clone(),
+                git_branch: tab
+                    .git_branch
+                    .clone()
+                    .or_else(|| tab_status.and_then(|status| status.git_branch.clone())),
+                active_app: tab.active_app.clone(),
+                window_id: tab.window_id,
+                run_count: session.map(|item| item.run_count).unwrap_or_default(),
+                last_active: session
+                    .map(|item| item.last_active.clone())
+                    .unwrap_or_default(),
+                turn_count: session_state
+                    .map(|item| item.turn_count)
+                    .unwrap_or_default(),
+                child_session_count: session_state
+                    .map(|item| item.child_session_count)
+                    .unwrap_or_default(),
+                pending_approval_description: session_state
+                    .and_then(|item| item.pending_approval.as_ref())
+                    .map(|approval| approval.description.clone())
+                    .filter(|value| !value.is_empty()),
+                last_exit_reason: session_state
+                    .and_then(|item| item.last_exit_reason.clone())
+                    .filter(|value| !value.is_empty()),
+                active_run_duration_millis: session_state
+                    .and_then(|item| item.active_run.as_ref())
+                    .map(|run| run.duration_so_far_ms)
+                    .unwrap_or_default(),
+                is_at_prompt: tab_status.map(|item| item.is_at_prompt).unwrap_or(false),
+                shell_loading: tab_status.map(|item| item.shell_loading).unwrap_or(false),
+                cto_active: tab_status.map(|item| item.cto_active).unwrap_or(false),
+                linked_entity_ids,
+            });
+        }
+
+        for session in &snapshot.sessions {
+            if !seen_session_ids.insert(session.session_id.clone()) {
+                continue;
+            }
+            let session_state = snapshot.runtime_sessions.get(&session.session_id);
+            let linked_entity_ids = linked_chau7_entity_ids(
+                &entity_ids_by_session,
+                &entity_ids_by_repo,
+                Some(session.session_id.as_str()),
+                Some(session.repo_path.as_str()),
+                Some(session.repo_path.as_str()),
+            );
+            summaries.push(aetower_model::Chau7SessionSummary {
+                id: format!("session:{}", session.session_id),
+                tab_id: None,
+                session_id: Some(session.session_id.clone()),
+                title: chau7_catalog_title(None, None, None, Some(session.session_id.as_str())),
+                provider: session.provider.clone(),
+                status: session_state
+                    .map(|item| item.state.clone())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "detached".to_owned()),
+                workspace_path: (!session.repo_path.is_empty()).then(|| session.repo_path.clone()),
+                repo_root: (!session.repo_path.is_empty()).then(|| session.repo_path.clone()),
+                git_branch: None,
+                active_app: None,
+                window_id: 0,
+                run_count: session.run_count,
+                last_active: session.last_active.clone(),
+                turn_count: session_state
+                    .map(|item| item.turn_count)
+                    .unwrap_or_default(),
+                child_session_count: session_state
+                    .map(|item| item.child_session_count)
+                    .unwrap_or_default(),
+                pending_approval_description: session_state
+                    .and_then(|item| item.pending_approval.as_ref())
+                    .map(|approval| approval.description.clone())
+                    .filter(|value| !value.is_empty()),
+                last_exit_reason: session_state
+                    .and_then(|item| item.last_exit_reason.clone())
+                    .filter(|value| !value.is_empty()),
+                active_run_duration_millis: session_state
+                    .and_then(|item| item.active_run.as_ref())
+                    .map(|run| run.duration_so_far_ms)
+                    .unwrap_or_default(),
+                is_at_prompt: false,
+                shell_loading: false,
+                cto_active: false,
+                linked_entity_ids,
+            });
+        }
+
+        summaries.sort_by(|left, right| {
+            let left_approval = left.pending_approval_description.is_some();
+            let right_approval = right.pending_approval_description.is_some();
+            if left_approval != right_approval {
+                return right_approval.cmp(&left_approval);
+            }
+            let left_linked = left.linked_entity_ids.len();
+            let right_linked = right.linked_entity_ids.len();
+            if left_linked != right_linked {
+                return right_linked.cmp(&left_linked);
+            }
+            left.title.to_lowercase().cmp(&right.title.to_lowercase())
+        });
+        summaries
+    }
+
     pub fn stop_chau7_session(&self, session_id: &str, force: bool) -> Result<(), String> {
         let guard = self.state.lock();
         let socket_path = guard
@@ -1939,6 +2162,86 @@ fn chau7_socket_path() -> Option<String> {
                 None
             }
         })
+}
+
+fn linked_chau7_entity_ids(
+    entity_ids_by_session: &BTreeMap<String, BTreeSet<String>>,
+    entity_ids_by_repo: &BTreeMap<String, BTreeSet<String>>,
+    session_id: Option<&str>,
+    repo_root: Option<&str>,
+    workspace_path: Option<&str>,
+) -> Vec<String> {
+    let mut ids = BTreeSet::new();
+    if let Some(session_id) = session_id
+        && let Some(values) = entity_ids_by_session.get(session_id)
+    {
+        ids.extend(values.iter().cloned());
+    }
+    for repo_key in [repo_root, workspace_path].into_iter().flatten() {
+        if let Some(values) = entity_ids_by_repo.get(repo_key) {
+            ids.extend(values.iter().cloned());
+        }
+    }
+    ids.into_iter().collect()
+}
+
+fn chau7_catalog_title(
+    status_title: Option<&str>,
+    tab_title: Option<&str>,
+    active_app: Option<&str>,
+    session_id: Option<&str>,
+) -> String {
+    status_title
+        .filter(|value| !value.is_empty())
+        .or(tab_title.filter(|value| !value.is_empty()))
+        .or(active_app.filter(|value| !value.is_empty()))
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            session_id
+                .map(|value| format!("Session {}", value.chars().take(8).collect::<String>()))
+                .unwrap_or_else(|| "Terminal tab".to_owned())
+        })
+}
+
+fn chau7_catalog_status(
+    tab: &crate::chau7::Chau7Tab,
+    tab_status: Option<&crate::chau7::Chau7TabStatus>,
+    session_state: Option<&crate::chau7::Chau7RuntimeSessionStatus>,
+) -> String {
+    if let Some(runtime) = session_state {
+        if runtime.pending_approval.is_some() {
+            return "approval-needed".to_owned();
+        }
+        if matches!(
+            runtime.last_exit_reason.as_deref(),
+            Some("error" | "failed")
+        ) {
+            return "error".to_owned();
+        }
+        if !runtime.state.is_empty() {
+            return runtime.state.clone();
+        }
+    }
+    if let Some(status) = tab_status {
+        if status.shell_loading {
+            return "shell-loading".to_owned();
+        }
+        if status.is_at_prompt {
+            return "at-prompt".to_owned();
+        }
+        if !status.status.is_empty() {
+            return status.status.clone();
+        }
+        if let Some(raw_status) = status.raw_status.as_deref()
+            && !raw_status.is_empty()
+        {
+            return raw_status.to_owned();
+        }
+    }
+    if !tab.status.is_empty() {
+        return tab.status.clone();
+    }
+    "unknown".to_owned()
 }
 
 fn chau7_tab_detail(
@@ -3685,25 +3988,48 @@ mod tests {
         let manager = AdapterManager {
             state: Arc::new(Mutex::new(AdapterState {
                 cached_chau7_snapshot: Some(crate::chau7::Chau7Snapshot {
-                    tabs: vec![crate::chau7::Chau7Tab {
-                        tab_id: "tab-1".to_owned(),
-                        title: "Aetower coding".to_owned(),
-                        cwd: "/Users/test/Aetower".to_owned(),
-                        repo_root: Some("/Users/test/Aetower".to_owned()),
-                        git_branch: Some("master".to_owned()),
-                        ai_provider: Some("claude".to_owned()),
-                        ai_session_id: Some("session-1".to_owned()),
-                        status: "running".to_owned(),
-                        active_app: Some("Claude".to_owned()),
-                        window_id: 0,
-                    }],
-                    sessions: vec![crate::chau7::Chau7Session {
-                        session_id: "session-1".to_owned(),
-                        provider: "claude".to_owned(),
-                        repo_path: "/Users/test/Aetower".to_owned(),
-                        run_count: 6,
-                        last_active: "2026-04-08T14:22:26.696Z".to_owned(),
-                    }],
+                    tabs: vec![
+                        crate::chau7::Chau7Tab {
+                            tab_id: "tab-1".to_owned(),
+                            title: "Aetower coding".to_owned(),
+                            cwd: "/Users/test/Aetower".to_owned(),
+                            repo_root: Some("/Users/test/Aetower".to_owned()),
+                            git_branch: Some("master".to_owned()),
+                            ai_provider: Some("claude".to_owned()),
+                            ai_session_id: Some("session-1".to_owned()),
+                            status: "running".to_owned(),
+                            active_app: Some("Claude".to_owned()),
+                            window_id: 7,
+                        },
+                        crate::chau7::Chau7Tab {
+                            tab_id: "tab-2".to_owned(),
+                            title: "Detached scratchpad".to_owned(),
+                            cwd: "/Users/test/Scratch".to_owned(),
+                            repo_root: Some("/Users/test/Scratch".to_owned()),
+                            git_branch: Some("feature/demo".to_owned()),
+                            ai_provider: Some("codex".to_owned()),
+                            ai_session_id: Some("session-2".to_owned()),
+                            status: "idle".to_owned(),
+                            active_app: Some("Codex".to_owned()),
+                            window_id: 8,
+                        },
+                    ],
+                    sessions: vec![
+                        crate::chau7::Chau7Session {
+                            session_id: "session-1".to_owned(),
+                            provider: "claude".to_owned(),
+                            repo_path: "/Users/test/Aetower".to_owned(),
+                            run_count: 6,
+                            last_active: "2026-04-08T14:22:26.696Z".to_owned(),
+                        },
+                        crate::chau7::Chau7Session {
+                            session_id: "session-2".to_owned(),
+                            provider: "codex".to_owned(),
+                            repo_path: "/Users/test/Scratch".to_owned(),
+                            run_count: 2,
+                            last_active: "2026-04-08T14:25:00.000Z".to_owned(),
+                        },
+                    ],
                     runtime_info: Some(crate::chau7::Chau7RuntimeInfo {
                         app_version: Some("1.4.2".to_owned()),
                         build_sha: Some("abc123def456".to_owned()),
@@ -3834,6 +4160,7 @@ mod tests {
 
         manager.enrich_entities(&mut entities, &capabilities);
         let entity = &entities[0];
+        let session_summaries = manager.chau7_session_summaries(&entities);
 
         assert!(entity.badges.iter().any(|badge| badge == "chau7-live"));
         assert!(entity.badges.iter().any(|badge| badge == "approval-needed"));
@@ -3902,5 +4229,21 @@ mod tests {
         );
         assert!(adapter_component.detail.contains("3 turns"));
         assert!(adapter_component.detail.contains("2 child sessions"));
+        assert_eq!(session_summaries.len(), 2);
+        let matched = session_summaries
+            .iter()
+            .find(|summary| summary.session_id.as_deref() == Some("session-1"))
+            .unwrap_or_else(|| panic!("matched session"));
+        assert_eq!(matched.title, "Claude");
+        assert_eq!(matched.git_branch.as_deref(), Some("master"));
+        assert_eq!(matched.window_id, 7);
+        assert_eq!(matched.linked_entity_ids, vec!["agent".to_owned()]);
+        let detached = session_summaries
+            .iter()
+            .find(|summary| summary.session_id.as_deref() == Some("session-2"))
+            .unwrap_or_else(|| panic!("detached session"));
+        assert_eq!(detached.title, "Detached scratchpad");
+        assert_eq!(detached.git_branch.as_deref(), Some("feature/demo"));
+        assert!(detached.linked_entity_ids.is_empty());
     }
 }
