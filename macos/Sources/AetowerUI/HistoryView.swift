@@ -29,7 +29,7 @@ private enum HistoryRangePreset: Double, CaseIterable, Identifiable {
     }
 }
 
-private struct HistoricalEntitySummary: Identifiable {
+private struct HistoricalEntitySummary: Identifiable, Sendable {
     let id: String
     let name: String
     let sightings: Int
@@ -42,23 +42,59 @@ private struct HistoricalEntitySummary: Identifiable {
 /// A single notable-change entry extracted from persisted snapshots.
 /// Named struct replaces the anonymous 4-field tuple that was used
 /// as a ForEach element.
-private struct ChangeNoteSummary: Identifiable {
+private struct ChangeNoteSummary: Identifiable, Sendable {
     let id: String
     let name: String
     let summary: String
     let capturedAtMillis: UInt64
 }
 
+private struct HistoryCompareChoice: Identifiable, Sendable {
+    let millis: UInt64
+    let label: String
+
+    var id: UInt64 { millis }
+}
+
+private struct HistoryDerivedContent: Sendable {
+    let hostFrictionSamples: [Double]
+    let hostCPUSamples: [Double]
+    let hostMemorySamples: [Double]
+    let hostNetworkSamples: [Double]
+    let hostGPUSamples: [Double]
+    let historicalEntities: [HistoricalEntitySummary]
+    let changeSummaries: [ChangeNoteSummary]
+    let compareChoices: [HistoryCompareChoice]
+
+    static let empty = HistoryDerivedContent(
+        hostFrictionSamples: [],
+        hostCPUSamples: [],
+        hostMemorySamples: [],
+        hostNetworkSamples: [],
+        hostGPUSamples: [],
+        historicalEntities: [],
+        changeSummaries: [],
+        compareChoices: []
+    )
+}
+
 public struct HistoryView: View {
     let state: AppState
+    let settings: SettingsStore
     @State private var range: HistoryRangePreset = .lastHour
     @State private var showClearHistoryConfirmation = false
     @State private var showAllEntities = false
+    @State private var showEntityDetailsInSafeMode = false
+    @State private var showChangeDetailsInSafeMode = false
+    @State private var derivedContent = HistoryDerivedContent.empty
+    @State private var historyDerivationTask: Task<HistoryDerivedContent, Never>?
+    @State private var historyDerivedIsLoading = false
 
     private let columns = [GridItem(.adaptive(minimum: 180), spacing: AetowerDesign.Spacing.md)]
 
-    public init(state: AppState) {
+    public init(state: AppState, settings: SettingsStore) {
         self.state = state
+        self.settings = settings
     }
 
     public var body: some View {
@@ -95,194 +131,7 @@ public struct HistoryView: View {
                     .disabled(state.historyIsLoading || state.historyIsLoadingMore)
                 }
 
-                if state.historyIsLoading && state.historySnapshots.isEmpty {
-                    historyLoadingState
-                } else if let historyLoadError = state.historyLoadError, state.historySnapshots.isEmpty {
-                    ContentUnavailableView(
-                        "No persisted history yet",
-                        systemImage: "clock.badge.questionmark",
-                        description: Text(historyLoadError)
-                    )
-                    .frame(maxWidth: .infinity)
-                } else {
-                    let frictionSamples = hostFrictionSamples
-                    let cpuSamples = hostCPUSamples
-                    let memorySamples = hostMemorySamples
-                    let networkSamples = hostNetworkSamples
-                    let gpuSamples = hostGPUSamples
-                    let lastHost = state.historySnapshots.last?.host
-
-                    GroupBox("Host trend") {
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-                            TrendMetricCard(
-                                title: "Friction",
-                                value: String(format: "%.1f", frictionSamples.last ?? 0),
-                                subtitle: range.detail,
-                                samples: frictionSamples,
-                                style: .friction
-                            )
-                            TrendMetricCard(
-                                title: "CPU",
-                                value: String(format: "%.1f%%", cpuSamples.last ?? 0),
-                                subtitle: "\(state.historySnapshots.count) persisted samples",
-                                samples: cpuSamples,
-                                style: .cpu
-                            )
-                            TrendMetricCard(
-                                title: "Memory",
-                                value: formatBytes(UInt64(memorySamples.last ?? 0)),
-                                subtitle: "peak \(formatBytes(memorySamples.max().map(UInt64.init) ?? 0))",
-                                samples: memorySamples,
-                                style: .memory
-                            )
-                            TrendMetricCard(
-                                title: "Network",
-                                value: formatRate(UInt64(networkSamples.last ?? 0)),
-                                subtitle: "peak \(formatRate(networkSamples.max().map(UInt64.init) ?? 0))",
-                                samples: networkSamples,
-                                style: .network
-                            )
-                            TrendMetricCard(
-                                title: "GPU",
-                                value: String(format: "%.1f%%", gpuSamples.last ?? 0),
-                                subtitle: "ANE \(String(format: "%.1f%%", lastHost.map { Double($0.anePercent) } ?? 0)) · \(formatBytes(lastHost?.gpuMemoryBytes ?? 0)) memory",
-                                samples: gpuSamples,
-                                style: .energy
-                            )
-                        }
-                        .padding(.top, AetowerDesign.Spacing.xs)
-                    }
-
-                    historyDiffSection
-
-                    GroupBox("Most recurring entities") {
-                        if historicalEntities.isEmpty {
-                            Text("No entity-level history is persisted for this range yet.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            let visibleEntities = showAllEntities
-                                ? historicalEntities
-                                : Array(historicalEntities.prefix(12))
-                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-                                ForEach(visibleEntities) { entity in
-                                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                                        HStack {
-                                            Text(entity.name)
-                                                .font(.headline)
-                                            Spacer()
-                                            Text(String(format: "avg %.1f", entity.averageFriction))
-                                                .font(.caption.monospacedDigit())
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        Text(
-                                            "\(entity.sightings) sightings · peak friction \(String(format: "%.1f", entity.peakFriction)) · peak CPU \(String(format: "%.1f%%", entity.peakCPU)) · peak net \(formatRate(entity.peakNetworkBps))"
-                                        )
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    }
-                                }
-                                if !showAllEntities && historicalEntities.count > 12 {
-                                    Button("Show all \(historicalEntities.count) entities") {
-                                        showAllEntities = true
-                                    }
-                                    .font(.caption)
-                                }
-                            }
-                            .padding(.top, AetowerDesign.Spacing.xs)
-                        }
-                    }
-
-                    GroupBox("Notable changes across range") {
-                        if changeSummaries.isEmpty {
-                            Text("No persisted recent-change summaries are available in this range yet.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                                ForEach(changeSummaries) { item in
-                                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                                        HStack {
-                                            Text(item.name)
-                                                .font(.headline)
-                                            Spacer()
-                                            Text(historyTimestamp(item.capturedAtMillis))
-                                                .font(.caption2)
-                                                .foregroundStyle(.tertiary)
-                                        }
-                                        Text(item.summary)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                }
-                            }
-                            .padding(.top, AetowerDesign.Spacing.xs)
-                        }
-                    }
-
-                    // Load-more button surfaced prominently between content
-                    // and the diagnostic Store Coverage box. Previously it
-                    // was buried inside Store Coverage and not discoverable.
-                    if state.historyIsLoadingMore {
-                        ProgressView("Loading older samples...")
-                            .progressViewStyle(.linear)
-                    } else if state.historyHasMore {
-                        Button {
-                            state.loadMoreHistory()
-                        } label: {
-                            Label("Load more persisted samples", systemImage: "arrow.down.circle")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    GroupBox("Store coverage") {
-                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                            LabeledContent("Range", value: range.detail)
-                            LabeledContent(
-                                "Loaded samples",
-                                value: "\(state.historySnapshots.count)\(state.historyRangeSummary.map { " of \($0.rangeCount)" } ?? "")"
-                            )
-                            LabeledContent(
-                                "Store size",
-                                value: formatBytes(state.historyRangeSummary?.storeBytes ?? 0)
-                            )
-                            LabeledContent(
-                                "WAL size",
-                                value: formatBytes(state.historyRangeSummary?.walBytes ?? 0)
-                            )
-                            LabeledContent(
-                                "Persisted samples",
-                                value: "\(state.historyRangeSummary?.snapshotCount ?? 0)"
-                            )
-                            LabeledContent(
-                                "Quarantine rows",
-                                value: "\(state.historyRangeSummary?.quarantineCount ?? 0)"
-                            )
-                            LabeledContent(
-                                "First sample",
-                                value: historyTimestamp(state.historyRangeSummary?.oldestMillis ?? state.historySnapshots.first?.capturedAtMillis)
-                            )
-                            LabeledContent(
-                                "Last sample",
-                                value: historyTimestamp(state.historyRangeSummary?.newestMillis ?? state.historySnapshots.last?.capturedAtMillis)
-                            )
-                            LabeledContent(
-                                "Last load",
-                                value: String(format: "%.0f ms", state.historyLastLoadDurationMillis)
-                            )
-                            if let historyLoadStatus = state.historyLoadStatus {
-                                Text(historyLoadStatus)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            Text("Aetower now keeps persisted history on a bounded local budget by default: a shorter retention window, WAL checkpoints, and automatic hard-cap trims when the store grows too large.")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.top, AetowerDesign.Spacing.xs)
-                    }
-                }
+                historyContent
             }
             .padding(AetowerDesign.Spacing.xxl)
         }
@@ -291,12 +140,19 @@ public struct HistoryView: View {
             state.setHistoryWindow(seconds: range.rawValue)
             state.setHistoryVisible(true)
         }
+        .task(id: historyDerivationToken) {
+            await recomputeDerivedContent()
+        }
         .onDisappear {
             state.setHistoryVisible(false)
+            historyDerivationTask?.cancel()
+            historyDerivationTask = nil
         }
         .onChange(of: range) { _, newValue in
             state.setHistoryWindow(seconds: newValue.rawValue)
             showAllEntities = false
+            showEntityDetailsInSafeMode = false
+            showChangeDetailsInSafeMode = false
         }
         .alert("Clear persisted history?", isPresented: $showClearHistoryConfirmation) {
             Button("Cancel", role: .cancel) {}
@@ -326,6 +182,245 @@ public struct HistoryView: View {
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var historyContent: some View {
+        if state.historyIsLoading && state.historySnapshots.isEmpty {
+            historyLoadingState
+        } else if let historyLoadError = state.historyLoadError, state.historySnapshots.isEmpty {
+            ContentUnavailableView(
+                "No persisted history yet",
+                systemImage: "clock.badge.questionmark",
+                description: Text(historyLoadError)
+            )
+            .frame(maxWidth: .infinity)
+        } else if historyDerivedIsLoading && derivedContent.hostFrictionSamples.isEmpty {
+            historyLoadingState
+        } else {
+            hostTrendSection
+            historyDiffSection
+            recurringEntitiesSection
+            changeSummariesSection
+            historyLoadMoreSection
+            storeCoverageSection
+        }
+    }
+
+    private var hostTrendSection: some View {
+        let frictionSamples = derivedContent.hostFrictionSamples
+        let cpuSamples = derivedContent.hostCPUSamples
+        let memorySamples = derivedContent.hostMemorySamples
+        let networkSamples = derivedContent.hostNetworkSamples
+        let gpuSamples = derivedContent.hostGPUSamples
+        let lastHost = state.historySnapshots.last?.host
+
+        return GroupBox("Host trend") {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                TrendMetricCard(
+                    title: "Friction",
+                    value: String(format: "%.1f", frictionSamples.last ?? 0),
+                    subtitle: range.detail,
+                    samples: frictionSamples,
+                    style: .friction
+                )
+                TrendMetricCard(
+                    title: "CPU",
+                    value: String(format: "%.1f%%", cpuSamples.last ?? 0),
+                    subtitle: "\(state.historySnapshots.count) persisted samples",
+                    samples: cpuSamples,
+                    style: .cpu
+                )
+                TrendMetricCard(
+                    title: "Memory",
+                    value: formatBytes(UInt64(memorySamples.last ?? 0)),
+                    subtitle: "peak \(formatBytes(memorySamples.max().map(UInt64.init) ?? 0))",
+                    samples: memorySamples,
+                    style: .memory
+                )
+                TrendMetricCard(
+                    title: "Network",
+                    value: formatRate(UInt64(networkSamples.last ?? 0)),
+                    subtitle: "peak \(formatRate(networkSamples.max().map(UInt64.init) ?? 0))",
+                    samples: networkSamples,
+                    style: .network
+                )
+                TrendMetricCard(
+                    title: "GPU",
+                    value: String(format: "%.1f%%", gpuSamples.last ?? 0),
+                    subtitle: "ANE \(String(format: "%.1f%%", lastHost.map { Double($0.anePercent) } ?? 0)) · \(formatBytes(lastHost?.gpuMemoryBytes ?? 0)) memory",
+                    samples: gpuSamples,
+                    style: .energy
+                )
+            }
+            .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
+    private var recurringEntitiesSection: some View {
+        GroupBox("Most recurring entities") {
+            if derivedContent.historicalEntities.isEmpty {
+                Text("No entity-level history is persisted for this range yet.")
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    if settings.operatorSafeModeEnabled {
+                        Text("\(derivedContent.historicalEntities.count) recurring entities derived from \(state.historySnapshots.count) persisted samples.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        DisclosureGroup("Expand detailed entity history", isExpanded: $showEntityDetailsInSafeMode) {
+                            recurringEntityList
+                                .padding(.top, AetowerDesign.Spacing.sm)
+                        }
+                    } else {
+                        recurringEntityList
+                    }
+                }
+                .padding(.top, AetowerDesign.Spacing.xs)
+            }
+        }
+    }
+
+    private var changeSummariesSection: some View {
+        GroupBox("Notable changes across range") {
+            if derivedContent.changeSummaries.isEmpty {
+                Text("No persisted recent-change summaries are available in this range yet.")
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    if settings.operatorSafeModeEnabled {
+                        Text("\(derivedContent.changeSummaries.count) persisted change summaries are available for this range.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        DisclosureGroup("Expand change summaries", isExpanded: $showChangeDetailsInSafeMode) {
+                            changeSummaryList
+                                .padding(.top, AetowerDesign.Spacing.sm)
+                        }
+                    } else {
+                        changeSummaryList
+                    }
+                }
+                .padding(.top, AetowerDesign.Spacing.xs)
+            }
+        }
+    }
+
+    private var recurringEntityList: some View {
+        let visibleEntities = showAllEntities
+            ? derivedContent.historicalEntities
+            : Array(derivedContent.historicalEntities.prefix(12))
+        return LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            ForEach(visibleEntities) { entity in
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack {
+                        Text(entity.name)
+                            .font(.headline)
+                        Spacer()
+                        Text(String(format: "avg %.1f", entity.averageFriction))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(
+                        "\(entity.sightings) sightings · peak friction \(String(format: "%.1f", entity.peakFriction)) · peak CPU \(String(format: "%.1f%%", entity.peakCPU)) · peak net \(formatRate(entity.peakNetworkBps))"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            if !showAllEntities && derivedContent.historicalEntities.count > 12 {
+                Button("Show all \(derivedContent.historicalEntities.count) entities") {
+                    showAllEntities = true
+                }
+                .font(.caption)
+            }
+        }
+    }
+
+    private var changeSummaryList: some View {
+        LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            ForEach(derivedContent.changeSummaries) { item in
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack {
+                        Text(item.name)
+                            .font(.headline)
+                        Spacer()
+                        Text(historyTimestamp(item.capturedAtMillis))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Text(item.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var historyLoadMoreSection: some View {
+        if state.historyIsLoadingMore {
+            ProgressView("Loading older samples...")
+                .progressViewStyle(.linear)
+        } else if state.historyHasMore {
+            Button {
+                state.loadMoreHistory()
+            } label: {
+                Label("Load more persisted samples", systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private var storeCoverageSection: some View {
+        GroupBox("Store coverage") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                LabeledContent("Range", value: range.detail)
+                LabeledContent(
+                    "Loaded samples",
+                    value: "\(state.historySnapshots.count)\(state.historyRangeSummary.map { " of \($0.rangeCount)" } ?? "")"
+                )
+                LabeledContent(
+                    "Store size",
+                    value: formatBytes(state.historyRangeSummary?.storeBytes ?? 0)
+                )
+                LabeledContent(
+                    "WAL size",
+                    value: formatBytes(state.historyRangeSummary?.walBytes ?? 0)
+                )
+                LabeledContent(
+                    "Persisted samples",
+                    value: "\(state.historyRangeSummary?.snapshotCount ?? 0)"
+                )
+                LabeledContent(
+                    "Quarantine rows",
+                    value: "\(state.historyRangeSummary?.quarantineCount ?? 0)"
+                )
+                LabeledContent(
+                    "First sample",
+                    value: historyTimestamp(state.historyRangeSummary?.oldestMillis ?? state.historySnapshots.first?.capturedAtMillis)
+                )
+                LabeledContent(
+                    "Last sample",
+                    value: historyTimestamp(state.historyRangeSummary?.newestMillis ?? state.historySnapshots.last?.capturedAtMillis)
+                )
+                LabeledContent(
+                    "Last load",
+                    value: String(format: "%.0f ms", state.historyLastLoadDurationMillis)
+                )
+                if let historyLoadStatus = state.historyLoadStatus {
+                    Text(historyLoadStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Aetower now keeps persisted history on a bounded local budget by default: a shorter retention window, WAL checkpoints, and automatic hard-cap trims when the store grows too large.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, AetowerDesign.Spacing.xs)
+        }
     }
 
     @ViewBuilder
@@ -366,7 +461,15 @@ public struct HistoryView: View {
                     }
                 }
 
-                if let diff = state.historySnapshotDiff {
+                if state.historySnapshotDiffIsLoading {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Preparing persisted diff…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let diff = state.historySnapshotDiff {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(diff.summary.hostSummary)
                             .font(.subheadline.weight(.medium))
@@ -380,9 +483,9 @@ public struct HistoryView: View {
                         HistoryDeltaMetricCard(
                             title: "Friction",
                             delta: SnapshotMetricDeltaReport(
-                                before: hostFrictionSamples.first ?? 0,
-                                after: hostFrictionSamples.last ?? 0,
-                                delta: (hostFrictionSamples.last ?? 0) - (hostFrictionSamples.first ?? 0),
+                                before: derivedContent.hostFrictionSamples.first ?? 0,
+                                after: derivedContent.hostFrictionSamples.last ?? 0,
+                                delta: (derivedContent.hostFrictionSamples.last ?? 0) - (derivedContent.hostFrictionSamples.first ?? 0),
                                 percentChange: nil
                             ),
                             style: .friction
@@ -451,101 +554,140 @@ public struct HistoryView: View {
         }
     }
 
-    private var hostFrictionSamples: [Double] {
-        state.historySnapshots.map(historyMachineFriction)
+    private var historyDerivationToken: String {
+        let snapshots = state.historySnapshots
+        let firstSequence = snapshots.first?.sequence ?? 0
+        let lastSequence = snapshots.last?.sequence ?? 0
+        return "\(snapshots.count)|\(firstSequence)|\(lastSequence)"
     }
 
-    private var hostCPUSamples: [Double] {
-        state.historySnapshots.map { Double($0.host.cpuPercent) }
-    }
-
-    private var hostMemorySamples: [Double] {
-        state.historySnapshots.map { Double($0.host.memoryUsedBytes) }
-    }
-
-    private var hostNetworkSamples: [Double] {
-        state.historySnapshots.map {
-            Double($0.host.networkReceiveBps + $0.host.networkSendBps)
-        }
-    }
-
-    private var hostGPUSamples: [Double] {
-        state.historySnapshots.map { Double($0.host.gpuPercent) }
-    }
-
-    private var historicalEntities: [HistoricalEntitySummary] {
-        struct Accumulator {
-            var name: String
-            var sightings: Int = 0
-            var totalFriction: Double = 0
-            var peakFriction: Double = 0
-            var peakCPU: Double = 0
-            var peakNetworkBps: UInt64 = 0
+    @MainActor
+    private func recomputeDerivedContent() async {
+        let snapshots = state.historySnapshots
+        let token = historyDerivationToken
+        historyDerivationTask?.cancel()
+        guard !snapshots.isEmpty else {
+            historyDerivedIsLoading = false
+            derivedContent = .empty
+            return
         }
 
-        var grouped: [String: Accumulator] = [:]
-        for snapshot in state.historySnapshots {
-            for entity in snapshot.entities {
-                let network = entity.metrics.networkReceiveBps + entity.metrics.networkSendBps
-                var accumulator = grouped[entity.entityId] ?? Accumulator(name: entity.displayName)
-                accumulator.sightings += 1
-                accumulator.totalFriction += Double(entity.friction.totalScore)
-                accumulator.peakFriction = max(accumulator.peakFriction, Double(entity.friction.totalScore))
-                accumulator.peakCPU = max(accumulator.peakCPU, Double(entity.metrics.cpuPercent))
-                accumulator.peakNetworkBps = max(accumulator.peakNetworkBps, network)
-                grouped[entity.entityId] = accumulator
+        historyDerivedIsLoading = true
+        let derivationStarted = CFAbsoluteTimeGetCurrent()
+        let task = Task.detached(priority: .utility) {
+            buildHistoryDerivedContent(from: snapshots)
+        }
+        historyDerivationTask = task
+        let derived = await task.value
+        guard !Task.isCancelled, historyDerivationToken == token else { return }
+        derivedContent = derived
+        historyDerivedIsLoading = false
+        state.recordHistoryDerivedDiagnostics(
+            durationMillis: (CFAbsoluteTimeGetCurrent() - derivationStarted) * 1000.0,
+            snapshotCount: snapshots.count,
+            recurringEntityCount: derived.historicalEntities.count,
+            changeSummaryCount: derived.changeSummaries.count
+        )
+    }
+}
+
+private func buildHistoryDerivedContent(from snapshots: [SystemSnapshot]) -> HistoryDerivedContent {
+    struct Accumulator {
+        var name: String
+        var sightings: Int = 0
+        var totalFriction: Double = 0
+        var peakFriction: Double = 0
+        var peakCPU: Double = 0
+        var peakNetworkBps: UInt64 = 0
+    }
+
+    let sortedSnapshots = snapshots.sorted { $0.capturedAtMillis < $1.capturedAtMillis }
+    let hostFrictionSamples = sortedSnapshots.map(historyMachineFriction)
+    let hostCPUSamples = sortedSnapshots.map { Double($0.host.cpuPercent) }
+    let hostMemorySamples = sortedSnapshots.map { Double($0.host.memoryUsedBytes) }
+    let hostNetworkSamples = sortedSnapshots.map {
+        Double($0.host.networkReceiveBps + $0.host.networkSendBps)
+    }
+    let hostGPUSamples = sortedSnapshots.map { Double($0.host.gpuPercent) }
+
+    var grouped: [String: Accumulator] = [:]
+    var bestByEntity: [String: ChangeNoteSummary] = [:]
+
+    for snapshot in sortedSnapshots {
+        for entity in snapshot.entities {
+            let network = entity.metrics.networkReceiveBps + entity.metrics.networkSendBps
+            var accumulator = grouped[entity.entityId] ?? Accumulator(name: entity.displayName)
+            accumulator.sightings += 1
+            accumulator.totalFriction += Double(entity.friction.totalScore)
+            accumulator.peakFriction = max(accumulator.peakFriction, Double(entity.friction.totalScore))
+            accumulator.peakCPU = max(accumulator.peakCPU, Double(entity.metrics.cpuPercent))
+            accumulator.peakNetworkBps = max(accumulator.peakNetworkBps, network)
+            grouped[entity.entityId] = accumulator
+
+            guard let summary = entity.recentChangeSummary, !summary.isEmpty else {
+                continue
+            }
+            let candidate = ChangeNoteSummary(
+                id: entity.entityId,
+                name: entity.displayName,
+                summary: summary,
+                capturedAtMillis: snapshot.capturedAtMillis
+            )
+            if let existing = bestByEntity[entity.entityId] {
+                if candidate.capturedAtMillis > existing.capturedAtMillis {
+                    bestByEntity[entity.entityId] = candidate
+                }
+            } else {
+                bestByEntity[entity.entityId] = candidate
             }
         }
+    }
 
-        return grouped.map { id, accumulator in
+    var historicalEntities = [HistoricalEntitySummary]()
+    historicalEntities.reserveCapacity(grouped.count)
+    for (id, accumulator) in grouped {
+        let averageFriction = accumulator.sightings == 0
+            ? 0
+            : accumulator.totalFriction / Double(accumulator.sightings)
+        historicalEntities.append(
             HistoricalEntitySummary(
                 id: id,
                 name: accumulator.name,
                 sightings: accumulator.sightings,
-                averageFriction: accumulator.sightings == 0 ? 0 : accumulator.totalFriction / Double(accumulator.sightings),
+                averageFriction: averageFriction,
                 peakFriction: accumulator.peakFriction,
                 peakCPU: accumulator.peakCPU,
                 peakNetworkBps: accumulator.peakNetworkBps
             )
-        }
-        .sorted {
-            $0.averageFriction > $1.averageFriction
-                || ($0.averageFriction == $1.averageFriction && $0.peakCPU > $1.peakCPU)
-        }
+        )
+    }
+    historicalEntities.sort {
+        $0.averageFriction > $1.averageFriction
+            || ($0.averageFriction == $1.averageFriction && $0.peakCPU > $1.peakCPU)
     }
 
-    /// Aggregate notable change summaries across ALL loaded snapshots,
-    /// not just the most recent one. Each entity's most recent change
-    /// summary is kept (deduped by entity ID, latest timestamp wins).
-    /// This gives meaningful results even for a 7-day window where the
-    /// "latest" snapshot might not capture the most interesting events.
-    private var changeSummaries: [ChangeNoteSummary] {
-        var bestByEntity: [String: ChangeNoteSummary] = [:]
-        for snapshot in state.historySnapshots {
-            for entity in snapshot.entities {
-                guard let summary = entity.recentChangeSummary, !summary.isEmpty else {
-                    continue
-                }
-                let candidate = ChangeNoteSummary(
-                    id: entity.entityId,
-                    name: entity.displayName,
-                    summary: summary,
-                    capturedAtMillis: snapshot.capturedAtMillis
-                )
-                if let existing = bestByEntity[entity.entityId] {
-                    if candidate.capturedAtMillis > existing.capturedAtMillis {
-                        bestByEntity[entity.entityId] = candidate
-                    }
-                } else {
-                    bestByEntity[entity.entityId] = candidate
-                }
-            }
-        }
-        return bestByEntity.values
-            .sorted { $0.capturedAtMillis > $1.capturedAtMillis }
-            .prefix(12)
-            .map { $0 }
+    let changeSummaries = bestByEntity.values
+        .sorted { $0.capturedAtMillis > $1.capturedAtMillis }
+        .prefix(12)
+        .map { $0 }
+
+    let compareChoices = sortedSnapshots.map {
+        HistoryCompareChoice(
+            millis: $0.capturedAtMillis,
+            label: "\($0.sequence) · \(historyTimestamp($0.capturedAtMillis))"
+        )
     }
+
+    return HistoryDerivedContent(
+        hostFrictionSamples: hostFrictionSamples,
+        hostCPUSamples: hostCPUSamples,
+        hostMemorySamples: hostMemorySamples,
+        hostNetworkSamples: hostNetworkSamples,
+        hostGPUSamples: hostGPUSamples,
+        historicalEntities: historicalEntities,
+        changeSummaries: changeSummaries,
+        compareChoices: compareChoices
+    )
 }
 
 private struct HistoryDeltaMetricCard: View {
@@ -624,23 +766,9 @@ private func historyEntityDeltaSummary(_ entity: SnapshotEntityDeltaReport) -> S
     return "friction \(friction) · CPU \(cpu) · wakeups \(wakeups) · resident \(memory)\(footprint)"
 }
 
-private struct HistoryCompareChoice: Identifiable {
-    let millis: UInt64
-    let label: String
-
-    var id: UInt64 { millis }
-}
-
 private extension HistoryView {
     var historyCompareChoices: [HistoryCompareChoice] {
-        state.historySnapshots
-            .sorted { $0.capturedAtMillis < $1.capturedAtMillis }
-            .map {
-                HistoryCompareChoice(
-                    millis: $0.capturedAtMillis,
-                    label: "\($0.sequence) · \(historyTimestamp($0.capturedAtMillis))"
-                )
-            }
+        derivedContent.compareChoices
     }
 
     var historyCompareBeforeBinding: Binding<UInt64?> {

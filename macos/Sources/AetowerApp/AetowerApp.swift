@@ -58,12 +58,12 @@ struct AetowerApp: App {
                         Label("Monitor", systemImage: "gauge.with.needle")
                     }
 
-                HistoryView(state: state)
+                HistoryView(state: state, settings: settings)
                     .tabItem {
                         Label("History", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
                     }
 
-                TimelineView(events: state.snapshot.timeline)
+                TimelineView(state: state, settings: settings)
                     .tabItem {
                         Label("Timeline", systemImage: "timeline.selection")
                     }

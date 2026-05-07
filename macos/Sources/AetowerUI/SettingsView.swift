@@ -39,6 +39,10 @@ public struct SettingsView: View {
                         }
 
                         Toggle("Show menu bar extra", isOn: $settings.showMenuBarExtra)
+                        Toggle("Operator-safe mode for heavy tabs", isOn: $settings.operatorSafeModeEnabled)
+                        Text("Defaults heavy views like History and Timeline to summaries first, smaller visible windows, and manual expansion for large detail lists.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Refresh interval")

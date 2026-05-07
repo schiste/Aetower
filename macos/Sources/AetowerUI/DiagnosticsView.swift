@@ -76,8 +76,10 @@ public struct DiagnosticsView: View {
 
                 controls
                 sessionHealth
+                selfMemoryAttribution
                 mcpLifecycle
                 overview
+                uiPayloadDiagnostics
                 eventStream
             }
             .padding(AetowerDesign.Spacing.xxl)
@@ -87,6 +89,9 @@ public struct DiagnosticsView: View {
             isVisible = true
             debouncedSearchText = searchText
             state.setDiagnosticsVisible(true)
+            if state.selfMemoryAttribution == nil {
+                state.loadSelfMemoryAttribution()
+            }
         }
         .onDisappear {
             isVisible = false
@@ -411,6 +416,12 @@ public struct DiagnosticsView: View {
                         subtitle: "\(byteCount(runtime.selfMemoryBytes)) resident · \(String(format: "%.0f/s", runtime.selfWakeupsPerSecond)) wakeups"
                     )
                     diagnosticsMetric(
+                        title: "Transport strategy",
+                        value: transportStrategyTitle,
+                        subtitle: transportStrategySubtitle,
+                        valueColor: transportStrategyColor
+                    )
+                    diagnosticsMetric(
                         title: "Last MCP observation",
                         value: runtime.mcpObservedAtMillis == 0 ? "Pending" : relativeTimeLabel(from: runtime.mcpObservedAtMillis),
                         subtitle: "updated by in-app MCP runtime stats"
@@ -420,6 +431,122 @@ public struct DiagnosticsView: View {
                 Text(mcpLifecycleGuidance)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
+    private var selfMemoryAttribution: some View {
+        GroupBox("Self memory attribution") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                HStack {
+                    Text("Point-in-time vmmap attribution for the Aetower app process or its attributed self entity.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Capture vmmap attribution") {
+                        state.loadSelfMemoryAttribution(force: true)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(state.selfMemoryAttributionIsLoading)
+                }
+
+                LazyVGrid(columns: overviewColumns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    diagnosticsMetric(
+                        title: "Resident",
+                        value: byteCount(state.selfMemoryAttribution?.currentResidentBytes ?? state.runtimeLagMetrics.selfMemoryBytes),
+                        subtitle: "current Aetower resident memory"
+                    )
+                    diagnosticsMetric(
+                        title: "Footprint",
+                        value: byteCount(state.selfMemoryAttribution?.currentPhysicalFootprintBytes ?? state.runtimeLagMetrics.selfMemoryPhysicalFootprintBytes),
+                        subtitle: "current physical footprint"
+                    )
+                    diagnosticsMetric(
+                        title: "Peak footprint",
+                        value: byteCount(state.selfMemoryAttribution?.peakPhysicalFootprintBytes ?? state.runtimeLagMetrics.selfMemoryPhysicalFootprintBytes),
+                        subtitle: selfPeakSubtitle
+                    )
+                    diagnosticsMetric(
+                        title: "Attributed PIDs",
+                        value: "\(state.selfMemoryAttribution?.processIds.count ?? 0)",
+                        subtitle: state.selfMemoryAttribution?.selfDisplayName ?? "capture vmmap attribution for grouped self context"
+                    )
+                }
+
+                if state.selfMemoryAttributionIsLoading {
+                    ProgressView("Capturing Aetower self vmmap breakdown…")
+                } else if let error = state.selfMemoryAttributionError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if let attribution = state.selfMemoryAttribution {
+                    Text(attribution.note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    ForEach(attribution.regions.prefix(6)) { region in
+                        HStack {
+                            Text(region.regionType)
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text(byteCount(region.residentBytes))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+
+                    if !attribution.caveats.isEmpty {
+                        Text(attribution.caveats.joined(separator: " "))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    Text("Use the capture button to collect a current vmmap-style region breakdown for Aetower itself.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
+    private var uiPayloadDiagnostics: some View {
+        GroupBox("Heavy-tab payloads") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                LazyVGrid(columns: overviewColumns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    diagnosticsMetric(
+                        title: "History decode",
+                        value: String(format: "%.1f ms", state.historyUiDiagnostics.pageDecodeDurationMillis),
+                        subtitle: "\(state.historyUiDiagnostics.snapshotCount) snapshots · \(state.historyUiDiagnostics.entityCount) entities"
+                    )
+                    diagnosticsMetric(
+                        title: "History derive",
+                        value: String(format: "%.1f ms", state.historyUiDiagnostics.derivedSummaryBuildDurationMillis),
+                        subtitle: "\(state.historyUiDiagnostics.recurringEntityCount) recurring entities · \(state.historyUiDiagnostics.changeSummaryCount) changes"
+                    )
+                    diagnosticsMetric(
+                        title: "Timeline filter",
+                        value: String(format: "%.1f ms", state.timelinePayloadDiagnostics.filterDurationMillis),
+                        subtitle: "\(state.timelinePayloadDiagnostics.filteredEventCount) of \(state.timelinePayloadDiagnostics.totalEventCount) events"
+                    )
+                    diagnosticsMetric(
+                        title: "Timeline visible",
+                        value: "\(state.timelinePayloadDiagnostics.visibleEventCount)",
+                        subtitle: state.timelinePayloadDiagnostics.safeModeEnabled
+                            ? "operator-safe mode window"
+                            : "standard visible window"
+                    )
+                }
+
+                Text(uiPayloadGuidance)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.top, AetowerDesign.Spacing.xs)
         }
@@ -722,6 +849,9 @@ public struct DiagnosticsView: View {
         if runtime.staleMcpHelperCount > 0 {
             return "\(runtime.staleMcpHelperCount) helper process(es) crossed the stale threshold. Check agents that kept stdio sessions open after disconnect."
         }
+        if runtime.mcpHelperCount >= 8 && runtime.mcpHelperCount >= runtime.mcpActiveClientCount {
+            return "Helper count tracks active clients one-for-one at a high steady state. If this is normal, the next runtime step is a pooled or persistent transport so idle helper overhead does not scale linearly with client count."
+        }
         if runtime.mcpRequestsPerSecond >= 10 {
             return "MCP request pressure is elevated. Prefer persistent clients and avoid reconnect/poll loops when agents run longer audits."
         }
@@ -756,6 +886,58 @@ public struct DiagnosticsView: View {
             return lastErrorMessage
         }
         return nil
+    }
+
+    private var transportStrategyTitle: String {
+        let runtime = state.runtimeLagMetrics
+        if runtime.mcpHelperCount >= 8 && runtime.mcpHelperCount >= runtime.mcpActiveClientCount {
+            return "Pool candidate"
+        }
+        if runtime.mcpHelperCount > 0 {
+            return "Per-client"
+        }
+        return "Idle"
+    }
+
+    private var transportStrategySubtitle: String {
+        let runtime = state.runtimeLagMetrics
+        if runtime.mcpHelperCount >= 8 && runtime.mcpHelperCount >= runtime.mcpActiveClientCount {
+            return "\(runtime.mcpHelperCount) helpers for \(runtime.mcpActiveClientCount) clients; pooled or persistent transport would cut steady overhead"
+        }
+        if runtime.mcpHelperCount > 0 {
+            return "\(runtime.mcpHelperCount) helpers for \(runtime.mcpActiveClientCount) connected clients"
+        }
+        return "No active helper process"
+    }
+
+    private var transportStrategyColor: Color? {
+        let runtime = state.runtimeLagMetrics
+        if runtime.mcpHelperCount >= 8 && runtime.mcpHelperCount >= runtime.mcpActiveClientCount {
+            return AetowerDesign.Status.warning
+        }
+        if runtime.mcpHelperCount > 0 {
+            return AetowerDesign.Status.neutral
+        }
+        return AetowerDesign.Status.success
+    }
+
+    private var selfPeakSubtitle: String {
+        guard let attribution = state.selfMemoryAttribution else {
+            return "current self telemetry"
+        }
+        let delta = attribution.peakDeltaFromCurrentBytes
+        let deltaLabel = delta > 0 ? "+\(byteCount(UInt64(delta)))" : byteCount(UInt64(abs(delta)))
+        if let peakAtMillis = attribution.peakAtMillis {
+            return "\(relativeTimeLabel(from: peakAtMillis)) · delta \(deltaLabel)"
+        }
+        return "delta \(deltaLabel)"
+    }
+
+    private var uiPayloadGuidance: String {
+        if state.timelinePayloadDiagnostics.safeModeEnabled {
+            return "Operator-safe mode is on. Heavy tabs start with bounded visible windows and collapsed large lists so Diagnostics can show payload cost without forcing the UI to render the full payload immediately."
+        }
+        return "Use operator-safe mode when these timings start climbing; it keeps History and Timeline summary-first while still letting operators expand deeper lists on demand."
     }
 
     private var diagnosticsLoadStatus: String {

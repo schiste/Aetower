@@ -21,6 +21,8 @@ public final class AppState {
     public private(set) var historyLoadStatus: String?
     public private(set) var historyHasMore = false
     public private(set) var historyLastLoadDurationMillis = 0.0
+    public private(set) var historyUiDiagnostics = HistoryUiDiagnosticsSummary.empty
+    public private(set) var historySnapshotDiffIsLoading = false
     private(set) var historySnapshotDiff: SnapshotDiffReportModel?
     private(set) var historySnapshotDiffError: String?
     public private(set) var historyCompareBeforeMillis: UInt64?
@@ -99,6 +101,11 @@ public final class AppState {
     private(set) var entityMemoryBreakdowns: [String: EntityMemoryBreakdownReportModel] = [:]
     private(set) var entityProfiles: [String: EntityProfileReportModel] = [:]
     private(set) var entityWakeupAttributions: [String: WakeupAttributionReportModel] = [:]
+    private(set) var selfMemoryAttribution: SelfRuntimeMemoryAttributionReportModel?
+    private(set) var selfMemoryAttributionError: String?
+    public private(set) var selfMemoryAttributionIsLoading = false
+    public private(set) var selfMemoryAttributionUpdatedAt: Date?
+    public private(set) var timelinePayloadDiagnostics = TimelinePayloadDiagnosticsSummary.empty
     private(set) var processInspections: [UInt32: ProcessInspectionReportModel] = [:]
     private(set) var processOpenResources: [UInt32: ProcessOpenResourcesReportModel] = [:]
     private(set) var processSamples: [UInt32: ProcessSampleReportModel] = [:]
@@ -119,6 +126,10 @@ public final class AppState {
     private var workspaceActivationTask: Task<Void, Never>?
     @ObservationIgnored
     private var historyLoadTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var historyDiffTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var selfMemoryAttributionTask: Task<Void, Never>?
     @ObservationIgnored
     private var diagnosticsLoadTask: Task<Void, Never>?
     @ObservationIgnored
@@ -209,11 +220,11 @@ public final class AppState {
     @ObservationIgnored
     private let suppressedAnomalySummaryMinimumCount = 10
     @ObservationIgnored
-    private let historyInitialPageSize: UInt32 = 120
+    private let historyInitialPageSize: UInt32 = 48
     @ObservationIgnored
-    private let historyLoadMorePageSize: UInt32 = 240
+    private let historyLoadMorePageSize: UInt32 = 96
     @ObservationIgnored
-    private let historyMaxRetainedSamples = 720
+    private let historyMaxRetainedSamples = 240
     @ObservationIgnored
     private let diagnosticsMaxRetainedEvents: UInt32 = 500
     @ObservationIgnored
@@ -329,6 +340,10 @@ public final class AppState {
         workspaceActivationTask = nil
         historyLoadTask?.cancel()
         historyLoadTask = nil
+        historyDiffTask?.cancel()
+        historyDiffTask = nil
+        selfMemoryAttributionTask?.cancel()
+        selfMemoryAttributionTask = nil
         diagnosticsLoadTask?.cancel()
         diagnosticsLoadTask = nil
         lagMonitor.stop()
@@ -420,10 +435,15 @@ public final class AppState {
         historyHasMore = false
         historyLoadStatus = nil
         historyLastLoadDurationMillis = 0
+        historyUiDiagnostics = .empty
+        historySnapshotDiffIsLoading = false
         historySnapshotDiff = nil
         historySnapshotDiffError = nil
         historyCompareBeforeMillis = nil
         historyCompareAfterMillis = nil
+        historyDiffTask?.cancel()
+        historyDiffTask = nil
+        timelinePayloadDiagnostics = .empty
         loadDiagnostics(force: true)
     }
 
@@ -433,8 +453,10 @@ public final class AppState {
             loadHistory(force: true)
         } else {
             historyLoadTask?.cancel()
+            historyDiffTask?.cancel()
             historyIsLoading = false
             historyIsLoadingMore = false
+            historySnapshotDiffIsLoading = false
         }
     }
 
@@ -627,9 +649,6 @@ public final class AppState {
                     uiRefreshMillis: (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1000.0,
                     refreshStartedAt: refreshStartedAt
                 )
-            }
-            if historyVisible {
-                loadHistory(force: force)
             }
             diffAnomalyStates()
             flushSuppressedAnomalySummaryIfNeeded()
@@ -899,6 +918,111 @@ public final class AppState {
         }
     }
 
+    func loadSelfMemoryAttribution(force: Bool = false, topRegions: UInt32 = 8) {
+        if !force,
+           let updatedAt = selfMemoryAttributionUpdatedAt,
+           Date().timeIntervalSince(updatedAt) < 60
+        {
+            return
+        }
+
+        let bridge = self.bridge
+        selfMemoryAttributionTask?.cancel()
+        selfMemoryAttributionIsLoading = true
+        selfMemoryAttributionError = nil
+        selfMemoryAttributionTask = Task(priority: .utility) { [weak self] in
+            let started = CFAbsoluteTimeGetCurrent()
+            let result = bridge.selfMemoryAttributionJSON(topRegions: topRegions)
+            await MainActor.run {
+                guard let self else { return }
+                let durationMillis = (CFAbsoluteTimeGetCurrent() - started) * 1000.0
+                self.selfMemoryAttribution = self.decodeJsonQueryResult(
+                    result,
+                    as: SelfRuntimeMemoryAttributionReportModel.self
+                )
+                self.selfMemoryAttributionError = self.jsonQueryErrorMessage(
+                    result,
+                    fallback: "Self memory attribution could not be collected."
+                )
+                self.selfMemoryAttributionIsLoading = false
+                if self.selfMemoryAttributionError == nil {
+                    self.selfMemoryAttributionUpdatedAt = Date()
+                    self.recordLocalDiagnosticsEvent(
+                        level: .info,
+                        subsystem: .ui,
+                        eventType: "self-memory-attribution-completed",
+                        message: "Captured Aetower self memory attribution.",
+                        fields: [
+                            DiagnosticsField(key: "duration_millis", value: String(format: "%.1f", durationMillis)),
+                            DiagnosticsField(key: "top_regions", value: String(topRegions)),
+                            DiagnosticsField(key: "resident_bytes", value: String(self.selfMemoryAttribution?.currentResidentBytes ?? 0)),
+                            DiagnosticsField(key: "footprint_bytes", value: String(self.selfMemoryAttribution?.currentPhysicalFootprintBytes ?? 0)),
+                        ]
+                    )
+                }
+            }
+        }
+    }
+
+    func recordHistoryDerivedDiagnostics(
+        durationMillis: Double,
+        snapshotCount: Int,
+        recurringEntityCount: Int,
+        changeSummaryCount: Int
+    ) {
+        historyUiDiagnostics = HistoryUiDiagnosticsSummary(
+            updatedAt: Date(),
+            pageDecodeDurationMillis: historyUiDiagnostics.pageDecodeDurationMillis,
+            snapshotCount: snapshotCount,
+            entityCount: historyUiDiagnostics.entityCount,
+            derivedSummaryBuildDurationMillis: durationMillis,
+            recurringEntityCount: recurringEntityCount,
+            changeSummaryCount: changeSummaryCount
+        )
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "history-ui-derived-completed",
+            message: "Built History tab derived summaries off the main render path.",
+            fields: [
+                DiagnosticsField(key: "duration_millis", value: String(format: "%.1f", durationMillis)),
+                DiagnosticsField(key: "snapshot_count", value: String(snapshotCount)),
+                DiagnosticsField(key: "recurring_entity_count", value: String(recurringEntityCount)),
+                DiagnosticsField(key: "change_summary_count", value: String(changeSummaryCount)),
+            ]
+        )
+    }
+
+    func recordTimelinePayloadDiagnostics(
+        totalEventCount: Int,
+        filteredEventCount: Int,
+        visibleEventCount: Int,
+        filterDurationMillis: Double,
+        safeModeEnabled: Bool
+    ) {
+        timelinePayloadDiagnostics = TimelinePayloadDiagnosticsSummary(
+            updatedAt: Date(),
+            totalEventCount: totalEventCount,
+            filteredEventCount: filteredEventCount,
+            visibleEventCount: visibleEventCount,
+            filterDurationMillis: filterDurationMillis,
+            safeModeEnabled: safeModeEnabled
+        )
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "timeline-ui-filter-completed",
+            message: "Computed the Timeline tab payload on a background task.",
+            fields: [
+                DiagnosticsField(key: "duration_millis", value: String(format: "%.1f", filterDurationMillis)),
+                DiagnosticsField(key: "total_event_count", value: String(totalEventCount)),
+                DiagnosticsField(key: "filtered_event_count", value: String(filteredEventCount)),
+                DiagnosticsField(key: "visible_event_count", value: String(visibleEventCount)),
+                DiagnosticsField(key: "safe_mode_enabled", value: safeModeEnabled ? "true" : "false"),
+            ]
+        )
+    }
+
     func runProcessInspection(pid: UInt32) {
         let bridge = self.bridge
         setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processInspect, isLoading: true)
@@ -1099,25 +1223,41 @@ public final class AppState {
             guard !Task.isCancelled else { return }
             let summary = summaryResult.summary
             let pageResult: HistoryPageLoadResult
+            let pageDecodeDurationMillis: Double
             if summaryResult.errorMessage == nil, let summary, summary.rangeCount > 0 {
+                let pageLoadStarted = CFAbsoluteTimeGetCurrent()
                 pageResult = bridge.loadHistoryPageResult(
                     startMillis: startMillis,
                     endMillis: endMillis,
                     beforeMillisExclusive: nil,
-                    limit: self?.historyInitialPageSize ?? 120
+                    limit: self?.historyInitialPageSize ?? 48
                 )
+                pageDecodeDurationMillis = (CFAbsoluteTimeGetCurrent() - pageLoadStarted) * 1000.0
             } else {
                 pageResult = HistoryPageLoadResult(snapshots: [], errorMessage: nil)
+                pageDecodeDurationMillis = 0
             }
             let snapshots = pageResult.snapshots.sorted { $0.capturedAtMillis < $1.capturedAtMillis }
             await MainActor.run {
                 guard let self else { return }
                 let durationMillis = (CFAbsoluteTimeGetCurrent() - loadStarted) * 1000.0
                 let cappedSnapshots = Array(snapshots.suffix(self.historyMaxRetainedSamples))
+                let entityCount = cappedSnapshots.reduce(into: 0) { count, sample in
+                    count += sample.entities.count
+                }
                 self.historyRangeSummary = summary
                 self.historyStoreSummary = summary
                 self.historySnapshots = cappedSnapshots
                 self.historyLastLoadDurationMillis = durationMillis
+                self.historyUiDiagnostics = HistoryUiDiagnosticsSummary(
+                    updatedAt: Date(),
+                    pageDecodeDurationMillis: pageDecodeDurationMillis,
+                    snapshotCount: cappedSnapshots.count,
+                    entityCount: entityCount,
+                    derivedSummaryBuildDurationMillis: self.historyUiDiagnostics.derivedSummaryBuildDurationMillis,
+                    recurringEntityCount: self.historyUiDiagnostics.recurringEntityCount,
+                    changeSummaryCount: self.historyUiDiagnostics.changeSummaryCount
+                )
                 self.historyHasMore = UInt64(cappedSnapshots.count) < (summary?.rangeCount ?? 0)
                     && cappedSnapshots.count < self.historyMaxRetainedSamples
                 self.historyLoadError = self.historyLoadErrorMessage(
@@ -1143,7 +1283,9 @@ public final class AppState {
                     message: "Loaded persisted history into the History view.",
                     fields: [
                         DiagnosticsField(key: "duration_millis", value: String(format: "%.1f", durationMillis)),
+                        DiagnosticsField(key: "page_decode_millis", value: String(format: "%.1f", pageDecodeDurationMillis)),
                         DiagnosticsField(key: "loaded_count", value: String(cappedSnapshots.count)),
+                        DiagnosticsField(key: "entity_count", value: String(entityCount)),
                         DiagnosticsField(key: "range_count", value: String(summary?.rangeCount ?? 0)),
                         DiagnosticsField(key: "store_bytes", value: String(summary?.storeBytes ?? 0)),
                         DiagnosticsField(key: "wal_bytes", value: String(summary?.walBytes ?? 0)),
@@ -1176,13 +1318,15 @@ public final class AppState {
         historyLoadStatus = "Loading older persisted samples…"
         historyLoadTask?.cancel()
         historyLoadTask = Task(priority: .utility) { [weak self] in
+            let pageLoadStarted = CFAbsoluteTimeGetCurrent()
             let loadStarted = CFAbsoluteTimeGetCurrent()
             let pageResult = bridge.loadHistoryPageResult(
                 startMillis: startMillis,
                 endMillis: endMillis,
                 beforeMillisExclusive: oldestMillis,
-                limit: min(self?.historyLoadMorePageSize ?? 240, UInt32(remainingCapacity))
+                limit: min(self?.historyLoadMorePageSize ?? 96, UInt32(remainingCapacity))
             )
+            let pageDecodeDurationMillis = (CFAbsoluteTimeGetCurrent() - pageLoadStarted) * 1000.0
             let olderSnapshots = pageResult.snapshots
             guard !Task.isCancelled else { return }
             await MainActor.run {
@@ -1199,6 +1343,18 @@ public final class AppState {
                 self.historySnapshots.insert(contentsOf: uniqueOlder, at: 0)
                 self.historySnapshots.sort { $0.capturedAtMillis < $1.capturedAtMillis }
                 self.historyLastLoadDurationMillis = durationMillis
+                let entityCount = self.historySnapshots.reduce(into: 0) { count, sample in
+                    count += sample.entities.count
+                }
+                self.historyUiDiagnostics = HistoryUiDiagnosticsSummary(
+                    updatedAt: Date(),
+                    pageDecodeDurationMillis: pageDecodeDurationMillis,
+                    snapshotCount: self.historySnapshots.count,
+                    entityCount: entityCount,
+                    derivedSummaryBuildDurationMillis: self.historyUiDiagnostics.derivedSummaryBuildDurationMillis,
+                    recurringEntityCount: self.historyUiDiagnostics.recurringEntityCount,
+                    changeSummaryCount: self.historyUiDiagnostics.changeSummaryCount
+                )
                 let rangeCount = self.historyRangeSummary?.rangeCount ?? 0
                 let appendedUniqueSamples = !uniqueOlder.isEmpty
                 self.historyHasMore = UInt64(self.historySnapshots.count) < rangeCount
@@ -1208,6 +1364,19 @@ public final class AppState {
                 self.historyLoadError = nil
                 self.resetHistoryComparisonIfNeeded()
                 self.refreshHistorySnapshotDiff()
+                self.recordLocalDiagnosticsEvent(
+                    level: .info,
+                    subsystem: .persistence,
+                    eventType: "history-ui-load-more-completed",
+                    message: "Appended older persisted history samples into the History view.",
+                    fields: [
+                        DiagnosticsField(key: "duration_millis", value: String(format: "%.1f", durationMillis)),
+                        DiagnosticsField(key: "page_decode_millis", value: String(format: "%.1f", pageDecodeDurationMillis)),
+                        DiagnosticsField(key: "loaded_count", value: String(self.historySnapshots.count)),
+                        DiagnosticsField(key: "entity_count", value: String(entityCount)),
+                        DiagnosticsField(key: "added_count", value: String(uniqueOlder.count)),
+                    ]
+                )
                 if self.historySnapshots.count >= self.historyMaxRetainedSamples {
                     self.historyLoadStatus = "Loaded history is capped at \(self.historyMaxRetainedSamples) retained samples to protect UI memory."
                 } else if olderSnapshots.isEmpty {
@@ -1251,10 +1420,13 @@ public final class AppState {
     }
 
     private func refreshHistorySnapshotDiff(limit: UInt32 = 12) {
+        historyDiffTask?.cancel()
+        historyDiffTask = nil
         guard let beforeMillis = historyCompareBeforeMillis,
               let afterMillis = historyCompareAfterMillis,
               beforeMillis != afterMillis
         else {
+            historySnapshotDiffIsLoading = false
             historySnapshotDiff = nil
             historySnapshotDiffError = historySnapshots.count >= 2
                 ? "Select two different persisted samples to compare."
@@ -1262,17 +1434,34 @@ public final class AppState {
             return
         }
 
-        let result = bridge.diffSnapshotsJSON(
-            beforeMillis: min(beforeMillis, afterMillis),
-            afterMillis: max(beforeMillis, afterMillis),
-            entityIds: [],
-            limit: limit
-        )
-        historySnapshotDiff = decodeJsonQueryResult(result, as: SnapshotDiffReportModel.self)
-        historySnapshotDiffError = jsonQueryErrorMessage(
-            result,
-            fallback: historySnapshots.count >= 2 ? "Persisted diff analysis could not be prepared." : nil
-        )
+        let normalizedBefore = min(beforeMillis, afterMillis)
+        let normalizedAfter = max(beforeMillis, afterMillis)
+        let bridge = self.bridge
+        historySnapshotDiffIsLoading = true
+        historySnapshotDiffError = nil
+        historyDiffTask = Task(priority: .utility) { [weak self] in
+            let result = bridge.diffSnapshotsJSON(
+                beforeMillis: normalizedBefore,
+                afterMillis: normalizedAfter,
+                entityIds: [],
+                limit: limit
+            )
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                let currentBefore = self.historyCompareBeforeMillis.map { min($0, self.historyCompareAfterMillis ?? $0) }
+                let currentAfter = self.historyCompareAfterMillis.map { max($0, self.historyCompareBeforeMillis ?? $0) }
+                guard currentBefore == normalizedBefore, currentAfter == normalizedAfter else {
+                    return
+                }
+                self.historySnapshotDiff = self.decodeJsonQueryResult(result, as: SnapshotDiffReportModel.self)
+                self.historySnapshotDiffError = self.jsonQueryErrorMessage(
+                    result,
+                    fallback: self.historySnapshots.count >= 2 ? "Persisted diff analysis could not be prepared." : nil
+                )
+                self.historySnapshotDiffIsLoading = false
+            }
+        }
     }
 
     public func loadDiagnostics(force: Bool = false, limit: UInt32 = 500) {
@@ -1969,6 +2158,7 @@ public final class AppState {
             "notificationsEnabled": settings.notificationsEnabled,
             "frictionNotificationThreshold": settings.frictionNotificationThreshold,
             "appearanceMode": settings.appearanceMode,
+            "operatorSafeModeEnabled": settings.operatorSafeModeEnabled,
             "chromiumEndpointConfigured": !settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "dockerSocketPath": exportControlledValue(
                 settings.dockerSocketPath,

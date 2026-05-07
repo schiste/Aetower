@@ -624,6 +624,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
      */
     func resetFanAuto(fanId: UInt8)  -> String
     
+    func selfMemoryAttributionJson(topRegions: UInt32)  -> JsonQueryResult
+    
     func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?) 
     
     /**
@@ -1022,6 +1024,14 @@ open func resetFanAuto(fanId: UInt8) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_reset_fan_auto(self.uniffiClonePointer(),
         FfiConverterUInt8.lower(fanId),$0
+    )
+})
+}
+    
+open func selfMemoryAttributionJson(topRegions: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_self_memory_attribution_json(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(topRegions),$0
     )
 })
 }
@@ -8745,6 +8755,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_reset_fan_auto() != 1522) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_self_memory_attribution_json() != 32687) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_set_capability_state() != 11556) {

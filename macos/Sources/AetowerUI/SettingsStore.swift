@@ -87,6 +87,9 @@ public final class SettingsStore {
     public var appearanceMode: String {
         didSet { persist() }
     }
+    public var operatorSafeModeEnabled: Bool {
+        didSet { persist() }
+    }
     public var exportPrivacyTier: ExportPrivacyTier {
         didSet { persist() }
     }
@@ -121,6 +124,7 @@ public final class SettingsStore {
         self.notificationsEnabled = defaults.object(forKey: Self.notificationsEnabledKey) as? Bool ?? false
         self.frictionNotificationThreshold = defaults.object(forKey: Self.frictionNotificationThresholdKey) as? Double ?? 60.0
         self.appearanceMode = defaults.string(forKey: Self.appearanceModeKey) ?? "system"
+        self.operatorSafeModeEnabled = defaults.object(forKey: Self.operatorSafeModeEnabledKey) as? Bool ?? true
         let persistedTier = defaults.string(forKey: Self.exportPrivacyTierKey)
         let legacySensitive = defaults.object(forKey: Self.includeSensitiveExportsKey) as? Bool ?? false
         self.exportPrivacyTier = ExportPrivacyTier(rawValue: persistedTier ?? "")
@@ -174,6 +178,7 @@ public final class SettingsStore {
     private static let notificationsEnabledKey = "settings.notificationsEnabled"
     private static let frictionNotificationThresholdKey = "settings.frictionNotificationThreshold"
     private static let appearanceModeKey = "settings.appearanceMode"
+    private static let operatorSafeModeEnabledKey = "settings.operatorSafeModeEnabled"
     private static let exportPrivacyTierKey = "settings.exportPrivacyTier"
     private static let includeSensitiveExportsKey = "settings.includeSensitiveExports"
 
@@ -217,6 +222,7 @@ extension SettingsStore {
         notificationsEnabled = false
         frictionNotificationThreshold = 60.0
         appearanceMode = "system"
+        operatorSafeModeEnabled = true
         exportPrivacyTier = .redacted
     }
 
@@ -241,6 +247,7 @@ extension SettingsStore {
         defaults.set(notificationsEnabled, forKey: Self.notificationsEnabledKey)
         defaults.set(frictionNotificationThreshold, forKey: Self.frictionNotificationThresholdKey)
         defaults.set(appearanceMode, forKey: Self.appearanceModeKey)
+        defaults.set(operatorSafeModeEnabled, forKey: Self.operatorSafeModeEnabledKey)
         defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
         defaults.set(exportPrivacyTier == .full, forKey: Self.includeSensitiveExportsKey)
     }

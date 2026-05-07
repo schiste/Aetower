@@ -72,25 +72,42 @@ private struct EventRow: View {
 // MARK: - Main view
 
 public struct TimelineView: View {
-    let events: [TimelineEvent]
+    let state: AppState
+    let settings: SettingsStore
     @State private var categoryFilter: TimelineCategory?
     @State private var severityFilter: TimelineSeverityFilter = .all
     @State private var searchText = ""
+    @State private var filteredEventsCache: [TimelineEvent] = []
+    @State private var filterTask: Task<[TimelineEvent], Never>?
+    @State private var isFiltering = false
+    @State private var visibleEventLimit: Int
+    @State private var expandTimelineRowsInSafeMode = false
 
     /// Computed once at init from the immutable events array rather
     /// than on every body evaluation. The category set cannot change
     /// without a new events prop being passed.
-    private let sortedCategories: [TimelineCategory]
-
-    public init(events: [TimelineEvent]) {
-        self.events = events
+    private var sortedCategories: [TimelineCategory] {
         var seen: [TimelineCategory] = []
         for event in events {
             if !seen.contains(event.category) {
                 seen.append(event.category)
             }
         }
-        self.sortedCategories = seen.sorted { categoryLabel($0) < categoryLabel($1) }
+        return seen.sorted { categoryLabel($0) < categoryLabel($1) }
+    }
+
+    private var events: [TimelineEvent] {
+        state.snapshot.timeline
+    }
+
+    private var defaultVisibleEventLimit: Int {
+        settings.operatorSafeModeEnabled ? 100 : 200
+    }
+
+    public init(state: AppState, settings: SettingsStore) {
+        self.state = state
+        self.settings = settings
+        _visibleEventLimit = State(initialValue: settings.operatorSafeModeEnabled ? 100 : 200)
     }
 
     public var body: some View {
@@ -144,15 +161,29 @@ public struct TimelineView: View {
 
                         Spacer()
 
-                        Text("\(filteredEvents.count) events")
+                        Text("\(filteredEventsCache.count) events")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                     .padding(.top, AetowerDesign.Spacing.xs)
+
+                    if settings.operatorSafeModeEnabled {
+                        Text("Operator-safe mode keeps large timeline lists collapsed by default and starts from a smaller visible window.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 GroupBox("Recent timeline") {
-                    if filteredEvents.isEmpty {
+                    if isFiltering && filteredEventsCache.isEmpty {
+                        ContentUnavailableView {
+                            Label("Preparing timeline", systemImage: "timeline.selection")
+                        } description: {
+                            ProgressView()
+                                .controlSize(.large)
+                        }
+                        .frame(maxWidth: .infinity)
+                    } else if filteredEventsCache.isEmpty {
                         ContentUnavailableView(
                             "No timeline events match this filter",
                             systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90",
@@ -161,11 +192,50 @@ public struct TimelineView: View {
                         .frame(maxWidth: .infinity)
                     } else {
                         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-                            ForEach(filteredEvents.reversed(), id: \.id) { event in
-                                EventRow(
-                                    event: event,
-                                    entityId: event.entityId
-                                )
+                            HStack {
+                                Text("\(visibleEvents.count) of \(filteredEventsCache.count) visible")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                if isFiltering {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                }
+                            }
+
+                            if settings.operatorSafeModeEnabled && !expandTimelineRowsInSafeMode {
+                                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                                    Text("Detailed timeline rows stay collapsed until you explicitly expand them.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Button {
+                                        expandTimelineRowsInSafeMode = true
+                                    } label: {
+                                        Label("Expand timeline rows", systemImage: "arrow.down.circle")
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                            } else {
+                                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                                    ForEach(visibleEvents, id: \.id) { event in
+                                        EventRow(
+                                            event: event,
+                                            entityId: event.entityId
+                                        )
+                                    }
+                                }
+
+                                if visibleEventLimit < filteredEventsCache.count {
+                                    Button {
+                                        visibleEventLimit = min(
+                                            visibleEventLimit + defaultVisibleEventLimit,
+                                            filteredEventsCache.count
+                                        )
+                                    } label: {
+                                        Label("Load older timeline events", systemImage: "arrow.down.circle")
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
                             }
                         }
                     }
@@ -173,28 +243,93 @@ public struct TimelineView: View {
             }
             .padding(AetowerDesign.Spacing.xxl)
         }
-    }
-
-    private var filteredEvents: [TimelineEvent] {
-        events.filter { event in
-            let severityOk: Bool = switch severityFilter {
-            case .all:
-                true
-            case .warningAndAbove:
-                event.severity == .warning || event.severity == .critical
-            case .critical:
-                event.severity == .critical
-            }
-            let categoryOk = categoryFilter.map { $0 == event.category } ?? true
-            let searchOk = searchText.isEmpty || {
-                let query = searchText.lowercased()
-                return event.title.lowercased().contains(query)
-                    || event.detail.lowercased().contains(query)
-                    || (event.entityId?.lowercased().contains(query) ?? false)
-            }()
-            return severityOk && categoryOk && searchOk
+        .task(id: filterCacheToken) {
+            await recomputeFilteredEvents()
+        }
+        .onChange(of: settings.operatorSafeModeEnabled) { _, _ in
+            visibleEventLimit = defaultVisibleEventLimit
+            expandTimelineRowsInSafeMode = false
+        }
+        .onDisappear {
+            filterTask?.cancel()
+            filterTask = nil
         }
     }
+
+    private var filterCacheToken: String {
+        let newestEventID = events.last?.id ?? ""
+        let oldestEventID = events.first?.id ?? ""
+        let categoryLabelValue = categoryFilter.map(categoryLabel) ?? "all"
+        return "\(events.count)|\(oldestEventID)|\(newestEventID)|\(severityFilter.rawValue)|\(categoryLabelValue)|\(searchText.lowercased())"
+    }
+
+    private var visibleEvents: [TimelineEvent] {
+        Array(filteredEventsCache.prefix(visibleEventLimit))
+    }
+
+    @MainActor
+    private func recomputeFilteredEvents() async {
+        filterTask?.cancel()
+        isFiltering = true
+        let filterStarted = CFAbsoluteTimeGetCurrent()
+        let token = filterCacheToken
+        let events = self.events
+        let severityFilter = self.severityFilter
+        let categoryFilter = self.categoryFilter
+        let query = self.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let task = Task.detached(priority: .utility) {
+            buildFilteredTimelineEvents(
+                from: events,
+                severityFilter: severityFilter,
+                categoryFilter: categoryFilter,
+                query: query
+            )
+        }
+        filterTask = task
+        let filtered = await task.value
+        guard !Task.isCancelled, filterCacheToken == token else { return }
+        filteredEventsCache = filtered
+        visibleEventLimit = defaultVisibleEventLimit
+        expandTimelineRowsInSafeMode = false
+        isFiltering = false
+        state.recordTimelinePayloadDiagnostics(
+            totalEventCount: events.count,
+            filteredEventCount: filtered.count,
+            visibleEventCount: min(defaultVisibleEventLimit, filtered.count),
+            filterDurationMillis: (CFAbsoluteTimeGetCurrent() - filterStarted) * 1000.0,
+            safeModeEnabled: settings.operatorSafeModeEnabled
+        )
+    }
+}
+
+private func buildFilteredTimelineEvents(
+    from events: [TimelineEvent],
+    severityFilter: TimelineSeverityFilter,
+    categoryFilter: TimelineCategory?,
+    query: String
+) -> [TimelineEvent] {
+    var filtered: [TimelineEvent] = []
+    filtered.reserveCapacity(min(events.count, 256))
+    for event in events.reversed() {
+        let severityOk: Bool = switch severityFilter {
+        case .all:
+            true
+        case .warningAndAbove:
+            event.severity == .warning || event.severity == .critical
+        case .critical:
+            event.severity == .critical
+        }
+        guard severityOk else { continue }
+        guard categoryFilter.map({ $0 == event.category }) ?? true else { continue }
+        if !query.isEmpty {
+            let searchOk = event.title.lowercased().contains(query)
+                || event.detail.lowercased().contains(query)
+                || (event.entityId?.lowercased().contains(query) ?? false)
+            guard searchOk else { continue }
+        }
+        filtered.append(event)
+    }
+    return filtered
 }
 
 // MARK: - Shared helpers

@@ -4599,6 +4599,17 @@ pub fn memory_breakdown_json(
     serde_json::to_string(&report).map_err(|error| error.to_string())
 }
 
+pub fn self_memory_attribution_json(
+    data_source: &dyn AetowerMcpDataSource,
+    top_regions: usize,
+) -> Result<String, String> {
+    let runtime = data_source.latest_runtime_lag_metrics()?;
+    let samples = vec![self_runtime_watch_sample(&runtime)];
+    let report =
+        build_self_runtime_memory_attribution(data_source, &samples, true, top_regions.max(1));
+    serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
 fn build_self_runtime_watch_report(
     data_source: &dyn AetowerMcpDataSource,
     duration_seconds: u64,

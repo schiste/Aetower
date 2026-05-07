@@ -7,7 +7,7 @@ use aetower_mcp::{
     diff_snapshots_json, entity_process_tree_json, explain_anomalies_json, memory_breakdown_json,
     process_action_history_json, process_action_json, process_inspect_json,
     process_open_resources_json, process_sample_json, profile_entity_json,
-    start_local_socket_server, wakeup_attribution_json,
+    self_memory_attribution_json, start_local_socket_server, wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1200,6 +1200,16 @@ impl MonitorEngine {
         json_query_result(memory_breakdown_json(
             &data_source,
             &entity_id,
+            top_regions as usize,
+        ))
+    }
+
+    pub fn self_memory_attribution_json(&self, top_regions: u32) -> JsonQueryResult {
+        let data_source = MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        };
+        json_query_result(self_memory_attribution_json(
+            &data_source,
             top_regions as usize,
         ))
     }

@@ -165,6 +165,10 @@ public final class EngineBridge: @unchecked Sendable {
         engine.memoryBreakdownJson(entityId: entityId, topRegions: topRegions)
     }
 
+    public func selfMemoryAttributionJSON(topRegions: UInt32 = 8) -> JsonQueryResult {
+        engine.selfMemoryAttributionJson(topRegions: topRegions)
+    }
+
     public func profileEntityJSON(
         entityId: String,
         durationSeconds: UInt32 = 5,
