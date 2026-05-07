@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    io::{Read, Write},
+    io::{BufReader, Read, Write},
     net::Shutdown,
     os::fd::AsRawFd,
     os::unix::{
@@ -1325,6 +1325,42 @@ fn is_graceful_peer_close(error: &std::io::Error) -> bool {
     )
 }
 
+struct McpSocketConnection {
+    reader: BufReader<UnixStream>,
+}
+
+impl McpSocketConnection {
+    fn new(stream: UnixStream) -> Result<Self, String> {
+        stream
+            .set_read_timeout(Some(MCP_READ_TIMEOUT))
+            .map_err(|error| format!("set MCP socket read timeout: {error}"))?;
+        Ok(Self {
+            reader: BufReader::new(stream),
+        })
+    }
+
+    fn read_message(
+        &mut self,
+        framing: &mut Option<MessageFraming>,
+    ) -> Result<ReadMessageOutcome, String> {
+        read_message(&mut self.reader, framing)
+    }
+
+    fn write_message(&mut self, message: &Value, framing: MessageFraming) -> Result<(), String> {
+        write_message(self.reader.get_mut(), message, framing)
+    }
+
+    fn shutdown(&mut self) {
+        let _ = self.reader.get_mut().shutdown(Shutdown::Both);
+    }
+}
+
+impl Drop for McpSocketConnection {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 fn handle_connection(
     stream: UnixStream,
     data_source: Arc<dyn AetowerMcpDataSource>,
@@ -1332,13 +1368,7 @@ fn handle_connection(
     running: Arc<AtomicBool>,
     stats: Arc<McpRuntimeStats>,
 ) -> Result<(), String> {
-    let mut reader = stream
-        .try_clone()
-        .map_err(|error| format!("clone MCP socket for read: {error}"))?;
-    reader
-        .set_read_timeout(Some(MCP_READ_TIMEOUT))
-        .map_err(|error| format!("set MCP socket read timeout: {error}"))?;
-    let mut writer = stream;
+    let mut connection = McpSocketConnection::new(stream)?;
     let server = AetowerMcpServer {
         data_source,
         dynamic_mode,
@@ -1347,12 +1377,11 @@ fn handle_connection(
     let mut framing = None;
 
     loop {
-        match read_message(&mut reader, &mut framing)? {
+        match connection.read_message(&mut framing)? {
             ReadMessageOutcome::Message(message) => {
                 let response = server.handle_message(message);
                 if let Some(response) = response {
-                    write_message(
-                        &mut writer,
+                    connection.write_message(
                         &response,
                         framing.unwrap_or(MessageFraming::ContentLength),
                     )?;
@@ -1363,6 +1392,7 @@ fn handle_connection(
             ReadMessageOutcome::Timeout => break,
         }
     }
+    connection.shutdown();
     Ok(())
 }
 
