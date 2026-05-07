@@ -199,11 +199,17 @@ public final class AppState {
     @ObservationIgnored
     private var lastLocalMcpHealthCheckDate = Date.distantPast
     @ObservationIgnored
+    private var lastLocalMcpProbeDate = Date.distantPast
+    @ObservationIgnored
+    private var cachedLocalMcpSocketProbe: LocalMcpSocketProbe?
+    @ObservationIgnored
     private let localMcpHealthyHealthCheckInterval: TimeInterval = 30
     @ObservationIgnored
     private let localMcpUnhealthyHealthCheckInterval: TimeInterval = 5
     @ObservationIgnored
     private let localMcpRestartFailureThreshold = 2
+    @ObservationIgnored
+    private let localMcpProbeCacheInterval: TimeInterval = 2
     @ObservationIgnored
     private let localMcpSocketPath = LocalMcpClientRegistrar.defaultSocketPath()
     @ObservationIgnored
@@ -331,6 +337,11 @@ public final class AppState {
         localMcpServerStarted = false
         localMcpServerHealthy = false
         localMcpLastProbeDetail = "listener stopped"
+        lastLocalMcpProbeDate = Date()
+        cachedLocalMcpSocketProbe = LocalMcpSocketProbe(
+            reachable: false,
+            detail: "listener stopped"
+        )
     }
 
     public func start(refreshInterval: Double) {
@@ -691,7 +702,7 @@ public final class AppState {
         lastLocalMcpHealthCheckDate = now
         localMcpLastHealthCheckDate = now
 
-        let probe = probeLocalMcpSocket()
+        let probe = currentLocalMcpSocketProbe(forceFresh: force)
         localMcpLastProbeDetail = probe.detail
         if localMcpServerStarted && probe.reachable {
             localMcpServerHealthy = true
@@ -753,10 +764,23 @@ public final class AppState {
             UInt64(Date().timeIntervalSince1970 * 1000)
         )
         historyStoreSummary = bridge.historyRangeSummary(startMillis: 0, endMillis: endMillis)
-        let probe = probeLocalMcpSocket()
+        let probe = currentLocalMcpSocketProbe()
         localMcpLastHealthCheckDate = now
         localMcpLastProbeDetail = probe.detail
         localMcpServerHealthy = localMcpServerStarted && probe.reachable
+    }
+
+    private func currentLocalMcpSocketProbe(forceFresh: Bool = false) -> LocalMcpSocketProbe {
+        let now = Date()
+        if !forceFresh,
+           let cachedProbe = cachedLocalMcpSocketProbe,
+           now.timeIntervalSince(lastLocalMcpProbeDate) < localMcpProbeCacheInterval {
+            return cachedProbe
+        }
+        let probe = probeLocalMcpSocket()
+        lastLocalMcpProbeDate = now
+        cachedLocalMcpSocketProbe = probe
+        return probe
     }
 
     /// Liveness probe: try a brief non-blocking connect to the MCP socket.
@@ -838,13 +862,13 @@ public final class AppState {
     }
 
     private func waitForLocalMcpSocketReachability(attempts: Int = 3) -> LocalMcpSocketProbe {
-        var probe = probeLocalMcpSocket()
+        var probe = currentLocalMcpSocketProbe(forceFresh: true)
         guard !probe.reachable else {
             return probe
         }
         for _ in 1..<attempts {
             usleep(50_000)
-            probe = probeLocalMcpSocket()
+            probe = currentLocalMcpSocketProbe(forceFresh: true)
             if probe.reachable {
                 return probe
             }

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum LocalMcpClientRegistrationState: String, Sendable {
@@ -602,7 +603,7 @@ args = ["\(socketPath)"]
         }
 
         if process.isRunning {
-            process.terminate()
+            terminate(process)
             throw RegistrationError.commandTimedOut(arguments.joined(separator: " "))
         }
 
@@ -613,6 +614,21 @@ args = ["\(socketPath)"]
             stdout: String(decoding: stdoutData, as: UTF8.self),
             stderr: String(decoding: stderrData, as: UTF8.self)
         )
+    }
+
+    private static func terminate(_ process: Process) {
+        guard process.isRunning else {
+            return
+        }
+        process.terminate()
+        let gracefulDeadline = Date().addingTimeInterval(0.25)
+        while process.isRunning && Date() < gracefulDeadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        if process.isRunning {
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+        }
+        process.waitUntilExit()
     }
 
     private static func homeRelativePath(_ suffix: String) -> String {
