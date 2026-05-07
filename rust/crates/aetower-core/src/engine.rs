@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -235,6 +235,7 @@ pub struct Engine {
     persistence: Arc<Mutex<Option<aetower_persistence::HistoryStore>>>,
     telemetry: Arc<Mutex<TelemetryExporter>>,
     history_maintenance_cancel: Arc<AtomicBool>,
+    system_marker_generation: Arc<AtomicU64>,
     diagnostics: DiagnosticsStore,
     running: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
@@ -310,6 +311,7 @@ impl Engine {
             persistence: Arc::new(Mutex::new(persistence)),
             telemetry: Arc::new(Mutex::new(telemetry_exporter)),
             history_maintenance_cancel: Arc::new(AtomicBool::new(false)),
+            system_marker_generation: Arc::new(AtomicU64::new(0)),
             diagnostics,
             running: Arc::new(AtomicBool::new(false)),
             worker: None,
@@ -1000,12 +1002,22 @@ impl Engine {
 
         let diagnostics = self.diagnostics.clone();
         let running = Arc::clone(&self.running);
+        let system_marker_generation = Arc::clone(&self.system_marker_generation);
+        let worker_generation = system_marker_generation
+            .fetch_add(1, Ordering::SeqCst)
+            .saturating_add(1);
         self.system_marker_worker = Some(thread::spawn(move || {
             let since_millis =
                 last_persisted_system_marker_millis(&diagnostics).unwrap_or_else(|| {
                     aet_time::now_millis().saturating_sub(SYSTEM_MARKER_LOOKBACK_MILLIS)
                 });
-            ingest_recent_system_markers(&diagnostics, &running, since_millis);
+            ingest_recent_system_markers(
+                &diagnostics,
+                &running,
+                &system_marker_generation,
+                worker_generation,
+                since_millis,
+            );
         }));
     }
 
@@ -1013,6 +1025,7 @@ impl Engine {
         self.running.store(false, Ordering::SeqCst);
         self.history_maintenance_cancel
             .store(true, Ordering::SeqCst);
+        self.system_marker_generation.fetch_add(1, Ordering::SeqCst);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -1027,7 +1040,11 @@ impl Engine {
         }
         // System-marker ingestion is best-effort and can be slow on machines
         // with large unified-log stores. Never block engine shutdown on it.
-        let _ = self.system_marker_worker.take();
+        if let Some(worker) = self.system_marker_worker.take()
+            && worker.is_finished()
+        {
+            let _ = worker.join();
+        }
     }
 
     pub fn latest_snapshot(&self) -> SystemSnapshot {
@@ -2026,14 +2043,19 @@ fn last_persisted_system_marker_millis(diagnostics: &DiagnosticsStore) -> Option
 fn ingest_recent_system_markers(
     diagnostics: &DiagnosticsStore,
     running: &AtomicBool,
+    generation: &AtomicU64,
+    expected_generation: u64,
     since_millis: u64,
 ) {
-    if !running.load(Ordering::SeqCst) {
+    if !system_marker_worker_is_current(running, generation, expected_generation) {
         return;
     }
     let markers = load_recent_system_markers(since_millis);
+    if !system_marker_worker_is_current(running, generation, expected_generation) {
+        return;
+    }
     for marker in markers {
-        if !running.load(Ordering::SeqCst) {
+        if !system_marker_worker_is_current(running, generation, expected_generation) {
             break;
         }
         let mut event = DiagnosticsEvent::builder(
@@ -2050,6 +2072,14 @@ fn ingest_recent_system_markers(
         }
         diagnostics.emit(event.build());
     }
+}
+
+fn system_marker_worker_is_current(
+    running: &AtomicBool,
+    generation: &AtomicU64,
+    expected_generation: u64,
+) -> bool {
+    running.load(Ordering::SeqCst) && generation.load(Ordering::SeqCst) == expected_generation
 }
 
 fn load_recent_system_markers(since_millis: u64) -> Vec<SystemMarker> {
