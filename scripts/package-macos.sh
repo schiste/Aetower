@@ -27,6 +27,31 @@ NOTARIZE="${AETOWER_NOTARIZE:-0}"
 STAPLE="${AETOWER_STAPLE:-0}"
 NOTARY_PROFILE="${AETOWER_NOTARY_PROFILE:-}"
 
+remove_tree() {
+    TARGET_PATH="$1"
+    ATTEMPTS="${2:-5}"
+    SLEEP_SECONDS="${3:-1}"
+
+    if [ ! -e "$TARGET_PATH" ]; then
+        return 0
+    fi
+
+    ATTEMPT=1
+    while [ "$ATTEMPT" -le "$ATTEMPTS" ]; do
+        rm -rf "$TARGET_PATH" 2>/dev/null || true
+        if [ ! -e "$TARGET_PATH" ]; then
+            return 0
+        fi
+        if [ "$ATTEMPT" -lt "$ATTEMPTS" ]; then
+            sleep "$SLEEP_SECONDS"
+        fi
+        ATTEMPT=$((ATTEMPT + 1))
+    done
+
+    echo "failed to remove $TARGET_PATH after $ATTEMPTS attempt(s)" >&2
+    return 1
+}
+
 sign_target() {
     TARGET="$1"
     WITH_RUNTIME="$2"
@@ -77,10 +102,10 @@ notarize_app() {
 
 sh "$ROOT/scripts/build-rust.sh"
 "$CARGO_BIN" build --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper --release
-rm -rf "$SWIFT_BUILD_DIR"
+remove_tree "$SWIFT_BUILD_DIR"
 /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -c release
 
-rm -rf "$APP_DIR"
+remove_tree "$APP_DIR"
 mkdir -p "$BIN_DIR" "$FRAMEWORK_DIR" "$HELPER_DIR" "$PLIST_DIR/Resources"
 
 cp "$SWIFT_BUILD_DIR/release/AetowerApp" "$BIN_DIR/Aetower"
