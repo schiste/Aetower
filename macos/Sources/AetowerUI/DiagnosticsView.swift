@@ -76,6 +76,7 @@ public struct DiagnosticsView: View {
 
                 controls
                 sessionHealth
+                recommendations
                 selfMemoryAttribution
                 localMcpServerState
                 mcpLifecycle
@@ -382,6 +383,32 @@ public struct DiagnosticsView: View {
                 )
             }
             .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
+    private var recommendations: some View {
+        let items = buildOperatorRecommendations(
+            snapshot: state.snapshot,
+            diagnostics: state.diagnosticsOverview,
+            history: state.historyStoreSummary ?? state.historyRangeSummary,
+            runtime: state.runtimeLagMetrics
+        )
+
+        return GroupBox("Recommended next actions") {
+            if items.isEmpty {
+                Text("No immediate operator actions are currently recommended.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, AetowerDesign.Spacing.xs)
+            } else {
+                LazyVGrid(columns: overviewColumns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    ForEach(items) { recommendation in
+                        diagnosticsRecommendationCard(recommendation)
+                    }
+                }
+                .padding(.top, AetowerDesign.Spacing.xs)
+            }
         }
     }
 
@@ -1114,6 +1141,30 @@ private func diagnosticsMetric(
     }
     .padding(AetowerDesign.Spacing.sm)
     .frame(maxWidth: .infinity, alignment: .leading)
+    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
+}
+
+private func diagnosticsRecommendationCard(_ recommendation: OperatorRecommendationSummary) -> some View {
+    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+        HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+            Text(recommendation.title)
+                .font(.subheadline.weight(.semibold))
+            Spacer()
+            Text(recommendation.severity.label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(recommendation.severity.color)
+        }
+        Text(recommendation.detail)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        Text(recommendation.action)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(AetowerDesign.Spacing.sm)
+    .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
     .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
 }
 

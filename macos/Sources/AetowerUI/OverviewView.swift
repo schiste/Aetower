@@ -149,10 +149,6 @@ public struct OverviewView: View {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
                 summarySection
 
-                if let machineIncident {
-                    OverviewIncidentBanner(incident: machineIncident)
-                }
-
                 if !hostAlerts.isEmpty {
                     OverviewPanel(
                         title: "Host alerts",
@@ -192,61 +188,6 @@ public struct OverviewView: View {
                             }
                         }
                     }
-                }
-
-                if !operatorRecommendations.isEmpty {
-                    OverviewPanel(
-                        title: "Recommended next actions",
-                        subtitle: "Operator-grade remediation suggestions derived from the current host state."
-                    ) {
-                        LazyVGrid(columns: overviewGridColumns(minimum: 260), alignment: .leading, spacing: 12) {
-                            ForEach(operatorRecommendations) { recommendation in
-                                OverviewListCard(
-                                    title: recommendation.title,
-                                    value: recommendation.severity.label,
-                                    detail: recommendation.detail,
-                                    tone: recommendation.severity.color,
-                                    footer: recommendation.action
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if !selfHealthChecks.isEmpty {
-                    OverviewPanel(
-                        title: "Aetower self-health",
-                        subtitle: "The health of Aetower’s own runtime, diagnostics, history store, capabilities, and MCP surface."
-                    ) {
-                        LazyVGrid(columns: overviewGridColumns(minimum: 240), alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-                            ForEach(selfHealthChecks) { check in
-                                OverviewListCard(
-                                    title: check.title,
-                                    value: check.value,
-                                    detail: check.detail,
-                                    tone: check.severity.color,
-                                    footer: check.footer
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // When the machine is healthy and no sections below the
-                // summary rendered, show a positive confirmation so the
-                // user knows the blank space is intentional.
-                if machineIncident == nil && hostAlerts.isEmpty
-                    && burdenLeaders.isEmpty && operatorRecommendations.isEmpty
-                    && selfHealthChecks.allSatisfy({ $0.severity == .info })
-                {
-                    HStack(spacing: AetowerDesign.Spacing.sm) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(AetowerDesign.Status.success)
-                        Text("System is healthy — no alerts, incidents, or recommendations.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.top, AetowerDesign.Spacing.sm)
                 }
             }
             .padding(.horizontal, AetowerDesign.Spacing.xl)
@@ -387,38 +328,15 @@ public struct OverviewView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var machineIncident: HostIncidentSummary? {
-        buildHostIncident(snapshot: state.snapshot, history: state.historyStoreSummary ?? state.historyRangeSummary)
-    }
-
     private var burdenLeaders: [BurdenLeaderSummary] {
         Array(buildBurdenLeaders(snapshot: state.snapshot).prefix(4))
-    }
-
-    private var operatorRecommendations: [OperatorRecommendationSummary] {
-        buildOperatorRecommendations(
-            snapshot: state.snapshot,
-            diagnostics: state.diagnosticsOverview,
-            history: state.historyStoreSummary ?? state.historyRangeSummary,
-            runtime: state.runtimeLagMetrics
-        )
-    }
-
-    private var selfHealthChecks: [OperatorHealthCheckSummary] {
-        buildSelfHealthChecks(
-            snapshot: state.snapshot,
-            diagnostics: state.diagnosticsOverview,
-            history: state.historyStoreSummary ?? state.historyRangeSummary,
-            runtime: state.runtimeLagMetrics,
-            localMcpServerHealthy: state.localMcpServerHealthy
-        )
     }
 
     private var hostAlerts: [OverviewHostAlert] {
         var alerts: [OverviewHostAlert] = []
         let host = state.snapshot.host
         let memoryBand = hostPressureBand(host)
-        if memoryBand != .nominal && !incidentCoversMemoryPressure {
+        if memoryBand != .nominal {
             let leaders = state.snapshot.entities
                 .sorted { $0.metrics.memoryResidentBytes > $1.metrics.memoryResidentBytes }
                 .prefix(3)
@@ -449,7 +367,6 @@ public struct OverviewView: View {
 
         let wakeupBand = hostWakeupBand(host.wakeupsPerSecond)
         if wakeupBand != .nominal,
-           !incidentCoversWakeups,
            let leader = state.snapshot.entities.max(by: { $0.metrics.wakeupsPerSecond < $1.metrics.wakeupsPerSecond })
         {
             alerts.append(
@@ -542,14 +459,6 @@ public struct OverviewView: View {
         default:
             return { String(format: "%.1f", $0) }
         }
-    }
-
-    private var incidentCoversMemoryPressure: Bool {
-        machineIncident?.title == "Machine under memory pressure"
-    }
-
-    private var incidentCoversWakeups: Bool {
-        machineIncident?.title == "Machine is wakeup-heavy"
     }
 
     private var overviewTrendSampleLimit: Int {
