@@ -64,6 +64,7 @@ struct OperatorHealthCheckSummary: Identifiable {
     let title: String
     let value: String
     let detail: String
+    let footer: String
     let severity: OperatorSeverity
 }
 
@@ -272,7 +273,7 @@ func buildOperatorRecommendations(
         )
     }
 
-    for entity in snapshot.entities.prefix(5) {
+    for entity in snapshot.entities {
         for recommendation in entity.recommendations.prefix(1) {
             recommendations.append(
                 OperatorRecommendationSummary(
@@ -314,6 +315,7 @@ func buildSelfHealthChecks(
                 runtime.mcpHelperCount,
                 runtime.staleMcpHelperCount
             ),
+            footer: "Keep collection, persistence, and helper churn under the active tick budget.",
             severity: operatorRuntimeSeverity(runtime)
         ),
         OperatorHealthCheckSummary(
@@ -321,6 +323,7 @@ func buildSelfHealthChecks(
             title: "Diagnostics",
             value: operatorDiagnosticsSeverity(diagnostics).label,
             detail: operatorDiagnosticsDetail(diagnostics),
+            footer: "Reduce retained warning/error noise so the stream stays operator-grade.",
             severity: operatorDiagnosticsSeverity(diagnostics)
         ),
         OperatorHealthCheckSummary(
@@ -328,6 +331,7 @@ func buildSelfHealthChecks(
             title: "Capabilities",
             value: capabilityHealthValue(snapshot.capabilities),
             detail: capabilityHealthDetail(snapshot.capabilities),
+            footer: "Grant or configure missing capabilities before trusting attribution depth.",
             severity: capabilityOverallSeverity(snapshot.capabilities)
         ),
         OperatorHealthCheckSummary(
@@ -337,6 +341,9 @@ func buildSelfHealthChecks(
             detail: localMcpServerHealthy
                 ? mcpHelperHealthDetail(runtime)
                 : "The in-app MCP socket is not currently reachable.",
+            footer: localMcpServerHealthy
+                ? "Watch helper count and stale sessions so local agent access remains cheap and reliable."
+                : "Bring the local socket back before relying on agent-facing tools.",
             severity: localMcpServerHealthy ? mcpHelperHealthSeverity(runtime) : .warning
         ),
     ]
@@ -348,6 +355,7 @@ func buildSelfHealthChecks(
                 title: "History store",
                 value: operatorHistorySeverity(history).label,
                 detail: "\(formatBytes(history.storeBytes)) DB · \(formatBytes(history.walBytes)) WAL · \(history.snapshotCount) snapshots",
+                footer: "Trim retention or let compaction run before heavy tabs become expensive again.",
                 severity: operatorHistorySeverity(history)
             ),
             at: 2

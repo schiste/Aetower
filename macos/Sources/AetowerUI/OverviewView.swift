@@ -185,6 +185,8 @@ public struct OverviewView: View {
                                     subtitle: "\(leader.entityName) · \(leader.detail)",
                                     samples: burdenLeaderSamples(for: leader),
                                     style: burdenLeaderStyle(for: leader),
+                                    valueAppearance: burdenLeaderValueAppearance(for: leader),
+                                    sampleValueFormatter: burdenLeaderSampleFormatter(for: leader),
                                     minHeight: 124
                                 )
                             }
@@ -223,7 +225,7 @@ public struct OverviewView: View {
                                     value: check.value,
                                     detail: check.detail,
                                     tone: check.severity.color,
-                                    footer: check.severity == .info ? "No immediate operator action required." : "Investigate this subsystem before trusting the rest of the output."
+                                    footer: check.footer
                                 )
                             }
                         }
@@ -235,6 +237,7 @@ public struct OverviewView: View {
                 // user knows the blank space is intentional.
                 if machineIncident == nil && hostAlerts.isEmpty
                     && burdenLeaders.isEmpty && operatorRecommendations.isEmpty
+                    && selfHealthChecks.allSatisfy({ $0.severity == .info })
                 {
                     HStack(spacing: AetowerDesign.Spacing.sm) {
                         Image(systemName: "checkmark.circle.fill")
@@ -415,7 +418,7 @@ public struct OverviewView: View {
         var alerts: [OverviewHostAlert] = []
         let host = state.snapshot.host
         let memoryBand = hostPressureBand(host)
-        if memoryBand != .nominal {
+        if memoryBand != .nominal && !incidentCoversMemoryPressure {
             let leaders = state.snapshot.entities
                 .sorted { $0.metrics.memoryResidentBytes > $1.metrics.memoryResidentBytes }
                 .prefix(3)
@@ -435,13 +438,18 @@ public struct OverviewView: View {
                     .compactMap { $0 }
                     .joined(separator: " · "),
                     tone: memoryBand == .severe ? AetowerDesign.Status.error : AetowerDesign.Status.warning,
-                    samples: hostHistorySamples { Double($0.compressedMemoryBytes + $0.swapUsedBytes) }
+                    samples: overviewTrendSamples(
+                        state.snapshot.hostTrend.compressedMemoryBytes.map(Double.init),
+                        history: hostHistorySamples { Double($0.compressedMemoryBytes + $0.swapUsedBytes) },
+                        fallback: Double(host.compressedMemoryBytes + host.swapUsedBytes)
+                    )
                 )
             )
         }
 
         let wakeupBand = hostWakeupBand(host.wakeupsPerSecond)
         if wakeupBand != .nominal,
+           !incidentCoversWakeups,
            let leader = state.snapshot.entities.max(by: { $0.metrics.wakeupsPerSecond < $1.metrics.wakeupsPerSecond })
         {
             alerts.append(
@@ -451,7 +459,11 @@ public struct OverviewView: View {
                     value: leader.displayName,
                     subtitle: "\(formatWakeups(leader.metrics.wakeupsPerSecond)) entity · \(formatWakeups(host.wakeupsPerSecond)) host · \(wakeupsLeaderSubtitle(for: leader))",
                     tone: wakeupBand == .severe ? AetowerDesign.Status.error : AetowerDesign.Status.warning,
-                    samples: leader.trend.wakeupsPerSecond.map(Double.init)
+                    samples: overviewTrendSamples(
+                        leader.trend.wakeupsPerSecond.map(Double.init),
+                        history: [],
+                        fallback: Double(leader.metrics.wakeupsPerSecond)
+                    )
                 )
             )
         }
@@ -474,22 +486,70 @@ public struct OverviewView: View {
         }
     }
 
+    private func burdenLeaderValueAppearance(for leader: BurdenLeaderSummary) -> TrendMetricValueAppearance {
+        switch leader.severity {
+        case .critical:
+            return .danger
+        case .warning:
+            return .warning
+        case .info:
+            return .ok
+        }
+    }
+
     private func burdenLeaderSamples(for leader: BurdenLeaderSummary) -> [Double] {
         guard let entity = state.snapshot.entities.first(where: { $0.entityId == leader.entityId }) else {
-            return []
+            return [0, 0]
         }
         switch leader.id {
         case "memory":
-            return entity.trend.memoryResidentBytes.map(Double.init)
+            return overviewTrendSamples(
+                entity.trend.memoryResidentBytes.map(Double.init),
+                history: [],
+                fallback: Double(entity.metrics.memoryResidentBytes)
+            )
         case "wakeups":
-            return entity.trend.wakeupsPerSecond.map(Double.init)
+            return overviewTrendSamples(
+                entity.trend.wakeupsPerSecond.map(Double.init),
+                history: [],
+                fallback: Double(entity.metrics.wakeupsPerSecond)
+            )
         case "disk":
-            return entity.trend.diskActivityBps.map(Double.init)
+            return overviewTrendSamples(
+                entity.trend.diskActivityBps.map(Double.init),
+                history: [],
+                fallback: Double(entity.metrics.diskReadBps + entity.metrics.diskWriteBps)
+            )
         case "network":
-            return entity.trend.networkActivityBps.map(Double.init)
+            return overviewTrendSamples(
+                entity.trend.networkActivityBps.map(Double.init),
+                history: [],
+                fallback: Double(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps)
+            )
         default:
-            return []
+            return [0, 0]
         }
+    }
+
+    private func burdenLeaderSampleFormatter(for leader: BurdenLeaderSummary) -> (Double) -> String {
+        switch leader.id {
+        case "memory":
+            return { formatBytes(UInt64(max($0, 0))) }
+        case "wakeups":
+            return { formatWakeups(Float($0)) }
+        case "disk", "network":
+            return { formatRate(UInt64(max($0, 0))) }
+        default:
+            return { String(format: "%.1f", $0) }
+        }
+    }
+
+    private var incidentCoversMemoryPressure: Bool {
+        machineIncident?.title == "Machine under memory pressure"
+    }
+
+    private var incidentCoversWakeups: Bool {
+        machineIncident?.title == "Machine is wakeup-heavy"
     }
 
     private var overviewTrendSampleLimit: Int {
