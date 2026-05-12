@@ -893,7 +893,10 @@ public struct MainListView: View {
 
     private var rankingPanel: some View {
         ScrollView {
-            rankedEntitiesSection
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                monitorOverviewSummary
+                rankedEntitiesSection
+            }
                 .padding(.horizontal, AetowerDesign.Spacing.sm)
                 .padding(.vertical, 6)
         }
@@ -1126,6 +1129,28 @@ public struct MainListView: View {
                 )
             } else {
                 LazyVStack(spacing: 2) {
+                    if !burdenLeaderEntities.isEmpty {
+                        listSectionHeader("Burden leaders")
+                        ForEach(burdenLeaderEntities, id: \.entityId) { entity in
+                            Button {
+                                searchFieldFocused = false
+                                withAnimation(AetowerDesign.Motion.standard) {
+                                    selectedEntityID = entity.entityId
+                                }
+                            } label: {
+                                EntityRow(
+                                    entity: entity,
+                                    isSelected: selectedEntityID == entity.entityId
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                monitorContextMenu(for: entity, members: [entity])
+                            }
+                        }
+                    }
+
+                    listSectionHeader("All processes")
                     if isGroupedMode {
                         ForEach(groupedEntities, id: \.id) { group in
                             Button {
@@ -1267,7 +1292,7 @@ public struct MainListView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Live control center")
                     .font(.headline)
-                Text("Rank live apps, agents, and process groups by current resource burden.")
+                Text("Monitor host load, then drill straight into burden leaders and live process groups.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1286,9 +1311,144 @@ public struct MainListView: View {
         .padding(.top, AetowerDesign.Spacing.xs)
     }
 
+    private var monitorOverviewSummary: some View {
+        let host = state.snapshot.host
+        let frictionScore = machineFrictionScore(for: host)
+        let frictionSamples = monitorTrendSamples(
+            state.snapshot.hostTrend.machineFriction.map(Double.init),
+            history: monitorHostHistorySamples { machineFrictionScore(for: $0) },
+            fallback: frictionScore
+        )
+        let cpuSamples = monitorTrendSamples(
+            state.snapshot.hostTrend.cpuPercent.map(Double.init),
+            history: monitorHostHistorySamples { Double($0.cpuPercent) },
+            fallback: Double(host.cpuPercent)
+        )
+        let memorySamples = monitorTrendSamples(
+            state.snapshot.hostTrend.memoryUsedBytes.map(Double.init),
+            history: monitorHostHistorySamples { Double($0.memoryUsedBytes) },
+            fallback: Double(host.memoryUsedBytes)
+        )
+        let diskSamples = monitorTrendSamples(
+            state.snapshot.hostTrend.diskActivityBps.map(Double.init),
+            history: monitorHostHistorySamples { Double($0.diskReadBps + $0.diskWriteBps) },
+            fallback: Double(host.diskReadBps + host.diskWriteBps)
+        )
+        let networkSamples = monitorTrendSamples(
+            state.snapshot.hostTrend.networkActivityBps.map(Double.init),
+            history: monitorHostHistorySamples { Double($0.networkReceiveBps + $0.networkSendBps) },
+            fallback: Double(host.networkReceiveBps + host.networkSendBps)
+        )
+        let wakeupSamples = monitorTrendSamples(
+            state.snapshot.hostTrend.wakeupsPerSecond.map(Double.init),
+            history: monitorHostHistorySamples { Double($0.wakeupsPerSecond) },
+            fallback: Double(host.wakeupsPerSecond)
+        )
+        let gpuPercentSamples = monitorTrendSamples(
+            monitorHostHistorySamples { Double($0.gpuPercent) },
+            history: [],
+            fallback: Double(host.gpuPercent)
+        )
+        let gpuMemorySamples = monitorTrendSamples(
+            monitorHostHistorySamples { Double($0.gpuMemoryBytes) },
+            history: [],
+            fallback: Double(host.gpuMemoryBytes)
+        )
+
+        return LazyVGrid(columns: monitorSummaryGridColumns, alignment: .leading, spacing: 12) {
+            TrendMetricCard(
+                title: "Friction",
+                value: String(format: "%.0f", frictionScore),
+                subtitle: "overall machine score · \(trendWindowLabel(sampleCount: frictionSamples.count))",
+                samples: frictionSamples,
+                style: .friction,
+                valueAppearance: monitorFrictionAppearance(frictionScore),
+                sampleValueFormatter: { String(format: "%.0f", $0) },
+                minHeight: 124
+            )
+            TrendMetricCard(
+                title: "CPU",
+                value: String(format: "%.0f%%", host.cpuPercent),
+                subtitle: "thermal \(thermalStateLabel(host.thermalState)) · \(trendWindowLabel(sampleCount: cpuSamples.count))",
+                samples: cpuSamples,
+                style: .cpu,
+                valueAppearance: monitorCPUAppearance(host),
+                sampleValueFormatter: { String(format: "%.0f%%", $0) },
+                minHeight: 124
+            )
+            TrendMetricCard(
+                title: "Memory",
+                value: formatBytes(host.memoryUsedBytes),
+                subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap · \(trendWindowLabel(sampleCount: memorySamples.count))",
+                samples: memorySamples,
+                style: .memory,
+                valueAppearance: monitorMemoryAppearance(host),
+                sampleValueFormatter: { formatBytes(UInt64(max($0, 0))) },
+                minHeight: 124
+            )
+            TrendMetricCard(
+                title: "Disk",
+                value: formatRate(host.diskReadBps + host.diskWriteBps),
+                subtitle: "read + write · \(trendWindowLabel(sampleCount: diskSamples.count))",
+                samples: diskSamples,
+                style: .disk,
+                valueAppearance: monitorThroughputAppearance(host.diskReadBps + host.diskWriteBps, warning: 50 * 1_024 * 1_024, danger: 250 * 1_024 * 1_024),
+                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) },
+                minHeight: 124
+            )
+            TrendMetricCard(
+                title: "Network",
+                value: formatRate(host.networkReceiveBps + host.networkSendBps),
+                subtitle: "send + receive · \(trendWindowLabel(sampleCount: networkSamples.count))",
+                samples: networkSamples,
+                style: .network,
+                valueAppearance: monitorThroughputAppearance(host.networkReceiveBps + host.networkSendBps, warning: 10 * 1_024 * 1_024, danger: 100 * 1_024 * 1_024),
+                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) },
+                minHeight: 124
+            )
+            TrendMetricCard(
+                title: "Wakeups",
+                value: formatWakeups(host.wakeupsPerSecond),
+                subtitle: hostWakeupBand(host.wakeupsPerSecond) == .severe
+                    ? "wakeup storm band · \(trendWindowLabel(sampleCount: wakeupSamples.count))"
+                    : "current host wakeup rate · \(trendWindowLabel(sampleCount: wakeupSamples.count))",
+                samples: wakeupSamples,
+                style: .friction,
+                valueAppearance: monitorWakeupAppearance(host),
+                sampleValueFormatter: { formatWakeups(Float($0)) },
+                minHeight: 124
+            )
+            if host.gpuPercent > 0 || host.gpuMemoryBytes > 0 {
+                let usingGpuPercent = host.gpuPercent > 0
+                TrendMetricCard(
+                    title: "GPU",
+                    value: usingGpuPercent
+                        ? String(format: "%.0f%%", host.gpuPercent)
+                        : formatBytes(host.gpuMemoryBytes),
+                    subtitle: "\(hostGPUSummary(host)) · \(trendWindowLabel(sampleCount: usingGpuPercent ? gpuPercentSamples.count : gpuMemorySamples.count))",
+                    samples: usingGpuPercent ? gpuPercentSamples : gpuMemorySamples,
+                    style: .energy,
+                    valueAppearance: monitorGPUAppearance(host),
+                    sampleValueFormatter: usingGpuPercent
+                        ? { String(format: "%.0f%%", $0) }
+                        : { formatBytes(UInt64(max($0, 0))) },
+                    minHeight: 124
+                )
+            }
+        }
+    }
+
     private var filteredEntities: [EntitySnapshot] {
         filterEntities(state.snapshot.entities, query: normalizedSearchQuery).sorted {
             compareEntities($0, $1, by: sortKey)
+        }
+    }
+
+    private var burdenLeaderEntities: [EntitySnapshot] {
+        var seen = Set<String>()
+        let ids = buildBurdenLeaders(snapshot: state.snapshot).map(\.entityId).filter { seen.insert($0).inserted }
+        return ids.compactMap { id in
+            state.snapshot.entities.first(where: { $0.entityId == id })
         }
     }
 
@@ -1394,6 +1554,103 @@ public struct MainListView: View {
     private var groupingTaskToken: String {
         guard let key = currentGroupingCacheKey else { return "flat" }
         return "\(key.sequence)|\(key.query)|\(key.sortKey.rawValue)"
+    }
+
+    private func listSectionHeader(_ title: String) -> some View {
+        HStack(spacing: 8) {
+            SectionEyebrow(text: title)
+            Rectangle()
+                .fill(Color.secondary.opacity(0.12))
+                .frame(height: 1)
+        }
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+    }
+
+    private var monitorTrendSampleLimit: Int {
+        150
+    }
+
+    private var monitorSummaryGridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 180, maximum: 420), spacing: AetowerDesign.Spacing.md, alignment: .top)]
+    }
+
+    private func monitorHostHistorySamples(_ extractor: (HostSnapshot) -> Double) -> [Double] {
+        let samples = state.historySnapshots.suffix(monitorTrendSampleLimit).map { extractor($0.host) }
+        return samples.isEmpty ? [extractor(state.snapshot.host)] : samples
+    }
+
+    private func monitorTrendSamples(_ live: [Double], history: [Double], fallback: Double) -> [Double] {
+        let trimmedLive = Array(live.suffix(monitorTrendSampleLimit))
+        if monitorHasUsefulVariation(trimmedLive) {
+            return trimmedLive
+        }
+        let trimmedHistory = Array(history.suffix(monitorTrendSampleLimit))
+        if monitorHasUsefulVariation(trimmedHistory) {
+            return trimmedHistory
+        }
+        if trimmedLive.count >= 2 {
+            return trimmedLive
+        }
+        if let sample = trimmedLive.first {
+            return [sample, sample]
+        }
+        if let sample = trimmedHistory.first {
+            return [sample, sample]
+        }
+        return [fallback, fallback]
+    }
+
+    private func monitorHasUsefulVariation(_ samples: [Double]) -> Bool {
+        guard samples.count >= 2, let minimum = samples.min(), let maximum = samples.max() else {
+            return false
+        }
+        let baseline = max(abs(samples.last ?? 0), 1.0)
+        return (maximum - minimum) / baseline > 0.01
+    }
+
+    private func monitorFrictionAppearance(_ score: Double) -> TrendMetricValueAppearance {
+        if score >= 60 { return .danger }
+        if score >= 30 { return .warning }
+        return .ok
+    }
+
+    private func monitorCPUAppearance(_ host: HostSnapshot) -> TrendMetricValueAppearance {
+        if host.cpuPercent >= 85 || host.thermalState == .critical { return .danger }
+        if host.cpuPercent >= 50 || host.thermalState == .serious { return .warning }
+        return .ok
+    }
+
+    private func monitorMemoryAppearance(_ host: HostSnapshot) -> TrendMetricValueAppearance {
+        switch hostPressureBand(host) {
+        case .severe: return .danger
+        case .elevated: return .warning
+        case .nominal: return .ok
+        }
+    }
+
+    private func monitorThroughputAppearance(_ bytesPerSecond: UInt64, warning: UInt64, danger: UInt64) -> TrendMetricValueAppearance {
+        if bytesPerSecond >= danger { return .danger }
+        if bytesPerSecond >= warning { return .warning }
+        return .ok
+    }
+
+    private func monitorWakeupAppearance(_ host: HostSnapshot) -> TrendMetricValueAppearance {
+        switch hostWakeupBand(host.wakeupsPerSecond) {
+        case .severe: return .danger
+        case .elevated: return .warning
+        case .nominal: return .ok
+        }
+    }
+
+    private func monitorGPUAppearance(_ host: HostSnapshot) -> TrendMetricValueAppearance {
+        if host.gpuPercent >= 85 || host.gpuMemoryBytes >= 8 * 1_024 * 1_024 * 1_024 {
+            return .danger
+        }
+        if host.gpuPercent >= 40 || host.gpuMemoryBytes >= 2 * 1_024 * 1_024 * 1_024 {
+            return .warning
+        }
+        return .ok
     }
 
     private func applyPendingMonitorFocusIfNeeded() {

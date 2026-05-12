@@ -48,11 +48,6 @@ struct AetowerApp: App {
     var body: some Scene {
         WindowGroup {
             TabView {
-                OverviewView(state: state)
-                    .tabItem {
-                        Label("Overview", systemImage: "rectangle.grid.1x2.fill")
-                    }
-
                 MainListView(state: state)
                     .tabItem {
                         Label("Monitor", systemImage: "gauge.with.needle")
