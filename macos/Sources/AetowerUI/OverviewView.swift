@@ -256,7 +256,6 @@ public struct OverviewView: View {
     private var summarySection: some View {
         let host = state.snapshot.host
         let frictionScore = machineFrictionScore(for: host)
-        let agentCount = host.aiAgentCount
         let frictionSamples = hostHistorySamples { snapshot in
             machineFrictionScore(for: snapshot)
         }
@@ -267,94 +266,73 @@ public struct OverviewView: View {
         let wakeupSamples = hostHistorySamples { Double($0.wakeupsPerSecond) }
         let gpuPercentSamples = hostHistorySamples { Double($0.gpuPercent) }
         let gpuMemorySamples = hostHistorySamples { Double($0.gpuMemoryBytes) }
-        return OverviewPanel(
-            title: "Machine overview",
-            subtitle: hostStatusSummary(host)
-        ) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Host friction")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(String(format: "%.0f", frictionScore))
-                            .font(.system(size: 48, weight: .bold, design: .rounded))
-                            .foregroundStyle(AetowerDesign.frictionColor(Float(frictionScore)))
-                        Text("\(state.snapshot.entities.count) ranked groups · \(agentCount) AI agent\(agentCount == 1 ? "" : "s")")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-
-                LazyVGrid(columns: overviewGridColumns(minimum: 180), alignment: .leading, spacing: 12) {
-                    TrendMetricCard(
-                        title: "Friction",
-                        value: String(format: "%.0f", frictionScore),
-                        subtitle: "overall machine score · \(trendWindowLabel(sampleCount: frictionSamples.count))",
-                        samples: frictionSamples,
-                        style: .friction,
-                        minHeight: 124
-                    )
-                    TrendMetricCard(
-                        title: "CPU",
-                        value: String(format: "%.0f%%", host.cpuPercent),
-                        subtitle: "thermal \(thermalStateLabel(host.thermalState)) · \(trendWindowLabel(sampleCount: cpuSamples.count))",
-                        samples: cpuSamples,
-                        style: .cpu,
-                        minHeight: 124
-                    )
-                    TrendMetricCard(
-                        title: "Memory",
-                        value: formatBytes(host.memoryUsedBytes),
-                        subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap · \(trendWindowLabel(sampleCount: memorySamples.count))",
-                        samples: memorySamples,
-                        style: .memory,
-                        minHeight: 124
-                    )
-                    TrendMetricCard(
-                        title: "Disk",
-                        value: formatRate(host.diskReadBps + host.diskWriteBps),
-                        subtitle: "read + write · \(trendWindowLabel(sampleCount: diskSamples.count))",
-                        samples: diskSamples,
-                        style: .disk,
-                        minHeight: 124
-                    )
-                    TrendMetricCard(
-                        title: "Network",
-                        value: formatRate(host.networkReceiveBps + host.networkSendBps),
-                        subtitle: "send + receive · \(trendWindowLabel(sampleCount: networkSamples.count))",
-                        samples: networkSamples,
-                        style: .network,
-                        minHeight: 124
-                    )
-                    TrendMetricCard(
-                        title: "Wakeups",
-                        value: formatWakeups(host.wakeupsPerSecond),
-                        subtitle: hostWakeupBand(host.wakeupsPerSecond) == .severe
-                            ? "wakeup storm band · \(trendWindowLabel(sampleCount: wakeupSamples.count))"
-                            : "current host wakeup rate · \(trendWindowLabel(sampleCount: wakeupSamples.count))",
-                        samples: wakeupSamples,
-                        style: .friction,
-                        minHeight: 124
-                    )
-                    if host.gpuPercent > 0 || host.gpuMemoryBytes > 0 {
-                        TrendMetricCard(
-                            title: "GPU",
-                            value: host.gpuPercent > 0
-                                ? String(format: "%.0f%%", host.gpuPercent)
-                                : formatBytes(host.gpuMemoryBytes),
-                            subtitle: "\(hostGPUSummary(host)) · \(trendWindowLabel(sampleCount: host.gpuPercent > 0 ? gpuPercentSamples.count : gpuMemorySamples.count))",
-                            samples: host.gpuPercent > 0
-                                ? gpuPercentSamples
-                                : gpuMemorySamples,
-                            style: .energy,
-                            minHeight: 124
-                        )
-                    }
-                }
+        return LazyVGrid(columns: overviewGridColumns(minimum: 180), alignment: .leading, spacing: 12) {
+            TrendMetricCard(
+                title: "Friction",
+                value: String(format: "%.0f", frictionScore),
+                subtitle: "overall machine score · \(trendWindowLabel(sampleCount: frictionSamples.count))",
+                samples: frictionSamples,
+                style: .friction,
+                minHeight: 124
+            )
+            TrendMetricCard(
+                title: "CPU",
+                value: String(format: "%.0f%%", host.cpuPercent),
+                subtitle: "thermal \(thermalStateLabel(host.thermalState)) · \(trendWindowLabel(sampleCount: cpuSamples.count))",
+                samples: cpuSamples,
+                style: .cpu,
+                minHeight: 124
+            )
+            TrendMetricCard(
+                title: "Memory",
+                value: formatBytes(host.memoryUsedBytes),
+                subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap · \(trendWindowLabel(sampleCount: memorySamples.count))",
+                samples: memorySamples,
+                style: .memory,
+                minHeight: 124
+            )
+            TrendMetricCard(
+                title: "Disk",
+                value: formatRate(host.diskReadBps + host.diskWriteBps),
+                subtitle: "read + write · \(trendWindowLabel(sampleCount: diskSamples.count))",
+                samples: diskSamples,
+                style: .disk,
+                minHeight: 124
+            )
+            TrendMetricCard(
+                title: "Network",
+                value: formatRate(host.networkReceiveBps + host.networkSendBps),
+                subtitle: "send + receive · \(trendWindowLabel(sampleCount: networkSamples.count))",
+                samples: networkSamples,
+                style: .network,
+                minHeight: 124
+            )
+            TrendMetricCard(
+                title: "Wakeups",
+                value: formatWakeups(host.wakeupsPerSecond),
+                subtitle: hostWakeupBand(host.wakeupsPerSecond) == .severe
+                    ? "wakeup storm band · \(trendWindowLabel(sampleCount: wakeupSamples.count))"
+                    : "current host wakeup rate · \(trendWindowLabel(sampleCount: wakeupSamples.count))",
+                samples: wakeupSamples,
+                style: .friction,
+                minHeight: 124
+            )
+            if host.gpuPercent > 0 || host.gpuMemoryBytes > 0 {
+                TrendMetricCard(
+                    title: "GPU",
+                    value: host.gpuPercent > 0
+                        ? String(format: "%.0f%%", host.gpuPercent)
+                        : formatBytes(host.gpuMemoryBytes),
+                    subtitle: "\(hostGPUSummary(host)) · \(trendWindowLabel(sampleCount: host.gpuPercent > 0 ? gpuPercentSamples.count : gpuMemorySamples.count))",
+                    samples: host.gpuPercent > 0
+                        ? gpuPercentSamples
+                        : gpuMemorySamples,
+                    style: .energy,
+                    minHeight: 124
+                )
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var machineIncident: HostIncidentSummary? {
