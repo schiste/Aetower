@@ -27,16 +27,7 @@ enum TrendMetricValueAppearance {
     case danger
 
     var color: Color {
-        switch self {
-        case .neutral:
-            return .primary
-        case .ok:
-            return AetowerDesign.Status.success
-        case .warning:
-            return AetowerDesign.Status.warning
-        case .danger:
-            return AetowerDesign.Status.error
-        }
+        .primary
     }
 
     var weight: Font.Weight {
