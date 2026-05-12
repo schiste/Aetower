@@ -855,8 +855,13 @@ public struct MainListView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            monitorSplitView
+        ScrollView {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                monitorOverviewSummary
+                monitorSplitView
+            }
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, 6)
         }
         .navigationTitle("Monitor")
         .modifier(KeyboardNavigationModifier(
@@ -892,43 +897,37 @@ public struct MainListView: View {
     }
 
     private var rankingPanel: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-                monitorOverviewSummary
-                rankedEntitiesSection
-            }
-                .padding(.horizontal, AetowerDesign.Spacing.sm)
-                .padding(.vertical, 6)
-        }
+        rankedEntitiesSection
     }
 
     private var monitorSplitView: some View {
-        HSplitView {
-            rankingPanel
-                .frame(
-                    minWidth: 420,
-                    idealWidth: selectedEntity == nil ? 980 : 760,
-                    maxWidth: .infinity,
-                    maxHeight: .infinity
-                )
-                .layoutPriority(2)
+        Group {
+            if let entity = selectedEntity {
+                HSplitView {
+                    rankingPanel
+                        .frame(
+                            minWidth: 420,
+                            idealWidth: 760,
+                            maxWidth: .infinity,
+                            maxHeight: .infinity
+                        )
+                        .layoutPriority(2)
 
-            Group {
-                if let entity = selectedEntity {
                     detailPanel(for: entity)
                         .transition(.opacity)
-                } else {
-                    detailPlaceholder
+                        .frame(
+                            minWidth: 360,
+                            idealWidth: 760,
+                            maxWidth: .infinity,
+                            maxHeight: .infinity,
+                            alignment: .topLeading
+                        )
+                        .layoutPriority(1)
                 }
+            } else {
+                rankingPanel
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .frame(
-                minWidth: selectedEntity == nil ? 240 : 360,
-                idealWidth: selectedEntity == nil ? 280 : 760,
-                maxWidth: selectedEntity == nil ? 360 : .infinity,
-                maxHeight: .infinity,
-                alignment: .topLeading
-            )
-            .layoutPriority(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(AetowerDesign.Motion.standard, value: selectedEntity?.entityId)
@@ -976,19 +975,6 @@ public struct MainListView: View {
                 processOperatorRequest: processOperatorRequest
             )
         }
-    }
-
-    private var detailPlaceholder: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ContentUnavailableView(
-                "Select an Entity",
-                systemImage: "arrow.triangle.branch",
-                description: Text("Choose an app or process group from the monitor list to inspect its grouped process tree, attribution, and friction drivers.")
-            )
-        }
-        .frame(maxWidth: 320, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.horizontal, AetowerDesign.Spacing.xl)
-        .padding(.top, 28)
     }
 
     private var rankedEntitiesSection: some View {
