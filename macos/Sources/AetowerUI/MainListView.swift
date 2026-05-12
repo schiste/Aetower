@@ -855,14 +855,12 @@ public struct MainListView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-                monitorOverviewSummary
-                monitorSplitView
-            }
-            .padding(.horizontal, AetowerDesign.Spacing.sm)
-            .padding(.vertical, 6)
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            monitorOverviewSummary
+            monitorSplitView
         }
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+        .padding(.vertical, 6)
         .navigationTitle("Monitor")
         .modifier(KeyboardNavigationModifier(
             focusedIndex: $focusedIndex,
@@ -897,7 +895,9 @@ public struct MainListView: View {
     }
 
     private var rankingPanel: some View {
-        rankedEntitiesSection
+        ScrollView {
+            rankedEntitiesSection
+        }
     }
 
     private var monitorSplitView: some View {
