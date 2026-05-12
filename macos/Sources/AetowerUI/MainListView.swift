@@ -1146,7 +1146,7 @@ public struct MainListView: View {
 
                     listSectionHeader("All processes")
                     if isGroupedMode {
-                        ForEach(groupedEntities, id: \.id) { group in
+                        ForEach(allProcessGroups, id: \.id) { group in
                             Button {
                                 searchFieldFocused = false
                                 withAnimation(AetowerDesign.Motion.standard) {
@@ -1164,7 +1164,7 @@ public struct MainListView: View {
                             }
                         }
                     } else {
-                        ForEach(filteredEntities, id: \.entityId) { entity in
+                        ForEach(allProcessEntities, id: \.entityId) { entity in
                             Button {
                                 searchFieldFocused = false
                                 withAnimation(AetowerDesign.Motion.standard) {
@@ -1446,6 +1446,18 @@ public struct MainListView: View {
         }
     }
 
+    private var burdenLeaderEntityIDs: Set<String> {
+        Set(burdenLeaderEntities.map(\.entityId))
+    }
+
+    private var allProcessEntities: [EntitySnapshot] {
+        filteredEntities.filter { !burdenLeaderEntityIDs.contains($0.entityId) }
+    }
+
+    private var allProcessGroups: [EntityGroup] {
+        groupedEntities.filter { !burdenLeaderEntityIDs.contains($0.root.entityId) }
+    }
+
     private func applySort(for column: MonitorSortColumn) {
         switch column {
         case .name:
@@ -1504,14 +1516,23 @@ public struct MainListView: View {
     }
 
     private var visibleEntityIDs: [String] {
-        isGroupedMode ? groupedEntities.map(\.root.entityId) : filteredEntities.map(\.entityId)
+        let burdenLeaderIDs = burdenLeaderEntities.map(\.entityId)
+        if isGroupedMode {
+            return burdenLeaderIDs + allProcessGroups.map(\.root.entityId)
+        }
+        return burdenLeaderIDs + allProcessEntities.map(\.entityId)
     }
 
     private var visibleProcessCount: Int {
         if isGroupedMode {
-            return groupedEntities.reduce(0) { $0 + $1.processCount }
+            let burdenLeaderProcessCount = burdenLeaderEntities.reduce(0) { total, entity in
+                total + entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
+            }
+            return burdenLeaderProcessCount + allProcessGroups.reduce(0) { $0 + $1.processCount }
         }
-        return filteredEntities.reduce(0) { total, entity in
+        return burdenLeaderEntities.reduce(0) { total, entity in
+            total + entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
+        } + allProcessEntities.reduce(0) { total, entity in
             total + entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
         }
     }
