@@ -256,14 +256,30 @@ public struct OverviewView: View {
     private var summarySection: some View {
         let host = state.snapshot.host
         let frictionScore = machineFrictionScore(for: host)
-        let frictionSamples = hostHistorySamples { snapshot in
-            machineFrictionScore(for: snapshot)
-        }
-        let cpuSamples = hostHistorySamples { Double($0.cpuPercent) }
-        let memorySamples = hostHistorySamples { Double($0.memoryUsedBytes) }
-        let diskSamples = hostHistorySamples { Double($0.diskReadBps + $0.diskWriteBps) }
-        let networkSamples = hostHistorySamples { Double($0.networkReceiveBps + $0.networkSendBps) }
-        let wakeupSamples = hostHistorySamples { Double($0.wakeupsPerSecond) }
+        let frictionSamples = overviewTrendSamples(
+            state.snapshot.hostTrend.machineFriction.map(Double.init),
+            fallback: frictionScore
+        )
+        let cpuSamples = overviewTrendSamples(
+            state.snapshot.hostTrend.cpuPercent.map(Double.init),
+            fallback: Double(host.cpuPercent)
+        )
+        let memorySamples = overviewTrendSamples(
+            state.snapshot.hostTrend.memoryUsedBytes.map(Double.init),
+            fallback: Double(host.memoryUsedBytes)
+        )
+        let diskSamples = overviewTrendSamples(
+            state.snapshot.hostTrend.diskActivityBps.map(Double.init),
+            fallback: Double(host.diskReadBps + host.diskWriteBps)
+        )
+        let networkSamples = overviewTrendSamples(
+            state.snapshot.hostTrend.networkActivityBps.map(Double.init),
+            fallback: Double(host.networkReceiveBps + host.networkSendBps)
+        )
+        let wakeupSamples = overviewTrendSamples(
+            state.snapshot.hostTrend.wakeupsPerSecond.map(Double.init),
+            fallback: Double(host.wakeupsPerSecond)
+        )
         let gpuPercentSamples = hostHistorySamples { Double($0.gpuPercent) }
         let gpuMemorySamples = hostHistorySamples { Double($0.gpuMemoryBytes) }
         return LazyVGrid(columns: overviewGridColumns(minimum: 180), alignment: .leading, spacing: 12) {
@@ -445,6 +461,17 @@ public struct OverviewView: View {
 
     private var overviewTrendSampleLimit: Int {
         150
+    }
+
+    private func overviewTrendSamples(_ samples: [Double], fallback: Double) -> [Double] {
+        let trimmed = Array(samples.suffix(overviewTrendSampleLimit))
+        if trimmed.count >= 2 {
+            return trimmed
+        }
+        if let sample = trimmed.first {
+            return [sample, sample]
+        }
+        return [fallback, fallback]
     }
 
     /// Unified history sample extractor. The previous three type-specific
