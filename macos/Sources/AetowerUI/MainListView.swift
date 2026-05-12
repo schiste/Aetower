@@ -93,11 +93,11 @@ private enum MonitorSortColumn {
     var width: CGFloat? {
         switch self {
         case .name: return nil
-        case .cpu: return 48
-        case .memory: return 52
-        case .wakeups: return 56
-        case .processCount: return 44
-        case .friction: return 50
+        case .cpu: return 64
+        case .memory: return 84
+        case .wakeups: return 72
+        case .processCount: return 56
+        case .friction: return 68
         }
     }
 
@@ -106,7 +106,7 @@ private enum MonitorSortColumn {
         case .name:
             return .leading
         case .cpu, .memory, .wakeups, .processCount, .friction:
-            return .trailing
+            return .center
         }
     }
 }
@@ -298,27 +298,31 @@ private struct EntityRow: View {
                     .symbolEffect(.pulse.wholeSymbol, isActive: true)
             }
 
-            // Metrics — right aligned, fixed width columns
+            // Metrics — centered, fixed width columns
             Text(String(format: "%.1f%%", entity.metrics.cpuPercent))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 48, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: 64, alignment: .center)
 
             Text(formatBytes(entity.metrics.memoryResidentBytes))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: 84, alignment: .center)
 
             Text(formatWakeups(entity.metrics.wakeupsPerSecond))
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 56, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: 72, alignment: .center)
 
             Label("\(entityProcessCount)", systemImage: "number")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.tertiary)
                 .labelStyle(.titleAndIcon)
-                .frame(width: 44, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: 56, alignment: .center)
 
             // Friction score — bold, colored
             HStack(spacing: 2) {
@@ -331,7 +335,7 @@ private struct EntityRow: View {
                     .foregroundStyle(AetowerDesign.frictionColor(entity.friction.totalScore))
                     .contentTransition(.numericText())
             }
-            .frame(width: 50, alignment: .trailing)
+            .frame(width: 68, alignment: .center)
 
             Image(systemName: "sidebar.right")
                 .font(.system(size: 10, weight: .semibold))
@@ -485,23 +489,27 @@ private struct GroupedEntityRow: View {
             Text(String(format: "%.1f%%", group.cpuPercent))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 48, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: 64, alignment: .center)
 
             Text(formatBytes(group.memoryBytes))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: 84, alignment: .center)
 
             Text(formatWakeups(group.wakeupsPerSecond))
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 56, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: 72, alignment: .center)
 
             Label("\(group.processCount)", systemImage: "number")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.tertiary)
                 .labelStyle(.titleAndIcon)
-                .frame(width: 44, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: 56, alignment: .center)
 
             HStack(spacing: 2) {
                 Image(systemName: "arrow.triangle.branch")
@@ -512,7 +520,7 @@ private struct GroupedEntityRow: View {
                     .foregroundStyle(AetowerDesign.frictionColor(group.frictionScore))
                     .contentTransition(.numericText())
             }
-            .frame(width: 50, alignment: .trailing)
+            .frame(width: 68, alignment: .center)
 
             Image(systemName: "sidebar.right")
                 .font(.system(size: 10, weight: .semibold))
