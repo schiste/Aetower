@@ -257,6 +257,16 @@ public struct OverviewView: View {
         let host = state.snapshot.host
         let frictionScore = machineFrictionScore(for: host)
         let agentCount = host.aiAgentCount
+        let frictionSamples = hostHistorySamples { snapshot in
+            machineFrictionScore(for: snapshot)
+        }
+        let cpuSamples = hostHistorySamples { Double($0.cpuPercent) }
+        let memorySamples = hostHistorySamples { Double($0.memoryUsedBytes) }
+        let diskSamples = hostHistorySamples { Double($0.diskReadBps + $0.diskWriteBps) }
+        let networkSamples = hostHistorySamples { Double($0.networkReceiveBps + $0.networkSendBps) }
+        let wakeupSamples = hostHistorySamples { Double($0.wakeupsPerSecond) }
+        let gpuPercentSamples = hostHistorySamples { Double($0.gpuPercent) }
+        let gpuMemorySamples = hostHistorySamples { Double($0.gpuMemoryBytes) }
         return OverviewPanel(
             title: "Machine overview",
             subtitle: hostStatusSummary(host)
@@ -279,51 +289,53 @@ public struct OverviewView: View {
 
                 LazyVGrid(columns: overviewGridColumns(minimum: 180), alignment: .leading, spacing: 12) {
                     TrendMetricCard(
+                        title: "Friction",
+                        value: String(format: "%.0f", frictionScore),
+                        subtitle: "overall machine score · \(trendWindowLabel(sampleCount: frictionSamples.count))",
+                        samples: frictionSamples,
+                        style: .friction,
+                        minHeight: 124
+                    )
+                    TrendMetricCard(
                         title: "CPU",
                         value: String(format: "%.0f%%", host.cpuPercent),
-                        subtitle: "Thermal \(thermalStateLabel(host.thermalState))",
-                        samples: hostHistorySamples { Double($0.cpuPercent) },
+                        subtitle: "thermal \(thermalStateLabel(host.thermalState)) · \(trendWindowLabel(sampleCount: cpuSamples.count))",
+                        samples: cpuSamples,
                         style: .cpu,
                         minHeight: 124
                     )
                     TrendMetricCard(
                         title: "Memory",
                         value: formatBytes(host.memoryUsedBytes),
-                        subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap",
-                        samples: hostHistorySamples { Double($0.memoryUsedBytes) },
+                        subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap · \(trendWindowLabel(sampleCount: memorySamples.count))",
+                        samples: memorySamples,
                         style: .memory,
                         minHeight: 124
                     )
                     TrendMetricCard(
                         title: "Disk",
                         value: formatRate(host.diskReadBps + host.diskWriteBps),
-                        subtitle: "read + write · \(trendWindowLabel(sampleCount: min(state.historySnapshots.count, 24)))",
-                        samples: hostHistorySamples { Double($0.diskReadBps + $0.diskWriteBps) },
+                        subtitle: "read + write · \(trendWindowLabel(sampleCount: diskSamples.count))",
+                        samples: diskSamples,
                         style: .disk,
                         minHeight: 124
                     )
                     TrendMetricCard(
                         title: "Network",
                         value: formatRate(host.networkReceiveBps + host.networkSendBps),
-                        subtitle: "send + receive · \(trendWindowLabel(sampleCount: min(state.historySnapshots.count, 24)))",
-                        samples: hostHistorySamples { Double($0.networkReceiveBps + $0.networkSendBps) },
+                        subtitle: "send + receive · \(trendWindowLabel(sampleCount: networkSamples.count))",
+                        samples: networkSamples,
                         style: .network,
                         minHeight: 124
                     )
                     TrendMetricCard(
                         title: "Wakeups",
                         value: formatWakeups(host.wakeupsPerSecond),
-                        subtitle: hostWakeupBand(host.wakeupsPerSecond) == .severe ? "Wakeup storm band" : "Current host wakeup rate",
-                        samples: hostHistorySamples { Double($0.wakeupsPerSecond) },
+                        subtitle: hostWakeupBand(host.wakeupsPerSecond) == .severe
+                            ? "wakeup storm band · \(trendWindowLabel(sampleCount: wakeupSamples.count))"
+                            : "current host wakeup rate · \(trendWindowLabel(sampleCount: wakeupSamples.count))",
+                        samples: wakeupSamples,
                         style: .friction,
-                        minHeight: 124
-                    )
-                    TrendMetricCard(
-                        title: "AI agents",
-                        value: "\(agentCount)",
-                        subtitle: "recent local AI runtime count",
-                        samples: hostHistorySamples { Double($0.aiAgentCount) },
-                        style: .energy,
                         minHeight: 124
                     )
                     if host.gpuPercent > 0 || host.gpuMemoryBytes > 0 {
@@ -332,10 +344,10 @@ public struct OverviewView: View {
                             value: host.gpuPercent > 0
                                 ? String(format: "%.0f%%", host.gpuPercent)
                                 : formatBytes(host.gpuMemoryBytes),
-                            subtitle: hostGPUSummary(host),
+                            subtitle: "\(hostGPUSummary(host)) · \(trendWindowLabel(sampleCount: host.gpuPercent > 0 ? gpuPercentSamples.count : gpuMemorySamples.count))",
                             samples: host.gpuPercent > 0
-                                ? hostHistorySamples { Double($0.gpuPercent) }
-                                : hostHistorySamples { Double($0.gpuMemoryBytes) },
+                                ? gpuPercentSamples
+                                : gpuMemorySamples,
                             style: .energy,
                             minHeight: 124
                         )
@@ -453,11 +465,15 @@ public struct OverviewView: View {
         }
     }
 
+    private var overviewTrendSampleLimit: Int {
+        150
+    }
+
     /// Unified history sample extractor. The previous three type-specific
     /// helpers (Float, UInt64, Double) were nearly identical and each
-    /// iterated the same .suffix(24) slice independently.
+    /// iterated the same history slice independently.
     private func hostHistorySamples(_ extractor: (HostSnapshot) -> Double) -> [Double] {
-        let samples = state.historySnapshots.suffix(24).map { extractor($0.host) }
+        let samples = state.historySnapshots.suffix(overviewTrendSampleLimit).map { extractor($0.host) }
         return samples.isEmpty ? [extractor(state.snapshot.host)] : samples
     }
 }
