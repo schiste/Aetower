@@ -20,13 +20,55 @@ enum TrendMetricStyle {
     }
 }
 
+enum TrendMetricValueAppearance {
+    case neutral
+    case ok
+    case warning
+    case danger
+
+    var color: Color {
+        switch self {
+        case .neutral:
+            return .primary
+        case .ok:
+            return AetowerDesign.Status.success
+        case .warning:
+            return AetowerDesign.Status.warning
+        case .danger:
+            return AetowerDesign.Status.error
+        }
+    }
+
+    var weight: Font.Weight {
+        switch self {
+        case .neutral:
+            return .bold
+        case .ok:
+            return .regular
+        case .warning:
+            return .medium
+        case .danger:
+            return .bold
+        }
+    }
+
+    var italic: Bool {
+        if case .warning = self {
+            return true
+        }
+        return false
+    }
+}
+
 struct TrendMetricCard: View {
     let title: String
     let value: String
     let subtitle: String
     let samples: [Double]
     let style: TrendMetricStyle
+    let valueAppearance: TrendMetricValueAppearance
     let minHeight: CGFloat
+    let sampleValueFormatter: (Double) -> String
     @State private var isHovered = false
     @State private var hoverX: CGFloat? = nil
 
@@ -36,6 +78,8 @@ struct TrendMetricCard: View {
         subtitle: String,
         samples: [Double],
         style: TrendMetricStyle,
+        valueAppearance: TrendMetricValueAppearance = .neutral,
+        sampleValueFormatter: @escaping (Double) -> String = TrendMetricCard.defaultSampleFormatter,
         minHeight: CGFloat = 104
     ) {
         self.title = title
@@ -43,6 +87,8 @@ struct TrendMetricCard: View {
         self.subtitle = subtitle
         self.samples = samples
         self.style = style
+        self.valueAppearance = valueAppearance
+        self.sampleValueFormatter = sampleValueFormatter
         self.minHeight = minHeight
     }
 
@@ -61,7 +107,9 @@ struct TrendMetricCard: View {
                 Spacer(minLength: 0)
 
                 Text(value)
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .font(.system(size: 28, weight: valueAppearance.weight, design: .rounded))
+                    .foregroundStyle(valueAppearance.color)
+                    .italic(valueAppearance.italic)
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
                     .contentTransition(.numericText())
@@ -89,7 +137,7 @@ struct TrendMetricCard: View {
                 if let hoverX, let sampleValue = sampleAtPosition(hoverX) {
                     GeometryReader { geo in
                         let clampedX = min(max(hoverX, 30), geo.size.width - 30)
-                        Text(formatSampleValue(sampleValue))
+                        Text(sampleValueFormatter(sampleValue))
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
@@ -119,7 +167,7 @@ struct TrendMetricCard: View {
             Text(label)
                 .font(.system(size: 8, weight: .medium))
                 .foregroundStyle(.tertiary)
-            Text(formatSampleValue(value))
+            Text(sampleValueFormatter(value))
                 .font(.system(size: 8, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)
         }
@@ -135,7 +183,7 @@ struct TrendMetricCard: View {
         return samples[clampedIndex]
     }
 
-    private func formatSampleValue(_ value: Double) -> String {
+    nonisolated private static func defaultSampleFormatter(_ value: Double) -> String {
         if value >= 1_000_000_000 {
             return String(format: "%.1fG", value / 1_000_000_000)
         } else if value >= 1_000_000 {

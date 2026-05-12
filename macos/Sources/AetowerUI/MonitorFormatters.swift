@@ -8,7 +8,7 @@ func formatBytes(_ bytes: UInt64) -> String {
 }
 
 func formatRate(_ bytesPerSecond: UInt64) -> String {
-    "\(formatBytes(bytesPerSecond))/s"
+    "\(MonitorByteFormatters.rate.string(fromByteCount: Int64(bytesPerSecond)))/s"
 }
 
 func formatWakeups(_ wakeupsPerSecond: Float) -> String {
@@ -23,6 +23,16 @@ private enum MonitorByteFormatters {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useMB, .useGB]
         formatter.countStyle = .binary
+        return formatter
+    }()
+
+    nonisolated(unsafe) static let rate: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useBytes, .useKB, .useMB, .useGB]
+        formatter.countStyle = .binary
+        formatter.isAdaptive = true
+        formatter.includesUnit = true
+        formatter.zeroPadsFractionDigits = false
         return formatter
     }()
 }

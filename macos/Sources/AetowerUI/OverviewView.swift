@@ -258,30 +258,46 @@ public struct OverviewView: View {
         let frictionScore = machineFrictionScore(for: host)
         let frictionSamples = overviewTrendSamples(
             state.snapshot.hostTrend.machineFriction.map(Double.init),
+            history: hostHistorySamples { snapshot in
+                machineFrictionScore(for: snapshot)
+            },
             fallback: frictionScore
         )
         let cpuSamples = overviewTrendSamples(
             state.snapshot.hostTrend.cpuPercent.map(Double.init),
+            history: hostHistorySamples { Double($0.cpuPercent) },
             fallback: Double(host.cpuPercent)
         )
         let memorySamples = overviewTrendSamples(
             state.snapshot.hostTrend.memoryUsedBytes.map(Double.init),
+            history: hostHistorySamples { Double($0.memoryUsedBytes) },
             fallback: Double(host.memoryUsedBytes)
         )
         let diskSamples = overviewTrendSamples(
             state.snapshot.hostTrend.diskActivityBps.map(Double.init),
+            history: hostHistorySamples { Double($0.diskReadBps + $0.diskWriteBps) },
             fallback: Double(host.diskReadBps + host.diskWriteBps)
         )
         let networkSamples = overviewTrendSamples(
             state.snapshot.hostTrend.networkActivityBps.map(Double.init),
+            history: hostHistorySamples { Double($0.networkReceiveBps + $0.networkSendBps) },
             fallback: Double(host.networkReceiveBps + host.networkSendBps)
         )
         let wakeupSamples = overviewTrendSamples(
             state.snapshot.hostTrend.wakeupsPerSecond.map(Double.init),
+            history: hostHistorySamples { Double($0.wakeupsPerSecond) },
             fallback: Double(host.wakeupsPerSecond)
         )
-        let gpuPercentSamples = hostHistorySamples { Double($0.gpuPercent) }
-        let gpuMemorySamples = hostHistorySamples { Double($0.gpuMemoryBytes) }
+        let gpuPercentSamples = overviewTrendSamples(
+            hostHistorySamples { Double($0.gpuPercent) },
+            history: [],
+            fallback: Double(host.gpuPercent)
+        )
+        let gpuMemorySamples = overviewTrendSamples(
+            hostHistorySamples { Double($0.gpuMemoryBytes) },
+            history: [],
+            fallback: Double(host.gpuMemoryBytes)
+        )
         return LazyVGrid(columns: overviewGridColumns(minimum: 180), alignment: .leading, spacing: 12) {
             TrendMetricCard(
                 title: "Friction",
@@ -289,6 +305,8 @@ public struct OverviewView: View {
                 subtitle: "overall machine score · \(trendWindowLabel(sampleCount: frictionSamples.count))",
                 samples: frictionSamples,
                 style: .friction,
+                valueAppearance: frictionValueAppearance(frictionScore),
+                sampleValueFormatter: { String(format: "%.0f", $0) },
                 minHeight: 124
             )
             TrendMetricCard(
@@ -297,6 +315,8 @@ public struct OverviewView: View {
                 subtitle: "thermal \(thermalStateLabel(host.thermalState)) · \(trendWindowLabel(sampleCount: cpuSamples.count))",
                 samples: cpuSamples,
                 style: .cpu,
+                valueAppearance: cpuValueAppearance(host),
+                sampleValueFormatter: { String(format: "%.0f%%", $0) },
                 minHeight: 124
             )
             TrendMetricCard(
@@ -305,6 +325,8 @@ public struct OverviewView: View {
                 subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap · \(trendWindowLabel(sampleCount: memorySamples.count))",
                 samples: memorySamples,
                 style: .memory,
+                valueAppearance: memoryValueAppearance(host),
+                sampleValueFormatter: { formatBytes(UInt64(max($0, 0))) },
                 minHeight: 124
             )
             TrendMetricCard(
@@ -313,6 +335,8 @@ public struct OverviewView: View {
                 subtitle: "read + write · \(trendWindowLabel(sampleCount: diskSamples.count))",
                 samples: diskSamples,
                 style: .disk,
+                valueAppearance: throughputValueAppearance(host.diskReadBps + host.diskWriteBps, warning: 50 * 1_024 * 1_024, danger: 250 * 1_024 * 1_024),
+                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) },
                 minHeight: 124
             )
             TrendMetricCard(
@@ -321,6 +345,8 @@ public struct OverviewView: View {
                 subtitle: "send + receive · \(trendWindowLabel(sampleCount: networkSamples.count))",
                 samples: networkSamples,
                 style: .network,
+                valueAppearance: throughputValueAppearance(host.networkReceiveBps + host.networkSendBps, warning: 10 * 1_024 * 1_024, danger: 100 * 1_024 * 1_024),
+                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) },
                 minHeight: 124
             )
             TrendMetricCard(
@@ -331,19 +357,26 @@ public struct OverviewView: View {
                     : "current host wakeup rate · \(trendWindowLabel(sampleCount: wakeupSamples.count))",
                 samples: wakeupSamples,
                 style: .friction,
+                valueAppearance: wakeupValueAppearance(host),
+                sampleValueFormatter: { formatWakeups(Float($0)) },
                 minHeight: 124
             )
             if host.gpuPercent > 0 || host.gpuMemoryBytes > 0 {
+                let usingGpuPercent = host.gpuPercent > 0
                 TrendMetricCard(
                     title: "GPU",
-                    value: host.gpuPercent > 0
+                    value: usingGpuPercent
                         ? String(format: "%.0f%%", host.gpuPercent)
                         : formatBytes(host.gpuMemoryBytes),
-                    subtitle: "\(hostGPUSummary(host)) · \(trendWindowLabel(sampleCount: host.gpuPercent > 0 ? gpuPercentSamples.count : gpuMemorySamples.count))",
-                    samples: host.gpuPercent > 0
+                    subtitle: "\(hostGPUSummary(host)) · \(trendWindowLabel(sampleCount: usingGpuPercent ? gpuPercentSamples.count : gpuMemorySamples.count))",
+                    samples: usingGpuPercent
                         ? gpuPercentSamples
                         : gpuMemorySamples,
                     style: .energy,
+                    valueAppearance: gpuValueAppearance(host),
+                    sampleValueFormatter: usingGpuPercent
+                        ? { String(format: "%.0f%%", $0) }
+                        : { formatBytes(UInt64(max($0, 0))) },
                     minHeight: 124
                 )
             }
@@ -463,15 +496,83 @@ public struct OverviewView: View {
         150
     }
 
-    private func overviewTrendSamples(_ samples: [Double], fallback: Double) -> [Double] {
-        let trimmed = Array(samples.suffix(overviewTrendSampleLimit))
-        if trimmed.count >= 2 {
-            return trimmed
+    private func overviewTrendSamples(_ live: [Double], history: [Double], fallback: Double) -> [Double] {
+        let trimmedLive = Array(live.suffix(overviewTrendSampleLimit))
+        if hasUsefulVariation(trimmedLive) {
+            return trimmedLive
         }
-        if let sample = trimmed.first {
+        let trimmedHistory = Array(history.suffix(overviewTrendSampleLimit))
+        if hasUsefulVariation(trimmedHistory) {
+            return trimmedHistory
+        }
+        if trimmedLive.count >= 2 {
+            return trimmedLive
+        }
+        if let sample = trimmedLive.first {
+            return [sample, sample]
+        }
+        if let sample = trimmedHistory.first {
             return [sample, sample]
         }
         return [fallback, fallback]
+    }
+
+    private func hasUsefulVariation(_ samples: [Double]) -> Bool {
+        guard samples.count >= 2, let minimum = samples.min(), let maximum = samples.max() else {
+            return false
+        }
+        let baseline = max(abs(samples.last ?? 0), 1.0)
+        return (maximum - minimum) / baseline > 0.01
+    }
+
+    private func frictionValueAppearance(_ score: Double) -> TrendMetricValueAppearance {
+        if score >= 60 { return .danger }
+        if score >= 30 { return .warning }
+        return .ok
+    }
+
+    private func cpuValueAppearance(_ host: HostSnapshot) -> TrendMetricValueAppearance {
+        if host.cpuPercent >= 85 || host.thermalState == .critical { return .danger }
+        if host.cpuPercent >= 50 || host.thermalState == .serious { return .warning }
+        return .ok
+    }
+
+    private func memoryValueAppearance(_ host: HostSnapshot) -> TrendMetricValueAppearance {
+        switch hostPressureBand(host) {
+        case .severe:
+            return .danger
+        case .elevated:
+            return .warning
+        case .nominal:
+            return .ok
+        }
+    }
+
+    private func throughputValueAppearance(_ bytesPerSecond: UInt64, warning: UInt64, danger: UInt64) -> TrendMetricValueAppearance {
+        if bytesPerSecond >= danger { return .danger }
+        if bytesPerSecond >= warning { return .warning }
+        return .ok
+    }
+
+    private func wakeupValueAppearance(_ host: HostSnapshot) -> TrendMetricValueAppearance {
+        switch hostWakeupBand(host.wakeupsPerSecond) {
+        case .severe:
+            return .danger
+        case .elevated:
+            return .warning
+        case .nominal:
+            return .ok
+        }
+    }
+
+    private func gpuValueAppearance(_ host: HostSnapshot) -> TrendMetricValueAppearance {
+        if host.gpuPercent >= 85 || host.gpuMemoryBytes >= 8 * 1_024 * 1_024 * 1_024 {
+            return .danger
+        }
+        if host.gpuPercent >= 40 || host.gpuMemoryBytes >= 2 * 1_024 * 1_024 * 1_024 {
+            return .warning
+        }
+        return .ok
     }
 
     /// Unified history sample extractor. The previous three type-specific
