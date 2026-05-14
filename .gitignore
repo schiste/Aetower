@@ -1,7 +1,19 @@
+# Build output
 /.build
 /macos/.build
 /dist
 /rust/target
-.DS_Store
+
+# Local profiling and tool caches
 tmp/
+
+# Editor / IDE scratch
 .chau7/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS detritus
+.DS_Store
+
