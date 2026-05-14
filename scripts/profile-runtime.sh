@@ -22,6 +22,7 @@ TCC_REQUEST_MAX="${AETOWER_PROFILE_TCC_REQUEST_MAX:-6}"
 DIAGNOSTICS_GROWTH_MAX_BYTES="${AETOWER_PROFILE_DIAGNOSTICS_GROWTH_MAX_BYTES:-262144}"
 HISTORY_GROWTH_MAX_BYTES="${AETOWER_PROFILE_HISTORY_GROWTH_MAX_BYTES:-10485760}"
 TICK_OVER_BUDGET_MAX="${AETOWER_PROFILE_TICK_OVER_BUDGET_MAX:-0}"
+KEEP_RUNS="${AETOWER_PROFILE_KEEP_RUNS:-10}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -64,6 +65,16 @@ mkdir -p "$OUT_DIR"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="$OUT_DIR/$TIMESTAMP"
 mkdir -p "$RUN_DIR"
+
+if [ "$KEEP_RUNS" -gt 0 ]; then
+    find "$OUT_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+        | grep -E '/[0-9]{8}-[0-9]{6}$' \
+        | sort -r \
+        | tail -n +$((KEEP_RUNS + 1)) \
+        | while IFS= read -r stale; do
+            rm -rf "$stale"
+        done
+fi
 METRICS_CSV="$RUN_DIR/metrics.csv"
 SAMPLE_TXT="$RUN_DIR/sample.txt"
 SUMMARY_TXT="$RUN_DIR/summary.txt"
