@@ -21,6 +21,11 @@ pub use transport::{
     start_local_socket_server,
 };
 
+mod reports;
+
+use reports::snapshot::{
+    build_capability_status, build_host_alerts, build_recent_changes, build_top_findings,
+};
 use transport::{McpRuntimeStats, jsonrpc_error, publish_mcp_runtime_stats};
 
 #[cfg(test)]
@@ -64,14 +69,14 @@ const MIN_SELF_WATCH_INTERVAL_MILLIS: u64 = 250;
 const MAX_SELF_WATCH_INTERVAL_MILLIS: u64 = 60_000;
 const DEFAULT_RUNTIME_BURST_WINDOW_MINUTES: u64 = 10;
 const DEFAULT_RUNTIME_BURST_EVENT_LIMIT: usize = 64;
-const MEMORY_PRESSURE_WARNING_RATIO: f64 = 0.80;
-const MEMORY_PRESSURE_CRITICAL_RATIO: f64 = 0.90;
-const COMPRESSED_MEMORY_WARNING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-const COMPRESSED_MEMORY_CRITICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
-const SWAP_WARNING_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-const SWAP_CRITICAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
-const WAKEUPS_WARNING: f32 = 12_000.0;
-const WAKEUPS_CRITICAL: f32 = 25_000.0;
+pub(crate) const MEMORY_PRESSURE_WARNING_RATIO: f64 = 0.80;
+pub(crate) const MEMORY_PRESSURE_CRITICAL_RATIO: f64 = 0.90;
+pub(crate) const COMPRESSED_MEMORY_WARNING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+pub(crate) const COMPRESSED_MEMORY_CRITICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
+pub(crate) const SWAP_WARNING_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+pub(crate) const SWAP_CRITICAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+pub(crate) const WAKEUPS_WARNING: f32 = 12_000.0;
+pub(crate) const WAKEUPS_CRITICAL: f32 = 25_000.0;
 const HISTORY_STORE_WARNING_BYTES: u64 = 512 * 1024 * 1024;
 const HISTORY_STORE_CRITICAL_BYTES: u64 = 1024 * 1024 * 1024;
 const HISTORY_WAL_WARNING_BYTES: u64 = 32 * 1024 * 1024;
@@ -109,14 +114,14 @@ pub struct HistorySummaryResponse {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "kebab-case")]
-enum SeverityBand {
+pub(crate) enum SeverityBand {
     Info,
     Warning,
     Critical,
 }
 
 impl SeverityBand {
-    fn score(self) -> u8 {
+    pub(crate) fn score(self) -> u8 {
         match self {
             Self::Info => 1,
             Self::Warning => 2,
@@ -134,7 +139,7 @@ enum ExportPrivacyTier {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct TopFinding {
+pub(crate) struct TopFinding {
     id: String,
     severity: SeverityBand,
     title: String,
@@ -145,7 +150,7 @@ struct TopFinding {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct HostAlert {
+pub(crate) struct HostAlert {
     id: String,
     severity: SeverityBand,
     category: String,
@@ -238,7 +243,7 @@ struct AiHistoricalTrendReport {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct RecentChangeItem {
+pub(crate) struct RecentChangeItem {
     timestamp_millis: u64,
     severity: SeverityBand,
     source: String,
@@ -248,7 +253,7 @@ struct RecentChangeItem {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct CapabilityStatusItem {
+pub(crate) struct CapabilityStatusItem {
     kind: String,
     state: String,
     health: String,
@@ -5447,280 +5452,6 @@ fn format_metric_value(metric: &str, value: f64) -> String {
     }
 }
 
-fn build_top_findings(
-    snapshot: &SystemSnapshot,
-    diagnostics: &DiagnosticsOverview,
-    history: &HistorySummaryResponse,
-    limit: usize,
-) -> Vec<TopFinding> {
-    let mut findings = Vec::new();
-    if let Some(memory) = memory_pressure_finding(snapshot) {
-        findings.push(memory);
-    }
-    if let Some(wakeups) = wakeup_finding(snapshot) {
-        findings.push(wakeups);
-    }
-    if let Some(history_finding) = history_store_finding(history) {
-        findings.push(history_finding);
-    }
-    if let Some(diagnostics_finding) = diagnostics_finding(diagnostics) {
-        findings.push(diagnostics_finding);
-    }
-
-    for entity in top_entities(snapshot, 4) {
-        findings.push(TopFinding {
-            id: format!("entity:{}", entity.entity_id),
-            severity: if entity.friction.total_score >= 20.0 {
-                SeverityBand::Critical
-            } else {
-                SeverityBand::Warning
-            },
-            title: format!("{} is a top current friction source", entity.display_name),
-            detail: format!(
-                "{:.1}% CPU, {} resident, friction {:.1}. {}",
-                entity.metrics.cpu_percent,
-                format_bytes(entity.metrics.memory_resident_bytes),
-                entity.friction.total_score,
-                entity
-                    .recent_change_summary
-                    .clone()
-                    .unwrap_or_else(|| "No recent change summary is attached.".to_owned())
-            ),
-            source: "entity".to_owned(),
-            entity_ids: vec![entity.entity_id.clone()],
-            recommendation: entity.recommendations.first().map(|recommendation| {
-                format!("{}: {}", recommendation.title, recommendation.detail)
-            }),
-        });
-    }
-
-    findings.sort_by(|left, right| {
-        right
-            .severity
-            .score()
-            .cmp(&left.severity.score())
-            .then_with(|| left.id.cmp(&right.id))
-    });
-    findings.truncate(limit.max(1));
-    findings
-}
-
-fn build_host_alerts(snapshot: &SystemSnapshot, top_entity_limit: usize) -> Vec<HostAlert> {
-    let mut alerts = Vec::new();
-    let used_ratio = if snapshot.host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        snapshot.host.memory_used_bytes as f64 / snapshot.host.memory_total_bytes as f64
-    };
-    let top_memory_entities = top_memory_entities(snapshot, top_entity_limit);
-    let top_external_memory = top_external_memory_entities(snapshot, top_entity_limit);
-    let top_memory_entity_labels = if top_external_memory.is_empty() {
-        format_entity_burden_labels(&top_memory_entities, |entity| {
-            format_bytes(entity.metrics.memory_resident_bytes)
-        })
-    } else {
-        format_entity_burden_labels(&top_external_memory, |entity| {
-            format_bytes(entity.metrics.memory_resident_bytes)
-        })
-    };
-    if used_ratio >= MEMORY_PRESSURE_WARNING_RATIO
-        || snapshot.host.compressed_memory_bytes >= COMPRESSED_MEMORY_WARNING_BYTES
-        || snapshot.host.swap_used_bytes >= SWAP_WARNING_BYTES
-    {
-        let severity = if used_ratio >= MEMORY_PRESSURE_CRITICAL_RATIO
-            || snapshot.host.compressed_memory_bytes >= COMPRESSED_MEMORY_CRITICAL_BYTES
-            || snapshot.host.swap_used_bytes >= SWAP_CRITICAL_BYTES
-        {
-            SeverityBand::Critical
-        } else {
-            SeverityBand::Warning
-        };
-        let mut metrics = BTreeMap::new();
-        metrics.insert(
-            "memory_used_bytes".to_owned(),
-            json!(snapshot.host.memory_used_bytes),
-        );
-        metrics.insert(
-            "memory_total_bytes".to_owned(),
-            json!(snapshot.host.memory_total_bytes),
-        );
-        metrics.insert(
-            "compressed_memory_bytes".to_owned(),
-            json!(snapshot.host.compressed_memory_bytes),
-        );
-        metrics.insert(
-            "swap_used_bytes".to_owned(),
-            json!(snapshot.host.swap_used_bytes),
-        );
-        alerts.push(HostAlert {
-            id: "host-memory-pressure".to_owned(),
-            severity,
-            category: "memory-pressure".to_owned(),
-            title: "Host memory pressure is elevated".to_owned(),
-            detail: format!(
-                "{} used of {}, {} compressed, {} swap. Top current groups: {}.",
-                format_bytes(snapshot.host.memory_used_bytes),
-                format_bytes(snapshot.host.memory_total_bytes),
-                format_bytes(snapshot.host.compressed_memory_bytes),
-                format_bytes(snapshot.host.swap_used_bytes),
-                if top_memory_entity_labels.is_empty() {
-                    "none".to_owned()
-                } else if top_external_memory.is_empty() {
-                    format!(
-                        "no non-Aetower leader visible; current leaders {top_memory_entity_labels}"
-                    )
-                } else {
-                    format!("external leaders {top_memory_entity_labels}")
-                }
-            ),
-            metrics,
-            entity_ids: if top_external_memory.is_empty() {
-                top_memory_entities
-            } else {
-                top_external_memory
-            }
-            .into_iter()
-            .map(|entity| entity.entity_id.clone())
-            .collect(),
-        });
-    }
-
-    if snapshot.host.wakeups_per_second >= WAKEUPS_WARNING {
-        let severity = if snapshot.host.wakeups_per_second >= WAKEUPS_CRITICAL {
-            SeverityBand::Critical
-        } else {
-            SeverityBand::Warning
-        };
-        let external_wakeup_leaders = top_external_wakeup_entities(snapshot, top_entity_limit);
-        let wakeup_leaders = top_wakeup_entities(snapshot, top_entity_limit);
-        let leader = external_wakeup_leaders
-            .first()
-            .copied()
-            .or_else(|| wakeup_leaders.first().copied());
-        let mut metrics = BTreeMap::new();
-        metrics.insert(
-            "host_wakeups_per_second".to_owned(),
-            json!(snapshot.host.wakeups_per_second),
-        );
-        if let Some(leader) = leader {
-            metrics.insert(
-                "leader_wakeups_per_second".to_owned(),
-                json!(leader.metrics.wakeups_per_second),
-            );
-        }
-        alerts.push(HostAlert {
-            id: "host-wakeup-storm".to_owned(),
-            severity,
-            category: "wakeups".to_owned(),
-            title: "Wakeup rate is high".to_owned(),
-            detail: leader.map_or_else(
-                || format!(
-                    "Host wakeups are {:.0}/s with no single entity leader identified.",
-                    snapshot.host.wakeups_per_second
-                ),
-                |leader| {
-                    if is_aetower_entity(leader) {
-                        format!(
-                            "Host wakeups are {:.0}/s. No non-Aetower wakeup leader is visible; Aetower leads at {:.0}/s, so check self telemetry and MCP request rate.",
-                            snapshot.host.wakeups_per_second,
-                            leader.metrics.wakeups_per_second
-                        )
-                    } else {
-                        format!(
-                            "Host wakeups are {:.0}/s. External leader {} is at {:.0}/s.",
-                            snapshot.host.wakeups_per_second,
-                            leader.display_name,
-                            leader.metrics.wakeups_per_second
-                        )
-                    }
-                },
-            ),
-            metrics,
-            entity_ids: leader
-                .map(|entity| vec![entity.entity_id.clone()])
-                .unwrap_or_default(),
-        });
-    }
-
-    alerts
-}
-
-fn build_recent_changes(
-    snapshot: &SystemSnapshot,
-    window_millis: u64,
-    limit: usize,
-) -> Vec<RecentChangeItem> {
-    let since = snapshot.captured_at_millis.saturating_sub(window_millis);
-    let mut changes = snapshot
-        .timeline
-        .iter()
-        .filter(|event| event.timestamp_millis >= since)
-        .map(|event| RecentChangeItem {
-            timestamp_millis: event.timestamp_millis,
-            severity: match event.severity {
-                aetower_model::TimelineSeverity::Info => SeverityBand::Info,
-                aetower_model::TimelineSeverity::Warning => SeverityBand::Warning,
-                aetower_model::TimelineSeverity::Critical => SeverityBand::Critical,
-            },
-            source: format!("timeline:{:?}", event.category).to_lowercase(),
-            entity_id: event.entity_id.clone(),
-            title: event.title.clone(),
-            detail: event.detail.clone(),
-        })
-        .collect::<Vec<_>>();
-
-    for entity in &snapshot.entities {
-        if let Some(summary) = &entity.recent_change_summary {
-            changes.push(RecentChangeItem {
-                timestamp_millis: snapshot.captured_at_millis,
-                severity: if entity.anomaly_detected {
-                    SeverityBand::Warning
-                } else {
-                    SeverityBand::Info
-                },
-                source: "entity-summary".to_owned(),
-                entity_id: Some(entity.entity_id.clone()),
-                title: format!("{} changed recently", entity.display_name),
-                detail: summary.clone(),
-            });
-        }
-    }
-
-    changes.sort_by(|left, right| {
-        right
-            .timestamp_millis
-            .cmp(&left.timestamp_millis)
-            .then_with(|| right.severity.score().cmp(&left.severity.score()))
-    });
-    changes.truncate(limit.max(1));
-    changes
-}
-
-fn build_capability_status(snapshot: &SystemSnapshot) -> Vec<CapabilityStatusItem> {
-    let mut capabilities = snapshot
-        .capabilities
-        .iter()
-        .map(|capability| CapabilityStatusItem {
-            kind: format!("{:?}", capability.kind),
-            state: format!("{:?}", capability.state),
-            health: format!("{:?}", capability.health),
-            operator_label: capability_operator_label(capability),
-            action_label: capability_action_label(capability),
-            detail: capability.detail.clone(),
-            last_updated_millis: capability.last_updated_millis,
-            severity: capability_severity(capability),
-        })
-        .collect::<Vec<_>>();
-    capabilities.sort_by(|left, right| {
-        right
-            .severity
-            .score()
-            .cmp(&left.severity.score())
-            .then_with(|| left.kind.cmp(&right.kind))
-    });
-    capabilities
-}
-
 fn build_history_store_health(
     summary: HistorySummaryResponse,
     recent_history_events: Vec<DiagnosticsEvent>,
@@ -7056,7 +6787,10 @@ fn section_manifest<T: Serialize>(
     })
 }
 
-fn top_entities(snapshot: &SystemSnapshot, limit: usize) -> Vec<&aetower_model::EntitySnapshot> {
+pub(crate) fn top_entities(
+    snapshot: &SystemSnapshot,
+    limit: usize,
+) -> Vec<&aetower_model::EntitySnapshot> {
     let mut entities = snapshot.entities.iter().collect::<Vec<_>>();
     entities.sort_by(|left, right| {
         right
@@ -7069,7 +6803,7 @@ fn top_entities(snapshot: &SystemSnapshot, limit: usize) -> Vec<&aetower_model::
     entities
 }
 
-fn top_memory_entities(
+pub(crate) fn top_memory_entities(
     snapshot: &SystemSnapshot,
     limit: usize,
 ) -> Vec<&aetower_model::EntitySnapshot> {
@@ -7088,7 +6822,7 @@ fn top_memory_entities(
     entities
 }
 
-fn top_external_memory_entities(
+pub(crate) fn top_external_memory_entities(
     snapshot: &SystemSnapshot,
     limit: usize,
 ) -> Vec<&aetower_model::EntitySnapshot> {
@@ -7100,7 +6834,7 @@ fn top_external_memory_entities(
     entities
 }
 
-fn top_wakeup_entities(
+pub(crate) fn top_wakeup_entities(
     snapshot: &SystemSnapshot,
     limit: usize,
 ) -> Vec<&aetower_model::EntitySnapshot> {
@@ -7120,7 +6854,7 @@ fn top_wakeup_entities(
     entities
 }
 
-fn top_external_wakeup_entities(
+pub(crate) fn top_external_wakeup_entities(
     snapshot: &SystemSnapshot,
     limit: usize,
 ) -> Vec<&aetower_model::EntitySnapshot> {
@@ -7132,7 +6866,10 @@ fn top_external_wakeup_entities(
     entities
 }
 
-fn format_entity_burden_labels<F>(entities: &[&aetower_model::EntitySnapshot], metric: F) -> String
+pub(crate) fn format_entity_burden_labels<F>(
+    entities: &[&aetower_model::EntitySnapshot],
+    metric: F,
+) -> String
 where
     F: Fn(&aetower_model::EntitySnapshot) -> String,
 {
@@ -7143,7 +6880,7 @@ where
         .join(", ")
 }
 
-fn is_aetower_entity(entity: &aetower_model::EntitySnapshot) -> bool {
+pub(crate) fn is_aetower_entity(entity: &aetower_model::EntitySnapshot) -> bool {
     let display_name = entity.display_name.to_ascii_lowercase();
     let entity_id = entity.entity_id.to_ascii_lowercase();
     display_name.contains("aetower") || entity_id.contains("aetower")
@@ -7656,7 +7393,7 @@ fn format_energy(nj_per_s: f64) -> String {
     }
 }
 
-fn memory_pressure_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
+pub(crate) fn memory_pressure_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
     let used_ratio = if snapshot.host.memory_total_bytes == 0 {
         0.0
     } else {
@@ -7711,7 +7448,7 @@ fn memory_pressure_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
     })
 }
 
-fn wakeup_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
+pub(crate) fn wakeup_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
     if snapshot.host.wakeups_per_second < WAKEUPS_WARNING {
         return None;
     }
@@ -7767,7 +7504,7 @@ fn wakeup_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
     })
 }
 
-fn history_store_finding(history: &HistorySummaryResponse) -> Option<TopFinding> {
+pub(crate) fn history_store_finding(history: &HistorySummaryResponse) -> Option<TopFinding> {
     let severity = history_store_severity(history);
     (severity != SeverityBand::Info).then(|| TopFinding {
         id: "history-store-health".to_owned(),
@@ -7788,7 +7525,7 @@ fn history_store_finding(history: &HistorySummaryResponse) -> Option<TopFinding>
     })
 }
 
-fn diagnostics_finding(diagnostics: &DiagnosticsOverview) -> Option<TopFinding> {
+pub(crate) fn diagnostics_finding(diagnostics: &DiagnosticsOverview) -> Option<TopFinding> {
     let severity = diagnostics_severity(diagnostics);
     (severity != SeverityBand::Info).then(|| TopFinding {
         id: "diagnostics-health".to_owned(),
@@ -7949,7 +7686,7 @@ fn normalized_group_value(value: Option<&str>) -> String {
         .to_ascii_lowercase()
 }
 
-fn capability_operator_label(capability: &aetower_model::CapabilitySnapshot) -> String {
+pub(crate) fn capability_operator_label(capability: &aetower_model::CapabilitySnapshot) -> String {
     match capability.state {
         aetower_model::CapabilityState::Granted => "Ready".to_owned(),
         aetower_model::CapabilityState::Denied => "Missing access".to_owned(),
@@ -7959,7 +7696,7 @@ fn capability_operator_label(capability: &aetower_model::CapabilitySnapshot) -> 
     }
 }
 
-fn capability_action_label(capability: &aetower_model::CapabilitySnapshot) -> String {
+pub(crate) fn capability_action_label(capability: &aetower_model::CapabilitySnapshot) -> String {
     match capability.state {
         aetower_model::CapabilityState::Denied => "Grant access".to_owned(),
         aetower_model::CapabilityState::Requested => "Complete setup".to_owned(),
@@ -7969,7 +7706,7 @@ fn capability_action_label(capability: &aetower_model::CapabilitySnapshot) -> St
     }
 }
 
-fn capability_severity(capability: &aetower_model::CapabilitySnapshot) -> SeverityBand {
+pub(crate) fn capability_severity(capability: &aetower_model::CapabilitySnapshot) -> SeverityBand {
     match capability.state {
         aetower_model::CapabilityState::Denied => SeverityBand::Critical,
         aetower_model::CapabilityState::Requested => SeverityBand::Warning,
@@ -8378,7 +8115,7 @@ fn sanitized_path_string(value: &str) -> String {
         .unwrap_or_else(|| "<redacted path>".to_owned())
 }
 
-fn format_bytes(bytes: u64) -> String {
+pub(crate) fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes as f64;
     let mut unit = 0usize;
