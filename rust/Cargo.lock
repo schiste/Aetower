@@ -81,14 +81,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aetower-fleet"
-version = "0.1.0"
-dependencies = [
- "aetower-model",
- "serde_json",
-]
-
-[[package]]
 name = "aetower-friction"
 version = "0.1.0"
 dependencies = [
