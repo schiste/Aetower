@@ -13,7 +13,6 @@ const SOCKET_TIMEOUT: Duration = Duration::from_millis(1_500);
 const MAX_RPC_LINES: usize = 24;
 
 /// A tab from Chau7's `tab_list` MCP tool response.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Chau7Tab {
     pub tab_id: String,
@@ -33,7 +32,6 @@ pub struct Chau7Tab {
 }
 
 /// A session from Chau7's `session_list` MCP tool response.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Chau7Session {
     pub session_id: String,
@@ -47,46 +45,25 @@ pub struct Chau7Session {
     pub last_active: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Chau7PendingApproval {
-    #[serde(default)]
-    pub id: String,
     #[serde(default)]
     pub description: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Chau7ActiveRun {
     #[serde(default, rename = "duration_so_far_ms")]
     pub duration_so_far_ms: u64,
-    #[serde(default)]
-    pub provider: String,
-    #[serde(default)]
-    pub run_id: String,
-    #[serde(default)]
-    pub session_id: String,
-    #[serde(default, rename = "started_at")]
-    pub started_at: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Chau7TabStatus {
     #[serde(default)]
-    pub tab_id: String,
-    #[serde(default)]
     pub title: String,
-    #[serde(default)]
-    pub cwd: String,
-    pub repo_root: Option<String>,
     pub git_branch: Option<String>,
-    pub ai_provider: Option<String>,
-    pub ai_session_id: Option<String>,
     #[serde(default)]
     pub status: String,
-    pub active_app: Option<String>,
     #[serde(default)]
     pub is_at_prompt: bool,
     #[serde(default)]
@@ -96,11 +73,8 @@ pub struct Chau7TabStatus {
     pub raw_status: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Chau7RuntimeSessionStatus {
-    #[serde(default)]
-    pub session_id: String,
     #[serde(default)]
     pub state: String,
     #[serde(default)]
@@ -133,10 +107,8 @@ pub struct Chau7RepoStats {
 }
 
 /// A run from Chau7's `run_list` tool response.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Chau7Run {
-    pub id: String,
     #[serde(default, rename = "startedAt")]
     pub started_at: String,
     #[serde(default, rename = "endedAt")]
@@ -145,30 +117,16 @@ pub struct Chau7Run {
     pub session_id: Option<String>,
     #[serde(default)]
     pub provider: String,
-    #[serde(default, rename = "durationMs")]
-    pub duration_ms: Option<u64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Chau7RepoEvent {
     #[serde(default, rename = "type")]
     pub event_type: String,
-    #[serde(default, rename = "ts")]
-    pub timestamp: String,
     #[serde(default)]
     pub message: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub tab_id: Option<String>,
-    #[serde(default)]
-    pub source: String,
-    #[serde(default)]
-    pub tool: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Chau7RuntimeInfo {
     #[serde(default)]
@@ -494,10 +452,7 @@ pub fn fetch_snapshot_with_options(
             )
             .ok()
             .and_then(|raw| serde_json::from_value::<Chau7RuntimeSessionStatus>(raw).ok())
-            .unwrap_or_else(|| Chau7RuntimeSessionStatus {
-                session_id: session_id.to_owned(),
-                ..Chau7RuntimeSessionStatus::default()
-            });
+            .unwrap_or_default();
         next_id += 1;
 
         if options.include_deep_context {
@@ -762,7 +717,6 @@ mod tests {
         let events: Vec<Chau7RepoEvent> = serde_json::from_str(raw).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "permission");
-        assert_eq!(events[0].source, "claude_code");
     }
 
     #[test]
@@ -797,19 +751,16 @@ mod tests {
                 build_channel: Some("dev".to_owned()),
             }),
             recent_runs: vec![Chau7Run {
-                id: "run-1".to_owned(),
                 started_at: "2026-04-20T08:00:00Z".to_owned(),
                 ended_at: None,
                 session_id: Some("sess-1".to_owned()),
                 provider: "claude".to_owned(),
-                duration_ms: Some(42),
             }],
             ..Chau7Snapshot::default()
         };
         previous.tab_statuses.insert(
             "tab-1".to_owned(),
             Chau7TabStatus {
-                tab_id: "tab-1".to_owned(),
                 status: "ready".to_owned(),
                 ..Chau7TabStatus::default()
             },
@@ -817,7 +768,6 @@ mod tests {
         previous.runtime_sessions.insert(
             "sess-1".to_owned(),
             Chau7RuntimeSessionStatus {
-                session_id: "sess-1".to_owned(),
                 state: "ready".to_owned(),
                 turn_count: 7,
                 ..Chau7RuntimeSessionStatus::default()
@@ -845,7 +795,6 @@ mod tests {
             vec![Chau7RepoEvent {
                 event_type: "permission".to_owned(),
                 message: "approval required".to_owned(),
-                ..Chau7RepoEvent::default()
             }],
         );
 

@@ -4050,15 +4050,9 @@ mod tests {
                     tab_statuses: BTreeMap::from([(
                         "tab-1".to_owned(),
                         crate::chau7::Chau7TabStatus {
-                            tab_id: "tab-1".to_owned(),
                             title: "Claude".to_owned(),
-                            cwd: "/Users/test/Aetower".to_owned(),
-                            repo_root: Some("/Users/test/Aetower".to_owned()),
                             git_branch: Some("master".to_owned()),
-                            ai_provider: Some("claude".to_owned()),
-                            ai_session_id: Some("session-1".to_owned()),
                             status: "running".to_owned(),
-                            active_app: Some("Claude".to_owned()),
                             is_at_prompt: true,
                             shell_loading: false,
                             cto_active: true,
@@ -4068,21 +4062,15 @@ mod tests {
                     runtime_sessions: BTreeMap::from([(
                         "session-1".to_owned(),
                         crate::chau7::Chau7RuntimeSessionStatus {
-                            session_id: "session-1".to_owned(),
                             state: "ready".to_owned(),
                             turn_count: 3,
                             last_completed_turn_id: Some("t_3".to_owned()),
                             last_exit_reason: Some("error".to_owned()),
                             pending_approval: Some(crate::chau7::Chau7PendingApproval {
-                                id: "approval-1".to_owned(),
                                 description: "Claude needs your permission to use Bash".to_owned(),
                             }),
                             active_run: Some(crate::chau7::Chau7ActiveRun {
                                 duration_so_far_ms: 438_172,
-                                provider: "claude".to_owned(),
-                                run_id: "run-1".to_owned(),
-                                session_id: "session-1".to_owned(),
-                                started_at: "2026-04-08T14:22:26.696Z".to_owned(),
                             }),
                             child_session_count: 2,
                         },
@@ -4091,12 +4079,7 @@ mod tests {
                         "/Users/test/Aetower".to_owned(),
                         vec![crate::chau7::Chau7RepoEvent {
                             event_type: "permission".to_owned(),
-                            timestamp: "2026-04-08T13:43:55.170Z".to_owned(),
                             message: "Claude needs your permission to use Write".to_owned(),
-                            session_id: Some("session-1".to_owned()),
-                            tab_id: Some("tab-1".to_owned()),
-                            source: "claude_code".to_owned(),
-                            tool: "Claude".to_owned(),
                         }],
                     )]),
                 }),
