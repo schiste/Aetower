@@ -4,4 +4,5 @@
 //! of MCP tools.
 
 pub(crate) mod history;
+pub(crate) mod process;
 pub(crate) mod snapshot;
