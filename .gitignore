@@ -4,3 +4,4 @@
 /rust/target
 .DS_Store
 tmp/
+.chau7/
