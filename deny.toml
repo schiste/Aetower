@@ -4,7 +4,7 @@ targets = []
 [advisories]
 version = 2
 ignore = [
-  { id = "RUSTSEC-2025-0141", reason = "History snapshots are still persisted with bincode v1; removing it requires an explicit on-disk migration path rather than a silent dependency swap." },
+  { id = "RUSTSEC-2025-0141", reason = "bincode v1 still encodes history.db snapshot blobs in aetower-persistence; migration plan is tracked in docs/bincode-migration-plan.md." },
 ]
 
 [bans]
