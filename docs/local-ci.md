@@ -149,6 +149,19 @@ This starts a temporary in-process HTTP receiver through `aetower-bench`, verifi
 - remote or floating dependencies
 - suspicious utility dumping grounds
 
+## Reclaiming local disk
+
+Cargo and SwiftPM caches plus the packaged app and profiling tmp dirs can
+accumulate several GB. Inspect or delete them with:
+
+```sh
+sh scripts/clean-local.sh          # dry-run, reports sizes
+sh scripts/clean-local.sh --yes    # actually delete
+```
+
+The script targets `tmp/`, `dist/`, `rust/target/`, and `macos/.build/`. It
+never touches user state under `~/Library/Application Support/Aetower/`.
+
 ## Tooling expectations
 
 The local gates now assume these tools are installed:
