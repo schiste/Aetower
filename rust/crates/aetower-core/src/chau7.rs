@@ -181,13 +181,6 @@ pub struct Chau7RuntimeInfo {
     pub build_channel: Option<String>,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Default, Deserialize)]
-struct Chau7SessionChild {
-    #[serde(default)]
-    pub session_id: String,
-}
-
 /// Combined snapshot cached by the adapter on each refresh cycle.
 #[derive(Debug, Clone, Default)]
 pub struct Chau7Snapshot {
