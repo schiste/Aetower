@@ -3,6 +3,7 @@
 //! Each submodule contains the `build_*` functions backing a related group
 //! of MCP tools.
 
+pub(crate) mod diagnostics;
 pub(crate) mod history;
 pub(crate) mod process;
 pub(crate) mod snapshot;
