@@ -36,6 +36,13 @@ pub(crate) const SOCKET_DIR_MODE: u32 = 0o700;
 pub(crate) const SOCKET_FILE_MODE: u32 = 0o600;
 const MCP_READ_TIMEOUT: Duration = Duration::from_millis(250);
 const PROXY_POLL_TIMEOUT: Duration = Duration::from_millis(250);
+// Exit a helper that has seen no MCP traffic in either direction for this
+// long. Real interactive use (Claude Code, Codex, Chau7) keeps a steady cadence
+// well under 5 min, so this fires only on abandoned helpers — clients that
+// connected, then crashed or were force-killed without propagating exit. Without
+// this, abandoned helpers wait for `parent_exited` to fire, which only catches
+// the original parent termination, missing intermediate detached states.
+const PROXY_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MessageFraming {
@@ -334,9 +341,16 @@ fn proxy_stdio_to_socket_polling(socket_path: impl AsRef<Path>) -> Result<(), St
     let mut write_half_open = true;
     let mut stdin_buffer = [0u8; 8192];
     let mut socket_buffer = [0u8; 8192];
+    let mut last_activity = std::time::Instant::now();
 
     loop {
         if parent_exited(original_parent_pid) {
+            break;
+        }
+        if last_activity.elapsed() >= PROXY_IDLE_TIMEOUT {
+            // Helper has been idle for too long; exit cleanly so abandoned
+            // helpers don't accumulate until the engine's stale-helper detector
+            // (15 min orphan + age) catches them.
             break;
         }
 
@@ -390,6 +404,7 @@ fn proxy_stdio_to_socket_polling(socket_path: impl AsRef<Path>) -> Result<(), St
                     }
                 }
                 Ok(bytes_read) => {
+                    last_activity = std::time::Instant::now();
                     let mut written = 0;
                     while written < bytes_read {
                         match stream.write(&stdin_buffer[written..bytes_read]) {
@@ -420,6 +435,7 @@ fn proxy_stdio_to_socket_polling(socket_path: impl AsRef<Path>) -> Result<(), St
                 match stream.read(&mut socket_buffer) {
                     Ok(0) => return Ok(()),
                     Ok(bytes_read) => {
+                        last_activity = std::time::Instant::now();
                         output
                             .write_all(&socket_buffer[..bytes_read])
                             .map_err(|err| format!("write MCP socket to stdout: {err}"))?;
