@@ -245,6 +245,10 @@ pub struct Engine {
     persistence: Arc<Mutex<Option<aetower_persistence::HistoryStore>>>,
     telemetry: Arc<Mutex<TelemetryExporter>>,
     history_maintenance_cancel: Arc<AtomicBool>,
+    // Set by `emit_host_incident_snapshots` when host memory pressure is
+    // critical. Causes the maintenance worker to skip its remaining sleep and
+    // run an immediate pruning pass instead of waiting for the next cycle.
+    history_maintenance_wake: Arc<AtomicBool>,
     system_marker_generation: Arc<AtomicU64>,
     diagnostics: DiagnosticsStore,
     running: Arc<AtomicBool>,
@@ -321,6 +325,7 @@ impl Engine {
             persistence: Arc::new(Mutex::new(persistence)),
             telemetry: Arc::new(Mutex::new(telemetry_exporter)),
             history_maintenance_cancel: Arc::new(AtomicBool::new(false)),
+            history_maintenance_wake: Arc::new(AtomicBool::new(false)),
             system_marker_generation: Arc::new(AtomicU64::new(0)),
             diagnostics,
             running: Arc::new(AtomicBool::new(false)),
@@ -344,6 +349,7 @@ impl Engine {
         let persistence = Arc::clone(&self.persistence);
         let running = Arc::clone(&self.running);
         let diagnostics = self.diagnostics.clone();
+        let history_maintenance_wake_clone = Arc::clone(&self.history_maintenance_wake);
         self.worker = Some(thread::spawn(move || {
             let mut collector = Collector::new();
             let mut gpu_sample = aetower_gpu::GpuSample::default();
@@ -581,6 +587,7 @@ impl Engine {
                     &diagnostics,
                     &guard.latest_snapshot,
                     &mut host_incident_state,
+                    Some(&history_maintenance_wake_clone),
                 );
                 // Persist snapshot (best-effort, throttled by write_interval).
                 let persist_started = Instant::now();
@@ -945,8 +952,13 @@ impl Engine {
         let diagnostics = self.diagnostics.clone();
         let running = Arc::clone(&self.running);
         let maintenance_cancel = Arc::clone(&self.history_maintenance_cancel);
+        let maintenance_wake = Arc::clone(&self.history_maintenance_wake);
         self.history_maintenance_worker = Some(thread::spawn(move || {
-            sleep_with_stop(&running, HISTORY_MAINTENANCE_INITIAL_DELAY);
+            sleep_until_wake_or_stop(
+                &running,
+                &maintenance_wake,
+                HISTORY_MAINTENANCE_INITIAL_DELAY,
+            );
             while running.load(Ordering::SeqCst) {
                 let started = Instant::now();
                 let policy = default_history_retention_policy();
@@ -1015,7 +1027,7 @@ impl Engine {
                     }
                     None => {}
                 }
-                sleep_with_stop(&running, next_sleep);
+                sleep_until_wake_or_stop(&running, &maintenance_wake, next_sleep);
             }
         }));
 
@@ -1786,6 +1798,23 @@ fn sleep_with_stop(running: &AtomicBool, duration: Duration) {
     }
 }
 
+/// Variant of `sleep_with_stop` that also breaks early when the wake flag is
+/// set, and clears the flag on consumption. Used by the history maintenance
+/// worker so host-memory-pressure events can shortcut its scheduled sleep.
+fn sleep_until_wake_or_stop(running: &AtomicBool, wake: &AtomicBool, duration: Duration) {
+    let started_at = Instant::now();
+    while running.load(Ordering::SeqCst) && started_at.elapsed() < duration {
+        if wake.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        let remaining = duration.saturating_sub(started_at.elapsed());
+        thread::sleep(remaining.min(Duration::from_millis(250)));
+    }
+    // Consume any wake signal that arrived during the natural sleep so the
+    // next cycle starts from a clean state.
+    wake.store(false, Ordering::SeqCst);
+}
+
 fn should_emit_runtime_heartbeat(last_heartbeat_millis: u64, captured_at_millis: u64) -> bool {
     last_heartbeat_millis == 0
         || captured_at_millis.saturating_sub(last_heartbeat_millis)
@@ -1838,6 +1867,7 @@ fn emit_host_incident_snapshots(
     diagnostics: &DiagnosticsStore,
     snapshot: &SystemSnapshot,
     state: &mut BTreeMap<&'static str, PersistedHostIncidentState>,
+    history_maintenance_wake: Option<&Arc<AtomicBool>>,
 ) {
     let incidents = collect_host_incidents(snapshot);
     let captured_at_millis = snapshot.captured_at_millis;
@@ -1846,6 +1876,18 @@ fn emit_host_incident_snapshots(
         .map(|incident| incident.key)
         .collect::<Vec<_>>();
     state.retain(|key, _| active_keys.iter().any(|active| active == key));
+
+    // If host memory pressure is critical, ask the history maintenance worker
+    // to wake early instead of waiting for its next scheduled cycle. Pruning
+    // history.db while the host is in critical pressure both relieves on-disk
+    // size and frees the compressed/cached pages backing past query results.
+    if let Some(wake) = history_maintenance_wake
+        && incidents.iter().any(|incident| {
+            incident.key == "memory-pressure" && incident.severity == DiagnosticsLevel::Error
+        })
+    {
+        wake.store(true, Ordering::SeqCst);
+    }
 
     for incident in incidents {
         let suppressed_count = match state.get_mut(incident.key) {
@@ -2394,13 +2436,13 @@ mod tests {
             ..SystemSnapshot::default()
         };
 
-        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state);
+        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state, None);
         snapshot.sequence = 2;
         snapshot.captured_at_millis = 2_000;
-        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state);
+        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state, None);
         snapshot.sequence = 3;
         snapshot.captured_at_millis = 61 * 60 * 1000;
-        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state);
+        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state, None);
 
         let events = diagnostics.recent(10);
         assert_eq!(events.len(), 2);
