@@ -37,7 +37,14 @@ const DOCKER_FETCH_BUDGET: Duration = Duration::from_millis(750);
 // no quiet windows for Chau7 to GC, persist async, or unload state. 30 s cuts
 // observer-induced pressure by 3x while keeping snapshot freshness reasonable.
 const CHAU7_REFRESH_INTERVAL_MILLIS: u64 = 30_000;
-const CHAU7_DEEP_REFRESH_INTERVAL_MILLIS: u64 = 120_000;
+// Deep refresh used to run every 4th light tick (every 120 s). Since
+// `Chau7Snapshot::inherit_deep_context_from` carries runtime_info, tab_statuses,
+// runtime_sessions, repo_stats, repo_events, and recent_runs forward across
+// light fetches, deep refreshes are only needed to occasionally re-seed that
+// state — not to keep the UI accurate. Stretching to 300 s cuts deep refreshes
+// from 30/h to 12/h, eliminating ~36% of the adapter's RPC traffic and the
+// CPU spikes that show up in `aetower_runtime_burst_explanation`.
+const CHAU7_DEEP_REFRESH_INTERVAL_MILLIS: u64 = 300_000;
 const CHAU7_LIGHT_MAX_AI_TABS: usize = 4;
 const CHAU7_DEEP_MAX_AI_TABS: usize = 8;
 const CHAU7_DEEP_MAX_REPOS: usize = 3;
