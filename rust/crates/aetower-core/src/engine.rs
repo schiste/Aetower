@@ -32,6 +32,11 @@ const ADAPTER_IDLE_SLEEP: Duration = Duration::from_secs(5);
 const TELEMETRY_DISABLED_SLEEP: Duration = Duration::from_secs(30);
 const HISTORY_MAINTENANCE_INITIAL_DELAY: Duration = Duration::from_secs(45);
 const HISTORY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(10 * 60);
+// When a maintenance pass finishes and the store is still above the soft cap,
+// shorten the next interval so the pruner converges quickly instead of waiting
+// a full 10 minutes. Without this, a write-heavy interval can push the store
+// past HISTORY_STORE_WARNING_BYTES between two normal cycles.
+const HISTORY_MAINTENANCE_AGGRESSIVE_INTERVAL: Duration = Duration::from_secs(60);
 const RUNTIME_HEARTBEAT_INTERVAL_MILLIS: u64 = 10 * 60 * 1000;
 const DEFAULT_HISTORY_RETENTION_MILLIS: u64 = 12 * 60 * 60 * 1000;
 const EMERGENCY_HISTORY_RETENTION_MILLIS: u64 = 3 * 60 * 60 * 1000;
@@ -944,10 +949,11 @@ impl Engine {
             sleep_with_stop(&running, HISTORY_MAINTENANCE_INITIAL_DELAY);
             while running.load(Ordering::SeqCst) {
                 let started = Instant::now();
+                let policy = default_history_retention_policy();
                 let result = if let Some(guard) = persistence.try_lock() {
                     guard.as_ref().map(|store| {
                         store.maintain_with_policy_cancellable(
-                            default_history_retention_policy(),
+                            policy,
                             Arc::clone(&maintenance_cancel),
                         )
                     })
@@ -955,8 +961,16 @@ impl Engine {
                     None
                 };
                 let elapsed_millis = started.elapsed().as_millis();
+                // Default cadence is HISTORY_MAINTENANCE_INTERVAL. Only when
+                // the post-maintenance store size still exceeds the soft cap
+                // do we accelerate to the aggressive interval so the pruner
+                // catches up before the warning threshold is reached.
+                let mut next_sleep = HISTORY_MAINTENANCE_INTERVAL;
                 match result {
                     Some(Ok(report)) => {
+                        if report.store_bytes_after > policy.soft_max_store_bytes {
+                            next_sleep = HISTORY_MAINTENANCE_AGGRESSIVE_INTERVAL;
+                        }
                         if report.cancelled {
                             diagnostics.emit(
                                 DiagnosticsEvent::builder(
@@ -1001,7 +1015,7 @@ impl Engine {
                     }
                     None => {}
                 }
-                sleep_with_stop(&running, HISTORY_MAINTENANCE_INTERVAL);
+                sleep_with_stop(&running, next_sleep);
             }
         }));
 
