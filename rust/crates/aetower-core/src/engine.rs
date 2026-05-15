@@ -35,7 +35,12 @@ const HISTORY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const RUNTIME_HEARTBEAT_INTERVAL_MILLIS: u64 = 10 * 60 * 1000;
 const DEFAULT_HISTORY_RETENTION_MILLIS: u64 = 12 * 60 * 60 * 1000;
 const EMERGENCY_HISTORY_RETENTION_MILLIS: u64 = 3 * 60 * 60 * 1000;
-const HISTORY_SOFT_MAX_BYTES: u64 = 512 * 1024 * 1024;
+// Soft cap is 384 MB (25% headroom below HISTORY_STORE_WARNING_BYTES in
+// aetower-mcp). The pruner needs to begin reclaiming storage *before* the
+// MCP diagnostics warning fires at 512 MB, not at the same threshold —
+// otherwise the alarm trips while maintenance is still scheduled, and the
+// store keeps growing until the next 10-minute maintenance cycle.
+const HISTORY_SOFT_MAX_BYTES: u64 = 384 * 1024 * 1024;
 const HISTORY_HARD_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 const HISTORY_MAX_WAL_BYTES: u64 = 32 * 1024 * 1024;
 const HISTORY_TARGET_SNAPSHOT_COUNT: u64 = 2_000;
