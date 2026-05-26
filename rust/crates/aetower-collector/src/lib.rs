@@ -101,12 +101,6 @@ pub struct CollectorTimings {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-struct NetworkTotals {
-    received: u64,
-    transmitted: u64,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
 struct ProcessCounterSample {
     start_time_millis: u64,
     wakeups: u64,
@@ -158,7 +152,6 @@ pub struct Collector {
     config: CollectorConfig,
     system: System,
     networks: Networks,
-    previous_network_totals: NetworkTotals,
     self_pid: u32,
     process_metadata_tick: u8,
     host_environment_refresh_tick: u8,
@@ -199,7 +192,6 @@ impl Collector {
             config: CollectorConfig::default(),
             system,
             networks,
-            previous_network_totals: NetworkTotals::default(),
             self_pid: std::process::id(),
             process_metadata_tick: 0,
             host_environment_refresh_tick: 0,
@@ -303,18 +295,12 @@ impl Collector {
             (self.bluetooth_refresh_tick + 1) % BLUETOOTH_REFRESH_INTERVAL_TICKS;
         let storage_refresh_millis = storage_refresh_started.elapsed().as_secs_f64() * 1000.0;
 
-        let mut network_totals = NetworkTotals::default();
-        for (_name, data) in &self.networks {
-            network_totals.received = network_totals.received.saturating_add(data.received());
-            network_totals.transmitted = network_totals
-                .transmitted
-                .saturating_add(data.transmitted());
-        }
         let network_interfaces = build_network_interface_snapshots(
             &self.networks,
             &self.cached_network_interfaces,
             self.first_network_tick,
         );
+        let network_first_tick = self.first_network_tick;
         self.first_network_tick = false;
 
         let metadata_refresh =
@@ -371,8 +357,12 @@ impl Collector {
                             .unwrap_or(0),
                     )
                 };
-                let disk_read_total = process.disk_usage().read_bytes;
-                let disk_write_total = process.disk_usage().written_bytes;
+                // Use the cumulative byte counters; subtracting the previous
+                // tick's cumulative value below yields a true per-tick delta.
+                // (`read_bytes` is itself only the delta since the last refresh,
+                // so differencing it double-counted and collapsed steady I/O to ~0.)
+                let disk_read_total = process.disk_usage().total_read_bytes;
+                let disk_write_total = process.disk_usage().total_written_bytes;
 
                 let tick_seconds = TICK_SECONDS;
                 let wakeups_per_second = previous
@@ -515,12 +505,31 @@ impl Collector {
         }
 
         let post_process_started = std::time::Instant::now();
-        let host_disk_read_bps = processes.iter().fold(0u64, |total, process| {
+        // Per-process `disk_read_bytes` is the bytes moved during the last tick;
+        // divide the host total by the tick length to report a per-second rate.
+        let host_disk_read_bytes = processes.iter().fold(0u64, |total, process| {
             total.saturating_add(process.disk_read_bytes)
         });
-        let host_disk_write_bps = processes.iter().fold(0u64, |total, process| {
+        let host_disk_write_bytes = processes.iter().fold(0u64, |total, process| {
             total.saturating_add(process.disk_write_bytes)
         });
+        let host_disk_read_bps = (host_disk_read_bytes as f64 / TICK_SECONDS as f64) as u64;
+        let host_disk_write_bps = (host_disk_write_bytes as f64 / TICK_SECONDS as f64) as u64;
+        // Host network throughput: sum the per-interface byte deltas straight from
+        // `sysinfo` (each is bytes-since-last-refresh = one tick) and convert to
+        // bytes/sec. Computed directly from `self.networks` rather than from the
+        // per-interface snapshots, which stay empty until interface metadata is
+        // first cached. Zero on the first tick, where the elapsed interval is unknown.
+        let (host_network_receive_bps, host_network_send_bps): (u64, u64) = if network_first_tick {
+            (0, 0)
+        } else {
+            let received: u64 = self.networks.values().map(|data| data.received()).sum();
+            let transmitted: u64 = self.networks.values().map(|data| data.transmitted()).sum();
+            (
+                (received as f64 / TICK_SECONDS as f64) as u64,
+                (transmitted as f64 / TICK_SECONDS as f64) as u64,
+            )
+        };
 
         let compressed_memory_bytes = platform::compressed_memory_bytes().unwrap_or(0);
         let host_wakeups_per_second = processes
@@ -535,12 +544,8 @@ impl Collector {
             compressed_memory_bytes,
             disk_read_bps: host_disk_read_bps,
             disk_write_bps: host_disk_write_bps,
-            network_receive_bps: network_totals
-                .received
-                .saturating_sub(self.previous_network_totals.received),
-            network_send_bps: network_totals
-                .transmitted
-                .saturating_sub(self.previous_network_totals.transmitted),
+            network_receive_bps: host_network_receive_bps,
+            network_send_bps: host_network_send_bps,
             wakeups_per_second: host_wakeups_per_second,
             thermal_state: self.cached_host_environment.thermal_state,
             on_battery: self.cached_host_environment.on_battery,
@@ -553,7 +558,6 @@ impl Collector {
             bluetooth_devices: self.cached_bluetooth_devices.clone(),
         };
         let post_process_millis = post_process_started.elapsed().as_secs_f64() * 1000.0;
-        self.previous_network_totals = network_totals;
 
         RawSnapshot {
             host,
