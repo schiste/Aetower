@@ -297,11 +297,14 @@ public final class AppState {
                 machineFriction: [],
                 cpuPercent: [],
                 memoryUsedBytes: [],
+                memoryPressureScore: [],
                 diskActivityBps: [],
                 networkActivityBps: [],
                 wakeupsPerSecond: [],
                 compressedMemoryBytes: [],
-                aiAgentFriction: []
+                aiAgentFriction: [],
+                gpuPercent: [],
+                gpuMemoryBytes: []
             ),
             capabilities: [],
             entities: [],

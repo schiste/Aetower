@@ -4547,23 +4547,29 @@ public struct HostTrend {
     public var machineFriction: [Float]
     public var cpuPercent: [Float]
     public var memoryUsedBytes: [UInt64]
+    public var memoryPressureScore: [Float]
     public var diskActivityBps: [UInt64]
     public var networkActivityBps: [UInt64]
     public var wakeupsPerSecond: [Float]
     public var compressedMemoryBytes: [UInt64]
     public var aiAgentFriction: [Float]
+    public var gpuPercent: [Float]
+    public var gpuMemoryBytes: [UInt64]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(machineFriction: [Float], cpuPercent: [Float], memoryUsedBytes: [UInt64], diskActivityBps: [UInt64], networkActivityBps: [UInt64], wakeupsPerSecond: [Float], compressedMemoryBytes: [UInt64], aiAgentFriction: [Float]) {
+    public init(machineFriction: [Float], cpuPercent: [Float], memoryUsedBytes: [UInt64], memoryPressureScore: [Float], diskActivityBps: [UInt64], networkActivityBps: [UInt64], wakeupsPerSecond: [Float], compressedMemoryBytes: [UInt64], aiAgentFriction: [Float], gpuPercent: [Float], gpuMemoryBytes: [UInt64]) {
         self.machineFriction = machineFriction
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
+        self.memoryPressureScore = memoryPressureScore
         self.diskActivityBps = diskActivityBps
         self.networkActivityBps = networkActivityBps
         self.wakeupsPerSecond = wakeupsPerSecond
         self.compressedMemoryBytes = compressedMemoryBytes
         self.aiAgentFriction = aiAgentFriction
+        self.gpuPercent = gpuPercent
+        self.gpuMemoryBytes = gpuMemoryBytes
     }
 }
 
@@ -4583,6 +4589,9 @@ extension HostTrend: Equatable, Hashable {
         if lhs.memoryUsedBytes != rhs.memoryUsedBytes {
             return false
         }
+        if lhs.memoryPressureScore != rhs.memoryPressureScore {
+            return false
+        }
         if lhs.diskActivityBps != rhs.diskActivityBps {
             return false
         }
@@ -4598,6 +4607,12 @@ extension HostTrend: Equatable, Hashable {
         if lhs.aiAgentFriction != rhs.aiAgentFriction {
             return false
         }
+        if lhs.gpuPercent != rhs.gpuPercent {
+            return false
+        }
+        if lhs.gpuMemoryBytes != rhs.gpuMemoryBytes {
+            return false
+        }
         return true
     }
 
@@ -4605,11 +4620,14 @@ extension HostTrend: Equatable, Hashable {
         hasher.combine(machineFriction)
         hasher.combine(cpuPercent)
         hasher.combine(memoryUsedBytes)
+        hasher.combine(memoryPressureScore)
         hasher.combine(diskActivityBps)
         hasher.combine(networkActivityBps)
         hasher.combine(wakeupsPerSecond)
         hasher.combine(compressedMemoryBytes)
         hasher.combine(aiAgentFriction)
+        hasher.combine(gpuPercent)
+        hasher.combine(gpuMemoryBytes)
     }
 }
 
@@ -4625,11 +4643,14 @@ public struct FfiConverterTypeHostTrend: FfiConverterRustBuffer {
                 machineFriction: FfiConverterSequenceFloat.read(from: &buf), 
                 cpuPercent: FfiConverterSequenceFloat.read(from: &buf), 
                 memoryUsedBytes: FfiConverterSequenceUInt64.read(from: &buf), 
+                memoryPressureScore: FfiConverterSequenceFloat.read(from: &buf), 
                 diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
                 networkActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
                 wakeupsPerSecond: FfiConverterSequenceFloat.read(from: &buf), 
                 compressedMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf), 
-                aiAgentFriction: FfiConverterSequenceFloat.read(from: &buf)
+                aiAgentFriction: FfiConverterSequenceFloat.read(from: &buf), 
+                gpuPercent: FfiConverterSequenceFloat.read(from: &buf), 
+                gpuMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf)
         )
     }
 
@@ -4637,11 +4658,14 @@ public struct FfiConverterTypeHostTrend: FfiConverterRustBuffer {
         FfiConverterSequenceFloat.write(value.machineFriction, into: &buf)
         FfiConverterSequenceFloat.write(value.cpuPercent, into: &buf)
         FfiConverterSequenceUInt64.write(value.memoryUsedBytes, into: &buf)
+        FfiConverterSequenceFloat.write(value.memoryPressureScore, into: &buf)
         FfiConverterSequenceUInt64.write(value.diskActivityBps, into: &buf)
         FfiConverterSequenceUInt64.write(value.networkActivityBps, into: &buf)
         FfiConverterSequenceFloat.write(value.wakeupsPerSecond, into: &buf)
         FfiConverterSequenceUInt64.write(value.compressedMemoryBytes, into: &buf)
         FfiConverterSequenceFloat.write(value.aiAgentFriction, into: &buf)
+        FfiConverterSequenceFloat.write(value.gpuPercent, into: &buf)
+        FfiConverterSequenceUInt64.write(value.gpuMemoryBytes, into: &buf)
     }
 }
 
