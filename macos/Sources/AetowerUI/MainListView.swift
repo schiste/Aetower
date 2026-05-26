@@ -305,7 +305,7 @@ private struct EntityRow: View {
                 .lineLimit(1)
                 .frame(width: 64, alignment: .center)
 
-            Text(formatBytes(entity.metrics.memoryResidentBytes))
+            Text(formatBytes(entityEffectiveMemoryBytes(entity)))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -751,7 +751,7 @@ private func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup]
             root: root,
             members: sortedMembers,
             cpuPercent: members.reduce(0) { $0 + $1.metrics.cpuPercent },
-            memoryBytes: members.reduce(0) { $0 + $1.metrics.memoryResidentBytes },
+            memoryBytes: members.reduce(0) { $0 + entityEffectiveMemoryBytes($1) },
             wakeupsPerSecond: members.reduce(0) { $0 + $1.metrics.wakeupsPerSecond },
             diskBps: members.reduce(0) { $0 + $1.metrics.diskReadBps + $1.metrics.diskWriteBps },
             networkBps: members.reduce(0) { $0 + $1.metrics.networkReceiveBps + $1.metrics.networkSendBps },
@@ -1319,9 +1319,9 @@ public struct MainListView: View {
             fallback: Double(host.cpuPercent)
         )
         let memorySamples = monitorTrendSamples(
-            state.snapshot.hostTrend.memoryUsedBytes.map(Double.init),
-            history: monitorHostHistorySamples { Double($0.memoryUsedBytes) },
-            fallback: Double(host.memoryUsedBytes)
+            state.snapshot.hostTrend.memoryPressureScore.map(Double.init),
+            history: monitorHostHistorySamples { hostMemoryPressureScore($0) },
+            fallback: hostMemoryPressureScore(host)
         )
         let diskSamples = monitorTrendSamples(
             state.snapshot.hostTrend.diskActivityBps.map(Double.init),
@@ -1339,13 +1339,13 @@ public struct MainListView: View {
             fallback: Double(host.wakeupsPerSecond)
         )
         let gpuPercentSamples = monitorTrendSamples(
-            monitorHostHistorySamples { Double($0.gpuPercent) },
-            history: [],
+            state.snapshot.hostTrend.gpuPercent.map(Double.init),
+            history: monitorHostHistorySamples { Double($0.gpuPercent) },
             fallback: Double(host.gpuPercent)
         )
         let gpuMemorySamples = monitorTrendSamples(
-            monitorHostHistorySamples { Double($0.gpuMemoryBytes) },
-            history: [],
+            state.snapshot.hostTrend.gpuMemoryBytes.map(Double.init),
+            history: monitorHostHistorySamples { Double($0.gpuMemoryBytes) },
             fallback: Double(host.gpuMemoryBytes)
         )
 
@@ -1373,11 +1373,13 @@ public struct MainListView: View {
             TrendMetricCard(
                 title: "Memory",
                 value: formatBytes(host.memoryUsedBytes),
-                subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap · \(trendWindowLabel(sampleCount: memorySamples.count))",
+                subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap · pressure trend",
                 samples: memorySamples,
                 style: .memory,
                 valueAppearance: monitorMemoryAppearance(host),
-                sampleValueFormatter: { formatBytes(UInt64(max($0, 0))) },
+                // Samples are the 0–100 memory pressure score, not bytes — label
+                // the hover stats with /100 so they don't read as bytes/percent.
+                sampleValueFormatter: { String(format: "%.0f/100", $0) },
                 minHeight: 124
             )
             TrendMetricCard(
@@ -1742,7 +1744,7 @@ public struct MainListView: View {
         case .cpu:
             return "\(entity.displayName) is currently highest by CPU usage at \(String(format: "%.1f%%", entity.metrics.cpuPercent))."
         case .memory:
-            return "\(entity.displayName) is currently highest by resident-memory load at \(String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes)))."
+            return "\(entity.displayName) is currently highest by charged-memory load at \(String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes)))."
         case .wakeups:
             return "\(entity.displayName) is currently highest by wakeup rate at \(formatWakeups(entity.metrics.wakeupsPerSecond))."
         case .processCount:
@@ -1773,7 +1775,7 @@ private func compareEntities(_ left: EntitySnapshot, _ right: EntitySnapshot, by
     case .cpu:
         return Double(left.metrics.cpuPercent) > Double(right.metrics.cpuPercent)
     case .memory:
-        return left.metrics.memoryResidentBytes > right.metrics.memoryResidentBytes
+        return entityEffectiveMemoryBytes(left) > entityEffectiveMemoryBytes(right)
     case .wakeups:
         return Double(left.metrics.wakeupsPerSecond) > Double(right.metrics.wakeupsPerSecond)
     case .processCount:

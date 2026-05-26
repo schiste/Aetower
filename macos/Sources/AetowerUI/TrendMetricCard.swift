@@ -18,6 +18,16 @@ enum TrendMetricStyle {
         case .energy: return AetowerDesign.Tone.energy
         }
     }
+
+    /// Rate-style metrics (disk / network) are mostly-idle with occasional large
+    /// bursts, so their sparklines use a log scale to stay legible. Bounded
+    /// metrics (CPU %, friction/memory scores) stay linear.
+    var usesLogScale: Bool {
+        switch self {
+        case .disk, .network: return true
+        case .friction, .cpu, .memory, .energy: return false
+        }
+    }
 }
 
 enum TrendMetricValueAppearance {
@@ -87,6 +97,7 @@ struct TrendMetricCard: View {
         MetricCardSurface(
             tone: style.color,
             samples: samples,
+            logScale: style.usesLogScale,
             minHeight: minHeight,
             hoverX: hoverX
         ) {
