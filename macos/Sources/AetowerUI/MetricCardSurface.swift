@@ -1,10 +1,8 @@
-import Foundation
 import SwiftUI
 
 struct MetricCardSurface<OverlayContent: View, HoverOverlay: View>: View {
     let tone: Color
     let samples: [Double]
-    let logScale: Bool
     let strokeOpacity: Double
     let fillOpacity: Double
     let sparklineOpacity: Double
@@ -17,7 +15,6 @@ struct MetricCardSurface<OverlayContent: View, HoverOverlay: View>: View {
     init(
         tone: Color,
         samples: [Double],
-        logScale: Bool = false,
         strokeOpacity: Double = 0.20,
         fillOpacity: Double = 0.12,
         sparklineOpacity: Double = 0.85,
@@ -29,7 +26,6 @@ struct MetricCardSurface<OverlayContent: View, HoverOverlay: View>: View {
     ) {
         self.tone = tone
         self.samples = samples
-        self.logScale = logScale
         self.strokeOpacity = strokeOpacity
         self.fillOpacity = fillOpacity
         self.sparklineOpacity = sparklineOpacity
@@ -47,7 +43,7 @@ struct MetricCardSurface<OverlayContent: View, HoverOverlay: View>: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(tone.opacity(strokeOpacity), lineWidth: 1)
 
-            MetricCardSparkline(samples: samples, color: tone, hoverX: hoverX, logScale: logScale)
+            MetricCardSparkline(samples: samples, color: tone, hoverX: hoverX)
                 .padding(6)
                 .opacity(sparklineOpacity)
 
@@ -65,7 +61,6 @@ private struct MetricCardSparkline: View {
     let samples: [Double]
     let color: Color
     let hoverX: CGFloat?
-    var logScale: Bool = false
     @State private var drawProgress: CGFloat = 0
 
     var body: some View {
@@ -147,18 +142,20 @@ private struct MetricCardSparkline: View {
     }
 
     private var normalizedSamples: [Double] {
-        // Byte-rate series (disk / network) are mostly-idle with occasional large
-        // bursts — a wide dynamic range that linear min/max scaling renders as a
-        // flat line (the bursts either squash the typical range to a sliver, or,
-        // when most samples are zero, collapse the range entirely). A log scale
-        // (log1p) maps idle→0, typical activity→~0.8, and spikes→1.0 so all of it
-        // is visible at once. Bounded metrics (CPU %, 0–100 scores) keep linear
-        // scaling, where every value already spans the card naturally.
-        let values = logScale ? samples.map { $0 > 0 ? log(1.0 + $0) : 0 } : samples
-        guard let minimum = values.min(), let maximum = values.max() else { return [] }
-        let range = maximum - minimum
-        guard range > 0.000_1 else { return values.map { _ in 0.5 } }
-        return values.map { ($0 - minimum) / range }
+        // Normalize linearly, but clamp the top of the range at the 95th
+        // percentile so a single burst (common in disk/network series) doesn't
+        // squash all the ordinary variation into a flat sliver. Fall back to the
+        // true max when that percentile collapses onto the floor (e.g. a mostly
+        // idle/zero series) so a sparse signal still shows. Bounded metrics
+        // (CPU %, 0–100 scores) have no outliers, so the percentile ≈ max and
+        // this stays equivalent to plain min/max scaling.
+        guard let minimum = samples.min(), let maximum = samples.max() else { return [] }
+        let sorted = samples.sorted()
+        let p95 = sorted[Int((Double(sorted.count) - 1.0) * 0.95)]
+        let ceiling = p95 > minimum ? p95 : maximum
+        let range = ceiling - minimum
+        guard range > 0.000_1 else { return samples.map { _ in 0.5 } }
+        return samples.map { Swift.min(1.0, ($0 - minimum) / range) }
     }
 
     private func point(for value: Double, index: Int, count: Int, in rect: CGRect) -> CGPoint {
