@@ -5,6 +5,7 @@ import AetowerBridge
 public struct SettingsView: View {
     let state: AppState
     let settings: SettingsStore
+    @Environment(UpdaterController.self) private var updater
     @FocusState private var focusedField: SettingsField?
     @State private var applyConfirmation: String?
 
@@ -273,6 +274,24 @@ public struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(telemetryVerificationStatus.contains("failed") ? .orange : .secondary)
                         }
+                    }
+                }
+
+                GroupBox("Updates") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(updater.statusMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Button("Check for Updates") {
+                            updater.checkForUpdates()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!updater.isConfigured)
+
+                        Text("Direct-download builds use Sparkle for signed update checks. Local development builds stay disabled until the packaged app includes an appcast URL and Sparkle public key.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
 

@@ -1,5 +1,6 @@
 import SwiftUI
 import AetowerUI
+import Sparkle
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -20,6 +21,7 @@ struct AetowerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var state = AppState()
     @State private var settings = SettingsStore()
+    @State private var updater = UpdaterController()
     @State private var menuBarExtraInserted = false
     @State private var hudPanel: CompactHUDPanel?
     @State private var menuBarDisplayTitle = "Aetower"
@@ -84,6 +86,7 @@ struct AetowerApp: App {
                     }
 
                 SettingsView(state: state, settings: settings)
+                    .environment(updater)
                     .tabItem {
                         Label("Settings", systemImage: "slider.horizontal.3")
                     }
@@ -142,6 +145,12 @@ struct AetowerApp: App {
                     hudPanel?.toggle()
                 }
                 .keyboardShortcut("h", modifiers: [.command, .shift])
+            }
+            CommandMenu("Updates") {
+                Button("Check for Updates…") {
+                    updater.checkForUpdates()
+                }
+                .disabled(!updater.isConfigured)
             }
         }
         MenuBarExtra(menuBarDisplayTitle, systemImage: "bolt.fill", isInserted: $menuBarExtraInserted) {

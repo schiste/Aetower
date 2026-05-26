@@ -10,6 +10,7 @@ if [ -n "${HOME:-}" ] \
 fi
 APP_NAME="Aetower.app"
 APP_DIR="$ROOT/dist/$APP_NAME"
+ZIP_PATH="$ROOT/dist/Aetower.zip"
 BIN_DIR="$APP_DIR/Contents/MacOS"
 FRAMEWORK_DIR="$APP_DIR/Contents/Frameworks"
 HELPER_DIR="$APP_DIR/Contents/Helpers"
@@ -26,6 +27,9 @@ HELPER_ENTITLEMENTS_PATH="${AETOWER_HELPER_ENTITLEMENTS_PATH:-}"
 NOTARIZE="${AETOWER_NOTARIZE:-0}"
 STAPLE="${AETOWER_STAPLE:-0}"
 NOTARY_PROFILE="${AETOWER_NOTARY_PROFILE:-}"
+APPCAST_URL="${AETOWER_APPCAST_URL:-}"
+SPARKLE_PUBLIC_ED_KEY="${AETOWER_SPARKLE_PUBLIC_ED_KEY:-}"
+INCLUDE_PRIVILEGED_HELPER="${AETOWER_INCLUDE_PRIVILEGED_HELPER:-0}"
 
 remove_tree() {
     TARGET_PATH="$1"
@@ -101,7 +105,9 @@ notarize_app() {
 }
 
 sh "$ROOT/scripts/build-rust.sh"
-"$CARGO_BIN" build --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper --release
+if [ "$INCLUDE_PRIVILEGED_HELPER" = "1" ]; then
+    "$CARGO_BIN" build --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper --release
+fi
 remove_tree "$SWIFT_BUILD_DIR"
 /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -c release
 
@@ -110,8 +116,13 @@ mkdir -p "$BIN_DIR" "$FRAMEWORK_DIR" "$HELPER_DIR" "$PLIST_DIR/Resources"
 
 cp "$SWIFT_BUILD_DIR/release/AetowerApp" "$BIN_DIR/Aetower"
 cp "$ROOT/rust/target/release/libaetower_ffi.dylib" "$FRAMEWORK_DIR/"
-cp "$ROOT/rust/target/release/aetower-helper" "$HELPER_DIR/aetower-helper"
 cp "$ROOT/rust/target/release/aetower-mcp" "$HELPER_DIR/aetower-mcp"
+
+# Embed Sparkle.framework. SwiftPM links the app against
+# @rpath/Sparkle.framework but never copies it into the bundle, so it must be
+# embedded here or the app aborts at launch ("Library not loaded"). cp -R
+# preserves the framework's internal version symlinks (Versions/Current, etc.).
+cp -R "$SWIFT_BUILD_DIR/release/Sparkle.framework" "$FRAMEWORK_DIR/"
 
 cat > "$PLIST_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -136,9 +147,19 @@ cat > "$PLIST_DIR/Info.plist" <<PLIST
   <string>14.0</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.</string>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
 </dict>
 </plist>
 PLIST
+
+if [ -n "$APPCAST_URL" ]; then
+    /usr/libexec/PlistBuddy -c "Add :SUFeedURL string $APPCAST_URL" "$PLIST_DIR/Info.plist"
+fi
+
+if [ -n "$SPARKLE_PUBLIC_ED_KEY" ]; then
+    /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_ED_KEY" "$PLIST_DIR/Info.plist"
+fi
 
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$BIN_DIR/Aetower" || true
 install_name_tool -change "$ROOT/rust/target/debug/deps/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
@@ -149,8 +170,29 @@ install_name_tool -change "$SWIFTPM_PLUGIN_DIR/debug/libaetower_ffi.dylib" "@rpa
 install_name_tool -change "$SWIFTPM_PLUGIN_DIR/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
 
 sign_target "$FRAMEWORK_DIR/libaetower_ffi.dylib" plain
-sign_target "$HELPER_DIR/aetower-helper" runtime "$HELPER_ENTITLEMENTS_PATH"
 sign_target "$HELPER_DIR/aetower-mcp" plain
+if [ "$INCLUDE_PRIVILEGED_HELPER" = "1" ]; then
+    cp "$ROOT/rust/target/release/aetower-helper" "$HELPER_DIR/aetower-helper"
+    sign_target "$HELPER_DIR/aetower-helper" runtime "$HELPER_ENTITLEMENTS_PATH"
+fi
+
+# Sign Sparkle's nested code INSIDE-OUT. A bundle's signature seals a hash of
+# everything inside it, so each interior unit must be finalized before the unit
+# that contains it; signing the framework first would seal an unsigned interior.
+# sign_target with "runtime" applies the hardened runtime when a Developer ID is
+# set (required for notarization) and falls back to ad-hoc when AETOWER_SIGN_IDENTITY=-.
+# These are non-sandboxed XPC services, so no extra entitlements are needed.
+SPARKLE_FW="$FRAMEWORK_DIR/Sparkle.framework"
+SPARKLE_VERSION="$SPARKLE_FW/Versions/B"
+sign_target "$SPARKLE_VERSION/XPCServices/Installer.xpc" runtime
+sign_target "$SPARKLE_VERSION/XPCServices/Downloader.xpc" runtime
+sign_target "$SPARKLE_VERSION/Autoupdate" runtime
+sign_target "$SPARKLE_VERSION/Updater.app" runtime
+sign_target "$SPARKLE_FW" runtime
+
 sign_target "$APP_DIR" runtime "$ENTITLEMENTS_PATH"
 codesign --verify --deep --strict "$APP_DIR"
 notarize_app
+
+remove_tree "$ZIP_PATH" 1 0
+ditto -c -k --keepParent "$APP_DIR" "$ZIP_PATH"

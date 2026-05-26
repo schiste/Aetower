@@ -21,6 +21,9 @@ let package = Package(
     products: [
         .executable(name: "AetowerApp", targets: ["AetowerApp"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0")
+    ],
     targets: [
         .plugin(
             name: "BuildRustBridgePlugin",
@@ -48,7 +51,10 @@ let package = Package(
         ),
         .target(
             name: "AetowerUI",
-            dependencies: ["AetowerBridge"],
+            dependencies: [
+                "AetowerBridge",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "Sources/AetowerUI"
         ),
         .executableTarget(

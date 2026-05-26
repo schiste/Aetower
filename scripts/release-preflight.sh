@@ -8,6 +8,9 @@ NOTARY_PROFILE="${AETOWER_NOTARY_PROFILE:-}"
 ENTITLEMENTS_PATH="${AETOWER_ENTITLEMENTS_PATH:-}"
 HELPER_ENTITLEMENTS_PATH="${AETOWER_HELPER_ENTITLEMENTS_PATH:-}"
 REQUIRE_ENDPOINT_SECURITY="${AETOWER_REQUIRE_ENDPOINT_SECURITY:-0}"
+REQUIRE_SPARKLE="${AETOWER_REQUIRE_SPARKLE:-1}"
+APPCAST_URL="${AETOWER_APPCAST_URL:-}"
+SPARKLE_PUBLIC_ED_KEY="${AETOWER_SPARKLE_PUBLIC_ED_KEY:-}"
 
 STATUS=0
 
@@ -65,6 +68,24 @@ if [ "$REQUIRE_ENDPOINT_SECURITY" = "1" ]; then
     fi
 else
     printf '  endpoint security helper entitlements: optional\n'
+fi
+
+if [ "$REQUIRE_SPARKLE" = "1" ]; then
+    if [ -z "$APPCAST_URL" ]; then
+        printf '  sparkle feed url: missing (set AETOWER_APPCAST_URL)\n'
+        STATUS=1
+    else
+        printf '  sparkle feed url: configured\n'
+    fi
+
+    if [ -z "$SPARKLE_PUBLIC_ED_KEY" ]; then
+        printf '  sparkle public ed key: missing (set AETOWER_SPARKLE_PUBLIC_ED_KEY)\n'
+        STATUS=1
+    else
+        printf '  sparkle public ed key: configured\n'
+    fi
+else
+    printf '  sparkle release metadata: optional\n'
 fi
 
 if [ "$STATUS" -eq 0 ]; then
