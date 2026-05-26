@@ -109,7 +109,7 @@ func cpuTrendSummary(_ entity: EntitySnapshot) -> String {
 
 func memoryTrendSummary(_ entity: EntitySnapshot) -> String {
     if entity.metrics.memoryPhysicalFootprintBytes > 0 {
-        return "resident \(formatBytes(entity.metrics.memoryResidentBytes)) · footprint \(formatBytes(entity.metrics.memoryPhysicalFootprintBytes))"
+        return "resident \(formatBytes(entity.metrics.memoryResidentBytes)) · charged \(formatBytes(entityEffectiveMemoryBytes(entity)))"
     }
     return "resident \(formatBytes(entity.metrics.memoryResidentBytes)) · \(trendWindowLabel(sampleCount: entity.trend.memoryResidentBytes.count))"
 }
@@ -158,10 +158,11 @@ enum HostBand {
 
 func hostPressureBand(_ host: HostSnapshot) -> HostBand {
     let totalBytes = max(Double(host.memoryTotalBytes), 1)
+    let usedRatio = Double(host.memoryUsedBytes) / totalBytes
     let compressedRatio = Double(host.compressedMemoryBytes) / totalBytes
     let swapRatio = Double(host.swapUsedBytes) / totalBytes
-    if compressedRatio >= 0.12 || swapRatio >= 0.08 { return .severe }
-    if compressedRatio >= 0.05 || swapRatio >= 0.02 { return .elevated }
+    if usedRatio >= 0.88 || compressedRatio >= 0.12 || swapRatio >= 0.08 { return .severe }
+    if usedRatio >= 0.75 || compressedRatio >= 0.05 || swapRatio >= 0.02 { return .elevated }
     return .nominal
 }
 
@@ -184,8 +185,27 @@ func memoryLoadPercent(bytes: UInt64, totalBytes: UInt64) -> Double {
     return (Double(bytes) / Double(totalBytes)) * 100.0
 }
 
+func hostMemoryPressureScore(_ host: HostSnapshot) -> Double {
+    let totalBytes = max(Double(host.memoryTotalBytes), 1)
+    let usedRatio = Double(host.memoryUsedBytes) / totalBytes
+    let compressedRatio = Double(host.compressedMemoryBytes) / totalBytes
+    let swapRatio = Double(host.swapUsedBytes) / totalBytes
+    return min(usedRatio * 55.0 + min(compressedRatio, 1.0) * 25.0 + min(swapRatio, 1.0) * 20.0, 100.0)
+}
+
+func effectiveMemoryBytes(residentBytes: UInt64, footprintBytes: UInt64) -> UInt64 {
+    max(residentBytes, footprintBytes)
+}
+
+func entityEffectiveMemoryBytes(_ entity: EntitySnapshot) -> UInt64 {
+    effectiveMemoryBytes(
+        residentBytes: entity.metrics.memoryResidentBytes,
+        footprintBytes: entity.metrics.memoryPhysicalFootprintBytes
+    )
+}
+
 func entityMemoryLoadPercent(_ entity: EntitySnapshot, totalBytes: UInt64) -> Double {
-    memoryLoadPercent(bytes: entity.metrics.memoryResidentBytes, totalBytes: totalBytes)
+    memoryLoadPercent(bytes: entityEffectiveMemoryBytes(entity), totalBytes: totalBytes)
 }
 
 func entityMemoryTrendPercents(_ entity: EntitySnapshot, totalBytes: UInt64) -> [Double] {

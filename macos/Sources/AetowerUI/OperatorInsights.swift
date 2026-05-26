@@ -83,7 +83,7 @@ func buildHostIncident(
 
     if memoryBand >= wakeupBand && memoryBand >= storeBand {
         let memoryLeaders = snapshot.entities
-            .sorted { $0.metrics.memoryResidentBytes > $1.metrics.memoryResidentBytes }
+            .sorted { entityEffectiveMemoryBytes($0) > entityEffectiveMemoryBytes($1) }
             .prefix(3)
             .map(\.displayName)
             .joined(separator: ", ")
@@ -125,8 +125,8 @@ func buildHostIncident(
 func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
     var leaders: [BurdenLeaderSummary] = []
 
-    if let memoryLeader = snapshot.entities.max(by: { $0.metrics.memoryResidentBytes < $1.metrics.memoryResidentBytes }),
-       memoryLeader.metrics.memoryResidentBytes > 0
+    if let memoryLeader = snapshot.entities.max(by: { entityEffectiveMemoryBytes($0) < entityEffectiveMemoryBytes($1) }),
+       entityEffectiveMemoryBytes(memoryLeader) > 0
     {
         leaders.append(
             BurdenLeaderSummary(
@@ -134,8 +134,8 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
                 title: "Memory leader",
                 entityId: memoryLeader.entityId,
                 entityName: memoryLeader.displayName,
-                metricValue: formatBytes(memoryLeader.metrics.memoryResidentBytes),
-                detail: "Largest resident footprint in the current snapshot.",
+                metricValue: formatBytes(entityEffectiveMemoryBytes(memoryLeader)),
+                detail: "Largest charged memory footprint in the current snapshot.",
                 severity: operatorHostPressureBand(snapshot.host)
             )
         )
@@ -212,7 +212,7 @@ func buildOperatorRecommendations(
                 id: "host-memory",
                 title: "Reduce memory pressure",
                 detail: "Compression and swap are already active. Work the biggest resident groups down first.",
-                action: topEntityNames(snapshot: snapshot, metric: \.metrics.memoryResidentBytes),
+                action: topEntityNames(snapshot: snapshot, metric: entityEffectiveMemoryBytes),
                 severity: operatorHostPressureBand(snapshot.host)
             )
         )
@@ -224,7 +224,7 @@ func buildOperatorRecommendations(
                 id: "host-wakeups",
                 title: "Reduce wakeup-heavy workloads",
                 detail: "Wakeups are high enough to hurt battery life and foreground responsiveness.",
-                action: topEntityNames(snapshot: snapshot, metric: \.metrics.wakeupsPerSecond),
+                action: topEntityNames(snapshot: snapshot) { $0.metrics.wakeupsPerSecond },
                 severity: operatorWakeupBand(snapshot.host.wakeupsPerSecond)
             )
         )
@@ -444,9 +444,9 @@ func capabilityRemediationText(_ capability: CapabilitySnapshot) -> String {
     }
 }
 
-private func topEntityNames<T: Comparable>(snapshot: SystemSnapshot, metric: KeyPath<EntitySnapshot, T>) -> String {
+private func topEntityNames<T: Comparable>(snapshot: SystemSnapshot, metric: (EntitySnapshot) -> T) -> String {
     let leaders = snapshot.entities
-        .sorted { $0[keyPath: metric] > $1[keyPath: metric] }
+        .sorted { metric($0) > metric($1) }
         .prefix(3)
         .map(\.displayName)
     if leaders.isEmpty {
@@ -502,12 +502,13 @@ private func capabilityHealthDetail(_ capabilities: [CapabilitySnapshot]) -> Str
 
 private func operatorHostPressureBand(_ host: HostSnapshot) -> OperatorSeverity {
     let totalBytes = max(Double(host.memoryTotalBytes), 1)
+    let usedRatio = Double(host.memoryUsedBytes) / totalBytes
     let compressedRatio = Double(host.compressedMemoryBytes) / totalBytes
     let swapRatio = Double(host.swapUsedBytes) / totalBytes
-    if compressedRatio >= 0.12 || swapRatio >= 0.08 {
+    if usedRatio >= 0.88 || compressedRatio >= 0.12 || swapRatio >= 0.08 {
         return .critical
     }
-    if compressedRatio >= 0.05 || swapRatio >= 0.02 {
+    if usedRatio >= 0.75 || compressedRatio >= 0.05 || swapRatio >= 0.02 {
         return .warning
     }
     return .info

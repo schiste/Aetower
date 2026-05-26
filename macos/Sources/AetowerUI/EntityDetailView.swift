@@ -451,14 +451,32 @@ public struct EntityDetailView: View {
                     minHeight: 124
                 )
                 if entity.metrics.memoryPhysicalFootprintBytes > 0 {
-                    TrendMetricCard(
-                        title: "Physical Footprint",
-                        value: formatBytes(entity.metrics.memoryPhysicalFootprintBytes),
-                        subtitle: "macOS task footprint across grouped processes",
-                        samples: [Double(entity.metrics.memoryPhysicalFootprintBytes)],
-                        style: .memory,
+                    MetricCardSurface(
+                        tone: TrendMetricStyle.memory.color,
+                        samples: [],
                         minHeight: 124
-                    )
+                    ) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Charged Memory")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+
+                            Spacer(minLength: 0)
+
+                            Text(formatBytes(entity.metrics.memoryPhysicalFootprintBytes))
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .foregroundStyle(.primary)
+                                .minimumScaleFactor(0.7)
+                                .lineLimit(1)
+
+                            Text("macOS physical footprint across grouped processes")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    } hoverOverlay: {
+                        EmptyView()
+                    }
                 }
                 TrendMetricCard(
                     title: "Disk Activity",
