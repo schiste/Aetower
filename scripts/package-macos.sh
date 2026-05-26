@@ -19,8 +19,21 @@ SWIFT_BUILD_DIR="${SWIFT_BUILD_DIR:-$ROOT/macos/.build}"
 SWIFTPM_PLUGIN_DIR="$SWIFT_BUILD_DIR/plugins/outputs/macos/AetowerBindings/destination/BuildRustBridgePlugin"
 
 BUNDLE_ID="${AETOWER_BUNDLE_ID:-com.aetower.app}"
-VERSION="${AETOWER_VERSION:-0.1.0}"
-BUILD_NUMBER="${AETOWER_BUILD_NUMBER:-1}"
+# Default the marketing version to the latest git tag (without a leading "v"),
+# falling back to 0.1.0. CFBundleVersion (the value Sparkle compares to decide
+# "is there a newer build") defaults to the commit count so it increases
+# monotonically across releases without manual bookkeeping. Both can be
+# overridden explicitly via the env vars.
+VERSION="${AETOWER_VERSION:-}"
+if [ -z "$VERSION" ]; then
+    VERSION="$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"
+fi
+VERSION="${VERSION:-0.1.0}"
+BUILD_NUMBER="${AETOWER_BUILD_NUMBER:-}"
+if [ -z "$BUILD_NUMBER" ]; then
+    BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
+fi
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
 SIGN_IDENTITY="${AETOWER_SIGN_IDENTITY:--}"
 ENTITLEMENTS_PATH="${AETOWER_ENTITLEMENTS_PATH:-}"
 HELPER_ENTITLEMENTS_PATH="${AETOWER_HELPER_ENTITLEMENTS_PATH:-}"
