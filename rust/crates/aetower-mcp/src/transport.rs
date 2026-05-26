@@ -482,13 +482,50 @@ pub(crate) struct McpSocketConnection {
 }
 
 impl McpSocketConnection {
-    pub(crate) fn new(stream: UnixStream) -> Result<Self, String> {
-        stream
-            .set_read_timeout(Some(MCP_READ_TIMEOUT))
-            .map_err(|error| format!("set MCP socket read timeout: {error}"))?;
-        Ok(Self {
+    pub(crate) fn new(stream: UnixStream) -> Self {
+        Self {
             reader: BufReader::new(stream),
-        })
+        }
+    }
+
+    /// Arm the per-read timeout the serve loop relies on to periodically wake and
+    /// re-check the shutdown flag. Returns `Ok(false)` when the peer has already
+    /// hung up and there is nothing to serve.
+    ///
+    /// On macOS, `SO_RCVTIMEO` is rejected with `EINVAL` once the remote end of
+    /// an `AF_UNIX` stream has closed. That happens routinely for connect-then-
+    /// close peers — the accept-loop wakeup in `Drop`, `is_socket_listener_reachable`
+    /// probes, or a client that disconnects immediately — so a failure here is
+    /// usually a benign closed connection, not a transport fault. We confirm the
+    /// peer is gone with a non-blocking peek rather than trusting the errno, and
+    /// only surface a real error if the socket is somehow still connected.
+    pub(crate) fn arm_read_timeout(&self) -> Result<bool, String> {
+        match self
+            .reader
+            .get_ref()
+            .set_read_timeout(Some(MCP_READ_TIMEOUT))
+        {
+            Ok(()) => Ok(true),
+            Err(_) if self.peer_hung_up() => Ok(false),
+            Err(error) => Err(format!("set MCP socket read timeout: {error}")),
+        }
+    }
+
+    /// True if the peer has closed the connection (a non-blocking peek sees EOF).
+    /// `MSG_DONTWAIT` keeps this from blocking regardless of the socket's mode, so
+    /// a live but idle socket returns `EAGAIN` (not hung up) instead of stalling.
+    fn peer_hung_up(&self) -> bool {
+        let fd = self.reader.get_ref().as_raw_fd();
+        let mut byte = 0u8;
+        let peeked = unsafe {
+            libc::recv(
+                fd,
+                &mut byte as *mut _ as *mut libc::c_void,
+                1,
+                libc::MSG_PEEK | libc::MSG_DONTWAIT,
+            )
+        };
+        peeked == 0
     }
 
     pub(crate) fn read_message(
@@ -524,7 +561,12 @@ pub(crate) fn handle_connection(
     running: Arc<AtomicBool>,
     stats: Arc<McpRuntimeStats>,
 ) -> Result<(), String> {
-    let mut connection = McpSocketConnection::new(stream)?;
+    let mut connection = McpSocketConnection::new(stream);
+    if !connection.arm_read_timeout()? {
+        // Peer connected then closed before we could serve it (a reachability
+        // probe or the accept-loop wakeup). Nothing to do; close cleanly.
+        return Ok(());
+    }
     let server = AetowerMcpServer::new_with_stats(data_source, dynamic_mode, Some(stats));
     let mut framing = None;
 
