@@ -106,7 +106,7 @@ public final class SettingsStore {
         self.chromiumEndpoint = defaults.string(forKey: Self.chromiumEndpointKey) ?? ""
         self.dockerSocketPath = defaults.string(forKey: Self.dockerSocketPathKey) ?? "/var/run/docker.sock"
         self.privilegedHelperPath = defaults.string(forKey: Self.privilegedHelperPathKey)
-            ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/aetower-helper").path
+            ?? Self.defaultPrivilegedHelperPath()
         self.privilegedHelperEnabled = defaults.object(forKey: Self.privilegedHelperEnabledKey) as? Bool ?? false
         self.chau7Endpoint = defaults.string(forKey: Self.chau7EndpointKey) ?? ""
         self.telemetryEnabled = defaults.object(forKey: Self.telemetryEnabledKey) as? Bool ?? false
@@ -205,8 +205,7 @@ extension SettingsStore {
         refreshIntervalSeconds = 2.0
         chromiumEndpoint = ""
         dockerSocketPath = "/var/run/docker.sock"
-        privilegedHelperPath = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/aetower-helper").path
+        privilegedHelperPath = Self.defaultPrivilegedHelperPath()
         privilegedHelperEnabled = false
         chau7Endpoint = ""
         telemetryEnabled = false
@@ -250,5 +249,13 @@ extension SettingsStore {
         defaults.set(operatorSafeModeEnabled, forKey: Self.operatorSafeModeEnabledKey)
         defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
         defaults.set(exportPrivacyTier == .full, forKey: Self.includeSensitiveExportsKey)
+    }
+
+    private static func defaultPrivilegedHelperPath(
+        fileManager: FileManager = .default
+    ) -> String {
+        let path = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/aetower-helper").path
+        return fileManager.isExecutableFile(atPath: path) ? path : ""
     }
 }
