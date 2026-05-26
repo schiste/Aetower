@@ -1,6 +1,6 @@
 # Direct Download Release
 
-Aetower's first direct-download release path assumes:
+Aetower's direct-download release path assumes:
 
 - Developer ID signing
 - notarization with `notarytool`
@@ -9,68 +9,111 @@ Aetower's first direct-download release path assumes:
 
 ## Required environment
 
-Set these before running `Scripts/release-preflight.sh` or `Scripts/package-macos.sh`:
+Set these before running the release scripts:
 
 - `AETOWER_SIGN_IDENTITY`
   - Example: `Developer ID Application: Your Team Name (TEAMID)`
 - `AETOWER_NOTARIZE=1`
 - `AETOWER_NOTARY_PROFILE`
 - `AETOWER_APPCAST_URL`
+  - The HTTPS URL where `appcast.xml` will be served. Baked into the app as
+    `SUFeedURL`.
 - `AETOWER_SPARKLE_PUBLIC_ED_KEY`
+  - The EdDSA public key printed by `generate_keys`. Baked in as `SUPublicEDKey`.
 
 Optional:
 
 - `AETOWER_STAPLE=1`
+- `AETOWER_VERSION` / `AETOWER_BUILD_NUMBER`
+  - If unset, `AETOWER_VERSION` defaults to the latest git tag (minus a leading
+    `v`) and `AETOWER_BUILD_NUMBER` defaults to the git commit count. Sparkle
+    compares `CFBundleVersion` (the build number), so it must increase every
+    release — the commit-count default handles that automatically.
+- `AETOWER_DOWNLOAD_URL_PREFIX`
+  - Base URL the release archives are hosted under (the `<enclosure>` URL
+    prefix in the appcast). If unset, it is derived from `AETOWER_APPCAST_URL`'s
+    directory. Set it explicitly when the zips live somewhere other than the
+    appcast's directory (e.g. GitHub Releases asset URLs).
+- `AETOWER_SPARKLE_ED_KEY_FILE`
+  - Path to the private EdDSA key file. Default: read from the Keychain.
 - `AETOWER_INCLUDE_PRIVILEGED_HELPER=1`
 - `AETOWER_HELPER_ENTITLEMENTS_PATH=macos/AetowerHelper.entitlements`
 - `AETOWER_REQUIRE_ENDPOINT_SECURITY=1`
 
 ## One-time setup
 
-1. Install a `Developer ID Application` certificate in Keychain.
+1. Install a `Developer ID Application` certificate in Keychain
+   (Xcode → Settings → Accounts → Manage Certificates → + → Developer ID
+   Application). This is required: Sparkle-delivered updates must be Developer
+   ID signed AND notarized or Gatekeeper will refuse to launch them.
+
 2. Store notarization credentials:
 
-```sh
-sh Scripts/store-notary-credentials.sh <profile-name> <apple-id> <team-id>
-```
+   ```sh
+   sh scripts/store-notary-credentials.sh <profile-name> <apple-id> <team-id>
+   ```
 
-3. Generate Sparkle keys after resolving the Sparkle package:
+3. Generate the Sparkle EdDSA key pair (after the Sparkle package has been
+   resolved by a build at least once):
 
-```sh
-./macos/.build/checkouts/Sparkle/bin/generate_keys
-```
+   ```sh
+   ./macos/.build/artifacts/sparkle/Sparkle/bin/generate_keys
+   ```
 
-Copy the printed public key into `AETOWER_SPARKLE_PUBLIC_ED_KEY`.
+   This stores the private key in the Keychain and prints the public key. Copy
+   the public key into `AETOWER_SPARKLE_PUBLIC_ED_KEY`. Back up the private key
+   somewhere safe — if it is lost, no client can verify any future update.
 
-## Preflight
+4. Choose hosting for `appcast.xml` and the release `.zip`s (GitHub Releases, a
+   static site, S3, …) and set `AETOWER_APPCAST_URL` (and, if the zips are
+   hosted apart from the appcast, `AETOWER_DOWNLOAD_URL_PREFIX`).
 
-```sh
-sh Scripts/release-preflight.sh
-```
+## Cut a release
 
-## Build package
-
-```sh
-sh Scripts/package-macos.sh
-```
-
-Outputs:
-
-- `dist/Aetower.app`
-- `dist/Aetower.zip`
-
-## Generate Sparkle appcast
+Run the whole pipeline:
 
 ```sh
-sh Scripts/generate-sparkle-appcast.sh
+sh scripts/release.sh
 ```
 
-Output:
+This runs, in order:
 
-- `dist/appcast/appcast.xml`
+1. `scripts/release-preflight.sh` — verifies signing identity, notary profile,
+   appcast URL, and public key are present.
+2. `scripts/package-macos.sh` — builds, embeds + inside-out signs
+   `Sparkle.framework`, code-signs with the hardened runtime, notarizes, and
+   (optionally) staples. Produces `dist/Aetower.app` and `dist/Aetower.zip`.
+3. `scripts/generate-sparkle-appcast.sh` — copies the zip into the archives
+   directory (`dist/appcast/` by default) and runs Sparkle's `generate_appcast`
+   to (re)write `dist/appcast/appcast.xml`, signing each entry with the EdDSA
+   key and applying the download URL prefix.
+
+The individual scripts can also be run directly with the same environment.
+
+## Publish
+
+Upload the contents of the archives directory (`dist/appcast/`) — `appcast.xml`,
+the `Aetower-<version>.zip` archives, and any generated deltas — to your host so
+that:
+
+- `appcast.xml` is reachable at `AETOWER_APPCAST_URL`, and
+- each `<enclosure>` URL resolves (the download URL prefix + filename).
+
+Keep the archives directory between releases (don't wipe it): `generate_appcast`
+re-uses the existing `appcast.xml` and prior archives to build delta updates and
+a growing version history.
+
+## Verify the update flow (do this before trusting a release)
+
+1. Build and notarize the previous version (N-1) and install it.
+2. Publish the appcast/archives for version N.
+3. In the app: **Check for Updates** (menu or Settings → Updates). Confirm it
+   detects N, downloads, passes EdDSA verification, installs, and relaunches
+   into N. This is the only step that proves the cert, EdDSA keys, version
+   numbering, and appcast URLs all line up.
 
 ## Direct-download baseline
 
-The baseline release path does **not** require Endpoint Security.
-Leave the privileged helper disabled unless you are shipping an advanced build
-with the restricted entitlement approved by Apple.
+The baseline release path does **not** require Endpoint Security. Leave the
+privileged helper disabled unless you are shipping an advanced build with the
+restricted entitlement approved by Apple.
