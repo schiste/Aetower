@@ -33,8 +33,13 @@ fi
 
 [ -x "$APP_BIN" ]
 [ -f "$FFI_LIB" ]
-[ -x "$HELPER_BIN" ]
 [ -x "$MCP_PROXY_BIN" ]
+# The privileged Endpoint Security helper is optional and excluded by default
+# (package-macos.sh only bundles it when AETOWER_INCLUDE_PRIVILEGED_HELPER=1),
+# so only assert its presence when it was meant to be included.
+if [ "${AETOWER_INCLUDE_PRIVILEGED_HELPER:-0}" = "1" ]; then
+    [ -x "$HELPER_BIN" ]
+fi
 
 codesign --verify --deep --strict "$APP_DIR"
 
