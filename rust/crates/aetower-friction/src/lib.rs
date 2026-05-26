@@ -1,5 +1,6 @@
 use aetower_model::{
     EntitySnapshot, FrictionContributor, HostSnapshot, Recommendation, ThermalState,
+    entity_effective_memory_bytes, host_memory_pressure_factor,
 };
 use smallvec::SmallVec;
 
@@ -14,9 +15,9 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
     let battery_multiplier = if host.on_battery { 1.08 } else { 1.0 };
 
     for entity in entities.iter_mut() {
+        let effective_memory_bytes = entity_effective_memory_bytes(&entity.metrics) as f32;
         let cpu_score = (entity.metrics.cpu_percent / 100.0).min(2.0) * 36.0;
-        let memory_score =
-            (entity.metrics.memory_resident_bytes as f32 / total_memory).min(1.0) * 26.0;
+        let memory_score = (effective_memory_bytes / total_memory).min(1.0) * 26.0;
         let disk_mib =
             (entity.metrics.disk_read_bps + entity.metrics.disk_write_bps) as f32 / 1_048_576.0;
         let disk_score = disk_mib.min(20.0) * 1.2;
@@ -30,9 +31,7 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
         let network_score = ((network_mib / 8.0).min(1.0) * 10.0) + (network_share * 8.0);
 
         let wakeups_score = (entity.metrics.wakeups_per_second / 500.0).min(1.0) * 8.0;
-        let pressure_score = host_pressure_factor
-            * (entity.metrics.memory_resident_bytes as f32 / total_memory)
-            * 20.0;
+        let pressure_score = host_pressure_factor * (effective_memory_bytes / total_memory) * 20.0;
         let foreground_bonus = if entity.metrics.is_foreground {
             10.0
         } else {
@@ -69,7 +68,7 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
         if memory_score > 8.0 {
             reasons.push(format!(
                 "high memory {:.1} MB",
-                entity.metrics.memory_resident_bytes as f32 / 1_048_576.0
+                effective_memory_bytes / 1_048_576.0
             ));
         }
         if pressure_score > 4.0 && host_pressure_factor > 0.15 {
@@ -205,12 +204,13 @@ fn friction_contributors(
             label: "Memory footprint".to_owned(),
             score: memory_score,
             detail: format!(
-                "{:.1} MB resident, {:.1}% of host memory",
-                entity.metrics.memory_resident_bytes as f32 / 1_048_576.0,
+                "{:.1} MB charged memory, {:.1}% of host memory",
+                entity_effective_memory_bytes(&entity.metrics) as f32 / 1_048_576.0,
                 if host.memory_total_bytes == 0 {
                     0.0
                 } else {
-                    (entity.metrics.memory_resident_bytes as f32 / host.memory_total_bytes as f32)
+                    (entity_effective_memory_bytes(&entity.metrics) as f32
+                        / host.memory_total_bytes as f32)
                         * 100.0
                 }
             ),
@@ -290,17 +290,7 @@ fn friction_contributors(
 }
 
 fn pressure_factor(host: &HostSnapshot) -> f32 {
-    let compressed_ratio = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        host.compressed_memory_bytes as f32 / host.memory_total_bytes as f32
-    };
-    let swap_ratio = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        host.swap_used_bytes as f32 / host.memory_total_bytes as f32
-    };
-    (compressed_ratio * 1.5 + swap_ratio * 2.0).min(1.0)
+    host_memory_pressure_factor(host)
 }
 
 fn thermal_multiplier(state: ThermalState) -> f32 {

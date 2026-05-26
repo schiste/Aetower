@@ -3,7 +3,10 @@ use std::time::Duration;
 use aetower_diagnostics::{
     DiagnosticsEvent, DiagnosticsLevel, DiagnosticsStore, DiagnosticsSubsystem,
 };
-use aetower_model::{EntitySnapshot, RuntimeLagMetrics, SystemSnapshot, ThermalState};
+use aetower_model::{
+    EntitySnapshot, RuntimeLagMetrics, SystemSnapshot, ThermalState,
+    machine_friction_score as model_machine_friction_score,
+};
 use reqwest::blocking::Client;
 use reqwest::header::CONTENT_TYPE;
 use serde::Serialize;
@@ -663,33 +666,7 @@ fn kv_int(key: &str, value: i64) -> KeyValue {
 }
 
 fn machine_friction_score(snapshot: &SystemSnapshot) -> f64 {
-    let host = &snapshot.host;
-    let cpu_score = host.cpu_percent.min(100.0) as f64 * 0.5;
-    let memory_ratio = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        host.memory_used_bytes as f64 / host.memory_total_bytes as f64
-    };
-    let memory_score = memory_ratio.min(1.0) * 35.0;
-    let swap_score = if host.swap_used_bytes == 0 {
-        0.0
-    } else {
-        ((host.swap_used_bytes as f64 / 1_073_741_824.0).min(8.0) / 8.0) * 15.0
-    };
-    let compressed_score = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        (host.compressed_memory_bytes as f64 / host.memory_total_bytes as f64).min(1.0) * 12.0
-    };
-    let network_score = ((host
-        .network_receive_bps
-        .saturating_add(host.network_send_bps)) as f64
-        / 8_388_608.0)
-        .min(1.0)
-        * 10.0;
-    let wakeups_score = (host.wakeups_per_second as f64 / 500.0).min(1.0) * 8.0;
-    (cpu_score + memory_score + swap_score + compressed_score + network_score + wakeups_score)
-        .min(100.0)
+    model_machine_friction_score(&snapshot.host) as f64
 }
 
 fn thermal_state_value(state: ThermalState) -> u8 {
