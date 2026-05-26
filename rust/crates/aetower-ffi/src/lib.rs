@@ -368,11 +368,14 @@ pub struct HostTrend {
     pub machine_friction: Vec<f32>,
     pub cpu_percent: Vec<f32>,
     pub memory_used_bytes: Vec<u64>,
+    pub memory_pressure_score: Vec<f32>,
     pub disk_activity_bps: Vec<u64>,
     pub network_activity_bps: Vec<u64>,
     pub wakeups_per_second: Vec<f32>,
     pub compressed_memory_bytes: Vec<u64>,
     pub ai_agent_friction: Vec<f32>,
+    pub gpu_percent: Vec<f32>,
+    pub gpu_memory_bytes: Vec<u64>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -2046,11 +2049,14 @@ impl From<model::HostTrend> for HostTrend {
             machine_friction: value.machine_friction,
             cpu_percent: value.cpu_percent,
             memory_used_bytes: value.memory_used_bytes,
+            memory_pressure_score: value.memory_pressure_score,
             disk_activity_bps: value.disk_activity_bps,
             network_activity_bps: value.network_activity_bps,
             wakeups_per_second: value.wakeups_per_second,
             compressed_memory_bytes: value.compressed_memory_bytes,
             ai_agent_friction: value.ai_agent_friction,
+            gpu_percent: value.gpu_percent,
+            gpu_memory_bytes: value.gpu_memory_bytes,
         }
     }
 }

@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use aetower_model::{
-    AlertLevel, AlertThreshold, EntitySnapshot, HostSnapshot, HostTrend, MetricTrend,
-    Recommendation, ThermalState, ThresholdDirection, TimelineCategory, TimelineEvent,
-    TimelineSeverity,
+    AlertLevel, AlertThreshold, EntitySnapshot, HostPressureBand, HostSnapshot, HostTrend,
+    MetricTrend, Recommendation, ThermalState, ThresholdDirection, TimelineCategory, TimelineEvent,
+    TimelineSeverity, host_memory_pressure_score, host_pressure_band,
+    machine_friction_score as model_machine_friction_score,
 };
 
 pub struct History {
@@ -61,11 +62,14 @@ struct HostTrendState {
     machine_friction: VecDeque<f32>,
     cpu_percent: VecDeque<f32>,
     memory_used_bytes: VecDeque<u64>,
+    memory_pressure_score: VecDeque<f32>,
     disk_activity_bps: VecDeque<u64>,
     network_activity_bps: VecDeque<u64>,
     wakeups_per_second: VecDeque<f32>,
     compressed_memory_bytes: VecDeque<u64>,
     ai_agent_friction: VecDeque<f32>,
+    gpu_percent: VecDeque<f32>,
+    gpu_memory_bytes: VecDeque<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1364,11 +1368,14 @@ impl Default for HostTrendState {
             machine_friction: VecDeque::with_capacity(MAX_TREND_POINTS),
             cpu_percent: VecDeque::with_capacity(MAX_TREND_POINTS),
             memory_used_bytes: VecDeque::with_capacity(MAX_TREND_POINTS),
+            memory_pressure_score: VecDeque::with_capacity(MAX_TREND_POINTS),
             disk_activity_bps: VecDeque::with_capacity(MAX_TREND_POINTS),
             network_activity_bps: VecDeque::with_capacity(MAX_TREND_POINTS),
             wakeups_per_second: VecDeque::with_capacity(MAX_TREND_POINTS),
             compressed_memory_bytes: VecDeque::with_capacity(MAX_TREND_POINTS),
             ai_agent_friction: VecDeque::with_capacity(MAX_TREND_POINTS),
+            gpu_percent: VecDeque::with_capacity(MAX_TREND_POINTS),
+            gpu_memory_bytes: VecDeque::with_capacity(MAX_TREND_POINTS),
         }
     }
 }
@@ -1378,6 +1385,10 @@ impl HostTrendState {
         push_point(&mut self.machine_friction, machine_friction_score(host));
         push_point(&mut self.cpu_percent, host.cpu_percent);
         push_point(&mut self.memory_used_bytes, host.memory_used_bytes);
+        push_point(
+            &mut self.memory_pressure_score,
+            host_memory_pressure_score(host),
+        );
         push_point(
             &mut self.disk_activity_bps,
             host.disk_read_bps.saturating_add(host.disk_write_bps),
@@ -1393,6 +1404,8 @@ impl HostTrendState {
             host.compressed_memory_bytes,
         );
         push_point(&mut self.ai_agent_friction, host.ai_agent_friction);
+        push_point(&mut self.gpu_percent, host.gpu_percent);
+        push_point(&mut self.gpu_memory_bytes, host.gpu_memory_bytes);
     }
 
     fn snapshot(&self) -> HostTrend {
@@ -1400,11 +1413,14 @@ impl HostTrendState {
             machine_friction: self.machine_friction.iter().copied().collect(),
             cpu_percent: self.cpu_percent.iter().copied().collect(),
             memory_used_bytes: self.memory_used_bytes.iter().copied().collect(),
+            memory_pressure_score: self.memory_pressure_score.iter().copied().collect(),
             disk_activity_bps: self.disk_activity_bps.iter().copied().collect(),
             network_activity_bps: self.network_activity_bps.iter().copied().collect(),
             wakeups_per_second: self.wakeups_per_second.iter().copied().collect(),
             compressed_memory_bytes: self.compressed_memory_bytes.iter().copied().collect(),
             ai_agent_friction: self.ai_agent_friction.iter().copied().collect(),
+            gpu_percent: self.gpu_percent.iter().copied().collect(),
+            gpu_memory_bytes: self.gpu_memory_bytes.iter().copied().collect(),
         }
     }
 }
@@ -1417,32 +1433,7 @@ fn push_point<T>(series: &mut VecDeque<T>, value: T) {
 }
 
 fn machine_friction_score(host: &HostSnapshot) -> f32 {
-    let cpu_score = host.cpu_percent.min(100.0) * 0.5;
-    let memory_ratio = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        host.memory_used_bytes as f32 / host.memory_total_bytes as f32
-    };
-    let memory_score = (memory_ratio.min(1.0)) * 35.0;
-    let swap_score = if host.swap_used_bytes == 0 {
-        0.0
-    } else {
-        ((host.swap_used_bytes as f32 / 1_073_741_824.0).min(8.0) / 8.0) * 15.0
-    };
-    let compressed_score = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        ((host.compressed_memory_bytes as f32 / host.memory_total_bytes as f32).min(1.0)) * 12.0
-    };
-    let network_score = ((host
-        .network_receive_bps
-        .saturating_add(host.network_send_bps)) as f32
-        / 8_388_608.0)
-        .min(1.0)
-        * 10.0;
-    let wakeups_score = (host.wakeups_per_second / 500.0).min(1.0) * 8.0;
-    (cpu_score + memory_score + swap_score + compressed_score + network_score + wakeups_score)
-        .min(100.0)
+    model_machine_friction_score(host)
 }
 
 /// Z-score anomaly detection: returns true if `current` is more than 2
@@ -1568,15 +1559,10 @@ fn set_recent_change_summary(entity: &mut EntitySnapshot, summary: String) {
 }
 
 fn pressure_band(host: &HostSnapshot) -> PressureBand {
-    let total_memory = host.memory_total_bytes.max(1) as f32;
-    let compressed_ratio = host.compressed_memory_bytes as f32 / total_memory;
-    let swap_ratio = host.swap_used_bytes as f32 / total_memory;
-    if compressed_ratio >= 0.12 || swap_ratio >= 0.08 {
-        PressureBand::Severe
-    } else if compressed_ratio >= 0.05 || swap_ratio >= 0.02 {
-        PressureBand::Elevated
-    } else {
-        PressureBand::Nominal
+    match host_pressure_band(host) {
+        HostPressureBand::Nominal => PressureBand::Nominal,
+        HostPressureBand::Elevated => PressureBand::Elevated,
+        HostPressureBand::Severe => PressureBand::Severe,
     }
 }
 

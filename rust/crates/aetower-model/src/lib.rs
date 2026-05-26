@@ -252,6 +252,8 @@ pub struct HostTrend {
     pub machine_friction: Vec<f32>,
     pub cpu_percent: Vec<f32>,
     pub memory_used_bytes: Vec<u64>,
+    #[serde(default)]
+    pub memory_pressure_score: Vec<f32>,
     pub disk_activity_bps: Vec<u64>,
     #[serde(default)]
     pub network_activity_bps: Vec<u64>,
@@ -261,6 +263,116 @@ pub struct HostTrend {
     pub compressed_memory_bytes: Vec<u64>,
     #[serde(default)]
     pub ai_agent_friction: Vec<f32>,
+    #[serde(default)]
+    pub gpu_percent: Vec<f32>,
+    #[serde(default)]
+    pub gpu_memory_bytes: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum HostPressureBand {
+    #[default]
+    Nominal,
+    Elevated,
+    Severe,
+}
+
+pub fn effective_memory_bytes(resident_bytes: u64, physical_footprint_bytes: u64) -> u64 {
+    physical_footprint_bytes.max(resident_bytes)
+}
+
+pub fn entity_effective_memory_bytes(metrics: &AggregateMetrics) -> u64 {
+    effective_memory_bytes(
+        metrics.memory_resident_bytes,
+        metrics.memory_physical_footprint_bytes,
+    )
+}
+
+pub fn host_memory_used_ratio(host: &HostSnapshot) -> f32 {
+    if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        host.memory_used_bytes as f32 / host.memory_total_bytes as f32
+    }
+}
+
+pub fn host_memory_pressure_score(host: &HostSnapshot) -> f32 {
+    let used_ratio = host_memory_used_ratio(host).min(1.0);
+    let compressed_ratio = if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        host.compressed_memory_bytes as f32 / host.memory_total_bytes as f32
+    };
+    let swap_ratio = if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        host.swap_used_bytes as f32 / host.memory_total_bytes as f32
+    };
+
+    (used_ratio * 55.0 + compressed_ratio.min(1.0) * 25.0 + swap_ratio.min(1.0) * 20.0).min(100.0)
+}
+
+pub fn host_memory_pressure_factor(host: &HostSnapshot) -> f32 {
+    let used_ratio = host_memory_used_ratio(host);
+    let compressed_ratio = if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        host.compressed_memory_bytes as f32 / host.memory_total_bytes as f32
+    };
+    let swap_ratio = if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        host.swap_used_bytes as f32 / host.memory_total_bytes as f32
+    };
+
+    (used_ratio * 0.7 + compressed_ratio * 1.5 + swap_ratio * 2.0).min(1.0)
+}
+
+pub fn machine_friction_score(host: &HostSnapshot) -> f32 {
+    let cpu_score = host.cpu_percent.min(100.0) * 0.5;
+    let memory_score = host_memory_used_ratio(host).min(1.0) * 35.0;
+    let swap_score = if host.swap_used_bytes == 0 {
+        0.0
+    } else {
+        ((host.swap_used_bytes as f32 / 1_073_741_824.0).min(8.0) / 8.0) * 15.0
+    };
+    let compressed_score = if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        ((host.compressed_memory_bytes as f32 / host.memory_total_bytes as f32).min(1.0)) * 12.0
+    };
+    let network_score = ((host
+        .network_receive_bps
+        .saturating_add(host.network_send_bps)) as f32
+        / 8_388_608.0)
+        .min(1.0)
+        * 10.0;
+    let wakeups_score = (host.wakeups_per_second / 500.0).min(1.0) * 8.0;
+    (cpu_score + memory_score + swap_score + compressed_score + network_score + wakeups_score)
+        .min(100.0)
+}
+
+pub fn host_pressure_band(host: &HostSnapshot) -> HostPressureBand {
+    let used_ratio = host_memory_used_ratio(host);
+    let compressed_ratio = if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        host.compressed_memory_bytes as f32 / host.memory_total_bytes as f32
+    };
+    let swap_ratio = if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        host.swap_used_bytes as f32 / host.memory_total_bytes as f32
+    };
+
+    if used_ratio >= 0.88 || compressed_ratio >= 0.12 || swap_ratio >= 0.08 {
+        HostPressureBand::Severe
+    } else if used_ratio >= 0.75 || compressed_ratio >= 0.05 || swap_ratio >= 0.02 {
+        HostPressureBand::Elevated
+    } else {
+        HostPressureBand::Nominal
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
