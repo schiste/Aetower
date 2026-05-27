@@ -10,6 +10,7 @@ public struct SettingsView: View {
     @State private var selectedSection: SettingsSection = .general
     @State private var appliedIntegrationSnapshot: SettingsIntegrationSnapshot?
     @State private var applyConfirmation: String?
+    @State private var showAdvancedCollectionControls = false
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
@@ -294,69 +295,96 @@ public struct SettingsView: View {
     @ViewBuilder
     private var collectionSection: some View {
         @Bindable var settings = settings
-            SettingsCard(
-                title: "Runtime collection",
-                subtitle: "These controls apply immediately and affect the running engine without restarting adapters.",
-                status: status(for: .collection)
-            ) {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                Text("Collection profile")
+        SettingsCard(
+            title: "Runtime collection",
+            subtitle: "Choose an intent first. Detailed cadence tuning is available when needed.",
+            status: status(for: .collection)
+        ) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                Text("Collection presets")
                     .font(.headline)
-                Picker("Collection profile", selection: $settings.collectionProfile) {
-                    Text("Balanced").tag(CollectionProfile.balanced)
-                    Text("Full").tag(CollectionProfile.full)
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 238), spacing: AetowerDesign.Spacing.md)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.md
+                ) {
+                    ForEach(SettingsCollectionPreset.allCases) { preset in
+                        Button {
+                            preset.apply(to: settings)
+                        } label: {
+                            SettingsPresetCard(preset: preset)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .pickerStyle(.segmented)
-                Text("Balanced keeps CPU and battery lower by sampling expensive per-process signals more sparsely. Full is intended for short diagnostic sessions.")
+                Text("Presets update the running engine through the existing live collection settings path.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             SettingDivider()
 
-            Toggle("Adaptive engine cadence", isOn: $settings.adaptiveCadenceEnabled)
-            Text("When enabled, Aetower stays active during hotspots and slows down when the machine is quiet or on battery.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            DisclosureGroup("Advanced cadence controls", isExpanded: $showAdvancedCollectionControls) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                        Text("Collection mode")
+                            .font(.headline)
+                        Picker("Collection mode", selection: $settings.collectionProfile) {
+                            Text("Balanced").tag(CollectionProfile.balanced)
+                            Text("Full detail").tag(CollectionProfile.full)
+                        }
+                        .pickerStyle(.segmented)
+                        Text("Balanced lowers CPU and battery cost by sampling expensive per-process signals less often. Full detail is intended for short diagnostic sessions.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
-            intervalSlider(
-                title: "Engine active interval",
-                value: $settings.engineActiveIntervalSeconds,
-                range: 1...5,
-                step: 0.5,
-                format: "%.1fs"
-            )
-            intervalSlider(
-                title: "Engine idle interval",
-                value: $settings.engineIdleIntervalSeconds,
-                range: 2...30,
-                step: 1,
-                format: "%.0fs",
-                note: "Used when adaptive cadence is on and the machine is quiet."
-            )
-            intervalSlider(
-                title: "Engine low-power interval",
-                value: $settings.engineLowPowerIntervalSeconds,
-                range: 3...45,
-                step: 1,
-                format: "%.0fs",
-                note: "Used on battery or Low Power Mode."
-            )
-            intervalSlider(
-                title: "GPU sample interval",
-                value: $settings.gpuSampleIntervalSeconds,
-                range: 5...120,
-                step: 5,
-                format: "%.0fs"
-            )
-            intervalSlider(
-                title: "GPU sample interval on battery",
-                value: $settings.gpuSampleLowPowerIntervalSeconds,
-                range: 10...180,
-                step: 5,
-                format: "%.0fs",
-                note: "Longer GPU intervals reduce system-service activity and save power."
-            )
+                    Toggle("Adaptive engine cadence", isOn: $settings.adaptiveCadenceEnabled)
+                    Text("When enabled, Aetower stays active during hotspots and slows down when the machine is quiet or on battery.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    intervalSlider(
+                        title: "Engine active interval",
+                        value: $settings.engineActiveIntervalSeconds,
+                        range: 1...5,
+                        step: 0.5,
+                        format: "%.1fs"
+                    )
+                    intervalSlider(
+                        title: "Engine idle interval",
+                        value: $settings.engineIdleIntervalSeconds,
+                        range: 2...30,
+                        step: 1,
+                        format: "%.0fs",
+                        note: "Used when adaptive cadence is on and the machine is quiet."
+                    )
+                    intervalSlider(
+                        title: "Engine low-power interval",
+                        value: $settings.engineLowPowerIntervalSeconds,
+                        range: 3...45,
+                        step: 1,
+                        format: "%.0fs",
+                        note: "Used on battery or Low Power Mode."
+                    )
+                    intervalSlider(
+                        title: "GPU sample interval",
+                        value: $settings.gpuSampleIntervalSeconds,
+                        range: 5...120,
+                        step: 5,
+                        format: "%.0fs"
+                    )
+                    intervalSlider(
+                        title: "GPU sample interval on battery",
+                        value: $settings.gpuSampleLowPowerIntervalSeconds,
+                        range: 10...180,
+                        step: 5,
+                        format: "%.0fs",
+                        note: "Longer GPU intervals reduce system-service activity and save power."
+                    )
+                }
+                .padding(.top, AetowerDesign.Spacing.md)
+            }
         }
     }
 
@@ -880,6 +908,105 @@ private struct SettingsIntegrationSnapshot: Equatable {
     }
 }
 
+private enum SettingsCollectionPreset: String, CaseIterable, Identifiable {
+    case batterySaver
+    case balanced
+    case diagnostic
+    case fullDetail
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .batterySaver:
+            return "Battery Saver"
+        case .balanced:
+            return "Balanced"
+        case .diagnostic:
+            return "Diagnostic"
+        case .fullDetail:
+            return "Full Detail"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .batterySaver:
+            return "Slow sampling for long-running observation on battery."
+        case .balanced:
+            return "Default profile for daily monitoring."
+        case .diagnostic:
+            return "Sharper sampling for short performance investigations."
+        case .fullDetail:
+            return "Maximum detail for brief, active debugging sessions."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .batterySaver:
+            return "battery.75"
+        case .balanced:
+            return "dial.medium"
+        case .diagnostic:
+            return "waveform.path.ecg"
+        case .fullDetail:
+            return "scope"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .batterySaver:
+            return AetowerDesign.Status.success
+        case .balanced:
+            return AetowerDesign.Status.ready
+        case .diagnostic:
+            return AetowerDesign.Status.warning
+        case .fullDetail:
+            return AetowerDesign.Status.error
+        }
+    }
+
+    @MainActor
+    func apply(to settings: SettingsStore) {
+        switch self {
+        case .batterySaver:
+            settings.collectionProfile = .balanced
+            settings.adaptiveCadenceEnabled = true
+            settings.engineActiveIntervalSeconds = 3.0
+            settings.engineIdleIntervalSeconds = 12.0
+            settings.engineLowPowerIntervalSeconds = 20.0
+            settings.gpuSampleIntervalSeconds = 90.0
+            settings.gpuSampleLowPowerIntervalSeconds = 150.0
+        case .balanced:
+            settings.collectionProfile = .balanced
+            settings.adaptiveCadenceEnabled = true
+            settings.engineActiveIntervalSeconds = 2.0
+            settings.engineIdleIntervalSeconds = 5.0
+            settings.engineLowPowerIntervalSeconds = 8.0
+            settings.gpuSampleIntervalSeconds = 30.0
+            settings.gpuSampleLowPowerIntervalSeconds = 60.0
+        case .diagnostic:
+            settings.collectionProfile = .full
+            settings.adaptiveCadenceEnabled = true
+            settings.engineActiveIntervalSeconds = 1.0
+            settings.engineIdleIntervalSeconds = 2.0
+            settings.engineLowPowerIntervalSeconds = 5.0
+            settings.gpuSampleIntervalSeconds = 10.0
+            settings.gpuSampleLowPowerIntervalSeconds = 20.0
+        case .fullDetail:
+            settings.collectionProfile = .full
+            settings.adaptiveCadenceEnabled = false
+            settings.engineActiveIntervalSeconds = 1.0
+            settings.engineIdleIntervalSeconds = 1.0
+            settings.engineLowPowerIntervalSeconds = 3.0
+            settings.gpuSampleIntervalSeconds = 5.0
+            settings.gpuSampleLowPowerIntervalSeconds = 10.0
+        }
+    }
+}
+
 private struct SettingsCard<Content: View>: View {
     let title: String
     let subtitle: String
@@ -923,6 +1050,37 @@ private struct SettingsCard<Content: View>: View {
         .overlay(
             RoundedRectangle(cornerRadius: AetowerDesign.Radius.lg)
                 .stroke(Color.secondary.opacity(0.10), lineWidth: 1)
+        )
+    }
+}
+
+private struct SettingsPresetCard: View {
+    let preset: SettingsCollectionPreset
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: preset.systemImage)
+                    .foregroundStyle(preset.color)
+                    .frame(width: 20)
+                Text(preset.title)
+                    .font(.headline)
+                Spacer()
+            }
+            Text(preset.subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+        }
+        .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
+        .padding(AetowerDesign.Spacing.md)
+        .background(
+            RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
+                .fill(preset.color.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
+                .stroke(preset.color.opacity(0.20), lineWidth: 1)
         )
     }
 }
