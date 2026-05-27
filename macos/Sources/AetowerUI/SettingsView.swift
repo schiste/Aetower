@@ -1368,15 +1368,7 @@ private struct SettingsCard<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(AetowerDesign.Spacing.xl)
-        .background(
-            RoundedRectangle(cornerRadius: AetowerDesign.Radius.lg)
-                .fill(AetowerDesign.Surface.card)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: AetowerDesign.Radius.lg)
-                .stroke(Color.secondary.opacity(0.10), lineWidth: 1)
-        )
+        .padding(.top, AetowerDesign.Spacing.md)
     }
 }
 
@@ -1526,11 +1518,12 @@ private struct SettingsRowCard<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(AetowerDesign.Spacing.md)
-        .background(
-            RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
-                .fill(Color.secondary.opacity(0.045))
-        )
+        .padding(.vertical, AetowerDesign.Spacing.md)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.secondary.opacity(0.12))
+                .frame(height: 1)
+        }
     }
 }
 
