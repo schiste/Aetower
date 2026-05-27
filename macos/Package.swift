@@ -39,7 +39,14 @@ let package = Package(
             dependencies: ["aetower_ffiFFI"],
             path: "Sources/AetowerBindings",
             linkerSettings: [
-                .unsafeFlags(["-L", rustDebugLibraryPath, "-L", rustReleaseLibraryPath]),
+                .unsafeFlags([
+                    "-L", rustDebugLibraryPath,
+                    "-L", rustReleaseLibraryPath,
+                    "-Xlinker", "-rpath",
+                    "-Xlinker", rustDebugLibraryPath,
+                    "-Xlinker", "-rpath",
+                    "-Xlinker", rustReleaseLibraryPath,
+                ]),
                 .linkedLibrary("aetower_ffi")
             ],
             plugins: ["BuildRustBridgePlugin"]
@@ -61,6 +68,11 @@ let package = Package(
             name: "AetowerApp",
             dependencies: ["AetowerBridge", "AetowerUI"],
             path: "Sources/AetowerApp"
+        ),
+        .testTarget(
+            name: "AetowerUITests",
+            dependencies: ["AetowerUI"],
+            path: "Tests/AetowerUITests"
         )
     ]
 )
