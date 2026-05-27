@@ -154,11 +154,11 @@ iStat Menus and Stats are single-machine tools with no network awareness. Sensei
 
 **What it does**
 
-Configuration for Aetower's collection behavior, adapter endpoints, telemetry export, and capability management. Controls the tick interval, GPU sample cadence, full-collection mode, Chau7 socket path, Chromium debug endpoint, Docker socket, privileged helper path, and OpenTelemetry export.
+Configuration for Aetower's collection behavior, adapter endpoints, telemetry export, AI-client MCP registration, and capability management. Controls the UI refresh interval, engine collection cadence, GPU sample cadence, full-collection mode, Chau7 socket path, Chromium debug endpoint, Docker socket, advanced helper path, and OpenTelemetry export.
 
 **Its role**
 
-Tuning the engine. Most users never need to touch this — the defaults are optimized for the common case (2s tick, 30s GPU sample, adaptive cadence on battery). Power users and developers use Settings to connect optional adapters, enable full-collection mode for debugging, or configure telemetry export to an external observability stack.
+Tuning the app and engine. Most users never need to touch this — the defaults are optimized for the common case (2s UI refresh, adaptive engine cadence, 30s GPU sample). Power users and developers use Settings to connect optional adapters, enable full-collection mode for short debugging sessions, register local AI clients for MCP access, or configure telemetry export to an external observability stack.
 
 **Aetower's value vs competitors**
 
@@ -166,6 +166,6 @@ Activity Monitor has no settings beyond column visibility. iStat Menus has exten
 
 **3 things to do with this tab**
 
-1. **Connect Chau7** — paste your `~/.chau7/mcp.sock` path to enable AI session tracking, per-repo cost breakdowns, and runtime session state in the AI Agents tab.
-2. **Adjust battery cadence** — if Aetower itself is using too much energy on battery, increase the low-power tick interval from 4s to 8s and the GPU sample interval from 60s to 120s. The dashboard updates less often but the collection cost drops proportionally.
-3. **Enable full collection** — toggle this on temporarily when investigating a specific issue. It forces every-tick PID scans, CWD probes, and metadata refreshes that are normally throttled. Turn it off when done — the overhead is noticeable.
+1. **Connect Chau7** — leave the socket path blank for auto-detection or set `~/.chau7/mcp.sock` explicitly to enable AI session tracking, per-repo cost breakdowns, and runtime session state.
+2. **Adjust battery cadence** — if Aetower itself is using too much energy on battery, increase the low-power engine interval and GPU sample interval. The UI can still refresh normally while expensive collection happens less often.
+3. **Register AI clients deliberately** — use manual registration by default, or enable launch-time auto-registration when you want Aetower to keep supported local clients pointed at its bundled MCP proxy.

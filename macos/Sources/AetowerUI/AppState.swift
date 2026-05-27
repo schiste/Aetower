@@ -601,7 +601,6 @@ public final class AppState {
                 settings.telemetryExportIntervalSeconds
             )
         )
-        configureRuntimeCollection(settings)
 
         updateLagMonitoringState()
         refresh(force: true)

@@ -260,9 +260,9 @@ public final class SettingsStore {
 }
 
 extension SettingsStore {
-    /// Reset all settings to factory defaults. Does NOT call
-    /// applyIntegrationSettings — the caller should trigger that
-    /// separately to push the reset values to the running engine.
+    /// Reset persisted settings to factory defaults. Runtime application
+    /// state still belongs to the caller because SettingsStore intentionally
+    /// does not own AppState or the engine bridge.
     public func resetToDefaults() {
         showMenuBarExtra = true
         refreshIntervalSeconds = 2.0
@@ -287,6 +287,11 @@ extension SettingsStore {
         operatorSafeModeEnabled = true
         exportPrivacyTier = .redacted
         autoRegisterLocalMcpClientsEnabled = false
+        if launchAtLoginEnabled {
+            setLaunchAtLogin(false)
+        } else {
+            launchAtLoginError = nil
+        }
     }
 
     func persist() {

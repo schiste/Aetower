@@ -40,20 +40,23 @@ public struct SettingsView: View {
                         }
 
                         Toggle("Show menu bar extra", isOn: $settings.showMenuBarExtra)
-                        Toggle("Operator-safe mode for heavy tabs", isOn: $settings.operatorSafeModeEnabled)
-                        Text("Defaults heavy views like History and Timeline to summaries first, smaller visible windows, and manual expansion for large detail lists.")
+                        Toggle("Operator-safe mode for History and Timeline", isOn: $settings.operatorSafeModeEnabled)
+                        Text("Defaults heavy History and Timeline views to summaries first, smaller visible windows, and manual expansion for large detail lists.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Refresh interval")
+                            Text("UI refresh interval")
                                 .font(.headline)
-                            Picker("Refresh interval", selection: $settings.refreshIntervalSeconds) {
+                            Picker("UI refresh interval", selection: $settings.refreshIntervalSeconds) {
                                 Text("1.0s").tag(1.0)
                                 Text("2.0s").tag(2.0)
                                 Text("5.0s").tag(5.0)
                             }
                             .pickerStyle(.segmented)
+                            Text("How often the macOS UI asks the engine for a newer snapshot. Engine collection cadence is controlled separately below.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
 
                         Toggle(
@@ -69,8 +72,19 @@ public struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
+                        Text("Uses macOS Login Items. If macOS requires approval, finish it in System Settings.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
                         Divider()
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Runtime collection")
+                                .font(.headline)
+                            Text("These controls apply immediately and affect the running engine without restarting adapters.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
 
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Collection profile")
@@ -202,20 +216,34 @@ public struct SettingsView: View {
 
                 GroupBox("Integrations") {
                     VStack(alignment: .leading, spacing: 12) {
-                        TextField("Chromium endpoint", text: $settings.chromiumEndpoint)
-                            .textFieldStyle(.roundedBorder)
-                            .aetowerUtilityTextInput()
-                            .focused($focusedField, equals: .chromiumEndpoint)
-                        TextField("Docker socket path", text: $settings.dockerSocketPath)
-                            .textFieldStyle(.roundedBorder)
-                            .aetowerUtilityTextInput()
-                            .focused($focusedField, equals: .dockerSocketPath)
-                        Toggle("Enable privileged helper", isOn: $settings.privilegedHelperEnabled)
-                        TextField("Privileged helper path", text: $settings.privilegedHelperPath)
+                        TextField(
+                            "Chromium endpoint",
+                            text: $settings.chromiumEndpoint,
+                            prompt: Text("http://127.0.0.1:9222/json/list")
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .aetowerUtilityTextInput()
+                        .focused($focusedField, equals: .chromiumEndpoint)
+                        Text("Optional. Use a Chromium `/json` or `/json/list` endpoint when browser tab attribution is needed.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField(
+                            "Docker socket path",
+                            text: $settings.dockerSocketPath,
+                            prompt: Text(SettingsStore.defaultDockerSocketPath)
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .aetowerUtilityTextInput()
+                        .focused($focusedField, equals: .dockerSocketPath)
+                        Text("Leave blank to use the default Docker socket path.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Toggle("Enable advanced privileged helper", isOn: $settings.privilegedHelperEnabled)
+                        TextField("Advanced helper path", text: $settings.privilegedHelperPath)
                             .textFieldStyle(.roundedBorder)
                             .aetowerUtilityTextInput()
                             .focused($focusedField, equals: .privilegedHelperPath)
-                        Text("The privileged helper is optional. It is intended to run with elevated rights when you want deeper socket attribution today and higher-confidence Endpoint Security lineage in enterprise builds.")
+                        Text("Optional advanced/enterprise integration. Enable only when a signed helper is installed and you need deeper socket attribution or Endpoint Security lineage.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         TextField("Chau7 socket path", text: $settings.chau7Endpoint, prompt: Text("~/.chau7/mcp.sock"))
@@ -227,10 +255,14 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                         Divider()
                         Toggle("Enable OTLP telemetry export", isOn: $settings.telemetryEnabled)
-                        TextField("Telemetry endpoint", text: $settings.telemetryEndpoint)
-                            .textFieldStyle(.roundedBorder)
-                            .aetowerUtilityTextInput()
-                            .focused($focusedField, equals: .telemetryEndpoint)
+                        TextField(
+                            "Telemetry endpoint",
+                            text: $settings.telemetryEndpoint,
+                            prompt: Text(SettingsStore.defaultTelemetryEndpoint)
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .aetowerUtilityTextInput()
+                        .focused($focusedField, equals: .telemetryEndpoint)
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Telemetry export interval")
                                 .font(.headline)
@@ -240,14 +272,14 @@ public struct SettingsView: View {
                                     .font(.caption.monospacedDigit())
                                     .frame(width: 44, alignment: .trailing)
                             }
-                            Text("Exports host and entity gauges to an OTLP/HTTP collector. Useful when you want to correlate Aetower with the rest of your observability stack.")
+                            Text("Exports host and entity gauges to an OTLP/HTTP collector. Clearing the endpoint uses Aetower's default local collector URL.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        Button("Apply runtime and integration settings") {
+                        Button("Apply integration and telemetry settings") {
                             focusedField = nil
                             state.applyIntegrationSettings(settings)
-                            applyConfirmation = "Settings applied to the running engine."
+                            applyConfirmation = "Integration and telemetry settings applied."
                             // Clear the confirmation after 4 seconds so the
                             // message doesn't persist indefinitely.
                             Task {
@@ -429,12 +461,16 @@ public struct SettingsView: View {
                 }
                 GroupBox("Reset") {
                     VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                        Text("Restore all settings to their factory defaults. You will need to click \"Apply runtime and integration settings\" to push the changes to the running engine.")
+                        Text("Restore defaults immediately, stop launch-at-login, disable automatic AI-client registration, and push runtime, integration, notification, and telemetry defaults to the running app.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Button("Reset to defaults", role: .destructive) {
                             settings.resetToDefaults()
-                            applyConfirmation = "All settings reset to defaults."
+                            state.applyNotificationSettings(settings)
+                            state.applyRuntimeCollectionSettings(settings)
+                            state.applyIntegrationSettings(settings)
+                            state.applyLocalMcpClientRegistrationSettings(settings)
+                            applyConfirmation = "All settings reset and applied."
                             Task {
                                 try? await Task.sleep(nanoseconds: 4_000_000_000)
                                 applyConfirmation = nil
@@ -458,7 +494,7 @@ private func registrationLabel(_ state: LocalMcpClientRegistrationState) -> Stri
     case .registered:
         return "Registered"
     case .availableForAutomaticRegistration:
-        return "Automatic"
+        return "Available"
     case .manualConfigurationRequired:
         return "Manual"
     case .unavailable:

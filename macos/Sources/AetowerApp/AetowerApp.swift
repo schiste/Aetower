@@ -98,6 +98,7 @@ struct AetowerApp: App {
                 refreshMenuBarTitle(force: true)
                 state.startLocalMcpServer(autoRegisterClients: settings.autoRegisterLocalMcpClientsEnabled)
                 state.applyNotificationSettings(settings)
+                state.applyRuntimeCollectionSettings(settings)
                 state.applyIntegrationSettings(settings)
                 // NSApplication.terminate exits before SwiftUI @State deinit,
                 // so rely on the will-terminate notification to tear down the
