@@ -8,6 +8,7 @@ public struct SettingsView: View {
     @Environment(UpdaterController.self) private var updater
     @FocusState private var focusedField: SettingsField?
     @State private var selectedSection: SettingsSection = .general
+    @State private var appliedIntegrationSnapshot: SettingsIntegrationSnapshot?
     @State private var applyConfirmation: String?
 
     public init(state: AppState, settings: SettingsStore) {
@@ -91,6 +92,11 @@ public struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .onAppear {
+            if appliedIntegrationSnapshot == nil {
+                appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
+            }
+        }
         .onDisappear {
             focusedField = nil
         }
@@ -110,14 +116,18 @@ public struct SettingsView: View {
                         Image(systemName: section.systemImage)
                             .frame(width: 18)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(section.title)
-                                .font(.callout.weight(.semibold))
+                            HStack(spacing: AetowerDesign.Spacing.xs) {
+                                Text(section.title)
+                                    .font(.callout.weight(.semibold))
+                                Spacer(minLength: AetowerDesign.Spacing.xs)
+                                let status = status(for: section)
+                                SettingsMiniStatusBadge(status.label, color: status.color)
+                            }
                             Text(section.subtitle)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
-                        Spacer()
                     }
                     .foregroundStyle(selectedSection == section ? Color.primary : Color.secondary)
                     .padding(.horizontal, AetowerDesign.Spacing.md)
@@ -154,10 +164,48 @@ public struct SettingsView: View {
                     .foregroundStyle(.secondary)
                 Text(section.title)
                     .font(.system(size: 30, weight: .semibold, design: .rounded))
+                let status = status(for: section)
+                SettingsBadge(status.label, color: status.color)
             }
             Text(section.subtitle)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func status(for section: SettingsSection) -> SettingsStatus {
+        switch section {
+        case .general:
+            return SettingsStatus("Live", AetowerDesign.Status.success)
+        case .collection:
+            return SettingsStatus("Live", AetowerDesign.Status.success)
+        case .integrations:
+            return hasPendingIntegrationChanges
+                ? SettingsStatus("Pending Apply", AetowerDesign.Status.warning)
+                : SettingsStatus("Applied", AetowerDesign.Status.success)
+        case .aiClients:
+            return settings.autoRegisterLocalMcpClientsEnabled
+                ? SettingsStatus("Auto", AetowerDesign.Status.ready)
+                : SettingsStatus("Manual", AetowerDesign.Status.neutral)
+        case .notifications:
+            return settings.notificationsEnabled
+                ? SettingsStatus("Enabled", AetowerDesign.Status.success)
+                : SettingsStatus("Off", AetowerDesign.Status.neutral)
+        case .privacy:
+            return SettingsStatus(settings.exportPrivacyTier.rawValue.capitalized, AetowerDesign.Status.ready)
+        case .updates:
+            return updater.isConfigured
+                ? SettingsStatus("Ready", AetowerDesign.Status.success)
+                : SettingsStatus("Disabled", AetowerDesign.Status.neutral)
+        case .advanced:
+            return SettingsStatus("Advanced", AetowerDesign.Status.warning)
+        }
+    }
+
+    private var hasPendingIntegrationChanges: Bool {
+        guard let appliedIntegrationSnapshot else {
+            return false
+        }
+        return appliedIntegrationSnapshot != SettingsIntegrationSnapshot(settings)
     }
 
     @ViewBuilder
@@ -186,7 +234,11 @@ public struct SettingsView: View {
     private var generalSection: some View {
         @Bindable var settings = settings
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-            SettingsCard(title: "Appearance", subtitle: "Controls the app chrome immediately.") {
+            SettingsCard(
+                title: "Appearance",
+                subtitle: "Controls the app chrome immediately.",
+                status: status(for: .general)
+            ) {
                 Picker("Appearance", selection: $settings.appearanceMode) {
                     Text("System").tag("system")
                     Text("Light").tag("light")
@@ -242,7 +294,11 @@ public struct SettingsView: View {
     @ViewBuilder
     private var collectionSection: some View {
         @Bindable var settings = settings
-        SettingsCard(title: "Runtime collection", subtitle: "These controls apply immediately and affect the running engine without restarting adapters.") {
+            SettingsCard(
+                title: "Runtime collection",
+                subtitle: "These controls apply immediately and affect the running engine without restarting adapters.",
+                status: status(for: .collection)
+            ) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                 Text("Collection profile")
                     .font(.headline)
@@ -307,7 +363,19 @@ public struct SettingsView: View {
     @ViewBuilder
     private var integrationsSection: some View {
         @Bindable var settings = settings
-        SettingsCard(title: "Integration endpoints", subtitle: "Endpoint fields are staged until you apply them.") {
+        SettingsCard(
+            title: "Integration endpoints",
+            subtitle: "Endpoint fields are staged until you apply them.",
+            status: status(for: .integrations)
+        ) {
+            if hasPendingIntegrationChanges {
+                SettingsNotice(
+                    title: "Integration changes are pending",
+                    detail: "Apply these staged endpoint and telemetry changes before trusting capability status.",
+                    color: AetowerDesign.Status.warning
+                )
+            }
+
             TextField(
                 "Chromium endpoint",
                 text: $settings.chromiumEndpoint,
@@ -373,9 +441,7 @@ public struct SettingsView: View {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 Button("Apply integration and telemetry settings") {
                     focusedField = nil
-                    state.applyIntegrationSettings(settings)
-                    applyConfirmation = "Integration and telemetry settings applied."
-                    clearApplyConfirmationLater()
+                    applyIntegrationAndTelemetrySettings(settings)
                 }
                 .buttonStyle(.borderedProminent)
 
@@ -402,7 +468,11 @@ public struct SettingsView: View {
     @ViewBuilder
     private var aiClientsSection: some View {
         @Bindable var settings = settings
-        SettingsCard(title: "Local AI client MCP access", subtitle: "Aetower can register its bundled MCP proxy for supported local agents.") {
+        SettingsCard(
+            title: "Local AI client MCP access",
+            subtitle: "Aetower can register its bundled MCP proxy for supported local agents.",
+            status: status(for: .aiClients)
+        ) {
             Toggle(
                 "Auto-register supported AI clients on launch",
                 isOn: $settings.autoRegisterLocalMcpClientsEnabled
@@ -484,7 +554,11 @@ public struct SettingsView: View {
     @ViewBuilder
     private var notificationsSection: some View {
         @Bindable var settings = settings
-        SettingsCard(title: "Friction alerts", subtitle: "Notify when a process group crosses your attention threshold.") {
+        SettingsCard(
+            title: "Friction alerts",
+            subtitle: "Notify when a process group crosses your attention threshold.",
+            status: status(for: .notifications)
+        ) {
             Toggle("Enable notifications", isOn: $settings.notificationsEnabled)
             Text("Authorization: \(state.notificationAuthorizationStatus)")
                 .font(.caption.monospaced())
@@ -508,7 +582,11 @@ public struct SettingsView: View {
     @ViewBuilder
     private var privacySection: some View {
         @Bindable var settings = settings
-        SettingsCard(title: "Export privacy", subtitle: "Controls what leaves the machine in JSON exports and support bundles.") {
+        SettingsCard(
+            title: "Export privacy",
+            subtitle: "Controls what leaves the machine in JSON exports and support bundles.",
+            status: status(for: .privacy)
+        ) {
             Picker("Export privacy tier", selection: $settings.exportPrivacyTier) {
                 Text("Redacted").tag(ExportPrivacyTier.redacted)
                 Text("Operator").tag(ExportPrivacyTier.operatorMode)
@@ -522,7 +600,11 @@ public struct SettingsView: View {
     }
 
     private var updatesSection: some View {
-        SettingsCard(title: "Direct-download updates", subtitle: "Sparkle handles signed release checks outside the Mac App Store.") {
+        SettingsCard(
+            title: "Direct-download updates",
+            subtitle: "Sparkle handles signed release checks outside the Mac App Store.",
+            status: status(for: .updates)
+        ) {
             Text(updater.statusMessage)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -543,7 +625,11 @@ public struct SettingsView: View {
     private var advancedSection: some View {
         @Bindable var settings = settings
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-            SettingsCard(title: "Capabilities", subtitle: "Richer integrations stay behind explicit capability gates.") {
+            SettingsCard(
+                title: "Capabilities",
+                subtitle: "Richer integrations stay behind explicit capability gates.",
+                status: status(for: .advanced)
+            ) {
                 ForEach(state.snapshot.capabilities, id: \.kind) { capability in
                     SettingsRowCard {
                         HStack {
@@ -564,6 +650,9 @@ public struct SettingsView: View {
                         HStack {
                             Button(capabilityActionLabel(capability)) {
                                 state.performCapabilityAction(capability, settings: settings)
+                                if isAdapterCapability(capability.kind) {
+                                    appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
+                                }
                             }
                             .buttonStyle(.borderedProminent)
 
@@ -585,6 +674,7 @@ public struct SettingsView: View {
                     state.applyRuntimeCollectionSettings(settings)
                     state.applyIntegrationSettings(settings)
                     state.applyLocalMcpClientRegistrationSettings(settings)
+                    appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
                     applyConfirmation = "All settings reset and applied."
                     clearApplyConfirmationLater()
                 }
@@ -628,6 +718,22 @@ public struct SettingsView: View {
         Task {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             applyConfirmation = nil
+        }
+    }
+
+    private func applyIntegrationAndTelemetrySettings(_ settings: SettingsStore) {
+        state.applyIntegrationSettings(settings)
+        appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
+        applyConfirmation = "Integration and telemetry settings applied."
+        clearApplyConfirmationLater()
+    }
+
+    private func isAdapterCapability(_ kind: CapabilityKind) -> Bool {
+        switch kind {
+        case .accessibility, .fullDiskAccess, .appleAutomation:
+            return false
+        case .chromiumDebug, .dockerSocket, .privilegedHelper, .endpointSecurity, .chau7:
+            return true
         }
     }
 }
@@ -739,16 +845,69 @@ private func capabilityActionLabel(_ capability: CapabilitySnapshot) -> String {
     }
 }
 
+private struct SettingsStatus {
+    let label: String
+    let color: Color
+
+    init(_ label: String, _ color: Color) {
+        self.label = label
+        self.color = color
+    }
+}
+
+private struct SettingsIntegrationSnapshot: Equatable {
+    let chromiumEndpoint: String
+    let dockerSocketPath: String
+    let privilegedHelperEnabled: Bool
+    let privilegedHelperPath: String
+    let chau7Endpoint: String
+    let telemetryEnabled: Bool
+    let telemetryEndpoint: String
+    let telemetryExportIntervalSeconds: UInt32
+
+    @MainActor
+    init(_ settings: SettingsStore) {
+        chromiumEndpoint = settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        dockerSocketPath = SettingsStore.normalizedDockerSocketPath(settings.dockerSocketPath)
+        privilegedHelperEnabled = settings.privilegedHelperEnabled
+        privilegedHelperPath = settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        chau7Endpoint = settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        telemetryEnabled = settings.telemetryEnabled
+        telemetryEndpoint = SettingsStore.normalizedTelemetryEndpoint(settings.telemetryEndpoint)
+        telemetryExportIntervalSeconds = SettingsStore.normalizedTelemetryExportIntervalSeconds(
+            settings.telemetryExportIntervalSeconds
+        )
+    }
+}
+
 private struct SettingsCard<Content: View>: View {
     let title: String
     let subtitle: String
-    @ViewBuilder var content: Content
+    let status: SettingsStatus?
+    let content: Content
+
+    init(
+        title: String,
+        subtitle: String,
+        status: SettingsStatus? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.status = status
+        self.content = content()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                Text(title)
-                    .font(.headline)
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Text(title)
+                        .font(.headline)
+                    if let status {
+                        SettingsBadge(status.label, color: status.color)
+                    }
+                }
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -800,6 +959,48 @@ private struct SettingsBadge: View {
             .padding(.horizontal, AetowerDesign.Spacing.sm)
             .padding(.vertical, AetowerDesign.Spacing.xs)
             .background(color.opacity(0.12), in: Capsule())
+    }
+}
+
+private struct SettingsMiniStatusBadge: View {
+    let label: String
+    let color: Color
+
+    init(_ label: String, color: Color) {
+        self.label = label
+        self.color = color
+    }
+
+    var body: some View {
+        Text(label)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .padding(.horizontal, AetowerDesign.Spacing.xs)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.10), in: Capsule())
+    }
+}
+
+private struct SettingsNotice: View {
+    let title: String
+    let detail: String
+    let color: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(color)
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md))
     }
 }
 
