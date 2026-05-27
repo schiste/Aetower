@@ -430,7 +430,7 @@ public struct EntityDetailView: View {
                     title: "Friction",
                     value: String(format: "%.1f", entity.friction.totalScore),
                     subtitle: "recent score · \(trendWindowLabel(sampleCount: entity.trend.friction.count))",
-                    samples: entity.trend.friction.map(Double.init),
+                    samples: entity.trend.friction.map { Double($0) },
                     style: .friction,
                     minHeight: 124
                 )
@@ -438,7 +438,7 @@ public struct EntityDetailView: View {
                     title: "CPU",
                     value: String(format: "%.1f%%", entity.metrics.cpuPercent),
                     subtitle: "\(entity.metrics.isForeground ? "frontmost app" : "backgrounded app") · \(trendWindowLabel(sampleCount: entity.trend.cpuPercent.count))",
-                    samples: entity.trend.cpuPercent.map(Double.init),
+                    samples: entity.trend.cpuPercent.map { Double($0) },
                     style: .cpu,
                     minHeight: 124
                 )
@@ -446,7 +446,7 @@ public struct EntityDetailView: View {
                     title: "Resident Memory",
                     value: formatBytes(entity.metrics.memoryResidentBytes),
                     subtitle: "\(entity.metrics.processCount) grouped processes · \(trendWindowLabel(sampleCount: entity.trend.memoryResidentBytes.count))",
-                    samples: entity.trend.memoryResidentBytes.map(Double.init),
+                    samples: entity.trend.memoryResidentBytes.map { Double($0) },
                     style: .memory,
                     minHeight: 124
                 )
@@ -482,7 +482,7 @@ public struct EntityDetailView: View {
                     title: "Disk Activity",
                     value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
                     subtitle: "read + write throughput · \(trendWindowLabel(sampleCount: entity.trend.diskActivityBps.count))",
-                    samples: entity.trend.diskActivityBps.map(Double.init),
+                    samples: entity.trend.diskActivityBps.map { Double($0) },
                     style: .disk,
                     minHeight: 124
                 )
@@ -498,7 +498,7 @@ public struct EntityDetailView: View {
                     title: "Network",
                     value: formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps),
                     subtitle: "read + send throughput · \(trendWindowLabel(sampleCount: entity.trend.networkActivityBps.count))",
-                    samples: entity.trend.networkActivityBps.map(Double.init),
+                    samples: entity.trend.networkActivityBps.map { Double($0) },
                     style: .network,
                     minHeight: 124
                 )
@@ -506,7 +506,7 @@ public struct EntityDetailView: View {
                     title: "Wakeups",
                     value: formatWakeups(entity.metrics.wakeupsPerSecond),
                     subtitle: "timer and interrupt churn · \(trendWindowLabel(sampleCount: entity.trend.wakeupsPerSecond.count))",
-                    samples: entity.trend.wakeupsPerSecond.map(Double.init),
+                    samples: entity.trend.wakeupsPerSecond.map { Double($0) },
                     style: .friction,
                     minHeight: 124
                 )

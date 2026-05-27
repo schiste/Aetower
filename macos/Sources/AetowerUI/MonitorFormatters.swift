@@ -100,11 +100,11 @@ func trendLabel(samples: [Double], stableText: String) -> String {
 }
 
 func frictionTrendSummary(_ entity: EntitySnapshot) -> String {
-    "\(trendLabel(samples: entity.trend.friction.map(Double.init), stableText: "recent score")) · \(trendWindowLabel(sampleCount: entity.trend.friction.count))"
+    "\(trendLabel(samples: entity.trend.friction.map { Double($0) }, stableText: "recent score")) · \(trendWindowLabel(sampleCount: entity.trend.friction.count))"
 }
 
 func cpuTrendSummary(_ entity: EntitySnapshot) -> String {
-    "\(trendLabel(samples: entity.trend.cpuPercent.map(Double.init), stableText: "recent load")) · \(trendWindowLabel(sampleCount: entity.trend.cpuPercent.count))"
+    "\(trendLabel(samples: entity.trend.cpuPercent.map { Double($0) }, stableText: "recent load")) · \(trendWindowLabel(sampleCount: entity.trend.cpuPercent.count))"
 }
 
 func memoryTrendSummary(_ entity: EntitySnapshot) -> String {
@@ -125,15 +125,15 @@ func memoryMetricNote(residentBytes: UInt64, footprintBytes: UInt64) -> String {
 }
 
 func diskTrendSummary(_ entity: EntitySnapshot) -> String {
-    "\(trendLabel(samples: entity.trend.diskActivityBps.map(Double.init), stableText: "recent throughput")) · \(trendWindowLabel(sampleCount: entity.trend.diskActivityBps.count))"
+    "\(trendLabel(samples: entity.trend.diskActivityBps.map { Double($0) }, stableText: "recent throughput")) · \(trendWindowLabel(sampleCount: entity.trend.diskActivityBps.count))"
 }
 
 func networkTrendSummary(_ entity: EntitySnapshot) -> String {
-    "\(trendLabel(samples: entity.trend.networkActivityBps.map(Double.init), stableText: "recent throughput")) · \(trendWindowLabel(sampleCount: entity.trend.networkActivityBps.count))"
+    "\(trendLabel(samples: entity.trend.networkActivityBps.map { Double($0) }, stableText: "recent throughput")) · \(trendWindowLabel(sampleCount: entity.trend.networkActivityBps.count))"
 }
 
 func wakeupsTrendSummary(_ entity: EntitySnapshot) -> String {
-    "\(trendLabel(samples: entity.trend.wakeupsPerSecond.map(Double.init), stableText: "recent wakeups")) · \(trendWindowLabel(sampleCount: entity.trend.wakeupsPerSecond.count))"
+    "\(trendLabel(samples: entity.trend.wakeupsPerSecond.map { Double($0) }, stableText: "recent wakeups")) · \(trendWindowLabel(sampleCount: entity.trend.wakeupsPerSecond.count))"
 }
 
 func trendWindowLabel(sampleCount: Int) -> String {

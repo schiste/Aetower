@@ -493,7 +493,7 @@ public struct Chau7View: View {
                     title: "CPU",
                     value: String(format: "%.1f%%", entity.metrics.cpuPercent),
                     subtitle: "peak \(String(format: "%.1f%%", entity.trend.cpuPercent.max() ?? entity.metrics.cpuPercent))",
-                    samples: entity.trend.cpuPercent.map(Double.init),
+                    samples: entity.trend.cpuPercent.map { Double($0) },
                     tone: AetowerDesign.Tone.cpu
                 )
                 chau7MetricCard(
@@ -507,7 +507,7 @@ public struct Chau7View: View {
                     title: "Wakeups",
                     value: String(format: "%.0f/s", entity.metrics.wakeupsPerSecond),
                     subtitle: "peak \(String(format: "%.0f/s", entity.trend.wakeupsPerSecond.max() ?? entity.metrics.wakeupsPerSecond))",
-                    samples: entity.trend.wakeupsPerSecond.map(Double.init),
+                    samples: entity.trend.wakeupsPerSecond.map { Double($0) },
                     tone: AetowerDesign.Status.warning
                 )
                 chau7MetricCard(
@@ -528,7 +528,7 @@ public struct Chau7View: View {
                     title: "Build",
                     value: buildIdentity?.label ?? "Unknown build",
                     subtitle: buildIdentity?.timestamp ?? (chau7Capability?.detail ?? "No build metadata surfaced yet."),
-                    samples: entity.trend.friction.map(Double.init),
+                    samples: entity.trend.friction.map { Double($0) },
                     tone: AetowerDesign.Tone.friction
                 )
             }

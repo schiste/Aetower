@@ -1068,7 +1068,7 @@ package struct AIAgentsView: View {
             trendMetric(
                 title: "CPU",
                 value: String(format: "%.0f%%", entity.metrics.cpuPercent),
-                samples: entity.trend.cpuPercent.map(Double.init),
+                samples: entity.trend.cpuPercent.map { Double($0) },
                 color: AetowerDesign.Tone.cpu
             )
             trendMetric(
@@ -1080,7 +1080,7 @@ package struct AIAgentsView: View {
             trendMetric(
                 title: "Wakeups",
                 value: String(format: "%.0f/s", entity.metrics.wakeupsPerSecond),
-                samples: entity.trend.wakeupsPerSecond.map(Double.init),
+                samples: entity.trend.wakeupsPerSecond.map { Double($0) },
                 color: AetowerDesign.Status.warning
             )
         }
@@ -1278,7 +1278,7 @@ package struct AIAgentsView: View {
                 entityName: cpu.displayName,
                 valueLabel: String(format: "%.0f%%", cpu.metrics.cpuPercent),
                 color: AetowerDesign.Tone.cpu,
-                trend: cpu.trend.cpuPercent.map(Double.init)
+                trend: cpu.trend.cpuPercent.map { Double($0) }
             ))
         }
         if let memory = agents.max(by: { $0.metrics.memoryResidentBytes < $1.metrics.memoryResidentBytes }), memory.metrics.memoryResidentBytes > 0 {
@@ -1302,7 +1302,7 @@ package struct AIAgentsView: View {
                 // CPU is the best physical proxy on Apple Silicon —
                 // energy consumption correlates most directly with CPU
                 // utilisation, not the composite friction score.
-                trend: energy.trend.cpuPercent.map(Double.init)
+                trend: energy.trend.cpuPercent.map { Double($0) }
             ))
         }
         if let gpu = agents.max(by: { $0.metrics.estimatedGpuPercent < $1.metrics.estimatedGpuPercent }), gpu.metrics.estimatedGpuPercent > 0 {
@@ -1316,7 +1316,7 @@ package struct AIAgentsView: View {
                 // is a reasonable proxy — it blends CPU, memory, disk,
                 // and wakeups into a composite "system impact" score
                 // that tracks with GPU-heavy workloads' total footprint.
-                trend: gpu.trend.cpuPercent.map(Double.init)
+                trend: gpu.trend.cpuPercent.map { Double($0) }
             ))
         }
         if let wakeups = agents.max(by: { $0.metrics.wakeupsPerSecond < $1.metrics.wakeupsPerSecond }), wakeups.metrics.wakeupsPerSecond > 0 {
@@ -1326,7 +1326,7 @@ package struct AIAgentsView: View {
                 entityName: wakeups.displayName,
                 valueLabel: String(format: "%.0f/s", wakeups.metrics.wakeupsPerSecond),
                 color: AetowerDesign.Status.warning,
-                trend: wakeups.trend.wakeupsPerSecond.map(Double.init)
+                trend: wakeups.trend.wakeupsPerSecond.map { Double($0) }
             ))
         }
 

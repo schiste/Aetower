@@ -1311,42 +1311,42 @@ public struct MainListView: View {
         let host = snapshot.host
         let frictionScore = machineFrictionScore(for: host)
         let frictionSamples = monitorTrendSamples(
-            hostTrend.machineFriction.map(Double.init),
+            hostTrend.machineFriction.map { Double($0) },
             history: monitorHostHistorySamples { machineFrictionScore(for: $0) },
             fallback: frictionScore
         )
         let cpuSamples = monitorTrendSamples(
-            hostTrend.cpuPercent.map(Double.init),
+            hostTrend.cpuPercent.map { Double($0) },
             history: monitorHostHistorySamples { Double($0.cpuPercent) },
             fallback: Double(host.cpuPercent)
         )
         let memorySamples = monitorTrendSamples(
-            hostTrend.memoryPressureScore.map(Double.init),
+            hostTrend.memoryPressureScore.map { Double($0) },
             history: monitorHostHistorySamples { hostMemoryPressureScore($0) },
             fallback: hostMemoryPressureScore(host)
         )
         let diskSamples = monitorTrendSamples(
-            hostTrend.diskActivityBps.map(Double.init),
+            hostTrend.diskActivityBps.map { Double($0) },
             history: monitorHostHistorySamples { Double($0.diskReadBps + $0.diskWriteBps) },
             fallback: Double(host.diskReadBps + host.diskWriteBps)
         )
         let networkSamples = monitorTrendSamples(
-            hostTrend.networkActivityBps.map(Double.init),
+            hostTrend.networkActivityBps.map { Double($0) },
             history: monitorHostHistorySamples { Double($0.networkReceiveBps + $0.networkSendBps) },
             fallback: Double(host.networkReceiveBps + host.networkSendBps)
         )
         let wakeupSamples = monitorTrendSamples(
-            hostTrend.wakeupsPerSecond.map(Double.init),
+            hostTrend.wakeupsPerSecond.map { Double($0) },
             history: monitorHostHistorySamples { Double($0.wakeupsPerSecond) },
             fallback: Double(host.wakeupsPerSecond)
         )
         let gpuPercentSamples = monitorTrendSamples(
-            hostTrend.gpuPercent.map(Double.init),
+            hostTrend.gpuPercent.map { Double($0) },
             history: monitorHostHistorySamples { Double($0.gpuPercent) },
             fallback: Double(host.gpuPercent)
         )
         let gpuMemorySamples = monitorTrendSamples(
-            hostTrend.gpuMemoryBytes.map(Double.init),
+            hostTrend.gpuMemoryBytes.map { Double($0) },
             history: monitorHostHistorySamples { Double($0.gpuMemoryBytes) },
             fallback: Double(host.gpuMemoryBytes)
         )
