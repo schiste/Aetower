@@ -189,8 +189,8 @@ public struct Chau7View: View {
                 tabId: nil,
                 sessionId: contexts.compactMap(\.sessionId).first,
                 title: primary.displayName,
-                provider: providerLabel(for: primary) ?? "shell",
-                workspace: projectContext(for: primary),
+                provider: agentProviderLabel(for: primary) ?? "shell",
+                workspace: agentProjectContext(for: primary),
                 repoRoot: contexts.compactMap(\.repoRoot).first,
                 gitBranch: nil,
                 status: contexts.compactMap(\.status).first ?? "unknown",
@@ -513,7 +513,7 @@ public struct Chau7View: View {
                 chau7MetricCard(
                     title: "Disk",
                     value: formatRate(entity.metrics.diskReadBps + entity.metrics.diskWriteBps),
-                    subtitle: "energy \(formatEnergy(njPerS: entity.metrics.energyNjPerS))",
+                    subtitle: "energy \(agentFormatEnergy(njPerS: entity.metrics.energyNjPerS))",
                     samples: entity.trend.diskActivityBps.map { Double($0) },
                     tone: AetowerDesign.Tone.network
                 )
@@ -957,16 +957,16 @@ public struct Chau7View: View {
                     }
                     Spacer()
                     if !session.status.isEmpty {
-                        stateBadge(
+                        agentStateBadge(
                             session.status.replacingOccurrences(of: "-", with: " ").capitalized,
                             color: statusTone(session.status)
                         )
                     }
                     if session.approvalNeeded {
-                        stateBadge("Approval needed", color: AetowerDesign.Status.warning)
+                        agentStateBadge("Approval needed", color: AetowerDesign.Status.warning)
                     }
                     if let sessionId = session.sessionId {
-                        stateBadge(shortSessionId(sessionId), color: AetowerDesign.Status.ready)
+                        agentStateBadge(shortSessionId(sessionId), color: AetowerDesign.Status.ready)
                     }
                 }
 
@@ -1038,7 +1038,7 @@ public struct Chau7View: View {
                 }
                 Spacer()
                 if !session.status.isEmpty {
-                    stateBadge(
+                    agentStateBadge(
                         session.status.replacingOccurrences(of: "-", with: " ").capitalized,
                         color: statusTone(session.status)
                     )
@@ -1307,27 +1307,9 @@ public struct Chau7View: View {
     }
 
     private func sampledStackRow(_ stack: SampledStackReportModel) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(stack.queueLabel ?? stack.threadLabel)
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("\(stack.sampleCount) samples")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Text(stack.classification)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.tertiary)
-            if !stack.topFrames.isEmpty {
-                Text(stack.topFrames.prefix(3).joined(separator: " → "))
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md))
+        sampledStackBody(stack)
+            .padding(AetowerDesign.Spacing.md)
+            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md))
     }
 
     private func sectionPlaceholder(_ text: String) -> some View {
@@ -1350,16 +1332,6 @@ public struct Chau7View: View {
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, AetowerDesign.Spacing.xs)
         .background(Color.secondary.opacity(0.08), in: Capsule())
-    }
-
-    private func stateBadge(_ label: String, color: Color) -> some View {
-        Text(label)
-            .font(.caption2)
-            .fontWeight(.medium)
-            .foregroundStyle(color)
-            .padding(.horizontal, AetowerDesign.Spacing.sm)
-            .padding(.vertical, AetowerDesign.Spacing.xxs)
-            .background(color.opacity(0.08), in: Capsule())
     }
 
     private func metricPill(_ label: String, color: Color) -> some View {
@@ -1547,63 +1519,6 @@ public struct Chau7View: View {
         sessionComponent(for: entity)?.adapterContext
     }
 
-    private func providerLabel(for entity: EntitySnapshot) -> String? {
-        if let title = sessionComponent(for: entity)?.title,
-           let prefix = title.components(separatedBy: " · ").first
-        {
-            let trimmed = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return trimmed
-            }
-        }
-
-        let providerBadges = entity.badges.filter {
-            $0 != "ai-agent"
-                && $0 != "chau7-live"
-                && !$0.hasPrefix("ai-session:")
-                && ![
-                    "approval-needed",
-                    "delegating",
-                    "cto-active",
-                    "at-prompt",
-                    "shell-loading",
-                    "agent-error",
-                    "agent-finished",
-                ].contains($0)
-        }
-        return providerBadges.first.map { $0.replacingOccurrences(of: "-", with: " ").capitalized }
-    }
-
-    private func projectContext(for entity: EntitySnapshot) -> String? {
-        func rankedPath(_ component: ComponentSnapshot) -> (Int, String)? {
-            if let repoRoot = component.adapterContext?.repoRoot, !repoRoot.isEmpty {
-                let rank = component.adapterContext?.kind == .chau7Session ? 0 : 1
-                return (rank, repoRoot)
-            }
-
-            if let workspacePath = component.adapterContext?.workspacePath, !workspacePath.isEmpty {
-                return (2, workspacePath)
-            }
-
-            if let cwd = component.cwd, !cwd.isEmpty {
-                return (3, cwd)
-            }
-
-            return nil
-        }
-
-        return entity.components
-            .compactMap(rankedPath)
-            .sorted { lhs, rhs in
-                if lhs.0 != rhs.0 {
-                    return lhs.0 < rhs.0
-                }
-                return lhs.1.localizedCaseInsensitiveCompare(rhs.1) == .orderedAscending
-            }
-            .first?
-            .1
-    }
-
     private func graphicsResidentBytes(in breakdown: EntityMemoryBreakdownReportModel) -> UInt64 {
         breakdown.regions
             .filter {
@@ -1666,17 +1581,6 @@ public struct Chau7View: View {
         let prefix = delta > 0 ? "+" : delta < 0 ? "-" : ""
         let magnitude = abs(delta)
         return prefix + valueLabel(magnitude, suffix: suffix, bytesMode: bytesMode, rateMode: rateMode)
-    }
-
-    private func formatEnergy(njPerS: Double) -> String {
-        let mw = njPerS / 1_000_000
-        if mw >= 1000 {
-            return String(format: "%.1f W", mw / 1000)
-        } else if mw >= 1 {
-            return String(format: "%.0f mW", mw)
-        } else {
-            return "0 mW"
-        }
     }
 
     private func shortenPath(_ path: String) -> String {

@@ -296,7 +296,7 @@ package struct AIAgentsView: View {
                 color: AetowerDesign.Tone.gpu
             )
             summaryChip(
-                label: formatEnergy(njPerS: derived.totalEnergy),
+                label: agentFormatEnergy(njPerS: derived.totalEnergy),
                 icon: "bolt.fill",
                 color: AetowerDesign.Tone.energy
             )
@@ -449,7 +449,7 @@ package struct AIAgentsView: View {
                             .fontWeight(.semibold)
                         Spacer()
                         if let sessionId = item.sessionId {
-                            stateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.warning)
+                            agentStateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.warning)
                         }
                     }
                     if let workspace = item.workspace {
@@ -486,9 +486,9 @@ package struct AIAgentsView: View {
                             .fontWeight(.semibold)
                         Spacer()
                         if let sessionId = item.sessionId {
-                            stateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.ready)
+                            agentStateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.ready)
                         }
-                        stateBadge("\(item.childSessionCount) child", color: AetowerDesign.Status.ready)
+                        agentStateBadge("\(item.childSessionCount) child", color: AetowerDesign.Status.ready)
                     }
                     if let workspace = item.workspace {
                         Text(shortenPath(workspace))
@@ -542,7 +542,7 @@ package struct AIAgentsView: View {
                             color: AetowerDesign.Tone.cpu
                         )
                         metricPill(label: formatBytes(group.totalMemoryBytes), color: AetowerDesign.Tone.memory)
-                        metricPill(label: formatEnergy(njPerS: group.totalEnergyNjPerS), color: AetowerDesign.Tone.energy)
+                        metricPill(label: agentFormatEnergy(njPerS: group.totalEnergyNjPerS), color: AetowerDesign.Tone.energy)
                         if group.totalCostUsd > 0 {
                             metricPill(
                                 label: String(format: "$%.2f", group.totalCostUsd),
@@ -553,10 +553,10 @@ package struct AIAgentsView: View {
 
                     HStack(spacing: AetowerDesign.Spacing.xs) {
                         if group.approvalCount > 0 {
-                            stateBadge("Approvals \(group.approvalCount)", color: AetowerDesign.Status.warning)
+                            agentStateBadge("Approvals \(group.approvalCount)", color: AetowerDesign.Status.warning)
                         }
                         if group.delegatingCount > 0 {
-                            stateBadge("Delegating \(group.delegatingCount)", color: AetowerDesign.Status.ready)
+                            agentStateBadge("Delegating \(group.delegatingCount)", color: AetowerDesign.Status.ready)
                         }
                     }
                 }
@@ -587,14 +587,14 @@ package struct AIAgentsView: View {
             HStack {
                 Text(entity.displayName)
                     .font(.headline)
-                if let provider = providerLabel(for: entity) {
+                if let provider = agentProviderLabel(for: entity) {
                     Text("·")
                         .foregroundStyle(.tertiary)
                     Text(provider)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                if let workspace = projectContext(for: entity) {
+                if let workspace = agentProjectContext(for: entity) {
                     Text("—")
                         .foregroundStyle(.tertiary)
                     Text(shortenPath(workspace))
@@ -615,7 +615,7 @@ package struct AIAgentsView: View {
                     )
                 }
                 metricPill(
-                    label: formatEnergy(njPerS: entity.metrics.energyNjPerS),
+                    label: agentFormatEnergy(njPerS: entity.metrics.energyNjPerS),
                     color: AetowerDesign.Tone.energy
                 )
                 metricPill(
@@ -852,16 +852,6 @@ package struct AIAgentsView: View {
         )
     }
 
-    private func stateBadge(_ label: String, color: Color) -> some View {
-        Text(label)
-            .font(.caption2)
-            .fontWeight(.medium)
-            .foregroundStyle(color)
-            .padding(.horizontal, AetowerDesign.Spacing.sm)
-            .padding(.vertical, AetowerDesign.Spacing.xxs)
-            .background(color.opacity(0.08), in: Capsule())
-    }
-
     private func metricPill(label: String, color: Color) -> some View {
         Text(label)
             .font(.caption)
@@ -890,73 +880,13 @@ package struct AIAgentsView: View {
         return AetowerDesign.Status.success
     }
 
-    private func providerLabel(for entity: EntitySnapshot) -> String? {
-        if let title = sessionComponent(for: entity)?.title,
-           let prefix = title.components(separatedBy: " · ").first {
-            let trimmed = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return trimmed
-            }
-        }
-
-        let providerBadges = entity.badges.filter {
-            $0 != "ai-agent"
-                && $0 != "chau7-live"
-                && !$0.hasPrefix("ai-session:")
-                && ![
-                    "approval-needed",
-                    "delegating",
-                    "cto-active",
-                    "at-prompt",
-                    "shell-loading",
-                    "agent-error",
-                ].contains($0)
-        }
-        return providerBadges.first.map { $0.replacingOccurrences(of: "-", with: " ").capitalized }
-    }
-
     private func sessionComponent(for entity: EntitySnapshot) -> ComponentSnapshot? {
         entity.components.first { $0.adapterContext?.kind == .chau7Session }
     }
 
-    private func projectContext(for entity: EntitySnapshot) -> String? {
-        func rankedPath(_ component: ComponentSnapshot) -> (Int, String)? {
-            if let repoRoot = component.adapterContext?.repoRoot, !repoRoot.isEmpty {
-                let rank = component.adapterContext?.kind == .chau7Session ? 0 : 1
-                return (rank, repoRoot)
-            }
-
-            if let workspacePath = component.adapterContext?.workspacePath, !workspacePath.isEmpty {
-                let kind = component.adapterContext?.kind
-                let rank = (kind == .vsCodeWorkspace || kind == .vsCodeRuntime) ? 0 : 2
-                return (rank, workspacePath)
-            }
-
-            if let cwd = component.cwd, !cwd.isEmpty {
-                return (3, cwd)
-            }
-
-            return nil
-        }
-
-        return entity.components
-            .compactMap(rankedPath)
-            .sorted { lhs, rhs in
-                if lhs.0 != rhs.0 {
-                    return lhs.0 < rhs.0
-                }
-                if lhs.1.count != rhs.1.count {
-                    return lhs.1.count < rhs.1.count
-                }
-                return lhs.1.localizedCaseInsensitiveCompare(rhs.1) == .orderedAscending
-            }
-            .first?
-            .1
-    }
-
     private func dataBadges(for entity: EntitySnapshot) -> [DataBadge] {
         let sessionLinked = sessionComponent(for: entity)?.adapterContext?.sessionId != nil
-        let projectLinked = projectContext(for: entity) != nil
+        let projectLinked = agentProjectContext(for: entity) != nil
         let gpuEstimated = entity.metrics.estimatedGpuPercent > 0
 
         var badges: [DataBadge] = [
@@ -989,7 +919,7 @@ package struct AIAgentsView: View {
     private func dataQualityBadgeRow(for entity: EntitySnapshot) -> some View {
         HStack(spacing: AetowerDesign.Spacing.xs) {
             ForEach(dataBadges(for: entity).prefix(4)) { badge in
-                stateBadge(badge.label, color: badge.color)
+                agentStateBadge(badge.label, color: badge.color)
             }
         }
     }
@@ -1014,28 +944,28 @@ package struct AIAgentsView: View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
             HStack(spacing: AetowerDesign.Spacing.xs) {
                 if let status = info.status, !status.isEmpty {
-                    stateBadge(status.replacingOccurrences(of: "-", with: " ").capitalized, color: statusTone(status))
+                    agentStateBadge(status.replacingOccurrences(of: "-", with: " ").capitalized, color: statusTone(status))
                 }
                 if let sessionId = info.sessionId, !sessionId.isEmpty {
-                    stateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.ready)
+                    agentStateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.ready)
                 }
                 if entity.badges.contains("cto-active") {
-                    stateBadge("CTO active", color: AetowerDesign.Status.ready)
+                    agentStateBadge("CTO active", color: AetowerDesign.Status.ready)
                 }
                 if entity.badges.contains("at-prompt") {
-                    stateBadge("At prompt", color: AetowerDesign.Status.success)
+                    agentStateBadge("At prompt", color: AetowerDesign.Status.success)
                 }
                 if entity.badges.contains("shell-loading") {
-                    stateBadge("Shell loading", color: AetowerDesign.Status.warning)
+                    agentStateBadge("Shell loading", color: AetowerDesign.Status.warning)
                 }
                 if let version = info.appVersion, !version.isEmpty {
-                    stateBadge("v\(version)", color: AetowerDesign.Tone.memory)
+                    agentStateBadge("v\(version)", color: AetowerDesign.Tone.memory)
                 }
                 if let channel = info.buildChannel, !channel.isEmpty {
-                    stateBadge(channel.capitalized, color: AetowerDesign.Status.ready)
+                    agentStateBadge(channel.capitalized, color: AetowerDesign.Status.ready)
                 }
                 if let buildSha = info.buildSha, !buildSha.isEmpty {
-                    stateBadge("#\(shortBuildSha(buildSha))", color: AetowerDesign.Status.warning)
+                    agentStateBadge("#\(shortBuildSha(buildSha))", color: AetowerDesign.Status.warning)
                 }
             }
 
@@ -1153,15 +1083,15 @@ package struct AIAgentsView: View {
 
     private func buildRuntimeGroups(from agents: [EntitySnapshot]) -> [RuntimeGroup] {
         let grouped = Dictionary(grouping: agents) { entity in
-            let provider = providerLabel(for: entity) ?? "Unknown Provider"
-            let workspace = projectContext(for: entity)
+            let provider = agentProviderLabel(for: entity) ?? "Unknown Provider"
+            let workspace = agentProjectContext(for: entity)
             return "\(provider)|\(workspace ?? "-")"
         }
 
         return grouped.values.compactMap { members in
             guard let first = members.first else { return nil }
-            let provider = providerLabel(for: first) ?? "Unknown Provider"
-            let workspace = projectContext(for: first)
+            let provider = agentProviderLabel(for: first) ?? "Unknown Provider"
+            let workspace = agentProjectContext(for: first)
             return RuntimeGroup(
                 provider: provider,
                 workspace: workspace,
@@ -1197,8 +1127,8 @@ package struct AIAgentsView: View {
             let samples: [(cpu: Double, memory: UInt64)] = state.historySnapshots.suffix(24).map { snapshot in
                 let matching = snapshot.entities.filter { entity in
                     entity.entityKind == .aiAgent
-                        && providerLabel(for: entity) == group.provider
-                        && projectContext(for: entity) == group.workspace
+                        && agentProviderLabel(for: entity) == group.provider
+                        && agentProjectContext(for: entity) == group.workspace
                 }
                 return (
                     cpu: matching.reduce(0.0) { $0 + Double($1.metrics.cpuPercent) },
@@ -1237,7 +1167,7 @@ package struct AIAgentsView: View {
                 entityId: entity.entityId,
                 displayName: entity.displayName,
                 sessionId: sessionComponent(for: entity)?.adapterContext?.sessionId,
-                workspace: projectContext(for: entity),
+                workspace: agentProjectContext(for: entity),
                 detail: detail,
                 impact: impactSummary(for: entity)
             )
@@ -1260,7 +1190,7 @@ package struct AIAgentsView: View {
                 entityId: entity.entityId,
                 displayName: entity.displayName,
                 sessionId: sessionComponent(for: entity)?.adapterContext?.sessionId,
-                workspace: projectContext(for: entity),
+                workspace: agentProjectContext(for: entity),
                 childSessionCount: childCount,
                 detail: detail,
                 note: "\(childCount) child session\(childCount == 1 ? "" : "s") delegated from this agent."
@@ -1296,7 +1226,7 @@ package struct AIAgentsView: View {
                 id: "energy",
                 title: "Top Energy",
                 entityName: energy.displayName,
-                valueLabel: formatEnergy(njPerS: energy.metrics.energyNjPerS),
+                valueLabel: agentFormatEnergy(njPerS: energy.metrics.energyNjPerS),
                 color: AetowerDesign.Tone.energy,
                 // No dedicated energy trend array exists in MetricTrend.
                 // CPU is the best physical proxy on Apple Silicon —
@@ -1433,17 +1363,6 @@ package struct AIAgentsView: View {
     }
 
     // MARK: - Formatters
-
-    private func formatEnergy(njPerS: Double) -> String {
-        let mw = njPerS / 1_000_000
-        if mw >= 1000 {
-            return String(format: "%.1f W", mw / 1000)
-        } else if mw >= 1 {
-            return String(format: "%.0f mW", mw)
-        } else {
-            return "0 mW"
-        }
-    }
 
     private func formatSessionEnergy(nj: UInt64) -> String {
         let wh = Double(nj) / 3.6e12

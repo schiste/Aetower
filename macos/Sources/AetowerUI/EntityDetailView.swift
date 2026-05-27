@@ -1072,27 +1072,9 @@ private struct SampledStackCard: View {
     let stack: SampledStackReportModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(stack.queueLabel ?? stack.threadLabel)
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("\(stack.sampleCount) samples")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Text(stack.classification)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.tertiary)
-            if !stack.topFrames.isEmpty {
-                Text(stack.topFrames.prefix(3).joined(separator: " → "))
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(10)
-        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        sampledStackBody(stack)
+            .padding(10)
+            .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
