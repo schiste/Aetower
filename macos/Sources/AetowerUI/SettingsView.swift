@@ -297,7 +297,11 @@ public struct SettingsView: View {
 
                 GroupBox("AI Clients") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Aetower can register its bundled MCP proxy for supported local AI clients. Automatic registration only runs when the client exposes a stable user-owned config file.")
+                        Toggle(
+                            "Auto-register supported AI clients on launch",
+                            isOn: $settings.autoRegisterLocalMcpClientsEnabled
+                        )
+                        Text("Off by default. Manual registration is safer for shared machines; enabling this lets Aetower keep supported local AI clients pointed at its bundled MCP proxy when they expose stable user-owned config files.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
@@ -412,7 +416,7 @@ public struct SettingsView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             HStack {
                                 Button(capabilityActionLabel(capability)) {
-                                    state.requestCapability(capability)
+                                    state.performCapabilityAction(capability, settings: settings)
                                 }
                                 .buttonStyle(.borderedProminent)
 
@@ -552,6 +556,6 @@ private func capabilityActionLabel(_ capability: CapabilitySnapshot) -> String {
     case .accessibility, .fullDiskAccess, .appleAutomation:
         return "Request Access"
     default:
-        return "Refresh"
+        return "Refresh Status"
     }
 }

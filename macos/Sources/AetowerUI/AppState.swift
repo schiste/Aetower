@@ -326,10 +326,12 @@ public final class AppState {
         localMcpSocketPath
     }
 
-    public func startLocalMcpServer() {
+    public func startLocalMcpServer(autoRegisterClients: Bool = false) {
         ensureLocalMcpServer(force: true)
         refreshLocalMcpClientStatuses()
-        ensureAutomaticLocalMcpClientRegistration()
+        if autoRegisterClients {
+            ensureAutomaticLocalMcpClientRegistration()
+        }
     }
 
     /// Tear down the in-process MCP server explicitly so the Unix socket
@@ -390,6 +392,15 @@ public final class AppState {
         let result = permissionCoordinator.request(capability.kind)
         bridge.setCapability(capability.kind, state: result.state, detail: result.detail)
         refresh(force: true)
+    }
+
+    public func performCapabilityAction(_ capability: CapabilitySnapshot, settings: SettingsStore) {
+        switch capability.kind {
+        case .accessibility, .fullDiskAccess, .appleAutomation:
+            requestCapability(capability)
+        case .chromiumDebug, .dockerSocket, .privilegedHelper, .endpointSecurity, .chau7:
+            applyIntegrationSettings(settings)
+        }
     }
 
     private func refreshLocalPermissionCapabilities() {
@@ -657,6 +668,15 @@ public final class AppState {
             lastError = localMcpRegistrationStatusMessage
         } else {
             localMcpRegistrationStatusMessage = "No supported local AI client needed an MCP registration update."
+        }
+    }
+
+    public func applyLocalMcpClientRegistrationSettings(_ settings: SettingsStore) {
+        if settings.autoRegisterLocalMcpClientsEnabled {
+            ensureAutomaticLocalMcpClientRegistration()
+        } else {
+            refreshLocalMcpClientStatuses()
+            localMcpRegistrationStatusMessage = "Automatic MCP client registration is off. Manual registration remains available."
         }
     }
 
@@ -2340,6 +2360,7 @@ public final class AppState {
             "gpuSampleIntervalSeconds": settings.gpuSampleIntervalSeconds,
             "gpuSampleLowPowerIntervalSeconds": settings.gpuSampleLowPowerIntervalSeconds,
             "exportPrivacyTier": settings.exportPrivacyTier.rawValue,
+            "autoRegisterLocalMcpClientsEnabled": settings.autoRegisterLocalMcpClientsEnabled,
         ]
     }
 

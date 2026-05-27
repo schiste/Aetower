@@ -96,7 +96,7 @@ struct AetowerApp: App {
             .task {
                 menuBarExtraInserted = settings.showMenuBarExtra
                 refreshMenuBarTitle(force: true)
-                state.startLocalMcpServer()
+                state.startLocalMcpServer(autoRegisterClients: settings.autoRegisterLocalMcpClientsEnabled)
                 state.applyNotificationSettings(settings)
                 state.applyIntegrationSettings(settings)
                 // NSApplication.terminate exits before SwiftUI @State deinit,
@@ -154,6 +154,9 @@ struct AetowerApp: App {
             }
             .onChange(of: settings.gpuSampleLowPowerIntervalSeconds) { _, _ in
                 state.applyRuntimeCollectionSettings(settings)
+            }
+            .onChange(of: settings.autoRegisterLocalMcpClientsEnabled) { _, _ in
+                state.applyLocalMcpClientRegistrationSettings(settings)
             }
             .onDisappear {
                 state.stop()

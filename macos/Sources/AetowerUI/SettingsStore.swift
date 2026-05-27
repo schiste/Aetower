@@ -107,6 +107,9 @@ public final class SettingsStore {
     public var exportPrivacyTier: ExportPrivacyTier {
         didSet { persist() }
     }
+    public var autoRegisterLocalMcpClientsEnabled: Bool {
+        didSet { persist() }
+    }
     public private(set) var launchAtLoginEnabled: Bool
     public private(set) var launchAtLoginError: String?
 
@@ -143,6 +146,9 @@ public final class SettingsStore {
         let legacySensitive = defaults.object(forKey: Self.includeSensitiveExportsKey) as? Bool ?? false
         self.exportPrivacyTier = ExportPrivacyTier(rawValue: persistedTier ?? "")
             ?? (legacySensitive ? .full : .redacted)
+        self.autoRegisterLocalMcpClientsEnabled = defaults.object(
+            forKey: Self.autoRegisterLocalMcpClientsEnabledKey
+        ) as? Bool ?? false
         self.launchAtLoginEnabled = false
         self.launchAtLoginError = nil
         normalizeLoadedValues()
@@ -195,6 +201,7 @@ public final class SettingsStore {
     private static let appearanceModeKey = "settings.appearanceMode"
     private static let operatorSafeModeEnabledKey = "settings.operatorSafeModeEnabled"
     private static let exportPrivacyTierKey = "settings.exportPrivacyTier"
+    private static let autoRegisterLocalMcpClientsEnabledKey = "settings.autoRegisterLocalMcpClientsEnabled"
     private static let includeSensitiveExportsKey = "settings.includeSensitiveExports"
 
     /// Read the persisted export privacy tier directly from UserDefaults.
@@ -279,6 +286,7 @@ extension SettingsStore {
         appearanceMode = "system"
         operatorSafeModeEnabled = true
         exportPrivacyTier = .redacted
+        autoRegisterLocalMcpClientsEnabled = false
     }
 
     func persist() {
@@ -304,6 +312,7 @@ extension SettingsStore {
         defaults.set(appearanceMode, forKey: Self.appearanceModeKey)
         defaults.set(operatorSafeModeEnabled, forKey: Self.operatorSafeModeEnabledKey)
         defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
+        defaults.set(autoRegisterLocalMcpClientsEnabled, forKey: Self.autoRegisterLocalMcpClientsEnabledKey)
         defaults.set(exportPrivacyTier == .full, forKey: Self.includeSensitiveExportsKey)
     }
 
