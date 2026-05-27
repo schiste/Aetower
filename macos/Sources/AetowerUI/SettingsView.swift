@@ -8,7 +8,7 @@ public struct SettingsView: View {
     let settings: SettingsStore
     @Environment(UpdaterController.self) private var updater
     @FocusState private var focusedField: SettingsField?
-    @State private var selectedSection: SettingsSection = .general
+    @State private var selectedSection: SettingsSection = .setup
     @State private var appliedIntegrationSnapshot: SettingsIntegrationSnapshot?
     @State private var applyConfirmation: String?
     @State private var showAdvancedCollectionControls = false
@@ -27,6 +27,7 @@ public struct SettingsView: View {
     }
 
     private enum SettingsSection: String, CaseIterable, Identifiable {
+        case setup
         case general
         case collection
         case integrations
@@ -40,6 +41,7 @@ public struct SettingsView: View {
 
         var title: String {
             switch self {
+            case .setup: return "Setup"
             case .general: return "General"
             case .collection: return "Collection"
             case .integrations: return "Integrations"
@@ -53,6 +55,7 @@ public struct SettingsView: View {
 
         var subtitle: String {
             switch self {
+            case .setup: return "First-run readiness"
             case .general: return "App behavior and launch"
             case .collection: return "Runtime sampling policy"
             case .integrations: return "External data sources"
@@ -66,6 +69,7 @@ public struct SettingsView: View {
 
         var systemImage: String {
             switch self {
+            case .setup: return "checklist"
             case .general: return "slider.horizontal.2.square"
             case .collection: return "gauge.with.needle"
             case .integrations: return "point.3.connected.trianglepath.dotted"
@@ -176,6 +180,12 @@ public struct SettingsView: View {
 
     private func status(for section: SettingsSection) -> SettingsStatus {
         switch section {
+        case .setup:
+            let progress = setupChecklistProgress
+            if progress.completed == progress.total {
+                return SettingsStatus("Ready", AetowerDesign.Status.success)
+            }
+            return SettingsStatus("\(progress.completed)/\(progress.total)", AetowerDesign.Status.warning)
         case .general:
             return SettingsStatus("Live", AetowerDesign.Status.success)
         case .collection:
@@ -222,9 +232,50 @@ public struct SettingsView: View {
         integrationValidationIssues.filter { $0.target == target }
     }
 
+    private var setupChecklistProgress: (completed: Int, total: Int) {
+        let states = [
+            settings.operatorSafeModeEnabled,
+            true,
+            isCapabilityReady(.chau7),
+            hasRegisteredLocalMcpClient,
+            settings.exportPrivacyTier != .full,
+            updater.isConfigured,
+        ]
+        return (states.filter { $0 }.count, states.count)
+    }
+
+    private var hasRegisteredLocalMcpClient: Bool {
+        if settings.autoRegisterLocalMcpClientsEnabled {
+            return true
+        }
+        return state.localMcpClientStatuses.contains { status in
+            if case .registered = status.state {
+                return true
+            }
+            return false
+        }
+    }
+
+    private func isCapabilityReady(_ kind: CapabilityKind) -> Bool {
+        guard let capability = state.snapshot.capabilities.first(where: { $0.kind == kind }) else {
+            return false
+        }
+        if case .granted = capability.state {
+            return true
+        }
+        switch capability.health {
+        case .live, .configured:
+            return true
+        case .cached, .degraded:
+            return false
+        }
+    }
+
     @ViewBuilder
     private var selectedSectionContent: some View {
         switch selectedSection {
+        case .setup:
+            setupSection
         case .general:
             generalSection
         case .collection:
@@ -241,6 +292,78 @@ public struct SettingsView: View {
             updatesSection
         case .advanced:
             advancedSection
+        }
+    }
+
+    @ViewBuilder
+    private var setupSection: some View {
+        let progress = setupChecklistProgress
+        SettingsCard(
+            title: "First-run setup",
+            subtitle: "A short checklist for making Aetower useful without forcing every advanced option.",
+            status: status(for: .setup)
+        ) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                Text("\(progress.completed) of \(progress.total) recommended steps are ready.")
+                    .font(.headline)
+                ProgressView(value: Double(progress.completed), total: Double(progress.total))
+            }
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                SettingsChecklistRow(
+                    title: "Keep heavy views safe",
+                    detail: "Operator-safe mode keeps History and Timeline summary-first so large payloads do not freeze the UI.",
+                    isComplete: settings.operatorSafeModeEnabled,
+                    actionTitle: "Review General"
+                ) {
+                    selectedSection = .general
+                }
+
+                SettingsChecklistRow(
+                    title: "Choose collection behavior",
+                    detail: "Collection has a live preset. Tune it only when you need more detail or lower overhead.",
+                    isComplete: true,
+                    actionTitle: "Review Collection"
+                ) {
+                    selectedSection = .collection
+                }
+
+                SettingsChecklistRow(
+                    title: "Connect Chau7",
+                    detail: "Chau7 data enriches sessions with terminal tabs, repositories, branches, and AI-agent context.",
+                    isComplete: isCapabilityReady(.chau7),
+                    actionTitle: "Review Integrations"
+                ) {
+                    selectedSection = .integrations
+                }
+
+                SettingsChecklistRow(
+                    title: "Expose MCP to local AI clients",
+                    detail: "Registering supported clients makes Aetower discoverable from tools like Claude CLI and Codex.",
+                    isComplete: hasRegisteredLocalMcpClient,
+                    actionTitle: "Review AI Clients"
+                ) {
+                    selectedSection = .aiClients
+                }
+
+                SettingsChecklistRow(
+                    title: "Keep exports safe",
+                    detail: "Redacted or operator privacy tiers are safer defaults for support bundles and JSON exports.",
+                    isComplete: settings.exportPrivacyTier != .full,
+                    actionTitle: "Review Privacy"
+                ) {
+                    selectedSection = .privacy
+                }
+
+                SettingsChecklistRow(
+                    title: "Confirm direct-download updates",
+                    detail: "Sparkle must be configured in packaged builds before users can receive signed updates.",
+                    isComplete: updater.isConfigured,
+                    actionTitle: "Review Updates"
+                ) {
+                    selectedSection = .updates
+                }
+            }
         }
     }
 
@@ -1353,6 +1476,43 @@ private struct SettingsValidationList: View {
                             .foregroundStyle(issue.severity.color)
                     }
                 }
+            }
+        }
+    }
+}
+
+private struct SettingsChecklistRow: View {
+    let title: String
+    let detail: String
+    let isComplete: Bool
+    let actionTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        SettingsRowCard {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isComplete ? AetowerDesign.Status.success : AetowerDesign.Status.warning)
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Text(title)
+                            .font(.headline)
+                        SettingsBadge(
+                            isComplete ? "Ready" : "Review",
+                            color: isComplete ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+                        )
+                    }
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.md)
+
+                Button(actionTitle, action: action)
+                    .buttonStyle(.bordered)
             }
         }
     }
