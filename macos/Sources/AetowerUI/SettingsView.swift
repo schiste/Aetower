@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 import SwiftUI
 import AetowerBridge
@@ -209,6 +210,18 @@ public struct SettingsView: View {
         return appliedIntegrationSnapshot != SettingsIntegrationSnapshot(settings)
     }
 
+    private var integrationValidationIssues: [SettingsValidationIssue] {
+        SettingsValidationIssue.integrationIssues(for: settings)
+    }
+
+    private var hasBlockingIntegrationValidationIssues: Bool {
+        integrationValidationIssues.contains { $0.severity == .error }
+    }
+
+    private func integrationIssues(for target: SettingsValidationTarget) -> [SettingsValidationIssue] {
+        integrationValidationIssues.filter { $0.target == target }
+    }
+
     @ViewBuilder
     private var selectedSectionContent: some View {
         switch selectedSection {
@@ -404,80 +417,139 @@ public struct SettingsView: View {
                 )
             }
 
-            TextField(
-                "Chromium endpoint",
-                text: $settings.chromiumEndpoint,
-                prompt: Text("http://127.0.0.1:9222/json/list")
-            )
-            .textFieldStyle(.roundedBorder)
-            .aetowerUtilityTextInput()
-            .focused($focusedField, equals: .chromiumEndpoint)
-            Text("Optional. Use a Chromium `/json` or `/json/list` endpoint when browser tab attribution is needed.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if hasBlockingIntegrationValidationIssues {
+                SettingsNotice(
+                    title: "Some integration settings need attention",
+                    detail: "Fix the highlighted values before applying this page.",
+                    color: AetowerDesign.Status.error
+                )
+            }
 
-            TextField(
-                "Docker socket path",
-                text: $settings.dockerSocketPath,
-                prompt: Text(SettingsStore.defaultDockerSocketPath)
-            )
-            .textFieldStyle(.roundedBorder)
-            .aetowerUtilityTextInput()
-            .focused($focusedField, equals: .dockerSocketPath)
-            Text("Leave blank to use the default Docker socket path.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                SettingsSetupCard(
+                    title: "Browser tabs",
+                    subtitle: "Adds Chrome, Edge, or Chromium tab attribution when remote debugging is enabled.",
+                    systemImage: "globe",
+                    badge: "Optional",
+                    color: AetowerDesign.Status.ready
+                ) {
+                    TextField(
+                        "Browser debug endpoint",
+                        text: $settings.chromiumEndpoint,
+                        prompt: Text("http://127.0.0.1:9222/json/list")
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .aetowerUtilityTextInput()
+                    .focused($focusedField, equals: .chromiumEndpoint)
+                    Text("Use a local `/json` or `/json/list` endpoint. Leave blank to disable browser attribution.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SettingsValidationList(issues: integrationIssues(for: .chromiumEndpoint))
+                }
 
-            Toggle("Enable advanced privileged helper", isOn: $settings.privilegedHelperEnabled)
-            TextField("Advanced helper path", text: $settings.privilegedHelperPath)
-                .textFieldStyle(.roundedBorder)
-                .aetowerUtilityTextInput()
-                .focused($focusedField, equals: .privilegedHelperPath)
-            Text("Optional advanced/enterprise integration. Enable only when a signed helper is installed.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                SettingsSetupCard(
+                    title: "Docker",
+                    subtitle: "Lets Aetower group container activity with host processes.",
+                    systemImage: "shippingbox",
+                    badge: "Optional",
+                    color: AetowerDesign.Status.ready
+                ) {
+                    TextField(
+                        "Docker socket",
+                        text: $settings.dockerSocketPath,
+                        prompt: Text(SettingsStore.defaultDockerSocketPath)
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .aetowerUtilityTextInput()
+                    .focused($focusedField, equals: .dockerSocketPath)
+                    Text("Leave blank to use the default Docker socket path.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SettingsValidationList(issues: integrationIssues(for: .dockerSocketPath))
+                }
 
-            TextField("Chau7 socket path", text: $settings.chau7Endpoint, prompt: Text("~/.chau7/mcp.sock"))
-                .textFieldStyle(.roundedBorder)
-                .aetowerUtilityTextInput()
-                .focused($focusedField, equals: .chau7Endpoint)
-            Text("Optional. Auto-detected when Chau7 is running. Enriches terminal sessions with AI agent context.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                SettingsSetupCard(
+                    title: "Signed helper",
+                    subtitle: "Enterprise-only access for capabilities that require a separately installed helper.",
+                    systemImage: "lock.shield",
+                    badge: "Advanced",
+                    color: AetowerDesign.Status.warning
+                ) {
+                    Toggle("Enable signed helper", isOn: $settings.privilegedHelperEnabled)
+                    TextField("Signed helper path", text: $settings.privilegedHelperPath)
+                        .textFieldStyle(.roundedBorder)
+                        .aetowerUtilityTextInput()
+                        .focused($focusedField, equals: .privilegedHelperPath)
+                    Text("Enable only after installing and signing the helper outside Aetower.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SettingsValidationList(issues: integrationIssues(for: .privilegedHelperPath))
+                }
 
-            SettingDivider()
+                SettingsSetupCard(
+                    title: "Chau7",
+                    subtitle: "Adds terminal tabs, repositories, branches, sessions, and AI-agent context.",
+                    systemImage: "terminal",
+                    badge: "Recommended",
+                    color: AetowerDesign.Status.success
+                ) {
+                    TextField(
+                        "Chau7 session socket",
+                        text: $settings.chau7Endpoint,
+                        prompt: Text("Leave blank for auto-detect")
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .aetowerUtilityTextInput()
+                    .focused($focusedField, equals: .chau7Endpoint)
+                    Text("Leave blank for the default local Chau7 socket. If set manually, use an absolute path.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SettingsValidationList(issues: integrationIssues(for: .chau7Endpoint))
+                }
 
-            Toggle("Enable OTLP telemetry export", isOn: $settings.telemetryEnabled)
-            TextField(
-                "Telemetry endpoint",
-                text: $settings.telemetryEndpoint,
-                prompt: Text(SettingsStore.defaultTelemetryEndpoint)
-            )
-            .textFieldStyle(.roundedBorder)
-            .aetowerUtilityTextInput()
-            .focused($focusedField, equals: .telemetryEndpoint)
+                SettingsSetupCard(
+                    title: "Observability export",
+                    subtitle: "Sends Aetower host and process metrics to a local or enterprise collector.",
+                    systemImage: "arrow.up.forward.circle",
+                    badge: "OTLP/HTTP",
+                    color: AetowerDesign.Status.ready
+                ) {
+                    Toggle("Enable observability export", isOn: $settings.telemetryEnabled)
+                    TextField(
+                        "Metrics collector endpoint",
+                        text: $settings.telemetryEndpoint,
+                        prompt: Text(SettingsStore.defaultTelemetryEndpoint)
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .aetowerUtilityTextInput()
+                    .focused($focusedField, equals: .telemetryEndpoint)
+                    SettingsValidationList(issues: integrationIssues(for: .telemetryEndpoint))
 
-            intervalSlider(
-                title: "Telemetry export interval",
-                value: $settings.telemetryExportIntervalSeconds,
-                range: 5...120,
-                step: 5,
-                format: "%.0fs",
-                note: "Exports host and entity gauges to an OTLP/HTTP collector."
-            )
+                    intervalSlider(
+                        title: "Metrics export interval",
+                        value: $settings.telemetryExportIntervalSeconds,
+                        range: 5...120,
+                        step: 5,
+                        format: "%.0fs",
+                        note: "Exports host and entity gauges to an OTLP/HTTP metrics collector."
+                    )
+                }
+            }
 
             HStack(spacing: AetowerDesign.Spacing.sm) {
-                Button("Apply integration and telemetry settings") {
+                Button("Apply integration settings") {
                     focusedField = nil
                     applyIntegrationAndTelemetrySettings(settings)
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(hasBlockingIntegrationValidationIssues)
 
-                Button("Verify telemetry export") {
+                Button("Send test metrics") {
                     focusedField = nil
                     state.verifyTelemetryExport(settings)
                 }
                 .buttonStyle(.bordered)
+                .disabled(hasBlockingIntegrationValidationIssues)
             }
 
             if let applyConfirmation {
@@ -1007,6 +1079,137 @@ private enum SettingsCollectionPreset: String, CaseIterable, Identifiable {
     }
 }
 
+private enum SettingsValidationSeverity {
+    case warning
+    case error
+
+    var color: Color {
+        switch self {
+        case .warning:
+            return AetowerDesign.Status.warning
+        case .error:
+            return AetowerDesign.Status.error
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .warning:
+            return "exclamationmark.triangle.fill"
+        case .error:
+            return "xmark.octagon.fill"
+        }
+    }
+}
+
+private enum SettingsValidationTarget {
+    case chromiumEndpoint
+    case dockerSocketPath
+    case privilegedHelperPath
+    case chau7Endpoint
+    case telemetryEndpoint
+}
+
+private struct SettingsValidationIssue: Identifiable {
+    let target: SettingsValidationTarget
+    let severity: SettingsValidationSeverity
+    let message: String
+
+    var id: String {
+        "\(target)-\(severity)-\(message)"
+    }
+
+    @MainActor
+    static func integrationIssues(for settings: SettingsStore) -> [SettingsValidationIssue] {
+        var issues: [SettingsValidationIssue] = []
+
+        let chromiumEndpoint = settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !chromiumEndpoint.isEmpty {
+            if !isHTTPURL(chromiumEndpoint) {
+                issues.append(SettingsValidationIssue(
+                    target: .chromiumEndpoint,
+                    severity: .error,
+                    message: "Use a full http:// or https:// browser debug endpoint."
+                ))
+            } else if let path = URLComponents(string: chromiumEndpoint)?.path,
+                      !path.localizedLowercase.contains("json") {
+                issues.append(SettingsValidationIssue(
+                    target: .chromiumEndpoint,
+                    severity: .warning,
+                    message: "Most Chromium debug endpoints end with /json or /json/list."
+                ))
+            }
+        }
+
+        let dockerSocketPath = settings.dockerSocketPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !dockerSocketPath.isEmpty && !isAbsolutePath(dockerSocketPath) {
+            issues.append(SettingsValidationIssue(
+                target: .dockerSocketPath,
+                severity: .error,
+                message: "Use an absolute socket path, or leave this blank for the default."
+            ))
+        }
+
+        let helperPath = settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if settings.privilegedHelperEnabled && helperPath.isEmpty {
+            issues.append(SettingsValidationIssue(
+                target: .privilegedHelperPath,
+                severity: .error,
+                message: "Choose the installed helper path, or disable the signed helper."
+            ))
+        } else if !helperPath.isEmpty && !isAbsolutePath(helperPath) {
+            issues.append(SettingsValidationIssue(
+                target: .privilegedHelperPath,
+                severity: .error,
+                message: "Use an absolute helper path."
+            ))
+        }
+
+        let chau7Endpoint = settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !chau7Endpoint.isEmpty && !isAbsolutePath(chau7Endpoint) {
+            issues.append(SettingsValidationIssue(
+                target: .chau7Endpoint,
+                severity: .error,
+                message: "Use an absolute socket path, or leave this blank for auto-detect."
+            ))
+        }
+
+        let telemetryEndpoint = SettingsStore.normalizedTelemetryEndpoint(settings.telemetryEndpoint)
+        if settings.telemetryEnabled && !isHTTPURL(telemetryEndpoint) {
+            issues.append(SettingsValidationIssue(
+                target: .telemetryEndpoint,
+                severity: .error,
+                message: "Use a full http:// or https:// metrics collector endpoint."
+            ))
+        } else if !settings.telemetryEnabled,
+                  !settings.telemetryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !isHTTPURL(telemetryEndpoint) {
+            issues.append(SettingsValidationIssue(
+                target: .telemetryEndpoint,
+                severity: .warning,
+                message: "This endpoint will need a full http:// or https:// URL before export is enabled."
+            ))
+        }
+
+        return issues
+    }
+
+    private static func isHTTPURL(_ value: String) -> Bool {
+        guard let components = URLComponents(string: value),
+              let scheme = components.scheme?.localizedLowercase,
+              scheme == "http" || scheme == "https",
+              let host = components.host,
+              !host.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    private static func isAbsolutePath(_ value: String) -> Bool {
+        value.hasPrefix("/")
+    }
+}
+
 private struct SettingsCard<Content: View>: View {
     let title: String
     let subtitle: String
@@ -1082,6 +1285,76 @@ private struct SettingsPresetCard: View {
             RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
                 .stroke(preset.color.opacity(0.20), lineWidth: 1)
         )
+    }
+}
+
+private struct SettingsSetupCard<Content: View>: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let badge: String
+    let color: Color
+    let content: Content
+
+    init(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        badge: String,
+        color: Color,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.systemImage = systemImage
+        self.badge = badge
+        self.color = color
+        self.content = content()
+    }
+
+    var body: some View {
+        SettingsRowCard {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(color)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Text(title)
+                            .font(.headline)
+                        SettingsBadge(badge, color: color)
+                    }
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                content
+            }
+            .padding(.leading, 36)
+        }
+    }
+}
+
+private struct SettingsValidationList: View {
+    let issues: [SettingsValidationIssue]
+
+    var body: some View {
+        if !issues.isEmpty {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                ForEach(issues) { issue in
+                    HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.xs) {
+                        Image(systemName: issue.severity.systemImage)
+                            .foregroundStyle(issue.severity.color)
+                        Text(issue.message)
+                            .font(.caption)
+                            .foregroundStyle(issue.severity.color)
+                    }
+                }
+            }
+        }
     }
 }
 
