@@ -134,6 +134,27 @@ struct AetowerApp: App {
             .onChange(of: settings.frictionNotificationThreshold) { _, _ in
                 state.applyNotificationSettings(settings)
             }
+            .onChange(of: settings.collectionProfile) { _, _ in
+                state.applyRuntimeCollectionSettings(settings)
+            }
+            .onChange(of: settings.adaptiveCadenceEnabled) { _, _ in
+                state.applyRuntimeCollectionSettings(settings)
+            }
+            .onChange(of: settings.engineActiveIntervalSeconds) { _, _ in
+                state.applyRuntimeCollectionSettings(settings)
+            }
+            .onChange(of: settings.engineIdleIntervalSeconds) { _, _ in
+                state.applyRuntimeCollectionSettings(settings)
+            }
+            .onChange(of: settings.engineLowPowerIntervalSeconds) { _, _ in
+                state.applyRuntimeCollectionSettings(settings)
+            }
+            .onChange(of: settings.gpuSampleIntervalSeconds) { _, _ in
+                state.applyRuntimeCollectionSettings(settings)
+            }
+            .onChange(of: settings.gpuSampleLowPowerIntervalSeconds) { _, _ in
+                state.applyRuntimeCollectionSettings(settings)
+            }
             .onDisappear {
                 state.stop()
             }

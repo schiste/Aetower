@@ -20,6 +20,12 @@ public enum CollectionProfile: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 public final class SettingsStore {
+    public static let defaultDockerSocketPath = "/var/run/docker.sock"
+    public static let defaultTelemetryEndpoint = "http://localhost:4318/v1/metrics"
+    public static let minimumTelemetryExportIntervalSeconds = 5.0
+    public static let minimumEngineTickSeconds = 0.5
+    public static let minimumGPUSampleIntervalSeconds = 5.0
+
     public var showMenuBarExtra: Bool {
         didSet { persist() }
     }
@@ -57,26 +63,34 @@ public final class SettingsStore {
         didSet { persist() }
     }
     public var engineActiveIntervalSeconds: Double {
-        didSet { persist() }
+        didSet {
+            enforceRuntimeIntervalRelationships()
+            persist()
+        }
     }
     public var engineIdleIntervalSeconds: Double {
         didSet {
-            // Enforce: idle must be >= active to avoid the logical
-            // contradiction of polling faster when idle than when active.
-            if engineIdleIntervalSeconds < engineActiveIntervalSeconds {
-                engineIdleIntervalSeconds = engineActiveIntervalSeconds
-            }
+            enforceRuntimeIntervalRelationships()
             persist()
         }
     }
     public var engineLowPowerIntervalSeconds: Double {
-        didSet { persist() }
+        didSet {
+            enforceRuntimeIntervalRelationships()
+            persist()
+        }
     }
     public var gpuSampleIntervalSeconds: Double {
-        didSet { persist() }
+        didSet {
+            enforceRuntimeIntervalRelationships()
+            persist()
+        }
     }
     public var gpuSampleLowPowerIntervalSeconds: Double {
-        didSet { persist() }
+        didSet {
+            enforceRuntimeIntervalRelationships()
+            persist()
+        }
     }
     public var notificationsEnabled: Bool {
         didSet { persist() }
@@ -104,13 +118,13 @@ public final class SettingsStore {
         self.showMenuBarExtra = defaults.object(forKey: Self.showMenuBarExtraKey) as? Bool ?? true
         self.refreshIntervalSeconds = defaults.object(forKey: Self.refreshIntervalKey) as? Double ?? 2.0
         self.chromiumEndpoint = defaults.string(forKey: Self.chromiumEndpointKey) ?? ""
-        self.dockerSocketPath = defaults.string(forKey: Self.dockerSocketPathKey) ?? "/var/run/docker.sock"
+        self.dockerSocketPath = defaults.string(forKey: Self.dockerSocketPathKey) ?? Self.defaultDockerSocketPath
         self.privilegedHelperPath = defaults.string(forKey: Self.privilegedHelperPathKey)
             ?? Self.defaultPrivilegedHelperPath()
         self.privilegedHelperEnabled = defaults.object(forKey: Self.privilegedHelperEnabledKey) as? Bool ?? false
         self.chau7Endpoint = defaults.string(forKey: Self.chau7EndpointKey) ?? ""
         self.telemetryEnabled = defaults.object(forKey: Self.telemetryEnabledKey) as? Bool ?? false
-        self.telemetryEndpoint = defaults.string(forKey: Self.telemetryEndpointKey) ?? "http://localhost:4318/v1/metrics"
+        self.telemetryEndpoint = defaults.string(forKey: Self.telemetryEndpointKey) ?? Self.defaultTelemetryEndpoint
         self.telemetryExportIntervalSeconds = defaults.object(forKey: Self.telemetryExportIntervalKey) as? Double ?? 30.0
         self.collectionProfile = CollectionProfile(
             rawValue: defaults.string(forKey: Self.collectionProfileKey) ?? ""
@@ -131,6 +145,7 @@ public final class SettingsStore {
             ?? (legacySensitive ? .full : .redacted)
         self.launchAtLoginEnabled = false
         self.launchAtLoginError = nil
+        normalizeLoadedValues()
         syncLaunchAtLoginState()
     }
 
@@ -194,6 +209,47 @@ public final class SettingsStore {
         let legacySensitive = defaults.object(forKey: includeSensitiveExportsKey) as? Bool ?? false
         return legacySensitive ? .full : .redacted
     }
+
+    public static func normalizedDockerSocketPath(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? defaultDockerSocketPath : trimmed
+    }
+
+    public static func normalizedTelemetryEndpoint(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? defaultTelemetryEndpoint : trimmed
+    }
+
+    public static func normalizedTelemetryExportIntervalSeconds(_ value: Double) -> UInt32 {
+        UInt32(max(Int(minimumTelemetryExportIntervalSeconds), Int(value.rounded())))
+    }
+
+    public static func milliseconds(from seconds: Double, minimumSeconds: Double) -> UInt64 {
+        UInt64(max(Int((minimumSeconds * 1000).rounded()), Int((seconds * 1000).rounded())))
+    }
+
+    private func normalizeLoadedValues() {
+        refreshIntervalSeconds = max(1.0, refreshIntervalSeconds)
+        telemetryExportIntervalSeconds = max(Self.minimumTelemetryExportIntervalSeconds, telemetryExportIntervalSeconds)
+        engineActiveIntervalSeconds = max(Self.minimumEngineTickSeconds, engineActiveIntervalSeconds)
+        engineIdleIntervalSeconds = max(Self.minimumEngineTickSeconds, engineIdleIntervalSeconds)
+        engineLowPowerIntervalSeconds = max(Self.minimumEngineTickSeconds, engineLowPowerIntervalSeconds)
+        gpuSampleIntervalSeconds = max(Self.minimumGPUSampleIntervalSeconds, gpuSampleIntervalSeconds)
+        gpuSampleLowPowerIntervalSeconds = max(Self.minimumGPUSampleIntervalSeconds, gpuSampleLowPowerIntervalSeconds)
+        enforceRuntimeIntervalRelationships()
+    }
+
+    private func enforceRuntimeIntervalRelationships() {
+        if engineIdleIntervalSeconds < engineActiveIntervalSeconds {
+            engineIdleIntervalSeconds = engineActiveIntervalSeconds
+        }
+        if engineLowPowerIntervalSeconds < engineActiveIntervalSeconds {
+            engineLowPowerIntervalSeconds = engineActiveIntervalSeconds
+        }
+        if gpuSampleLowPowerIntervalSeconds < gpuSampleIntervalSeconds {
+            gpuSampleLowPowerIntervalSeconds = gpuSampleIntervalSeconds
+        }
+    }
 }
 
 extension SettingsStore {
@@ -204,12 +260,12 @@ extension SettingsStore {
         showMenuBarExtra = true
         refreshIntervalSeconds = 2.0
         chromiumEndpoint = ""
-        dockerSocketPath = "/var/run/docker.sock"
+        dockerSocketPath = Self.defaultDockerSocketPath
         privilegedHelperPath = Self.defaultPrivilegedHelperPath()
         privilegedHelperEnabled = false
         chau7Endpoint = ""
         telemetryEnabled = false
-        telemetryEndpoint = "http://localhost:4318/v1/metrics"
+        telemetryEndpoint = Self.defaultTelemetryEndpoint
         telemetryExportIntervalSeconds = 30.0
         collectionProfile = .balanced
         adaptiveCadenceEnabled = true

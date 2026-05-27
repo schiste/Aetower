@@ -560,15 +560,18 @@ public final class AppState {
         }
     }
 
+    public func applyRuntimeCollectionSettings(_ settings: SettingsStore) {
+        configureRuntimeCollection(settings)
+        updateLagMonitoringState()
+        refresh(force: true)
+    }
+
     public func applyIntegrationSettings(_ settings: SettingsStore) {
         let chromiumEndpoint = settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        let dockerSocketPath = settings.dockerSocketPath.trimmingCharacters(in: .whitespacesAndNewlines)
         let privilegedHelperPath = settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
 
         bridge.configureChromiumEndpoint(chromiumEndpoint.isEmpty ? nil : chromiumEndpoint)
-        bridge.configureDockerSocketPath(
-            dockerSocketPath.isEmpty ? "/var/run/docker.sock" : dockerSocketPath
-        )
+        bridge.configureDockerSocketPath(SettingsStore.normalizedDockerSocketPath(settings.dockerSocketPath))
         bridge.configurePrivilegedHelper(
             path: privilegedHelperPath.isEmpty ? nil : privilegedHelperPath,
             enabled: settings.privilegedHelperEnabled
@@ -576,24 +579,18 @@ public final class AppState {
 
         let chau7Endpoint = settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         bridge.configureChau7Endpoint(chau7Endpoint.isEmpty ? nil : chau7Endpoint)
-        let telemetryEndpoint = settings.telemetryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let telemetryEndpoint = SettingsStore.normalizedTelemetryEndpoint(settings.telemetryEndpoint)
         self.telemetryEnabled = settings.telemetryEnabled
-        self.telemetryEndpoint = telemetryEndpoint.isEmpty ? "http://localhost:4318/v1/metrics" : telemetryEndpoint
+        self.telemetryEndpoint = telemetryEndpoint
         telemetryVerificationStatus = nil
         bridge.configureTelemetry(
-            endpoint: telemetryEndpoint.isEmpty ? nil : telemetryEndpoint,
+            endpoint: telemetryEndpoint,
             enabled: settings.telemetryEnabled,
-            exportIntervalSeconds: UInt32(max(5, Int(settings.telemetryExportIntervalSeconds.rounded())))
+            exportIntervalSeconds: SettingsStore.normalizedTelemetryExportIntervalSeconds(
+                settings.telemetryExportIntervalSeconds
+            )
         )
-        bridge.configureRuntimeCollection(
-            fullCollection: settings.collectionProfile == .full,
-            adaptiveCadence: settings.adaptiveCadenceEnabled,
-            activeTickMillis: UInt64(max(500, Int((settings.engineActiveIntervalSeconds * 1000).rounded()))),
-            idleTickMillis: UInt64(max(500, Int((settings.engineIdleIntervalSeconds * 1000).rounded()))),
-            lowPowerTickMillis: UInt64(max(500, Int((settings.engineLowPowerIntervalSeconds * 1000).rounded()))),
-            gpuSampleIntervalMillis: UInt64(max(5_000, Int((settings.gpuSampleIntervalSeconds * 1000).rounded()))),
-            gpuSampleLowPowerIntervalMillis: UInt64(max(5_000, Int((settings.gpuSampleLowPowerIntervalSeconds * 1000).rounded())))
-        )
+        configureRuntimeCollection(settings)
 
         updateLagMonitoringState()
         refresh(force: true)
@@ -616,6 +613,33 @@ public final class AppState {
                 self.loadDiagnostics(force: true)
             }
         }
+    }
+
+    private func configureRuntimeCollection(_ settings: SettingsStore) {
+        bridge.configureRuntimeCollection(
+            fullCollection: settings.collectionProfile == .full,
+            adaptiveCadence: settings.adaptiveCadenceEnabled,
+            activeTickMillis: SettingsStore.milliseconds(
+                from: settings.engineActiveIntervalSeconds,
+                minimumSeconds: SettingsStore.minimumEngineTickSeconds
+            ),
+            idleTickMillis: SettingsStore.milliseconds(
+                from: settings.engineIdleIntervalSeconds,
+                minimumSeconds: SettingsStore.minimumEngineTickSeconds
+            ),
+            lowPowerTickMillis: SettingsStore.milliseconds(
+                from: settings.engineLowPowerIntervalSeconds,
+                minimumSeconds: SettingsStore.minimumEngineTickSeconds
+            ),
+            gpuSampleIntervalMillis: SettingsStore.milliseconds(
+                from: settings.gpuSampleIntervalSeconds,
+                minimumSeconds: SettingsStore.minimumGPUSampleIntervalSeconds
+            ),
+            gpuSampleLowPowerIntervalMillis: SettingsStore.milliseconds(
+                from: settings.gpuSampleLowPowerIntervalSeconds,
+                minimumSeconds: SettingsStore.minimumGPUSampleIntervalSeconds
+            )
+        )
     }
 
     public func refreshLocalMcpClientStatuses() {

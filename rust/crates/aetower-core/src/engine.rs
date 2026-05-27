@@ -1256,12 +1256,12 @@ impl Engine {
         export_interval_secs: u32,
     ) {
         let mut guard = self.telemetry.lock();
-        let mut config = guard.config().clone();
-        if let Some(endpoint) = endpoint {
-            config.endpoint = endpoint;
-        }
-        config.enabled = enabled;
-        config.export_interval_secs = export_interval_secs.max(5);
+        let config = telemetry_config_with_overrides(
+            guard.config(),
+            endpoint,
+            enabled,
+            export_interval_secs,
+        );
         guard.update_config(config);
         self.diagnostics.emit(
             DiagnosticsEvent::builder(
@@ -1766,6 +1766,22 @@ fn refresh_adapter_capabilities(
             .capabilities
             .insert(kind.clone(), adapters.capability_snapshot(kind, now_millis));
     }
+}
+
+fn telemetry_config_with_overrides(
+    current: &OtlpConfig,
+    endpoint: Option<String>,
+    enabled: bool,
+    export_interval_secs: u32,
+) -> OtlpConfig {
+    let mut config = current.clone();
+    config.endpoint = endpoint
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| OtlpConfig::default().endpoint);
+    config.enabled = enabled;
+    config.export_interval_secs = export_interval_secs.max(5);
+    config
 }
 
 impl Drop for Engine {
@@ -2380,6 +2396,37 @@ mod tests {
             })
             .is_none()
         );
+    }
+
+    #[test]
+    fn telemetry_overrides_reset_blank_endpoint_to_default() {
+        let current = OtlpConfig {
+            endpoint: "http://custom.invalid/v1/metrics".to_owned(),
+            export_interval_secs: 60,
+            enabled: true,
+        };
+
+        let configured = telemetry_config_with_overrides(&current, None, false, 1);
+
+        assert_eq!(configured.endpoint, OtlpConfig::default().endpoint);
+        assert!(!configured.enabled);
+        assert_eq!(configured.export_interval_secs, 5);
+    }
+
+    #[test]
+    fn telemetry_overrides_trim_explicit_endpoint() {
+        let current = OtlpConfig::default();
+
+        let configured = telemetry_config_with_overrides(
+            &current,
+            Some("  http://collector.local/v1/metrics  ".to_owned()),
+            true,
+            15,
+        );
+
+        assert_eq!(configured.endpoint, "http://collector.local/v1/metrics");
+        assert!(configured.enabled);
+        assert_eq!(configured.export_interval_secs, 15);
     }
 
     #[test]
