@@ -3,6 +3,7 @@
 /macos/.build
 /dist
 /rust/target
+/logs
 
 # Local profiling and tool caches
 tmp/
@@ -16,4 +17,3 @@ tmp/
 
 # macOS detritus
 .DS_Store
-

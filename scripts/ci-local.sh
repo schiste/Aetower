@@ -2,8 +2,49 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ "${AETOWER_CI_LOGGING_ACTIVE:-0}" != "1" ]; then
+    requested_mode="pre-commit"
+    previous_arg=""
+    for arg in "$@"; do
+        if [ "$arg" = "--full" ]; then
+            requested_mode="full"
+            previous_arg=""
+            continue
+        fi
+        if [ "$previous_arg" = "--mode" ]; then
+            requested_mode="$arg"
+            previous_arg=""
+            continue
+        fi
+        previous_arg="$arg"
+    done
+    case "$requested_mode" in
+        prepush) requested_mode="pre-push" ;;
+        prepush-full|local|cloud-parity) requested_mode="full" ;;
+    esac
+    if [ "$requested_mode" != "pre-commit" ]; then
+        mkdir -p "$ROOT/logs"
+        log_file="$ROOT/logs/quality-$requested_mode-$(date +%Y%m%d-%H%M%S).log"
+        status_file="$(mktemp "${TMPDIR:-/tmp}/aetower-ci-status.XXXXXX")"
+        (
+            set +e
+            AETOWER_CI_LOGGING_ACTIVE=1 AETOWER_CI_LOG_FILE="$log_file" sh "$0" "$@"
+            inner_status="$?"
+            printf '%s' "$inner_status" > "$status_file"
+            exit "$inner_status"
+        ) 2>&1 | tee "$log_file"
+        status="$(cat "$status_file" 2>/dev/null || printf '1')"
+        rm -f "$status_file"
+        exit "$status"
+    fi
+fi
+
 MODE="pre-commit"
 BENCH_ITERATIONS=""
+INCLUDE_FILTER=""
+SKIP_FILTER=""
+PUSH_STDIN_FILE=""
 SWIFTLINT_CACHE_DIR="$ROOT/tmp/swiftlint-cache"
 SWIFT_BUILD_DIR="$ROOT/macos/.build"
 SUMMARY_FILE=""
@@ -20,12 +61,33 @@ while [ "$#" -gt 0 ]; do
             BENCH_ITERATIONS="${2:-}"
             shift 2
             ;;
+        --include)
+            INCLUDE_FILTER="${2:-}"
+            shift 2
+            ;;
+        --skip)
+            SKIP_FILTER="${2:-}"
+            shift 2
+            ;;
+        --push-stdin-file)
+            PUSH_STDIN_FILE="${2:-}"
+            shift 2
+            ;;
+        --full)
+            MODE="full"
+            shift
+            ;;
         *)
             echo "unsupported argument: $1" >&2
             exit 1
             ;;
     esac
 done
+
+case "$MODE" in
+    prepush) MODE="pre-push" ;;
+    prepush-full|local|cloud-parity) MODE="full" ;;
+esac
 
 format_duration() {
     seconds="$1"
@@ -50,19 +112,59 @@ record_step() {
     fi
 }
 
-print_command() {
-    printf '    command:'
+format_command() {
+    first=1
     for arg in "$@"; do
-        printf ' %s' "$arg"
+        if [ "$first" -eq 1 ]; then
+            first=0
+        else
+            printf ' '
+        fi
+        printf '%s' "$arg"
     done
-    printf '\n'
+}
+
+filter_contains() {
+    filter="$1"
+    label="$2"
+    if [ -z "$filter" ]; then
+        return 1
+    fi
+    old_ifs="$IFS"
+    IFS=","
+    for item in $filter; do
+        IFS="$old_ifs"
+        if [ "$item" = "$label" ]; then
+            return 0
+        fi
+        IFS=","
+    done
+    IFS="$old_ifs"
+    return 1
+}
+
+should_run_label() {
+    label="$1"
+    if [ -n "$INCLUDE_FILTER" ] && ! filter_contains "$INCLUDE_FILTER" "$label"; then
+        skip "$label" "excluded by --include=$INCLUDE_FILTER"
+        return 1
+    fi
+    if filter_contains "$SKIP_FILTER" "$label"; then
+        skip "$label" "excluded by --skip=$SKIP_FILTER"
+        return 1
+    fi
+    return 0
 }
 
 run() {
     label="$1"
     shift
+    if ! should_run_label "$label"; then
+        return
+    fi
+    command_text="$(format_command "$@")"
     printf '\n==> %s\n' "$label"
-    print_command "$@"
+    printf '    command: %s\n' "$command_text"
     start="$(date +%s)"
     set +e
     "$@"
@@ -73,7 +175,7 @@ run() {
         record_step "$label" "PASS" "$duration"
         printf '    result: PASS (%s)\n' "$(format_duration "$duration")"
     else
-        record_step "$label" "FAIL" "$duration" "exit $status"
+        record_step "$label" "FAIL" "$duration" "exit $status; rerun: $command_text"
         printf '    result: FAIL (%s, exit %s)\n' "$(format_duration "$duration")" "$status" >&2
         return "$status"
     fi
@@ -142,6 +244,9 @@ print_summary() {
             if [ "$status" = "SKIP" ] && [ -n "$detail" ]; then
                 printf ' | %s' "$detail"
             fi
+            if [ "$status" = "FAIL" ] && [ -n "$detail" ]; then
+                printf ' | %s' "$detail"
+            fi
             printf '\n'
         done < "$SUMMARY_FILE"
     fi
@@ -154,6 +259,9 @@ print_summary() {
     fi
     printf 'total %s | ran %s | passed %s | skipped %s | failed %s\n' \
         "$(format_duration "$total_seconds")" "$ran" "$passed" "$skipped" "$failed"
+    if [ -n "${AETOWER_CI_LOG_FILE:-}" ]; then
+        printf 'log %s\n' "$AETOWER_CI_LOG_FILE"
+    fi
     printf '============================================================\n'
 
     if [ -n "$SUMMARY_FILE" ] && [ -f "$SUMMARY_FILE" ]; then
@@ -221,14 +329,63 @@ changed_semgrep_files() {
         || true
 }
 
-push_diff_base() {
+fallback_push_base() {
     if git rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
         printf '%s' '@{upstream}'
+    elif git rev-parse --verify 'origin/main' >/dev/null 2>&1; then
+        printf '%s' 'origin/main'
+    elif git rev-parse --verify 'main' >/dev/null 2>&1; then
+        printf '%s' 'main'
     elif git rev-parse --verify 'HEAD~1' >/dev/null 2>&1; then
         printf '%s' 'HEAD~1'
     else
         printf '%s' 'HEAD'
     fi
+}
+
+push_diff_base() {
+    if [ -n "$PUSH_STDIN_FILE" ] && [ -s "$PUSH_STDIN_FILE" ]; then
+        while read -r local_ref local_sha remote_ref remote_sha; do
+            if [ -z "${local_sha:-}" ]; then
+                continue
+            fi
+            case "$remote_sha" in
+                0000000000000000000000000000000000000000)
+                    fallback_push_base
+                    return
+                    ;;
+                *)
+                    printf '%s' "$remote_sha"
+                    return
+                    ;;
+            esac
+        done < "$PUSH_STDIN_FILE"
+    fi
+    fallback_push_base
+}
+
+confirm_dirty_worktree_for_push() {
+    if [ "$MODE" != "pre-push" ] && [ "$MODE" != "full" ]; then
+        return
+    fi
+    if git diff --quiet && git diff --cached --quiet; then
+        return
+    fi
+    if [ "${AETOWER_SKIP_DIRTY_WORKTREE_CONFIRM:-0}" = "1" ]; then
+        printf 'dirty worktree confirmation skipped by AETOWER_SKIP_DIRTY_WORKTREE_CONFIRM=1\n'
+        return
+    fi
+    if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        printf 'The worktree is dirty. Continue with the quality run? [y/N] ' > /dev/tty
+        read -r answer < /dev/tty
+        case "$answer" in
+            y|Y|yes|YES) return ;;
+        esac
+        echo "aborted because the worktree is dirty" >&2
+        exit 1
+    fi
+    echo "dirty worktree detected; set AETOWER_SKIP_DIRTY_WORKTREE_CONFIRM=1 to run non-interactively" >&2
+    exit 1
 }
 
 should_run_full_rust_gate() {
@@ -359,6 +516,9 @@ run_full_swiftlint() {
 }
 
 run_full_semgrep() {
+    if ! should_run_label "semgrep"; then
+        return
+    fi
     if ! semgrep_healthy; then
         skip "semgrep" "local binary unavailable or unhealthy"
         return
@@ -376,6 +536,8 @@ run_full_dependency_policy() {
 }
 
 run_full_gate() {
+    confirm_dirty_worktree_for_push
+
     if [ -z "$BENCH_ITERATIONS" ]; then
         case "$MODE" in
             pre-push) BENCH_ITERATIONS="20" ;;

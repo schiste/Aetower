@@ -2,4 +2,7 @@
 set -eu
 
 ROOT="$(git rev-parse --show-toplevel)"
-exec sh "$ROOT/scripts/ci-local.sh" --mode pre-push
+PUSH_STDIN_FILE="$(mktemp "${TMPDIR:-/tmp}/aetower-pre-push.XXXXXX")"
+trap 'rm -f "$PUSH_STDIN_FILE"' EXIT INT TERM
+cat > "$PUSH_STDIN_FILE"
+exec sh "$ROOT/scripts/ci-local.sh" --mode pre-push --push-stdin-file "$PUSH_STDIN_FILE"
