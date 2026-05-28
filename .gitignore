@@ -5,6 +5,7 @@
 /rust/target
 /logs
 /.aetower-cache
+/.env.release.local
 
 # Local profiling and tool caches
 tmp/

@@ -1,5 +1,4 @@
 #!/bin/sh
-#!/bin/sh
 set -eu
 
 SIGN_IDENTITY="${AETOWER_SIGN_IDENTITY:-}"
@@ -16,11 +15,22 @@ STATUS=0
 
 printf 'release preflight\n'
 
+codesigning_identities() {
+    identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+    if printf '%s\n' "$identities" | grep -F "Developer ID Application:" >/dev/null 2>&1; then
+        printf '%s\n' "$identities"
+        return
+    fi
+    if command -v zsh >/dev/null 2>&1; then
+        zsh -lc 'security find-identity -v -p codesigning' 2>/dev/null || true
+    fi
+}
+
 if [ -z "$SIGN_IDENTITY" ]; then
     printf '  signing identity: missing (set AETOWER_SIGN_IDENTITY)\n'
     STATUS=1
 else
-    if security find-identity -v -p codesigning | grep -F "$SIGN_IDENTITY" >/dev/null 2>&1; then
+    if codesigning_identities | grep -F "$SIGN_IDENTITY" >/dev/null 2>&1; then
         printf '  signing identity: found\n'
     else
         printf '  signing identity: not found in local keychain\n'
