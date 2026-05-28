@@ -43,7 +43,8 @@ Optional:
   - Base URL the release archives are hosted under (the `<enclosure>` URL
     prefix in the appcast). If unset, it is derived from `AETOWER_APPCAST_URL`'s
     directory. Set it explicitly when the zips live somewhere other than the
-    appcast's directory (e.g. GitHub Releases asset URLs).
+    appcast's directory (e.g. GitHub Releases asset URLs). The release script
+    normalizes the value with a trailing slash before invoking Sparkle.
 - `AETOWER_SPARKLE_ED_KEY_FILE`
   - Path to the private EdDSA key file. Default: read from the Keychain.
 - `AETOWER_INCLUDE_PRIVILEGED_HELPER=1`

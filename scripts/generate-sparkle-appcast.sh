@@ -58,6 +58,12 @@ if [ -z "$DOWNLOAD_PREFIX" ] && [ -n "${AETOWER_APPCAST_URL:-}" ]; then
         */*) DOWNLOAD_PREFIX="${AETOWER_APPCAST_URL%/*}/" ;;
     esac
 fi
+if [ -n "$DOWNLOAD_PREFIX" ]; then
+    case "$DOWNLOAD_PREFIX" in
+        */) ;;
+        *) DOWNLOAD_PREFIX="$DOWNLOAD_PREFIX/" ;;
+    esac
+fi
 
 mkdir -p "$ARCHIVES_DIR"
 
