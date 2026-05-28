@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_DIR="$ROOT/dist/Aetower.app"
 APP_BIN="$APP_DIR/Contents/MacOS/Aetower"
 MCP_BIN="$APP_DIR/Contents/Helpers/aetower-mcp"
+SOCKET_PATH="${AETOWER_MCP_SOCKET_PATH:-$HOME/.aetower/mcp.sock}"
 REBUILD=0
 LAUNCHED=0
 APP_PID=""
@@ -39,6 +40,19 @@ APP_PID=$!
 LAUNCHED=1
 sleep 4
 
+ATTEMPTS=0
+while [ "$ATTEMPTS" -lt 20 ]; do
+    if [ -S "$SOCKET_PATH" ]; then
+        break
+    fi
+    ATTEMPTS=$((ATTEMPTS + 1))
+    sleep 1
+done
+if [ ! -S "$SOCKET_PATH" ]; then
+    echo "Aetower MCP socket not found: $SOCKET_PATH" >&2
+    exit 1
+fi
+
 cleanup() {
     if [ "$LAUNCHED" -eq 1 ] && [ -n "$APP_PID" ]; then
         kill "$APP_PID" 2>/dev/null || true
@@ -48,15 +62,16 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-python3 - "$MCP_BIN" <<'PY'
+python3 - "$MCP_BIN" "$SOCKET_PATH" <<'PY'
 import json
 import subprocess
 import sys
 import time
 
 binary = sys.argv[1]
+socket_path = sys.argv[2]
 proc = subprocess.Popen(
-    [binary],
+    [binary, socket_path],
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
