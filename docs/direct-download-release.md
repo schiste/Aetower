@@ -1,6 +1,10 @@
 # Direct Download Release
 
-Aetower's direct-download release path assumes:
+Aetower's current public release channel is **Developer Preview**. Public
+artifacts should be distributed only through the signed and notarized
+direct-download path.
+
+The direct-download release path assumes:
 
 - Developer ID signing
 - notarization with `notarytool`
@@ -68,7 +72,7 @@ Optional:
    static site, S3, …) and set `AETOWER_APPCAST_URL` (and, if the zips are
    hosted apart from the appcast, `AETOWER_DOWNLOAD_URL_PREFIX`).
 
-## Cut a release
+## Cut a Developer Preview release
 
 Run the whole pipeline:
 
@@ -117,3 +121,6 @@ a growing version history.
 The baseline release path does **not** require Endpoint Security. Leave the
 privileged helper disabled unless you are shipping an advanced build with the
 restricted entitlement approved by Apple.
+
+Use [Developer Preview Release Checklist](release-checklist.md) as the final
+human checklist before publishing an artifact.
