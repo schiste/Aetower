@@ -14,6 +14,16 @@ otherwise.
 
 Do not publish vulnerability details publicly before coordination.
 
+Preferred private channel:
+
+- GitHub private vulnerability report:
+  `https://github.com/schiste/Aetower/security/advisories/new`
+
+If that channel is unavailable, contact the project maintainer privately before
+opening a public issue. Public issues are acceptable only for non-sensitive
+bugs that do not include host metadata, logs, credentials, private paths,
+session names, process command lines, MCP output, or support-bundle excerpts.
+
 Report:
 
 - a concise description of the issue
@@ -22,9 +32,6 @@ Report:
 - whether local data, exported data, MCP access, permissions, signing, or
   update delivery are involved
 - any logs or support-bundle excerpts, redacted as needed
-
-Use the private project-maintainer channel until a dedicated security contact
-or disclosure inbox is published.
 
 ## Security boundaries
 

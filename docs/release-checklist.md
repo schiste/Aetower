@@ -8,6 +8,7 @@ Use this checklist before sharing a public Developer Preview build.
 - Version and build number are final.
 - `CHANGELOG.md` has dated release notes.
 - Public docs are current.
+- `docs/known-limitations.md` reflects the current Developer Preview boundary.
 
 ## 2. Quality gates
 
@@ -60,6 +61,12 @@ Expected artifacts:
 
 ## 5. Verify artifact
 
+Run:
+
+```sh
+sh scripts/verify-public-preview.sh --package --gatekeeper --operator
+```
+
 On a clean Mac or clean user account:
 
 - unzip and launch `Aetower.app`
@@ -81,6 +88,9 @@ Confirm:
 - EdDSA verification succeeds
 - install succeeds
 - relaunch opens version N
+
+See [Public Preview Validation](public-preview-validation.md) for the complete
+runbook, including the two-hour soak command.
 
 ## 7. Publish
 

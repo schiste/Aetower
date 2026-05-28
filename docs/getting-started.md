@@ -13,6 +13,9 @@ Preview build.
 If macOS warns that the app cannot be verified, do not continue with that
 artifact. Use a Developer ID signed and notarized build.
 
+Before sharing the app with others, review
+[Known Limitations](known-limitations.md).
+
 ## First-run checklist
 
 Open **Settings -> Setup** and review:
