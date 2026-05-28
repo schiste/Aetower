@@ -80,6 +80,9 @@ Release configuration is documented in
 [Direct Download Release](docs/direct-download-release.md). Public-preview
 verification is documented in
 [Public Preview Validation](docs/public-preview-validation.md).
+Brand asset import is documented in [Brand Assets](docs/brand-assets.md).
+Cloudflare Pages hosting is documented in
+[Cloudflare Release Hosting](docs/cloudflare-release-hosting.md).
 
 ## Privacy and safety
 

@@ -1,0 +1,3 @@
+name = "aetower-dev"
+pages_build_output_dir = "dist/cloudflare-site"
+compatibility_date = "2026-05-28"

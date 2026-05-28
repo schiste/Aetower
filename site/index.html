@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aetower Developer Preview</title>
+    <meta
+      name="description"
+      content="Aetower is a local-first macOS observability app for developers, operators, and AI agents."
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #101716;
+        --muted: #546260;
+        --line: #d8e4df;
+        --accent: #36d683;
+        --violet: #7b3ff2;
+        --surface: #f7faf8;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: ui-rounded, "SF Pro Rounded", "Avenir Next", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 25% 20%, rgba(54, 214, 131, 0.22), transparent 28rem),
+          radial-gradient(circle at 75% 30%, rgba(123, 63, 242, 0.20), transparent 25rem),
+          linear-gradient(135deg, #ffffff, #eef7f2);
+      }
+
+      main {
+        box-sizing: border-box;
+        width: min(960px, 100%);
+        margin: 0 auto;
+        padding: 72px 24px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 132px 1fr;
+        gap: 32px;
+        align-items: center;
+      }
+
+      .icon {
+        width: 132px;
+        height: 132px;
+        object-fit: contain;
+        filter: drop-shadow(0 24px 32px rgba(16, 23, 22, 0.18));
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--violet);
+      }
+
+      h1 {
+        margin: 0;
+        max-width: 720px;
+        font-size: clamp(44px, 7vw, 86px);
+        line-height: 0.92;
+        letter-spacing: -0.065em;
+      }
+
+      .lead {
+        max-width: 680px;
+        margin: 24px 0 0;
+        font-size: 20px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-top: 34px;
+      }
+
+      a.button {
+        display: inline-flex;
+        align-items: center;
+        min-height: 48px;
+        padding: 0 20px;
+        border: 1px solid var(--ink);
+        border-radius: 999px;
+        color: var(--ink);
+        font-weight: 800;
+        text-decoration: none;
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      a.button.primary {
+        border-color: transparent;
+        background: var(--ink);
+        color: #fff;
+      }
+
+      .panel {
+        margin-top: 48px;
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: rgba(255, 255, 255, 0.72);
+        backdrop-filter: blur(18px);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+
+      h2 {
+        margin: 0 0 10px;
+        font-size: 18px;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      footer {
+        margin-top: 40px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 760px) {
+        .hero,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .icon {
+          width: 96px;
+          height: 96px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <img class="icon" src="/assets/aetower-app-icon-preview.png" alt="Aetower icon" />
+        <div>
+          <p class="eyebrow">Developer Preview for macOS</p>
+          <h1>Local observability for operators and AI agents.</h1>
+          <p class="lead">
+            Aetower helps you inspect process pressure, wakeups, memory, energy friction,
+            diagnostics, and local agent impact without sending your machine data to a cloud service.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="/releases/Aetower-0.1.0-developer-preview.1.zip">Download Aetower</a>
+            <a class="button" href="/releases/appcast.xml">Sparkle appcast</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel grid" aria-label="Preview notes">
+        <div>
+          <h2>Local-first</h2>
+          <p>Runtime history and diagnostics stay on your Mac unless you export them.</p>
+        </div>
+        <div>
+          <h2>Conservative defaults</h2>
+          <p>Endpoint Security, telemetry, and automatic MCP registration are off by default.</p>
+        </div>
+        <div>
+          <h2>Direct updates</h2>
+          <p>Public builds are Developer ID signed, notarized, and delivered through Sparkle.</p>
+        </div>
+      </section>
+
+      <footer>
+        Aetower is a Developer Preview. Review local observability data before sharing screenshots,
+        exports, or support bundles.
+      </footer>
+    </main>
+  </body>
+</html>

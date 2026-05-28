@@ -132,3 +132,6 @@ restricted entitlement approved by Apple.
 
 Use [Developer Preview Release Checklist](release-checklist.md) as the final
 human checklist before publishing an artifact.
+
+If publishing through Cloudflare Pages on `aetower.dev`, use
+[Cloudflare Release Hosting](cloudflare-release-hosting.md).
