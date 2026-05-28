@@ -98,6 +98,21 @@ pub struct CollectorTimings {
     pub discovery_scan: bool,
     #[serde(default)]
     pub sampled_rusage: bool,
+    /// Number of processes covered by the `refresh_processes_specifics` call
+    /// this tick. Combined with `process_refresh_millis` this gives a
+    /// per-PID cost — the actionable signal when refresh time blows up.
+    /// On a discovery scan this is `system.processes().len()` (all of them);
+    /// on other ticks it is `known_pids.len()`.
+    #[serde(default)]
+    pub process_refresh_pid_count: u32,
+    /// Whether the per-process `with_memory()` flag was set inside the
+    /// `ProcessRefreshKind` for this tick. Memory refresh costs an extra
+    /// `task_info` syscall per PID, so a slow tick with this `true` is
+    /// shaped differently from a slow tick with this `false`. The latter
+    /// usually points at base CPU/disk usage refresh being slow per-call,
+    /// not at our cadence choices.
+    #[serde(default)]
+    pub process_refresh_refreshed_memory: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -245,20 +260,29 @@ impl Collector {
                 .process_metadata_tick
                 .is_multiple_of(PROCESS_MEMORY_REFRESH_INTERVAL_TICKS);
         let process_refresh_started = std::time::Instant::now();
-        if discovery_scan {
+        // `process_refresh_pid_count` records how many PIDs `sysinfo` walked
+        // this tick — captured before the discovery branch refreshes
+        // `known_pids`, so on a discovery tick we report the post-scan
+        // population (which is what was actually iterated) and on other
+        // ticks we report `known_pids` exactly. Pairs with
+        // `process_refresh_millis` to compute per-PID cost.
+        let process_refresh_refreshed_memory = discovery_scan || refresh_memory;
+        let process_refresh_pid_count: u32 = if discovery_scan {
             self.system.refresh_processes_specifics(
                 ProcessesToUpdate::All,
                 true,
                 process_refresh_kind(true, true),
             );
             self.known_pids = self.system.processes().keys().copied().collect();
+            self.known_pids.len().try_into().unwrap_or(u32::MAX)
         } else {
             self.system.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&self.known_pids),
                 false,
                 process_refresh_kind(false, refresh_memory),
             );
-        }
+            self.known_pids.len().try_into().unwrap_or(u32::MAX)
+        };
         let process_refresh_millis = process_refresh_started.elapsed().as_secs_f64() * 1000.0;
         self.process_metadata_tick = self.process_metadata_tick.wrapping_add(1);
         self.user_directory_refresh_tick = self.user_directory_refresh_tick.wrapping_add(1);
@@ -584,6 +608,8 @@ impl Collector {
                 storage_refresh_millis: storage_refresh_millis as f32,
                 discovery_scan,
                 sampled_rusage: sample_wakeups || refresh_memory,
+                process_refresh_pid_count,
+                process_refresh_refreshed_memory,
             },
         }
     }

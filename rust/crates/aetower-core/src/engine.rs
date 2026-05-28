@@ -718,6 +718,14 @@ impl Engine {
                     .field("collect_discovery_scan", raw.timings.discovery_scan)
                     .field("collect_sampled_rusage", raw.timings.sampled_rusage)
                     .field(
+                        "collect_process_refresh_pid_count",
+                        raw.timings.process_refresh_pid_count,
+                    )
+                    .field(
+                        "collect_process_refresh_refreshed_memory",
+                        raw.timings.process_refresh_refreshed_memory,
+                    )
+                    .field(
                         "identity_millis",
                         format!("{:.3}", pipeline_timings.identity_millis),
                     )
@@ -796,6 +804,20 @@ impl Engine {
                         )
                         .field("collect_discovery_scan", raw.timings.discovery_scan)
                         .field("collect_sampled_rusage", raw.timings.sampled_rusage)
+                        // The two fields below decompose collect_process_refresh_millis
+                        // into its real drivers. PID count × per-PID cost dominates
+                        // the wall time; `refreshed_memory` tells us whether the
+                        // extra `task_info` syscall was on the path. With these,
+                        // a slow tick is classifiable instead of being a single
+                        // opaque number.
+                        .field(
+                            "collect_process_refresh_pid_count",
+                            raw.timings.process_refresh_pid_count,
+                        )
+                        .field(
+                            "collect_process_refresh_refreshed_memory",
+                            raw.timings.process_refresh_refreshed_memory,
+                        )
                         .field("history_queue_depth", history_queue_depth)
                         .field(
                             "diagnostics_queue_depth",
@@ -885,6 +907,14 @@ impl Engine {
                     )
                     .field("collect_discovery_scan", raw.timings.discovery_scan)
                     .field("collect_sampled_rusage", raw.timings.sampled_rusage)
+                    .field(
+                        "collect_process_refresh_pid_count",
+                        raw.timings.process_refresh_pid_count,
+                    )
+                    .field(
+                        "collect_process_refresh_refreshed_memory",
+                        raw.timings.process_refresh_refreshed_memory,
+                    )
                     .field(
                         "identity_millis",
                         format!("{:.3}", pipeline_timings.identity_millis),
