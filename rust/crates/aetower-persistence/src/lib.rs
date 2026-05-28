@@ -416,8 +416,16 @@ impl HistoryStore {
                 aggressive_reason,
             ));
         }
+        // `incremental_vacuum` returns pages on the freelist back to the OS
+        // when `auto_vacuum=INCREMENTAL` is active (set by the migration in
+        // `configure_connection`). It is a documented no-op when the database
+        // is still in legacy `auto_vacuum=NONE` mode, so the call is safe to
+        // include unconditionally during the transition window. Running it on
+        // every maintenance pass keeps the on-disk freelist small enough that
+        // the heavier `VACUUM` gate below almost never fires after the initial
+        // migration.
         let checkpoint_cancelled = self.execute_batch_cancellable(
-            "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;",
+            "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize; PRAGMA incremental_vacuum;",
             cancel,
             "checkpoint history store",
         )?;
