@@ -10,6 +10,14 @@ use aetower_model::{
 pub struct History {
     previous_scores: BTreeMap<String, f32>,
     previous_anomaly: BTreeMap<String, bool>,
+    /// Wrapping counter gating how often the z-score anomaly pass runs. The
+    /// pass computes a mean+stddev over each entity's friction trend every
+    /// tick, which is the dominant per-tick cost in `update`. Friction
+    /// anomalies are slow-moving and not actionable sub-second, so we
+    /// recompute every `ANOMALY_DETECTION_INTERVAL_TICKS` ticks and carry the
+    /// cached verdict forward on the ticks in between. Mirrors the
+    /// `cooccurrence` / `cooccurrence_tick` pairing below.
+    anomaly_tick: u8,
     previous_thermal_state: ThermalState,
     thermal_contributors: Vec<String>,
     entity_index: HashMap<String, u16>,
@@ -123,6 +131,11 @@ struct EntityBehaviorFlags {
 }
 
 const MAX_TREND_POINTS: usize = 30;
+/// How often the z-score anomaly pass recomputes. At FAST_TICK (2 s) this is
+/// ~10 s, matching the collector's slow-counter cadence. Between recomputes
+/// the previous verdict is reused, so an entity stays flagged/unflagged until
+/// the next recompute rather than flickering.
+const ANOMALY_DETECTION_INTERVAL_TICKS: u8 = 5;
 const PROCESS_LAUNCH_BURST_WINDOW_MILLIS: u64 = 15_000;
 const SHORT_LIVED_PROCESS_MILLIS: u64 = 30_000;
 const RESTART_LOOP_WINDOW_MILLIS: u64 = 60_000;
@@ -155,6 +168,7 @@ impl History {
         Self {
             previous_scores: BTreeMap::new(),
             previous_anomaly: BTreeMap::new(),
+            anomaly_tick: 0,
             previous_thermal_state: ThermalState::Nominal,
             thermal_contributors: Vec::new(),
             entity_index: HashMap::new(),
@@ -245,7 +259,29 @@ impl History {
 
         // Anomaly detection: flag entities whose current friction exceeds
         // mean + 2*stddev of their recent trend (z-score > 2).
+        //
+        // The z-score pass walks every entity's friction trend each tick and is
+        // the dominant per-tick cost here, so we only recompute every
+        // `ANOMALY_DETECTION_INTERVAL_TICKS` ticks (~10 s). The counter is read
+        // before it advances, so a freshly constructed `History` (tick 0)
+        // recomputes on its first `update` rather than waiting a full window.
+        let recompute_anomaly = self
+            .anomaly_tick
+            .is_multiple_of(ANOMALY_DETECTION_INTERVAL_TICKS);
+        self.anomaly_tick = self.anomaly_tick.wrapping_add(1);
         for entity in entities.iter_mut() {
+            if !recompute_anomaly {
+                // Carry the last verdict forward untouched: no z-score math, no
+                // edge-triggered event. `previous_anomaly` is the source of
+                // truth and is left as-is so the next recompute still sees the
+                // correct "was anomaly" edge.
+                entity.anomaly_detected = self
+                    .previous_anomaly
+                    .get(&entity.entity_id)
+                    .copied()
+                    .unwrap_or(false);
+                continue;
+            }
             let is_anomaly = self
                 .metric_history
                 .get(&entity.entity_id)
