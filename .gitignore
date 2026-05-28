@@ -4,6 +4,7 @@
 /dist
 /rust/target
 /logs
+/.aetower-cache
 
 # Local profiling and tool caches
 tmp/

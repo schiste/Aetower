@@ -12,6 +12,7 @@ Remove repo-local build, packaging, and profiling artifacts.
 
 Cleans (when --yes is passed):
   - tmp/              repo-local profiling output and tool caches
+  - .aetower-cache/   local quality-gate artifact cache
   - dist/             packaged Aetower.app from scripts/package-macos.sh
   - rust/target/      Cargo build cache (can be tens of GB)
   - macos/.build/     SwiftPM build cache
@@ -60,6 +61,7 @@ else
 fi
 
 report_and_clean "$ROOT/tmp"
+report_and_clean "$ROOT/.aetower-cache"
 report_and_clean "$ROOT/dist"
 report_and_clean "$ROOT/rust/target"
 report_and_clean "$ROOT/macos/.build"

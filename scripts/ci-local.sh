@@ -47,9 +47,11 @@ SKIP_FILTER=""
 PUSH_STDIN_FILE=""
 SWIFTLINT_CACHE_DIR="$ROOT/tmp/swiftlint-cache"
 SWIFT_BUILD_DIR="$ROOT/macos/.build"
+CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT/tmp/clang-module-cache}"
 SUMMARY_FILE=""
 SUMMARY_PRINTED=0
 RUN_STARTED_AT="$(date +%s)"
+export CLANG_MODULE_CACHE_PATH
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -103,12 +105,12 @@ format_duration() {
 }
 
 record_step() {
-    label="$1"
-    status="$2"
-    duration="$3"
-    detail="${4:-}"
+    step_label="$1"
+    step_status="$2"
+    step_duration="$3"
+    step_detail="${4:-}"
     if [ -n "$SUMMARY_FILE" ]; then
-        printf '%s\t%s\t%s\t%s\n' "$label" "$status" "$duration" "$detail" >> "$SUMMARY_FILE"
+        printf '%s\t%s\t%s\t%s\n' "$step_label" "$step_status" "$step_duration" "$step_detail" >> "$SUMMARY_FILE"
     fi
 }
 
@@ -204,17 +206,17 @@ print_summary() {
     measured_seconds=0
 
     if [ -n "$SUMMARY_FILE" ] && [ -f "$SUMMARY_FILE" ]; then
-        while IFS='	' read -r label status duration detail; do
-            case "$status" in
+        while IFS='	' read -r step_label step_status step_duration step_detail; do
+            case "$step_status" in
                 PASS)
                     passed=$((passed + 1))
                     ran=$((ran + 1))
-                    measured_seconds=$((measured_seconds + duration))
+                    measured_seconds=$((measured_seconds + step_duration))
                     ;;
                 FAIL)
                     failed=$((failed + 1))
                     ran=$((ran + 1))
-                    measured_seconds=$((measured_seconds + duration))
+                    measured_seconds=$((measured_seconds + step_duration))
                     ;;
                 SKIP)
                     skipped=$((skipped + 1))
@@ -228,24 +230,24 @@ print_summary() {
     printf '============================================================\n'
 
     if [ -n "$SUMMARY_FILE" ] && [ -f "$SUMMARY_FILE" ]; then
-        while IFS='	' read -r label status duration detail; do
-            duration_text="$(format_duration "$duration")"
+        while IFS='	' read -r step_label step_status step_duration step_detail; do
+            duration_text="$(format_duration "$step_duration")"
             percent="0.0"
-            if [ "$measured_seconds" -gt 0 ] && [ "$status" != "SKIP" ]; then
-                percent="$(awk -v duration="$duration" -v total="$measured_seconds" 'BEGIN { printf "%.1f", (duration / total) * 100 }')"
+            if [ "$measured_seconds" -gt 0 ] && [ "$step_status" != "SKIP" ]; then
+                percent="$(awk -v duration="$step_duration" -v total="$measured_seconds" 'BEGIN { printf "%.1f", (duration / total) * 100 }')"
             fi
-            case "$status" in
+            case "$step_status" in
                 PASS) marker="[PASS]" ;;
                 FAIL) marker="[FAIL]" ;;
                 SKIP) marker="[SKIP]" ;;
-                *) marker="[$status]" ;;
+                *) marker="[$step_status]" ;;
             esac
-            printf '%-6s %-50s | %8s | %5s%%' "$marker" "$label" "$duration_text" "$percent"
-            if [ "$status" = "SKIP" ] && [ -n "$detail" ]; then
-                printf ' | %s' "$detail"
+            printf '%-6s %-50s | %8s | %5s%%' "$marker" "$step_label" "$duration_text" "$percent"
+            if [ "$step_status" = "SKIP" ] && [ -n "$step_detail" ]; then
+                printf ' | %s' "$step_detail"
             fi
-            if [ "$status" = "FAIL" ] && [ -n "$detail" ]; then
-                printf ' | %s' "$detail"
+            if [ "$step_status" = "FAIL" ] && [ -n "$step_detail" ]; then
+                printf ' | %s' "$step_detail"
             fi
             printf '\n'
         done < "$SUMMARY_FILE"
@@ -296,8 +298,33 @@ semgrep_healthy() {
     env SEMGREP_SEND_METRICS=off semgrep --help >/dev/null 2>&1
 }
 
+remove_tree() {
+    target_path="$1"
+    attempts="${2:-5}"
+    sleep_seconds="${3:-1}"
+
+    if [ ! -e "$target_path" ]; then
+        return 0
+    fi
+
+    attempt=1
+    while [ "$attempt" -le "$attempts" ]; do
+        rm -rf "$target_path" 2>/dev/null || true
+        if [ ! -e "$target_path" ]; then
+            return 0
+        fi
+        if [ "$attempt" -lt "$attempts" ]; then
+            sleep "$sleep_seconds"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    echo "failed to remove $target_path after $attempts attempt(s)" >&2
+    return 1
+}
+
 clean_swift_build_dir() {
-    rm -rf "$SWIFT_BUILD_DIR"
+    remove_tree "$SWIFT_BUILD_DIR"
 }
 
 staged_files() {
@@ -537,6 +564,7 @@ run_full_dependency_policy() {
 
 run_full_gate() {
     confirm_dirty_worktree_for_push
+    mkdir -p "$CLANG_MODULE_CACHE_PATH"
 
     if [ -z "$BENCH_ITERATIONS" ]; then
         case "$MODE" in
@@ -561,7 +589,7 @@ run_full_gate() {
     run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
     run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
     run "telemetry smoke" sh "$ROOT/scripts/telemetry-smoke.sh"
-    run "package smoke" sh "$ROOT/scripts/smoke-package.sh" --rebuild
+    run "package smoke" sh "$ROOT/scripts/quality-package-smoke.sh"
     if [ "$MODE" = "full" ]; then
         run "local operator smoke" sh "$ROOT/scripts/local-operator-smoke.sh"
     fi

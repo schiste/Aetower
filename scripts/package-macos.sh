@@ -17,6 +17,8 @@ HELPER_DIR="$APP_DIR/Contents/Helpers"
 PLIST_DIR="$APP_DIR/Contents"
 SWIFT_BUILD_DIR="${SWIFT_BUILD_DIR:-$ROOT/macos/.build}"
 SWIFTPM_PLUGIN_DIR="$SWIFT_BUILD_DIR/plugins/outputs/macos/AetowerBindings/destination/BuildRustBridgePlugin"
+CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT/tmp/clang-module-cache}"
+export CLANG_MODULE_CACHE_PATH
 
 BUNDLE_ID="${AETOWER_BUNDLE_ID:-com.aetower.app}"
 # Default the marketing version to the latest git tag (without a leading "v"),
@@ -121,6 +123,7 @@ sh "$ROOT/scripts/build-rust.sh"
 if [ "$INCLUDE_PRIVILEGED_HELPER" = "1" ]; then
     "$CARGO_BIN" build --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper --release
 fi
+mkdir -p "$CLANG_MODULE_CACHE_PATH"
 remove_tree "$SWIFT_BUILD_DIR"
 /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -c release
 
