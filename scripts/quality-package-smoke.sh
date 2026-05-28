@@ -65,12 +65,14 @@ package_cache_key() {
             macos/Sources \
             macos/Aetower.entitlements \
             macos/AetowerHelper.entitlements \
+            assets/brand \
             rust/Cargo.toml \
             rust/Cargo.lock \
             rust/crates \
             scripts/build-rust.sh \
             scripts/generate-app-icon.py \
             scripts/generate-app-icon.sh \
+            scripts/import-app-icon.sh \
             scripts/package-macos.sh \
             scripts/smoke-package.sh \
             scripts/quality-package-smoke.sh \
