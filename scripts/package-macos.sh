@@ -18,6 +18,8 @@ PLIST_DIR="$APP_DIR/Contents"
 SWIFT_BUILD_DIR="${SWIFT_BUILD_DIR:-$ROOT/macos/.build}"
 SWIFTPM_PLUGIN_DIR="$SWIFT_BUILD_DIR/plugins/outputs/macos/AetowerBindings/destination/BuildRustBridgePlugin"
 CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT/tmp/clang-module-cache}"
+APP_ICON_BUILD_DIR="${AETOWER_APP_ICON_BUILD_DIR:-$ROOT/tmp/app-icon}"
+APP_ICON_PATH="${AETOWER_APP_ICON_PATH:-$APP_ICON_BUILD_DIR/Aetower.icns}"
 export CLANG_MODULE_CACHE_PATH
 
 BUNDLE_ID="${AETOWER_BUNDLE_ID:-com.aetower.app}"
@@ -133,6 +135,8 @@ mkdir -p "$BIN_DIR" "$FRAMEWORK_DIR" "$HELPER_DIR" "$PLIST_DIR/Resources"
 cp "$SWIFT_BUILD_DIR/release/AetowerApp" "$BIN_DIR/Aetower"
 cp "$ROOT/rust/target/release/libaetower_ffi.dylib" "$FRAMEWORK_DIR/"
 cp "$ROOT/rust/target/release/aetower-mcp" "$HELPER_DIR/aetower-mcp"
+sh "$ROOT/scripts/generate-app-icon.sh" >/dev/null
+cp "$APP_ICON_PATH" "$PLIST_DIR/Resources/Aetower.icns"
 
 # Embed Sparkle.framework. SwiftPM links the app against
 # @rpath/Sparkle.framework but never copies it into the bundle, so it must be
@@ -151,6 +155,8 @@ cat > "$PLIST_DIR/Info.plist" <<PLIST
   <string>Aetower</string>
   <key>CFBundleIdentifier</key>
   <string>$BUNDLE_ID</string>
+  <key>CFBundleIconFile</key>
+  <string>Aetower</string>
   <key>CFBundleName</key>
   <string>Aetower</string>
   <key>CFBundlePackageType</key>

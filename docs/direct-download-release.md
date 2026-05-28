@@ -91,8 +91,9 @@ This runs, in order:
 1. `scripts/release-preflight.sh` — verifies signing identity, notary profile,
    appcast URL, public key, and final release metadata are present.
 2. `scripts/package-macos.sh` — builds, embeds + inside-out signs
-   `Sparkle.framework`, code-signs with the hardened runtime, notarizes, and
-   (optionally) staples. Produces `dist/Aetower.app` and `dist/Aetower.zip`.
+   `Sparkle.framework`, generates and embeds the app icon, code-signs with the
+   hardened runtime, notarizes, and (optionally) staples. Produces
+   `dist/Aetower.app` and `dist/Aetower.zip`.
 3. `scripts/generate-sparkle-appcast.sh` — copies the zip into the archives
    directory (`dist/appcast/` by default) and runs Sparkle's `generate_appcast`
    to (re)write `dist/appcast/appcast.xml`, signing each entry with the EdDSA

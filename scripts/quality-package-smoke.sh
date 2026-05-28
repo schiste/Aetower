@@ -69,6 +69,8 @@ package_cache_key() {
             rust/Cargo.lock \
             rust/crates \
             scripts/build-rust.sh \
+            scripts/generate-app-icon.py \
+            scripts/generate-app-icon.sh \
             scripts/package-macos.sh \
             scripts/smoke-package.sh \
             scripts/quality-package-smoke.sh \
