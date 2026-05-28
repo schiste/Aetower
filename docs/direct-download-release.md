@@ -24,15 +24,21 @@ Set these before running the release scripts:
     `SUFeedURL`.
 - `AETOWER_SPARKLE_PUBLIC_ED_KEY`
   - The EdDSA public key printed by `generate_keys`. Baked in as `SUPublicEDKey`.
+- `AETOWER_BUNDLE_ID`
+  - Final reverse-DNS bundle identifier for public builds. Do not ship the
+    local default `com.aetower.app`.
+- `AETOWER_VERSION`
+  - Marketing version shown by macOS and Sparkle release notes.
+- `AETOWER_BUILD_NUMBER`
+  - Monotonic `CFBundleVersion`; Sparkle uses this to decide whether a build is
+    newer.
 
 Optional:
 
 - `AETOWER_STAPLE=1`
-- `AETOWER_VERSION` / `AETOWER_BUILD_NUMBER`
-  - If unset, `AETOWER_VERSION` defaults to the latest git tag (minus a leading
-    `v`) and `AETOWER_BUILD_NUMBER` defaults to the git commit count. Sparkle
-    compares `CFBundleVersion` (the build number), so it must increase every
-    release — the commit-count default handles that automatically.
+- `AETOWER_REQUIRE_FINAL_METADATA=0`
+  - Development escape hatch only. Public release-candidate runs default this
+    to `1` and fail unless bundle id, version, and build number are explicit.
 - `AETOWER_DOWNLOAD_URL_PREFIX`
   - Base URL the release archives are hosted under (the `<enclosure>` URL
     prefix in the appcast). If unset, it is derived from `AETOWER_APPCAST_URL`'s
@@ -83,7 +89,7 @@ sh scripts/release.sh
 This runs, in order:
 
 1. `scripts/release-preflight.sh` — verifies signing identity, notary profile,
-   appcast URL, and public key are present.
+   appcast URL, public key, and final release metadata are present.
 2. `scripts/package-macos.sh` — builds, embeds + inside-out signs
    `Sparkle.framework`, code-signs with the hardened runtime, notarizes, and
    (optionally) staples. Produces `dist/Aetower.app` and `dist/Aetower.zip`.

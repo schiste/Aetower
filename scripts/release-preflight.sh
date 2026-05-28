@@ -8,8 +8,12 @@ ENTITLEMENTS_PATH="${AETOWER_ENTITLEMENTS_PATH:-}"
 HELPER_ENTITLEMENTS_PATH="${AETOWER_HELPER_ENTITLEMENTS_PATH:-}"
 REQUIRE_ENDPOINT_SECURITY="${AETOWER_REQUIRE_ENDPOINT_SECURITY:-0}"
 REQUIRE_SPARKLE="${AETOWER_REQUIRE_SPARKLE:-1}"
+REQUIRE_FINAL_METADATA="${AETOWER_REQUIRE_FINAL_METADATA:-0}"
 APPCAST_URL="${AETOWER_APPCAST_URL:-}"
 SPARKLE_PUBLIC_ED_KEY="${AETOWER_SPARKLE_PUBLIC_ED_KEY:-}"
+BUNDLE_ID="${AETOWER_BUNDLE_ID:-}"
+VERSION="${AETOWER_VERSION:-}"
+BUILD_NUMBER="${AETOWER_BUILD_NUMBER:-}"
 
 STATUS=0
 
@@ -96,6 +100,43 @@ if [ "$REQUIRE_SPARKLE" = "1" ]; then
     fi
 else
     printf '  sparkle release metadata: optional\n'
+fi
+
+if [ "$REQUIRE_FINAL_METADATA" = "1" ]; then
+    if [ -z "$BUNDLE_ID" ]; then
+        printf '  final bundle id: missing (set AETOWER_BUNDLE_ID)\n'
+        STATUS=1
+    elif [ "$BUNDLE_ID" = "com.aetower.app" ]; then
+        printf '  final bundle id: still using local default com.aetower.app\n'
+        STATUS=1
+    elif printf '%s\n' "$BUNDLE_ID" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$'; then
+        printf '  final bundle id: configured\n'
+    else
+        printf '  final bundle id: invalid (%s)\n' "$BUNDLE_ID"
+        STATUS=1
+    fi
+
+    if [ -z "$VERSION" ]; then
+        printf '  release version: missing (set AETOWER_VERSION)\n'
+        STATUS=1
+    elif printf '%s\n' "$VERSION" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z._-]*$'; then
+        printf '  release version: configured\n'
+    else
+        printf '  release version: invalid (%s)\n' "$VERSION"
+        STATUS=1
+    fi
+
+    if [ -z "$BUILD_NUMBER" ]; then
+        printf '  release build number: missing (set AETOWER_BUILD_NUMBER)\n'
+        STATUS=1
+    elif printf '%s\n' "$BUILD_NUMBER" | grep -Eq '^[0-9]+(\.[0-9]+)*$'; then
+        printf '  release build number: configured\n'
+    else
+        printf '  release build number: invalid (%s)\n' "$BUILD_NUMBER"
+        STATUS=1
+    fi
+else
+    printf '  final release metadata: optional\n'
 fi
 
 if [ "$STATUS" -eq 0 ]; then

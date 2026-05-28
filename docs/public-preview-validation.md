@@ -12,7 +12,8 @@ cp .env.release.example .env.release.local
 ```
 
 Fill `.env.release.local` with the Developer ID identity, notary profile,
-Sparkle appcast URL, download URL prefix, and Sparkle public EdDSA key.
+Sparkle appcast URL, download URL prefix, Sparkle public EdDSA key, final bundle
+id, marketing version, and build number.
 
 Then run:
 
