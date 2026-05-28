@@ -93,6 +93,11 @@ pub struct HistoryStore {
     write_interval: u32,
     diagnostics: Option<DiagnosticsStore>,
     writer: HistoryWriter,
+    /// `Some` only when the most recent `open()` ran the auto_vacuum
+    /// migration. Drained by `set_diagnostics` so the audit-trail event is
+    /// emitted exactly once per process, *after* the sink is wired up
+    /// (the migration itself runs before the engine plumbs diagnostics).
+    pending_migration_event: Option<AutoVacuumMigrationOutcome>,
 }
 
 struct HistoryWriter {
@@ -117,7 +122,7 @@ impl HistoryStore {
     /// (e.g. 5 = write every 5th tick).
     pub fn open(path: &Path, write_interval: u32) -> Result<Self, String> {
         let conn = Connection::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
-        configure_connection(&conn)?;
+        let pending_migration_event = configure_connection(&conn, path)?;
         let writer = HistoryWriter::spawn(path.to_path_buf())?;
 
         Ok(Self {
@@ -127,11 +132,36 @@ impl HistoryStore {
             write_interval: write_interval.max(1),
             diagnostics: None,
             writer,
+            pending_migration_event,
         })
     }
 
     pub fn set_diagnostics(&mut self, diagnostics: DiagnosticsStore) {
         self.diagnostics = Some(diagnostics);
+        // If the most recent open() ran the auto_vacuum migration, drop a
+        // single audit-trail event now that the sink is plumbed in. `take`
+        // makes this exactly-once even if `set_diagnostics` is called
+        // multiple times in the lifetime of a store.
+        if let Some(outcome) = self.pending_migration_event.take()
+            && let Some(diag) = self.diagnostics.as_ref()
+        {
+            let bytes_reclaimed = outcome
+                .store_bytes_before
+                .saturating_sub(outcome.store_bytes_after);
+            diag.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Info,
+                    DiagnosticsSubsystem::Persistence,
+                    "history-migration-applied",
+                    "Converted history store to auto_vacuum=INCREMENTAL.",
+                )
+                .field("store_bytes_before", outcome.store_bytes_before)
+                .field("store_bytes_after", outcome.store_bytes_after)
+                .field("bytes_reclaimed", bytes_reclaimed)
+                .field("elapsed_millis", outcome.elapsed_millis)
+                .build(),
+            );
+        }
     }
 
     /// Called on every engine tick. Only persists every `write_interval`th call.
@@ -1180,7 +1210,12 @@ impl HistoryWriter {
                 Ok(conn) => conn,
                 Err(_) => return,
             };
-            if configure_connection(&conn).is_err() {
+            // Writer thread opens its own connection to the same file; by
+            // the time this runs the main connection has already migrated
+            // auto_vacuum mode, so configure_connection will find it set
+            // and skip the VACUUM. The migration outcome (if any) is
+            // discarded here — only the main store reports it.
+            if configure_connection(&conn, &path).is_err() {
                 return;
             }
 
@@ -1345,7 +1380,22 @@ fn size_pressure_snapshot_target(
     (target < snapshot_count).then_some(target)
 }
 
-fn configure_connection(conn: &Connection) -> Result<(), String> {
+/// Outcome of the one-time `auto_vacuum=INCREMENTAL` migration, captured at
+/// `HistoryStore::open` so we can emit a single audit-trail diagnostic event
+/// once `set_diagnostics` plumbs the diagnostics sink in. Without this the
+/// migration is silent — if it ever fails partially or takes minutes on a
+/// slow disk we'd have no record.
+#[derive(Debug, Clone)]
+pub(crate) struct AutoVacuumMigrationOutcome {
+    pub store_bytes_before: u64,
+    pub store_bytes_after: u64,
+    pub elapsed_millis: u64,
+}
+
+fn configure_connection(
+    conn: &Connection,
+    path: &Path,
+) -> Result<Option<AutoVacuumMigrationOutcome>, String> {
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| format!("WAL: {e}"))?;
     conn.pragma_update(None, "synchronous", "NORMAL")
@@ -1359,22 +1409,33 @@ fn configure_connection(conn: &Connection) -> Result<(), String> {
     // first launch after upgrade absorbs that cost (measured at ~1.3 s on a
     // 394 MB store with 63% freelist — far less than initially feared).
     // Subsequent opens find the mode already set and skip the VACUUM. On a
-    // brand-new empty database the VACUUM is a near-instant no-op. After
-    // this migration, a subsequent change to the maintenance path's
-    // `PRAGMA incremental_vacuum` will actually return deleted pages to the
-    // operating system, instead of letting the freelist accumulate until a
-    // full-file rewrite triggers (the historical cause of 394 MB / 63%-free
-    // databases observed in the wild).
+    // brand-new empty database the VACUUM is a near-instant no-op.
+    //
+    // The before/after/elapsed numbers are captured here and returned to
+    // the caller; `HistoryStore::open` stashes them and `set_diagnostics`
+    // emits a `history-migration-applied` event once the sink is wired up
+    // — that gives us a one-shot audit trail per upgrade.
     const AUTO_VACUUM_INCREMENTAL: i64 = 2;
     let auto_vacuum_mode: i64 = conn
         .query_row("PRAGMA auto_vacuum", [], |row| row.get(0))
         .map_err(|e| format!("auto_vacuum query: {e}"))?;
-    if auto_vacuum_mode != AUTO_VACUUM_INCREMENTAL {
+    let migration = if auto_vacuum_mode != AUTO_VACUUM_INCREMENTAL {
+        let store_bytes_before = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let started = Instant::now();
         conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")
             .map_err(|e| format!("auto_vacuum set: {e}"))?;
         conn.execute_batch("VACUUM;")
             .map_err(|e| format!("auto_vacuum migration VACUUM: {e}"))?;
-    }
+        let elapsed_millis = started.elapsed().as_millis() as u64;
+        let store_bytes_after = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        Some(AutoVacuumMigrationOutcome {
+            store_bytes_before,
+            store_bytes_after,
+            elapsed_millis,
+        })
+    } else {
+        None
+    };
 
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS snapshots (
@@ -1404,7 +1465,7 @@ fn configure_connection(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE snapshots ADD COLUMN format_version INTEGER NOT NULL DEFAULT 1",
         [],
     );
-    Ok(())
+    Ok(migration)
 }
 
 fn open_read_only_connection(path: &Path) -> Result<Connection, String> {
