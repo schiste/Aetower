@@ -968,26 +968,62 @@ impl HistoryStore {
             .conn
             .query_row("PRAGMA freelist_count", [], |row| row.get::<_, i64>(0))
             .map_err(|e| format!("pragma freelist_count: {e}"))?;
-        if page_count <= 0 {
-            return Ok(false);
-        }
         let (store_bytes, wal_bytes) = self.store_file_sizes();
-        let fragmentation_ratio = freelist_count as f64 / page_count as f64;
-        // Gate on absolute waste, not total file size: a 200 MB file that is
-        // 90% free wastes 180 MB of real disk while a 600 MB file that is 5%
-        // free wastes only 30 MB. The previous gate of `store_bytes >= 512 MB`
-        // missed the first case entirely and is why a real user's 394 MB DB
-        // accumulated 250 MB of unreclaimed pages without ever triggering a
-        // VACUUM. The 128 MB / 25%-ratio threshold catches pathological
-        // fragmentation early but skips small healthy stores where the rewrite
-        // cost would dwarf the gain. WAL is bounded separately so a large
-        // pending WAL doesn't get rewritten alongside.
-        let free_bytes = (store_bytes as f64 * fragmentation_ratio) as u64;
-        Ok(free_bytes >= 128 * 1024 * 1024
-            && fragmentation_ratio >= 0.25
-            && wal_bytes <= 64 * 1024 * 1024)
+        Ok(should_vacuum_decision(
+            store_bytes,
+            wal_bytes,
+            page_count,
+            freelist_count,
+        ))
     }
+}
 
+/// Minimum freelist size (in bytes) before VACUUM is worth running. Public so
+/// the engine crate can assert it against `HISTORY_SOFT_MAX_BYTES` — the
+/// original bug was that this number lived only inside `should_vacuum_decision`
+/// at 512 MB while the policy treated 384 MB as "trouble," so the gate could
+/// never fire before emergency retention kicked in. Keeping the constant
+/// addressable makes that invariant testable across crates.
+pub const VACUUM_TRIGGER_FREE_BYTES: u64 = 128 * 1024 * 1024;
+/// Minimum fragmentation ratio (freelist / page_count) before VACUUM fires.
+/// Pairs with `VACUUM_TRIGGER_FREE_BYTES` — both gates must be satisfied so
+/// small databases with a few free pages don't trigger an expensive rewrite.
+pub const VACUUM_TRIGGER_FRAGMENTATION_RATIO: f64 = 0.25;
+/// Maximum WAL size that still permits a VACUUM. Above this the WAL would be
+/// folded into the rewrite, which is expensive and pointless on a checkpoint
+/// that hasn't yet truncated.
+pub const VACUUM_MAX_WAL_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Pure decision used by `HistoryStore::should_vacuum`, extracted so tests
+/// can pin down the boundary cases without needing a real SQLite file at a
+/// specific size and fragmentation.
+///
+/// Gate on absolute waste, not total file size: a 200 MB file that is 90%
+/// free wastes 180 MB of real disk while a 600 MB file that is 5% free
+/// wastes only 30 MB. The previous gate of `store_bytes >= 512 MB` missed
+/// the first case entirely and is why a real user's 394 MB DB accumulated
+/// 250 MB of unreclaimed pages without ever triggering a VACUUM. The
+/// 128 MB / 25%-ratio threshold catches pathological fragmentation early
+/// but skips small healthy stores where the rewrite cost would dwarf the
+/// gain. WAL is bounded separately so a large pending WAL doesn't get
+/// rewritten alongside.
+pub fn should_vacuum_decision(
+    store_bytes: u64,
+    wal_bytes: u64,
+    page_count: i64,
+    freelist_count: i64,
+) -> bool {
+    if page_count <= 0 {
+        return false;
+    }
+    let fragmentation_ratio = freelist_count.max(0) as f64 / page_count as f64;
+    let free_bytes = (store_bytes as f64 * fragmentation_ratio) as u64;
+    free_bytes >= VACUUM_TRIGGER_FREE_BYTES
+        && fragmentation_ratio >= VACUUM_TRIGGER_FRAGMENTATION_RATIO
+        && wal_bytes <= VACUUM_MAX_WAL_BYTES
+}
+
+impl HistoryStore {
     fn execute_batch_cancellable(
         &self,
         sql: &str,

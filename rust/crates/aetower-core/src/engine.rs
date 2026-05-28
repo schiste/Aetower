@@ -2450,6 +2450,83 @@ fn format_bytes(bytes: u64) -> String {
 mod tests {
     use super::*;
 
+    /// Pin the relationship between the engine-side retention policy and the
+    /// persistence-side VACUUM gate. The original bug fixed in
+    /// `perf(persistence): trigger VACUUM by absolute waste, not file size`
+    /// was that `should_vacuum` had a 512 MB lower bound while
+    /// `HISTORY_SOFT_MAX_BYTES` was 384 MB — the policy treated the DB as
+    /// "trouble" at 384 MB but the gate could only fire at 512 MB, so
+    /// VACUUM never ran in normal operation. This test re-checks the
+    /// invariant: when the file reaches the policy's soft trigger with
+    /// realistic fragmentation (we saw 63% in the wild), the gate must
+    /// fire. Any future change that reintroduces a similar misalignment
+    /// — bumping VACUUM_TRIGGER_FREE_BYTES too high, raising the
+    /// fragmentation ratio threshold, lowering HISTORY_SOFT_MAX_BYTES —
+    /// will trip this assertion.
+    #[test]
+    fn vacuum_gate_fires_at_policy_soft_trigger_with_realistic_fragmentation() {
+        // ~63% fragmentation observed in the wild (250 MB free of 394 MB).
+        // Picking 50% gives the same shape with some safety margin.
+        let fragmentation_ratio = 0.50;
+        let store_bytes = HISTORY_SOFT_MAX_BYTES;
+        let page_size: u64 = 4096;
+        let page_count = (store_bytes / page_size) as i64;
+        let freelist_count = (page_count as f64 * fragmentation_ratio) as i64;
+        let wal_bytes = 1024 * 1024;
+
+        assert!(
+            aetower_persistence::should_vacuum_decision(
+                store_bytes,
+                wal_bytes,
+                page_count,
+                freelist_count,
+            ),
+            "VACUUM gate must fire when the DB hits HISTORY_SOFT_MAX_BYTES \
+             with significant fragmentation; otherwise aggressive maintenance \
+             runs without ever reclaiming pages, leaving a growing freelist \
+             (the original 394 MB / 63%-free pathology)."
+        );
+    }
+
+    /// Companion to the above: an empty/healthy DB must NOT trigger VACUUM
+    /// (which would be expensive and pointless). This guards against
+    /// over-correcting in the other direction — lowering thresholds so
+    /// aggressively that every small-DB maintenance pass rewrites the file.
+    #[test]
+    fn vacuum_gate_skips_small_or_healthy_databases() {
+        let page_size: u64 = 4096;
+
+        // Small DB, even heavily fragmented: not worth a rewrite.
+        let store_bytes = 50 * 1024 * 1024;
+        let page_count = (store_bytes / page_size) as i64;
+        let freelist_count = (page_count as f64 * 0.50) as i64;
+        assert!(
+            !aetower_persistence::should_vacuum_decision(
+                store_bytes,
+                0,
+                page_count,
+                freelist_count
+            ),
+            "small DB ({store_bytes} bytes) at 50% fragmentation should not VACUUM — \
+             absolute waste is below VACUUM_TRIGGER_FREE_BYTES"
+        );
+
+        // Large DB, slightly fragmented: also not worth a rewrite.
+        let store_bytes = 1024 * 1024 * 1024;
+        let page_count = (store_bytes / page_size) as i64;
+        let freelist_count = (page_count as f64 * 0.05) as i64;
+        assert!(
+            !aetower_persistence::should_vacuum_decision(
+                store_bytes,
+                0,
+                page_count,
+                freelist_count
+            ),
+            "large DB at 5% fragmentation should not VACUUM — ratio gate prevents \
+             rewriting a mostly-full file for marginal gain"
+        );
+    }
+
     #[test]
     fn parses_unified_log_timestamp() {
         let millis = parse_unified_log_timestamp("2026-04-13 19:03:09.753950+0200")
