@@ -6,6 +6,10 @@ The local verification path is intentionally strict. It is layered so that:
 - `pre-push` is the full repository validation path
 - `full` is the same as `pre-push`, plus advisory cross-checking when `cargo-audit` is installed
 
+Aetower does not use GitHub Actions for CI. The source of truth is the local
+hook-driven runner in `scripts/ci-local.sh`, so the same checks run before code
+leaves the machine.
+
 ## Install commit hooks
 
 ```sh
@@ -36,6 +40,17 @@ Full local CI, including advisory cross-checking:
 ```sh
 sh scripts/ci-local.sh --mode full
 ```
+
+Every mode prints:
+
+- the command line for each executed gate
+- explicit skip reasons for scope-based gates
+- pass/fail status and duration per gate
+- a final quality summary with total runtime, ran, passed, skipped, and failed
+  counts
+
+This is intentionally verbose because local-only CI must be self-explaining:
+there is no remote Actions log to inspect after the fact.
 
 ## What the gates enforce
 

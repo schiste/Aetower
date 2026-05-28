@@ -6,6 +6,9 @@ MODE="pre-commit"
 BENCH_ITERATIONS=""
 SWIFTLINT_CACHE_DIR="$ROOT/tmp/swiftlint-cache"
 SWIFT_BUILD_DIR="$ROOT/macos/.build"
+SUMMARY_FILE=""
+SUMMARY_PRINTED=0
+RUN_STARTED_AT="$(date +%s)"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -24,10 +27,138 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+format_duration() {
+    seconds="$1"
+    if [ "$seconds" -lt 1 ]; then
+        printf '<1s'
+    elif [ "$seconds" -lt 60 ]; then
+        printf '%ss' "$seconds"
+    else
+        minutes=$((seconds / 60))
+        remainder=$((seconds % 60))
+        printf '%sm %02ss' "$minutes" "$remainder"
+    fi
+}
+
+record_step() {
+    label="$1"
+    status="$2"
+    duration="$3"
+    detail="${4:-}"
+    if [ -n "$SUMMARY_FILE" ]; then
+        printf '%s\t%s\t%s\t%s\n' "$label" "$status" "$duration" "$detail" >> "$SUMMARY_FILE"
+    fi
+}
+
+print_command() {
+    printf '    command:'
+    for arg in "$@"; do
+        printf ' %s' "$arg"
+    done
+    printf '\n'
+}
+
 run() {
-    printf '\n==> %s\n' "$1"
+    label="$1"
     shift
+    printf '\n==> %s\n' "$label"
+    print_command "$@"
+    start="$(date +%s)"
+    set +e
     "$@"
+    status="$?"
+    set -e
+    duration=$(( $(date +%s) - start ))
+    if [ "$status" -eq 0 ]; then
+        record_step "$label" "PASS" "$duration"
+        printf '    result: PASS (%s)\n' "$(format_duration "$duration")"
+    else
+        record_step "$label" "FAIL" "$duration" "exit $status"
+        printf '    result: FAIL (%s, exit %s)\n' "$(format_duration "$duration")" "$status" >&2
+        return "$status"
+    fi
+}
+
+skip() {
+    label="$1"
+    reason="$2"
+    printf '\n--> skip: %s\n' "$label"
+    printf '    reason: %s\n' "$reason"
+    record_step "$label" "SKIP" 0 "$reason"
+}
+
+print_summary() {
+    exit_status="$1"
+    if [ "$SUMMARY_PRINTED" -eq 1 ]; then
+        return
+    fi
+    SUMMARY_PRINTED=1
+
+    total_seconds=$(( $(date +%s) - RUN_STARTED_AT ))
+    passed=0
+    skipped=0
+    failed=0
+    ran=0
+    measured_seconds=0
+
+    if [ -n "$SUMMARY_FILE" ] && [ -f "$SUMMARY_FILE" ]; then
+        while IFS='	' read -r label status duration detail; do
+            case "$status" in
+                PASS)
+                    passed=$((passed + 1))
+                    ran=$((ran + 1))
+                    measured_seconds=$((measured_seconds + duration))
+                    ;;
+                FAIL)
+                    failed=$((failed + 1))
+                    ran=$((ran + 1))
+                    measured_seconds=$((measured_seconds + duration))
+                    ;;
+                SKIP)
+                    skipped=$((skipped + 1))
+                    ;;
+            esac
+        done < "$SUMMARY_FILE"
+    fi
+
+    printf '\n============================================================\n'
+    printf 'Quality run summary (%s)\n' "$MODE"
+    printf '============================================================\n'
+
+    if [ -n "$SUMMARY_FILE" ] && [ -f "$SUMMARY_FILE" ]; then
+        while IFS='	' read -r label status duration detail; do
+            duration_text="$(format_duration "$duration")"
+            percent="0.0"
+            if [ "$measured_seconds" -gt 0 ] && [ "$status" != "SKIP" ]; then
+                percent="$(awk -v duration="$duration" -v total="$measured_seconds" 'BEGIN { printf "%.1f", (duration / total) * 100 }')"
+            fi
+            case "$status" in
+                PASS) marker="[PASS]" ;;
+                FAIL) marker="[FAIL]" ;;
+                SKIP) marker="[SKIP]" ;;
+                *) marker="[$status]" ;;
+            esac
+            printf '%-6s %-50s | %8s | %5s%%' "$marker" "$label" "$duration_text" "$percent"
+            if [ "$status" = "SKIP" ] && [ -n "$detail" ]; then
+                printf ' | %s' "$detail"
+            fi
+            printf '\n'
+        done < "$SUMMARY_FILE"
+    fi
+
+    printf '%s\n' '------------------------------------------------------------'
+    if [ "$exit_status" -eq 0 ]; then
+        printf '[PASS] Quality run complete in %s\n' "$(format_duration "$total_seconds")"
+    else
+        printf '[FAIL] Quality run failed in %s\n' "$(format_duration "$total_seconds")"
+    fi
+    printf 'total %s | ran %s | passed %s | skipped %s | failed %s\n' \
+        "$(format_duration "$total_seconds")" "$ran" "$passed" "$skipped" "$failed"
+    printf '============================================================\n'
+
+    if [ -n "$SUMMARY_FILE" ] && [ -f "$SUMMARY_FILE" ]; then
+        rm -f "$SUMMARY_FILE"
+    fi
 }
 
 resolve_cargo_bin() {
@@ -109,6 +240,7 @@ should_run_full_rust_gate() {
 
 run_precommit_rust() {
     if ! has_staged_match '^rust/|^rustfmt\.toml$|^rust-toolchain\.toml$'; then
+        skip "Rust staged gate" "no staged Rust changes"
         return
     fi
 
@@ -122,6 +254,7 @@ run_precommit_rust() {
 
     packages="$(affected_rust_packages)"
     if [ -z "$packages" ]; then
+        skip "Rust package gate" "no affected Rust package detected"
         return
     fi
 
@@ -139,6 +272,7 @@ run_precommit_gitleaks() {
 run_precommit_swiftlint() {
     files="$(changed_swift_files)"
     if [ -z "$files" ]; then
+        skip "swiftlint (staged Swift)" "no staged Swift source changes"
         return
     fi
     require_tool "swiftlint" "install with: brew install swiftlint"
@@ -151,10 +285,11 @@ run_precommit_swiftlint() {
 run_precommit_semgrep() {
     files="$(changed_semgrep_files)"
     if [ -z "$files" ]; then
+        skip "semgrep (changed files)" "no staged files matched local Semgrep scope"
         return
     fi
     if ! semgrep_healthy; then
-        printf '\n==> semgrep (skipped: local binary unavailable or unhealthy)\n'
+        skip "semgrep (changed files)" "local binary unavailable or unhealthy"
         return
     fi
     run "semgrep (changed files)" env SEMGREP_SEND_METRICS=off semgrep scan --metrics=off --error --quiet --config "$ROOT/.semgrep/local-quality.yml" $files
@@ -167,6 +302,7 @@ run_workspace_tests() {
 
 run_precommit_swift() {
     if ! has_staged_match '^macos/.*\.swift$|^macos/Package\.swift$'; then
+        skip "swift build" "no staged Swift package changes"
         return
     fi
     run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
@@ -174,6 +310,7 @@ run_precommit_swift() {
 
 run_precommit_bridge() {
     if ! has_staged_match '^rust/crates/aetower-ffi/|^macos/Sources/AetowerBindings/aetower_ffi\.swift$|^macos/Sources/aetower_ffiFFI/aetower_ffiFFI\.h$|^macos/Sources/AetowerBridge/|^scripts/build-rust'; then
+        skip "build Rust bridge" "no staged FFI or bridge changes"
         return
     fi
     clean_swift_build_dir
@@ -182,6 +319,7 @@ run_precommit_bridge() {
 
 run_precommit_benchmark() {
     if ! has_staged_match '^rust/crates/aetower-(core|collector|history|persistence|telemetry|gpu|model|diagnostics|friction|attribution|identity)/'; then
+        skip "benchmark smoke" "no staged runtime crate changes"
         return
     fi
     iterations="${BENCH_ITERATIONS:-4}"
@@ -190,8 +328,10 @@ run_precommit_benchmark() {
 
 run_precommit_shell() {
     if ! has_staged_match '(^scripts/.*\.sh$|^\.githooks/)'; then
+        skip "shell hook checks" "no staged shell or hook changes"
         return
     fi
+    skip "shell hook checks" "no shell-specific checker configured"
 }
 
 run_precommit() {
@@ -220,7 +360,7 @@ run_full_swiftlint() {
 
 run_full_semgrep() {
     if ! semgrep_healthy; then
-        printf '\n==> semgrep (skipped: local binary unavailable or unhealthy)\n'
+        skip "semgrep" "local binary unavailable or unhealthy"
         return
     fi
     run "semgrep" env SEMGREP_SEND_METRICS=off semgrep scan --metrics=off --error --quiet --config "$ROOT/.semgrep/local-quality.yml" "$ROOT/macos/Sources/AetowerUI" "$ROOT/macos/Sources/AetowerApp" "$ROOT/macos/Sources/AetowerBridge" "$ROOT/rust/crates" "$ROOT/scripts"
@@ -264,13 +404,20 @@ run_full_gate() {
         run "local operator smoke" sh "$ROOT/scripts/local-operator-smoke.sh"
     fi
     run_full_dependency_policy
-    if [ "$MODE" = "full" ] && command -v cargo-audit >/dev/null 2>&1; then
-        run "cargo audit" cargo audit --file "$ROOT/rust/Cargo.lock" --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2026-0097
+    if [ "$MODE" = "full" ]; then
+        if command -v cargo-audit >/dev/null 2>&1; then
+            run "cargo audit" cargo audit --file "$ROOT/rust/Cargo.lock" --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2026-0097
+        else
+            skip "cargo audit" "cargo-audit is not installed"
+        fi
     fi
 }
 
 cd "$ROOT"
 CARGO_BIN="$(resolve_cargo_bin)"
+SUMMARY_FILE="$(mktemp "${TMPDIR:-/tmp}/aetower-ci-summary.XXXXXX")"
+trap 'status=$?; print_summary "$status"' EXIT
+trap 'status=$?; print_summary "$status"; exit "$status"' INT TERM
 
 case "$MODE" in
     pre-commit)
