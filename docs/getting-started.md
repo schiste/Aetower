@@ -40,6 +40,8 @@ Open **Settings -> Setup** and review:
   custom path.
 - Keep automatic MCP registration disabled on shared machines.
 - Use **Settings -> Diagnostics** before filing an issue or exporting data.
+- Use **Settings -> Advanced -> Reset Aetower local data** before handing off a
+  test machine or after a heavy preview run.
 
 ## For AI agents
 
