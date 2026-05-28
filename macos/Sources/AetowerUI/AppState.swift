@@ -137,6 +137,25 @@ public final class AppState {
     @ObservationIgnored
     private var workspaceActivationTask: Task<Void, Never>?
     @ObservationIgnored
+    private var appBecameActiveTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var appResignedActiveTask: Task<Void, Never>?
+    /// Whether Aetower is the active application. When it is not, its windows
+    /// are not on screen, so the refresh loop stretches its cadence (see
+    /// `currentRefreshIntervalNanos`). Internal control state, not UI-bound.
+    @ObservationIgnored
+    private var appIsActive = true
+    /// Base refresh cadence in nanoseconds, captured from the configured
+    /// foreground interval in `start`. The background cadence is derived from
+    /// this so a single source drives both.
+    @ObservationIgnored
+    private var baseRefreshIntervalNanos: UInt64 = 1_000_000_000
+    /// How much to stretch the refresh interval while backgrounded. At the
+    /// default 1 s foreground cadence this makes the occluded app pull a
+    /// snapshot every 5 s instead of every second.
+    @ObservationIgnored
+    private let backgroundRefreshMultiplier: UInt64 = 5
+    @ObservationIgnored
     private var historyLoadTask: Task<Void, Never>?
     @ObservationIgnored
     private var historyDiffTask: Task<Void, Never>?
@@ -354,14 +373,18 @@ public final class AppState {
         ensureLocalMcpServer()
         refreshLocalPermissionCapabilities()
         observeWorkspaceActivation()
+        observeAppActivation()
         publishFrontmostState(force: true)
         refresh(force: true)
         updateLagMonitoringState()
-        let intervalNanos = UInt64(max(1.0, refreshInterval) * 1_000_000_000)
+        baseRefreshIntervalNanos = UInt64(max(1.0, refreshInterval) * 1_000_000_000)
         refreshTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: intervalNanos)
+                // Read the cadence each iteration so it tracks foreground /
+                // background transitions without restarting the loop.
+                let sleepNanos = await MainActor.run { self.currentRefreshIntervalNanos() }
+                try? await Task.sleep(nanoseconds: sleepNanos)
                 guard !Task.isCancelled else { break }
                 await MainActor.run {
                     self.publishFrontmostState()
@@ -371,11 +394,25 @@ public final class AppState {
         }
     }
 
+    /// Sleep interval for the refresh loop: the foreground cadence when Aetower
+    /// is active, stretched by `backgroundRefreshMultiplier` when it is not.
+    /// Regaining focus forces an immediate refresh (see `observeAppActivation`),
+    /// so the longer background sleep never delays what the user sees on focus.
+    private func currentRefreshIntervalNanos() -> UInt64 {
+        appIsActive
+            ? baseRefreshIntervalNanos
+            : baseRefreshIntervalNanos * backgroundRefreshMultiplier
+    }
+
     public func stop() {
         refreshTask?.cancel()
         refreshTask = nil
         workspaceActivationTask?.cancel()
         workspaceActivationTask = nil
+        appBecameActiveTask?.cancel()
+        appBecameActiveTask = nil
+        appResignedActiveTask?.cancel()
+        appResignedActiveTask = nil
         historyLoadTask?.cancel()
         historyLoadTask = nil
         historyDiffTask?.cancel()
@@ -1800,6 +1837,38 @@ public final class AppState {
                 await MainActor.run {
                     self.publishFrontmostState(force: true)
                     self.refresh()
+                }
+            }
+        }
+    }
+
+    /// Tracks whether Aetower itself is the active application so the refresh
+    /// loop can throttle while our windows are occluded. `NSApplication` posts
+    /// these on `NotificationCenter.default`; we seed `appIsActive` from the
+    /// current state in case the app launches in the background.
+    private func observeAppActivation() {
+        appIsActive = NSApplication.shared.isActive
+        appResignedActiveTask = Task { [weak self] in
+            guard let self else { return }
+            for await _ in NotificationCenter.default.notifications(
+                named: NSApplication.didResignActiveNotification
+            ) {
+                guard !Task.isCancelled else { break }
+                await MainActor.run { self.appIsActive = false }
+            }
+        }
+        appBecameActiveTask = Task { [weak self] in
+            guard let self else { return }
+            for await _ in NotificationCenter.default.notifications(
+                named: NSApplication.didBecomeActiveNotification
+            ) {
+                guard !Task.isCancelled else { break }
+                await MainActor.run {
+                    self.appIsActive = true
+                    // Pull immediately so focus shows fresh data rather than
+                    // whatever was last sampled on the slow background cadence.
+                    self.publishFrontmostState(force: true)
+                    self.refresh(force: true)
                 }
             }
         }
