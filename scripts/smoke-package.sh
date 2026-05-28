@@ -4,6 +4,8 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_DIR="$ROOT/dist/Aetower.app"
 APP_BIN="$APP_DIR/Contents/MacOS/Aetower"
+APP_PLIST="$APP_DIR/Contents/Info.plist"
+APP_ICON="$APP_DIR/Contents/Resources/Aetower.icns"
 FFI_LIB="$APP_DIR/Contents/Frameworks/libaetower_ffi.dylib"
 HELPER_BIN="$APP_DIR/Contents/Helpers/aetower-helper"
 MCP_PROXY_BIN="$APP_DIR/Contents/Helpers/aetower-mcp"
@@ -32,8 +34,11 @@ if [ "$REBUILD" -eq 1 ] || [ ! -d "$APP_DIR" ]; then
 fi
 
 [ -x "$APP_BIN" ]
+[ -f "$APP_PLIST" ]
+[ -f "$APP_ICON" ]
 [ -f "$FFI_LIB" ]
 [ -x "$MCP_PROXY_BIN" ]
+/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$APP_PLIST" | grep -Fx "Aetower" >/dev/null
 # The privileged Endpoint Security helper is optional and excluded by default
 # (package-macos.sh only bundles it when AETOWER_INCLUDE_PRIVILEGED_HELPER=1),
 # so only assert its presence when it was meant to be included.
