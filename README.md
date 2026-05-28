@@ -73,7 +73,7 @@ sh scripts/package-macos.sh
 Cut a signed Developer Preview release:
 
 ```sh
-sh scripts/release-candidate.sh
+sh scripts/release-public-preview.sh
 ```
 
 Release configuration is documented in
@@ -83,6 +83,8 @@ verification is documented in
 Brand asset import is documented in [Brand Assets](docs/brand-assets.md).
 Cloudflare Pages hosting is documented in
 [Cloudflare Release Hosting](docs/cloudflare-release-hosting.md).
+Homebrew cask publishing is documented in
+[Homebrew Release](docs/homebrew-release.md).
 
 ## Privacy and safety
 

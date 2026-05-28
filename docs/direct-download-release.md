@@ -9,6 +9,7 @@ The direct-download release path assumes:
 - Developer ID signing
 - notarization with `notarytool`
 - Sparkle for update delivery
+- optional Developer ID Installer `.pkg` output for installer/MDM distribution
 - the privileged Endpoint Security helper is optional and excluded by default
 
 ## Required environment
@@ -36,6 +37,11 @@ Set these before running the release scripts:
 Optional:
 
 - `AETOWER_STAPLE=1`
+- `AETOWER_INSTALLER_SIGN_IDENTITY`
+  - Developer ID Installer identity for optional `.pkg` output. Example:
+    `Developer ID Installer: Your Team Name (TEAMID)`.
+- `AETOWER_NOTARIZE_PKG=1`
+- `AETOWER_STAPLE_PKG=1`
 - `AETOWER_REQUIRE_FINAL_METADATA=0`
   - Development escape hatch only. Public release-candidate runs default this
     to `1` and fail unless bundle id, version, and build number are explicit.
@@ -102,6 +108,40 @@ This runs, in order:
    applying the download URL prefix.
 
 The individual scripts can also be run directly with the same environment.
+
+## Public Preview Orchestrator
+
+Use the full local release set command when preparing a public preview:
+
+```sh
+sh scripts/release-public-preview.sh
+```
+
+This runs the signed/notarized macOS ZIP release, generates the Sparkle appcast,
+generates the Homebrew cask artifact, and prepares the Cloudflare Pages payload.
+It does not deploy to Cloudflare by default.
+
+The generated cask is a tap-ready artifact, not a full Homebrew publication by
+itself. Publish it through a dedicated tap such as `homebrew-aetower`; see
+[Homebrew Release](homebrew-release.md).
+
+If a Developer ID Installer certificate is installed, also produce the optional
+installer package:
+
+```sh
+sh scripts/release-public-preview.sh --with-pkg
+```
+
+The `.pkg` is for installer-style distribution and MDM/admin workflows. Sparkle
+updates still work after a `.pkg` install because Sparkle updates the installed
+`.app`. The release feed still uses the ZIP appcast because this repo's Sparkle
+`generate_appcast` tool does not support package-based update archives.
+
+Deploy explicitly only after reviewing the generated site payload:
+
+```sh
+sh scripts/release-public-preview.sh --prepare-only --deploy-cloudflare
+```
 
 ## Publish
 

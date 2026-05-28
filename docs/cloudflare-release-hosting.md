@@ -19,13 +19,14 @@ The release site is intentionally static:
 Build the signed release candidate first:
 
 ```sh
-sh scripts/release-candidate.sh
+sh scripts/release-public-preview.sh
 ```
 
-Then prepare the Cloudflare Pages output:
+Or, when reusing existing release artifacts, prepare only the Cloudflare Pages
+output:
 
 ```sh
-sh scripts/prepare-cloudflare-site.sh
+sh scripts/release-public-preview.sh --prepare-only
 ```
 
 This writes:

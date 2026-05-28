@@ -50,7 +50,7 @@ sh scripts/release-preflight.sh
 Run:
 
 ```sh
-sh scripts/release.sh
+sh scripts/release-public-preview.sh
 ```
 
 Expected artifacts:
@@ -58,6 +58,21 @@ Expected artifacts:
 - `dist/Aetower.app`
 - `dist/Aetower.zip`
 - `dist/appcast/appcast.xml`
+- `dist/homebrew/Casks/aetower.rb`
+- `dist/cloudflare-site/`
+
+Validate the generated cask from the Homebrew tap repository before publishing.
+See [Homebrew Release](homebrew-release.md).
+
+Optional, when a Developer ID Installer certificate is installed:
+
+```sh
+sh scripts/release-public-preview.sh --with-pkg
+```
+
+Expected additional artifact:
+
+- `dist/Aetower.pkg`
 
 ## 5. Verify artifact
 
