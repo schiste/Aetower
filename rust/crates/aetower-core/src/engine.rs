@@ -550,8 +550,19 @@ impl Engine {
                     }
                 }
 
+                // history_millis used to be a composite of (a) waiting for
+                // `state.lock()` and (b) the actual history.update work, which
+                // meant a slow tick could be 5 s of lock wait OR 5 s of CPU
+                // work and we couldn't tell which from the diagnostic. Split
+                // them so future investigations can attribute correctly —
+                // long waits implicate whoever holds `state` (UI thread
+                // serializing a snapshot, telemetry exporter, adapter worker);
+                // long updates implicate History::update itself (z-score
+                // pass, retention bookkeeping, timeline growth).
                 let history_started = Instant::now();
                 let mut guard = state.lock();
+                let state_lock_wait_millis = history_started.elapsed().as_secs_f64() * 1000.0;
+                let history_update_started = Instant::now();
                 let mut runtime_lag_metrics = runtime_lag_metrics;
                 runtime_lag_metrics.updated_at_millis = captured_at_millis;
                 runtime_lag_metrics.collect_millis = collect_millis as f32;
@@ -563,8 +574,34 @@ impl Engine {
                     guard
                         .history
                         .update(captured_at_millis, &host, &mut entities);
+                let history_update_millis = history_update_started.elapsed().as_secs_f64() * 1000.0;
                 let history_millis = history_started.elapsed().as_secs_f64() * 1000.0;
                 runtime_lag_metrics.history_millis = history_millis as f32;
+                // Surface long state-lock waits as a forensic breadcrumb.
+                // Threshold of 500 ms is well above normal (lock should be
+                // held only for snapshot publication, microseconds at most).
+                // Crossing it means someone held `state` for noticeably long
+                // — emitting here gives us a timestamped record we can
+                // cross-reference against UI / adapter / telemetry events
+                // when chasing the next multi-second-tick incident.
+                if state_lock_wait_millis >= 500.0 {
+                    diagnostics.emit(
+                        DiagnosticsEvent::builder(
+                            DiagnosticsLevel::Warn,
+                            DiagnosticsSubsystem::Engine,
+                            "long-state-lock-wait",
+                            "Engine tick waited unusually long for the shared state lock.",
+                        )
+                        .timestamp_millis(captured_at_millis)
+                        .field("wait_millis", format!("{state_lock_wait_millis:.3}"))
+                        .field(
+                            "history_update_millis",
+                            format!("{history_update_millis:.3}"),
+                        )
+                        .field("entities_processed", entities.len())
+                        .build(),
+                    );
+                }
                 guard.sequence += 1;
                 let chau7_sessions = adapters.chau7_session_summaries(&entities);
                 guard.latest_snapshot = SystemSnapshot {
@@ -739,6 +776,14 @@ impl Engine {
                     )
                     .field("enrich_millis", format!("{enrich_millis:.3}"))
                     .field("history_millis", format!("{history_millis:.3}"))
+                    .field(
+                        "state_lock_wait_millis",
+                        format!("{state_lock_wait_millis:.3}"),
+                    )
+                    .field(
+                        "history_update_millis",
+                        format!("{history_update_millis:.3}"),
+                    )
                     .field("persist_millis", format!("{persist_millis:.3}"))
                     .build(),
                 );
@@ -829,6 +874,14 @@ impl Engine {
                         // until it crossed the budget threshold; with it we can
                         // spot a drift from 50ms to seconds visibly.
                         .field("history_millis", format!("{history_millis:.3}"))
+                        .field(
+                            "state_lock_wait_millis",
+                            format!("{state_lock_wait_millis:.3}"),
+                        )
+                        .field(
+                            "history_update_millis",
+                            format!("{history_update_millis:.3}"),
+                        )
                         // Freelist size on the persisted SQLite store. After
                         // the auto_vacuum=INCREMENTAL migration this should
                         // sit near zero; persistent growth means
@@ -929,6 +982,14 @@ impl Engine {
                     )
                     .field("enrich_millis", format!("{enrich_millis:.3}"))
                     .field("history_millis", format!("{history_millis:.3}"))
+                    .field(
+                        "state_lock_wait_millis",
+                        format!("{state_lock_wait_millis:.3}"),
+                    )
+                    .field(
+                        "history_update_millis",
+                        format!("{history_update_millis:.3}"),
+                    )
                     .field("persist_millis", format!("{persist_millis:.3}"))
                     .build(),
                 );
