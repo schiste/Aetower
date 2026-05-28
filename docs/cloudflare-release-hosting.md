@@ -10,7 +10,9 @@ The release site is intentionally static:
 - `/` serves a small Developer Preview landing page.
 - `/assets/aetower-app-icon-preview.png` serves the app icon preview.
 - `/releases/appcast.xml` serves the Sparkle feed.
-- `/releases/Aetower-<version>.zip` serves the signed and notarized app archive.
+- `/releases/Aetower.zip` serves the latest signed and notarized app archive
+  for direct human downloads.
+- `/releases/Aetower-<version>-<build>.zip` serves immutable Sparkle archives.
 
 ## Prepare
 
@@ -71,7 +73,7 @@ Check:
 ```sh
 curl -I https://aetower.dev/
 curl -I https://aetower.dev/releases/appcast.xml
-curl -I https://aetower.dev/releases/Aetower-0.1.0-developer-preview.1.zip
+curl -I https://aetower.dev/releases/Aetower.zip
 ```
 
 Then run the Sparkle N-1 -> N update verification before sharing the link.

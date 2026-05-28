@@ -96,9 +96,10 @@ This runs, in order:
    hardened runtime, notarizes, and (optionally) staples. Produces
    `dist/Aetower.app` and `dist/Aetower.zip`.
 3. `scripts/generate-sparkle-appcast.sh` — copies the zip into the archives
-   directory (`dist/appcast/` by default) and runs Sparkle's `generate_appcast`
-   to (re)write `dist/appcast/appcast.xml`, signing each entry with the EdDSA
-   key and applying the download URL prefix.
+   directory (`dist/appcast/` by default) under a version-and-build-specific
+   filename and runs Sparkle's `generate_appcast` to (re)write
+   `dist/appcast/appcast.xml`, signing each entry with the EdDSA key and
+   applying the download URL prefix.
 
 The individual scripts can also be run directly with the same environment.
 

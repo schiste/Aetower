@@ -14,6 +14,7 @@ set -eu
 #   AETOWER_RELEASE_ARCHIVE   release zip (default: dist/Aetower.zip)
 #   AETOWER_APPCAST_DIR       archives + appcast output dir (default: dist/appcast)
 #   AETOWER_VERSION           version, used to name the archived copy
+#   AETOWER_BUILD_NUMBER      build number, included in the archived copy name
 #   AETOWER_DOWNLOAD_URL_PREFIX
 #       Base URL the archives are hosted under; becomes the <enclosure> URL
 #       prefix. If unset, it is derived from AETOWER_APPCAST_URL (its directory).
@@ -28,6 +29,7 @@ DIST_DIR="${AETOWER_DIST_DIR:-$ROOT/dist}"
 ARTIFACT="${AETOWER_RELEASE_ARCHIVE:-$DIST_DIR/Aetower.zip}"
 ARCHIVES_DIR="${AETOWER_APPCAST_DIR:-$DIST_DIR/appcast}"
 VERSION="${AETOWER_VERSION:-}"
+BUILD_NUMBER="${AETOWER_BUILD_NUMBER:-}"
 
 if [ ! -f "$ARTIFACT" ]; then
     echo "release archive not found: $ARTIFACT" >&2
@@ -69,7 +71,9 @@ mkdir -p "$ARCHIVES_DIR"
 
 # Copy the release archive into the archives dir under a version-stable name so
 # successive releases accumulate (enables delta generation + a growing feed).
-if [ -n "$VERSION" ]; then
+if [ -n "$VERSION" ] && [ -n "$BUILD_NUMBER" ]; then
+    ARCHIVE_NAME="Aetower-$VERSION-$BUILD_NUMBER.zip"
+elif [ -n "$VERSION" ]; then
     ARCHIVE_NAME="Aetower-$VERSION.zip"
 else
     ARCHIVE_NAME="$(basename "$ARTIFACT")"
