@@ -402,9 +402,9 @@ confirm_dirty_worktree_for_push() {
         printf 'dirty worktree confirmation skipped by AETOWER_SKIP_DIRTY_WORKTREE_CONFIRM=1\n'
         return
     fi
-    if [ -r /dev/tty ] && [ -w /dev/tty ]; then
-        printf 'The worktree is dirty. Continue with the quality run? [y/N] ' > /dev/tty
-        read -r answer < /dev/tty
+    if tty_path="$(tty 2>/dev/null)" && [ -n "$tty_path" ] && [ "$tty_path" != "not a tty" ]; then
+        printf 'The worktree is dirty. Continue with the quality run? [y/N] ' > "$tty_path"
+        read -r answer < "$tty_path"
         case "$answer" in
             y|Y|yes|YES) return ;;
         esac
