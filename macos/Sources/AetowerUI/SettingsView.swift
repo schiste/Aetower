@@ -12,6 +12,7 @@ public struct SettingsView: View {
     @State private var appliedIntegrationSnapshot: SettingsIntegrationSnapshot?
     @State private var applyConfirmation: String?
     @State private var showAdvancedCollectionControls = false
+    @State private var showResetLocalDataConfirmation = false
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
@@ -105,6 +106,14 @@ public struct SettingsView: View {
         }
         .onDisappear {
             focusedField = nil
+        }
+        .alert("Reset Aetower local data?", isPresented: $showResetLocalDataConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset local data", role: .destructive) {
+                resetLocalAetowerData()
+            }
+        } message: {
+            Text("This clears persisted history and diagnostics, restores conservative defaults, and reapplies runtime settings. It does not delete exported support bundles or rewrite existing AI-client configuration files.")
         }
     }
 
@@ -887,7 +896,7 @@ public struct SettingsView: View {
                 }
             }
 
-            SettingsCard(title: "Reset", subtitle: "Restore defaults and push them to the running app.") {
+            SettingsCard(title: "Reset", subtitle: "Restore defaults or clear local Aetower data.") {
                 Text("Restores defaults immediately, stops launch-at-login, disables automatic AI-client registration, and applies runtime, integration, notification, and telemetry defaults.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -902,6 +911,17 @@ public struct SettingsView: View {
                     clearApplyConfirmationLater()
                 }
                 .buttonStyle(.bordered)
+
+                Divider()
+
+                Text("Use this before sharing a support machine or after a heavy preview run. It clears persisted history and diagnostics, resets settings, and leaves exported files and third-party MCP client configuration untouched.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Reset Aetower local data", role: .destructive) {
+                    showResetLocalDataConfirmation = true
+                }
+                .buttonStyle(.borderedProminent)
+
                 if let applyConfirmation {
                     Text(applyConfirmation)
                         .font(.caption)
@@ -948,6 +968,19 @@ public struct SettingsView: View {
         state.applyIntegrationSettings(settings)
         appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
         applyConfirmation = "Integration and telemetry settings applied."
+        clearApplyConfirmationLater()
+    }
+
+    private func resetLocalAetowerData() {
+        settings.resetToDefaults()
+        state.clearHistory()
+        state.clearDiagnostics()
+        state.applyNotificationSettings(settings)
+        state.applyRuntimeCollectionSettings(settings)
+        state.applyIntegrationSettings(settings)
+        state.applyLocalMcpClientRegistrationSettings(settings)
+        appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
+        applyConfirmation = "Local Aetower data cleared and defaults restored."
         clearApplyConfirmationLater()
     }
 
