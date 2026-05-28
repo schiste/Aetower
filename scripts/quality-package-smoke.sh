@@ -73,6 +73,7 @@ package_cache_key() {
             scripts/generate-app-icon.py \
             scripts/generate-app-icon.sh \
             scripts/import-app-icon.sh \
+            scripts/normalize-app-icon.py \
             scripts/package-macos.sh \
             scripts/smoke-package.sh \
             scripts/quality-package-smoke.sh \

@@ -19,7 +19,7 @@ if [ ! -f "$SOURCE_PATH" ]; then
 fi
 
 mkdir -p "$BRAND_DIR"
-sips -s format png "$SOURCE_PATH" --out "$CANONICAL_SOURCE" >/dev/null
+python3 "$ROOT/scripts/normalize-app-icon.py" "$SOURCE_PATH" "$CANONICAL_SOURCE"
 sips -z 1024 1024 "$CANONICAL_SOURCE" --out "$PREVIEW_PATH" >/dev/null
 AETOWER_APP_ICON_SOURCE="$CANONICAL_SOURCE" sh "$ROOT/scripts/generate-app-icon.sh" >/dev/null
 

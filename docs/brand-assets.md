@@ -21,7 +21,9 @@ sh scripts/import-app-icon.sh /path/to/source-icon.png
 ```
 
 The importer normalizes the filename, writes the 1024 px preview, and verifies
-that `scripts/generate-app-icon.sh` can produce the macOS `.icns` file.
+that `scripts/generate-app-icon.sh` can produce the macOS `.icns` file. It also
+removes edge-connected light checkerboard matte pixels from RGB exports so the
+committed source uses real alpha transparency.
 
 ## Package Behavior
 
