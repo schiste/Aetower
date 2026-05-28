@@ -42,6 +42,17 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertFalse(store.telemetryEnabled)
     }
 
+    func testPublicPreviewDefaultsStayConservative() {
+        let store = makeStore()
+
+        XCTAssertFalse(store.privilegedHelperEnabled)
+        XCTAssertFalse(store.telemetryEnabled)
+        XCTAssertFalse(store.autoRegisterLocalMcpClientsEnabled)
+        XCTAssertTrue(store.operatorSafeModeEnabled)
+        XCTAssertEqual(store.exportPrivacyTier, .redacted)
+        XCTAssertEqual(store.collectionProfile, .balanced)
+    }
+
     func testAutomaticClientRegistrationPreferencePersists() {
         let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
