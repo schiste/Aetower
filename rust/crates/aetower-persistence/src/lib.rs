@@ -921,9 +921,19 @@ impl HistoryStore {
         }
         let (store_bytes, wal_bytes) = self.store_file_sizes();
         let fragmentation_ratio = freelist_count as f64 / page_count as f64;
-        Ok(store_bytes >= 512 * 1024 * 1024
-            && wal_bytes <= 64 * 1024 * 1024
-            && fragmentation_ratio >= 0.25)
+        // Gate on absolute waste, not total file size: a 200 MB file that is
+        // 90% free wastes 180 MB of real disk while a 600 MB file that is 5%
+        // free wastes only 30 MB. The previous gate of `store_bytes >= 512 MB`
+        // missed the first case entirely and is why a real user's 394 MB DB
+        // accumulated 250 MB of unreclaimed pages without ever triggering a
+        // VACUUM. The 128 MB / 25%-ratio threshold catches pathological
+        // fragmentation early but skips small healthy stores where the rewrite
+        // cost would dwarf the gain. WAL is bounded separately so a large
+        // pending WAL doesn't get rewritten alongside.
+        let free_bytes = (store_bytes as f64 * fragmentation_ratio) as u64;
+        Ok(free_bytes >= 128 * 1024 * 1024
+            && fragmentation_ratio >= 0.25
+            && wal_bytes <= 64 * 1024 * 1024)
     }
 
     fn execute_batch_cancellable(
