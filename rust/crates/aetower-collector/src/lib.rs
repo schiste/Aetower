@@ -147,6 +147,15 @@ const DISK_REFRESH_INTERVAL_TICKS: u8 = 60;
 /// Refresh every ~30 seconds so the user sees "just connected" devices
 /// populate quickly without hammering `ioreg`.
 const BLUETOOTH_REFRESH_INTERVAL_TICKS: u8 = 15;
+/// How often per-process wakeups/energy/physical-footprint are sampled via
+/// `proc_pid_rusage`. Sampling every tick issues one syscall per known PID
+/// every 2 s, which dominates collector CPU on hosts with many processes.
+/// These counters change slowly and are not actionable in real time, so we
+/// sample on the same ~10 s cadence as the memory refresh — the two already
+/// share the `sample_rusage` branch below, so aligning them means rusage is
+/// effectively free on the ticks in between. New PIDs are always sampled
+/// immediately regardless of this interval.
+const WAKEUPS_SAMPLE_INTERVAL_TICKS: u8 = 5;
 
 pub struct Collector {
     config: CollectorConfig,
@@ -305,8 +314,10 @@ impl Collector {
 
         let metadata_refresh =
             self.config.full_collection || self.process_metadata_tick == 1 || discovery_scan;
-        let sample_wakeups =
-            self.config.full_collection || self.wakeups_sample_tick.is_multiple_of(3);
+        let sample_wakeups = self.config.full_collection
+            || self
+                .wakeups_sample_tick
+                .is_multiple_of(WAKEUPS_SAMPLE_INTERVAL_TICKS);
         self.wakeups_sample_tick = self.wakeups_sample_tick.wrapping_add(1);
         let mut user_directory_refreshed = self.should_refresh_user_directory(discovery_scan);
         if user_directory_refreshed {
@@ -327,9 +338,10 @@ impl Collector {
                     .get(&pid)
                     .filter(|prev| prev.start_time_millis == start_time_millis);
                 // Wakeups and energy come from the same syscall
-                // (`proc_pid_rusage`). We sample them on the same cadence
-                // (every 3rd tick) to avoid per-process syscall overhead
-                // on every tick, but always read the counters for new PIDs.
+                // (`proc_pid_rusage`). We sample them on the same slow cadence
+                // (every `WAKEUPS_SAMPLE_INTERVAL_TICKS` ticks, ~10 s) to avoid
+                // a per-process syscall on every tick, but always read the
+                // counters for new PIDs so they show data immediately.
                 let sample_rusage = sample_wakeups || refresh_memory || previous.is_none();
                 let (wakeups, energy_nj, physical_footprint_bytes) = if sample_rusage {
                     platform::process_counters(pid)
