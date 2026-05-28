@@ -70,16 +70,21 @@ sh scripts/package-macos.sh
 Cut a signed Developer Preview release:
 
 ```sh
-sh scripts/release.sh
+sh scripts/release-candidate.sh
 ```
 
 Release configuration is documented in
-[Direct Download Release](docs/direct-download-release.md).
+[Direct Download Release](docs/direct-download-release.md). Public-preview
+verification is documented in
+[Public Preview Validation](docs/public-preview-validation.md).
 
 ## Privacy and safety
 
 Aetower observes local system and process metadata. Review
 [Privacy](PRIVACY.md) before sharing builds publicly.
+
+Review [Known Limitations](docs/known-limitations.md) before publishing or
+installing Developer Preview builds outside your own machine.
 
 The default direct-download build excludes the optional privileged Endpoint
 Security helper. Keep that default for Developer Preview distribution unless
