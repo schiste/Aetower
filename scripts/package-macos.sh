@@ -192,7 +192,7 @@ install_name_tool -change "$SWIFTPM_PLUGIN_DIR/debug/libaetower_ffi.dylib" "@rpa
 install_name_tool -change "$SWIFTPM_PLUGIN_DIR/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
 
 sign_target "$FRAMEWORK_DIR/libaetower_ffi.dylib" plain
-sign_target "$HELPER_DIR/aetower-mcp" plain
+sign_target "$HELPER_DIR/aetower-mcp" runtime
 if [ "$INCLUDE_PRIVILEGED_HELPER" = "1" ]; then
     cp "$ROOT/rust/target/release/aetower-helper" "$HELPER_DIR/aetower-helper"
     sign_target "$HELPER_DIR/aetower-helper" runtime "$HELPER_ENTITLEMENTS_PATH"
