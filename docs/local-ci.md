@@ -209,6 +209,45 @@ logs/quality-<mode>-<timestamp>.log
 `pre-commit` does not create logs to avoid flooding the repository during
 frequent commit cycles. The `logs/` directory is ignored by Git.
 
+### Targeted artifact reuse
+
+The `package smoke` gate uses a narrow local cache under:
+
+```text
+.aetower-cache/quality/package-smoke/
+```
+
+The cache stores the packaged `Aetower.app` and `Aetower.zip` after a successful
+package smoke. A later run can restore them when the package key still matches.
+The key includes:
+
+- current `HEAD`
+- Swift, Rust, and Cargo versions
+- package-relevant environment such as bundle id, version, build number, signing
+  identity, Sparkle feed values, and helper inclusion
+- Swift package inputs
+- Rust crate inputs and lockfile
+- packaging, Rust bridge, package-smoke, and cache-wrapper scripts
+- explicitly configured entitlement files
+
+Even on a cache hit, `scripts/smoke-package.sh` still verifies the restored app
+with `codesign --verify --deep --strict`. The cache only skips rebuilding; it
+does not skip bundle validation.
+
+The cache is disabled automatically for notarization/stapling runs because
+those should always produce fresh artifacts. To disable it manually:
+
+```sh
+AETOWER_QUALITY_DISABLE_CACHE=1 sh scripts/ci-local.sh --mode pre-push
+```
+
+The cache keeps the five most recent package entries by default. Override this
+when needed:
+
+```sh
+AETOWER_PACKAGE_SMOKE_CACHE_KEEP=2 sh scripts/ci-local.sh --mode pre-push
+```
+
 ### Runtime filters
 
 The runner supports narrow reproductions:
@@ -233,6 +272,12 @@ Run package verification directly:
 
 ```sh
 sh scripts/smoke-package.sh --rebuild
+```
+
+Run the quality-gate package smoke with cache support:
+
+```sh
+sh scripts/quality-package-smoke.sh
 ```
 
 To also launch the packaged app briefly and verify the process comes up:
@@ -291,16 +336,17 @@ For Developer ID signing and optional notarization, see
 
 ## Reclaiming Local Disk
 
-Cargo and SwiftPM caches plus the packaged app and profiling tmp dirs can
-accumulate several GB. Inspect or delete them with:
+Cargo, SwiftPM, local quality caches, the packaged app, and profiling tmp dirs
+can accumulate several GB. Inspect or delete them with:
 
 ```sh
 sh scripts/clean-local.sh          # dry-run, reports sizes
 sh scripts/clean-local.sh --yes    # actually delete
 ```
 
-The script targets `tmp/`, `dist/`, `rust/target/`, and `macos/.build/`. It
-never touches user state under `~/Library/Application Support/Aetower/`.
+The script targets `tmp/`, `.aetower-cache/`, `dist/`, `rust/target/`, and
+`macos/.build/`. It never touches user state under
+`~/Library/Application Support/Aetower/`.
 
 ## Tooling Expectations
 
@@ -357,15 +403,17 @@ gate, not to make `--no-verify` part of the normal workflow.
 
 ## Recommendation
 
-Do not add a generic content-hash cache yet. The current timing data shows the
-dominant costs are `package smoke` and `swift build`, so the next CI efficiency
-step should be targeted:
+Keep the cache policy targeted. Package-smoke artifact reuse is currently the
+right boundary because the restored bundle is still verified and the cache key
+is package-specific. Avoid a broad, generic "skip any passing gate by hash"
+cache until the runner has a richer registry with per-gate input declarations.
 
-1. preserve and reuse the SwiftPM package build when inputs allow it
-2. split package smoke into fast bundle-structure verification and slower
-   rebuild verification
-3. keep release/full mode as the place that proves a fresh package from
-   scratch
+The next efficiency work should focus on Swift build reuse and clearer split
+points between "fresh package from source" and "verify existing package":
+
+1. preserve SwiftPM build output when bridge/package inputs did not change
+2. keep `full` as the place for an explicit fresh-from-source package rebuild
+3. report cache hit/miss counts in the quality summary
 
 That will reduce local push time without weakening the integration guarantees
 that matter for a native macOS system monitor.
