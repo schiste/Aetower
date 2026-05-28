@@ -911,6 +911,20 @@ impl HistoryStore {
         (store_bytes, wal_bytes)
     }
 
+    /// Number of pages currently on the SQLite freelist.
+    ///
+    /// Surfaced so the engine heartbeat can publish on-disk waste over time,
+    /// letting us spot a growing freelist long before it crosses
+    /// `should_vacuum`'s gate. After the auto_vacuum=INCREMENTAL migration
+    /// this should stay near zero in steady state; persistent growth here
+    /// means `incremental_vacuum` is not keeping up with the delete rate.
+    pub fn freelist_pages(&self) -> Result<u64, String> {
+        self.conn
+            .query_row("PRAGMA freelist_count", [], |row| row.get::<_, i64>(0))
+            .map(|n| n.max(0) as u64)
+            .map_err(|e| format!("pragma freelist_count: {e}"))
+    }
+
     fn wal_path(&self) -> PathBuf {
         PathBuf::from(format!("{}-wal", self.db_path.display()))
     }

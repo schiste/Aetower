@@ -801,6 +801,29 @@ impl Engine {
                             "diagnostics_queue_depth",
                             diagnostics.pending_writes().min(u32::MAX as u64),
                         )
+                        // history_millis lets us watch the History::update cost
+                        // on healthy ticks, not just on tick-over-budget. Before
+                        // this field was added we were blind to slow growth
+                        // until it crossed the budget threshold; with it we can
+                        // spot a drift from 50ms to seconds visibly.
+                        .field("history_millis", format!("{history_millis:.3}"))
+                        // Freelist size on the persisted SQLite store. After
+                        // the auto_vacuum=INCREMENTAL migration this should
+                        // sit near zero; persistent growth means
+                        // `incremental_vacuum` is not keeping up. Use
+                        // `try_lock` so the heartbeat never blocks on a
+                        // long-running maintenance pass holding the store
+                        // mutex — reporting 0 on contention is fine, the
+                        // next heartbeat will pick it up.
+                        .field(
+                            "history_freelist_pages",
+                            persistence
+                                .try_lock()
+                                .as_ref()
+                                .and_then(|guard| guard.as_ref())
+                                .and_then(|store| store.freelist_pages().ok())
+                                .unwrap_or(0),
+                        )
                         .field("mcp_helper_count", mcp_helper_count)
                         .field("stale_mcp_helper_count", stale_mcp_helper_count)
                         .build(),
