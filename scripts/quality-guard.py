@@ -27,6 +27,7 @@ SWIFT_PUBLIC_VIEW_ALLOWLIST = {
     "MainListView.swift",
     "MenuBarSummaryView.swift",
     "ProcessTreeView.swift",
+    "SensorDashboardView.swift",
     "SettingsView.swift",
     "TimelineView.swift",
 }

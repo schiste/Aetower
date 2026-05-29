@@ -47,49 +47,63 @@ struct AetowerApp: App {
         UserDefaults.standard.set(true, forKey: "ApplePersistenceIgnoreState")
     }
 
+    @ViewBuilder
+    private var primaryTabs: some View {
+        MainListView(state: state)
+            .tabItem {
+                Label("Monitor", systemImage: "gauge.with.needle")
+            }
+
+        HistoryView(state: state, settings: settings)
+            .tabItem {
+                Label("History", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+            }
+
+        TimelineView(state: state, settings: settings)
+            .tabItem {
+                Label("Timeline", systemImage: "timeline.selection")
+            }
+
+        Chau7View(state: state)
+            .tabItem {
+                Label("Chau7", systemImage: "terminal")
+            }
+    }
+
+    @ViewBuilder
+    private var secondaryTabs: some View {
+        AIAgentsView(state: state)
+            .tabItem {
+                Label("AI Agents", systemImage: "cpu")
+            }
+
+        SensorDashboardView(state: state)
+            .tabItem {
+                Label("Sensors", systemImage: "thermometer.medium")
+            }
+
+        DiagnosticsView(state: state, settings: settings)
+            .tabItem {
+                Label("Diagnostics", systemImage: "waveform.path.ecg.rectangle")
+            }
+
+        FleetView(state: state)
+            .tabItem {
+                Label("Fleet", systemImage: "network")
+            }
+
+        SettingsView(state: state, settings: settings)
+            .environment(updater)
+            .tabItem {
+                Label("Settings", systemImage: "slider.horizontal.3")
+            }
+    }
+
     var body: some Scene {
         WindowGroup {
             TabView {
-                MainListView(state: state)
-                    .tabItem {
-                        Label("Monitor", systemImage: "gauge.with.needle")
-                    }
-
-                HistoryView(state: state, settings: settings)
-                    .tabItem {
-                        Label("History", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
-                    }
-
-                TimelineView(state: state, settings: settings)
-                    .tabItem {
-                        Label("Timeline", systemImage: "timeline.selection")
-                    }
-
-                Chau7View(state: state)
-                    .tabItem {
-                        Label("Chau7", systemImage: "terminal")
-                    }
-
-                AIAgentsView(state: state)
-                    .tabItem {
-                        Label("AI Agents", systemImage: "cpu")
-                    }
-
-                DiagnosticsView(state: state, settings: settings)
-                    .tabItem {
-                        Label("Diagnostics", systemImage: "waveform.path.ecg.rectangle")
-                    }
-
-                FleetView(state: state)
-                    .tabItem {
-                        Label("Fleet", systemImage: "network")
-                    }
-
-                SettingsView(state: state, settings: settings)
-                    .environment(updater)
-                    .tabItem {
-                        Label("Settings", systemImage: "slider.horizontal.3")
-                    }
+                primaryTabs
+                secondaryTabs
             }
             .frame(minWidth: 1180, minHeight: 760)
             .preferredColorScheme(resolvedColorScheme)
