@@ -30,6 +30,8 @@ struct ProcessOperatorPanel: View {
 
                 networkConnectionsSection
 
+                reputationSection
+
                 if processes.isEmpty {
                     ContentUnavailableView(
                         "No live process controls",
@@ -321,6 +323,66 @@ struct ProcessOperatorPanel: View {
                         .foregroundStyle(.tertiary)
                 }
             }
+        }
+    }
+
+    /// Entity-level VirusTotal reputation (opt-in). Sourced from the snapshot —
+    /// no lookup happens here. Shown only when a verdict has been resolved for a
+    /// risky binary.
+    @ViewBuilder
+    private var reputationSection: some View {
+        if let reputation = entity.binaryReputation {
+            let detections = reputation.malicious + reputation.suspicious
+            VStack(alignment: .leading, spacing: 6) {
+                SectionHeader(
+                    "Binary reputation",
+                    detail: reputationVerdictLabel(reputation.verdict)
+                )
+                LazyVGrid(columns: operatorColumns, alignment: .leading, spacing: 8) {
+                    MetricLabel("Detections", "\(detections)/\(reputation.totalEngines)")
+                    MetricLabel("Malicious", "\(reputation.malicious)")
+                    MetricLabel("Suspicious", "\(reputation.suspicious)")
+                    MetricLabel("Harmless", "\(reputation.harmless)")
+                }
+                switch reputation.verdict {
+                case .malicious:
+                    StatusLine(
+                        icon: "exclamationmark.octagon.fill",
+                        color: AetowerDesign.Status.error,
+                        text: "Flagged as malicious by \(detections) engine(s)."
+                    )
+                case .suspicious:
+                    StatusLine(
+                        icon: "exclamationmark.triangle.fill",
+                        color: AetowerDesign.Status.warning,
+                        text: "Flagged as suspicious by \(detections) engine(s)."
+                    )
+                case .unknown:
+                    StatusLine(
+                        icon: "questionmark.circle",
+                        color: .secondary,
+                        text: "Not present in VirusTotal's corpus."
+                    )
+                default:
+                    EmptyView()
+                }
+                if !reputation.permalink.isEmpty,
+                    let url = URL(string: reputation.permalink)
+                {
+                    Link("View on VirusTotal", destination: url)
+                        .font(.caption)
+                }
+            }
+        }
+    }
+
+    private func reputationVerdictLabel(_ verdict: ReputationVerdict) -> String {
+        switch verdict {
+        case .clean: return "clean"
+        case .suspicious: return "suspicious"
+        case .malicious: return "malicious"
+        case .unknown: return "unknown"
+        @unknown default: return "unknown"
         }
     }
 

@@ -286,6 +286,26 @@ private struct EntityRow: View {
         return hosts
     }
 
+    /// Compact VirusTotal chip for the row: detections/total colored by verdict.
+    /// Hidden for the `unknown` verdict (binary not in VirusTotal's corpus) to
+    /// avoid cluttering the row with non-signal.
+    private var reputationChip: (label: String, color: Color)? {
+        guard let reputation = entity.binaryReputation else { return nil }
+        let detections = reputation.malicious + reputation.suspicious
+        switch reputation.verdict {
+        case .malicious:
+            return ("VT \(detections)/\(reputation.totalEngines)", AetowerDesign.Status.error)
+        case .suspicious:
+            return ("VT \(detections)/\(reputation.totalEngines)", AetowerDesign.Status.warning)
+        case .clean:
+            return ("VT clean", AetowerDesign.Status.success)
+        case .unknown:
+            return nil
+        @unknown default:
+            return nil
+        }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             // Entity type icon
@@ -344,6 +364,17 @@ private struct EntityRow: View {
                 }
                 .foregroundStyle(AetowerDesign.Tone.network)
                 .help("Talking to \(distinctRemoteHosts.prefix(5).joined(separator: ", "))")
+            }
+
+            if let chip = reputationChip {
+                Text(chip.label)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(chip.color)
+                    .lineLimit(1)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(chip.color.opacity(0.15), in: Capsule())
+                    .help("VirusTotal reputation for this binary.")
             }
 
             // Metrics — centered, fixed width columns
