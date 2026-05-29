@@ -146,7 +146,7 @@ compare_app_to_baseline() {
     [ "$PUBLIC_KEY" = "$BASE_PUBLIC_KEY" ] || fail "$LABEL Sparkle public key mismatch"
 
     if [ "$VERIFY_CODESIGN" = "1" ]; then
-        codesign --verify --deep --strict "$CANDIDATE_APP" >/dev/null 2>&1 \
+        codesign --verify --deep --strict "$CANDIDATE_APP" \
             || fail "$LABEL app failed codesign verification"
     fi
 }
