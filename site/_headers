@@ -11,6 +11,18 @@
   Content-Type: application/zip
   Cache-Control: public, max-age=120
 
+/releases/*.pkg
+  Content-Type: application/octet-stream
+  Cache-Control: public, max-age=31536000, immutable
+
+/releases/Aetower.pkg
+  Content-Type: application/octet-stream
+  Cache-Control: public, max-age=120
+
 /releases/appcast.xml
   Content-Type: application/xml; charset=utf-8
+  Cache-Control: public, max-age=120
+
+/homebrew/Casks/aetower.rb
+  Content-Type: text/plain; charset=utf-8
   Cache-Control: public, max-age=120

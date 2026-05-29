@@ -2,6 +2,28 @@
 
 All notable public changes to Aetower should be documented here.
 
+## 0.5 (build 413) - 2026-05-29
+
+First public `0.5` Developer Preview release.
+
+Release metadata:
+
+- Bundle identifier: `com.aeptus.aetower`
+- Sparkle appcast: `https://aetower.dev/releases/appcast.xml`
+- Release archive prefix: `https://aetower.dev/releases/`
+
+- Added prominent process actions in Monitor and process detail surfaces,
+  including easier access to terminate and force-kill preview flows.
+- Added richer monitor-side process controls, quick stop access, and clearer
+  action naming.
+- Added Chau7 integration guidance when Chau7 is not running or not connected.
+- Added public-release publication checks for Sparkle appcast, immutable ZIP,
+  direct ZIP, Homebrew cask, optional PKG, and third-party notices.
+- Added Cloudflare release-site publication of Homebrew cask artifacts and
+  optional signed PKG artifacts.
+- Added release preflight validation that the changelog version/build matches
+  the release metadata.
+
 ## 0.1.0-developer-preview.1 (build 408) - 2026-05-29
 
 First public Developer Preview baseline.

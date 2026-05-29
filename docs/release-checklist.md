@@ -61,6 +61,7 @@ Expected artifacts:
 - `dist/homebrew/Casks/aetower.rb`
 - `dist/THIRD-PARTY-NOTICES.md`
 - `dist/cloudflare-site/`
+- `dist/cloudflare-site/homebrew/Casks/aetower.rb`
 
 The release command runs the Sparkle distribution matrix automatically. To run
 it again:
@@ -81,6 +82,8 @@ sh scripts/release-public-preview.sh --with-pkg
 Expected additional artifact:
 
 - `dist/Aetower.pkg`
+- `dist/cloudflare-site/releases/Aetower.pkg`
+- `dist/cloudflare-site/releases/Aetower-<version>-<build>.pkg`
 
 ## 5. Verify artifact
 
@@ -130,6 +133,8 @@ This deploys the prepared Cloudflare Pages payload and verifies that:
 - the public appcast contains the expected version and build number
 - the immutable Sparkle archive resolves
 - the direct ZIP resolves
+- the Homebrew cask resolves
+- the signed PKG resolves when `--with-pkg` was used
 - third-party notices resolve
 
 Keep old appcast archives available so Sparkle can generate and serve deltas.

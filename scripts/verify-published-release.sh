@@ -17,6 +17,7 @@ VERSION="${AETOWER_VERSION:-}"
 BUILD_NUMBER="${AETOWER_BUILD_NUMBER:-}"
 PUBLIC_BASE_URL="${AETOWER_PUBLIC_BASE_URL:-}"
 CURL_BIN="${CURL_BIN:-}"
+VERIFY_PKG="${AETOWER_VERIFY_PKG:-0}"
 
 if [ -z "$CURL_BIN" ]; then
     if [ -x /usr/bin/curl ]; then
@@ -56,6 +57,8 @@ IMMUTABLE_ARCHIVE="Aetower-$VERSION-$BUILD_NUMBER.zip"
 IMMUTABLE_URL="$DOWNLOAD_PREFIX$IMMUTABLE_ARCHIVE"
 DIRECT_ZIP_URL="$PUBLIC_BASE_URL/releases/Aetower.zip"
 NOTICES_URL="$PUBLIC_BASE_URL/third-party-notices.md"
+HOMEBREW_CASK_URL="$PUBLIC_BASE_URL/homebrew/Casks/aetower.rb"
+PKG_URL="$PUBLIC_BASE_URL/releases/Aetower-$VERSION-$BUILD_NUMBER.pkg"
 
 check_url() {
     label="$1"
@@ -96,6 +99,10 @@ fi
 
 check_url "immutable Sparkle archive" "$IMMUTABLE_URL"
 check_url "direct download ZIP" "$DIRECT_ZIP_URL"
+check_url "Homebrew cask" "$HOMEBREW_CASK_URL"
+if [ "$VERIFY_PKG" = "1" ]; then
+    check_url "signed pkg installer" "$PKG_URL"
+fi
 check_url "third-party notices" "$NOTICES_URL"
 
 printf '✓ published release verified\n'

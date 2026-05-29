@@ -129,7 +129,11 @@ if [ "$DEPLOY_CLOUDFLARE" -eq 1 ]; then
     npx wrangler pages deploy "$SITE_OUTPUT" --project-name "$CLOUDFLARE_PROJECT"
     if [ "$VERIFY_PUBLIC" -eq 1 ]; then
         printf '\n=== verify published release ===\n'
-        sh "$ROOT/scripts/verify-published-release.sh"
+        if [ "$WITH_PKG" -eq 1 ]; then
+            AETOWER_VERIFY_PKG=1 sh "$ROOT/scripts/verify-published-release.sh"
+        else
+            sh "$ROOT/scripts/verify-published-release.sh"
+        fi
     else
         printf '\nPublished release verification skipped by --skip-public-verify.\n'
     fi

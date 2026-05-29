@@ -13,6 +13,11 @@ The release site is intentionally static:
 - `/releases/Aetower.zip` serves the latest signed and notarized app archive
   for direct human downloads.
 - `/releases/Aetower-<version>-<build>.zip` serves immutable Sparkle archives.
+- `/releases/Aetower.pkg` serves the latest signed and notarized installer
+  package when a Developer ID Installer certificate is available.
+- `/releases/Aetower-<version>-<build>.pkg` serves immutable installer
+  packages when PKG output is enabled.
+- `/homebrew/Casks/aetower.rb` serves the generated Homebrew cask artifact.
 - `/third-party-notices.md` serves the generated dependency/license inventory.
 
 ## Prepare
@@ -82,6 +87,7 @@ curl -I https://aetower.dev/
 curl -I https://aetower.dev/third-party-notices.md
 curl -I https://aetower.dev/releases/appcast.xml
 curl -I https://aetower.dev/releases/Aetower.zip
+curl -I https://aetower.dev/homebrew/Casks/aetower.rb
 ```
 
 Then run the Sparkle N-1 -> N update verification before sharing the link.
