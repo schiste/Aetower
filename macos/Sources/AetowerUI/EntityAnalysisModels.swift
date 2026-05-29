@@ -386,7 +386,26 @@ struct ProcessInspectionReportModel: Codable {
     let environment: [ProcessEnvVarModel]?
     let environmentNote: String?
     let startupEntry: ProcessStartupEntryModel?
+    let loadedDylibs: [ProcessDylibModel]?
+    let dylibSummary: DylibSummaryModel?
     let safetyNotes: [String]
+}
+
+struct ProcessDylibModel: Codable, Identifiable {
+    let path: String
+    let name: String
+    /// system | third_party
+    let category: String
+    let injected: Bool
+
+    var id: String { path }
+    var isSystem: Bool { category == "system" }
+}
+
+struct DylibSummaryModel: Codable {
+    let total: UInt32
+    let thirdParty: UInt32
+    let injected: UInt32
 }
 
 /// Result of a sandboxed Rhai advanced filter evaluated by the engine.
@@ -439,7 +458,22 @@ struct ProcessSignatureInfoModel: Codable {
     let teamId: String?
     let authority: [String]
     let notarized: Bool?
+    let classification: String?
+    let isAdhoc: Bool?
     let note: String?
+
+    /// Human label for the classification string.
+    var classificationLabel: String {
+        switch classification {
+        case "apple": return "Apple"
+        case "mac_app_store": return "Mac App Store"
+        case "developer_id": return "Developer ID"
+        case "adhoc": return "Ad-hoc"
+        case "unsigned": return "Unsigned"
+        case "other": return "Other"
+        default: return "Unknown"
+        }
+    }
 }
 
 struct ProcessEnvVarModel: Codable, Identifiable {

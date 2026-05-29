@@ -302,14 +302,22 @@ struct ProcessOperatorPanel: View {
 
         if let signature = inspection.signature {
             VStack(alignment: .leading, spacing: 8) {
-                SectionHeader("Code signature", detail: signatureStatus(signature))
+                SectionHeader("Code signature", detail: signature.classificationLabel)
                 LazyVGrid(columns: operatorColumns, alignment: .leading, spacing: 8) {
+                    MetricLabel("Type", signature.classificationLabel)
                     MetricLabel("Team ID", signature.teamId ?? "—")
                     MetricLabel("Identifier", signature.signingId ?? "—")
                     MetricLabel("Notarized", notarizedLabel(signature.notarized))
                 }
                 if let authority = signature.authority.first {
                     MetricLabel("Authority", authority)
+                }
+                if signature.isAdhoc == true {
+                    StatusLine(
+                        icon: "exclamationmark.triangle.fill",
+                        color: AetowerDesign.Status.warning,
+                        text: "Ad-hoc signed (no Developer ID) — unusual for distributed software."
+                    )
                 }
                 if let note = signature.note {
                     StatusLine(icon: "info.circle", color: .secondary, text: note)
@@ -345,6 +353,54 @@ struct ProcessOperatorPanel: View {
         }
 
         environmentSection(inspection)
+        dylibSection(inspection)
+    }
+
+    @ViewBuilder
+    private func dylibSection(_ inspection: ProcessInspectionReportModel) -> some View {
+        let dylibs = inspection.loadedDylibs ?? []
+        if !dylibs.isEmpty {
+            let summary = inspection.dylibSummary
+            let detail = summary.map {
+                "\($0.total) total · \($0.thirdParty) 3rd-party"
+                    + ($0.injected > 0 ? " · \($0.injected) injected" : "")
+            } ?? "\(dylibs.count)"
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(dylibs) { dylib in
+                        HStack(spacing: 8) {
+                            Image(systemName: dylib.injected
+                                ? "exclamationmark.triangle.fill"
+                                : (dylib.isSystem ? "lock.shield" : "shippingbox"))
+                                .font(.system(size: 10))
+                                .foregroundStyle(dylib.injected
+                                    ? AetowerDesign.Status.warning
+                                    : (dylib.isSystem ? Color.secondary : AetowerDesign.Status.ready))
+                                .frame(width: 16)
+                            Text(dylib.name)
+                                .font(.system(size: 11, weight: dylib.injected ? .semibold : .regular))
+                                .lineLimit(1)
+                            if dylib.injected {
+                                Text("INJECTED")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(AetowerDesign.Status.warning)
+                            }
+                            Spacer()
+                            Text(dylib.path)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                                .frame(maxWidth: 220, alignment: .trailing)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                SectionHeader("Loaded libraries", detail: detail)
+            }
+        }
     }
 
     @ViewBuilder
@@ -378,10 +434,6 @@ struct ProcessOperatorPanel: View {
         } else if let note = inspection.environmentNote {
             StatusLine(icon: "lock.shield", color: .secondary, text: note)
         }
-    }
-
-    private func signatureStatus(_ signature: ProcessSignatureInfoModel) -> String {
-        signature.signed ? "signed" : "unsigned"
     }
 
     private func notarizedLabel(_ notarized: Bool?) -> String {
