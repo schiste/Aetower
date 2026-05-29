@@ -13,11 +13,12 @@ RUN_GATEKEEPER=0
 RUN_OPERATOR=0
 RUN_SOAK=0
 REBUILD=0
+REQUIRE_PKG=0
 SOAK_SECONDS="${AETOWER_PUBLIC_PREVIEW_SOAK_SECONDS:-7200}"
 
 usage() {
     cat <<EOF
-usage: $0 [--all] [--preflight] [--package] [--matrix] [--gatekeeper] [--operator] [--soak] [--rebuild]
+usage: $0 [--all] [--preflight] [--package] [--matrix] [--require-pkg] [--gatekeeper] [--operator] [--soak] [--rebuild]
 
 Validate a public Developer Preview candidate.
 
@@ -53,6 +54,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --matrix)
             RUN_MATRIX=1
+            shift
+            ;;
+        --require-pkg)
+            REQUIRE_PKG=1
             shift
             ;;
         --gatekeeper)
@@ -103,7 +108,11 @@ if [ "$RUN_PACKAGE" -eq 1 ]; then
 fi
 
 if [ "$RUN_MATRIX" -eq 1 ]; then
-    sh "$ROOT/scripts/verify-sparkle-distribution-matrix.sh"
+    if [ "$REQUIRE_PKG" -eq 1 ]; then
+        sh "$ROOT/scripts/verify-sparkle-distribution-matrix.sh" --require-pkg
+    else
+        sh "$ROOT/scripts/verify-sparkle-distribution-matrix.sh"
+    fi
 fi
 
 if [ "$RUN_GATEKEEPER" -eq 1 ]; then

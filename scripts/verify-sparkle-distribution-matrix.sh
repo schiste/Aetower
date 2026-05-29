@@ -79,6 +79,10 @@ require_dir() {
     fi
 }
 
+sha256_file() {
+    shasum -a 256 "$1" | awk '{ print $1 }'
+}
+
 find_app() {
     /usr/bin/find "$1" -name Aetower.app -type d -prune -print | /usr/bin/head -n 1
 }
@@ -100,6 +104,10 @@ metadata_for_app() {
     if [ -z "$FEED_URL" ] || [ -z "$PUBLIC_KEY" ]; then
         fail "$APP_PATH is not Sparkle-enabled; missing SUFeedURL or SUPublicEDKey"
     fi
+    case "$FEED_URL" in
+        https://*) ;;
+        *) fail "$APP_PATH has non-HTTPS Sparkle feed URL: $FEED_URL" ;;
+    esac
     require_dir "$APP_PATH/Contents/Frameworks/Sparkle.framework"
 }
 
@@ -148,9 +156,12 @@ verify_appcast() {
     require_file "$ARCHIVE_PATH"
 
     ARCHIVE_LENGTH="$(wc -c < "$ARCHIVE_PATH" | tr -d '[:space:]')"
-    contains_literal "$APPCAST_PATH" "<sparkle:version>$BASE_BUILD_NUMBER</sparkle:version>" \
+    APPCAST_COMPACT="$TMP_ROOT/appcast.compact.xml"
+    tr -d '[:space:]' < "$APPCAST_PATH" > "$APPCAST_COMPACT"
+
+    contains_literal "$APPCAST_COMPACT" "<sparkle:version>$BASE_BUILD_NUMBER</sparkle:version>" \
         || fail "appcast does not contain build $BASE_BUILD_NUMBER"
-    contains_literal "$APPCAST_PATH" "<sparkle:shortVersionString>$BASE_VERSION</sparkle:shortVersionString>" \
+    contains_literal "$APPCAST_COMPACT" "<sparkle:shortVersionString>$BASE_VERSION</sparkle:shortVersionString>" \
         || fail "appcast does not contain version $BASE_VERSION"
     contains_literal "$APPCAST_PATH" "$ARCHIVE_NAME" \
         || fail "appcast does not reference $ARCHIVE_NAME"
@@ -175,7 +186,7 @@ verify_homebrew_cask() {
         || fail "Homebrew cask version mismatch: $CASK_VERSION != $EXPECTED_VERSION"
 
     ARCHIVE_PATH="$APPCAST_DIR/Aetower-$BASE_VERSION-$BASE_BUILD_NUMBER.zip"
-    EXPECTED_SHA="$(shasum -a 256 "$ARCHIVE_PATH" | awk '{ print $1 }')"
+    EXPECTED_SHA="$(sha256_file "$ARCHIVE_PATH")"
     CASK_SHA="$(
         sed -n 's/^[[:space:]]*sha256 "\(.*\)".*$/\1/p' "$HOMEBREW_CASK_PATH" \
             | /usr/bin/head -n 1
@@ -191,14 +202,31 @@ verify_homebrew_cask() {
         || fail "Homebrew cask livecheck does not reference the app Sparkle feed"
 }
 
-verify_zip() {
-    require_file "$ZIP_PATH"
-    ZIP_DIR="$TMP_ROOT/zip"
+verify_zip_file() {
+    LABEL="$1"
+    CANDIDATE_ZIP="$2"
+    require_file "$CANDIDATE_ZIP"
+
+    ZIP_DIR="$TMP_ROOT/$LABEL-zip"
     mkdir -p "$ZIP_DIR"
-    ditto -x -k "$ZIP_PATH" "$ZIP_DIR"
+    ditto -x -k "$CANDIDATE_ZIP" "$ZIP_DIR"
     ZIP_APP="$(find_app "$ZIP_DIR")"
-    [ -n "$ZIP_APP" ] || fail "zip does not contain Aetower.app"
-    compare_app_to_baseline "zip" "$ZIP_APP"
+    [ -n "$ZIP_APP" ] || fail "$LABEL zip does not contain Aetower.app"
+    compare_app_to_baseline "$LABEL zip" "$ZIP_APP"
+}
+
+verify_zip() {
+    ARCHIVE_PATH="$APPCAST_DIR/Aetower-$BASE_VERSION-$BASE_BUILD_NUMBER.zip"
+    require_file "$ZIP_PATH"
+    require_file "$ARCHIVE_PATH"
+
+    ZIP_SHA="$(sha256_file "$ZIP_PATH")"
+    ARCHIVE_SHA="$(sha256_file "$ARCHIVE_PATH")"
+    [ "$ZIP_SHA" = "$ARCHIVE_SHA" ] \
+        || fail "direct zip sha mismatch: $ZIP_SHA != immutable Sparkle archive $ARCHIVE_SHA"
+
+    verify_zip_file "direct" "$ZIP_PATH"
+    verify_zip_file "sparkle-archive" "$ARCHIVE_PATH"
 }
 
 verify_pkg() {

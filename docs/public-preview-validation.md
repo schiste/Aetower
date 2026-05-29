@@ -54,6 +54,7 @@ and a two-hour soak. For focused checks:
 ```sh
 sh scripts/verify-public-preview.sh --package --gatekeeper
 sh scripts/verify-public-preview.sh --matrix
+sh scripts/verify-public-preview.sh --matrix --require-pkg
 sh scripts/verify-public-preview.sh --operator
 AETOWER_PUBLIC_PREVIEW_SOAK_SECONDS=7200 sh scripts/verify-public-preview.sh --soak
 ```

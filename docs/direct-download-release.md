@@ -147,6 +147,10 @@ sh scripts/verify-sparkle-distribution-matrix.sh
 sh scripts/verify-sparkle-distribution-matrix.sh --require-pkg
 ```
 
+The matrix is a release-artifact check. A local development package built
+without `AETOWER_APPCAST_URL` and `AETOWER_SPARKLE_PUBLIC_ED_KEY` is expected
+to fail because Sparkle is intentionally disabled for that artifact.
+
 Deploy explicitly only after reviewing the generated site payload:
 
 ```sh
