@@ -810,6 +810,12 @@ pub(crate) fn build_process_inspection(
         .unwrap_or_default();
     let (environment, environment_note) = read_process_environment(pid);
     let startup_entry = executable_path.as_deref().and_then(lookup_startup_entry);
+    let dyld_insert = environment
+        .iter()
+        .find(|entry| entry.key == "DYLD_INSERT_LIBRARIES")
+        .map(|entry| entry.value.clone())
+        .unwrap_or_default();
+    let (loaded_dylibs, dylib_summary) = read_process_dylibs(pid, &dyld_insert);
 
     Ok(ProcessInspectionReport {
         captured_at_millis: snapshot.captured_at_millis,
@@ -861,6 +867,8 @@ pub(crate) fn build_process_inspection(
         environment,
         environment_note,
         startup_entry,
+        loaded_dylibs,
+        dylib_summary,
         safety_notes,
     })
 }
@@ -1211,6 +1219,8 @@ pub(crate) fn read_process_signature(executable_path: &str) -> ProcessSignatureI
             team_id: None,
             authority: Vec::new(),
             notarized: None,
+            classification: "unknown".to_owned(),
+            is_adhoc: false,
             note: Some("codesign could not be executed.".to_owned()),
         };
     };
@@ -1222,12 +1232,15 @@ pub(crate) fn read_process_signature(executable_path: &str) -> ProcessSignatureI
         .map(str::to_owned)
         .collect::<Vec<_>>();
     let signed = output.status.success();
+    let (classification, is_adhoc) = classify_signature(signed, &authority);
     ProcessSignatureInfo {
         signed,
         signing_id: parse_codesign_field(&details, "Identifier="),
         team_id: parse_codesign_field(&details, "TeamIdentifier="),
         authority,
         notarized: signed.then(|| spctl_accepts_executable(executable_path)),
+        classification,
+        is_adhoc,
         note: (!signed).then(|| {
             String::from_utf8_lossy(&output.stderr)
                 .lines()
@@ -1490,6 +1503,106 @@ fn parse_codesign_field(details: &str, prefix: &str) -> Option<String> {
         .lines()
         .find_map(|line| line.trim().strip_prefix(prefix))
         .map(str::to_owned)
+}
+
+/// Classify a code signature from its `codesign` authority chain. Returns the
+/// classification string and whether the signature is ad-hoc (signed in place
+/// with no signing authorities — a common malware/dev tell). Developer ID and
+/// Mac App Store are checked before the generic Apple leaf because their chains
+/// also anchor to Apple roots.
+pub(crate) fn classify_signature(signed: bool, authority: &[String]) -> (String, bool) {
+    if !signed {
+        return ("unsigned".to_owned(), false);
+    }
+    if authority.is_empty() {
+        return ("adhoc".to_owned(), true);
+    }
+    let chain = authority.join(" | ");
+    let classification = if chain.contains("Developer ID Application") {
+        "developer_id"
+    } else if chain.contains("Apple Mac OS Application Signing") {
+        "mac_app_store"
+    } else if chain.contains("Software Signing") {
+        "apple"
+    } else {
+        "other"
+    };
+    (classification.to_owned(), false)
+}
+
+/// Enumerate dynamic libraries mapped into a process via `lsof` (reusing the
+/// open-resources command), classify each system vs third-party, and flag any
+/// listed in the process's `DYLD_INSERT_LIBRARIES` as injected.
+pub(crate) fn read_process_dylibs(
+    pid: u32,
+    dyld_insert: &str,
+) -> (Vec<ProcessDylib>, DylibSummary) {
+    let injected = dyld_insert
+        .split(':')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<_>>();
+    match run_os_command(
+        "/usr/sbin/lsof",
+        &["-nP".to_owned(), "-p".to_owned(), pid.to_string()],
+    ) {
+        Ok(output) => parse_dylibs_from_lsof(&output, &injected),
+        Err(_) => (Vec::new(), DylibSummary::default()),
+    }
+}
+
+pub(crate) fn parse_dylibs_from_lsof(
+    output: &str,
+    injected: &[&str],
+) -> (Vec<ProcessDylib>, DylibSummary) {
+    const MAX_DYLIBS: usize = 400;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut dylibs = Vec::new();
+    for line in output.lines().skip(1) {
+        let parts = line.split_whitespace().collect::<Vec<_>>();
+        if parts.len() < 9 {
+            continue;
+        }
+        let path = parts[8..].join(" ");
+        if !(path.ends_with(".dylib") || path.contains(".framework/")) {
+            continue;
+        }
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let category = if path.starts_with("/System/")
+            || path.starts_with("/usr/lib/")
+            || path.starts_with("/Library/Apple/")
+        {
+            "system"
+        } else {
+            "third_party"
+        };
+        let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
+        dylibs.push(ProcessDylib {
+            injected: injected.iter().any(|entry| *entry == path),
+            path,
+            name,
+            category: category.to_owned(),
+        });
+        if dylibs.len() >= MAX_DYLIBS {
+            break;
+        }
+    }
+    dylibs.sort_by(|left, right| {
+        left.category
+            .cmp(&right.category)
+            .then(left.name.cmp(&right.name))
+    });
+    let summary = DylibSummary {
+        total: dylibs.len() as u32,
+        third_party: dylibs
+            .iter()
+            .filter(|d| d.category == "third_party")
+            .count() as u32,
+        injected: dylibs.iter().filter(|d| d.injected).count() as u32,
+    };
+    (dylibs, summary)
 }
 
 fn spctl_accepts_executable(executable_path: &str) -> bool {
@@ -2021,5 +2134,68 @@ mod metadata_tests {
         assert!(value_is_secret("anything", "ghp_abc"));
         assert!(!value_is_secret("PATH", "/usr/bin:/bin"));
         assert!(!value_is_secret("HOME", "/Users/someone"));
+    }
+
+    #[test]
+    fn classify_signature_distinguishes_authorities() {
+        let dev_id = vec![
+            "Developer ID Application: Acme Inc (TEAMID)".to_owned(),
+            "Developer ID Certification Authority".to_owned(),
+            "Apple Root CA".to_owned(),
+        ];
+        assert_eq!(
+            classify_signature(true, &dev_id),
+            ("developer_id".to_owned(), false)
+        );
+
+        let mas = vec![
+            "Apple Mac OS Application Signing".to_owned(),
+            "Apple Worldwide Developer Relations Certification Authority".to_owned(),
+            "Apple Root CA".to_owned(),
+        ];
+        assert_eq!(
+            classify_signature(true, &mas),
+            ("mac_app_store".to_owned(), false)
+        );
+
+        let apple = vec![
+            "Software Signing".to_owned(),
+            "Apple Code Signing Certification Authority".to_owned(),
+            "Apple Root CA".to_owned(),
+        ];
+        assert_eq!(
+            classify_signature(true, &apple),
+            ("apple".to_owned(), false)
+        );
+
+        assert_eq!(classify_signature(true, &[]), ("adhoc".to_owned(), true));
+        assert_eq!(
+            classify_signature(false, &[]),
+            ("unsigned".to_owned(), false)
+        );
+    }
+
+    #[test]
+    fn parse_dylibs_classifies_and_flags_injected() {
+        let output = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n\
+            App 100 alice txt REG 1,4 100 200 /usr/lib/libSystem.B.dylib\n\
+            App 100 alice txt REG 1,4 100 200 /opt/acme/libplugin.dylib\n\
+            App 100 alice txt REG 1,4 100 200 /tmp/inject.dylib\n\
+            App 100 alice 1u IPv4 0x1 0 0t0 TCP 1.2.3.4:443\n";
+        let injected = ["/tmp/inject.dylib"];
+        let (dylibs, summary) = parse_dylibs_from_lsof(output, &injected);
+        assert_eq!(summary.total, 3);
+        assert_eq!(summary.third_party, 2);
+        assert_eq!(summary.injected, 1);
+        assert!(
+            dylibs.iter().any(|d| d.path == "/tmp/inject.dylib"
+                && d.injected
+                && d.category == "third_party")
+        );
+        assert!(
+            dylibs
+                .iter()
+                .any(|d| d.path == "/usr/lib/libSystem.B.dylib" && d.category == "system")
+        );
     }
 }

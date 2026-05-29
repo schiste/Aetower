@@ -822,7 +822,28 @@ struct ProcessInspectionReport {
     environment: Vec<EnvVarEntry>,
     environment_note: Option<String>,
     startup_entry: Option<StartupEntryInfo>,
+    loaded_dylibs: Vec<ProcessDylib>,
+    dylib_summary: DylibSummary,
     safety_notes: Vec<String>,
+}
+
+/// A dynamic library mapped into a running process (TaskExplorer parity).
+/// `injected` is set when the path appears in the process's
+/// `DYLD_INSERT_LIBRARIES` — the high-signal injection indicator.
+#[derive(Debug, Clone, Serialize)]
+struct ProcessDylib {
+    path: String,
+    name: String,
+    /// system | third_party
+    category: String,
+    injected: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct DylibSummary {
+    total: u32,
+    third_party: u32,
+    injected: u32,
 }
 
 /// Bundle identity read from a running process's `.app`/`Info.plist`. Lets the
@@ -845,6 +866,9 @@ struct ProcessSignatureInfo {
     team_id: Option<String>,
     authority: Vec<String>,
     notarized: Option<bool>,
+    /// apple | mac_app_store | developer_id | adhoc | unsigned | other | unknown.
+    classification: String,
+    is_adhoc: bool,
     note: Option<String>,
 }
 
