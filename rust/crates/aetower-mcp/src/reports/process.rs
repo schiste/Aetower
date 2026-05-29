@@ -797,6 +797,20 @@ pub(crate) fn build_process_inspection(
         safety_notes.push("The process is not visible to ps right now.".to_owned());
     }
 
+    let executable_path = context
+        .as_ref()
+        .and_then(|context| context.executable_path.clone());
+    let bundle = executable_path
+        .as_deref()
+        .and_then(read_process_bundle_info);
+    let signature = executable_path.as_deref().map(read_process_signature);
+    let entitlements = executable_path
+        .as_deref()
+        .map(read_process_entitlements)
+        .unwrap_or_default();
+    let (environment, environment_note) = read_process_environment(pid);
+    let startup_entry = executable_path.as_deref().and_then(lookup_startup_entry);
+
     Ok(ProcessInspectionReport {
         captured_at_millis: snapshot.captured_at_millis,
         pid,
@@ -809,9 +823,7 @@ pub(crate) fn build_process_inspection(
         component_kind: context
             .as_ref()
             .map(|context| context.component_kind.clone()),
-        executable_path: context
-            .as_ref()
-            .and_then(|context| context.executable_path.clone()),
+        executable_path,
         command_line: context
             .as_ref()
             .and_then(|context| context.command_line.clone())
@@ -843,6 +855,12 @@ pub(crate) fn build_process_inspection(
             .map(|context| context.sibling_process_count)
             .unwrap_or(0),
         ps,
+        bundle,
+        signature,
+        entitlements,
+        environment,
+        environment_note,
+        startup_entry,
         safety_notes,
     })
 }
@@ -1167,6 +1185,319 @@ pub(crate) fn process_ps_summary(pid: u32) -> Result<ProcessPsSummary, String> {
         ],
     )?;
     parse_ps_summary(&output)
+}
+
+pub(crate) fn read_process_bundle_info(executable_path: &str) -> Option<ProcessBundleInfo> {
+    let bundle_path = containing_app_bundle(executable_path)?;
+    let info_plist = bundle_path.join("Contents/Info.plist");
+    Some(ProcessBundleInfo {
+        bundle_id: plist_value(&info_plist, "CFBundleIdentifier"),
+        bundle_path: Some(bundle_path.to_string_lossy().to_string()),
+        name: plist_value(&info_plist, "CFBundleName")
+            .or_else(|| plist_value(&info_plist, "CFBundleDisplayName")),
+        short_version: plist_value(&info_plist, "CFBundleShortVersionString"),
+        version: plist_value(&info_plist, "CFBundleVersion"),
+    })
+}
+
+pub(crate) fn read_process_signature(executable_path: &str) -> ProcessSignatureInfo {
+    let output = Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=4", executable_path])
+        .output();
+    let Ok(output) = output else {
+        return ProcessSignatureInfo {
+            signed: false,
+            signing_id: None,
+            team_id: None,
+            authority: Vec::new(),
+            notarized: None,
+            note: Some("codesign could not be executed.".to_owned()),
+        };
+    };
+
+    let details = String::from_utf8_lossy(&output.stderr);
+    let authority = details
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("Authority="))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let signed = output.status.success();
+    ProcessSignatureInfo {
+        signed,
+        signing_id: parse_codesign_field(&details, "Identifier="),
+        team_id: parse_codesign_field(&details, "TeamIdentifier="),
+        authority,
+        notarized: signed.then(|| spctl_accepts_executable(executable_path)),
+        note: (!signed).then(|| {
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .next()
+                .unwrap_or("codesign did not accept this executable.")
+                .trim()
+                .to_owned()
+        }),
+    }
+}
+
+pub(crate) fn read_process_entitlements(executable_path: &str) -> Vec<String> {
+    let output = Command::new("/usr/bin/codesign")
+        .args(["-d", "--entitlements", ":-", executable_path])
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut entitlements = text
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("<key>")
+                .and_then(|value| value.strip_suffix("</key>"))
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    entitlements.sort();
+    entitlements.dedup();
+    entitlements
+}
+
+/// Read a same-user process's environment via `KERN_PROCARGS2`, redacting
+/// values whose key or shape looks like a secret. Other-user/system processes
+/// return empty with a friendly note (no elevation in this build).
+pub(crate) fn read_process_environment(pid: u32) -> (Vec<EnvVarEntry>, Option<String>) {
+    const MAX_ENV: usize = 512;
+    match procargs_environment(pid) {
+        Ok(pairs) => {
+            let truncated = pairs.len() > MAX_ENV;
+            let mut redacted_count = 0usize;
+            let entries = pairs
+                .into_iter()
+                .take(MAX_ENV)
+                .map(|(key, value)| {
+                    if value_is_secret(&key, &value) {
+                        redacted_count += 1;
+                        EnvVarEntry {
+                            key,
+                            value: format!("‹redacted · {} chars›", value.chars().count()),
+                        }
+                    } else {
+                        EnvVarEntry { key, value }
+                    }
+                })
+                .collect::<Vec<_>>();
+            let mut notes = Vec::new();
+            if truncated {
+                notes.push(format!("showing the first {MAX_ENV}"));
+            }
+            if redacted_count > 0 {
+                notes.push(format!(
+                    "{redacted_count} value(s) redacted as likely secrets"
+                ));
+            }
+            let note = if entries.is_empty() {
+                Some("No environment variables were readable for this process.".to_owned())
+            } else if notes.is_empty() {
+                None
+            } else {
+                Some(notes.join("; "))
+            };
+            (entries, note)
+        }
+        Err(message) => (Vec::new(), Some(message)),
+    }
+}
+
+/// Heuristic secret detection: redact by key name (the common case) or by a few
+/// well-known value prefixes (OpenAI `sk-`, GitHub `ghp_`, AWS `AKIA`, PEM).
+fn value_is_secret(key: &str, value: &str) -> bool {
+    const SECRET_KEY_MARKERS: [&str; 11] = [
+        "KEY",
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "PASSWD",
+        "AUTH",
+        "SESSION",
+        "CREDENTIAL",
+        "PRIVATE",
+        "APIKEY",
+        "ACCESS_KEY",
+    ];
+    let upper_key = key.to_ascii_uppercase();
+    if SECRET_KEY_MARKERS
+        .iter()
+        .any(|marker| upper_key.contains(marker))
+    {
+        return true;
+    }
+    let trimmed = value.trim_start();
+    ["sk-", "ghp_", "gho_", "github_pat_", "AKIA", "-----BEGIN"]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+}
+
+const CTL_KERN: libc::c_int = 1;
+const KERN_ARGMAX: libc::c_int = 8;
+const KERN_PROCARGS2: libc::c_int = 49;
+
+/// Pull another process's argv+environment buffer from `KERN_PROCARGS2`. Works
+/// for same-user processes without elevation; otherwise the kernel returns an
+/// error we translate into a friendly message.
+fn procargs_environment(pid: u32) -> Result<Vec<(String, String)>, String> {
+    let mut argmax: libc::c_int = 0;
+    let mut argmax_size = std::mem::size_of::<libc::c_int>();
+    let mut argmax_mib = [CTL_KERN, KERN_ARGMAX];
+    let argmax_rc = unsafe {
+        libc::sysctl(
+            argmax_mib.as_mut_ptr(),
+            argmax_mib.len() as libc::c_uint,
+            &mut argmax as *mut _ as *mut libc::c_void,
+            &mut argmax_size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if argmax_rc != 0 || argmax <= 0 {
+        return Err("Could not determine the process argument buffer size.".to_owned());
+    }
+
+    let mut buffer = vec![0u8; argmax as usize];
+    let mut buffer_size = buffer.len();
+    let mut mib = [CTL_KERN, KERN_PROCARGS2, pid as libc::c_int];
+    let rc = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            buffer.as_mut_ptr() as *mut libc::c_void,
+            &mut buffer_size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 {
+        return Err(
+            "Environment variables require same-user ownership (elevation is not enabled in this build)."
+                .to_owned(),
+        );
+    }
+    buffer.truncate(buffer_size);
+    Ok(parse_procargs2(&buffer))
+}
+
+/// Parse a `KERN_PROCARGS2` buffer: `[argc:i32][exec_path\0][\0..][argv\0..][env\0..]`.
+pub(crate) fn parse_procargs2(buffer: &[u8]) -> Vec<(String, String)> {
+    if buffer.len() < 4 {
+        return Vec::new();
+    }
+    let argc = i32::from_ne_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]).max(0) as usize;
+    let mut pos = 4;
+    // Skip the executable path string.
+    while pos < buffer.len() && buffer[pos] != 0 {
+        pos += 1;
+    }
+    // Skip the NUL padding between exec path and argv.
+    while pos < buffer.len() && buffer[pos] == 0 {
+        pos += 1;
+    }
+    // Skip argc argument strings.
+    let mut args_seen = 0;
+    while args_seen < argc && pos < buffer.len() {
+        while pos < buffer.len() && buffer[pos] != 0 {
+            pos += 1;
+        }
+        pos += 1; // consume the NUL terminator
+        args_seen += 1;
+    }
+    // The remainder is KEY=VALUE environment entries until an empty string.
+    let mut envs = Vec::new();
+    while pos < buffer.len() {
+        let start = pos;
+        while pos < buffer.len() && buffer[pos] != 0 {
+            pos += 1;
+        }
+        let bytes = &buffer[start..pos];
+        pos += 1; // consume the NUL terminator
+        if bytes.is_empty() {
+            break;
+        }
+        if let Ok(text) = std::str::from_utf8(bytes)
+            && let Some((key, value)) = text.split_once('=')
+        {
+            envs.push((key.to_owned(), value.to_owned()));
+        }
+    }
+    envs
+}
+
+pub(crate) fn lookup_startup_entry(executable_path: &str) -> Option<StartupEntryInfo> {
+    for (kind, directory) in [
+        ("launch-agent", "/Library/LaunchAgents"),
+        ("launch-daemon", "/Library/LaunchDaemons"),
+        ("user-launch-agent", "~/Library/LaunchAgents"),
+    ] {
+        let directory = directory.replace('~', &std::env::var("HOME").unwrap_or_default());
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("plist") {
+                continue;
+            }
+            let Ok(contents) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if contents.contains(executable_path) {
+                return Some(StartupEntryInfo {
+                    kind: kind.to_owned(),
+                    label: plist_value(&path, "Label"),
+                    plist_path: path.to_string_lossy().to_string(),
+                });
+            }
+        }
+    }
+    None
+}
+
+fn containing_app_bundle(executable_path: &str) -> Option<std::path::PathBuf> {
+    std::path::Path::new(executable_path)
+        .ancestors()
+        .find(|path| path.extension().and_then(|extension| extension.to_str()) == Some("app"))
+        .map(std::path::Path::to_path_buf)
+}
+
+fn plist_value(plist_path: &std::path::Path, key: &str) -> Option<String> {
+    if !plist_path.exists() {
+        return None;
+    }
+    let output = Command::new("/usr/libexec/PlistBuddy")
+        .args(["-c", &format!("Print :{key}")])
+        .arg(plist_path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!value.is_empty()).then_some(value)
+}
+
+fn parse_codesign_field(details: &str, prefix: &str) -> Option<String> {
+    details
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(prefix))
+        .map(str::to_owned)
+}
+
+fn spctl_accepts_executable(executable_path: &str) -> bool {
+    Command::new("/usr/sbin/spctl")
+        .args(["--assess", "--type", "execute", executable_path])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 pub(crate) fn parse_ps_summary(output: &str) -> Result<ProcessPsSummary, String> {
@@ -1649,5 +1980,46 @@ pub(crate) fn format_metric_value(metric: &str, value: f64) -> String {
             format!("{}/s", format_bytes(value.max(0.0).round() as u64))
         }
         _ => format!("{value:.1}"),
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    #[test]
+    fn parse_procargs2_extracts_env_after_argv() {
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&1i32.to_ne_bytes()); // argc = 1
+        buffer.extend_from_slice(b"/bin/exec\0"); // executable path
+        buffer.extend_from_slice(b"/bin/exec\0"); // argv[0]
+        buffer.extend_from_slice(b"FOO=bar\0");
+        buffer.extend_from_slice(b"SECRET_KEY=zzz\0");
+        buffer.extend_from_slice(b"\0"); // empty string terminates env
+
+        let envs = parse_procargs2(&buffer);
+        assert_eq!(
+            envs,
+            vec![
+                ("FOO".to_owned(), "bar".to_owned()),
+                ("SECRET_KEY".to_owned(), "zzz".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_procargs2_handles_truncated_buffer() {
+        assert!(parse_procargs2(&[]).is_empty());
+        assert!(parse_procargs2(&[0, 1]).is_empty());
+    }
+
+    #[test]
+    fn value_is_secret_flags_keys_and_known_prefixes() {
+        assert!(value_is_secret("AWS_SECRET_ACCESS_KEY", "x"));
+        assert!(value_is_secret("GITHUB_TOKEN", "x"));
+        assert!(value_is_secret("anything", "sk-abc123"));
+        assert!(value_is_secret("anything", "ghp_abc"));
+        assert!(!value_is_secret("PATH", "/usr/bin:/bin"));
+        assert!(!value_is_secret("HOME", "/Users/someone"));
     }
 }

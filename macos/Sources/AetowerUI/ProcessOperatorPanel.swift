@@ -272,12 +272,123 @@ struct ProcessOperatorPanel: View {
                 if let command = inspection.commandLine {
                     MonospaceBlock(command)
                 }
+                inspectionMetadata(inspection)
                 ForEach(inspection.safetyNotes, id: \.self) { note in
                     StatusLine(icon: "shield.lefthalf.filled", color: .orange, text: note)
                 }
             }
         } else if isLoading(pid, .processInspect) {
             ProgressView("Inspecting PID \(pid)…")
+        }
+    }
+
+    /// Static, on-demand metadata sections (ProcessSpy parity): bundle identity,
+    /// code signature, entitlements, environment, and launchd startup entry.
+    /// Each section renders only when the engine returned data for it.
+    @ViewBuilder
+    private func inspectionMetadata(_ inspection: ProcessInspectionReportModel) -> some View {
+        if let bundle = inspection.bundle, bundle.bundleId != nil || bundle.versionLabel != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader("Bundle", detail: bundle.name ?? "app")
+                LazyVGrid(columns: operatorColumns, alignment: .leading, spacing: 8) {
+                    MetricLabel("Bundle ID", bundle.bundleId ?? "Unknown")
+                    MetricLabel("Version", bundle.versionLabel ?? "Unknown")
+                }
+                if let path = bundle.bundlePath {
+                    MonospaceBlock(path)
+                }
+            }
+        }
+
+        if let signature = inspection.signature {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader("Code signature", detail: signatureStatus(signature))
+                LazyVGrid(columns: operatorColumns, alignment: .leading, spacing: 8) {
+                    MetricLabel("Team ID", signature.teamId ?? "—")
+                    MetricLabel("Identifier", signature.signingId ?? "—")
+                    MetricLabel("Notarized", notarizedLabel(signature.notarized))
+                }
+                if let authority = signature.authority.first {
+                    MetricLabel("Authority", authority)
+                }
+                if let note = signature.note {
+                    StatusLine(icon: "info.circle", color: .secondary, text: note)
+                }
+            }
+        }
+
+        if let entitlements = inspection.entitlements, !entitlements.isEmpty {
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(entitlements, id: \.self) { entitlement in
+                        Text(entitlement)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                SectionHeader("Entitlements", detail: "\(entitlements.count)")
+            }
+        }
+
+        if let startup = inspection.startupEntry {
+            VStack(alignment: .leading, spacing: 6) {
+                SectionHeader("Startup entry", detail: startup.kind)
+                if let label = startup.label {
+                    MetricLabel("Label", label)
+                }
+                MonospaceBlock(startup.plistPath)
+            }
+        }
+
+        environmentSection(inspection)
+    }
+
+    @ViewBuilder
+    private func environmentSection(_ inspection: ProcessInspectionReportModel) -> some View {
+        let environment = inspection.environment ?? []
+        if !environment.isEmpty {
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(environment) { entry in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(entry.key)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .frame(maxWidth: 160, alignment: .leading)
+                                .lineLimit(1)
+                            Text(entry.value)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .textSelection(.enabled)
+                            Spacer()
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                SectionHeader(
+                    "Environment",
+                    detail: inspection.environmentNote ?? "\(environment.count) variables"
+                )
+            }
+        } else if let note = inspection.environmentNote {
+            StatusLine(icon: "lock.shield", color: .secondary, text: note)
+        }
+    }
+
+    private func signatureStatus(_ signature: ProcessSignatureInfoModel) -> String {
+        signature.signed ? "signed" : "unsigned"
+    }
+
+    private func notarizedLabel(_ notarized: Bool?) -> String {
+        switch notarized {
+        case .some(true): return "Yes"
+        case .some(false): return "No"
+        case .none: return "Unknown"
         }
     }
 

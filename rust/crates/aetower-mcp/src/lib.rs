@@ -815,7 +815,52 @@ struct ProcessInspectionReport {
     child_pids: Vec<u32>,
     sibling_process_count: u32,
     ps: Option<ProcessPsSummary>,
+    bundle: Option<ProcessBundleInfo>,
+    signature: Option<ProcessSignatureInfo>,
+    entitlements: Vec<String>,
+    environment: Vec<EnvVarEntry>,
+    environment_note: Option<String>,
+    startup_entry: Option<StartupEntryInfo>,
     safety_notes: Vec<String>,
+}
+
+/// Bundle identity read from a running process's `.app`/`Info.plist`. Lets the
+/// UI distinguish same-named processes by version + bundle id (ProcessSpy parity).
+#[derive(Debug, Clone, Serialize)]
+struct ProcessBundleInfo {
+    bundle_id: Option<String>,
+    bundle_path: Option<String>,
+    name: Option<String>,
+    short_version: Option<String>,
+    version: Option<String>,
+}
+
+/// Code-signing facts parsed from `codesign`/`spctl`. `notarized` is `None` when
+/// the Gatekeeper assessment could not be determined (best-effort).
+#[derive(Debug, Clone, Serialize)]
+struct ProcessSignatureInfo {
+    signed: bool,
+    signing_id: Option<String>,
+    team_id: Option<String>,
+    authority: Vec<String>,
+    notarized: Option<bool>,
+    note: Option<String>,
+}
+
+/// One environment variable captured from `KERN_PROCARGS2` (same-user only).
+#[derive(Debug, Clone, Serialize)]
+struct EnvVarEntry {
+    key: String,
+    value: String,
+}
+
+/// A launchd job (daemon or login/agent) whose `ProgramArguments` resolve to the
+/// inspected executable.
+#[derive(Debug, Clone, Serialize)]
+struct StartupEntryInfo {
+    kind: String,
+    label: Option<String>,
+    plist_path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -380,7 +380,79 @@ struct ProcessInspectionReportModel: Codable {
     let childPids: [UInt32]
     let siblingProcessCount: UInt32
     let ps: ProcessPsSummaryModel?
+    let bundle: ProcessBundleInfoModel?
+    let signature: ProcessSignatureInfoModel?
+    let entitlements: [String]?
+    let environment: [ProcessEnvVarModel]?
+    let environmentNote: String?
+    let startupEntry: ProcessStartupEntryModel?
     let safetyNotes: [String]
+}
+
+/// Result of a sandboxed Rhai advanced filter evaluated by the engine.
+struct EntityFilterReportModel: Codable {
+    let expression: String
+    let matchedEntityIds: [String]
+    let matchedPids: [UInt32]
+    let matchedCount: UInt32
+    let evaluatedEntities: UInt32
+    let error: String?
+}
+
+/// A process observed in recent history that is no longer alive — reconstructed
+/// by diffing the live snapshot against `loadHistoryRange`. Carries the last
+/// metrics seen before the process exited.
+struct FinishedProcessModel: Identifiable {
+    let pid: UInt32
+    let name: String
+    let entityName: String
+    let lastCpuPercent: Float
+    let lastMemoryBytes: UInt64
+    let user: String?
+    let startTimeMillis: UInt64
+    let lastSeenMillis: UInt64
+
+    var id: UInt32 { pid }
+}
+
+struct ProcessBundleInfoModel: Codable {
+    let bundleId: String?
+    let bundlePath: String?
+    let name: String?
+    let shortVersion: String?
+    let version: String?
+
+    /// Human-friendly "1.2.3 (456)" version label when either component exists.
+    var versionLabel: String? {
+        switch (shortVersion, version) {
+        case let (short?, build?) where short != build: return "\(short) (\(build))"
+        case let (short?, _): return short
+        case let (_, build?): return build
+        default: return nil
+        }
+    }
+}
+
+struct ProcessSignatureInfoModel: Codable {
+    let signed: Bool
+    let signingId: String?
+    let teamId: String?
+    let authority: [String]
+    let notarized: Bool?
+    let note: String?
+}
+
+struct ProcessEnvVarModel: Codable, Identifiable {
+    let key: String
+    let value: String
+
+    var id: String { key }
+}
+
+struct ProcessStartupEntryModel: Codable {
+    let kind: String
+    let label: String?
+    let plistPath: String
 }
 
 struct ProcessOpenResourceModel: Codable, Identifiable {
