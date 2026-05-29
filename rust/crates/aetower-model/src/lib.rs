@@ -100,6 +100,9 @@ pub enum TimelineCategory {
     /// Network activity (e.g. a process opening a connection to a new remote
     /// host). Targeted by connection-rule automation.
     Network,
+    /// A regression detected over persisted history (e.g. memory creep over
+    /// days, or idle CPU rising after an app update).
+    Regression,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -292,6 +295,10 @@ pub struct HostTrend {
     pub gpu_percent: Vec<f32>,
     #[serde(default)]
     pub gpu_memory_bytes: Vec<u64>,
+    /// Max observed CPU die temperature (°C) per sample — powers the thermal
+    /// trend HorizonGraph and the throttle forecast slope.
+    #[serde(default)]
+    pub max_cpu_temperature: Vec<f32>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -725,6 +732,12 @@ pub struct EntitySnapshot {
     /// when the feature is off / the binary is signed).
     #[serde(default)]
     pub binary_reputation: Option<BinaryReputation>,
+    /// App version (`CFBundleShortVersionString`) for `.app`-bundled entities,
+    /// resolved lazily by the engine and cached. Persisted in snapshots so the
+    /// regression detector can spot "idle CPU rose after the last update".
+    /// `None` for non-bundled processes or before resolution.
+    #[serde(default)]
+    pub app_version: Option<String>,
 }
 
 fn unknown_signing() -> String {
@@ -838,6 +851,28 @@ pub struct SystemSnapshot {
     /// attribution is incomplete so the UI can show every active tab/session.
     #[serde(default)]
     pub chau7_sessions: Vec<Chau7SessionSummary>,
+    /// Heuristic throttle forecast, present only while the Mac is warming and a
+    /// throttle is plausibly imminent. `None` when nominal/cooling.
+    #[serde(default)]
+    pub thermal_forecast: Option<ThermalForecast>,
+}
+
+/// A heuristic forecast of imminent thermal throttling, extrapolated from the
+/// recent CPU-temperature slope and thermal-state trajectory. An estimate, not
+/// a hardware speed-limit reading.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ThermalForecast {
+    /// Estimated minutes until throttling at the current warming rate. `None`
+    /// when already throttling (state == Critical) or not estimable.
+    pub minutes_to_throttle: Option<f32>,
+    /// Recent warming rate in °C per minute (negative = cooling).
+    pub trend_celsius_per_min: f32,
+    /// Current thermal state at the time of the forecast.
+    pub state: ThermalState,
+    /// The top thermal contributor the user could act on.
+    pub top_contributor_entity_id: Option<String>,
+    pub top_contributor_pid: Option<u32>,
+    pub top_contributor_label: Option<String>,
 }
 
 /// Aggregated cost/usage data for one repository tracked by Chau7.

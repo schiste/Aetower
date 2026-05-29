@@ -81,6 +81,7 @@ struct HostTrendState {
     ai_agent_friction: VecDeque<f32>,
     gpu_percent: VecDeque<f32>,
     gpu_memory_bytes: VecDeque<u64>,
+    max_cpu_temperature: VecDeque<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1456,6 +1457,7 @@ impl Default for HostTrendState {
             ai_agent_friction: VecDeque::with_capacity(MAX_TREND_POINTS),
             gpu_percent: VecDeque::with_capacity(MAX_TREND_POINTS),
             gpu_memory_bytes: VecDeque::with_capacity(MAX_TREND_POINTS),
+            max_cpu_temperature: VecDeque::with_capacity(MAX_TREND_POINTS),
         }
     }
 }
@@ -1486,6 +1488,9 @@ impl HostTrendState {
         push_point(&mut self.ai_agent_friction, host.ai_agent_friction);
         push_point(&mut self.gpu_percent, host.gpu_percent);
         push_point(&mut self.gpu_memory_bytes, host.gpu_memory_bytes);
+        if let Some(max_temp) = max_cpu_temperature(host) {
+            push_point(&mut self.max_cpu_temperature, max_temp);
+        }
     }
 
     fn snapshot(&self) -> HostTrend {
@@ -1501,8 +1506,20 @@ impl HostTrendState {
             ai_agent_friction: self.ai_agent_friction.iter().copied().collect(),
             gpu_percent: self.gpu_percent.iter().copied().collect(),
             gpu_memory_bytes: self.gpu_memory_bytes.iter().copied().collect(),
+            max_cpu_temperature: self.max_cpu_temperature.iter().copied().collect(),
         }
     }
+}
+
+/// Highest CPU die temperature across all reported sensors, if any.
+fn max_cpu_temperature(host: &HostSnapshot) -> Option<f32> {
+    host.cpu_temperatures
+        .iter()
+        .map(|reading| reading.celsius)
+        .filter(|celsius| celsius.is_finite() && *celsius > 0.0)
+        .fold(None, |acc: Option<f32>, celsius| {
+            Some(acc.map_or(celsius, |current| current.max(celsius)))
+        })
 }
 
 fn push_point<T>(series: &mut VecDeque<T>, value: T) {
@@ -1859,6 +1876,7 @@ mod tests {
             signing_classification: "unknown".to_owned(),
             is_adhoc: false,
             binary_reputation: None,
+            app_version: None,
         }
     }
 

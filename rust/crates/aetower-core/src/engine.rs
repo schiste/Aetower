@@ -286,6 +286,7 @@ impl Engine {
             timeline: Vec::new(),
             ai_repo_summaries: Vec::new(),
             chau7_sessions: Vec::new(),
+            thermal_forecast: None,
         };
 
         // Open persistence database (best-effort — app works without it).
@@ -615,6 +616,7 @@ impl Engine {
                     timeline,
                     ai_repo_summaries: adapters.ai_repo_summaries(),
                     chau7_sessions,
+                    thermal_forecast: None,
                 };
                 emit_boot_session_observed(
                     &diagnostics,

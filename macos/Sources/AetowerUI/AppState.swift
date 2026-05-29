@@ -332,13 +332,15 @@ public final class AppState {
                 compressedMemoryBytes: [],
                 aiAgentFriction: [],
                 gpuPercent: [],
-                gpuMemoryBytes: []
+                gpuMemoryBytes: [],
+                maxCpuTemperature: []
             ),
             capabilities: [],
             entities: [],
             timeline: [],
             aiRepoSummaries: [],
-            chau7Sessions: []
+            chau7Sessions: [],
+            thermalForecast: nil
         )
         self.bridge = bridge
         self.permissionCoordinator = permissionCoordinator
@@ -720,6 +722,7 @@ public final class AppState {
         case .thermal: return "thermal"
         case .anomaly: return "anomaly"
         case .network: return "network"
+        case .regression: return "regression"
         @unknown default: return "any"
         }
     }

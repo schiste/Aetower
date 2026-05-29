@@ -4117,6 +4117,7 @@ mod tests {
             signing_classification: "unknown".to_owned(),
             is_adhoc: false,
             binary_reputation: None,
+            app_version: None,
         };
 
         enrich_vscode_entity(&mut entity);
@@ -4200,6 +4201,7 @@ mod tests {
             signing_classification: "unknown".to_owned(),
             is_adhoc: false,
             binary_reputation: None,
+            app_version: None,
         };
 
         enrich_with_endpoint_security(
@@ -4430,6 +4432,7 @@ mod tests {
             signing_classification: "unknown".to_owned(),
             is_adhoc: false,
             binary_reputation: None,
+            app_version: None,
         }];
 
         manager.enrich_entities(&mut entities, &capabilities);

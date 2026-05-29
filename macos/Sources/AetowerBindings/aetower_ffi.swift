@@ -3489,10 +3489,11 @@ public struct EntitySnapshot {
     public var signingClassification: String
     public var isAdhoc: Bool
     public var binaryReputation: BinaryReputation?
+    public var appVersion: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, launcherSummary: String?, attributionNotes: [String], bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recentChangeSummary: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation], networkConnections: [NetworkConnection], signingClassification: String, isAdhoc: Bool, binaryReputation: BinaryReputation?) {
+    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, launcherSummary: String?, attributionNotes: [String], bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recentChangeSummary: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation], networkConnections: [NetworkConnection], signingClassification: String, isAdhoc: Bool, binaryReputation: BinaryReputation?, appVersion: String?) {
         self.entityId = entityId
         self.displayName = displayName
         self.primaryProvenance = primaryProvenance
@@ -3520,6 +3521,7 @@ public struct EntitySnapshot {
         self.signingClassification = signingClassification
         self.isAdhoc = isAdhoc
         self.binaryReputation = binaryReputation
+        self.appVersion = appVersion
     }
 }
 
@@ -3611,6 +3613,9 @@ extension EntitySnapshot: Equatable, Hashable {
         if lhs.binaryReputation != rhs.binaryReputation {
             return false
         }
+        if lhs.appVersion != rhs.appVersion {
+            return false
+        }
         return true
     }
 
@@ -3642,6 +3647,7 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(signingClassification)
         hasher.combine(isAdhoc)
         hasher.combine(binaryReputation)
+        hasher.combine(appVersion)
     }
 }
 
@@ -3680,7 +3686,8 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
                 networkConnections: FfiConverterSequenceTypeNetworkConnection.read(from: &buf), 
                 signingClassification: FfiConverterString.read(from: &buf), 
                 isAdhoc: FfiConverterBool.read(from: &buf), 
-                binaryReputation: FfiConverterOptionTypeBinaryReputation.read(from: &buf)
+                binaryReputation: FfiConverterOptionTypeBinaryReputation.read(from: &buf), 
+                appVersion: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -3712,6 +3719,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
         FfiConverterString.write(value.signingClassification, into: &buf)
         FfiConverterBool.write(value.isAdhoc, into: &buf)
         FfiConverterOptionTypeBinaryReputation.write(value.binaryReputation, into: &buf)
+        FfiConverterOptionString.write(value.appVersion, into: &buf)
     }
 }
 
@@ -4853,10 +4861,11 @@ public struct HostTrend {
     public var aiAgentFriction: [Float]
     public var gpuPercent: [Float]
     public var gpuMemoryBytes: [UInt64]
+    public var maxCpuTemperature: [Float]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(machineFriction: [Float], cpuPercent: [Float], memoryUsedBytes: [UInt64], memoryPressureScore: [Float], diskActivityBps: [UInt64], networkActivityBps: [UInt64], wakeupsPerSecond: [Float], compressedMemoryBytes: [UInt64], aiAgentFriction: [Float], gpuPercent: [Float], gpuMemoryBytes: [UInt64]) {
+    public init(machineFriction: [Float], cpuPercent: [Float], memoryUsedBytes: [UInt64], memoryPressureScore: [Float], diskActivityBps: [UInt64], networkActivityBps: [UInt64], wakeupsPerSecond: [Float], compressedMemoryBytes: [UInt64], aiAgentFriction: [Float], gpuPercent: [Float], gpuMemoryBytes: [UInt64], maxCpuTemperature: [Float]) {
         self.machineFriction = machineFriction
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
@@ -4868,6 +4877,7 @@ public struct HostTrend {
         self.aiAgentFriction = aiAgentFriction
         self.gpuPercent = gpuPercent
         self.gpuMemoryBytes = gpuMemoryBytes
+        self.maxCpuTemperature = maxCpuTemperature
     }
 }
 
@@ -4911,6 +4921,9 @@ extension HostTrend: Equatable, Hashable {
         if lhs.gpuMemoryBytes != rhs.gpuMemoryBytes {
             return false
         }
+        if lhs.maxCpuTemperature != rhs.maxCpuTemperature {
+            return false
+        }
         return true
     }
 
@@ -4926,6 +4939,7 @@ extension HostTrend: Equatable, Hashable {
         hasher.combine(aiAgentFriction)
         hasher.combine(gpuPercent)
         hasher.combine(gpuMemoryBytes)
+        hasher.combine(maxCpuTemperature)
     }
 }
 
@@ -4948,7 +4962,8 @@ public struct FfiConverterTypeHostTrend: FfiConverterRustBuffer {
                 compressedMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf), 
                 aiAgentFriction: FfiConverterSequenceFloat.read(from: &buf), 
                 gpuPercent: FfiConverterSequenceFloat.read(from: &buf), 
-                gpuMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf)
+                gpuMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf), 
+                maxCpuTemperature: FfiConverterSequenceFloat.read(from: &buf)
         )
     }
 
@@ -4964,6 +4979,7 @@ public struct FfiConverterTypeHostTrend: FfiConverterRustBuffer {
         FfiConverterSequenceFloat.write(value.aiAgentFriction, into: &buf)
         FfiConverterSequenceFloat.write(value.gpuPercent, into: &buf)
         FfiConverterSequenceUInt64.write(value.gpuMemoryBytes, into: &buf)
+        FfiConverterSequenceFloat.write(value.maxCpuTemperature, into: &buf)
     }
 }
 
@@ -6242,10 +6258,11 @@ public struct SystemSnapshot {
     public var timeline: [TimelineEvent]
     public var aiRepoSummaries: [AiRepoSummary]
     public var chau7Sessions: [Chau7SessionSummary]
+    public var thermalForecast: ThermalForecast?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sequence: UInt64, capturedAtMillis: UInt64, host: HostSnapshot, hostTrend: HostTrend, capabilities: [CapabilitySnapshot], entities: [EntitySnapshot], timeline: [TimelineEvent], aiRepoSummaries: [AiRepoSummary], chau7Sessions: [Chau7SessionSummary]) {
+    public init(sequence: UInt64, capturedAtMillis: UInt64, host: HostSnapshot, hostTrend: HostTrend, capabilities: [CapabilitySnapshot], entities: [EntitySnapshot], timeline: [TimelineEvent], aiRepoSummaries: [AiRepoSummary], chau7Sessions: [Chau7SessionSummary], thermalForecast: ThermalForecast?) {
         self.sequence = sequence
         self.capturedAtMillis = capturedAtMillis
         self.host = host
@@ -6255,6 +6272,7 @@ public struct SystemSnapshot {
         self.timeline = timeline
         self.aiRepoSummaries = aiRepoSummaries
         self.chau7Sessions = chau7Sessions
+        self.thermalForecast = thermalForecast
     }
 }
 
@@ -6292,6 +6310,9 @@ extension SystemSnapshot: Equatable, Hashable {
         if lhs.chau7Sessions != rhs.chau7Sessions {
             return false
         }
+        if lhs.thermalForecast != rhs.thermalForecast {
+            return false
+        }
         return true
     }
 
@@ -6305,6 +6326,7 @@ extension SystemSnapshot: Equatable, Hashable {
         hasher.combine(timeline)
         hasher.combine(aiRepoSummaries)
         hasher.combine(chau7Sessions)
+        hasher.combine(thermalForecast)
     }
 }
 
@@ -6325,7 +6347,8 @@ public struct FfiConverterTypeSystemSnapshot: FfiConverterRustBuffer {
                 entities: FfiConverterSequenceTypeEntitySnapshot.read(from: &buf), 
                 timeline: FfiConverterSequenceTypeTimelineEvent.read(from: &buf), 
                 aiRepoSummaries: FfiConverterSequenceTypeAiRepoSummary.read(from: &buf), 
-                chau7Sessions: FfiConverterSequenceTypeChau7SessionSummary.read(from: &buf)
+                chau7Sessions: FfiConverterSequenceTypeChau7SessionSummary.read(from: &buf), 
+                thermalForecast: FfiConverterOptionTypeThermalForecast.read(from: &buf)
         )
     }
 
@@ -6339,6 +6362,7 @@ public struct FfiConverterTypeSystemSnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeTimelineEvent.write(value.timeline, into: &buf)
         FfiConverterSequenceTypeAiRepoSummary.write(value.aiRepoSummaries, into: &buf)
         FfiConverterSequenceTypeChau7SessionSummary.write(value.chau7Sessions, into: &buf)
+        FfiConverterOptionTypeThermalForecast.write(value.thermalForecast, into: &buf)
     }
 }
 
@@ -6425,6 +6449,108 @@ public func FfiConverterTypeTemperatureReading_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeTemperatureReading_lower(_ value: TemperatureReading) -> RustBuffer {
     return FfiConverterTypeTemperatureReading.lower(value)
+}
+
+
+public struct ThermalForecast {
+    public var minutesToThrottle: Float?
+    public var trendCelsiusPerMin: Float
+    public var state: ThermalState
+    public var topContributorEntityId: String?
+    public var topContributorPid: UInt32?
+    public var topContributorLabel: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(minutesToThrottle: Float?, trendCelsiusPerMin: Float, state: ThermalState, topContributorEntityId: String?, topContributorPid: UInt32?, topContributorLabel: String?) {
+        self.minutesToThrottle = minutesToThrottle
+        self.trendCelsiusPerMin = trendCelsiusPerMin
+        self.state = state
+        self.topContributorEntityId = topContributorEntityId
+        self.topContributorPid = topContributorPid
+        self.topContributorLabel = topContributorLabel
+    }
+}
+
+#if compiler(>=6)
+extension ThermalForecast: Sendable {}
+#endif
+
+
+extension ThermalForecast: Equatable, Hashable {
+    public static func ==(lhs: ThermalForecast, rhs: ThermalForecast) -> Bool {
+        if lhs.minutesToThrottle != rhs.minutesToThrottle {
+            return false
+        }
+        if lhs.trendCelsiusPerMin != rhs.trendCelsiusPerMin {
+            return false
+        }
+        if lhs.state != rhs.state {
+            return false
+        }
+        if lhs.topContributorEntityId != rhs.topContributorEntityId {
+            return false
+        }
+        if lhs.topContributorPid != rhs.topContributorPid {
+            return false
+        }
+        if lhs.topContributorLabel != rhs.topContributorLabel {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(minutesToThrottle)
+        hasher.combine(trendCelsiusPerMin)
+        hasher.combine(state)
+        hasher.combine(topContributorEntityId)
+        hasher.combine(topContributorPid)
+        hasher.combine(topContributorLabel)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeThermalForecast: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ThermalForecast {
+        return
+            try ThermalForecast(
+                minutesToThrottle: FfiConverterOptionFloat.read(from: &buf), 
+                trendCelsiusPerMin: FfiConverterFloat.read(from: &buf), 
+                state: FfiConverterTypeThermalState.read(from: &buf), 
+                topContributorEntityId: FfiConverterOptionString.read(from: &buf), 
+                topContributorPid: FfiConverterOptionUInt32.read(from: &buf), 
+                topContributorLabel: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ThermalForecast, into buf: inout [UInt8]) {
+        FfiConverterOptionFloat.write(value.minutesToThrottle, into: &buf)
+        FfiConverterFloat.write(value.trendCelsiusPerMin, into: &buf)
+        FfiConverterTypeThermalState.write(value.state, into: &buf)
+        FfiConverterOptionString.write(value.topContributorEntityId, into: &buf)
+        FfiConverterOptionUInt32.write(value.topContributorPid, into: &buf)
+        FfiConverterOptionString.write(value.topContributorLabel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeThermalForecast_lift(_ buf: RustBuffer) throws -> ThermalForecast {
+    return try FfiConverterTypeThermalForecast.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeThermalForecast_lower(_ value: ThermalForecast) -> RustBuffer {
+    return FfiConverterTypeThermalForecast.lower(value)
 }
 
 
@@ -8506,6 +8632,7 @@ public enum TimelineCategory {
     case thermal
     case anomaly
     case network
+    case regression
 }
 
 
@@ -8534,6 +8661,8 @@ public struct FfiConverterTypeTimelineCategory: FfiConverterRustBuffer {
         case 5: return .anomaly
         
         case 6: return .network
+        
+        case 7: return .regression
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -8565,6 +8694,10 @@ public struct FfiConverterTypeTimelineCategory: FfiConverterRustBuffer {
         
         case .network:
             writeInt(&buf, Int32(6))
+        
+        
+        case .regression:
+            writeInt(&buf, Int32(7))
         
         }
     }
@@ -9025,6 +9158,30 @@ fileprivate struct FfiConverterOptionTypeSystemSnapshot: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeSystemSnapshot.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeThermalForecast: FfiConverterRustBuffer {
+    typealias SwiftType = ThermalForecast?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeThermalForecast.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeThermalForecast.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

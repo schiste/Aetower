@@ -120,6 +120,7 @@ pub enum TimelineCategory {
     Thermal,
     Anomaly,
     Network,
+    Regression,
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -392,6 +393,7 @@ pub struct HostTrend {
     pub ai_agent_friction: Vec<f32>,
     pub gpu_percent: Vec<f32>,
     pub gpu_memory_bytes: Vec<u64>,
+    pub max_cpu_temperature: Vec<f32>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -609,6 +611,7 @@ pub struct EntitySnapshot {
     pub signing_classification: String,
     pub is_adhoc: bool,
     pub binary_reputation: Option<BinaryReputation>,
+    pub app_version: Option<String>,
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -671,6 +674,17 @@ pub struct SystemSnapshot {
     pub timeline: Vec<TimelineEvent>,
     pub ai_repo_summaries: Vec<AiRepoSummary>,
     pub chau7_sessions: Vec<Chau7SessionSummary>,
+    pub thermal_forecast: Option<ThermalForecast>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct ThermalForecast {
+    pub minutes_to_throttle: Option<f32>,
+    pub trend_celsius_per_min: f32,
+    pub state: ThermalState,
+    pub top_contributor_entity_id: Option<String>,
+    pub top_contributor_pid: Option<u32>,
+    pub top_contributor_label: Option<String>,
 }
 
 /// Per-repository AI cost summary from the Chau7 adapter.
@@ -1761,6 +1775,7 @@ impl From<model::TimelineCategory> for TimelineCategory {
             model::TimelineCategory::Thermal => Self::Thermal,
             model::TimelineCategory::Anomaly => Self::Anomaly,
             model::TimelineCategory::Network => Self::Network,
+            model::TimelineCategory::Regression => Self::Regression,
         }
     }
 }
@@ -2160,6 +2175,7 @@ impl From<model::HostTrend> for HostTrend {
             ai_agent_friction: value.ai_agent_friction,
             gpu_percent: value.gpu_percent,
             gpu_memory_bytes: value.gpu_memory_bytes,
+            max_cpu_temperature: value.max_cpu_temperature,
         }
     }
 }
@@ -2392,6 +2408,7 @@ impl From<model::EntitySnapshot> for EntitySnapshot {
             signing_classification: value.signing_classification,
             is_adhoc: value.is_adhoc,
             binary_reputation: value.binary_reputation.map(Into::into),
+            app_version: value.app_version,
         }
     }
 }
@@ -2507,6 +2524,20 @@ impl From<model::SystemSnapshot> for SystemSnapshot {
                 .map(Into::into)
                 .collect(),
             chau7_sessions: value.chau7_sessions.into_iter().map(Into::into).collect(),
+            thermal_forecast: value.thermal_forecast.map(Into::into),
+        }
+    }
+}
+
+impl From<model::ThermalForecast> for ThermalForecast {
+    fn from(value: model::ThermalForecast) -> Self {
+        Self {
+            minutes_to_throttle: value.minutes_to_throttle,
+            trend_celsius_per_min: value.trend_celsius_per_min,
+            state: value.state.into(),
+            top_contributor_entity_id: value.top_contributor_entity_id,
+            top_contributor_pid: value.top_contributor_pid,
+            top_contributor_label: value.top_contributor_label,
         }
     }
 }

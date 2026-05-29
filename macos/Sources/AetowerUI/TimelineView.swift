@@ -380,6 +380,7 @@ private func categoryLabel(_ category: TimelineCategory) -> String {
     case .thermal: return "Thermal"
     case .anomaly: return "Anomaly"
     case .network: return "Network"
+    case .regression: return "Regression"
     }
 }
 
