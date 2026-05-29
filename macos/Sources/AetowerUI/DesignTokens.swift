@@ -115,6 +115,15 @@ enum AetowerDesign {
         case "claude": return .blue
         case "codex": return .green
         case "chatgpt": return .orange
+        case "aider": return .pink
+        case "cursor-agent": return .indigo
+        case "ollama": return .teal
+        case "mlx-lm": return .cyan
+        case "llama-cpp": return .mint
+        case "llamafile": return .brown
+        case "lm-studio": return .purple
+        case "koboldcpp": return .red
+        case "whisper": return .yellow
         default: return .purple
         }
     }
@@ -124,7 +133,20 @@ enum AetowerDesign {
         case "claude": return "Claude"
         case "codex": return "Codex"
         case "chatgpt": return "ChatGPT"
-        default: return "AI"
+        case "aider": return "Aider"
+        case "cursor-agent": return "Cursor"
+        case "ollama": return "Ollama"
+        case "mlx-lm": return "MLX"
+        case "llama-cpp": return "llama.cpp"
+        case "llamafile": return "Llamafile"
+        case "lm-studio": return "LM Studio"
+        case "koboldcpp": return "KoboldCpp"
+        case "whisper": return "Whisper"
+        default:
+            let label = provider
+                .replacingOccurrences(of: "-", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return label.isEmpty ? "AI" : label.capitalized
         }
     }
 }

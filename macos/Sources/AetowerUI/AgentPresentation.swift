@@ -6,9 +6,75 @@ import SwiftUI
 // so there is a single source of truth. Where the per-view copies had drifted,
 // the shared version takes the superset behavior (noted inline).
 
+struct AgentRuntimeBadge: Identifiable {
+    let id: String
+    let label: String
+    let color: Color
+}
+
+private let agentNonRuntimeBadges: Set<String> = [
+    "ai-agent",
+    "ai-model",
+    "shell-tree",
+    "daemon",
+    "interactive",
+    "chau7-live",
+    "command-attributed",
+    "privileged-helper",
+    "approval-needed",
+    "delegating",
+    "cto-active",
+    "at-prompt",
+    "shell-loading",
+    "waiting-input",
+    "agent-error",
+    "agent-idle",
+    "agent-finished",
+    "recent-process-exit",
+]
+
 /// The Chau7 session component for an entity, if one is attached.
 func agentSessionComponent(for entity: EntitySnapshot) -> ComponentSnapshot? {
     entity.components.first { $0.adapterContext?.kind == .chau7Session }
+}
+
+/// Provider/model badges for visible agent identity chips.
+///
+/// These are intentionally derived from stable backend badge tokens rather than
+/// display names, so optional integrations (Chau7) and raw process recognition
+/// both feed the same UI.
+func agentRuntimeBadges(for entity: EntitySnapshot) -> [AgentRuntimeBadge] {
+    let ids = agentRuntimeBadgeIDs(for: entity)
+    if ids.isEmpty, entity.entityKind == .aiAgent {
+        return [AgentRuntimeBadge(id: "ai", label: "AI", color: .purple)]
+    }
+    return ids.map {
+        AgentRuntimeBadge(
+            id: $0,
+            label: AetowerDesign.agentLabel($0),
+            color: AetowerDesign.agentColor($0)
+        )
+    }
+}
+
+private func agentRuntimeBadgeIDs(for entity: EntitySnapshot) -> [String] {
+    var ids: [String] = []
+    var seen = Set<String>()
+    for badge in entity.badges {
+        guard isRuntimeBadgeCandidate(badge) else {
+            continue
+        }
+        if seen.insert(badge).inserted {
+            ids.append(badge)
+        }
+    }
+    return ids
+}
+
+private func isRuntimeBadgeCandidate(_ badge: String) -> Bool {
+    !badge.isEmpty
+        && !badge.hasPrefix("ai-session:")
+        && !agentNonRuntimeBadges.contains(badge)
 }
 
 /// Human-readable provider/runtime label for an AI agent entity.
@@ -23,25 +89,11 @@ func agentProviderLabel(for entity: EntitySnapshot) -> String? {
        let prefix = title.components(separatedBy: " · ").first {
         let trimmed = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            return trimmed
+            return AetowerDesign.agentLabel(trimmed)
         }
     }
 
-    let providerBadges = entity.badges.filter {
-        $0 != "ai-agent"
-            && $0 != "chau7-live"
-            && !$0.hasPrefix("ai-session:")
-            && ![
-                "approval-needed",
-                "delegating",
-                "cto-active",
-                "at-prompt",
-                "shell-loading",
-                "agent-error",
-                "agent-finished",
-            ].contains($0)
-    }
-    return providerBadges.first.map { $0.replacingOccurrences(of: "-", with: " ").capitalized }
+    return agentRuntimeBadgeIDs(for: entity).first.map(AetowerDesign.agentLabel)
 }
 
 /// Best project/workspace path for an entity, ranked by source reliability.

@@ -71,7 +71,7 @@ fn classify_process(
                 bundle_id: None,
                 executable_path: process.exe.clone(),
                 entity_kind: EntityKind::AiAgent,
-                badges: vec!["ai-agent".to_owned(), "shell-tree".to_owned()],
+                badges: ai_runtime_badges(&process.name, "shell-tree"),
             };
         }
         return terminal_session_seed(shell_process);
@@ -95,7 +95,7 @@ fn classify_process(
             bundle_id: None,
             executable_path: process.exe.clone(),
             entity_kind: EntityKind::AiAgent,
-            badges: vec!["ai-agent".to_owned(), "daemon".to_owned()],
+            badges: ai_runtime_badges(&process.name, "daemon"),
         };
     }
 
@@ -181,16 +181,44 @@ fn is_browser_name(name: &str) -> bool {
 /// which is derived from `sysinfo::Process::name()` — on macOS this
 /// is the binary file name, not the bundle display name.
 fn is_ai_agent_exe(name: &str) -> bool {
+    ai_runtime_badge(name).is_some()
+}
+
+fn ai_runtime_badges(name: &str, lineage_badge: &str) -> Vec<String> {
+    let mut badges = vec!["ai-agent".to_owned(), lineage_badge.to_owned()];
+    if is_ai_model_exe(name) {
+        badges.push("ai-model".to_owned());
+    }
+    if let Some(runtime) = ai_runtime_badge(name) {
+        badges.push(runtime.to_owned());
+    }
+    badges
+}
+
+fn ai_runtime_badge(name: &str) -> Option<&'static str> {
+    match name {
+        // AI coding agents
+        "claude" | "claude-code" => Some("claude"),
+        "codex" => Some("codex"),
+        "aider" => Some("aider"),
+        "cursor-agent" => Some("cursor-agent"),
+        // Local LLM servers
+        "ollama" | "ollama-runner" | "ollama_llama_server" => Some("ollama"),
+        "mlx_lm" | "mlx-lm-server" | "mlx_lm.server" => Some("mlx-lm"),
+        "llama-server" | "llama-cli" | "llama-bench" => Some("llama-cpp"),
+        "llamafile" => Some("llamafile"),
+        "lm-studio" | "lmstudio" | "LM Studio" => Some("lm-studio"),
+        "koboldcpp" => Some("koboldcpp"),
+        // Local ML inference
+        "whisper" | "whisper-server" | "whisper-cpp" => Some("whisper"),
+        _ => None,
+    }
+}
+
+fn is_ai_model_exe(name: &str) -> bool {
     matches!(
         name,
-        // AI coding agents
-        "claude"
-            | "claude-code"
-            | "codex"
-            | "aider"
-            | "cursor-agent"
-            // Local LLM servers
-            | "ollama"
+        "ollama"
             | "ollama-runner"
             | "ollama_llama_server"
             | "mlx_lm"
@@ -204,7 +232,6 @@ fn is_ai_agent_exe(name: &str) -> bool {
             | "lmstudio"
             | "LM Studio"
             | "koboldcpp"
-            // Local ML inference
             | "whisper"
             | "whisper-server"
             | "whisper-cpp"
@@ -556,6 +583,86 @@ mod tests {
         assert_eq!(entity.entity_kind, EntityKind::TerminalSession);
         assert_eq!(entity.entity_id, "terminal:20");
         assert_eq!(entity.display_name, "zsh session");
+    }
+
+    #[test]
+    fn shell_ai_agents_accumulate_runtime_badges() {
+        let processes = vec![
+            sample(
+                1,
+                None,
+                "launchd",
+                Some("/sbin/launchd"),
+                &["/sbin/launchd"],
+            ),
+            sample(
+                10,
+                Some(1),
+                "Terminal",
+                Some("/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal"),
+                &["Terminal"],
+            ),
+            sample(20, Some(10), "zsh", Some("/bin/zsh"), &["-zsh"]),
+            sample(
+                21,
+                Some(20),
+                "codex",
+                Some("/opt/homebrew/bin/codex"),
+                &["codex"],
+            ),
+            sample(
+                22,
+                Some(20),
+                "aider",
+                Some("/opt/homebrew/bin/aider"),
+                &["aider"],
+            ),
+        ];
+
+        let identity = resolve(&processes);
+        let Some(entity) = identity.entities.get("ai-agent:20") else {
+            panic!("shell agent entity should exist");
+        };
+
+        assert_eq!(entity.entity_kind, EntityKind::AiAgent);
+        assert!(entity.badges.iter().any(|badge| badge == "ai-agent"));
+        assert!(entity.badges.iter().any(|badge| badge == "shell-tree"));
+        assert!(entity.badges.iter().any(|badge| badge == "codex"));
+        assert!(entity.badges.iter().any(|badge| badge == "aider"));
+    }
+
+    #[test]
+    fn daemon_ai_model_gets_runtime_and_model_badges() {
+        let processes = vec![
+            sample(
+                1,
+                None,
+                "launchd",
+                Some("/sbin/launchd"),
+                &["/sbin/launchd"],
+            ),
+            sample(
+                30,
+                Some(1),
+                "ollama-runner",
+                Some("/opt/homebrew/bin/ollama-runner"),
+                &["ollama-runner"],
+            ),
+        ];
+
+        let identity = resolve(&processes);
+        let Some(entity_id) = identity.pid_to_entity.get(&30) else {
+            panic!("model process should resolve");
+        };
+        let Some(entity) = identity.entities.get(entity_id) else {
+            panic!("model entity should exist");
+        };
+
+        assert_eq!(entity.entity_kind, EntityKind::AiAgent);
+        assert!(entity.badges.iter().any(|badge| badge == "ai-agent"));
+        assert!(entity.badges.iter().any(|badge| badge == "ai-model"));
+        assert!(entity.badges.iter().any(|badge| badge == "daemon"));
+        assert!(entity.badges.iter().any(|badge| badge == "ollama"));
     }
 
     #[test]
