@@ -36,7 +36,27 @@ Do not present Developer Preview builds as production-ready or App Store-ready.
 
 ## Install and first run
 
-For Developer Preview builds, use the direct-download release path:
+Latest Developer Preview: **0.51 build 418**.
+
+Download the release from
+[GitHub Releases](https://github.com/schiste/Aetower/releases/tag/v0.51).
+The release contains the signed/notarized app ZIP, matching source archive,
+Homebrew cask artifact, Sparkle appcast, third-party notices, and checksums.
+
+Canonical Sparkle update metadata is configured for:
+
+```text
+https://aetower.dev/releases/appcast.xml
+```
+
+Until `aetower.dev` DNS is fully active, the deployed release payload is also
+available from the Cloudflare Pages project URL:
+
+```text
+https://aetower-dev.pages.dev/releases/appcast.xml
+```
+
+For Developer Preview builds:
 
 1. Download the signed and notarized `Aetower.zip`.
 2. Unzip and move `Aetower.app` to `/Applications`.
