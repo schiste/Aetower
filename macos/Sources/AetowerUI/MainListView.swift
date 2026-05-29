@@ -1170,7 +1170,10 @@ public struct MainListView: View {
     }
 
     private func detailPanel(for entity: EntitySnapshot) -> some View {
-        VStack(spacing: 0) {
+        let processTreeEntities = selectedProcessTreeEntities(for: entity)
+        let quickStopPID = primaryProcessID(in: processTreeEntities)
+
+        return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .center, spacing: 12) {
                     SectionEyebrow(text: "Detail")
@@ -1198,6 +1201,10 @@ public struct MainListView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+
+                if let quickStopPID {
+                    sidePanelQuickStop(entity: entity, pid: quickStopPID)
+                }
             }
             .padding(.horizontal, AetowerDesign.Spacing.lg)
             .padding(.vertical, AetowerDesign.Spacing.md)
@@ -1207,10 +1214,45 @@ public struct MainListView: View {
             EntityDetailView(
                 entity: entity,
                 state: state,
-                processTreeSeedEntities: selectedProcessTreeEntities(for: entity),
+                processTreeSeedEntities: processTreeEntities,
                 processOperatorRequest: processOperatorRequest
             )
         }
+    }
+
+    private func sidePanelQuickStop(entity: EntitySnapshot, pid: UInt32) -> some View {
+        HStack(spacing: 8) {
+            Label("Quick stop", systemImage: "hand.raised.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text("PID \(pid)")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.tertiary)
+
+            Spacer()
+
+            sidePanelStopButton(.terminate, entity: entity, pid: pid)
+            sidePanelStopButton(.forceKill, entity: entity, pid: pid)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
+    }
+
+    private func sidePanelStopButton(_ action: ProcessActionKind, entity: EntitySnapshot, pid: UInt32) -> some View {
+        Button(role: action.isDestructive ? .destructive : nil) {
+            requestProcessOperation(
+                entityID: entity.entityId,
+                pid: pid,
+                operation: .previewAction(action)
+            )
+        } label: {
+            Label(action.label, systemImage: action.systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(action == .forceKill ? AetowerDesign.Status.error : AetowerDesign.Status.warning)
+        }
+        .buttonStyle(.borderless)
     }
 
     private var rankedEntitiesSection: some View {
@@ -1452,7 +1494,7 @@ public struct MainListView: View {
                     operation: .previewAction(.forceKill)
                 )
             }
-            Menu("Preview action") {
+            Menu("Actions") {
                 ForEach(contextPreviewActions) { action in
                     Button(action.label, role: action.isDestructive ? .destructive : nil) {
                         requestProcessOperation(

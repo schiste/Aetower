@@ -144,7 +144,7 @@ struct ProcessOperatorPanel: View {
         Button("Force kill PID \(pid)…", role: .destructive) {
             previewAction(.forceKill, pid: pid)
         }
-        Menu("Preview action") {
+        Menu("Actions") {
             ForEach(quickPreviewActions) { action in
                 Button(action.label, role: action.isDestructive ? .destructive : nil) {
                     previewAction(action, pid: pid)
@@ -172,16 +172,6 @@ struct ProcessOperatorPanel: View {
                 .disabled(isLoading(pid, .processSample))
 
                 Spacer()
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Quick stop")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    prominentActionButton(.terminate, pid: pid)
-                    prominentActionButton(.forceKill, pid: pid)
-                }
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -583,38 +573,6 @@ struct ProcessOperatorPanel: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .disabled(isLoading(pid, .processAction))
-    }
-
-    private func prominentActionButton(_ action: ProcessActionKind, pid: UInt32) -> some View {
-        Button(role: action.isDestructive ? .destructive : nil) {
-            previewAction(action, pid: pid)
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Label(action.label, systemImage: action.systemImage)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(prominentActionTint(action))
-                Text(action == .terminate ? "Graceful SIGTERM" : "Immediate SIGKILL")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                prominentActionSurface(action),
-                in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm)
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(isLoading(pid, .processAction))
-    }
-
-    private func prominentActionTint(_ action: ProcessActionKind) -> Color {
-        action == .forceKill ? AetowerDesign.Status.error : AetowerDesign.Status.warning
-    }
-
-    private func prominentActionSurface(_ action: ProcessActionKind) -> Color {
-        action == .forceKill ? AetowerDesign.Surface.alertCritical : AetowerDesign.Surface.alertWarning
     }
 
     private func previewAction(_ action: ProcessActionKind, pid: UInt32) {
