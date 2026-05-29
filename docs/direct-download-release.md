@@ -123,7 +123,7 @@ sh scripts/release-public-preview.sh
 This runs the signed/notarized macOS ZIP release, generates the Sparkle appcast,
 generates the Homebrew cask artifact, generates third-party dependency/license
 notices, verifies the Sparkle distribution matrix, and prepares the Cloudflare
-Pages payload. It does not deploy to Cloudflare by default.
+Pages payload. It does not publish to Cloudflare by default.
 
 The generated cask is a tap-ready artifact, not a full Homebrew publication by
 itself. Publish it through a dedicated tap such as `homebrew-aetower`; see
@@ -154,11 +154,19 @@ The matrix is a release-artifact check. A local development package built
 without `AETOWER_APPCAST_URL` and `AETOWER_SPARKLE_PUBLIC_ED_KEY` is expected
 to fail because Sparkle is intentionally disabled for that artifact.
 
-Deploy explicitly only after reviewing the generated site payload:
+Publish explicitly only when the generated build should become visible to
+Sparkle clients:
 
 ```sh
-sh scripts/release-public-preview.sh --prepare-only --deploy-cloudflare
+sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare
 ```
+
+The publish path deploys the prepared Cloudflare Pages payload, then verifies
+that the public appcast contains the expected `AETOWER_VERSION` and
+`AETOWER_BUILD_NUMBER`, the immutable Sparkle archive resolves, the direct ZIP
+resolves, and the generated third-party notices are public. Use
+`--skip-public-verify` only when Cloudflare propagation is being checked
+manually.
 
 ## Publish
 

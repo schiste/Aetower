@@ -6,7 +6,7 @@ ENV_FILE="${AETOWER_RELEASE_ENV_FILE:-$ROOT/.env.release.local}"
 
 usage() {
     cat <<EOF
-usage: $0 [--prepare-only] [--with-pkg] [--skip-matrix] [--deploy-cloudflare]
+usage: $0 [--prepare-only] [--with-pkg] [--skip-matrix] [--deploy-cloudflare|--publish-cloudflare] [--skip-public-verify]
 
 Build the public Developer Preview release set:
   1. signed/notarized macOS app + zip
@@ -17,8 +17,8 @@ Build the public Developer Preview release set:
   6. Sparkle distribution matrix verification
   7. Cloudflare Pages static payload
 
-By default this does not deploy to Cloudflare. Use --deploy-cloudflare only
-after reviewing the generated dist/cloudflare-site payload.
+By default this does not publish to Cloudflare. Use --publish-cloudflare only
+when the generated release should become visible to Sparkle clients.
 
 By default this also skips the .pkg installer because public .pkg output
 requires a Developer ID Installer certificate. Use --with-pkg when that
@@ -30,6 +30,7 @@ PREPARE_ONLY=0
 DEPLOY_CLOUDFLARE=0
 WITH_PKG=0
 RUN_MATRIX=1
+VERIFY_PUBLIC=1
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --prepare-only)
@@ -44,8 +45,12 @@ while [ "$#" -gt 0 ]; do
             RUN_MATRIX=0
             shift
             ;;
-        --deploy-cloudflare)
+        --deploy-cloudflare|--publish-cloudflare)
             DEPLOY_CLOUDFLARE=1
+            shift
+            ;;
+        --skip-public-verify)
+            VERIFY_PUBLIC=0
             shift
             ;;
         -h|--help)
@@ -119,10 +124,17 @@ printf '  notices:         %s\n' "$ROOT/dist/THIRD-PARTY-NOTICES.md"
 printf '  cloudflare site: %s\n' "$SITE_OUTPUT"
 
 if [ "$DEPLOY_CLOUDFLARE" -eq 1 ]; then
-    printf '\n=== deploy Cloudflare Pages ===\n'
+    printf '\n=== publish Cloudflare Pages ===\n'
+    printf 'Publishing updates %s and makes this build discoverable by Sparkle clients.\n' "${AETOWER_APPCAST_URL:-the configured appcast URL}"
     npx wrangler pages deploy "$SITE_OUTPUT" --project-name "$CLOUDFLARE_PROJECT"
+    if [ "$VERIFY_PUBLIC" -eq 1 ]; then
+        printf '\n=== verify published release ===\n'
+        sh "$ROOT/scripts/verify-published-release.sh"
+    else
+        printf '\nPublished release verification skipped by --skip-public-verify.\n'
+    fi
 else
-    printf '\nCloudflare deploy intentionally skipped.\n'
-    printf 'Deploy explicitly with:\n'
-    printf '  npx wrangler pages deploy %s --project-name %s\n' "$SITE_OUTPUT" "$CLOUDFLARE_PROJECT"
+    printf '\nCloudflare publish intentionally skipped.\n'
+    printf 'Publish explicitly with:\n'
+    printf '  sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare\n'
 fi

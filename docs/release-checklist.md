@@ -119,10 +119,17 @@ runbook, including the two-hour soak command.
 
 ## 7. Publish
 
-Upload the appcast directory to the configured host:
+Publish through the orchestrator:
 
-- `appcast.xml`
-- release zip archives
-- generated delta updates, if any
+```sh
+sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare
+```
+
+This deploys the prepared Cloudflare Pages payload and verifies that:
+
+- the public appcast contains the expected version and build number
+- the immutable Sparkle archive resolves
+- the direct ZIP resolves
+- third-party notices resolve
 
 Keep old appcast archives available so Sparkle can generate and serve deltas.

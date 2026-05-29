@@ -44,11 +44,16 @@ Verify Wrangler is authenticated:
 npx wrangler whoami
 ```
 
-Deploy:
+Deploy through the release orchestrator:
 
 ```sh
-npx wrangler pages deploy dist/cloudflare-site --project-name aetower-dev
+sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare
 ```
+
+This deploys `dist/cloudflare-site/` and then runs
+`scripts/verify-published-release.sh` against the public URLs. Use direct
+`wrangler pages deploy` only for emergency manual recovery, because it bypasses
+the Sparkle/public URL verification step.
 
 In Cloudflare, attach the custom domain:
 
