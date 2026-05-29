@@ -293,6 +293,10 @@ public struct EntityDetailView: View {
     let processTreeSeedEntities: [EntitySnapshot]
     let processOperatorRequest: ProcessOperatorRequest?
     @State private var selectedSection: EntityDetailSection = .summary
+    /// Set when a recommendation's one-click action is tapped — staged into the
+    /// always-visible operator panel below, where the dry-run preview shows and
+    /// the user confirms. Takes precedence over the caller-provided request.
+    @State private var localOperatorRequest: ProcessOperatorRequest?
 
     public init(
         entity: EntitySnapshot,
@@ -315,7 +319,7 @@ public struct EntityDetailView: View {
                     entity: entity,
                     state: state,
                     processEntities: processTreeSeedEntities,
-                    quickRequest: processOperatorRequest
+                    quickRequest: localOperatorRequest ?? processOperatorRequest
                 )
                 sectionPicker
                 selectedSectionContent
@@ -581,19 +585,73 @@ public struct EntityDetailView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(Array(entity.recommendations.enumerated()), id: \.offset) { _, recommendation in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(recommendation.title)
-                                .font(.headline)
-                            Text(recommendation.detail)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        recommendationCard(recommendation)
                     }
                 }
             }
             .padding(.top, 4)
         }
+    }
+
+    @ViewBuilder
+    private func recommendationCard(_ recommendation: Recommendation) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(recommendationTint(recommendation.severity))
+                    .frame(width: 8, height: 8)
+                Text(recommendation.title)
+                    .font(.headline)
+            }
+            Text(recommendation.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let pid = recommendation.targetPid,
+                let rawAction = recommendation.suggestedAction,
+                let action = ProcessActionKind(rawValue: rawAction)
+            {
+                Button {
+                    // Stage the dry-run preview in the operator panel above; the
+                    // user confirms there. One click ≠ execution.
+                    localOperatorRequest = ProcessOperatorRequest(
+                        pid: pid,
+                        operation: .previewAction(action)
+                    )
+                } label: {
+                    Label(
+                        recommendationActionLabel(action, recommendation.targetLabel),
+                        systemImage: action.systemImage
+                    )
+                }
+                .buttonStyle(.bordered)
+                .tint(recommendationTint(recommendation.severity))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            Color.secondary.opacity(0.05),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+    }
+
+    private func recommendationTint(_ severity: RecommendationSeverity) -> Color {
+        switch severity {
+        case .urgent: return AetowerDesign.Status.error
+        case .suggested: return AetowerDesign.Status.warning
+        case .info: return AetowerDesign.Status.neutral
+        @unknown default: return AetowerDesign.Status.neutral
+        }
+    }
+
+    private func recommendationActionLabel(_ action: ProcessActionKind, _ targetLabel: String?)
+        -> String
+    {
+        if let targetLabel, !targetLabel.isEmpty {
+            return "\(action.label): \(targetLabel)"
+        }
+        return action.label
     }
 
     private var attributionCaveats: some View {
