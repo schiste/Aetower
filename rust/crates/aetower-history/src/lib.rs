@@ -1795,6 +1795,7 @@ mod tests {
             agent_cost: None,
             session_markers: Vec::new(),
             recommendations: Vec::new(),
+            network_connections: Vec::new(),
         }
     }
 

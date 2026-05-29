@@ -671,6 +671,21 @@ pub struct EntitySnapshot {
     pub session_markers: Vec<SessionMarker>,
     #[serde(default)]
     pub recommendations: Vec<Recommendation>,
+    /// Live network connections attributed to this entity's processes
+    /// (same-user, sampled best-effort). Deduped, capped.
+    #[serde(default)]
+    pub network_connections: Vec<NetworkConnection>,
+}
+
+/// One network socket attributed to a process: protocol, local endpoint, and
+/// (for connected sockets) the remote endpoint + state. Listening sockets have
+/// `remote == None` and `state == "LISTEN"`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NetworkConnection {
+    pub protocol: String,
+    pub local: String,
+    pub remote: Option<String>,
+    pub state: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

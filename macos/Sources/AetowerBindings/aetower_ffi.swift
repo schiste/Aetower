@@ -3339,10 +3339,11 @@ public struct EntitySnapshot {
     public var agentCost: AgentCostSummary?
     public var sessionMarkers: [SessionMarker]
     public var recommendations: [Recommendation]
+    public var networkConnections: [NetworkConnection]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, launcherSummary: String?, attributionNotes: [String], bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recentChangeSummary: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation]) {
+    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, launcherSummary: String?, attributionNotes: [String], bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recentChangeSummary: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation], networkConnections: [NetworkConnection]) {
         self.entityId = entityId
         self.displayName = displayName
         self.primaryProvenance = primaryProvenance
@@ -3366,6 +3367,7 @@ public struct EntitySnapshot {
         self.agentCost = agentCost
         self.sessionMarkers = sessionMarkers
         self.recommendations = recommendations
+        self.networkConnections = networkConnections
     }
 }
 
@@ -3445,6 +3447,9 @@ extension EntitySnapshot: Equatable, Hashable {
         if lhs.recommendations != rhs.recommendations {
             return false
         }
+        if lhs.networkConnections != rhs.networkConnections {
+            return false
+        }
         return true
     }
 
@@ -3472,6 +3477,7 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(agentCost)
         hasher.combine(sessionMarkers)
         hasher.combine(recommendations)
+        hasher.combine(networkConnections)
     }
 }
 
@@ -3506,7 +3512,8 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
                 groupingSuggestion: FfiConverterOptionString.read(from: &buf), 
                 agentCost: FfiConverterOptionTypeAgentCostSummary.read(from: &buf), 
                 sessionMarkers: FfiConverterSequenceTypeSessionMarker.read(from: &buf), 
-                recommendations: FfiConverterSequenceTypeRecommendation.read(from: &buf)
+                recommendations: FfiConverterSequenceTypeRecommendation.read(from: &buf), 
+                networkConnections: FfiConverterSequenceTypeNetworkConnection.read(from: &buf)
         )
     }
 
@@ -3534,6 +3541,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
         FfiConverterOptionTypeAgentCostSummary.write(value.agentCost, into: &buf)
         FfiConverterSequenceTypeSessionMarker.write(value.sessionMarkers, into: &buf)
         FfiConverterSequenceTypeRecommendation.write(value.recommendations, into: &buf)
+        FfiConverterSequenceTypeNetworkConnection.write(value.networkConnections, into: &buf)
     }
 }
 
@@ -4974,6 +4982,92 @@ public func FfiConverterTypeMetricTrend_lift(_ buf: RustBuffer) throws -> Metric
 #endif
 public func FfiConverterTypeMetricTrend_lower(_ value: MetricTrend) -> RustBuffer {
     return FfiConverterTypeMetricTrend.lower(value)
+}
+
+
+public struct NetworkConnection {
+    public var `protocol`: String
+    public var local: String
+    public var remote: String?
+    public var state: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(`protocol`: String, local: String, remote: String?, state: String) {
+        self.`protocol` = `protocol`
+        self.local = local
+        self.remote = remote
+        self.state = state
+    }
+}
+
+#if compiler(>=6)
+extension NetworkConnection: Sendable {}
+#endif
+
+
+extension NetworkConnection: Equatable, Hashable {
+    public static func ==(lhs: NetworkConnection, rhs: NetworkConnection) -> Bool {
+        if lhs.`protocol` != rhs.`protocol` {
+            return false
+        }
+        if lhs.local != rhs.local {
+            return false
+        }
+        if lhs.remote != rhs.remote {
+            return false
+        }
+        if lhs.state != rhs.state {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(`protocol`)
+        hasher.combine(local)
+        hasher.combine(remote)
+        hasher.combine(state)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNetworkConnection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NetworkConnection {
+        return
+            try NetworkConnection(
+                protocol: FfiConverterString.read(from: &buf), 
+                local: FfiConverterString.read(from: &buf), 
+                remote: FfiConverterOptionString.read(from: &buf), 
+                state: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NetworkConnection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.`protocol`, into: &buf)
+        FfiConverterString.write(value.local, into: &buf)
+        FfiConverterOptionString.write(value.remote, into: &buf)
+        FfiConverterString.write(value.state, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkConnection_lift(_ buf: RustBuffer) throws -> NetworkConnection {
+    return try FfiConverterTypeNetworkConnection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkConnection_lower(_ value: NetworkConnection) -> RustBuffer {
+    return FfiConverterTypeNetworkConnection.lower(value)
 }
 
 
@@ -8960,6 +9054,31 @@ fileprivate struct FfiConverterSequenceTypeFrictionContributor: FfiConverterRust
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFrictionContributor.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNetworkConnection: FfiConverterRustBuffer {
+    typealias SwiftType = [NetworkConnection]
+
+    public static func write(_ value: [NetworkConnection], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNetworkConnection.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NetworkConnection] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NetworkConnection]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNetworkConnection.read(from: &buf))
         }
         return seq
     }

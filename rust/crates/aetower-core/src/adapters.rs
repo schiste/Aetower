@@ -16,7 +16,7 @@ use aetower_diagnostics::{
 use aetower_model::{
     AdapterContextKind, AdapterContextSnapshot, AttributionConfidence, CapabilityHealth,
     CapabilityKind, CapabilitySnapshot, CapabilityState, ComponentKind, ComponentSnapshot,
-    EntitySnapshot, ProvenanceKind, ProvenanceSnapshot,
+    EntitySnapshot, NetworkConnection, ProvenanceKind, ProvenanceSnapshot,
 };
 use aetower_time as time;
 use parking_lot::Mutex;
@@ -1380,6 +1380,11 @@ impl AdapterManager {
                     {
                         entity.badges.push("privileged-helper".to_owned());
                     }
+                    entity.network_connections = process
+                        .connections
+                        .iter()
+                        .map(|raw| parse_connection_string(raw))
+                        .collect();
                 }
             }
 
@@ -2828,6 +2833,43 @@ fn invoke_helper_fan_command(
     ))
 }
 
+/// Parse a sampled socket string into a structured connection. Handles, with or
+/// without a leading protocol token and trailing `(STATE)`:
+///   "TCP 1.2.3.4:443->5.6.7.8:443", "1.2.3.4:443->5.6.7.8:443", "TCP *:8080 (LISTEN)".
+fn parse_connection_string(raw: &str) -> NetworkConnection {
+    let trimmed = raw.trim();
+    let (protocol, rest) = match trimmed.split_once(' ') {
+        Some((proto, rest))
+            if proto.eq_ignore_ascii_case("tcp") || proto.eq_ignore_ascii_case("udp") =>
+        {
+            (proto.to_ascii_uppercase(), rest.trim())
+        }
+        _ => (String::new(), trimmed),
+    };
+    let (endpoints, explicit_state) = match rest.rsplit_once(" (") {
+        Some((endpoints, state)) => (
+            endpoints.trim(),
+            Some(state.trim_end_matches(')').trim().to_ascii_lowercase()),
+        ),
+        None => (rest, None),
+    };
+    if let Some((local, remote)) = endpoints.split_once("->") {
+        NetworkConnection {
+            protocol,
+            local: local.trim().to_owned(),
+            remote: Some(remote.trim().to_owned()),
+            state: explicit_state.unwrap_or_else(|| "established".to_owned()),
+        }
+    } else {
+        NetworkConnection {
+            protocol,
+            local: endpoints.trim().to_owned(),
+            remote: None,
+            state: explicit_state.unwrap_or_else(|| "listen".to_owned()),
+        }
+    }
+}
+
 fn helper_process_matches(entity: &EntitySnapshot, process: &PrivilegedProcessSample) -> bool {
     let display_name = entity.display_name.to_ascii_lowercase();
     let process_name = process.process_name.to_ascii_lowercase();
@@ -3580,8 +3622,8 @@ mod tests {
         EndpointSecurityLifecycleEvent, EndpointSecuritySample, EndpointSecurityStatusSnapshot,
         adapter_runtime_detail, capability_status, docker_block_io_totals, docker_cpu_percent,
         docker_network_totals, endpoint_security_runtime_detail, enrich_vscode_entity,
-        enrich_with_endpoint_security, parse_http_endpoint, resolved_chau7_socket_path,
-        sanitize_chau7_socket_path, workspace_hint_from_command_line,
+        enrich_with_endpoint_security, parse_connection_string, parse_http_endpoint,
+        resolved_chau7_socket_path, sanitize_chau7_socket_path, workspace_hint_from_command_line,
     };
 
     #[test]
@@ -3591,6 +3633,27 @@ mod tests {
             result,
             Some(("127.0.0.1".to_owned(), 9222, "/json/list".to_owned()))
         );
+    }
+
+    #[test]
+    fn parses_connection_strings() {
+        let established = parse_connection_string("TCP 1.2.3.4:54321->5.6.7.8:443");
+        assert_eq!(established.protocol, "TCP");
+        assert_eq!(established.local, "1.2.3.4:54321");
+        assert_eq!(established.remote.as_deref(), Some("5.6.7.8:443"));
+        assert_eq!(established.state, "established");
+
+        // No protocol prefix (older helper output).
+        let bare = parse_connection_string("1.2.3.4:54321->5.6.7.8:443");
+        assert_eq!(bare.protocol, "");
+        assert_eq!(bare.remote.as_deref(), Some("5.6.7.8:443"));
+
+        // Listening socket with explicit state.
+        let listening = parse_connection_string("TCP *:8080 (LISTEN)");
+        assert_eq!(listening.protocol, "TCP");
+        assert_eq!(listening.local, "*:8080");
+        assert!(listening.remote.is_none());
+        assert_eq!(listening.state, "listen");
     }
 
     #[test]
@@ -3852,6 +3915,7 @@ mod tests {
             agent_cost: None,
             session_markers: Vec::new(),
             recommendations: Vec::new(),
+            network_connections: Vec::new(),
         };
 
         enrich_vscode_entity(&mut entity);
@@ -3931,6 +3995,7 @@ mod tests {
             agent_cost: None,
             session_markers: Vec::new(),
             recommendations: Vec::new(),
+            network_connections: Vec::new(),
         };
 
         enrich_with_endpoint_security(
@@ -4157,6 +4222,7 @@ mod tests {
             agent_cost: None,
             session_markers: Vec::new(),
             recommendations: Vec::new(),
+            network_connections: Vec::new(),
         }];
 
         manager.enrich_entities(&mut entities, &capabilities);

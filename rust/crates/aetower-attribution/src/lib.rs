@@ -135,6 +135,7 @@ fn entity_from_seed(seed: &EntitySeed) -> EntitySnapshot {
         agent_cost: None,
         session_markers: Vec::new(),
         recommendations: Vec::new(),
+        network_connections: Vec::new(),
     }
 }
 

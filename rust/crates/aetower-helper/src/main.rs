@@ -198,7 +198,7 @@ fn apply_fan_command(args: &[String], command: FanCommand) -> Result<FanControlR
 fn collect_snapshot() -> Result<HelperSnapshot> {
     let executable_names = collect_executable_names()?;
     let lsof_output = Command::new("lsof")
-        .args(["-nP", "-iTCP", "-iUDP", "-Fpcn"])
+        .args(["-nP", "-iTCP", "-iUDP", "-FpcnP"])
         .output()
         .context("failed to execute lsof")?;
 
@@ -209,6 +209,7 @@ fn collect_snapshot() -> Result<HelperSnapshot> {
     let mut samples = BTreeMap::<u32, WorkingSample>::new();
     let stdout = String::from_utf8(lsof_output.stdout).context("lsof output was not utf-8")?;
     let mut current_pid: Option<u32> = None;
+    let mut current_protocol: Option<String> = None;
 
     for line in stdout.lines() {
         if line.is_empty() {
@@ -217,6 +218,7 @@ fn collect_snapshot() -> Result<HelperSnapshot> {
         let (prefix, value) = line.split_at(1);
         match prefix {
             "p" => {
+                current_protocol = None;
                 if let Ok(pid) = value.parse::<u32>() {
                     current_pid = Some(pid);
                     samples.entry(pid).or_insert_with(|| WorkingSample {
@@ -233,15 +235,21 @@ fn collect_snapshot() -> Result<HelperSnapshot> {
                     samples.entry(pid).or_default().process_name = value.to_owned();
                 }
             }
+            "P" => {
+                let protocol = value.trim();
+                current_protocol = (!protocol.is_empty()).then(|| protocol.to_owned());
+            }
             "n" => {
                 if let Some(pid) = current_pid {
                     let normalized = value.trim();
                     if !normalized.is_empty() {
-                        samples
-                            .entry(pid)
-                            .or_default()
-                            .connections
-                            .insert(normalized.to_owned());
+                        // Prefix the protocol so downstream parsing can recover it,
+                        // e.g. "TCP 1.2.3.4:443->5.6.7.8:443".
+                        let entry = match current_protocol.as_deref() {
+                            Some(protocol) => format!("{protocol} {normalized}"),
+                            None => normalized.to_owned(),
+                        };
+                        samples.entry(pid).or_default().connections.insert(entry);
                     }
                 }
             }

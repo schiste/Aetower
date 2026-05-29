@@ -593,6 +593,15 @@ pub struct EntitySnapshot {
     pub agent_cost: Option<AgentCostSummary>,
     pub session_markers: Vec<SessionMarker>,
     pub recommendations: Vec<Recommendation>,
+    pub network_connections: Vec<NetworkConnection>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct NetworkConnection {
+    pub protocol: String,
+    pub local: String,
+    pub remote: Option<String>,
+    pub state: String,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -2314,6 +2323,22 @@ impl From<model::EntitySnapshot> for EntitySnapshot {
             agent_cost: value.agent_cost.map(Into::into),
             session_markers: value.session_markers.into_iter().map(Into::into).collect(),
             recommendations: value.recommendations.into_iter().map(Into::into).collect(),
+            network_connections: value
+                .network_connections
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        }
+    }
+}
+
+impl From<model::NetworkConnection> for NetworkConnection {
+    fn from(value: model::NetworkConnection) -> Self {
+        Self {
+            protocol: value.protocol,
+            local: value.local,
+            remote: value.remote,
+            state: value.state,
         }
     }
 }
