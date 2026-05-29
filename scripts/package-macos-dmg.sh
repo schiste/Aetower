@@ -54,31 +54,54 @@ hdiutil attach "$RW_DMG" -readwrite -nobrowse -noverify -mountpoint "$MOUNT_DIR"
 
 if ! osascript <<APPLESCRIPT
 tell application "Finder"
-    tell disk "$VOLUME_NAME"
-        open
-        delay 0.2
-        set current view of container window to icon view
-        set toolbar visible of container window to false
-        set statusbar visible of container window to false
-        set the bounds of container window to {120, 120, 840, 560}
-        set viewOptions to the icon view options of container window
-        set arrangement of viewOptions to not arranged
-        set icon size of viewOptions to 96
-        set background picture of viewOptions to file ".background:$BACKGROUND_NAME"
-        set position of item "Aetower.app" of container window to {180, 238}
-        set position of item "Applications" of container window to {540, 238}
-        update without registering applications
-        close
-    end tell
+    set dmgFolder to POSIX file "$MOUNT_DIR" as alias
+    open dmgFolder
+    delay 1
+    set dmgWindow to container window of dmgFolder
+    set current view of dmgWindow to icon view
+    set toolbar visible of dmgWindow to false
+    set statusbar visible of dmgWindow to false
+    set the bounds of dmgWindow to {120, 120, 840, 560}
+    set viewOptions to the icon view options of dmgWindow
+    set arrangement of viewOptions to not arranged
+    set icon size of viewOptions to 96
+    set background picture of viewOptions to file ".background:$BACKGROUND_NAME" of dmgFolder
+    set position of item "Aetower.app" of dmgFolder to {180, 238}
+    set position of item "Applications" of dmgFolder to {540, 238}
+    update dmgFolder without registering applications
+    close dmgWindow
 end tell
 APPLESCRIPT
 then
-    if [ "$ALLOW_UNSTYLED" != "1" ]; then
-        echo "failed to style DMG Finder window" >&2
-        echo "set AETOWER_DMG_ALLOW_UNSTYLED=1 only for local testing" >&2
-        exit 1
+    if ! osascript <<APPLESCRIPT
+tell application "Finder"
+    tell disk "$VOLUME_NAME"
+        open
+        delay 1
+        set dmgWindow to container window
+        set current view of dmgWindow to icon view
+        set toolbar visible of dmgWindow to false
+        set statusbar visible of dmgWindow to false
+        set the bounds of dmgWindow to {120, 120, 840, 560}
+        set viewOptions to the icon view options of dmgWindow
+        set arrangement of viewOptions to not arranged
+        set icon size of viewOptions to 96
+        set background picture of viewOptions to file ".background:$BACKGROUND_NAME"
+        set position of item "Aetower.app" of dmgWindow to {180, 238}
+        set position of item "Applications" of dmgWindow to {540, 238}
+        update without registering applications
+        close dmgWindow
+    end tell
+end tell
+APPLESCRIPT
+    then
+        if [ "$ALLOW_UNSTYLED" != "1" ]; then
+            echo "failed to style DMG Finder window" >&2
+            echo "set AETOWER_DMG_ALLOW_UNSTYLED=1 only for local testing" >&2
+            exit 1
+        fi
+        echo "warning: DMG Finder styling failed; continuing because AETOWER_DMG_ALLOW_UNSTYLED=1" >&2
     fi
-    echo "warning: DMG Finder styling failed; continuing because AETOWER_DMG_ALLOW_UNSTYLED=1" >&2
 fi
 
 sync
