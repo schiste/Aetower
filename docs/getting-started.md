@@ -5,9 +5,9 @@ Preview build.
 
 ## Install
 
-1. Download the signed and notarized `Aetower.zip`.
-2. Unzip it.
-3. Move `Aetower.app` to `/Applications`.
+1. Download the signed and notarized `Aetower.dmg`.
+2. Open it.
+3. Drag `Aetower.app` to `Applications`.
 4. Launch Aetower.
 
 If macOS warns that the app cannot be verified, do not continue with that

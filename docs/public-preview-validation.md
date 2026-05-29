@@ -54,23 +54,23 @@ and a two-hour soak. For focused checks:
 ```sh
 sh scripts/verify-public-preview.sh --package --gatekeeper
 sh scripts/verify-public-preview.sh --matrix
-sh scripts/verify-public-preview.sh --matrix --require-pkg
+sh scripts/verify-public-preview.sh --matrix --require-dmg --require-pkg
 sh scripts/verify-public-preview.sh --operator
 AETOWER_PUBLIC_PREVIEW_SOAK_SECONDS=7200 sh scripts/verify-public-preview.sh --soak
 ```
 
-The distribution matrix proves that the direct-download ZIP, Homebrew cask, and
-optional PKG all resolve to the same bundle id, version, build number, Sparkle
+The distribution matrix proves that the direct-download ZIP, Homebrew cask,
+DMG, and PKG all resolve to the same bundle id, version, build number, Sparkle
 feed URL, public EdDSA key, and embedded Sparkle framework.
-Use `sh scripts/verify-sparkle-distribution-matrix.sh --require-pkg` when the
-release includes `dist/Aetower.pkg`.
+Use `sh scripts/verify-sparkle-distribution-matrix.sh --require-dmg --require-pkg`
+for public release candidates.
 
 ## 4. Clean-Machine Validation
 
 Use a clean macOS user account or a second Mac.
 
-1. Download the public `Aetower.zip` from the same URL users will receive.
-2. Unzip it and move `Aetower.app` to `/Applications`.
+1. Download the public `Aetower.dmg` from the same URL users will receive.
+2. Open it and drag `Aetower.app` to `Applications`.
 3. Launch it normally from Finder.
 4. Confirm Gatekeeper accepts the app without override steps.
 5. Open **Settings -> Setup**.

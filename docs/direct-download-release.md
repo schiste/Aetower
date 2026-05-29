@@ -9,8 +9,10 @@ The direct-download release path assumes:
 - Developer ID signing
 - notarization with `notarytool`
 - Sparkle for update delivery
+- signed and notarized drag-and-drop `.dmg` output for human installs
+- signed and notarized Developer ID Installer `.pkg` output for installer/MDM
+  distribution
 - corresponding source archive publication for the copyleft release
-- optional Developer ID Installer `.pkg` output for installer/MDM distribution
 - the privileged Endpoint Security helper is optional and excluded by default
 
 ## Required environment
@@ -34,13 +36,18 @@ Set these before running the release scripts:
 - `AETOWER_BUILD_NUMBER`
   - Monotonic `CFBundleVersion`; Sparkle uses this to decide whether a build is
     newer.
+- `AETOWER_INSTALLER_SIGN_IDENTITY`
+  - Developer ID Installer identity for `.pkg` output. If unset, the package
+    script attempts to detect the first installed Developer ID Installer
+    certificate. Example: `Developer ID Installer: Your Team Name (TEAMID)`.
 
 Optional:
 
 - `AETOWER_STAPLE=1`
-- `AETOWER_INSTALLER_SIGN_IDENTITY`
-  - Developer ID Installer identity for optional `.pkg` output. Example:
-    `Developer ID Installer: Your Team Name (TEAMID)`.
+- `AETOWER_RELEASE_WITH_DMG=1`
+- `AETOWER_RELEASE_WITH_PKG=1`
+- `AETOWER_NOTARIZE_DMG=1`
+- `AETOWER_STAPLE_DMG=1`
 - `AETOWER_NOTARIZE_PKG=1`
 - `AETOWER_STAPLE_PKG=1`
 - `AETOWER_REQUIRE_FINAL_METADATA=0`
@@ -86,16 +93,20 @@ Optional:
    the public key into `AETOWER_SPARKLE_PUBLIC_ED_KEY`. Back up the private key
    somewhere safe — if it is lost, no client can verify any future update.
 
-4. Choose hosting for `appcast.xml` and the release `.zip`s (GitHub Releases, a
-   static site, S3, …) and set `AETOWER_APPCAST_URL` (and, if the zips are
-   hosted apart from the appcast, `AETOWER_DOWNLOAD_URL_PREFIX`).
+4. Install a `Developer ID Installer` certificate in Keychain if public PKG
+   output is expected.
+
+5. Choose hosting for `appcast.xml` and the release `.zip`, `.dmg`, and `.pkg`
+   files (Cloudflare Pages, GitHub Releases, a static site, S3, etc.) and set
+   `AETOWER_APPCAST_URL` (and, if the zips are hosted apart from the appcast,
+   `AETOWER_DOWNLOAD_URL_PREFIX`).
 
 ## Cut a Developer Preview release
 
-Run the whole pipeline:
+Run the public pipeline:
 
 ```sh
-sh scripts/release.sh
+sh scripts/release-public-preview.sh
 ```
 
 This runs, in order:
@@ -113,9 +124,18 @@ This runs, in order:
    applying the download URL prefix.
 4. `scripts/generate-source-archive.sh` — generates the versioned
    corresponding source archive from the clean release commit.
-5. `scripts/generate-third-party-notices.sh` — generates
+5. `scripts/package-macos-dmg.sh` — builds a signed/notarized drag-and-drop
+   DMG with the `Aetower.app` icon, `/Applications` symlink, and branded
+   install background.
+6. `scripts/package-macos-pkg.sh` — builds a signed/notarized installer PKG
+   for installer and managed deployment workflows.
+7. `scripts/generate-third-party-notices.sh` — generates
    `dist/THIRD-PARTY-NOTICES.md` from the locked Rust Cargo graph and SwiftPM
    package resolution.
+8. `scripts/verify-sparkle-distribution-matrix.sh --require-dmg --require-pkg`
+   — verifies ZIP, appcast, Homebrew cask, DMG, and PKG all resolve to the same
+   Sparkle-enabled bundle.
+9. `scripts/prepare-cloudflare-site.sh` — stages the static release payload.
 
 The individual scripts can also be run directly with the same environment.
 
@@ -129,33 +149,28 @@ sh scripts/release-public-preview.sh
 
 This runs the signed/notarized macOS ZIP release, generates the Sparkle appcast,
 generates the Homebrew cask artifact, generates the corresponding source
-archive, generates third-party dependency/license notices, verifies the Sparkle
-distribution matrix, and prepares the Cloudflare Pages payload. It does not
-publish to Cloudflare by default.
+archive, generates signed/notarized DMG and PKG installers, generates
+third-party dependency/license notices, verifies the Sparkle distribution
+matrix, and prepares the Cloudflare Pages payload. It does not publish to
+Cloudflare by default.
 
 The generated cask is a tap-ready artifact, not a full Homebrew publication by
 itself. Publish it through a dedicated tap such as `homebrew-aetower`; see
 [Homebrew Release](homebrew-release.md).
 
-If a Developer ID Installer certificate is installed, also produce the optional
-installer package:
+The `.dmg` is the default human download. The `.pkg` is for installer-style
+distribution and MDM/admin workflows. Sparkle updates still work after either
+install path because Sparkle updates the installed `.app`. The release feed
+still uses the ZIP appcast because this repo's Sparkle `generate_appcast` tool
+does not support package-based update archives.
 
-```sh
-sh scripts/release-public-preview.sh --with-pkg
-```
-
-The `.pkg` is for installer-style distribution and MDM/admin workflows. Sparkle
-updates still work after a `.pkg` install because Sparkle updates the installed
-`.app`. The release feed still uses the ZIP appcast because this repo's Sparkle
-`generate_appcast` tool does not support package-based update archives.
-
-The release pipeline verifies that ZIP, Homebrew cask, and optional PKG all
-resolve to the same Sparkle-enabled bundle. Run the matrix directly when
-debugging packaging issues:
+The release pipeline verifies that ZIP, Homebrew cask, DMG, and PKG all resolve
+to the same Sparkle-enabled bundle. Run the matrix directly when debugging
+packaging issues:
 
 ```sh
 sh scripts/verify-sparkle-distribution-matrix.sh
-sh scripts/verify-sparkle-distribution-matrix.sh --require-pkg
+sh scripts/verify-sparkle-distribution-matrix.sh --require-dmg --require-pkg
 ```
 
 The matrix is a release-artifact check. A local development package built
@@ -172,19 +187,22 @@ sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare
 The publish path deploys the prepared Cloudflare Pages payload, then verifies
 that the public appcast contains the expected `AETOWER_VERSION` and
 `AETOWER_BUILD_NUMBER`, the immutable Sparkle archive resolves, the direct ZIP
-resolves, the corresponding source archive resolves, and the generated
-third-party notices are public. Use
+resolves, the DMG and PKG resolve, the corresponding source archive resolves,
+and the generated third-party notices are public. Use
 `--skip-public-verify` only when Cloudflare propagation is being checked
 manually.
 
 ## Publish
 
-Upload the contents of the archives directory (`dist/appcast/`) — `appcast.xml`,
-the `Aetower-<version>.zip` archives, and any generated deltas — to your host so
-that:
+Upload the prepared release site (`dist/cloudflare-site/`) or equivalent host
+payload. At minimum, publish the appcast archives (`appcast.xml`,
+`Aetower-<version>-<build>.zip`, and any generated deltas), the latest DMG, the
+latest PKG, source archives, notices, and the generated Homebrew cask so that:
 
 - `appcast.xml` is reachable at `AETOWER_APPCAST_URL`, and
 - each `<enclosure>` URL resolves (the download URL prefix + filename).
+- the human download link resolves to `Aetower.dmg`.
+- the managed-install link resolves to `Aetower.pkg`.
 
 Keep the archives directory between releases (don't wipe it): `generate_appcast`
 re-uses the existing `appcast.xml` and prior archives to build delta updates and

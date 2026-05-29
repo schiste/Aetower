@@ -57,6 +57,8 @@ Expected artifacts:
 
 - `dist/Aetower.app`
 - `dist/Aetower.zip`
+- `dist/Aetower.dmg`
+- `dist/Aetower.pkg`
 - `dist/appcast/appcast.xml`
 - `dist/homebrew/Casks/aetower.rb`
 - `dist/source/Aetower-<version>-<build>-source.tar.gz`
@@ -64,6 +66,10 @@ Expected artifacts:
 - `dist/THIRD-PARTY-NOTICES.md`
 - `dist/cloudflare-site/`
 - `dist/cloudflare-site/homebrew/Casks/aetower.rb`
+- `dist/cloudflare-site/releases/Aetower.dmg`
+- `dist/cloudflare-site/releases/Aetower-<version>-<build>.dmg`
+- `dist/cloudflare-site/releases/Aetower.pkg`
+- `dist/cloudflare-site/releases/Aetower-<version>-<build>.pkg`
 - `dist/cloudflare-site/releases/Aetower-<version>-<build>-source.tar.gz`
 - `dist/cloudflare-site/releases/Aetower-source.tar.gz`
 
@@ -71,23 +77,11 @@ The release command runs the Sparkle distribution matrix automatically. To run
 it again:
 
 ```sh
-sh scripts/verify-sparkle-distribution-matrix.sh
+sh scripts/verify-sparkle-distribution-matrix.sh --require-dmg --require-pkg
 ```
 
 Validate the generated cask from the Homebrew tap repository before publishing.
 See [Homebrew Release](homebrew-release.md).
-
-Optional, when a Developer ID Installer certificate is installed:
-
-```sh
-sh scripts/release-public-preview.sh --with-pkg
-```
-
-Expected additional artifact:
-
-- `dist/Aetower.pkg`
-- `dist/cloudflare-site/releases/Aetower.pkg`
-- `dist/cloudflare-site/releases/Aetower-<version>-<build>.pkg`
 
 ## 5. Verify artifact
 
@@ -99,7 +93,9 @@ sh scripts/verify-public-preview.sh --package --gatekeeper --operator
 
 On a clean Mac or clean user account:
 
-- unzip and launch `Aetower.app`
+- open the DMG, drag `Aetower.app` to Applications, and launch it
+- run the PKG installer on a clean account or clean Mac when validating managed
+  installation
 - verify Gatekeeper accepts the app
 - verify Settings -> Setup opens cleanly
 - verify Settings -> Updates is configured
@@ -137,10 +133,11 @@ This deploys the prepared Cloudflare Pages payload and verifies that:
 
 - the public appcast contains the expected version and build number
 - the immutable Sparkle archive resolves
+- the direct DMG resolves
 - the direct ZIP resolves
 - the Homebrew cask resolves
 - the corresponding source archive resolves
-- the signed PKG resolves when `--with-pkg` was used
+- the signed PKG resolves
 - third-party notices resolve
 
 Keep old appcast archives available so Sparkle can generate and serve deltas.

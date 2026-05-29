@@ -40,8 +40,9 @@ Latest Developer Preview: **0.51 build 418**.
 
 Download the release from
 [GitHub Releases](https://github.com/schiste/Aetower/releases/tag/v0.51).
-The release contains the signed/notarized app ZIP, matching source archive,
-Homebrew cask artifact, Sparkle appcast, third-party notices, and checksums.
+The release pipeline now produces a signed/notarized drag-and-drop DMG,
+installer PKG, Sparkle ZIP, matching source archive, Homebrew cask artifact,
+Sparkle appcast, third-party notices, and checksums.
 
 Canonical Sparkle update metadata is configured for:
 
@@ -58,8 +59,8 @@ https://aetower-dev.pages.dev/releases/appcast.xml
 
 For Developer Preview builds:
 
-1. Download the signed and notarized `Aetower.zip`.
-2. Unzip and move `Aetower.app` to `/Applications`.
+1. Download the signed and notarized `Aetower.dmg`.
+2. Open it and drag `Aetower.app` to `Applications`.
 3. Launch Aetower.
 4. Open **Settings -> Setup** and complete the readiness checklist.
 

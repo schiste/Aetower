@@ -74,13 +74,14 @@ brew install --cask aetower
 Confirm the installed app launches, Gatekeeper accepts it, and Sparkle can still
 detect updates from the app's configured feed.
 
-## Relationship to Sparkle and PKG
+## Relationship to Sparkle, DMG, and PKG
 
 Sparkle remains the app's in-app update path. The cask installs the app from the
 same ZIP artifact that Sparkle references in `appcast.xml`.
 
-The optional `.pkg` artifact is for installer-style distribution and MDM/admin
-workflows. A `.pkg` install can still receive future Sparkle app updates because
-Sparkle updates the installed `.app`; however, this repository's Sparkle
-`generate_appcast` tooling is ZIP-based and does not create package-based
-Sparkle update items.
+The `.dmg` artifact is the human-facing download on `aetower.dev`. The `.pkg`
+artifact is for installer-style distribution and MDM/admin workflows. DMG and
+PKG installs can still receive future Sparkle app updates because Sparkle
+updates the installed `.app`; however, this repository's Sparkle
+`generate_appcast` tooling is ZIP-based and does not create DMG- or
+package-based Sparkle update items.

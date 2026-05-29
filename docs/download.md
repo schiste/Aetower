@@ -6,12 +6,15 @@ Sparkle update metadata.
 
 ## Download
 
-Use only the published `Aetower.zip` for the current Developer Preview channel.
+Use only the published `Aetower.dmg` for normal installs on the current
+Developer Preview channel.
 Do not share ad-hoc local builds outside development machines.
 
 Expected public artifact:
 
-- `Aetower.zip`
+- `Aetower.dmg` for drag-and-drop installs
+- `Aetower.pkg` for installer/MDM workflows
+- `Aetower.zip` as the Sparkle update archive
 - signed and notarized `Aetower.app`
 - Sparkle appcast entry with EdDSA signature
 
@@ -25,9 +28,9 @@ Expected public artifact:
 
 ## Install
 
-1. Download `Aetower.zip`.
-2. Unzip it.
-3. Move `Aetower.app` to `/Applications`.
+1. Download `Aetower.dmg`.
+2. Open it.
+3. Drag `Aetower.app` to `Applications`.
 4. Launch from Finder.
 5. Open **Settings -> Setup** and review the readiness checklist.
 
