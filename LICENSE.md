@@ -1,13 +1,3 @@
-# Aetower License
-
-Copyright (C) 2026 Aetower contributors.
-
-Aetower is free software: you can redistribute it and/or modify it under
-the terms of the GNU Affero General Public License as published by the Free
-Software Foundation, version 3 only.
-
-SPDX-License-Identifier: AGPL-3.0-only
-
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 
