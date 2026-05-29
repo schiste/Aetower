@@ -13,6 +13,8 @@ public struct MenuBarSummaryView: View {
             Text("Aetower")
                 .font(.headline)
 
+            sparklineRow
+
             HStack {
                 Text("Host CPU")
                 Spacer()
@@ -113,6 +115,47 @@ public struct MenuBarSummaryView: View {
         }
         .padding(14)
         .frame(width: 280)
+    }
+
+    private var sparklineRow: some View {
+        let trend = state.snapshot.hostTrend
+        let host = state.snapshot.host
+        return HStack(spacing: 8) {
+            menuSparkline(
+                "CPU",
+                samples: trend.cpuPercent.map { Double($0) },
+                value: String(format: "%.0f%%", host.cpuPercent),
+                tone: AetowerDesign.Tone.cpu
+            )
+            menuSparkline(
+                "Memory",
+                samples: trend.memoryUsedBytes.map { Double($0) },
+                value: menuBarFormatBytes(host.memoryUsedBytes),
+                tone: AetowerDesign.Tone.memory
+            )
+            menuSparkline(
+                "Network",
+                samples: trend.networkActivityBps.map { Double($0) },
+                value: "\(menuBarFormatBytes(host.networkReceiveBps + host.networkSendBps))/s",
+                tone: AetowerDesign.Tone.network
+            )
+        }
+    }
+
+    private func menuSparkline(_ title: String, samples: [Double], value: String, tone: Color) -> some View {
+        MetricCardSurface(tone: tone, samples: samples, minHeight: 46) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(tone)
+            }
+        } hoverOverlay: {
+            EmptyView()
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
