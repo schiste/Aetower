@@ -1,6 +1,7 @@
 use aetower_model::{
-    EntitySnapshot, FrictionContributor, HostSnapshot, Recommendation, ThermalState,
-    entity_effective_memory_bytes, host_memory_pressure_factor,
+    ComponentKind, EntitySnapshot, FrictionContributor, HostSnapshot, Recommendation,
+    RecommendationSeverity, ThermalState, entity_effective_memory_bytes,
+    host_memory_pressure_factor,
 };
 use smallvec::SmallVec;
 
@@ -310,14 +311,7 @@ fn recommendations_for_entity(
     let mut recommendations = Vec::new();
 
     if entity.friction.cpu_score > 14.0 {
-        recommendations.push(Recommendation {
-            title: "Reduce active compute".to_owned(),
-            detail: if entity.metrics.is_foreground {
-                "This app is burning sustained CPU in the foreground. Pause the active task, close the busiest window, or let the run finish before switching back.".to_owned()
-            } else {
-                "This background workload is consuming meaningful CPU. Pause auto-refresh, background jobs, or extension activity if the Mac feels busy.".to_owned()
-            },
-        });
+        recommendations.push(cpu_recommendation(entity));
     }
 
     if entity.friction.pressure_score > 4.0 || entity.friction.memory_score > 8.0 {
@@ -328,6 +322,7 @@ fn recommendations_for_entity(
                 host.compressed_memory_bytes as f32 / 1_073_741_824.0,
                 host.swap_used_bytes as f32 / 1_073_741_824.0
             ),
+            ..Default::default()
         });
     }
 
@@ -338,6 +333,7 @@ fn recommendations_for_entity(
                 "This entity is pushing about {:.1} MiB/s of network traffic. Pause sync, downloads, uploads, or remote dev sessions if responsiveness matters right now.",
                 network_mib
             ),
+            ..Default::default()
         });
     }
 
@@ -345,6 +341,7 @@ fn recommendations_for_entity(
         recommendations.push(Recommendation {
             title: "Look for timer churn".to_owned(),
             detail: "Frequent wakeups usually come from watchers, polling loops, extensions, or background refresh timers. Disable the noisiest background feature first.".to_owned(),
+            ..Default::default()
         });
     }
 
@@ -352,11 +349,13 @@ fn recommendations_for_entity(
         recommendations.push(Recommendation {
             title: "Trim VS Code background load".to_owned(),
             detail: "Check extension hosts, file watchers, terminals, and workspace tasks. Large workspaces or noisy extensions often dominate Code-related friction.".to_owned(),
+            ..Default::default()
         });
     } else if entity.badges.iter().any(|badge| badge == "chromium-live") {
         recommendations.push(Recommendation {
             title: "Inspect the busiest tab".to_owned(),
             detail: "Browser helper load is often dominated by one active tab or extension. Use the component list to identify the loudest tab first.".to_owned(),
+            ..Default::default()
         });
     }
 
@@ -364,13 +363,130 @@ fn recommendations_for_entity(
     recommendations
 }
 
+/// The dominant process group within an entity: the set of same-named child
+/// processes with the highest summed CPU. Powers the concrete "N X at Y% CPU"
+/// explainer and selects a target pid (the group's heaviest member).
+struct ProcessGroup {
+    label: String,
+    count: usize,
+    summed_cpu: f32,
+    heaviest_pid: Option<u32>,
+}
+
+/// Collapse a process title into a family label so siblings group together —
+/// e.g. "Slack Helper (Renderer)" and "Slack Helper (GPU)" → "Slack Helper".
+fn process_family_label(title: &str) -> String {
+    let trimmed = title.split(" (").next().unwrap_or(title).trim();
+    if trimmed.is_empty() {
+        title.trim().to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn dominant_process_group(entity: &EntitySnapshot) -> Option<ProcessGroup> {
+    use std::collections::BTreeMap;
+    // label -> (count, summed_cpu, heaviest_cpu, heaviest_pid)
+    let mut groups: BTreeMap<String, (usize, f32, f32, Option<u32>)> = BTreeMap::new();
+    for component in &entity.components {
+        if component.kind != ComponentKind::Process {
+            continue;
+        }
+        let label = process_family_label(&component.title);
+        let entry = groups.entry(label).or_insert((0, 0.0, -1.0, None));
+        entry.0 += 1;
+        entry.1 += component.cpu_percent;
+        if component.cpu_percent > entry.2 {
+            entry.2 = component.cpu_percent;
+            entry.3 = component.process_id;
+        }
+    }
+    groups
+        .into_iter()
+        .max_by(|left, right| {
+            left.1
+                .1
+                .partial_cmp(&right.1.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(
+            |(label, (count, summed_cpu, _, heaviest_pid))| ProcessGroup {
+                label,
+                count,
+                summed_cpu,
+                heaviest_pid,
+            },
+        )
+}
+
+/// Build the CPU recommendation, attaching a concrete explainer and a per-case
+/// one-click action: suspend the heaviest helper for a *background* entity,
+/// lower-priority (renice) for the *foreground* app (never freeze what the user
+/// is actively using). Falls back to advisory text when no pid is resolvable.
+fn cpu_recommendation(entity: &EntitySnapshot) -> Recommendation {
+    let severity = if entity.friction.cpu_score > 28.0 {
+        RecommendationSeverity::Urgent
+    } else {
+        RecommendationSeverity::Suggested
+    };
+
+    if let Some(group) = dominant_process_group(entity)
+        && let Some(pid) = group.heaviest_pid
+    {
+        let plural = if group.count == 1 {
+            "process"
+        } else {
+            "processes"
+        };
+        let (action, action_phrase) = if entity.metrics.is_foreground {
+            ("lower-priority", "Lower its priority")
+        } else {
+            ("suspend", "Suspend the busiest one")
+        };
+        return Recommendation {
+            title: "Reduce active compute".to_owned(),
+            detail: format!(
+                "{} {} {} using about {:.0}% CPU. {} to free up the Mac, or pause the work driving it.",
+                group.count, group.label, plural, group.summed_cpu, action_phrase
+            ),
+            severity,
+            suggested_action: Some(action.to_owned()),
+            target_pid: Some(pid),
+            target_label: Some(group.label),
+        };
+    }
+
+    // No resolvable target — advisory only.
+    Recommendation {
+        title: "Reduce active compute".to_owned(),
+        detail: if entity.metrics.is_foreground {
+            "This app is burning sustained CPU in the foreground. Pause the active task, close the busiest window, or let the run finish before switching back.".to_owned()
+        } else {
+            "This background workload is consuming meaningful CPU. Pause auto-refresh, background jobs, or extension activity if the Mac feels busy.".to_owned()
+        },
+        severity,
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use aetower_model::{
-        AggregateMetrics, EntityKind, EntitySnapshot, FrictionBreakdown, HostSnapshot, MetricTrend,
+        AggregateMetrics, ComponentKind, ComponentSnapshot, EntityKind, EntitySnapshot,
+        FrictionBreakdown, HostSnapshot, MetricTrend, RecommendationSeverity,
     };
 
     use super::apply;
+
+    fn process_component(title: &str, cpu: f32, pid: u32) -> ComponentSnapshot {
+        ComponentSnapshot {
+            kind: ComponentKind::Process,
+            title: title.to_owned(),
+            cpu_percent: cpu,
+            process_id: Some(pid),
+            ..Default::default()
+        }
+    }
 
     fn entity(id: &str, display_name: &str, metrics: AggregateMetrics) -> EntitySnapshot {
         EntitySnapshot {
@@ -606,5 +722,86 @@ mod tests {
                 .any(|contributor| contributor.key == "energy"),
             "energy contributor must NOT appear when energy_nj_per_s is zero"
         );
+    }
+
+    #[test]
+    fn cpu_recommendation_suspends_heaviest_helper_for_background_entity() {
+        let host = HostSnapshot {
+            memory_total_bytes: 8 * 1024 * 1024 * 1024,
+            ..HostSnapshot::default()
+        };
+        let mut subject = entity(
+            "slack",
+            "Slack",
+            AggregateMetrics {
+                cpu_percent: 80.0,
+                is_foreground: false,
+                ..AggregateMetrics::default()
+            },
+        );
+        subject.components = vec![
+            process_component("Slack Helper (Renderer)", 30.0, 101),
+            process_component("Slack Helper (GPU)", 10.0, 102),
+            process_component("Slack Helper (Renderer)", 45.0, 103),
+        ];
+        let mut entities = vec![subject];
+
+        apply(&host, &mut entities);
+
+        let Some(recommendation) = entities[0]
+            .recommendations
+            .iter()
+            .find(|recommendation| recommendation.title == "Reduce active compute")
+        else {
+            panic!("expected a CPU recommendation");
+        };
+        assert_eq!(recommendation.suggested_action.as_deref(), Some("suspend"));
+        // Heaviest member of the dominant "Slack Helper" group is pid 103 (45%).
+        assert_eq!(recommendation.target_pid, Some(103));
+        assert_eq!(recommendation.target_label.as_deref(), Some("Slack Helper"));
+        assert_eq!(recommendation.severity, RecommendationSeverity::Urgent);
+        assert!(
+            recommendation.detail.contains("3 Slack Helper"),
+            "explainer should name the group: {}",
+            recommendation.detail
+        );
+    }
+
+    #[test]
+    fn cpu_recommendation_lowers_priority_for_foreground_entity() {
+        let host = HostSnapshot {
+            memory_total_bytes: 8 * 1024 * 1024 * 1024,
+            ..HostSnapshot::default()
+        };
+        let mut subject = entity(
+            "code",
+            "Code",
+            AggregateMetrics {
+                cpu_percent: 80.0,
+                is_foreground: true,
+                ..AggregateMetrics::default()
+            },
+        );
+        subject.components = vec![
+            process_component("Code Helper (Plugin)", 20.0, 201),
+            process_component("Code Helper (Renderer)", 50.0, 202),
+        ];
+        let mut entities = vec![subject];
+
+        apply(&host, &mut entities);
+
+        let Some(recommendation) = entities[0]
+            .recommendations
+            .iter()
+            .find(|recommendation| recommendation.title == "Reduce active compute")
+        else {
+            panic!("expected a CPU recommendation");
+        };
+        // Never suspend the app the user is actively using — renice instead.
+        assert_eq!(
+            recommendation.suggested_action.as_deref(),
+            Some("lower-priority")
+        );
+        assert_eq!(recommendation.target_pid, Some(202));
     }
 }

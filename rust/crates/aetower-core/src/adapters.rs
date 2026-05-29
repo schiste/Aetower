@@ -2633,6 +2633,7 @@ fn apply_chau7_runtime_state(
                             "This Chau7 session is waiting for an approval before it can continue."
                                 .to_owned()
                         }),
+                    ..Default::default()
                 });
             }
         }
@@ -2661,6 +2662,7 @@ fn apply_chau7_runtime_state(
                 entity.recommendations.push(aetower_model::Recommendation {
                     title: "Inspect failed agent turn".to_owned(),
                     detail: "Recent Chau7 runtime state indicates the last turn failed. Check the terminal transcript, approvals, or subprocess exits tied to this session.".to_owned(),
+                    ..Default::default()
                 });
             }
         }
@@ -2719,6 +2721,7 @@ fn apply_chau7_runtime_state(
                     entity.recommendations.push(aetower_model::Recommendation {
                         title: "Resume waiting agent".to_owned(),
                         detail: "This agent session is currently waiting for input. Resume the conversation if you expect more work from it.".to_owned(),
+                        ..Default::default()
                     });
                 }
             }
@@ -3237,6 +3240,7 @@ fn enrich_with_endpoint_security(entity: &mut EntitySnapshot, sample: &EndpointS
                 "Endpoint Security saw {} recent exit event(s) for this entity. Check helpers, launch agents, or child tasks that may be exiting unexpectedly.",
                 exit_count
             ),
+            ..Default::default()
         });
         entity.recommendations.truncate(4);
     }

@@ -601,10 +601,38 @@ pub struct MetricTrend {
     pub wakeups_per_second: Vec<f32>,
 }
 
+/// How urgent a recommendation is — drives ordering and UI tinting.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecommendationSeverity {
+    /// Informational; no action needed.
+    Info,
+    /// Worth acting on.
+    #[default]
+    Suggested,
+    /// High-friction; act now.
+    Urgent,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Recommendation {
     pub title: String,
     pub detail: String,
+    #[serde(default)]
+    pub severity: RecommendationSeverity,
+    /// A suggested one-click process action, as a raw `ProcessActionKind`
+    /// value (e.g. `"suspend"`, `"lower-priority"`). `None` for advisory-only
+    /// recommendations. Never a destructive action (kill/terminate).
+    #[serde(default)]
+    pub suggested_action: Option<String>,
+    /// The process the suggested action targets (the heaviest member of the
+    /// dominant process group).
+    #[serde(default)]
+    pub target_pid: Option<u32>,
+    /// Human-readable label for the target (e.g. `"Slack Helper"`), used in the
+    /// action button.
+    #[serde(default)]
+    pub target_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

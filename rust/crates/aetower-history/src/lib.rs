@@ -1626,6 +1626,7 @@ fn push_recommendation(entity: &mut EntitySnapshot, title: &str, detail: String)
     entity.recommendations.push(Recommendation {
         title: title.to_owned(),
         detail,
+        ..Default::default()
     });
     if entity.recommendations.len() > 4 {
         entity.recommendations.truncate(4);

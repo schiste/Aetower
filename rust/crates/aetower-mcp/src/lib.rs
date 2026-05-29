@@ -3367,6 +3367,7 @@ mod tests {
                         title: "Resolve pending agent approval".to_owned(),
                         detail: "A Chau7 session is currently blocked waiting for approval."
                             .to_owned(),
+                        ..Default::default()
                     }],
                     ..aetower_model::EntitySnapshot::default()
                 }],

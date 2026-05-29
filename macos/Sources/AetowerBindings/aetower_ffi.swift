@@ -5595,12 +5595,20 @@ public func FfiConverterTypeRebootCauseSnapshot_lower(_ value: RebootCauseSnapsh
 public struct Recommendation {
     public var title: String
     public var detail: String
+    public var severity: RecommendationSeverity
+    public var suggestedAction: String?
+    public var targetPid: UInt32?
+    public var targetLabel: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(title: String, detail: String) {
+    public init(title: String, detail: String, severity: RecommendationSeverity, suggestedAction: String?, targetPid: UInt32?, targetLabel: String?) {
         self.title = title
         self.detail = detail
+        self.severity = severity
+        self.suggestedAction = suggestedAction
+        self.targetPid = targetPid
+        self.targetLabel = targetLabel
     }
 }
 
@@ -5617,12 +5625,28 @@ extension Recommendation: Equatable, Hashable {
         if lhs.detail != rhs.detail {
             return false
         }
+        if lhs.severity != rhs.severity {
+            return false
+        }
+        if lhs.suggestedAction != rhs.suggestedAction {
+            return false
+        }
+        if lhs.targetPid != rhs.targetPid {
+            return false
+        }
+        if lhs.targetLabel != rhs.targetLabel {
+            return false
+        }
         return true
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(title)
         hasher.combine(detail)
+        hasher.combine(severity)
+        hasher.combine(suggestedAction)
+        hasher.combine(targetPid)
+        hasher.combine(targetLabel)
     }
 }
 
@@ -5636,13 +5660,21 @@ public struct FfiConverterTypeRecommendation: FfiConverterRustBuffer {
         return
             try Recommendation(
                 title: FfiConverterString.read(from: &buf), 
-                detail: FfiConverterString.read(from: &buf)
+                detail: FfiConverterString.read(from: &buf), 
+                severity: FfiConverterTypeRecommendationSeverity.read(from: &buf), 
+                suggestedAction: FfiConverterOptionString.read(from: &buf), 
+                targetPid: FfiConverterOptionUInt32.read(from: &buf), 
+                targetLabel: FfiConverterOptionString.read(from: &buf)
         )
     }
 
     public static func write(_ value: Recommendation, into buf: inout [UInt8]) {
         FfiConverterString.write(value.title, into: &buf)
         FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterTypeRecommendationSeverity.write(value.severity, into: &buf)
+        FfiConverterOptionString.write(value.suggestedAction, into: &buf)
+        FfiConverterOptionUInt32.write(value.targetPid, into: &buf)
+        FfiConverterOptionString.write(value.targetLabel, into: &buf)
     }
 }
 
@@ -8142,6 +8174,83 @@ public func FfiConverterTypeProvenanceKind_lower(_ value: ProvenanceKind) -> Rus
 
 
 extension ProvenanceKind: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RecommendationSeverity {
+    
+    case info
+    case suggested
+    case urgent
+}
+
+
+#if compiler(>=6)
+extension RecommendationSeverity: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRecommendationSeverity: FfiConverterRustBuffer {
+    typealias SwiftType = RecommendationSeverity
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RecommendationSeverity {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .info
+        
+        case 2: return .suggested
+        
+        case 3: return .urgent
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RecommendationSeverity, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .info:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .suggested:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .urgent:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecommendationSeverity_lift(_ buf: RustBuffer) throws -> RecommendationSeverity {
+    return try FfiConverterTypeRecommendationSeverity.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecommendationSeverity_lower(_ value: RecommendationSeverity) -> RustBuffer {
+    return FfiConverterTypeRecommendationSeverity.lower(value)
+}
+
+
+extension RecommendationSeverity: Equatable, Hashable {}
 
 
 

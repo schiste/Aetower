@@ -539,10 +539,21 @@ pub struct MetricTrend {
     pub wakeups_per_second: Vec<f32>,
 }
 
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum RecommendationSeverity {
+    Info,
+    Suggested,
+    Urgent,
+}
+
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct Recommendation {
     pub title: String,
     pub detail: String,
+    pub severity: RecommendationSeverity,
+    pub suggested_action: Option<String>,
+    pub target_pid: Option<u32>,
+    pub target_label: Option<String>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -2324,11 +2335,25 @@ impl From<model::MetricTrend> for MetricTrend {
     }
 }
 
+impl From<model::RecommendationSeverity> for RecommendationSeverity {
+    fn from(value: model::RecommendationSeverity) -> Self {
+        match value {
+            model::RecommendationSeverity::Info => Self::Info,
+            model::RecommendationSeverity::Suggested => Self::Suggested,
+            model::RecommendationSeverity::Urgent => Self::Urgent,
+        }
+    }
+}
+
 impl From<model::Recommendation> for Recommendation {
     fn from(value: model::Recommendation) -> Self {
         Self {
             title: value.title,
             detail: value.detail,
+            severity: value.severity.into(),
+            suggested_action: value.suggested_action,
+            target_pid: value.target_pid,
+            target_label: value.target_label,
         }
     }
 }
