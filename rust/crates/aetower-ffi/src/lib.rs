@@ -119,6 +119,7 @@ pub enum TimelineCategory {
     Host,
     Thermal,
     Anomaly,
+    Network,
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -594,6 +595,8 @@ pub struct EntitySnapshot {
     pub session_markers: Vec<SessionMarker>,
     pub recommendations: Vec<Recommendation>,
     pub network_connections: Vec<NetworkConnection>,
+    pub signing_classification: String,
+    pub is_adhoc: bool,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -1714,6 +1717,7 @@ impl From<model::TimelineCategory> for TimelineCategory {
             model::TimelineCategory::Host => Self::Host,
             model::TimelineCategory::Thermal => Self::Thermal,
             model::TimelineCategory::Anomaly => Self::Anomaly,
+            model::TimelineCategory::Network => Self::Network,
         }
     }
 }
@@ -2328,6 +2332,8 @@ impl From<model::EntitySnapshot> for EntitySnapshot {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
+            signing_classification: value.signing_classification,
+            is_adhoc: value.is_adhoc,
         }
     }
 }

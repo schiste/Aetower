@@ -97,6 +97,9 @@ pub enum TimelineCategory {
     Host,
     Thermal,
     Anomaly,
+    /// Network activity (e.g. a process opening a connection to a new remote
+    /// host). Targeted by connection-rule automation.
+    Network,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -675,6 +678,48 @@ pub struct EntitySnapshot {
     /// (same-user, sampled best-effort). Deduped, capped.
     #[serde(default)]
     pub network_connections: Vec<NetworkConnection>,
+    /// Code-signing classification of the entity's executable
+    /// (apple | mac_app_store | developer_id | adhoc | unsigned | other |
+    /// unknown). Resolved lazily by the engine and cached — populated only for
+    /// entities that have network connections, otherwise `"unknown"`. Used by
+    /// the connection-rule automation predicates (e.g. "alert when an unsigned
+    /// binary opens a socket").
+    #[serde(default = "unknown_signing")]
+    pub signing_classification: String,
+    /// Whether the signature is ad-hoc (signed in place with no authorities — a
+    /// common malware/dev tell). False when not yet resolved.
+    #[serde(default)]
+    pub is_adhoc: bool,
+}
+
+fn unknown_signing() -> String {
+    "unknown".to_owned()
+}
+
+/// Classify a code signature from its `codesign` authority chain. Returns the
+/// classification string and whether the signature is ad-hoc (signed in place
+/// with no signing authorities). Developer ID and Mac App Store are checked
+/// before the generic Apple leaf because their chains also anchor to Apple
+/// roots. Shared by the on-demand inspector (`aetower-mcp`) and the continuous
+/// engine resolver (`aetower-core`) so both agree on one taxonomy.
+pub fn classify_signature(signed: bool, authority: &[String]) -> (String, bool) {
+    if !signed {
+        return ("unsigned".to_owned(), false);
+    }
+    if authority.is_empty() {
+        return ("adhoc".to_owned(), true);
+    }
+    let chain = authority.join(" | ");
+    let classification = if chain.contains("Developer ID Application") {
+        "developer_id"
+    } else if chain.contains("Apple Mac OS Application Signing") {
+        "mac_app_store"
+    } else if chain.contains("Software Signing") {
+        "apple"
+    } else {
+        "other"
+    };
+    (classification.to_owned(), false)
 }
 
 /// One network socket attributed to a process: protocol, local endpoint, and
@@ -1019,4 +1064,60 @@ pub struct FrontmostAppState {
     pub executable_path: Option<String>,
     pub window_title: Option<String>,
     pub captured_at_millis: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_signature_taxonomy() {
+        // Unsigned and ad-hoc are the two firewall-relevant verdicts; ad-hoc is
+        // the "signed but no authority" tell.
+        assert_eq!(
+            classify_signature(false, &[]),
+            ("unsigned".to_owned(), false)
+        );
+        assert_eq!(classify_signature(true, &[]), ("adhoc".to_owned(), true));
+
+        let developer_id = vec!["Developer ID Application: Acme (TEAMID)".to_owned()];
+        assert_eq!(
+            classify_signature(true, &developer_id),
+            ("developer_id".to_owned(), false)
+        );
+
+        let apple = vec!["Software Signing".to_owned()];
+        assert_eq!(
+            classify_signature(true, &apple),
+            ("apple".to_owned(), false)
+        );
+
+        let unknown_chain = vec!["Some Other Authority".to_owned()];
+        assert_eq!(
+            classify_signature(true, &unknown_chain),
+            ("other".to_owned(), false)
+        );
+    }
+
+    #[test]
+    fn signing_classification_defaults_to_unknown_on_deserialize() {
+        // Snapshots persisted before this field existed must read back as
+        // "unknown" (never "" or a false "unsigned"), so the firewall predicate
+        // can't misfire on legacy data. Simulate a legacy payload by serializing
+        // a current snapshot and stripping the two new keys.
+        let Ok(mut value) = serde_json::to_value(EntitySnapshot::default()) else {
+            panic!("snapshot serializes");
+        };
+        let Some(object) = value.as_object_mut() else {
+            panic!("snapshot is a JSON object");
+        };
+        object.remove("signing_classification");
+        object.remove("is_adhoc");
+
+        let Ok(entity) = serde_json::from_value::<EntitySnapshot>(value) else {
+            panic!("legacy snapshot deserializes");
+        };
+        assert_eq!(entity.signing_classification, "unknown");
+        assert!(!entity.is_adhoc);
+    }
 }

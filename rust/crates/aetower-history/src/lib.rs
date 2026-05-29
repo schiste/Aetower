@@ -394,7 +394,7 @@ impl History {
                     };
                     self.push_event(
                         captured_at_millis,
-                        TimelineCategory::Lifecycle,
+                        TimelineCategory::Network,
                         TimelineSeverity::Info,
                         Some(entity.entity_id.clone()),
                         format!("{} opened a new connection", entity.display_name),
@@ -1855,6 +1855,8 @@ mod tests {
             session_markers: Vec::new(),
             recommendations: Vec::new(),
             network_connections: Vec::new(),
+            signing_classification: "unknown".to_owned(),
+            is_adhoc: false,
         }
     }
 

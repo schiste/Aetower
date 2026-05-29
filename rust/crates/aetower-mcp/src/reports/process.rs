@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use aetower_model::SystemSnapshot;
+use aetower_model::classify_signature;
 use serde_json::Value;
 
 use crate::*;
@@ -1503,31 +1504,6 @@ fn parse_codesign_field(details: &str, prefix: &str) -> Option<String> {
         .lines()
         .find_map(|line| line.trim().strip_prefix(prefix))
         .map(str::to_owned)
-}
-
-/// Classify a code signature from its `codesign` authority chain. Returns the
-/// classification string and whether the signature is ad-hoc (signed in place
-/// with no signing authorities — a common malware/dev tell). Developer ID and
-/// Mac App Store are checked before the generic Apple leaf because their chains
-/// also anchor to Apple roots.
-pub(crate) fn classify_signature(signed: bool, authority: &[String]) -> (String, bool) {
-    if !signed {
-        return ("unsigned".to_owned(), false);
-    }
-    if authority.is_empty() {
-        return ("adhoc".to_owned(), true);
-    }
-    let chain = authority.join(" | ");
-    let classification = if chain.contains("Developer ID Application") {
-        "developer_id"
-    } else if chain.contains("Apple Mac OS Application Signing") {
-        "mac_app_store"
-    } else if chain.contains("Software Signing") {
-        "apple"
-    } else {
-        "other"
-    };
-    (classification.to_owned(), false)
 }
 
 /// Enumerate dynamic libraries mapped into a process via `lsof` (reusing the

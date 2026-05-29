@@ -398,6 +398,8 @@ mod tests {
             session_markers: Vec::new(),
             recommendations: Vec::new(),
             network_connections: Vec::new(),
+            signing_classification: "unknown".to_owned(),
+            is_adhoc: false,
         }
     }
 

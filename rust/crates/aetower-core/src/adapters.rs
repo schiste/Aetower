@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     env,
     io::{Read, Write},
     net::TcpStream,
@@ -89,6 +89,11 @@ struct AdapterState {
     last_chau7_success_millis: u64,
     chau7_last_error: Option<String>,
     cached_chau7_snapshot: Option<crate::chau7::Chau7Snapshot>,
+    /// Code-signing verdicts keyed by executable path. Resolving a signature
+    /// forks `codesign` (~10-30ms), so we cache per binary and only ever
+    /// resolve for entities that currently hold network connections — keeping
+    /// the cost off the hot snapshot path and within the bench budget.
+    signing_cache: HashMap<String, (String, bool)>,
 }
 
 struct Chau7FetchPlan {
@@ -293,6 +298,7 @@ impl Default for AdapterManager {
                 last_chau7_success_millis: 0,
                 chau7_last_error: None,
                 cached_chau7_snapshot: None,
+                signing_cache: HashMap::new(),
             })),
         }
     }
@@ -1133,6 +1139,7 @@ impl AdapterManager {
             privileged_helper_sample,
             endpoint_security_sample,
             chau7_snapshot,
+            mut signing_cache,
         ) = {
             let guard = self.state.lock();
             let chromium_targets = capabilities
@@ -1161,8 +1168,12 @@ impl AdapterManager {
                 privileged_helper_sample,
                 endpoint_security_sample,
                 chau7_snapshot,
+                guard.signing_cache.clone(),
             )
         };
+        // Tracks paths resolved during this pass so we can write them back into
+        // the shared cache after the entity loop (codesign runs lock-free).
+        let mut newly_signed: Vec<(String, (String, bool))> = Vec::new();
 
         for entity in entities {
             if matches!(
@@ -1388,6 +1399,25 @@ impl AdapterManager {
                 }
             }
 
+            // Resolve code-signing classification only for entities that
+            // currently hold connections — the bounded set the firewall-lite
+            // rules care about. Cached by executable path, so steady state is a
+            // hash lookup; a cold path forks `codesign` once.
+            if !entity.network_connections.is_empty() {
+                if let Some(path) = entity.executable_path.clone() {
+                    let verdict = if let Some(hit) = signing_cache.get(&path) {
+                        hit.clone()
+                    } else {
+                        let resolved = resolve_signing_classification(&path);
+                        signing_cache.insert(path.clone(), resolved.clone());
+                        newly_signed.push((path, resolved.clone()));
+                        resolved
+                    };
+                    entity.signing_classification = verdict.0;
+                    entity.is_adhoc = verdict.1;
+                }
+            }
+
             // Chau7 enrichment: match tabs to entities, promote AI agents.
             //
             // Matching strategy (in priority order):
@@ -1598,6 +1628,37 @@ impl AdapterManager {
                 enrich_with_endpoint_security(entity, sample);
             }
         }
+
+        // Persist any signatures resolved this pass so future snapshots are a
+        // pure cache hit. A concurrent writer is fine — verdicts are stable per
+        // binary, so last-writer-wins is correct.
+        if !newly_signed.is_empty() {
+            let mut guard = self.state.lock();
+            for (path, verdict) in newly_signed {
+                guard.signing_cache.insert(path, verdict);
+            }
+        }
+    }
+}
+
+/// Resolve a binary's code-signing verdict via `codesign -dvvv`, reusing the
+/// shared model classifier so the engine and the on-demand inspector agree.
+/// `codesign` writes its detail (including `Authority=` lines) to stderr.
+fn resolve_signing_classification(executable_path: &str) -> (String, bool) {
+    let output = Command::new("/usr/bin/codesign")
+        .args(["-dvvv", executable_path])
+        .output();
+    match output {
+        Ok(output) => {
+            let details = String::from_utf8_lossy(&output.stderr);
+            let authority = details
+                .lines()
+                .filter_map(|line| line.trim().strip_prefix("Authority="))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            aetower_model::classify_signature(output.status.success(), &authority)
+        }
+        Err(_) => ("unknown".to_owned(), false),
     }
 }
 
@@ -3916,6 +3977,8 @@ mod tests {
             session_markers: Vec::new(),
             recommendations: Vec::new(),
             network_connections: Vec::new(),
+            signing_classification: "unknown".to_owned(),
+            is_adhoc: false,
         };
 
         enrich_vscode_entity(&mut entity);
@@ -3996,6 +4059,8 @@ mod tests {
             session_markers: Vec::new(),
             recommendations: Vec::new(),
             network_connections: Vec::new(),
+            signing_classification: "unknown".to_owned(),
+            is_adhoc: false,
         };
 
         enrich_with_endpoint_security(
@@ -4223,6 +4288,8 @@ mod tests {
             session_markers: Vec::new(),
             recommendations: Vec::new(),
             network_connections: Vec::new(),
+            signing_classification: "unknown".to_owned(),
+            is_adhoc: false,
         }];
 
         manager.enrich_entities(&mut entities, &capabilities);

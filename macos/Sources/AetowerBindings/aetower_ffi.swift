@@ -3340,10 +3340,12 @@ public struct EntitySnapshot {
     public var sessionMarkers: [SessionMarker]
     public var recommendations: [Recommendation]
     public var networkConnections: [NetworkConnection]
+    public var signingClassification: String
+    public var isAdhoc: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, launcherSummary: String?, attributionNotes: [String], bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recentChangeSummary: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation], networkConnections: [NetworkConnection]) {
+    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, launcherSummary: String?, attributionNotes: [String], bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recentChangeSummary: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation], networkConnections: [NetworkConnection], signingClassification: String, isAdhoc: Bool) {
         self.entityId = entityId
         self.displayName = displayName
         self.primaryProvenance = primaryProvenance
@@ -3368,6 +3370,8 @@ public struct EntitySnapshot {
         self.sessionMarkers = sessionMarkers
         self.recommendations = recommendations
         self.networkConnections = networkConnections
+        self.signingClassification = signingClassification
+        self.isAdhoc = isAdhoc
     }
 }
 
@@ -3450,6 +3454,12 @@ extension EntitySnapshot: Equatable, Hashable {
         if lhs.networkConnections != rhs.networkConnections {
             return false
         }
+        if lhs.signingClassification != rhs.signingClassification {
+            return false
+        }
+        if lhs.isAdhoc != rhs.isAdhoc {
+            return false
+        }
         return true
     }
 
@@ -3478,6 +3488,8 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(sessionMarkers)
         hasher.combine(recommendations)
         hasher.combine(networkConnections)
+        hasher.combine(signingClassification)
+        hasher.combine(isAdhoc)
     }
 }
 
@@ -3513,7 +3525,9 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
                 agentCost: FfiConverterOptionTypeAgentCostSummary.read(from: &buf), 
                 sessionMarkers: FfiConverterSequenceTypeSessionMarker.read(from: &buf), 
                 recommendations: FfiConverterSequenceTypeRecommendation.read(from: &buf), 
-                networkConnections: FfiConverterSequenceTypeNetworkConnection.read(from: &buf)
+                networkConnections: FfiConverterSequenceTypeNetworkConnection.read(from: &buf), 
+                signingClassification: FfiConverterString.read(from: &buf), 
+                isAdhoc: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -3542,6 +3556,8 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeSessionMarker.write(value.sessionMarkers, into: &buf)
         FfiConverterSequenceTypeRecommendation.write(value.recommendations, into: &buf)
         FfiConverterSequenceTypeNetworkConnection.write(value.networkConnections, into: &buf)
+        FfiConverterString.write(value.signingClassification, into: &buf)
+        FfiConverterBool.write(value.isAdhoc, into: &buf)
     }
 }
 
@@ -8142,6 +8158,7 @@ public enum TimelineCategory {
     case host
     case thermal
     case anomaly
+    case network
 }
 
 
@@ -8169,6 +8186,8 @@ public struct FfiConverterTypeTimelineCategory: FfiConverterRustBuffer {
         
         case 5: return .anomaly
         
+        case 6: return .network
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -8195,6 +8214,10 @@ public struct FfiConverterTypeTimelineCategory: FfiConverterRustBuffer {
         
         case .anomaly:
             writeInt(&buf, Int32(5))
+        
+        
+        case .network:
+            writeInt(&buf, Int32(6))
         
         }
     }

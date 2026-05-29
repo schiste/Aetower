@@ -379,6 +379,7 @@ private func categoryLabel(_ category: TimelineCategory) -> String {
     case .host: return "Host"
     case .thermal: return "Thermal"
     case .anomaly: return "Anomaly"
+    case .network: return "Network"
     }
 }
 

@@ -652,6 +652,7 @@ public final class AppState {
         case .host: return "host"
         case .thermal: return "thermal"
         case .anomaly: return "anomaly"
+        case .network: return "network"
         @unknown default: return "any"
         }
     }
