@@ -197,6 +197,10 @@ public final class EngineBridge: @unchecked Sendable {
         engine.processInspectJson(pid: pid)
     }
 
+    public func filterEntitiesJSON(expression: String) -> JsonQueryResult {
+        engine.filterEntitiesJson(expression: expression)
+    }
+
     public func processOpenResourcesJSON(pid: UInt32, limit: UInt32 = 80) -> JsonQueryResult {
         engine.processOpenResourcesJson(pid: pid, limit: limit)
     }

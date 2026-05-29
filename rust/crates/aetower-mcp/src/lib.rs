@@ -32,6 +32,7 @@ pub use reports::process::{
 };
 
 pub use reports::diagnostics::explain_anomalies_json;
+pub use reports::filter::filter_entities_json;
 #[cfg(test)]
 use reports::history::build_snapshot_diff_report_with_diagnostics;
 use reports::history::{

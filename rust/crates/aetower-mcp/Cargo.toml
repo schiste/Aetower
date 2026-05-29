@@ -13,5 +13,6 @@ aetower-persistence = { path = "../aetower-persistence" }
 aetower-model = { path = "../aetower-model" }
 dirs = "5"
 libc = "0.2"
+rhai.workspace = true
 serde.workspace = true
 serde_json.workspace = true

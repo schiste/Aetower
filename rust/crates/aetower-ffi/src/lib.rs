@@ -4,7 +4,7 @@ use aetower_core::{Engine, RuntimeCollectionSettings};
 use aetower_diagnostics as diagnostics;
 use aetower_mcp::{
     AetowerMcpDataSource, HistorySummaryResponse, LocalMcpServerHandle, default_socket_path,
-    diff_snapshots_json, entity_process_tree_json, explain_anomalies_json,
+    diff_snapshots_json, entity_process_tree_json, explain_anomalies_json, filter_entities_json,
     is_socket_listener_reachable, memory_breakdown_json, process_action_history_json,
     process_action_json, process_inspect_json, process_open_resources_json, process_sample_json,
     profile_entity_json, self_memory_attribution_json, start_local_socket_server,
@@ -1292,6 +1292,15 @@ impl MonitorEngine {
             engine: Arc::clone(&self.inner),
         };
         json_query_result(process_inspect_json(&data_source, pid))
+    }
+
+    /// Evaluate a sandboxed Rhai filter expression against the latest snapshot,
+    /// returning matched entity ids / pids as JSON.
+    pub fn filter_entities_json(&self, expression: String) -> JsonQueryResult {
+        let data_source = MonitorEngineDataSource {
+            engine: Arc::clone(&self.inner),
+        };
+        json_query_result(filter_entities_json(&data_source, &expression))
     }
 
     pub fn process_open_resources_json(&self, pid: u32, limit: u32) -> JsonQueryResult {

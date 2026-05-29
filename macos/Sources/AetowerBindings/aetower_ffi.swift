@@ -579,6 +579,12 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func exportSnapshotJson()  -> String
     
+    /**
+     * Evaluate a sandboxed Rhai filter expression against the latest snapshot,
+     * returning matched entity ids / pids as JSON.
+     */
+    func filterEntitiesJson(expression: String)  -> JsonQueryResult
+    
     func historyRangeSummary(startMillis: UInt64, endMillis: UInt64)  -> HistoryRangeSummary?
     
     func historyRangeSummaryResult(startMillis: UInt64, endMillis: UInt64)  -> HistoryRangeSummaryResult
@@ -838,6 +844,18 @@ open func exportDiagnosticsQueryJson(query: DiagnosticsQuery) -> String  {
 open func exportSnapshotJson() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_export_snapshot_json(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Evaluate a sandboxed Rhai filter expression against the latest snapshot,
+     * returning matched entity ids / pids as JSON.
+     */
+open func filterEntitiesJson(expression: String) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_filter_entities_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(expression),$0
     )
 })
 }
@@ -8995,6 +9013,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_export_snapshot_json() != 44531) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_filter_entities_json() != 60988) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_history_range_summary() != 33324) {

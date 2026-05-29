@@ -476,6 +476,7 @@ private struct GroupingCacheKey: Hashable {
     let sequence: UInt64
     let query: String
     let sortKey: SortKey
+    let filterSignature: String
 }
 
 private struct GroupedEntityRow: View {
@@ -1081,6 +1082,8 @@ public struct MainListView: View {
     @State private var groupingTask: Task<[EntityGroup], Never>?
     @State private var isGrouping = false
     @State private var processOperatorRequest: ProcessOperatorRequest?
+    @State private var advancedFilterText = ""
+    @State private var showAdvancedFilter = false
     @FocusState private var searchFieldFocused: Bool
 
     public init(state: AppState) {
@@ -1276,6 +1279,8 @@ public struct MainListView: View {
                 .padding(.vertical, AetowerDesign.Spacing.xs)
                 .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
                 .frame(maxWidth: 160)
+
+                advancedFilterButton
 
                 if isGroupedMode && isGrouping {
                     HStack(spacing: 5) {
@@ -1661,8 +1666,61 @@ public struct MainListView: View {
         }
     }
 
+    private var advancedFilterButton: some View {
+        Button {
+            showAdvancedFilter.toggle()
+        } label: {
+            Image(systemName: state.advancedFilterEntityIds == nil
+                ? "line.3.horizontal.decrease.circle"
+                : "line.3.horizontal.decrease.circle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(state.advancedFilterEntityIds == nil ? Color.secondary : Color.accentColor)
+        }
+        .buttonStyle(.plain)
+        .help("Advanced filter (Rhai expression)")
+        .popover(isPresented: $showAdvancedFilter, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Advanced filter")
+                    .font(.headline)
+                Text("Boolean expression evaluated per process. Fields: name, path, cmd, user, cwd, entity, bundle, badges, pid, cpu, mem, mem_mb, threads, energy, friction.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                TextField("cpu > 20 && name.contains(\"Helper\")", text: $advancedFilterText, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+                    .font(.system(size: 11, design: .monospaced))
+                    .aetowerUtilityTextInput()
+                if let error = state.advancedFilterError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let summary = state.advancedFilterSummary {
+                    Text(summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button("Apply") {
+                        state.applyAdvancedFilter(advancedFilterText)
+                    }
+                    .keyboardShortcut(.return, modifiers: [])
+                    Button("Clear") {
+                        advancedFilterText = ""
+                        state.clearAdvancedFilter()
+                    }
+                    .disabled(state.advancedFilterEntityIds == nil && advancedFilterText.isEmpty)
+                    Spacer()
+                }
+            }
+            .padding(14)
+            .frame(width: 320)
+        }
+    }
+
     private var filteredEntities: [EntitySnapshot] {
-        filterEntities(state.snapshot.entities, query: normalizedSearchQuery).sorted {
+        filterEntities(applyAdvancedFilter(state.snapshot.entities), query: normalizedSearchQuery).sorted {
             compareEntities($0, $1, by: sortKey)
         }
     }
@@ -1787,8 +1845,21 @@ public struct MainListView: View {
         return GroupingCacheKey(
             sequence: state.snapshot.sequence,
             query: normalizedSearchQuery,
-            sortKey: sortKey
+            sortKey: sortKey,
+            filterSignature: advancedFilterSignature
         )
+    }
+
+    /// Stable signature of the active advanced filter so the grouping cache
+    /// invalidates when the filter set changes ("" = no filter).
+    private var advancedFilterSignature: String {
+        guard let ids = state.advancedFilterEntityIds else { return "" }
+        return ids.sorted().joined(separator: ",")
+    }
+
+    private func applyAdvancedFilter(_ entities: [EntitySnapshot]) -> [EntitySnapshot] {
+        guard let ids = state.advancedFilterEntityIds else { return entities }
+        return entities.filter { ids.contains($0.entityId) }
     }
 
     private var isGroupedMode: Bool {
@@ -1936,7 +2007,7 @@ public struct MainListView: View {
 
         groupingTask?.cancel()
 
-        let entities = state.snapshot.entities
+        let entities = applyAdvancedFilter(state.snapshot.entities)
         let query = key.query
         let sortKey = key.sortKey
         isGrouping = true
