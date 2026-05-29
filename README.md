@@ -104,4 +104,8 @@ Report vulnerabilities through the process in [Security](SECURITY.md).
 
 ## License
 
-See [License](LICENSE.md).
+Aetower is licensed under the GNU Affero General Public License v3.0 only
+(`AGPL-3.0-only`). See [License](LICENSE.md).
+
+Public binary releases should be paired with the corresponding source archive
+for that exact version and build.

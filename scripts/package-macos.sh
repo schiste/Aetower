@@ -137,6 +137,7 @@ cp "$ROOT/rust/target/release/libaetower_ffi.dylib" "$FRAMEWORK_DIR/"
 cp "$ROOT/rust/target/release/aetower-mcp" "$HELPER_DIR/aetower-mcp"
 sh "$ROOT/scripts/generate-app-icon.sh" >/dev/null
 cp "$APP_ICON_PATH" "$PLIST_DIR/Resources/Aetower.icns"
+cp "$ROOT/LICENSE.md" "$PLIST_DIR/Resources/LICENSE.md"
 
 # Embed Sparkle.framework. SwiftPM links the app against
 # @rpath/Sparkle.framework but never copies it into the bundle, so it must be
@@ -167,6 +168,8 @@ cat > "$PLIST_DIR/Info.plist" <<PLIST
   <string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright © 2026 Aetower contributors. Licensed under AGPL-3.0-only.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.</string>
   <key>SUEnableAutomaticChecks</key>
