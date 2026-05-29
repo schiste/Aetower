@@ -49,7 +49,7 @@ struct AetowerApp: App {
 
     @ViewBuilder
     private var primaryTabs: some View {
-        MainListView(state: state)
+        MainListView(state: state, settings: settings)
             .tabItem {
                 Label("Monitor", systemImage: "gauge.with.needle")
             }
@@ -77,7 +77,7 @@ struct AetowerApp: App {
                 Label("AI Agents", systemImage: "cpu")
             }
 
-        SensorDashboardView(state: state)
+        SensorDashboardView(state: state, settings: settings)
             .tabItem {
                 Label("Sensors", systemImage: "thermometer.medium")
             }

@@ -6,9 +6,11 @@ import SwiftUI
 /// battery health, and Bluetooth device batteries.
 public struct SensorDashboardView: View {
     let state: AppState
+    let settings: SettingsStore
 
-    public init(state: AppState) {
+    public init(state: AppState, settings: SettingsStore) {
         self.state = state
+        self.settings = settings
     }
 
     private var host: HostSnapshot { state.snapshot.host }
@@ -40,6 +42,7 @@ public struct SensorDashboardView: View {
                         description: Text("This Mac is not reporting sensor readings, or collection has not sampled them yet.")
                     )
                 } else {
+                    if totalAttributedWatts > 0 { energyCostSection }
                     if !host.perCoreCpu.isEmpty { coresSection }
                     if !host.fans.isEmpty { fansSection }
                     if !host.cpuTemperatures.isEmpty || host.gpuTemperatureCelsius != nil { temperatureSection }
@@ -151,6 +154,82 @@ public struct SensorDashboardView: View {
             }
             .padding(.top, AetowerDesign.Spacing.xs)
         }
+    }
+
+    /// Total per-process power Aetower has attributed to running entities.
+    private var totalAttributedWatts: Double {
+        state.snapshot.entities
+            .compactMap { EnergyTranslation.watts(fromNjPerS: $0.metrics.energyNjPerS) }
+            .reduce(0, +)
+    }
+
+    private var energyCostSection: some View {
+        let watts = totalAttributedWatts
+        let cost = EnergyTranslation.costPerHour(
+            watts: watts,
+            pricePerKwh: settings.electricityPricePerKwh
+        )
+        let carbon = EnergyTranslation.carbonGramsPerHour(
+            watts: watts,
+            gridGramsPerKwh: settings.gridCarbonIntensityGramsPerKwh
+        )
+        return GroupBox("Energy & cost") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.adaptive(minimum: 150), spacing: AetowerDesign.Spacing.sm)
+                    ],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.sm
+                ) {
+                    sensorTile(
+                        "Attributed draw",
+                        value: "~\(EnergyTranslation.formatPower(watts))",
+                        tone: AetowerDesign.Tone.energy
+                    )
+                    sensorTile(
+                        "Cost",
+                        value:
+                            "~\(EnergyTranslation.formatCostPerHour(cost, currency: settings.energyCurrencySymbol))",
+                        tone: AetowerDesign.Tone.energy
+                    )
+                    sensorTile(
+                        "Carbon",
+                        value: "~\(EnergyTranslation.formatCarbonPerHour(carbon))",
+                        tone: AetowerDesign.Tone.energy
+                    )
+                    sensorTile(
+                        "Battery left",
+                        value: batteryLeftLabel(totalWatts: watts),
+                        tone: AetowerDesign.Tone.energy
+                    )
+                }
+                Text(
+                    "Sum of per-process kernel-billed energy across observed apps — an estimate that understates total system draw (display, idle, other users aren't attributed)."
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
+    private func batteryLeftLabel(totalWatts: Double) -> String {
+        guard host.onBattery else { return "on AC power" }
+        guard
+            let wattHours = EnergyTranslation.remainingWattHours(
+                maxCapacityMah: host.batteryHealth?.maxCapacityMah,
+                chargePercent: host.batteryChargePercent
+            ),
+            let minutes = EnergyTranslation.batteryMinutesRemaining(
+                wattHours: wattHours,
+                totalWatts: totalWatts
+            )
+        else {
+            return "—"
+        }
+        return "~\(EnergyTranslation.formatMinutes(minutes))"
     }
 
     private var storageSection: some View {

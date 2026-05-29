@@ -290,6 +290,7 @@ private struct ComponentCard: View {
 public struct EntityDetailView: View {
     let entity: EntitySnapshot
     let state: AppState
+    let settings: SettingsStore
     let processTreeSeedEntities: [EntitySnapshot]
     let processOperatorRequest: ProcessOperatorRequest?
     @State private var selectedSection: EntityDetailSection = .summary
@@ -301,11 +302,13 @@ public struct EntityDetailView: View {
     public init(
         entity: EntitySnapshot,
         state: AppState,
+        settings: SettingsStore,
         processTreeSeedEntities: [EntitySnapshot]? = nil,
         processOperatorRequest: ProcessOperatorRequest? = nil
     ) {
         self.entity = entity
         self.state = state
+        self.settings = settings
         self.processTreeSeedEntities = processTreeSeedEntities ?? [entity]
         self.processOperatorRequest = processOperatorRequest
     }
@@ -396,6 +399,7 @@ public struct EntityDetailView: View {
         switch selectedSection {
         case .summary:
             memorySemantics
+            energyTranslation
             aiCostSummary
             if entity.entityKind == .aiAgent { aiAgentSession }
             whatAetowerSees
@@ -537,6 +541,72 @@ public struct EntityDetailView: View {
             }
             .padding(.top, 4)
         }
+    }
+
+    private var energyTranslation: some View {
+        GroupBox("Energy translation") {
+            VStack(alignment: .leading, spacing: 8) {
+                if let watts = EnergyTranslation.watts(fromNjPerS: entity.metrics.energyNjPerS) {
+                    LabeledContent("Power", value: "~\(EnergyTranslation.formatPower(watts))")
+                    let cost = EnergyTranslation.costPerHour(
+                        watts: watts,
+                        pricePerKwh: settings.electricityPricePerKwh
+                    )
+                    LabeledContent(
+                        "Cost",
+                        value: "~\(EnergyTranslation.formatCostPerHour(cost, currency: settings.energyCurrencySymbol)) (\(EnergyTranslation.formatCostPerDay(cost, currency: settings.energyCurrencySymbol)))"
+                    )
+                    let carbon = EnergyTranslation.carbonGramsPerHour(
+                        watts: watts,
+                        gridGramsPerKwh: settings.gridCarbonIntensityGramsPerKwh
+                    )
+                    LabeledContent("Carbon", value: "~\(EnergyTranslation.formatCarbonPerHour(carbon))")
+                    LabeledContent("Battery", value: batteryShareLabel(entityWatts: watts))
+                    Text(
+                        "Estimated from kernel-billed energy (the same signal as Activity Monitor's Energy Impact). Cost and carbon use the rates in Settings."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(
+                        "No per-process energy reported. macOS bills energy only on Apple-silicon Macs, for processes that have run long enough to register a delta."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    /// "~22 of ~73 min remaining" when on battery, else "on AC power" / "—".
+    private func batteryShareLabel(entityWatts: Double) -> String {
+        let host = state.snapshot.host
+        guard host.onBattery else { return "on AC power" }
+        let totalWatts = state.snapshot.entities
+            .compactMap { EnergyTranslation.watts(fromNjPerS: $0.metrics.energyNjPerS) }
+            .reduce(0, +)
+        guard
+            let wattHours = EnergyTranslation.remainingWattHours(
+                maxCapacityMah: host.batteryHealth?.maxCapacityMah,
+                chargePercent: host.batteryChargePercent
+            ),
+            let minutesRemaining = EnergyTranslation.batteryMinutesRemaining(
+                wattHours: wattHours,
+                totalWatts: totalWatts
+            ),
+            let share = EnergyTranslation.entityBatteryShareMinutes(
+                entityWatts: entityWatts,
+                totalWatts: totalWatts,
+                minutesRemaining: minutesRemaining
+            )
+        else {
+            return "—"
+        }
+        return
+            "~\(EnergyTranslation.formatMinutes(share)) of ~\(EnergyTranslation.formatMinutes(minutesRemaining)) remaining"
     }
 
     private var whyItMatters: some View {

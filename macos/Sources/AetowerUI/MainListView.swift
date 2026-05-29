@@ -1119,6 +1119,7 @@ private func extractParentPIDForGrouping(from parentSummary: String) -> UInt32? 
 
 public struct MainListView: View {
     let state: AppState
+    let settings: SettingsStore
     @State private var selectedEntityID: String?
     @State private var searchText = ""
     @State private var sortKey: SortKey = .friction
@@ -1133,8 +1134,9 @@ public struct MainListView: View {
     @State private var showAdvancedFilter = false
     @FocusState private var searchFieldFocused: Bool
 
-    public init(state: AppState) {
+    public init(state: AppState, settings: SettingsStore) {
         self.state = state
+        self.settings = settings
     }
 
     public var body: some View {
@@ -1261,6 +1263,7 @@ public struct MainListView: View {
             EntityDetailView(
                 entity: entity,
                 state: state,
+                settings: settings,
                 processTreeSeedEntities: processTreeEntities,
                 processOperatorRequest: processOperatorRequest
             )
