@@ -42,6 +42,7 @@ public struct SensorDashboardView: View {
                         description: Text("This Mac is not reporting sensor readings, or collection has not sampled them yet.")
                     )
                 } else {
+                    if state.snapshot.thermalForecast != nil { thermalForecastSection }
                     if totalAttributedWatts > 0 { energyCostSection }
                     if !host.perCoreCpu.isEmpty { coresSection }
                     if !host.fans.isEmpty { fansSection }
@@ -153,6 +154,63 @@ public struct SensorDashboardView: View {
                 }
             }
             .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
+    @ViewBuilder
+    private var thermalForecastSection: some View {
+        if let forecast = state.snapshot.thermalForecast {
+            GroupBox("Thermal forecast") {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "thermometer.sun.fill")
+                        Text(forecastHeadline(forecast))
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundStyle(forecastTone(forecast.state))
+                    if let label = forecast.topContributorLabel {
+                        Text(
+                            "Top contributor: \(label) — open it to suspend or lower its priority."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    let temps = state.snapshot.hostTrend.maxCpuTemperature.map { Double($0) }
+                    if temps.count >= 2 {
+                        HorizonGraph(
+                            title: "CPU temperature",
+                            subtitle: String(
+                                format: "trend %+.1f °C/min", forecast.trendCelsiusPerMin),
+                            samples: temps,
+                            timestamps: [],
+                            tone: AetowerDesign.Tone.energy,
+                            format: { String(format: "%.0f °C", $0) }
+                        )
+                    }
+                    Text(
+                        "Heuristic estimate from the recent temperature slope — not a hardware throttle reading."
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                }
+                .padding(.top, AetowerDesign.Spacing.xs)
+            }
+        }
+    }
+
+    private func forecastHeadline(_ forecast: ThermalForecast) -> String {
+        if let minutes = forecast.minutesToThrottle {
+            return String(format: "Throttle likely in ~%.0f min", minutes)
+        }
+        return "Throttling now"
+    }
+
+    private func forecastTone(_ state: ThermalState) -> Color {
+        switch state {
+        case .critical, .serious: return AetowerDesign.Status.error
+        case .fair: return AetowerDesign.Status.warning
+        case .nominal: return AetowerDesign.Status.warning
+        @unknown default: return AetowerDesign.Status.warning
         }
     }
 

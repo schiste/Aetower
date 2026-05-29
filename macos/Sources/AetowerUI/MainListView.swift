@@ -1141,6 +1141,7 @@ public struct MainListView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            thermalForecastBanner
             monitorOverviewSummary
             monitorSplitView
         }
@@ -1616,6 +1617,40 @@ public struct MainListView: View {
             }
             .first?
             .pid
+    }
+
+    @ViewBuilder
+    private var thermalForecastBanner: some View {
+        if let forecast = state.snapshot.thermalForecast {
+            let tone =
+                forecast.state == .nominal || forecast.state == .fair
+                ? AetowerDesign.Status.warning : AetowerDesign.Status.error
+            HStack(spacing: 8) {
+                Image(systemName: "thermometer.sun.fill")
+                    .foregroundStyle(tone)
+                Text(thermalBannerText(forecast))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(tone)
+                Spacer()
+                Text("Sensors tab for the temperature trend")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, AetowerDesign.Spacing.xs)
+            .background(tone.opacity(0.12), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+        }
+    }
+
+    private func thermalBannerText(_ forecast: ThermalForecast) -> String {
+        let lead =
+            forecast.minutesToThrottle.map { String(format: "Throttle likely in ~%.0f min", $0) }
+            ?? "Throttling now"
+        if let label = forecast.topContributorLabel {
+            return "\(lead) · top contributor: \(label)"
+        }
+        return lead
     }
 
     private var monitorHeader: some View {
