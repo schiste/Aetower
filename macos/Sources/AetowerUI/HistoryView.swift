@@ -62,6 +62,7 @@ private struct HistoryDerivedContent: Sendable {
     let hostMemorySamples: [Double]
     let hostNetworkSamples: [Double]
     let hostGPUSamples: [Double]
+    let hostSampleTimestamps: [UInt64]
     let historicalEntities: [HistoricalEntitySummary]
     let changeSummaries: [ChangeNoteSummary]
     let compareChoices: [HistoryCompareChoice]
@@ -72,6 +73,7 @@ private struct HistoryDerivedContent: Sendable {
         hostMemorySamples: [],
         hostNetworkSamples: [],
         hostGPUSamples: [],
+        hostSampleTimestamps: [],
         historicalEntities: [],
         changeSummaries: [],
         compareChoices: []
@@ -215,42 +217,49 @@ public struct HistoryView: View {
         let gpuSamples = derivedContent.hostGPUSamples
         let lastHost = state.historySnapshots.last?.host
 
+        let timestamps = derivedContent.hostSampleTimestamps
+
         return GroupBox("Host trend") {
             LazyVGrid(columns: columns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-                TrendMetricCard(
+                HorizonGraph(
                     title: "Friction",
-                    value: String(format: "%.1f", frictionSamples.last ?? 0),
                     subtitle: range.detail,
                     samples: frictionSamples,
-                    style: .friction
+                    timestamps: timestamps,
+                    tone: AetowerDesign.Tone.friction,
+                    format: { String(format: "%.1f", $0) }
                 )
-                TrendMetricCard(
+                HorizonGraph(
                     title: "CPU",
-                    value: String(format: "%.1f%%", cpuSamples.last ?? 0),
                     subtitle: "\(state.historySnapshots.count) persisted samples",
                     samples: cpuSamples,
-                    style: .cpu
+                    timestamps: timestamps,
+                    tone: AetowerDesign.Tone.cpu,
+                    format: { String(format: "%.1f%%", $0) }
                 )
-                TrendMetricCard(
+                HorizonGraph(
                     title: "Memory",
-                    value: formatBytes(UInt64(memorySamples.last ?? 0)),
-                    subtitle: "peak \(formatBytes(memorySamples.max().map(UInt64.init) ?? 0))",
+                    subtitle: "peak \(formatBytes(memorySamples.max().map { UInt64(max(0, $0)) } ?? 0))",
                     samples: memorySamples,
-                    style: .memory
+                    timestamps: timestamps,
+                    tone: AetowerDesign.Tone.memory,
+                    format: { formatBytes(UInt64(max(0, $0))) }
                 )
-                TrendMetricCard(
+                HorizonGraph(
                     title: "Network",
-                    value: formatRate(UInt64(networkSamples.last ?? 0)),
-                    subtitle: "peak \(formatRate(networkSamples.max().map(UInt64.init) ?? 0))",
+                    subtitle: "peak \(formatRate(networkSamples.max().map { UInt64(max(0, $0)) } ?? 0))",
                     samples: networkSamples,
-                    style: .network
+                    timestamps: timestamps,
+                    tone: AetowerDesign.Tone.network,
+                    format: { formatRate(UInt64(max(0, $0))) }
                 )
-                TrendMetricCard(
+                HorizonGraph(
                     title: "GPU",
-                    value: String(format: "%.1f%%", gpuSamples.last ?? 0),
                     subtitle: "ANE \(String(format: "%.1f%%", lastHost.map { Double($0.anePercent) } ?? 0)) · \(formatBytes(lastHost?.gpuMemoryBytes ?? 0)) memory",
                     samples: gpuSamples,
-                    style: .energy
+                    timestamps: timestamps,
+                    tone: AetowerDesign.Tone.gpu,
+                    format: { String(format: "%.1f%%", $0) }
                 )
             }
             .padding(.top, AetowerDesign.Spacing.xs)
@@ -609,6 +618,7 @@ private func buildHistoryDerivedContent(from snapshots: [SystemSnapshot]) -> His
         Double($0.host.networkReceiveBps + $0.host.networkSendBps)
     }
     let hostGPUSamples = sortedSnapshots.map { Double($0.host.gpuPercent) }
+    let hostSampleTimestamps = sortedSnapshots.map { $0.capturedAtMillis }
 
     var grouped: [String: Accumulator] = [:]
     var bestByEntity: [String: ChangeNoteSummary] = [:]
@@ -684,6 +694,7 @@ private func buildHistoryDerivedContent(from snapshots: [SystemSnapshot]) -> His
         hostMemorySamples: hostMemorySamples,
         hostNetworkSamples: hostNetworkSamples,
         hostGPUSamples: hostGPUSamples,
+        hostSampleTimestamps: hostSampleTimestamps,
         historicalEntities: historicalEntities,
         changeSummaries: changeSummaries,
         compareChoices: compareChoices
