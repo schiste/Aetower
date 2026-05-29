@@ -848,6 +848,9 @@ public struct EntityDetailView: View {
                     LabeledContent("Launch lineage", value: launcherSummary)
                 }
                 LabeledContent("Executable", value: entity.executablePath ?? "Unknown")
+                if let appVersion = entity.appVersion {
+                    LabeledContent("App version", value: appVersion)
+                }
                 LabeledContent("Frontmost", value: entity.metrics.isForeground ? "Yes" : "No")
                 LabeledContent("Active window", value: entity.activeWindowTitle ?? "None detected")
                 LabeledContent("Network", value: formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps))
