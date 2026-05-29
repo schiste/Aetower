@@ -69,6 +69,9 @@ RUST_UNWRAP_PATTERN = re.compile(r"\.(unwrap|expect)\(")
 PACKAGE_SWIFT_REMOTE_DEP_PATTERN = re.compile(r"\.package\s*\(\s*url:")
 DEPENDENCY_RISK_PATTERN = re.compile(r"\b(git|branch|rev|tag)\s*=")
 WILDCARD_VERSION_PATTERN = re.compile(r'version\s*=\s*"\*"')
+CARGO_LOCK_NEUTRAL_TOML_LINE = re.compile(
+    r"^\s*(license|license-file|authors|description|homepage|repository|readme|keywords|categories|documentation|edition)\s*="
+)
 
 
 @dataclass
@@ -272,13 +275,46 @@ def check_dependency_hygiene(
                     violations.append(Violation(path, line_number, "Do not add git or branch-based Cargo dependencies."))
                 if WILDCARD_VERSION_PATTERN.search(line):
                     violations.append(Violation(path, line_number, "Do not add wildcard Cargo dependency versions."))
-        if "rust/Cargo.lock" not in changed_files:
+        if cargo_lock_required_for_cargo_toml_changes(mode, diff_base) and "rust/Cargo.lock" not in changed_files:
             violations.append(Violation("rust/Cargo.lock", None, "Cargo.lock must change when Cargo.toml changes."))
 
     if "macos/Package.swift" in changed_files:
         for line_number, line in added_lines.get("macos/Package.swift", []):
             if PACKAGE_SWIFT_REMOTE_DEP_PATTERN.search(line):
                 violations.append(Violation("macos/Package.swift", line_number, "Do not add remote SwiftPM packages without explicit review."))
+
+
+def cargo_lock_required_for_cargo_toml_changes(mode: str, diff_base: str | None) -> bool:
+    if mode == "pre-commit":
+        output = run_git("diff", "--cached", "--unified=0", "--no-color", "--diff-filter=ACMR")
+    elif mode == "working-tree":
+        output = run_git("diff", "--unified=0", "--no-color", "--diff-filter=ACMR", "HEAD")
+    else:
+        base = diff_base or default_diff_base()
+        output = run_git("diff", "--unified=0", "--no-color", "--diff-filter=ACMR", f"{base}...HEAD")
+
+    current_path: str | None = None
+    for raw in output.splitlines():
+        if raw.startswith("+++ b/"):
+            current_path = raw[6:]
+            continue
+        if raw.startswith("--- ") or raw.startswith("@@"):
+            continue
+        if current_path is None or not current_path.endswith("Cargo.toml"):
+            continue
+        if not raw.startswith(("+", "-")):
+            continue
+
+        line = raw[1:].strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            continue
+        if CARGO_LOCK_NEUTRAL_TOML_LINE.search(line):
+            continue
+        return True
+
+    return False
 
 
 def normalize_for_dup(line: str) -> str:
