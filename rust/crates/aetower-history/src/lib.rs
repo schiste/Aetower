@@ -55,6 +55,9 @@ pub struct History {
     /// tick collector hiccup (process briefly invisible) from flushing
     /// accumulated energy and emitting a spurious "session ended" event.
     ai_session_absent_ticks: BTreeMap<String, u8>,
+    /// Remote hosts each entity was connected to on the previous tick, so we can
+    /// emit a timeline event the first time an entity contacts a new host.
+    previous_remote_hosts: HashMap<String, HashSet<String>>,
 }
 
 struct MetricTrendState {
@@ -190,6 +193,7 @@ impl History {
             last_sensor_reading_millis: BTreeMap::new(),
             ai_session_energy_nj: BTreeMap::new(),
             ai_session_absent_ticks: BTreeMap::new(),
+            previous_remote_hosts: HashMap::new(),
         }
     }
 
@@ -363,6 +367,46 @@ impl History {
                 ));
             }
         }
+
+        // Network: emit an event the first time an entity contacts a new remote
+        // host. Seed silently on first observation so existing connections at
+        // launch don't fire a backlog of events.
+        for entity in entities.iter() {
+            let current = entity_remote_hosts(entity);
+            if current.is_empty() {
+                continue;
+            }
+            if let Some(previous) = self.previous_remote_hosts.get(&entity.entity_id) {
+                let mut new_hosts: Vec<&String> = current.difference(previous).collect();
+                if !new_hosts.is_empty() {
+                    new_hosts.sort();
+                    let shown = new_hosts
+                        .iter()
+                        .take(3)
+                        .map(|host| host.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let more = new_hosts.len().saturating_sub(3);
+                    let detail = if more > 0 {
+                        format!("Now contacting {shown} (+{more} more)")
+                    } else {
+                        format!("Now contacting {shown}")
+                    };
+                    self.push_event(
+                        captured_at_millis,
+                        TimelineCategory::Lifecycle,
+                        TimelineSeverity::Info,
+                        Some(entity.entity_id.clone()),
+                        format!("{} opened a new connection", entity.display_name),
+                        detail,
+                    );
+                }
+            }
+            self.previous_remote_hosts
+                .insert(entity.entity_id.clone(), current);
+        }
+        self.previous_remote_hosts
+            .retain(|id, _| active_entity_ids.contains(id));
 
         // Feature 6: Co-occurrence tracking with compact u16 indices.
         self.cooccurrence_tick += 1;
@@ -1592,6 +1636,21 @@ fn set_recent_change_summary(entity: &mut EntitySnapshot, summary: String) {
     if entity.recent_change_summary.is_none() {
         entity.recent_change_summary = Some(summary);
     }
+}
+
+/// Distinct remote hosts (host without port, excluding listening wildcards) an
+/// entity is currently connected to.
+fn entity_remote_hosts(entity: &EntitySnapshot) -> HashSet<String> {
+    entity
+        .network_connections
+        .iter()
+        .filter_map(|connection| connection.remote.as_deref())
+        .map(|remote| match remote.rsplit_once(':') {
+            Some((host, _port)) if !host.is_empty() => host.to_owned(),
+            _ => remote.to_owned(),
+        })
+        .filter(|host| !host.is_empty() && host != "*")
+        .collect()
 }
 
 fn pressure_band(host: &HostSnapshot) -> PressureBand {
