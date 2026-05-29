@@ -2,7 +2,7 @@
 
 All notable public changes to Aetower should be documented here.
 
-## 0.1.0-developer-preview.1 (build 405) - 2026-05-29
+## 0.1.0-developer-preview.1 (build 408) - 2026-05-29
 
 First public Developer Preview baseline.
 

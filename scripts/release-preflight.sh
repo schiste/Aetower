@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SIGN_IDENTITY="${AETOWER_SIGN_IDENTITY:-}"
 NOTARIZE="${AETOWER_NOTARIZE:-1}"
 NOTARY_PROFILE="${AETOWER_NOTARY_PROFILE:-}"
@@ -15,6 +16,7 @@ BUNDLE_ID="${AETOWER_BUNDLE_ID:-}"
 VERSION="${AETOWER_VERSION:-}"
 BUILD_NUMBER="${AETOWER_BUILD_NUMBER:-}"
 JQ_BIN="${JQ_BIN:-}"
+CHANGELOG_PATH="${AETOWER_CHANGELOG_PATH:-$ROOT/CHANGELOG.md}"
 
 STATUS=0
 
@@ -145,6 +147,18 @@ if [ "$REQUIRE_FINAL_METADATA" = "1" ]; then
     else
         printf '  release build number: invalid (%s)\n' "$BUILD_NUMBER"
         STATUS=1
+    fi
+
+    if [ -n "$VERSION" ] && [ -n "$BUILD_NUMBER" ]; then
+        if [ ! -f "$CHANGELOG_PATH" ]; then
+            printf '  changelog release entry: missing changelog file %s\n' "$CHANGELOG_PATH"
+            STATUS=1
+        elif grep -F "## $VERSION (build $BUILD_NUMBER)" "$CHANGELOG_PATH" >/dev/null 2>&1; then
+            printf '  changelog release entry: found\n'
+        else
+            printf '  changelog release entry: missing "## %s (build %s)"\n' "$VERSION" "$BUILD_NUMBER"
+            STATUS=1
+        fi
     fi
 else
     printf '  final release metadata: optional\n'
