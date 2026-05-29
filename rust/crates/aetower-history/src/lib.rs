@@ -798,6 +798,32 @@ impl History {
         });
     }
 
+    /// Record a regression finding (from the off-tick detector) as a timeline
+    /// event. Uses a bundle-scoped id so multiple findings sharing a timestamp
+    /// don't collide. The event surfaces on the next snapshot's timeline.
+    pub fn record_regression(
+        &mut self,
+        timestamp_millis: u64,
+        bundle_id: &str,
+        kind_key: &str,
+        severity: TimelineSeverity,
+        title: String,
+        detail: String,
+    ) {
+        self.timeline.push_back(TimelineEvent {
+            id: format!("regression:{bundle_id}:{kind_key}:{timestamp_millis}"),
+            timestamp_millis,
+            category: TimelineCategory::Regression,
+            severity,
+            entity_id: None,
+            title,
+            detail,
+        });
+        while self.timeline.len() > 120 {
+            self.timeline.pop_front();
+        }
+    }
+
     fn update_host_observability(
         &mut self,
         captured_at_millis: u64,

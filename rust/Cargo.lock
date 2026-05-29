@@ -44,6 +44,7 @@ dependencies = [
  "aetower-identity",
  "aetower-model",
  "aetower-persistence",
+ "aetower-regression",
  "aetower-reputation",
  "aetower-sensors",
  "aetower-telemetry",

@@ -32,6 +32,13 @@ const ADAPTER_IDLE_SLEEP: Duration = Duration::from_secs(5);
 const TELEMETRY_DISABLED_SLEEP: Duration = Duration::from_secs(30);
 const HISTORY_MAINTENANCE_INITIAL_DELAY: Duration = Duration::from_secs(45);
 const HISTORY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(10 * 60);
+// Regression detection runs off-tick over persisted history: a short delay
+// after launch, then every few hours. The window is bounded to ~7 days and
+// downsampled to keep the load_range read cheap.
+const REGRESSION_INITIAL_DELAY: Duration = Duration::from_secs(120);
+const REGRESSION_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+const REGRESSION_WINDOW_MILLIS: u64 = 7 * 86_400_000;
+const REGRESSION_MAX_SNAPSHOTS: usize = 400;
 // When a maintenance pass finishes and the store is still above the soft cap,
 // shorten the next interval so the pruner converges quickly instead of waiting
 // a full 10 minutes. Without this, a write-heavy interval can push the store
@@ -257,6 +264,7 @@ pub struct Engine {
     telemetry_worker: Option<JoinHandle<()>>,
     history_maintenance_worker: Option<JoinHandle<()>>,
     system_marker_worker: Option<JoinHandle<()>>,
+    regression_worker: Option<JoinHandle<()>>,
 }
 
 impl Engine {
@@ -335,6 +343,7 @@ impl Engine {
             telemetry_worker: None,
             history_maintenance_worker: None,
             system_marker_worker: None,
+            regression_worker: None,
         }
     }
 
@@ -1167,6 +1176,58 @@ impl Engine {
                 since_millis,
             );
         }));
+
+        // Regression detector: off-tick, reads persisted history, emits
+        // Regression timeline events. Deduped per (bundle, kind) for the
+        // session so a standing regression isn't re-announced every cycle.
+        let persistence = Arc::clone(&self.persistence);
+        let state = Arc::clone(&self.state);
+        let running = Arc::clone(&self.running);
+        self.regression_worker = Some(thread::spawn(move || {
+            sleep_with_stop(&running, REGRESSION_INITIAL_DELAY);
+            let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
+            while running.load(Ordering::SeqCst) {
+                let now = aet_time::now_millis();
+                let window_start = now.saturating_sub(REGRESSION_WINDOW_MILLIS);
+                // Load without blocking ticks; skip this cycle if the store is busy.
+                let snapshots = match persistence.try_lock() {
+                    Some(guard) => guard
+                        .as_ref()
+                        .and_then(|store| store.load_range(window_start, now).ok())
+                        .unwrap_or_default(),
+                    None => Vec::new(),
+                };
+                let downsampled = downsample_hourly(snapshots, REGRESSION_MAX_SNAPSHOTS);
+                if !downsampled.is_empty() {
+                    let findings = aetower_regression::detect_regressions(&downsampled, now);
+                    if !findings.is_empty() {
+                        let mut guard = state.lock();
+                        for finding in findings {
+                            let (kind_key, kind_title) = match finding.kind {
+                                aetower_regression::RegressionKind::Memory7dCreep => {
+                                    ("memory-creep", "Memory creep")
+                                }
+                                aetower_regression::RegressionKind::IdleCpuSinceUpdate => {
+                                    ("idle-cpu-update", "Idle CPU rose after update")
+                                }
+                            };
+                            let dedup_key = format!("{}:{kind_key}", finding.bundle_id);
+                            if emitted.insert(dedup_key) {
+                                guard.history.record_regression(
+                                    now,
+                                    &finding.bundle_id,
+                                    kind_key,
+                                    finding.severity,
+                                    format!("{}: {kind_title}", finding.display_name),
+                                    finding.summary,
+                                );
+                            }
+                        }
+                    }
+                }
+                sleep_with_stop(&running, REGRESSION_INTERVAL);
+            }
+        }));
     }
 
     pub fn stop(&mut self) {
@@ -1184,6 +1245,9 @@ impl Engine {
             let _ = worker.join();
         }
         if let Some(worker) = self.history_maintenance_worker.take() {
+            let _ = worker.join();
+        }
+        if let Some(worker) = self.regression_worker.take() {
             let _ = worker.join();
         }
         // System-marker ingestion is best-effort and can be slow on machines
@@ -1927,6 +1991,23 @@ fn telemetry_config_from_env() -> OtlpConfig {
         config.enabled = matches!(enabled.as_str(), "1" | "true" | "TRUE" | "yes" | "YES");
     }
     config
+}
+
+/// Keep at most one snapshot per hour bucket (and cap the total) so the
+/// regression detector reads a bounded series regardless of persistence cadence.
+fn downsample_hourly(snapshots: Vec<SystemSnapshot>, cap: usize) -> Vec<SystemSnapshot> {
+    const HOUR_MILLIS: u64 = 3_600_000;
+    let mut seen_hours = std::collections::HashSet::new();
+    let mut kept: Vec<SystemSnapshot> = snapshots
+        .into_iter()
+        .filter(|snapshot| seen_hours.insert(snapshot.captured_at_millis / HOUR_MILLIS))
+        .collect();
+    // If still over the cap, keep the most recent `cap` hourly samples.
+    if kept.len() > cap {
+        let drop = kept.len() - cap;
+        kept.drain(0..drop);
+    }
+    kept
 }
 
 fn sleep_with_stop(running: &AtomicBool, duration: Duration) {

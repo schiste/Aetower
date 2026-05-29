@@ -107,6 +107,9 @@ struct AdapterState {
     /// Throttle for VirusTotal requests (free tier = 4/min). One lookup is
     /// issued per `>= DEFAULT_MIN_REQUEST_INTERVAL_MILLIS`.
     last_reputation_request_millis: u64,
+    /// App version (`CFBundleShortVersionString`) keyed by `.app` bundle path.
+    /// Resolved once per bundle (reads Info.plist), cached for the session.
+    version_cache: HashMap<String, Option<String>>,
 }
 
 struct Chau7FetchPlan {
@@ -316,6 +319,7 @@ impl Default for AdapterManager {
                 virustotal_api_key: None,
                 reputation_cache: HashMap::new(),
                 last_reputation_request_millis: 0,
+                version_cache: HashMap::new(),
             })),
         }
     }
@@ -1175,6 +1179,7 @@ impl AdapterManager {
             reputation_key,
             reputation_cache,
             last_reputation_request_millis,
+            mut version_cache,
         ) = {
             let guard = self.state.lock();
             let chromium_targets = capabilities
@@ -1208,11 +1213,14 @@ impl AdapterManager {
                 guard.virustotal_api_key.clone(),
                 guard.reputation_cache.clone(),
                 guard.last_reputation_request_millis,
+                guard.version_cache.clone(),
             )
         };
         // Tracks paths resolved during this pass so we can write them back into
         // the shared cache after the entity loop (codesign runs lock-free).
         let mut newly_signed: Vec<(String, (String, bool))> = Vec::new();
+        // App-version verdicts resolved this pass (bundle path → version).
+        let mut newly_versioned: Vec<(String, Option<String>)> = Vec::new();
         // Executable paths of risky entities (unsigned/ad-hoc + connected) that
         // have no cached reputation yet — candidates for a background lookup.
         let mut reputation_candidates: Vec<String> = Vec::new();
@@ -1460,6 +1468,25 @@ impl AdapterManager {
                 }
             }
 
+            // App version: for .app-bundled apps, resolve CFBundleShortVersion
+            // String once per bundle (cached) so the regression detector can
+            // spot "idle CPU rose since the last update".
+            if matches!(entity.entity_kind, aetower_model::EntityKind::App) {
+                if let Some(bundle_path) =
+                    entity.executable_path.as_deref().and_then(app_bundle_path)
+                {
+                    let version = if let Some(hit) = version_cache.get(&bundle_path) {
+                        hit.clone()
+                    } else {
+                        let resolved = resolve_app_version(&bundle_path);
+                        version_cache.insert(bundle_path.clone(), resolved.clone());
+                        newly_versioned.push((bundle_path, resolved.clone()));
+                        resolved
+                    };
+                    entity.app_version = version;
+                }
+            }
+
             // Binary reputation (opt-in): only for "risky" binaries — unsigned
             // or ad-hoc AND currently connected. Signed binaries are never
             // hashed or sent. Attach from cache; otherwise queue a candidate for
@@ -1694,6 +1721,12 @@ impl AdapterManager {
                 guard.signing_cache.insert(path, verdict);
             }
         }
+        if !newly_versioned.is_empty() {
+            let mut guard = self.state.lock();
+            for (path, version) in newly_versioned {
+                guard.version_cache.insert(path, version);
+            }
+        }
 
         // Fire at most one VirusTotal lookup per refresh, gated by the rate
         // limiter (free tier = 4/min). The lookup runs on a detached thread so
@@ -1772,6 +1805,30 @@ fn entity_is_reputation_candidate(entity: &EntitySnapshot) -> bool {
         return false;
     }
     entity.is_adhoc || matches!(entity.signing_classification.as_str(), "unsigned" | "adhoc")
+}
+
+/// Derive the `.app` bundle path from an executable path
+/// (`/Applications/X.app/Contents/MacOS/X` → `/Applications/X.app`). `None`
+/// when the executable isn't inside a `.app` bundle.
+fn app_bundle_path(executable_path: &str) -> Option<String> {
+    let marker = ".app/";
+    let index = executable_path.find(marker)?;
+    Some(executable_path[..index + marker.len() - 1].to_owned())
+}
+
+/// Read `CFBundleShortVersionString` from a bundle's Info.plist. Best-effort —
+/// returns `None` when the plist or key is absent.
+fn resolve_app_version(bundle_path: &str) -> Option<String> {
+    let plist = format!("{bundle_path}/Contents/Info.plist");
+    let output = Command::new("/usr/libexec/PlistBuddy")
+        .args(["-c", "Print :CFBundleShortVersionString", &plist])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!version.is_empty()).then_some(version)
 }
 
 /// Resolve a binary's code-signing verdict via `codesign -dvvv`, reusing the
