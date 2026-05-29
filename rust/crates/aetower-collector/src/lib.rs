@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use aetower_model::{
-    BatteryHealthSnapshot, BluetoothDeviceBattery, BootSessionSnapshot, DiskHealthSnapshot,
-    NetworkInterfaceSnapshot, ThermalState,
+    BatteryHealthSnapshot, BluetoothDeviceBattery, BootSessionSnapshot, CoreKind, CoreLoad,
+    DiskHealthSnapshot, NetworkInterfaceSnapshot, ThermalState,
 };
 use serde::{Deserialize, Serialize};
 use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, Users};
@@ -72,6 +72,8 @@ pub struct RawHostSample {
     pub disks: Vec<DiskHealthSnapshot>,
     #[serde(default)]
     pub bluetooth_devices: Vec<BluetoothDeviceBattery>,
+    #[serde(default)]
+    pub per_core_cpu: Vec<CoreLoad>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -209,6 +211,12 @@ pub struct Collector {
     /// shows a misleading initial burst and only displays real rates
     /// once the tick cadence has stabilised.
     first_network_tick: bool,
+    /// Cumulative per-core CPU ticks from the previous sample, used to derive
+    /// per-core load deltas. Empty until the first `host_processor_info` call.
+    previous_core_ticks: Vec<platform::CoreTicks>,
+    /// Cached (performance, efficiency) logical-core counts from sysctl. `(0,0)`
+    /// when unavailable (Intel) — cores are then reported as `Unknown`.
+    core_perflevels: Option<(usize, usize)>,
 }
 
 impl Collector {
@@ -238,7 +246,38 @@ impl Collector {
             cached_bluetooth_devices: Vec::new(),
             bluetooth_refresh_tick: 0,
             first_network_tick: true,
+            previous_core_ticks: Vec::new(),
+            core_perflevels: None,
         }
+    }
+
+    /// Sample per-logical-core CPU load from `host_processor_info`, deriving the
+    /// per-core percentage from tick deltas against the previous sample and
+    /// classifying each core performance/efficiency (best-effort).
+    fn sample_per_core_cpu(&mut self) -> Vec<CoreLoad> {
+        let current = platform::per_core_ticks();
+        if current.is_empty() {
+            return Vec::new();
+        }
+        if self.core_perflevels.is_none() {
+            self.core_perflevels = Some(platform::core_perflevel_counts());
+        }
+        let (performance, efficiency) = self.core_perflevels.unwrap_or((0, 0));
+        let previous = std::mem::take(&mut self.previous_core_ticks);
+        let mut cores = Vec::with_capacity(current.len());
+        for (index, ticks) in current.iter().enumerate() {
+            let percent = previous
+                .get(index)
+                .map(|prev| ticks.busy_percent_since(prev))
+                .unwrap_or(0.0);
+            cores.push(CoreLoad {
+                index: index as u32,
+                percent,
+                kind: classify_core(index, current.len(), performance, efficiency),
+            });
+        }
+        self.previous_core_ticks = current;
+        cores
     }
 
     pub fn configure(&mut self, config: CollectorConfig) {
@@ -586,6 +625,7 @@ impl Collector {
         let host_wakeups_per_second = processes
             .iter()
             .fold(0.0f32, |total, process| total + process.wakeups_per_second);
+        let per_core_cpu = self.sample_per_core_cpu();
 
         let host = RawHostSample {
             cpu_percent: self.system.global_cpu_usage(),
@@ -607,6 +647,7 @@ impl Collector {
             network_interfaces,
             disks: self.cached_disks.clone(),
             bluetooth_devices: self.cached_bluetooth_devices.clone(),
+            per_core_cpu,
         };
         let post_process_millis = post_process_started.elapsed().as_secs_f64() * 1000.0;
 
@@ -763,6 +804,21 @@ pub fn read_environment() -> HostEnvironment {
     platform::read_environment()
 }
 
+/// Classify a logical core performance/efficiency. Apple Silicon's
+/// `host_processor_info` reports efficiency cores first, then performance cores
+/// (best-effort heuristic; `Unknown` when perflevel counts are unavailable or
+/// don't sum to the core total — e.g. Intel).
+fn classify_core(index: usize, total: usize, performance: usize, efficiency: usize) -> CoreKind {
+    if performance + efficiency != total || (performance == 0 && efficiency == 0) {
+        return CoreKind::Unknown;
+    }
+    if index < efficiency {
+        CoreKind::Efficiency
+    } else {
+        CoreKind::Performance
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod platform {
     use aetower_model::{
@@ -818,6 +874,15 @@ mod platform {
             host_info_out: *mut i32,
             host_info_out_cnt: *mut u32,
         ) -> i32;
+        fn host_processor_info(
+            host: u32,
+            flavor: i32,
+            out_processor_count: *mut u32,
+            out_processor_info: *mut *mut i32,
+            out_processor_info_cnt: *mut u32,
+        ) -> i32;
+        fn vm_deallocate(target_task: u32, address: usize, size: usize) -> i32;
+        static mach_task_self_: u32;
         fn sysctlbyname(
             name: *const c_char,
             oldp: *mut c_void,
@@ -1098,6 +1163,102 @@ mod platform {
     const HOST_VM_INFO64: i32 = 4;
     const KERN_SUCCESS: i32 = 0;
     const RUSAGE_INFO_V4: i32 = 4;
+    const PROCESSOR_CPU_LOAD_INFO: i32 = 2;
+    const CPU_STATE_MAX: usize = 4;
+    const CPU_STATE_USER: usize = 0;
+    const CPU_STATE_SYSTEM: usize = 1;
+    const CPU_STATE_IDLE: usize = 2;
+    const CPU_STATE_NICE: usize = 3;
+
+    /// Cumulative per-core CPU tick counters from `host_processor_info`.
+    #[derive(Clone, Copy)]
+    pub struct CoreTicks {
+        user: u64,
+        system: u64,
+        idle: u64,
+        nice: u64,
+    }
+
+    impl CoreTicks {
+        /// Busy percentage (0–100) over the interval since `previous`.
+        pub fn busy_percent_since(&self, previous: &CoreTicks) -> f32 {
+            let busy = self.user.saturating_sub(previous.user)
+                + self.system.saturating_sub(previous.system)
+                + self.nice.saturating_sub(previous.nice);
+            let idle = self.idle.saturating_sub(previous.idle);
+            let total = busy + idle;
+            if total == 0 {
+                0.0
+            } else {
+                (busy as f32 / total as f32) * 100.0
+            }
+        }
+    }
+
+    /// Read cumulative per-logical-core CPU ticks. Empty on failure.
+    pub fn per_core_ticks() -> Vec<CoreTicks> {
+        unsafe {
+            let host = mach_host_self();
+            let mut core_count: u32 = 0;
+            let mut info: *mut i32 = ptr::null_mut();
+            let mut info_count: u32 = 0;
+            let result = host_processor_info(
+                host,
+                PROCESSOR_CPU_LOAD_INFO,
+                &mut core_count,
+                &mut info,
+                &mut info_count,
+            );
+            if result != KERN_SUCCESS || info.is_null() || core_count == 0 {
+                return Vec::new();
+            }
+            let values = std::slice::from_raw_parts(info, info_count as usize);
+            let mut cores = Vec::with_capacity(core_count as usize);
+            for core in 0..core_count as usize {
+                let base = core * CPU_STATE_MAX;
+                if base + CPU_STATE_NICE >= values.len() {
+                    break;
+                }
+                cores.push(CoreTicks {
+                    user: values[base + CPU_STATE_USER] as u32 as u64,
+                    system: values[base + CPU_STATE_SYSTEM] as u32 as u64,
+                    idle: values[base + CPU_STATE_IDLE] as u32 as u64,
+                    nice: values[base + CPU_STATE_NICE] as u32 as u64,
+                });
+            }
+            vm_deallocate(
+                mach_task_self_,
+                info as usize,
+                (info_count as usize) * mem::size_of::<i32>(),
+            );
+            cores
+        }
+    }
+
+    /// `(performance, efficiency)` logical-core counts via sysctl. `(0, 0)` on
+    /// Intel or when unavailable.
+    pub fn core_perflevel_counts() -> (usize, usize) {
+        (
+            sysctl_u32("hw.perflevel0.logicalcpu").unwrap_or(0) as usize,
+            sysctl_u32("hw.perflevel1.logicalcpu").unwrap_or(0) as usize,
+        )
+    }
+
+    fn sysctl_u32(name: &str) -> Option<u32> {
+        let cname = std::ffi::CString::new(name).ok()?;
+        let mut value: u32 = 0;
+        let mut size = mem::size_of::<u32>();
+        let result = unsafe {
+            sysctlbyname(
+                cname.as_ptr(),
+                &mut value as *mut u32 as *mut c_void,
+                &mut size,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        (result == 0).then_some(value)
+    }
 
     /// macOS `rusage_info_v4` — a strict superset of v2 that adds QoS
     /// time buckets, instruction/cycle counters, and (critically for us)
@@ -2348,6 +2509,23 @@ mod platform {
 
     pub fn process_thread_count(_pid: u32) -> Option<u32> {
         None
+    }
+
+    #[derive(Clone, Copy)]
+    pub struct CoreTicks;
+
+    impl CoreTicks {
+        pub fn busy_percent_since(&self, _previous: &CoreTicks) -> f32 {
+            0.0
+        }
+    }
+
+    pub fn per_core_ticks() -> Vec<CoreTicks> {
+        Vec::new()
+    }
+
+    pub fn core_perflevel_counts() -> (usize, usize) {
+        (0, 0)
     }
 
     pub fn process_cwd(_pid: u32) -> Option<String> {

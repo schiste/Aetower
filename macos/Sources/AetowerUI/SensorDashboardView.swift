@@ -14,7 +14,8 @@ public struct SensorDashboardView: View {
     private var host: HostSnapshot { state.snapshot.host }
 
     private var hasAnySensor: Bool {
-        !host.fans.isEmpty
+        !host.perCoreCpu.isEmpty
+            || !host.fans.isEmpty
             || !host.cpuTemperatures.isEmpty
             || !host.powerReadings.isEmpty
             || !host.disks.isEmpty
@@ -39,6 +40,7 @@ public struct SensorDashboardView: View {
                         description: Text("This Mac is not reporting sensor readings, or collection has not sampled them yet.")
                     )
                 } else {
+                    if !host.perCoreCpu.isEmpty { coresSection }
                     if !host.fans.isEmpty { fansSection }
                     if !host.cpuTemperatures.isEmpty || host.gpuTemperatureCelsius != nil { temperatureSection }
                     if !host.powerReadings.isEmpty { powerSection }
@@ -49,6 +51,53 @@ public struct SensorDashboardView: View {
             }
             .frame(maxWidth: 920, alignment: .leading)
             .padding(AetowerDesign.Spacing.xxl)
+        }
+    }
+
+    private var coresSection: some View {
+        let performanceCount = host.perCoreCpu.filter { $0.kind == .performance }.count
+        let efficiencyCount = host.perCoreCpu.filter { $0.kind == .efficiency }.count
+        let detail = performanceCount + efficiencyCount > 0
+            ? "\(performanceCount)P · \(efficiencyCount)E"
+            : "\(host.perCoreCpu.count) cores"
+        return GroupBox(label: Text("CPU cores · \(detail)")) {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(host.perCoreCpu, id: \.index) { core in
+                    HStack(spacing: 8) {
+                        Text(coreKindLabel(core.kind))
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(coreKindTone(core.kind))
+                            .frame(width: 16, alignment: .leading)
+                        Text("Core \(core.index)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 52, alignment: .leading)
+                        ProgressView(value: Double(min(max(core.percent, 0), 100)), total: 100)
+                            .tint(coreKindTone(core.kind))
+                        Text(String(format: "%.0f%%", core.percent))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 40, alignment: .trailing)
+                    }
+                }
+            }
+            .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
+    private func coreKindLabel(_ kind: CoreKind) -> String {
+        switch kind {
+        case .performance: return "P"
+        case .efficiency: return "E"
+        case .unknown: return "—"
+        }
+    }
+
+    private func coreKindTone(_ kind: CoreKind) -> Color {
+        switch kind {
+        case .performance: return AetowerDesign.Tone.cpu
+        case .efficiency: return AetowerDesign.Tone.memory
+        case .unknown: return AetowerDesign.Status.neutral
         }
     }
 

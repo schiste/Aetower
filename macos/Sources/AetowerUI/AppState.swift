@@ -318,7 +318,8 @@ public final class AppState {
                 bootSession: nil,
                 networkInterfaces: [],
                 disks: [],
-                bluetoothDevices: []
+                bluetoothDevices: [],
+                perCoreCpu: []
             ),
             hostTrend: HostTrend(
                 machineFriction: [],

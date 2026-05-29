@@ -245,6 +245,28 @@ pub struct HostSnapshot {
     pub disks: Vec<DiskHealthSnapshot>,
     #[serde(default)]
     pub bluetooth_devices: Vec<BluetoothDeviceBattery>,
+    /// Per-logical-core CPU load, with best-effort performance/efficiency
+    /// classification. Live-only (not persisted in trend rings).
+    #[serde(default)]
+    pub per_core_cpu: Vec<CoreLoad>,
+}
+
+/// Performance vs efficiency core class (Apple Silicon). `Unknown` on Intel or
+/// when the perflevel split could not be determined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CoreKind {
+    #[default]
+    Unknown,
+    Performance,
+    Efficiency,
+}
+
+/// One logical CPU core's current load (0–100) plus its core class.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CoreLoad {
+    pub index: u32,
+    pub percent: f32,
+    pub kind: CoreKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -214,6 +214,21 @@ pub struct HostSnapshot {
     pub network_interfaces: Vec<NetworkInterfaceSnapshot>,
     pub disks: Vec<DiskHealthSnapshot>,
     pub bluetooth_devices: Vec<BluetoothDeviceBattery>,
+    pub per_core_cpu: Vec<CoreLoad>,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum CoreKind {
+    Unknown,
+    Performance,
+    Efficiency,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct CoreLoad {
+    pub index: u32,
+    pub percent: f32,
+    pub kind: CoreKind,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -1897,6 +1912,27 @@ impl From<model::HostSnapshot> for HostSnapshot {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
+            per_core_cpu: value.per_core_cpu.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<model::CoreKind> for CoreKind {
+    fn from(value: model::CoreKind) -> Self {
+        match value {
+            model::CoreKind::Performance => CoreKind::Performance,
+            model::CoreKind::Efficiency => CoreKind::Efficiency,
+            model::CoreKind::Unknown => CoreKind::Unknown,
+        }
+    }
+}
+
+impl From<model::CoreLoad> for CoreLoad {
+    fn from(value: model::CoreLoad) -> Self {
+        Self {
+            index: value.index,
+            percent: value.percent,
+            kind: value.kind.into(),
         }
     }
 }

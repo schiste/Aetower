@@ -105,6 +105,7 @@ pub fn run_benchmark(config: BenchmarkConfig) -> BenchmarkReport {
             bluetooth_devices: raw.host.bluetooth_devices.clone(),
             network_interfaces: raw.host.network_interfaces.clone(),
             disks: raw.host.disks.clone(),
+            per_core_cpu: raw.host.per_core_cpu.clone(),
         };
         let identity = identity::resolve(&raw.processes);
         let mut entities = attribution::build_entities(&raw.processes, &identity, None);
@@ -149,6 +150,7 @@ pub fn run_benchmark(config: BenchmarkConfig) -> BenchmarkReport {
             bluetooth_devices: raw.host.bluetooth_devices.clone(),
             network_interfaces: raw.host.network_interfaces.clone(),
             disks: raw.host.disks.clone(),
+            per_core_cpu: raw.host.per_core_cpu.clone(),
         };
         let identity_started_at = Instant::now();
         let identity = identity::resolve(&raw.processes);

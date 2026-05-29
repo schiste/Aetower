@@ -458,6 +458,7 @@ impl Engine {
                     bluetooth_devices: raw.host.bluetooth_devices.clone(),
                     network_interfaces: raw.host.network_interfaces.clone(),
                     disks: raw.host.disks.clone(),
+                    per_core_cpu: raw.host.per_core_cpu.clone(),
                 };
                 let gpu_interval = runtime_config.gpu_interval(&host);
                 let mut gpu_sample_millis = 0.0;

@@ -2624,6 +2624,84 @@ public func FfiConverterTypeComponentSnapshot_lower(_ value: ComponentSnapshot) 
 }
 
 
+public struct CoreLoad {
+    public var index: UInt32
+    public var percent: Float
+    public var kind: CoreKind
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(index: UInt32, percent: Float, kind: CoreKind) {
+        self.index = index
+        self.percent = percent
+        self.kind = kind
+    }
+}
+
+#if compiler(>=6)
+extension CoreLoad: Sendable {}
+#endif
+
+
+extension CoreLoad: Equatable, Hashable {
+    public static func ==(lhs: CoreLoad, rhs: CoreLoad) -> Bool {
+        if lhs.index != rhs.index {
+            return false
+        }
+        if lhs.percent != rhs.percent {
+            return false
+        }
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(index)
+        hasher.combine(percent)
+        hasher.combine(kind)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCoreLoad: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreLoad {
+        return
+            try CoreLoad(
+                index: FfiConverterUInt32.read(from: &buf), 
+                percent: FfiConverterFloat.read(from: &buf), 
+                kind: FfiConverterTypeCoreKind.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CoreLoad, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.index, into: &buf)
+        FfiConverterFloat.write(value.percent, into: &buf)
+        FfiConverterTypeCoreKind.write(value.kind, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreLoad_lift(_ buf: RustBuffer) throws -> CoreLoad {
+    return try FfiConverterTypeCoreLoad.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreLoad_lower(_ value: CoreLoad) -> RustBuffer {
+    return FfiConverterTypeCoreLoad.lower(value)
+}
+
+
 public struct DiagnosticsEvent {
     public var id: String
     public var timestampMillis: UInt64
@@ -4314,10 +4392,11 @@ public struct HostSnapshot {
     public var networkInterfaces: [NetworkInterfaceSnapshot]
     public var disks: [DiskHealthSnapshot]
     public var bluetoothDevices: [BluetoothDeviceBattery]
+    public var perCoreCpu: [CoreLoad]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?, bootSession: BootSessionSnapshot?, networkInterfaces: [NetworkInterfaceSnapshot], disks: [DiskHealthSnapshot], bluetoothDevices: [BluetoothDeviceBattery]) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?, bootSession: BootSessionSnapshot?, networkInterfaces: [NetworkInterfaceSnapshot], disks: [DiskHealthSnapshot], bluetoothDevices: [BluetoothDeviceBattery], perCoreCpu: [CoreLoad]) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
@@ -4348,6 +4427,7 @@ public struct HostSnapshot {
         self.networkInterfaces = networkInterfaces
         self.disks = disks
         self.bluetoothDevices = bluetoothDevices
+        self.perCoreCpu = perCoreCpu
     }
 }
 
@@ -4448,6 +4528,9 @@ extension HostSnapshot: Equatable, Hashable {
         if lhs.bluetoothDevices != rhs.bluetoothDevices {
             return false
         }
+        if lhs.perCoreCpu != rhs.perCoreCpu {
+            return false
+        }
         return true
     }
 
@@ -4482,6 +4565,7 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(networkInterfaces)
         hasher.combine(disks)
         hasher.combine(bluetoothDevices)
+        hasher.combine(perCoreCpu)
     }
 }
 
@@ -4523,7 +4607,8 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 bootSession: FfiConverterOptionTypeBootSessionSnapshot.read(from: &buf), 
                 networkInterfaces: FfiConverterSequenceTypeNetworkInterfaceSnapshot.read(from: &buf), 
                 disks: FfiConverterSequenceTypeDiskHealthSnapshot.read(from: &buf), 
-                bluetoothDevices: FfiConverterSequenceTypeBluetoothDeviceBattery.read(from: &buf)
+                bluetoothDevices: FfiConverterSequenceTypeBluetoothDeviceBattery.read(from: &buf), 
+                perCoreCpu: FfiConverterSequenceTypeCoreLoad.read(from: &buf)
         )
     }
 
@@ -4558,6 +4643,7 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeNetworkInterfaceSnapshot.write(value.networkInterfaces, into: &buf)
         FfiConverterSequenceTypeDiskHealthSnapshot.write(value.disks, into: &buf)
         FfiConverterSequenceTypeBluetoothDeviceBattery.write(value.bluetoothDevices, into: &buf)
+        FfiConverterSequenceTypeCoreLoad.write(value.perCoreCpu, into: &buf)
     }
 }
 
@@ -7052,6 +7138,83 @@ extension ComponentKind: Equatable, Hashable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum CoreKind {
+    
+    case unknown
+    case performance
+    case efficiency
+}
+
+
+#if compiler(>=6)
+extension CoreKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCoreKind: FfiConverterRustBuffer {
+    typealias SwiftType = CoreKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .unknown
+        
+        case 2: return .performance
+        
+        case 3: return .efficiency
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CoreKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .unknown:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .performance:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .efficiency:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreKind_lift(_ buf: RustBuffer) throws -> CoreKind {
+    return try FfiConverterTypeCoreKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreKind_lower(_ value: CoreKind) -> RustBuffer {
+    return FfiConverterTypeCoreKind.lower(value)
+}
+
+
+extension CoreKind: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum DiagnosticsLevel {
     
     case trace
@@ -8622,6 +8785,31 @@ fileprivate struct FfiConverterSequenceTypeComponentSnapshot: FfiConverterRustBu
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeComponentSnapshot.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeCoreLoad: FfiConverterRustBuffer {
+    typealias SwiftType = [CoreLoad]
+
+    public static func write(_ value: [CoreLoad], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCoreLoad.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CoreLoad] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CoreLoad]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCoreLoad.read(from: &buf))
         }
         return seq
     }
