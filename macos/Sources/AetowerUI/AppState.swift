@@ -976,6 +976,9 @@ public final class AppState {
             )
             runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
             refreshOperatorState(force: force)
+            if let updatedSnapshotValue {
+                evaluateAutomationRules(snapshot: updatedSnapshotValue)
+            }
             if let updatedSnapshotValue, lagMonitoringActive {
                 publishUiLagMetrics(
                     snapshot: updatedSnapshotValue,

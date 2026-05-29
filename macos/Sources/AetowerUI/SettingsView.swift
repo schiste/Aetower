@@ -13,6 +13,7 @@ public struct SettingsView: View {
     @State private var applyConfirmation: String?
     @State private var showAdvancedCollectionControls = false
     @State private var showResetLocalDataConfirmation = false
+    @State private var editingAutomationRules: [AutomationRule] = []
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
@@ -34,6 +35,7 @@ public struct SettingsView: View {
         case integrations
         case aiClients
         case notifications
+        case automation
         case privacy
         case updates
         case advanced
@@ -48,6 +50,7 @@ public struct SettingsView: View {
             case .integrations: return "Integrations"
             case .aiClients: return "AI Clients"
             case .notifications: return "Notifications"
+            case .automation: return "Automation"
             case .privacy: return "Privacy"
             case .updates: return "Updates"
             case .advanced: return "Advanced"
@@ -62,6 +65,7 @@ public struct SettingsView: View {
             case .integrations: return "External data sources"
             case .aiClients: return "MCP registration"
             case .notifications: return "Operator alerts"
+            case .automation: return "Run Shortcuts on events"
             case .privacy: return "Export controls"
             case .updates: return "Direct-download releases"
             case .advanced: return "Capabilities and reset"
@@ -76,6 +80,7 @@ public struct SettingsView: View {
             case .integrations: return "point.3.connected.trianglepath.dotted"
             case .aiClients: return "cpu"
             case .notifications: return "bell.badge"
+            case .automation: return "bolt.badge.automatic"
             case .privacy: return "hand.raised"
             case .updates: return "sparkles"
             case .advanced: return "wrench.and.screwdriver"
@@ -211,6 +216,11 @@ public struct SettingsView: View {
             return settings.notificationsEnabled
                 ? SettingsStatus("Enabled", AetowerDesign.Status.success)
                 : SettingsStatus("Off", AetowerDesign.Status.neutral)
+        case .automation:
+            let active = state.automationRules.filter(\.enabled).count
+            return active > 0
+                ? SettingsStatus("\(active) active", AetowerDesign.Status.success)
+                : SettingsStatus("Off", AetowerDesign.Status.neutral)
         case .privacy:
             return SettingsStatus(settings.exportPrivacyTier.rawValue.capitalized, AetowerDesign.Status.ready)
         case .updates:
@@ -295,6 +305,8 @@ public struct SettingsView: View {
             aiClientsSection
         case .notifications:
             notificationsSection
+        case .automation:
+            automationSection
         case .privacy:
             privacySection
         case .updates:
@@ -779,6 +791,86 @@ public struct SettingsView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var automationSection: some View {
+        SettingsCard(
+            title: "Event automations",
+            subtitle: "Run a macOS Shortcut or shell command when a matching timeline event appears.",
+            status: status(for: .automation)
+        ) {
+            if editingAutomationRules.isEmpty {
+                Text("No automation rules yet. Add one to react to launches, exits, anomalies, or thermal/friction shifts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach($editingAutomationRules) { $rule in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Toggle("", isOn: $rule.enabled).labelsHidden()
+                        TextField("Rule name", text: $rule.name)
+                            .textFieldStyle(.roundedBorder)
+                            .aetowerUtilityTextInput()
+                        Button(role: .destructive) {
+                            editingAutomationRules.removeAll { $0.id == rule.id }
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    HStack {
+                        Picker("When", selection: $rule.event) {
+                            ForEach(AutomationEvent.allCases) { event in
+                                Text(event.label).tag(event)
+                            }
+                        }
+                        .frame(maxWidth: 220)
+                        TextField("title contains (optional)", text: $rule.titleContains)
+                            .textFieldStyle(.roundedBorder)
+                            .aetowerUtilityTextInput()
+                    }
+                    HStack {
+                        Picker("Action", selection: $rule.actionKind) {
+                            ForEach(AutomationActionKind.allCases) { kind in
+                                Text(kind.label).tag(kind)
+                            }
+                        }
+                        .frame(maxWidth: 200)
+                        TextField(
+                            rule.actionKind == .shortcut ? "Shortcut name" : "shell command",
+                            text: $rule.actionValue
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .aetowerUtilityTextInput()
+                        .font(.system(size: 11, design: .monospaced))
+                    }
+                }
+                .padding(10)
+                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            }
+            HStack {
+                Button {
+                    editingAutomationRules.append(AutomationRule())
+                } label: {
+                    Label("Add rule", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+                Spacer()
+                Button("Save rules") {
+                    state.updateAutomationRules(editingAutomationRules)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            Text("Rules evaluate on each refresh while Aetower is running; background-only execution is not yet supported.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .onAppear {
+            if editingAutomationRules.isEmpty {
+                editingAutomationRules = state.automationRules
             }
         }
     }

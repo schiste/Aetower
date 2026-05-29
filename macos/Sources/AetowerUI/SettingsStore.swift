@@ -17,6 +17,90 @@ public enum CollectionProfile: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
 }
 
+/// Which timeline event category an automation rule reacts to.
+public enum AutomationEvent: String, CaseIterable, Identifiable, Codable, Sendable {
+    case any
+    case lifecycle
+    case friction
+    case host
+    case thermal
+    case anomaly
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .any: return "Any event"
+        case .lifecycle: return "Process launch/exit"
+        case .friction: return "Friction shift"
+        case .host: return "Host change"
+        case .thermal: return "Thermal change"
+        case .anomaly: return "Anomaly detected"
+        }
+    }
+}
+
+public enum AutomationActionKind: String, CaseIterable, Identifiable, Codable, Sendable {
+    case shortcut
+    case shell
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .shortcut: return "Run Shortcut"
+        case .shell: return "Run shell command"
+        }
+    }
+}
+
+/// A user-defined automation: when a matching timeline event appears, run a
+/// macOS Shortcut or a shell command. Evaluated by `AppState` on each snapshot
+/// while the app is running.
+public struct AutomationRule: Codable, Identifiable, Sendable {
+    public var id: UUID
+    public var enabled: Bool
+    public var name: String
+    public var event: AutomationEvent
+    public var titleContains: String
+    public var actionKind: AutomationActionKind
+    public var actionValue: String
+
+    public init(
+        id: UUID = UUID(),
+        enabled: Bool = true,
+        name: String = "New rule",
+        event: AutomationEvent = .lifecycle,
+        titleContains: String = "",
+        actionKind: AutomationActionKind = .shortcut,
+        actionValue: String = ""
+    ) {
+        self.id = id
+        self.enabled = enabled
+        self.name = name
+        self.event = event
+        self.titleContains = titleContains
+        self.actionKind = actionKind
+        self.actionValue = actionValue
+    }
+}
+
+/// Standalone UserDefaults persistence for automation rules, independent of
+/// `SettingsStore`'s per-property persist machinery.
+public enum AutomationStore {
+    private static let key = "aetower.automationRules"
+
+    public static func load() -> [AutomationRule] {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
+        return (try? JSONDecoder().decode([AutomationRule].self, from: data)) ?? []
+    }
+
+    public static func save(_ rules: [AutomationRule]) {
+        guard let data = try? JSONEncoder().encode(rules) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
 @MainActor
 @Observable
 public final class SettingsStore {
