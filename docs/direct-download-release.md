@@ -118,8 +118,9 @@ sh scripts/release-public-preview.sh
 ```
 
 This runs the signed/notarized macOS ZIP release, generates the Sparkle appcast,
-generates the Homebrew cask artifact, and prepares the Cloudflare Pages payload.
-It does not deploy to Cloudflare by default.
+generates the Homebrew cask artifact, verifies the Sparkle distribution matrix,
+and prepares the Cloudflare Pages payload. It does not deploy to Cloudflare by
+default.
 
 The generated cask is a tap-ready artifact, not a full Homebrew publication by
 itself. Publish it through a dedicated tap such as `homebrew-aetower`; see
@@ -136,6 +137,15 @@ The `.pkg` is for installer-style distribution and MDM/admin workflows. Sparkle
 updates still work after a `.pkg` install because Sparkle updates the installed
 `.app`. The release feed still uses the ZIP appcast because this repo's Sparkle
 `generate_appcast` tool does not support package-based update archives.
+
+The release pipeline verifies that ZIP, Homebrew cask, and optional PKG all
+resolve to the same Sparkle-enabled bundle. Run the matrix directly when
+debugging packaging issues:
+
+```sh
+sh scripts/verify-sparkle-distribution-matrix.sh
+sh scripts/verify-sparkle-distribution-matrix.sh --require-pkg
+```
 
 Deploy explicitly only after reviewing the generated site payload:
 

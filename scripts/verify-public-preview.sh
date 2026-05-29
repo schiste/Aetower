@@ -2,11 +2,13 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ENV_FILE="${AETOWER_RELEASE_ENV_FILE:-$ROOT/.env.release.local}"
 APP_DIR="$ROOT/dist/Aetower.app"
 APP_BIN="$APP_DIR/Contents/MacOS/Aetower"
 
 RUN_PREFLIGHT=0
 RUN_PACKAGE=0
+RUN_MATRIX=0
 RUN_GATEKEEPER=0
 RUN_OPERATOR=0
 RUN_SOAK=0
@@ -15,7 +17,7 @@ SOAK_SECONDS="${AETOWER_PUBLIC_PREVIEW_SOAK_SECONDS:-7200}"
 
 usage() {
     cat <<EOF
-usage: $0 [--all] [--preflight] [--package] [--gatekeeper] [--operator] [--soak] [--rebuild]
+usage: $0 [--all] [--preflight] [--package] [--matrix] [--gatekeeper] [--operator] [--soak] [--rebuild]
 
 Validate a public Developer Preview candidate.
 
@@ -35,6 +37,7 @@ while [ "$#" -gt 0 ]; do
         --all)
             RUN_PREFLIGHT=1
             RUN_PACKAGE=1
+            RUN_MATRIX=1
             RUN_GATEKEEPER=1
             RUN_OPERATOR=1
             RUN_SOAK=1
@@ -46,6 +49,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --package)
             RUN_PACKAGE=1
+            shift
+            ;;
+        --matrix)
+            RUN_MATRIX=1
             shift
             ;;
         --gatekeeper)
@@ -76,6 +83,13 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$ENV_FILE"
+    set +a
+fi
+
 if [ "$RUN_PREFLIGHT" -eq 1 ]; then
     sh "$ROOT/scripts/release-candidate.sh" --preflight-only
 fi
@@ -86,6 +100,10 @@ if [ "$RUN_PACKAGE" -eq 1 ]; then
     else
         sh "$ROOT/scripts/smoke-package.sh"
     fi
+fi
+
+if [ "$RUN_MATRIX" -eq 1 ]; then
+    sh "$ROOT/scripts/verify-sparkle-distribution-matrix.sh"
 fi
 
 if [ "$RUN_GATEKEEPER" -eq 1 ]; then

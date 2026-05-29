@@ -23,6 +23,13 @@ The cask is generated from `dist/Aetower.app/Contents/Info.plist` and from the
 immutable Sparkle archive in `dist/appcast/`. Its `sha256` is calculated from
 that archive, so regenerate the cask after every release build.
 
+The public-preview pipeline also verifies the cask against the Sparkle appcast
+and the packaged app. Run the check directly with:
+
+```sh
+sh scripts/verify-sparkle-distribution-matrix.sh
+```
+
 ## Publish through a tap
 
 Homebrew expects public casks to live in a tap repository. Use a dedicated tap,

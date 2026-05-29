@@ -61,6 +61,13 @@ Expected artifacts:
 - `dist/homebrew/Casks/aetower.rb`
 - `dist/cloudflare-site/`
 
+The release command runs the Sparkle distribution matrix automatically. To run
+it again:
+
+```sh
+sh scripts/verify-sparkle-distribution-matrix.sh
+```
+
 Validate the generated cask from the Homebrew tap repository before publishing.
 See [Homebrew Release](homebrew-release.md).
 

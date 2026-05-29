@@ -6,13 +6,14 @@ ENV_FILE="${AETOWER_RELEASE_ENV_FILE:-$ROOT/.env.release.local}"
 
 usage() {
     cat <<EOF
-usage: $0 [--prepare-only] [--with-pkg] [--deploy-cloudflare]
+usage: $0 [--prepare-only] [--with-pkg] [--skip-matrix] [--deploy-cloudflare]
 
 Build the public Developer Preview release set:
   1. signed/notarized macOS app + zip
   2. Sparkle appcast and immutable update archive
   3. Homebrew cask artifact
-  4. Cloudflare Pages static payload
+  4. Sparkle distribution matrix verification
+  5. Cloudflare Pages static payload
 
 By default this does not deploy to Cloudflare. Use --deploy-cloudflare only
 after reviewing the generated dist/cloudflare-site payload.
@@ -26,6 +27,7 @@ EOF
 PREPARE_ONLY=0
 DEPLOY_CLOUDFLARE=0
 WITH_PKG=0
+RUN_MATRIX=1
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --prepare-only)
@@ -34,6 +36,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --with-pkg)
             WITH_PKG=1
+            shift
+            ;;
+        --skip-matrix)
+            RUN_MATRIX=0
             shift
             ;;
         --deploy-cloudflare)
@@ -82,6 +88,15 @@ if [ "$WITH_PKG" -eq 1 ]; then
 else
     printf '\n=== skip pkg installer ===\n'
     printf 'Use --with-pkg after installing a Developer ID Installer certificate.\n'
+fi
+
+if [ "$RUN_MATRIX" -eq 1 ]; then
+    printf '\n=== verify Sparkle distribution matrix ===\n'
+    if [ "$WITH_PKG" -eq 1 ]; then
+        sh "$ROOT/scripts/verify-sparkle-distribution-matrix.sh" --require-pkg
+    else
+        sh "$ROOT/scripts/verify-sparkle-distribution-matrix.sh"
+    fi
 fi
 
 printf '\n=== prepare Cloudflare Pages payload ===\n'

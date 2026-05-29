@@ -47,14 +47,22 @@ Run the automated local checks against the release candidate:
 sh scripts/verify-public-preview.sh --all
 ```
 
-The `--all` battery runs release preflight, package verification, Gatekeeper
-assessment, MCP/operator smoke, and a two-hour soak. For focused checks:
+The `--all` battery runs release preflight, package verification, Sparkle
+distribution matrix verification, Gatekeeper assessment, MCP/operator smoke,
+and a two-hour soak. For focused checks:
 
 ```sh
 sh scripts/verify-public-preview.sh --package --gatekeeper
+sh scripts/verify-public-preview.sh --matrix
 sh scripts/verify-public-preview.sh --operator
 AETOWER_PUBLIC_PREVIEW_SOAK_SECONDS=7200 sh scripts/verify-public-preview.sh --soak
 ```
+
+The distribution matrix proves that the direct-download ZIP, Homebrew cask, and
+optional PKG all resolve to the same bundle id, version, build number, Sparkle
+feed URL, public EdDSA key, and embedded Sparkle framework.
+Use `sh scripts/verify-sparkle-distribution-matrix.sh --require-pkg` when the
+release includes `dist/Aetower.pkg`.
 
 ## 4. Clean-Machine Validation
 
@@ -77,6 +85,7 @@ Use a clean macOS user account or a second Mac.
 
 - `release-preflight` passes.
 - The release package is signed, notarized, and Gatekeeper-accepted.
+- The Sparkle distribution matrix passes for every published acquisition path.
 - Sparkle updates from N-1 to N.
 - A clean user can launch and use Setup without custom terminal commands.
 - The app remains responsive during the soak.
