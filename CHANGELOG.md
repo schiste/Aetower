@@ -2,9 +2,15 @@
 
 All notable public changes to Aetower should be documented here.
 
-## Developer Preview
+## 0.1.0-developer-preview.1 (build 386) - 2026-05-29
 
-Initial Developer Preview baseline.
+First public Developer Preview baseline.
+
+Release metadata:
+
+- Bundle identifier: `com.aeptus.aetower`
+- Sparkle appcast: `https://aetower.dev/releases/appcast.xml`
+- Release archive prefix: `https://aetower.dev/releases/`
 
 - Added a direct-download macOS release path with Developer ID signing,
   notarization, Sparkle appcast generation, and package smoke testing.
@@ -17,6 +23,3 @@ Initial Developer Preview baseline.
   hooks, wakeup attribution, and support-bundle previews.
 - Added local quality gates for Swift, Rust, security scans, benchmarks,
   package smoke, telemetry smoke, and dependency policy.
-
-Before publishing a build, replace this section with dated release notes and
-the exact version/build number shipped.
