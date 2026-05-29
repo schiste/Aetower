@@ -14,10 +14,21 @@ SPARKLE_PUBLIC_ED_KEY="${AETOWER_SPARKLE_PUBLIC_ED_KEY:-}"
 BUNDLE_ID="${AETOWER_BUNDLE_ID:-}"
 VERSION="${AETOWER_VERSION:-}"
 BUILD_NUMBER="${AETOWER_BUILD_NUMBER:-}"
+JQ_BIN="${JQ_BIN:-}"
 
 STATUS=0
 
 printf 'release preflight\n'
+
+if [ -z "$JQ_BIN" ]; then
+    JQ_BIN="$(command -v jq || true)"
+fi
+if [ -n "$JQ_BIN" ]; then
+    printf '  third-party notice tooling: jq found\n'
+else
+    printf '  third-party notice tooling: jq missing\n'
+    STATUS=1
+fi
 
 codesigning_identities() {
     identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"

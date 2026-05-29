@@ -12,8 +12,10 @@ Build the public Developer Preview release set:
   1. signed/notarized macOS app + zip
   2. Sparkle appcast and immutable update archive
   3. Homebrew cask artifact
-  4. Sparkle distribution matrix verification
-  5. Cloudflare Pages static payload
+  4. optional pkg installer artifact
+  5. third-party dependency/license inventory
+  6. Sparkle distribution matrix verification
+  7. Cloudflare Pages static payload
 
 By default this does not deploy to Cloudflare. Use --deploy-cloudflare only
 after reviewing the generated dist/cloudflare-site payload.
@@ -90,6 +92,9 @@ else
     printf 'Use --with-pkg after installing a Developer ID Installer certificate.\n'
 fi
 
+printf '\n=== generate third-party notices ===\n'
+sh "$ROOT/scripts/generate-third-party-notices.sh"
+
 if [ "$RUN_MATRIX" -eq 1 ]; then
     printf '\n=== verify Sparkle distribution matrix ===\n'
     if [ "$WITH_PKG" -eq 1 ]; then
@@ -110,6 +115,7 @@ if [ "$WITH_PKG" -eq 1 ]; then
 fi
 printf '  appcast dir:     %s\n' "$ROOT/dist/appcast"
 printf '  homebrew cask:   %s\n' "$ROOT/dist/homebrew/Casks/aetower.rb"
+printf '  notices:         %s\n' "$ROOT/dist/THIRD-PARTY-NOTICES.md"
 printf '  cloudflare site: %s\n' "$SITE_OUTPUT"
 
 if [ "$DEPLOY_CLOUDFLARE" -eq 1 ]; then

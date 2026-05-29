@@ -59,6 +59,7 @@ Expected artifacts:
 - `dist/Aetower.zip`
 - `dist/appcast/appcast.xml`
 - `dist/homebrew/Casks/aetower.rb`
+- `dist/THIRD-PARTY-NOTICES.md`
 - `dist/cloudflare-site/`
 
 The release command runs the Sparkle distribution matrix automatically. To run
@@ -98,6 +99,8 @@ On a clean Mac or clean user account:
 - verify MCP discovery smoke for the supported local agents
 - verify no duplicate Aetower engines are started
 - leave the app idle for at least 30 minutes and check Diagnostics
+- review `dist/THIRD-PARTY-NOTICES.md` and confirm no unexpected copyleft or
+  unknown-license dependency entered the release graph
 
 ## 6. Verify update flow
 

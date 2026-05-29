@@ -106,6 +106,9 @@ This runs, in order:
    filename and runs Sparkle's `generate_appcast` to (re)write
    `dist/appcast/appcast.xml`, signing each entry with the EdDSA key and
    applying the download URL prefix.
+4. `scripts/generate-third-party-notices.sh` — generates
+   `dist/THIRD-PARTY-NOTICES.md` from the locked Rust Cargo graph and SwiftPM
+   package resolution.
 
 The individual scripts can also be run directly with the same environment.
 
@@ -118,9 +121,9 @@ sh scripts/release-public-preview.sh
 ```
 
 This runs the signed/notarized macOS ZIP release, generates the Sparkle appcast,
-generates the Homebrew cask artifact, verifies the Sparkle distribution matrix,
-and prepares the Cloudflare Pages payload. It does not deploy to Cloudflare by
-default.
+generates the Homebrew cask artifact, generates third-party dependency/license
+notices, verifies the Sparkle distribution matrix, and prepares the Cloudflare
+Pages payload. It does not deploy to Cloudflare by default.
 
 The generated cask is a tap-ready artifact, not a full Homebrew publication by
 itself. Publish it through a dedicated tap such as `homebrew-aetower`; see

@@ -13,6 +13,7 @@ The release site is intentionally static:
 - `/releases/Aetower.zip` serves the latest signed and notarized app archive
   for direct human downloads.
 - `/releases/Aetower-<version>-<build>.zip` serves immutable Sparkle archives.
+- `/third-party-notices.md` serves the generated dependency/license inventory.
 
 ## Prepare
 
@@ -73,6 +74,7 @@ Check:
 
 ```sh
 curl -I https://aetower.dev/
+curl -I https://aetower.dev/third-party-notices.md
 curl -I https://aetower.dev/releases/appcast.xml
 curl -I https://aetower.dev/releases/Aetower.zip
 ```
