@@ -121,6 +121,14 @@ public final class AppState {
     private(set) var processInspections: [UInt32: ProcessInspectionReportModel] = [:]
     private(set) var processOpenResources: [UInt32: ProcessOpenResourcesReportModel] = [:]
     private(set) var processSamples: [UInt32: ProcessSampleReportModel] = [:]
+    private(set) var recentlyFinished: [FinishedProcessModel] = []
+    /// Entity ids matched by the active advanced (Rhai) filter; nil = no filter.
+    private(set) var advancedFilterEntityIds: Set<String>?
+    private(set) var advancedFilterError: String?
+    private(set) var advancedFilterSummary: String?
+    private(set) var automationRules: [AutomationRule] = AutomationStore.load()
+    private var seenAutomationEventIds: Set<String> = []
+    private var automationSeeded = false
     private(set) var processActionPreviewReports: [String: ProcessActionReportModel] = [:]
     private(set) var processActionReports: [UInt32: ProcessActionReportModel] = [:]
     private(set) var processActionHistory: ProcessActionHistoryReportModel?
@@ -469,6 +477,216 @@ public final class AppState {
         if panel.runModal() == .OK, let url = panel.url {
             try? json.write(to: url, atomically: true, encoding: .utf8)
         }
+    }
+
+    /// Export the current snapshot as a per-process CSV (one row per process
+    /// component). Mirrors `exportSnapshot` but emits spreadsheet-friendly rows.
+    public func exportSnapshotCSV() {
+        let csv = snapshotCSV()
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "aetower-processes.csv"
+        if panel.runModal() == .OK, let url = panel.url {
+            try? csv.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    func snapshotCSV() -> String {
+        let header = [
+            "entity", "entity_id", "pid", "process", "cpu_percent", "memory_bytes",
+            "memory_footprint_bytes", "user", "start_time_millis", "executable_path",
+            "command_line", "entity_friction", "entity_energy_nj_per_s",
+        ]
+        var rows = [header.map(csvField).joined(separator: ",")]
+        for entity in snapshot.entities {
+            for component in entity.components where component.kind != .adapterContext {
+                guard let pid = component.processId else { continue }
+                let fields = [
+                    entity.displayName,
+                    entity.entityId,
+                    String(pid),
+                    component.title,
+                    String(format: "%.1f", component.cpuPercent),
+                    String(component.memoryBytes),
+                    String(component.memoryPhysicalFootprintBytes),
+                    component.user ?? "",
+                    String(component.startTimeMillis),
+                    component.executablePath ?? "",
+                    component.commandLine ?? "",
+                    String(format: "%.1f", entity.friction.totalScore),
+                    String(format: "%.0f", entity.metrics.energyNjPerS),
+                ]
+                rows.append(fields.map(csvField).joined(separator: ","))
+            }
+        }
+        return rows.joined(separator: "\n")
+    }
+
+    /// RFC 4180 CSV field escaping: quote when the value contains a comma,
+    /// quote, or newline, and double any embedded quotes.
+    private func csvField(_ value: String) -> String {
+        if value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r") {
+            return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+        }
+        return value
+    }
+
+    /// Reconstruct recently-finished processes by diffing the live snapshot
+    /// against the last `windowMinutes` of history: a PID seen in history but
+    /// not alive now is "finished", carrying its most recent observed metrics.
+    public func refreshRecentlyFinished(windowMinutes: UInt64 = 5) {
+        let bridge = self.bridge
+        let current = self.snapshot
+        Task(priority: .utility) { [weak self] in
+            let endMillis = current.capturedAtMillis
+            let windowMillis = windowMinutes * 60_000
+            let startMillis = endMillis > windowMillis ? endMillis - windowMillis : 0
+            let history = bridge.loadHistoryRange(startMillis: startMillis, endMillis: endMillis)
+
+            let alivePids = Set(
+                current.entities.flatMap { entity in
+                    entity.components.compactMap(\.processId)
+                }
+            )
+
+            var lastSeen: [UInt32: FinishedProcessModel] = [:]
+            for snap in history {
+                for entity in snap.entities {
+                    for component in entity.components where component.kind != .adapterContext {
+                        guard let pid = component.processId else { continue }
+                        if let existing = lastSeen[pid], existing.lastSeenMillis >= snap.capturedAtMillis {
+                            continue
+                        }
+                        lastSeen[pid] = FinishedProcessModel(
+                            pid: pid,
+                            name: component.title,
+                            entityName: entity.displayName,
+                            lastCpuPercent: component.cpuPercent,
+                            lastMemoryBytes: component.memoryBytes,
+                            user: component.user,
+                            startTimeMillis: component.startTimeMillis,
+                            lastSeenMillis: snap.capturedAtMillis
+                        )
+                    }
+                }
+            }
+
+            let finished = lastSeen.values
+                .filter { !alivePids.contains($0.pid) }
+                .sorted { $0.lastSeenMillis > $1.lastSeenMillis }
+                .prefix(25)
+            let result = Array(finished)
+            await MainActor.run { self?.recentlyFinished = result }
+        }
+    }
+
+    /// Evaluate a sandboxed Rhai filter expression in the engine and retain the
+    /// matched entity ids so the list view can intersect against them.
+    public func applyAdvancedFilter(_ expression: String) {
+        let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            clearAdvancedFilter()
+            return
+        }
+        let result = bridge.filterEntitiesJSON(expression: trimmed)
+        guard let report = decodeJsonQueryResult(result, as: EntityFilterReportModel.self) else {
+            advancedFilterEntityIds = []
+            advancedFilterError = jsonQueryErrorMessage(result, fallback: "Filter could not be evaluated.")
+            advancedFilterSummary = nil
+            return
+        }
+        advancedFilterEntityIds = Set(report.matchedEntityIds)
+        advancedFilterError = report.error
+        advancedFilterSummary = "\(report.matchedCount) of \(report.evaluatedEntities) match"
+    }
+
+    public func clearAdvancedFilter() {
+        advancedFilterEntityIds = nil
+        advancedFilterError = nil
+        advancedFilterSummary = nil
+    }
+
+    public func updateAutomationRules(_ rules: [AutomationRule]) {
+        automationRules = rules
+        AutomationStore.save(rules)
+    }
+
+    /// Fire automation rules for timeline events that appeared since the last
+    /// snapshot. On the first snapshot we only seed the seen-set so we don't
+    /// fire on the historical backlog at launch. Rules run only while the app
+    /// is running (documented in the Automation settings UI).
+    private func evaluateAutomationRules(snapshot: SystemSnapshot) {
+        let events = snapshot.timeline
+        guard automationSeeded else {
+            seenAutomationEventIds = Set(events.map(\.id))
+            automationSeeded = true
+            return
+        }
+        let activeRules = automationRules.filter(\.enabled)
+        if !activeRules.isEmpty {
+            for event in events where !seenAutomationEventIds.contains(event.id) {
+                for rule in activeRules where automationRuleMatches(rule, event) {
+                    executeAutomationAction(rule, event: event)
+                }
+            }
+        }
+        // Reset to the current (bounded) window so the set never grows without bound.
+        seenAutomationEventIds = Set(events.map(\.id))
+    }
+
+    private func automationRuleMatches(_ rule: AutomationRule, _ event: TimelineEvent) -> Bool {
+        if rule.event != .any, rule.event.rawValue != timelineCategoryKey(event.category) {
+            return false
+        }
+        let needle = rule.titleContains.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return true }
+        return event.title.lowercased().contains(needle)
+            || event.detail.lowercased().contains(needle)
+    }
+
+    private func timelineCategoryKey(_ category: TimelineCategory) -> String {
+        switch category {
+        case .lifecycle: return "lifecycle"
+        case .friction: return "friction"
+        case .host: return "host"
+        case .thermal: return "thermal"
+        case .anomaly: return "anomaly"
+        @unknown default: return "any"
+        }
+    }
+
+    private func executeAutomationAction(_ rule: AutomationRule, event: TimelineEvent) {
+        let value = rule.actionValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        let process = Process()
+        switch rule.actionKind {
+        case .shortcut:
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+            process.arguments = ["run", value]
+        case .shell:
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", value]
+        }
+        var launchError: String?
+        do {
+            try process.run()
+        } catch {
+            launchError = error.localizedDescription
+        }
+        recordLocalDiagnosticsEvent(
+            level: launchError == nil ? .info : .warn,
+            subsystem: .ui,
+            eventType: "automation-rule",
+            message: launchError.map { "Automation '\(rule.name)' failed to launch: \($0)" }
+                ?? "Automation '\(rule.name)' triggered \(rule.actionKind.label.lowercased()) for: \(event.title)",
+            entityId: event.entityId,
+            fields: [
+                DiagnosticsField(key: "rule", value: rule.name),
+                DiagnosticsField(key: "action_kind", value: rule.actionKind.rawValue),
+                DiagnosticsField(key: "action_value", value: value),
+                DiagnosticsField(key: "event", value: event.title),
+            ]
+        )
     }
 
     public func exportDiagnostics(limit: UInt32 = 1000) {

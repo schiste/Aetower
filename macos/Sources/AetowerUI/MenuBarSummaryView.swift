@@ -101,6 +101,11 @@ public struct MenuBarSummaryView: View {
             }
             .buttonStyle(.bordered)
 
+            Button("Export Processes (CSV)") {
+                state.exportSnapshotCSV()
+            }
+            .buttonStyle(.bordered)
+
             Button("Open Settings") {
                 NSApp.activate(ignoringOtherApps: true)
             }

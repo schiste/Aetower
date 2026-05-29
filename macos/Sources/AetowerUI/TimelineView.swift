@@ -119,6 +119,36 @@ public struct TimelineView: View {
                     Text("The timeline records shifts that help explain why the ranking changed: spikes, new activity, and state transitions that matter to perceived system health.")
                         .foregroundStyle(.secondary)
                 }
+                // Throttle history reconstruction to ~every 30s of snapshot time.
+                .task(id: state.snapshot.capturedAtMillis / 30_000) {
+                    state.refreshRecentlyFinished()
+                }
+
+                if !state.recentlyFinished.isEmpty {
+                    GroupBox("Recently finished") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(state.recentlyFinished) { process in
+                                HStack(spacing: 8) {
+                                    Image(systemName: "moon.zzz")
+                                        .foregroundStyle(.secondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(process.name)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .lineLimit(1)
+                                        Text("\(process.entityName) · PID \(process.pid)")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text("\(formatBytes(process.lastMemoryBytes)) · \(String(format: "%.1f%%", process.lastCpuPercent))")
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .padding(.top, AetowerDesign.Spacing.xs)
+                    }
+                }
 
                 GroupBox("Filters") {
                     HStack(spacing: AetowerDesign.Spacing.md) {

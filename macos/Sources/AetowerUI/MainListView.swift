@@ -263,6 +263,15 @@ private struct EntityRow: View {
     let isSelected: Bool
     @State private var isHovered = false
 
+    /// A process group is "new" when its most recently started process began
+    /// within the last 30 seconds — surfaces freshly launched apps at a glance.
+    private var isNewlyLaunched: Bool {
+        let start = entity.newestProcessStartMillis
+        guard start > 0 else { return false }
+        let now = UInt64(Date().timeIntervalSince1970 * 1000)
+        return now >= start && now - start <= 30_000
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             // Entity type icon
@@ -276,6 +285,15 @@ private struct EntityRow: View {
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isNewlyLaunched {
+                Text("NEW")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(AetowerDesign.Status.success)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(AetowerDesign.Status.success.opacity(0.15), in: Capsule())
+            }
 
             // Badges
             if entity.entityKind == .aiAgent {
@@ -773,28 +791,235 @@ private func filterEntities(
     _ entities: [EntitySnapshot],
     query: String
 ) -> [EntitySnapshot] {
-    let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !normalizedQuery.isEmpty else {
+    let predicates = parseSearchQuery(query)
+    guard !predicates.isEmpty else {
         return entities
     }
+    // Space-separated tokens are ANDed: an entity must satisfy every predicate.
+    return entities.filter { entity in predicates.allSatisfy { $0(entity) } }
+}
 
-    let loweredQuery = normalizedQuery.localizedLowercase
-    return entities.filter { entity in
-        entity.displayName.localizedLowercase.contains(loweredQuery)
-            || entity.badges.joined(separator: " ").localizedLowercase.contains(loweredQuery)
-            || entity.friction.reasons.joined(separator: " ").localizedLowercase.contains(loweredQuery)
-            || entity.components.contains(where: { component in
-                component.title.localizedLowercase.contains(loweredQuery)
-                    || component.detail.localizedLowercase.contains(loweredQuery)
-                    || component.adapterContext?.status?.localizedLowercase.contains(loweredQuery) == true
-                    || component.adapterContext?.url?.localizedLowercase.contains(loweredQuery) == true
-                    || component.adapterContext?.workspacePath?.localizedLowercase.contains(loweredQuery) == true
-                    || component.adapterContext?.repoRoot?.localizedLowercase.contains(loweredQuery) == true
-                    || component.adapterContext?.imageName?.localizedLowercase.contains(loweredQuery) == true
-                    || component.adapterContext?.sessionId?.localizedLowercase.contains(loweredQuery) == true
-                    || component.adapterContext?.ports.joined(separator: " ").localizedLowercase.contains(loweredQuery) == true
-            })
+/// All free-text haystacks for an entity (lowercased), used by bare-term and
+/// `field`-less matching.
+private func entityTextHaystacks(_ entity: EntitySnapshot) -> [String] {
+    var haystacks = [
+        entity.displayName,
+        entity.badges.joined(separator: " "),
+        entity.friction.reasons.joined(separator: " "),
+    ]
+    for component in entity.components {
+        haystacks.append(component.title)
+        haystacks.append(component.detail)
+        if let path = component.executablePath { haystacks.append(path) }
+        if let command = component.commandLine { haystacks.append(command) }
+        if let cwd = component.cwd { haystacks.append(cwd) }
+        if let user = component.user { haystacks.append(user) }
+        if let context = component.adapterContext {
+            for value in [context.status, context.url, context.workspacePath, context.repoRoot, context.imageName, context.sessionId] {
+                if let value { haystacks.append(value) }
+            }
+        }
     }
+    return haystacks.map { $0.localizedLowercase }
+}
+
+private func entityMatchesSubstring(_ entity: EntitySnapshot, _ needle: String) -> Bool {
+    entityTextHaystacks(entity).contains { $0.contains(needle) }
+}
+
+/// Parse a search query into a list of AND-ed predicates. Supports bare
+/// substrings (default), `/regex/flags`, `field:value` text filters, and
+/// `field>n` / `field<n` / `field=n` numeric comparisons.
+private func parseSearchQuery(_ query: String) -> [(EntitySnapshot) -> Bool] {
+    tokenizeSearchQuery(query).compactMap(searchPredicate(for:))
+}
+
+/// Split on whitespace, but keep a `/.../`‑delimited regex (which may contain
+/// spaces) together as a single token.
+private func tokenizeSearchQuery(_ query: String) -> [String] {
+    var tokens: [String] = []
+    var current = ""
+    var inRegex = false
+    let chars = Array(query)
+    var index = 0
+    while index < chars.count {
+        let character = chars[index]
+        if inRegex {
+            current.append(character)
+            if character == "/" {
+                index += 1
+                while index < chars.count, chars[index].isLetter {
+                    current.append(chars[index])
+                    index += 1
+                }
+                tokens.append(current)
+                current = ""
+                inRegex = false
+                continue
+            }
+            index += 1
+            continue
+        }
+        if character == "/", current.isEmpty {
+            inRegex = true
+            current.append(character)
+            index += 1
+            continue
+        }
+        if character == " " || character == "\t" {
+            if !current.isEmpty {
+                tokens.append(current)
+                current = ""
+            }
+            index += 1
+            continue
+        }
+        current.append(character)
+        index += 1
+    }
+    if !current.isEmpty {
+        tokens.append(current)
+    }
+    return tokens
+}
+
+private func searchPredicate(for token: String) -> ((EntitySnapshot) -> Bool)? {
+    guard !token.isEmpty else { return nil }
+
+    // /regex/flags
+    if token.hasPrefix("/"), let regex = compileRegexToken(token) {
+        return { entity in
+            entityTextHaystacks(entity).contains { haystack in
+                regex.firstMatch(in: haystack, range: NSRange(haystack.startIndex..., in: haystack)) != nil
+            }
+        }
+    }
+
+    // field>n / field<n / field>=n / field<=n / field=n  (numeric)
+    if let numeric = parseNumericToken(token) {
+        return numeric
+    }
+
+    // field:value  (text)
+    if let colon = token.firstIndex(of: ":") {
+        let field = String(token[..<colon]).localizedLowercase
+        let value = String(token[token.index(after: colon)...]).localizedLowercase
+        if !value.isEmpty, let predicate = textFieldPredicate(field: field, value: value) {
+            return predicate
+        }
+    }
+
+    // bare substring
+    let needle = token.localizedLowercase
+    return { entityMatchesSubstring($0, needle) }
+}
+
+private func compileRegexToken(_ token: String) -> NSRegularExpression? {
+    // token looks like /pattern/flags ; fall back to substring (nil) if malformed.
+    let body = token.dropFirst()
+    guard let closing = body.lastIndex(of: "/") else { return nil }
+    let pattern = String(body[..<closing])
+    let flags = String(body[body.index(after: closing)...])
+    guard !pattern.isEmpty else { return nil }
+    var options: NSRegularExpression.Options = []
+    if flags.contains("i") { options.insert(.caseInsensitive) }
+    return try? NSRegularExpression(pattern: pattern, options: options)
+}
+
+private func textFieldPredicate(field: String, value: String) -> ((EntitySnapshot) -> Bool)? {
+    switch field {
+    case "name":
+        return { entity in
+            entity.displayName.localizedLowercase.contains(value)
+                || entity.components.contains { $0.title.localizedLowercase.contains(value) }
+        }
+    case "path":
+        return { entity in
+            entity.executablePath?.localizedLowercase.contains(value) == true
+                || entity.components.contains { $0.executablePath?.localizedLowercase.contains(value) == true }
+        }
+    case "cmd", "command":
+        return { entity in
+            entity.components.contains { $0.commandLine?.localizedLowercase.contains(value) == true }
+        }
+    case "user":
+        return { entity in
+            entity.components.contains { $0.user?.localizedLowercase.contains(value) == true }
+        }
+    case "bundle":
+        return { entity in entity.bundleId?.localizedLowercase.contains(value) == true }
+    case "badge":
+        return { entity in entity.badges.contains { $0.localizedLowercase.contains(value) } }
+    default:
+        return nil
+    }
+}
+
+private func parseNumericToken(_ token: String) -> ((EntitySnapshot) -> Bool)? {
+    let operators = [">=", "<=", ">", "<", "==", "="]
+    guard let op = operators.first(where: { token.contains($0) }),
+          let range = token.range(of: op)
+    else { return nil }
+    let field = String(token[..<range.lowerBound]).localizedLowercase
+    let rawValue = String(token[range.upperBound...])
+    guard !field.isEmpty, !rawValue.isEmpty,
+          let value = parseNumericValue(rawValue, field: field)
+    else { return nil }
+
+    func compare(_ lhs: Double) -> Bool {
+        switch op {
+        case ">": return lhs > value
+        case "<": return lhs < value
+        case ">=": return lhs >= value
+        case "<=": return lhs <= value
+        default: return lhs == value
+        }
+    }
+
+    switch field {
+    case "cpu":
+        return { compare(Double($0.metrics.cpuPercent)) }
+    case "mem", "memory", "ram":
+        return { compare(Double($0.metrics.memoryResidentBytes)) }
+    case "energy":
+        return { compare($0.metrics.energyNjPerS) }
+    case "wakeups":
+        return { compare(Double($0.metrics.wakeupsPerSecond)) }
+    case "friction":
+        return { compare(Double($0.friction.totalScore)) }
+    case "procs", "processes", "count":
+        return { compare(Double($0.metrics.processCount)) }
+    case "threads":
+        return { compare(Double($0.metrics.threadCount)) }
+    case "pid":
+        let target = UInt32(value)
+        return { entity in entity.components.contains { $0.processId == target } }
+    default:
+        return nil
+    }
+}
+
+/// Parse a numeric literal with optional byte units. Memory fields default to
+/// MB when unit-less; other fields treat the bare number literally.
+private func parseNumericValue(_ raw: String, field: String) -> Double? {
+    let lowered = raw.localizedLowercase
+    let unitMultipliers: [(String, Double)] = [
+        ("gb", 1024 * 1024 * 1024), ("g", 1024 * 1024 * 1024),
+        ("mb", 1024 * 1024), ("m", 1024 * 1024),
+        ("kb", 1024), ("k", 1024),
+        ("b", 1),
+    ]
+    for (suffix, multiplier) in unitMultipliers where lowered.hasSuffix(suffix) {
+        let numberPart = String(lowered.dropLast(suffix.count))
+        if let number = Double(numberPart) {
+            return number * multiplier
+        }
+    }
+    guard let number = Double(lowered) else { return nil }
+    if field == "mem" || field == "memory" || field == "ram" {
+        return number * 1024 * 1024 // bare memory number means MB
+    }
+    return number
 }
 
 private func sortGroups(_ groups: [EntityGroup], by sortKey: SortKey) -> [EntityGroup] {
@@ -1040,7 +1265,7 @@ public struct MainListView: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
-                    TextField("Search...", text: $searchText)
+                    TextField("Search…  cpu>50  path:/Applications  /helper/i", text: $searchText)
                         .textFieldStyle(.plain)
                         .aetowerUtilityTextInput()
                         .focused($searchFieldFocused)
