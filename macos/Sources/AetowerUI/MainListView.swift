@@ -1437,6 +1437,21 @@ public struct MainListView: View {
             Button("Run 3s sample") {
                 requestProcessOperation(entityID: entity.entityId, pid: pid, operation: .sample)
             }
+            Divider()
+            Button("Terminate PID \(pid)…", role: .destructive) {
+                requestProcessOperation(
+                    entityID: entity.entityId,
+                    pid: pid,
+                    operation: .previewAction(.terminate)
+                )
+            }
+            Button("Force kill PID \(pid)…", role: .destructive) {
+                requestProcessOperation(
+                    entityID: entity.entityId,
+                    pid: pid,
+                    operation: .previewAction(.forceKill)
+                )
+            }
             Menu("Preview action") {
                 ForEach(contextPreviewActions) { action in
                     Button(action.label, role: action.isDestructive ? .destructive : nil) {
