@@ -58,6 +58,8 @@ IMMUTABLE_URL="$DOWNLOAD_PREFIX$IMMUTABLE_ARCHIVE"
 DIRECT_ZIP_URL="$PUBLIC_BASE_URL/releases/Aetower.zip"
 NOTICES_URL="$PUBLIC_BASE_URL/third-party-notices.md"
 HOMEBREW_CASK_URL="$PUBLIC_BASE_URL/homebrew/Casks/aetower.rb"
+SOURCE_ARCHIVE_URL="$PUBLIC_BASE_URL/releases/Aetower-$VERSION-$BUILD_NUMBER-source.tar.gz"
+SOURCE_ARCHIVE_LATEST_URL="$PUBLIC_BASE_URL/releases/Aetower-source.tar.gz"
 PKG_URL="$PUBLIC_BASE_URL/releases/Aetower-$VERSION-$BUILD_NUMBER.pkg"
 
 check_url() {
@@ -100,6 +102,8 @@ fi
 check_url "immutable Sparkle archive" "$IMMUTABLE_URL"
 check_url "direct download ZIP" "$DIRECT_ZIP_URL"
 check_url "Homebrew cask" "$HOMEBREW_CASK_URL"
+check_url "versioned source archive" "$SOURCE_ARCHIVE_URL"
+check_url "latest source archive" "$SOURCE_ARCHIVE_LATEST_URL"
 if [ "$VERIFY_PKG" = "1" ]; then
     check_url "signed pkg installer" "$PKG_URL"
 fi

@@ -10,6 +10,7 @@ BRAND_ICON="${AETOWER_SITE_ICON_SOURCE:-$ROOT/assets/brand/aetower-app-icon-sour
 BRAND_PREVIEW="${AETOWER_SITE_ICON_PREVIEW:-$ROOT/assets/brand/aetower-app-icon-preview.png}"
 THIRD_PARTY_NOTICES="${AETOWER_THIRD_PARTY_NOTICES_PATH:-$ROOT/dist/THIRD-PARTY-NOTICES.md}"
 HOMEBREW_CASK="${AETOWER_HOMEBREW_CASK_PATH:-$ROOT/dist/homebrew/Casks/aetower.rb}"
+SOURCE_ARCHIVE_DIR="${AETOWER_SOURCE_ARCHIVE_DIR:-$ROOT/dist/source}"
 PKG_INSTALLER="${AETOWER_PKG_PATH:-$ROOT/dist/Aetower.pkg}"
 INCLUDE_PKG="${AETOWER_INCLUDE_PKG_IN_SITE:-0}"
 FALLBACK_ICON="$ROOT/tmp/app-icon/Aetower.iconset/icon_512x512@2x.png"
@@ -27,6 +28,11 @@ if [ ! -f "$THIRD_PARTY_NOTICES" ]; then
     echo "run sh scripts/generate-third-party-notices.sh first" >&2
     exit 1
 fi
+if [ ! -f "$SOURCE_ARCHIVE_DIR/Aetower-source.tar.gz" ]; then
+    echo "missing source archive: $SOURCE_ARCHIVE_DIR/Aetower-source.tar.gz" >&2
+    echo "run sh scripts/generate-source-archive.sh first" >&2
+    exit 1
+fi
 
 rm -rf "$SITE_OUTPUT"
 mkdir -p "$SITE_OUTPUT/assets" "$SITE_OUTPUT/homebrew/Casks" "$SITE_OUTPUT/releases"
@@ -35,6 +41,7 @@ cp "$SITE_SOURCE/_headers" "$SITE_OUTPUT/_headers"
 cp "$APPCAST_DIR"/* "$SITE_OUTPUT/releases/"
 cp "$RELEASE_ARCHIVE" "$SITE_OUTPUT/releases/Aetower.zip"
 cp "$THIRD_PARTY_NOTICES" "$SITE_OUTPUT/third-party-notices.md"
+cp "$SOURCE_ARCHIVE_DIR"/* "$SITE_OUTPUT/releases/"
 if [ -f "$HOMEBREW_CASK" ]; then
     cp "$HOMEBREW_CASK" "$SITE_OUTPUT/homebrew/Casks/aetower.rb"
 fi

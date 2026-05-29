@@ -13,9 +13,10 @@ Build the public Developer Preview release set:
   2. Sparkle appcast and immutable update archive
   3. Homebrew cask artifact
   4. optional pkg installer artifact
-  5. third-party dependency/license inventory
-  6. Sparkle distribution matrix verification
-  7. Cloudflare Pages static payload
+  5. corresponding source archive
+  6. third-party dependency/license inventory
+  7. Sparkle distribution matrix verification
+  8. Cloudflare Pages static payload
 
 By default this does not publish to Cloudflare. Use --publish-cloudflare only
 when the generated release should become visible to Sparkle clients.
@@ -89,6 +90,9 @@ fi
 printf '\n=== generate Homebrew cask ===\n'
 sh "$ROOT/scripts/generate-homebrew-cask.sh"
 
+printf '\n=== generate corresponding source archive ===\n'
+sh "$ROOT/scripts/generate-source-archive.sh"
+
 if [ "$WITH_PKG" -eq 1 ]; then
     printf '\n=== generate signed/notarized pkg installer ===\n'
     sh "$ROOT/scripts/package-macos-pkg.sh"
@@ -124,6 +128,7 @@ if [ "$WITH_PKG" -eq 1 ]; then
 fi
 printf '  appcast dir:     %s\n' "$ROOT/dist/appcast"
 printf '  homebrew cask:   %s\n' "$ROOT/dist/homebrew/Casks/aetower.rb"
+printf '  source archive:  %s\n' "$ROOT/dist/source/Aetower-${AETOWER_VERSION}-${AETOWER_BUILD_NUMBER}-source.tar.gz"
 printf '  notices:         %s\n' "$ROOT/dist/THIRD-PARTY-NOTICES.md"
 printf '  cloudflare site: %s\n' "$SITE_OUTPUT"
 

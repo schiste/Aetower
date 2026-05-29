@@ -11,6 +11,14 @@
   Content-Type: application/zip
   Cache-Control: public, max-age=120
 
+/releases/*-source.tar.gz
+  Content-Type: application/gzip
+  Cache-Control: public, max-age=31536000, immutable
+
+/releases/Aetower-source.tar.gz
+  Content-Type: application/gzip
+  Cache-Control: public, max-age=120
+
 /releases/*.pkg
   Content-Type: application/octet-stream
   Cache-Control: public, max-age=31536000, immutable

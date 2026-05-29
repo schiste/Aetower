@@ -9,6 +9,7 @@ The direct-download release path assumes:
 - Developer ID signing
 - notarization with `notarytool`
 - Sparkle for update delivery
+- corresponding source archive publication for the copyleft release
 - optional Developer ID Installer `.pkg` output for installer/MDM distribution
 - the privileged Endpoint Security helper is optional and excluded by default
 
@@ -45,6 +46,10 @@ Optional:
 - `AETOWER_REQUIRE_FINAL_METADATA=0`
   - Development escape hatch only. Public release-candidate runs default this
     to `1` and fail unless bundle id, version, and build number are explicit.
+- `AETOWER_REQUIRE_CLEAN_WORKTREE=0`
+  - Development escape hatch only. Public release-candidate runs default this
+    to `1` through `AETOWER_REQUIRE_FINAL_METADATA=1` so the generated source
+    archive matches the binary release.
 - `AETOWER_DOWNLOAD_URL_PREFIX`
   - Base URL the release archives are hosted under (the `<enclosure>` URL
     prefix in the appcast). If unset, it is derived from `AETOWER_APPCAST_URL`'s
@@ -106,7 +111,9 @@ This runs, in order:
    filename and runs Sparkle's `generate_appcast` to (re)write
    `dist/appcast/appcast.xml`, signing each entry with the EdDSA key and
    applying the download URL prefix.
-4. `scripts/generate-third-party-notices.sh` — generates
+4. `scripts/generate-source-archive.sh` — generates the versioned
+   corresponding source archive from the clean release commit.
+5. `scripts/generate-third-party-notices.sh` — generates
    `dist/THIRD-PARTY-NOTICES.md` from the locked Rust Cargo graph and SwiftPM
    package resolution.
 
@@ -121,9 +128,10 @@ sh scripts/release-public-preview.sh
 ```
 
 This runs the signed/notarized macOS ZIP release, generates the Sparkle appcast,
-generates the Homebrew cask artifact, generates third-party dependency/license
-notices, verifies the Sparkle distribution matrix, and prepares the Cloudflare
-Pages payload. It does not publish to Cloudflare by default.
+generates the Homebrew cask artifact, generates the corresponding source
+archive, generates third-party dependency/license notices, verifies the Sparkle
+distribution matrix, and prepares the Cloudflare Pages payload. It does not
+publish to Cloudflare by default.
 
 The generated cask is a tap-ready artifact, not a full Homebrew publication by
 itself. Publish it through a dedicated tap such as `homebrew-aetower`; see
@@ -164,7 +172,8 @@ sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare
 The publish path deploys the prepared Cloudflare Pages payload, then verifies
 that the public appcast contains the expected `AETOWER_VERSION` and
 `AETOWER_BUILD_NUMBER`, the immutable Sparkle archive resolves, the direct ZIP
-resolves, and the generated third-party notices are public. Use
+resolves, the corresponding source archive resolves, and the generated
+third-party notices are public. Use
 `--skip-public-verify` only when Cloudflare propagation is being checked
 manually.
 

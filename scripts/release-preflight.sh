@@ -10,6 +10,7 @@ HELPER_ENTITLEMENTS_PATH="${AETOWER_HELPER_ENTITLEMENTS_PATH:-}"
 REQUIRE_ENDPOINT_SECURITY="${AETOWER_REQUIRE_ENDPOINT_SECURITY:-0}"
 REQUIRE_SPARKLE="${AETOWER_REQUIRE_SPARKLE:-1}"
 REQUIRE_FINAL_METADATA="${AETOWER_REQUIRE_FINAL_METADATA:-0}"
+REQUIRE_CLEAN_WORKTREE="${AETOWER_REQUIRE_CLEAN_WORKTREE:-$REQUIRE_FINAL_METADATA}"
 APPCAST_URL="${AETOWER_APPCAST_URL:-}"
 SPARKLE_PUBLIC_ED_KEY="${AETOWER_SPARKLE_PUBLIC_ED_KEY:-}"
 BUNDLE_ID="${AETOWER_BUNDLE_ID:-}"
@@ -30,6 +31,22 @@ if [ -n "$JQ_BIN" ]; then
 else
     printf '  third-party notice tooling: jq missing\n'
     STATUS=1
+fi
+
+if [ "$REQUIRE_CLEAN_WORKTREE" = "1" ]; then
+    if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        if git -C "$ROOT" status --porcelain --untracked-files=all | grep . >/dev/null 2>&1; then
+            printf '  release source state: dirty worktree\n'
+            STATUS=1
+        else
+            printf '  release source state: clean worktree\n'
+        fi
+    else
+        printf '  release source state: unavailable outside git worktree\n'
+        STATUS=1
+    fi
+else
+    printf '  release source state: clean worktree not required\n'
 fi
 
 codesigning_identities() {

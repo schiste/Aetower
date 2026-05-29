@@ -13,6 +13,10 @@ The release site is intentionally static:
 - `/releases/Aetower.zip` serves the latest signed and notarized app archive
   for direct human downloads.
 - `/releases/Aetower-<version>-<build>.zip` serves immutable Sparkle archives.
+- `/releases/Aetower-source.tar.gz` serves the latest corresponding source
+  archive for the copyleft release.
+- `/releases/Aetower-<version>-<build>-source.tar.gz` serves immutable
+  corresponding source archives.
 - `/releases/Aetower.pkg` serves the latest signed and notarized installer
   package when a Developer ID Installer certificate is available.
 - `/releases/Aetower-<version>-<build>.pkg` serves immutable installer
@@ -87,6 +91,7 @@ curl -I https://aetower.dev/
 curl -I https://aetower.dev/third-party-notices.md
 curl -I https://aetower.dev/releases/appcast.xml
 curl -I https://aetower.dev/releases/Aetower.zip
+curl -I https://aetower.dev/releases/Aetower-source.tar.gz
 curl -I https://aetower.dev/homebrew/Casks/aetower.rb
 ```
 

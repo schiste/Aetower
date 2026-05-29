@@ -59,9 +59,13 @@ Expected artifacts:
 - `dist/Aetower.zip`
 - `dist/appcast/appcast.xml`
 - `dist/homebrew/Casks/aetower.rb`
+- `dist/source/Aetower-<version>-<build>-source.tar.gz`
+- `dist/source/Aetower-source.tar.gz`
 - `dist/THIRD-PARTY-NOTICES.md`
 - `dist/cloudflare-site/`
 - `dist/cloudflare-site/homebrew/Casks/aetower.rb`
+- `dist/cloudflare-site/releases/Aetower-<version>-<build>-source.tar.gz`
+- `dist/cloudflare-site/releases/Aetower-source.tar.gz`
 
 The release command runs the Sparkle distribution matrix automatically. To run
 it again:
@@ -102,6 +106,7 @@ On a clean Mac or clean user account:
 - verify MCP discovery smoke for the supported local agents
 - verify no duplicate Aetower engines are started
 - leave the app idle for at least 30 minutes and check Diagnostics
+- verify the app bundle contains `Contents/Resources/LICENSE.md`
 - review `dist/THIRD-PARTY-NOTICES.md` and confirm no unexpected copyleft or
   unknown-license dependency entered the release graph
 
@@ -134,6 +139,7 @@ This deploys the prepared Cloudflare Pages payload and verifies that:
 - the immutable Sparkle archive resolves
 - the direct ZIP resolves
 - the Homebrew cask resolves
+- the corresponding source archive resolves
 - the signed PKG resolves when `--with-pkg` was used
 - third-party notices resolve
 
