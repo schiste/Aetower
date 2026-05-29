@@ -13,12 +13,13 @@ RUN_GATEKEEPER=0
 RUN_OPERATOR=0
 RUN_SOAK=0
 REBUILD=0
+REQUIRE_DMG=0
 REQUIRE_PKG=0
 SOAK_SECONDS="${AETOWER_PUBLIC_PREVIEW_SOAK_SECONDS:-7200}"
 
 usage() {
     cat <<EOF
-usage: $0 [--all] [--preflight] [--package] [--matrix] [--require-pkg] [--gatekeeper] [--operator] [--soak] [--rebuild]
+usage: $0 [--all] [--preflight] [--package] [--matrix] [--require-dmg] [--require-pkg] [--gatekeeper] [--operator] [--soak] [--rebuild]
 
 Validate a public Developer Preview candidate.
 
@@ -42,6 +43,8 @@ while [ "$#" -gt 0 ]; do
             RUN_GATEKEEPER=1
             RUN_OPERATOR=1
             RUN_SOAK=1
+            REQUIRE_DMG=1
+            REQUIRE_PKG=1
             shift
             ;;
         --preflight)
@@ -58,6 +61,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --require-pkg)
             REQUIRE_PKG=1
+            shift
+            ;;
+        --require-dmg)
+            REQUIRE_DMG=1
             shift
             ;;
         --gatekeeper)
@@ -108,11 +115,15 @@ if [ "$RUN_PACKAGE" -eq 1 ]; then
 fi
 
 if [ "$RUN_MATRIX" -eq 1 ]; then
-    if [ "$REQUIRE_PKG" -eq 1 ]; then
-        sh "$ROOT/scripts/verify-sparkle-distribution-matrix.sh" --require-pkg
-    else
-        sh "$ROOT/scripts/verify-sparkle-distribution-matrix.sh"
+    MATRIX_ARGS=""
+    if [ "$REQUIRE_DMG" -eq 1 ]; then
+        MATRIX_ARGS="$MATRIX_ARGS --require-dmg"
     fi
+    if [ "$REQUIRE_PKG" -eq 1 ]; then
+        MATRIX_ARGS="$MATRIX_ARGS --require-pkg"
+    fi
+    # shellcheck disable=SC2086
+    sh "$ROOT/scripts/verify-sparkle-distribution-matrix.sh" $MATRIX_ARGS
 fi
 
 if [ "$RUN_GATEKEEPER" -eq 1 ]; then

@@ -8,6 +8,9 @@ ZIP_PATH="${AETOWER_ZIP_PATH:-$DIST_DIR/Aetower.zip}"
 APPCAST_DIR="${AETOWER_APPCAST_DIR:-$DIST_DIR/appcast}"
 APPCAST_PATH="${AETOWER_APPCAST_PATH:-$APPCAST_DIR/appcast.xml}"
 HOMEBREW_CASK_PATH="${AETOWER_HOMEBREW_CASK_PATH:-$DIST_DIR/homebrew/Casks/aetower.rb}"
+DMG_PATH="${AETOWER_DMG_PATH:-$DIST_DIR/Aetower.dmg}"
+REQUIRE_DMG="${AETOWER_REQUIRE_DMG_MATRIX:-0}"
+CHECK_DMG_IF_PRESENT="${AETOWER_CHECK_DMG_MATRIX:-0}"
 PKG_PATH="${AETOWER_PKG_PATH:-$DIST_DIR/Aetower.pkg}"
 REQUIRE_PKG="${AETOWER_REQUIRE_PKG_MATRIX:-0}"
 CHECK_PKG_IF_PRESENT="${AETOWER_CHECK_PKG_MATRIX:-0}"
@@ -15,16 +18,19 @@ VERIFY_CODESIGN="${AETOWER_MATRIX_VERIFY_CODESIGN:-1}"
 
 usage() {
     cat <<EOF
-usage: $0 [--require-pkg] [--check-pkg-if-present] [--skip-codesign]
+usage: $0 [--require-dmg] [--check-dmg-if-present] [--require-pkg] [--check-pkg-if-present] [--skip-codesign]
 
 Verifies that every generated distribution form resolves to the same
 Sparkle-enabled Aetower.app:
   - dist/Aetower.app baseline bundle
-  - dist/Aetower.zip direct-download/Sparkle archive
+  - dist/Aetower.zip Sparkle update archive
   - dist/appcast/appcast.xml Sparkle feed
   - dist/homebrew/Casks/aetower.rb Homebrew acquisition channel
+  - dist/Aetower.dmg optional drag-and-drop installer
   - dist/Aetower.pkg optional installer payload
 
+The .dmg check is skipped by default unless --require-dmg or
+--check-dmg-if-present is passed.
 The .pkg check is skipped by default unless --require-pkg or
 --check-pkg-if-present is passed.
 EOF
@@ -32,6 +38,14 @@ EOF
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --require-dmg)
+            REQUIRE_DMG=1
+            shift
+            ;;
+        --check-dmg-if-present)
+            CHECK_DMG_IF_PRESENT=1
+            shift
+            ;;
         --require-pkg)
             REQUIRE_PKG=1
             shift
@@ -229,6 +243,36 @@ verify_zip() {
     verify_zip_file "sparkle-archive" "$ARCHIVE_PATH"
 }
 
+verify_dmg() {
+    if [ "$REQUIRE_DMG" != "1" ] && [ "$CHECK_DMG_IF_PRESENT" != "1" ]; then
+        printf 'sparkle distribution matrix: dmg skipped (optional)\n'
+        return
+    fi
+
+    if [ ! -f "$DMG_PATH" ]; then
+        if [ "$REQUIRE_DMG" = "1" ]; then
+            fail "missing required dmg: $DMG_PATH"
+        fi
+        printf 'sparkle distribution matrix: dmg skipped (not present)\n'
+        return
+    fi
+
+    DMG_MOUNT="$TMP_ROOT/dmg-mount"
+    mkdir -p "$DMG_MOUNT"
+    hdiutil attach "$DMG_PATH" -readonly -nobrowse -noverify -mountpoint "$DMG_MOUNT" -quiet
+
+    DMG_APP="$(find_app "$DMG_MOUNT")"
+    [ -n "$DMG_APP" ] || fail "dmg does not contain Aetower.app"
+    compare_app_to_baseline "dmg" "$DMG_APP"
+
+    [ -L "$DMG_MOUNT/Applications" ] || fail "dmg is missing /Applications drag target symlink"
+    [ -f "$DMG_MOUNT/.background/aetower-dmg-background.png" ] \
+        || fail "dmg is missing branded drag-and-drop background"
+
+    hdiutil detach "$DMG_MOUNT" -quiet
+    DMG_MOUNT=""
+}
+
 verify_pkg() {
     if [ "$REQUIRE_PKG" != "1" ] && [ "$CHECK_PKG_IF_PRESENT" != "1" ]; then
         printf 'sparkle distribution matrix: pkg skipped (optional)\n'
@@ -264,13 +308,21 @@ require_dir "$APP_DIR"
 require_file "$ZIP_PATH"
 
 TMP_ROOT="$(mktemp -d /tmp/aetower-sparkle-matrix.XXXXXX)"
-trap 'rm -rf "$TMP_ROOT"' EXIT INT TERM
+DMG_MOUNT=""
+cleanup() {
+    if [ -n "$DMG_MOUNT" ] && [ -d "$DMG_MOUNT" ]; then
+        hdiutil detach "$DMG_MOUNT" -quiet >/dev/null 2>&1 || true
+    fi
+    rm -rf "$TMP_ROOT"
+}
+trap cleanup EXIT INT TERM
 
 capture_baseline
 compare_app_to_baseline "baseline" "$APP_DIR"
 verify_zip
 verify_appcast
 verify_homebrew_cask
+verify_dmg
 verify_pkg
 
 printf '✓ Sparkle distribution matrix passed\n'

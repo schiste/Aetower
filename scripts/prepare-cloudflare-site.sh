@@ -11,6 +11,8 @@ BRAND_PREVIEW="${AETOWER_SITE_ICON_PREVIEW:-$ROOT/assets/brand/aetower-app-icon-
 THIRD_PARTY_NOTICES="${AETOWER_THIRD_PARTY_NOTICES_PATH:-$ROOT/dist/THIRD-PARTY-NOTICES.md}"
 HOMEBREW_CASK="${AETOWER_HOMEBREW_CASK_PATH:-$ROOT/dist/homebrew/Casks/aetower.rb}"
 SOURCE_ARCHIVE_DIR="${AETOWER_SOURCE_ARCHIVE_DIR:-$ROOT/dist/source}"
+DMG_INSTALLER="${AETOWER_DMG_PATH:-$ROOT/dist/Aetower.dmg}"
+INCLUDE_DMG="${AETOWER_INCLUDE_DMG_IN_SITE:-0}"
 PKG_INSTALLER="${AETOWER_PKG_PATH:-$ROOT/dist/Aetower.pkg}"
 INCLUDE_PKG="${AETOWER_INCLUDE_PKG_IN_SITE:-0}"
 FALLBACK_ICON="$ROOT/tmp/app-icon/Aetower.iconset/icon_512x512@2x.png"
@@ -44,6 +46,17 @@ cp "$THIRD_PARTY_NOTICES" "$SITE_OUTPUT/third-party-notices.md"
 cp "$SOURCE_ARCHIVE_DIR"/* "$SITE_OUTPUT/releases/"
 if [ -f "$HOMEBREW_CASK" ]; then
     cp "$HOMEBREW_CASK" "$SITE_OUTPUT/homebrew/Casks/aetower.rb"
+fi
+if [ "$INCLUDE_DMG" = "1" ]; then
+    if [ ! -f "$DMG_INSTALLER" ]; then
+        echo "missing dmg installer: $DMG_INSTALLER" >&2
+        echo "run sh scripts/package-macos-dmg.sh first or omit AETOWER_INCLUDE_DMG_IN_SITE=1" >&2
+        exit 1
+    fi
+    DMG_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
+    DMG_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
+    cp "$DMG_INSTALLER" "$SITE_OUTPUT/releases/Aetower.dmg"
+    cp "$DMG_INSTALLER" "$SITE_OUTPUT/releases/Aetower-$DMG_VERSION-$DMG_BUILD.dmg"
 fi
 if [ "$INCLUDE_PKG" = "1" ]; then
     if [ ! -f "$PKG_INSTALLER" ]; then
