@@ -1364,6 +1364,13 @@ impl Engine {
         self.refresh_capability(CapabilityKind::Chau7);
     }
 
+    /// Push the binary-reputation consent + VirusTotal API key into the engine.
+    /// The key is held in memory for the session only and never persisted.
+    pub fn set_binary_reputation_config(&self, enabled: bool, api_key: String) {
+        self.adapters
+            .set_binary_reputation_config(enabled, api_key);
+    }
+
     pub fn configure_telemetry(
         &self,
         endpoint: Option<String>,

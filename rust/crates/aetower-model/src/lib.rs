@@ -690,10 +690,49 @@ pub struct EntitySnapshot {
     /// common malware/dev tell). False when not yet resolved.
     #[serde(default)]
     pub is_adhoc: bool,
+    /// VirusTotal reputation for the entity's executable, when resolved. Opt-in
+    /// and consent-gated: populated by the engine only for "risky" binaries
+    /// (unsigned/ad-hoc with active network connections) when the feature is
+    /// enabled and an API key is configured. `None` until looked up (or always,
+    /// when the feature is off / the binary is signed).
+    #[serde(default)]
+    pub binary_reputation: Option<BinaryReputation>,
 }
 
 fn unknown_signing() -> String {
     "unknown".to_owned()
+}
+
+/// Derived safety verdict for a binary from its VirusTotal analysis stats.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReputationVerdict {
+    /// No engine flagged the binary.
+    Clean,
+    /// At least one engine flagged it suspicious (but none malicious).
+    Suspicious,
+    /// At least one engine flagged it malicious.
+    Malicious,
+    /// Not present in the VirusTotal corpus, or not yet analysed.
+    #[default]
+    Unknown,
+}
+
+/// VirusTotal reputation for a binary, keyed by its SHA-256. Only the hash is
+/// ever sent to VirusTotal — never the file, its path, or any host context.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BinaryReputation {
+    pub sha256: String,
+    pub malicious: u32,
+    pub suspicious: u32,
+    pub harmless: u32,
+    pub undetected: u32,
+    pub total_engines: u32,
+    pub verdict: ReputationVerdict,
+    /// Permalink to the VirusTotal report for this hash (may be empty when the
+    /// hash is unknown to VirusTotal).
+    pub permalink: String,
+    pub checked_at_millis: u64,
 }
 
 /// Classify a code signature from its `codesign` authority chain. Returns the
@@ -1113,11 +1152,18 @@ mod tests {
         };
         object.remove("signing_classification");
         object.remove("is_adhoc");
+        object.remove("binary_reputation");
 
         let Ok(entity) = serde_json::from_value::<EntitySnapshot>(value) else {
             panic!("legacy snapshot deserializes");
         };
         assert_eq!(entity.signing_classification, "unknown");
         assert!(!entity.is_adhoc);
+        assert!(entity.binary_reputation.is_none());
+    }
+
+    #[test]
+    fn reputation_verdict_defaults_to_unknown() {
+        assert_eq!(ReputationVerdict::default(), ReputationVerdict::Unknown);
     }
 }

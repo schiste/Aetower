@@ -1857,6 +1857,7 @@ mod tests {
             network_connections: Vec::new(),
             signing_classification: "unknown".to_owned(),
             is_adhoc: false,
+            binary_reputation: None,
         }
     }
 

@@ -12,6 +12,7 @@ members = [
   "crates/aetower-diagnostics",
   "crates/aetower-sensors",
   "crates/aetower-telemetry",
+  "crates/aetower-reputation",
   "crates/aetower-core",
   "crates/aetower-ffi",
   "crates/aetower-mcp",
@@ -38,3 +39,4 @@ smallvec = { version = "1", features = ["serde"] }
 reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 rhai = { version = "1.19", default-features = false, features = ["std", "sync"] }
+sha2 = "0.10"

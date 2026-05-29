@@ -632,6 +632,13 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func selfMemoryAttributionJson(topRegions: UInt32)  -> JsonQueryResult
     
+    /**
+     * Push binary-reputation consent + the VirusTotal API key into the engine.
+     * Pass an empty key to clear it. The key is session-only (never persisted
+     * by the engine).
+     */
+    func setBinaryReputationConfig(enabled: Bool, apiKey: String) 
+    
     func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?) 
     
     /**
@@ -1052,6 +1059,19 @@ open func selfMemoryAttributionJson(topRegions: UInt32) -> JsonQueryResult  {
         FfiConverterUInt32.lower(topRegions),$0
     )
 })
+}
+    
+    /**
+     * Push binary-reputation consent + the VirusTotal API key into the engine.
+     * Pass an empty key to clear it. The key is session-only (never persisted
+     * by the engine).
+     */
+open func setBinaryReputationConfig(enabled: Bool, apiKey: String)  {try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_set_binary_reputation_config(self.uniffiClonePointer(),
+        FfiConverterBool.lower(enabled),
+        FfiConverterString.lower(apiKey),$0
+    )
+}
 }
     
 open func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?)  {try! rustCall() {
@@ -1928,6 +1948,132 @@ public func FfiConverterTypeBatteryHealthSnapshot_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeBatteryHealthSnapshot_lower(_ value: BatteryHealthSnapshot) -> RustBuffer {
     return FfiConverterTypeBatteryHealthSnapshot.lower(value)
+}
+
+
+public struct BinaryReputation {
+    public var sha256: String
+    public var malicious: UInt32
+    public var suspicious: UInt32
+    public var harmless: UInt32
+    public var undetected: UInt32
+    public var totalEngines: UInt32
+    public var verdict: ReputationVerdict
+    public var permalink: String
+    public var checkedAtMillis: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sha256: String, malicious: UInt32, suspicious: UInt32, harmless: UInt32, undetected: UInt32, totalEngines: UInt32, verdict: ReputationVerdict, permalink: String, checkedAtMillis: UInt64) {
+        self.sha256 = sha256
+        self.malicious = malicious
+        self.suspicious = suspicious
+        self.harmless = harmless
+        self.undetected = undetected
+        self.totalEngines = totalEngines
+        self.verdict = verdict
+        self.permalink = permalink
+        self.checkedAtMillis = checkedAtMillis
+    }
+}
+
+#if compiler(>=6)
+extension BinaryReputation: Sendable {}
+#endif
+
+
+extension BinaryReputation: Equatable, Hashable {
+    public static func ==(lhs: BinaryReputation, rhs: BinaryReputation) -> Bool {
+        if lhs.sha256 != rhs.sha256 {
+            return false
+        }
+        if lhs.malicious != rhs.malicious {
+            return false
+        }
+        if lhs.suspicious != rhs.suspicious {
+            return false
+        }
+        if lhs.harmless != rhs.harmless {
+            return false
+        }
+        if lhs.undetected != rhs.undetected {
+            return false
+        }
+        if lhs.totalEngines != rhs.totalEngines {
+            return false
+        }
+        if lhs.verdict != rhs.verdict {
+            return false
+        }
+        if lhs.permalink != rhs.permalink {
+            return false
+        }
+        if lhs.checkedAtMillis != rhs.checkedAtMillis {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(sha256)
+        hasher.combine(malicious)
+        hasher.combine(suspicious)
+        hasher.combine(harmless)
+        hasher.combine(undetected)
+        hasher.combine(totalEngines)
+        hasher.combine(verdict)
+        hasher.combine(permalink)
+        hasher.combine(checkedAtMillis)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBinaryReputation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BinaryReputation {
+        return
+            try BinaryReputation(
+                sha256: FfiConverterString.read(from: &buf), 
+                malicious: FfiConverterUInt32.read(from: &buf), 
+                suspicious: FfiConverterUInt32.read(from: &buf), 
+                harmless: FfiConverterUInt32.read(from: &buf), 
+                undetected: FfiConverterUInt32.read(from: &buf), 
+                totalEngines: FfiConverterUInt32.read(from: &buf), 
+                verdict: FfiConverterTypeReputationVerdict.read(from: &buf), 
+                permalink: FfiConverterString.read(from: &buf), 
+                checkedAtMillis: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BinaryReputation, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sha256, into: &buf)
+        FfiConverterUInt32.write(value.malicious, into: &buf)
+        FfiConverterUInt32.write(value.suspicious, into: &buf)
+        FfiConverterUInt32.write(value.harmless, into: &buf)
+        FfiConverterUInt32.write(value.undetected, into: &buf)
+        FfiConverterUInt32.write(value.totalEngines, into: &buf)
+        FfiConverterTypeReputationVerdict.write(value.verdict, into: &buf)
+        FfiConverterString.write(value.permalink, into: &buf)
+        FfiConverterUInt64.write(value.checkedAtMillis, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBinaryReputation_lift(_ buf: RustBuffer) throws -> BinaryReputation {
+    return try FfiConverterTypeBinaryReputation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBinaryReputation_lower(_ value: BinaryReputation) -> RustBuffer {
+    return FfiConverterTypeBinaryReputation.lower(value)
 }
 
 
@@ -3342,10 +3488,11 @@ public struct EntitySnapshot {
     public var networkConnections: [NetworkConnection]
     public var signingClassification: String
     public var isAdhoc: Bool
+    public var binaryReputation: BinaryReputation?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, launcherSummary: String?, attributionNotes: [String], bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recentChangeSummary: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation], networkConnections: [NetworkConnection], signingClassification: String, isAdhoc: Bool) {
+    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, launcherSummary: String?, attributionNotes: [String], bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recentChangeSummary: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation], networkConnections: [NetworkConnection], signingClassification: String, isAdhoc: Bool, binaryReputation: BinaryReputation?) {
         self.entityId = entityId
         self.displayName = displayName
         self.primaryProvenance = primaryProvenance
@@ -3372,6 +3519,7 @@ public struct EntitySnapshot {
         self.networkConnections = networkConnections
         self.signingClassification = signingClassification
         self.isAdhoc = isAdhoc
+        self.binaryReputation = binaryReputation
     }
 }
 
@@ -3460,6 +3608,9 @@ extension EntitySnapshot: Equatable, Hashable {
         if lhs.isAdhoc != rhs.isAdhoc {
             return false
         }
+        if lhs.binaryReputation != rhs.binaryReputation {
+            return false
+        }
         return true
     }
 
@@ -3490,6 +3641,7 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(networkConnections)
         hasher.combine(signingClassification)
         hasher.combine(isAdhoc)
+        hasher.combine(binaryReputation)
     }
 }
 
@@ -3527,7 +3679,8 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
                 recommendations: FfiConverterSequenceTypeRecommendation.read(from: &buf), 
                 networkConnections: FfiConverterSequenceTypeNetworkConnection.read(from: &buf), 
                 signingClassification: FfiConverterString.read(from: &buf), 
-                isAdhoc: FfiConverterBool.read(from: &buf)
+                isAdhoc: FfiConverterBool.read(from: &buf), 
+                binaryReputation: FfiConverterOptionTypeBinaryReputation.read(from: &buf)
         )
     }
 
@@ -3558,6 +3711,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeNetworkConnection.write(value.networkConnections, into: &buf)
         FfiConverterString.write(value.signingClassification, into: &buf)
         FfiConverterBool.write(value.isAdhoc, into: &buf)
+        FfiConverterOptionTypeBinaryReputation.write(value.binaryReputation, into: &buf)
     }
 }
 
@@ -7997,6 +8151,90 @@ extension ProvenanceKind: Equatable, Hashable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum ReputationVerdict {
+    
+    case clean
+    case suspicious
+    case malicious
+    case unknown
+}
+
+
+#if compiler(>=6)
+extension ReputationVerdict: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeReputationVerdict: FfiConverterRustBuffer {
+    typealias SwiftType = ReputationVerdict
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ReputationVerdict {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .clean
+        
+        case 2: return .suspicious
+        
+        case 3: return .malicious
+        
+        case 4: return .unknown
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ReputationVerdict, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .clean:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .suspicious:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .malicious:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .unknown:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReputationVerdict_lift(_ buf: RustBuffer) throws -> ReputationVerdict {
+    return try FfiConverterTypeReputationVerdict.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReputationVerdict_lower(_ value: ReputationVerdict) -> RustBuffer {
+    return FfiConverterTypeReputationVerdict.lower(value)
+}
+
+
+extension ReputationVerdict: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum SessionMarkerKind {
     
     case runStart
@@ -8510,6 +8748,30 @@ fileprivate struct FfiConverterOptionTypeBatteryHealthSnapshot: FfiConverterRust
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeBatteryHealthSnapshot.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeBinaryReputation: FfiConverterRustBuffer {
+    typealias SwiftType = BinaryReputation?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeBinaryReputation.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeBinaryReputation.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -9412,6 +9674,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_self_memory_attribution_json() != 32687) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_set_binary_reputation_config() != 29160) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_set_capability_state() != 11556) {

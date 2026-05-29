@@ -14,6 +14,7 @@ aetower-sensors = { path = "../aetower-sensors" }
 aetower-history = { path = "../aetower-history" }
 aetower-identity = { path = "../aetower-identity" }
 aetower-model = { path = "../aetower-model" }
+aetower-reputation = { path = "../aetower-reputation" }
 aetower-telemetry = { path = "../aetower-telemetry" }
 aetower-time = { path = "../aetower-time" }
 anyhow.workspace = true

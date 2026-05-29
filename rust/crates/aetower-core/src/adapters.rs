@@ -14,10 +14,11 @@ use aetower_diagnostics::{
     DiagnosticsEvent, DiagnosticsLevel, DiagnosticsStore, DiagnosticsSubsystem,
 };
 use aetower_model::{
-    AdapterContextKind, AdapterContextSnapshot, AttributionConfidence, CapabilityHealth,
-    CapabilityKind, CapabilitySnapshot, CapabilityState, ComponentKind, ComponentSnapshot,
-    EntitySnapshot, NetworkConnection, ProvenanceKind, ProvenanceSnapshot,
+    AdapterContextKind, AdapterContextSnapshot, AttributionConfidence, BinaryReputation,
+    CapabilityHealth, CapabilityKind, CapabilitySnapshot, CapabilityState, ComponentKind,
+    ComponentSnapshot, EntitySnapshot, NetworkConnection, ProvenanceKind, ProvenanceSnapshot,
 };
+use aetower_reputation::{RateLimiter, ReputationOutcome, VtClient, hash_file};
 use aetower_time as time;
 use parking_lot::Mutex;
 use serde::Deserialize;
@@ -94,6 +95,18 @@ struct AdapterState {
     /// resolve for entities that currently hold network connections — keeping
     /// the cost off the hot snapshot path and within the bench budget.
     signing_cache: HashMap<String, (String, bool)>,
+    /// Consent gate for VirusTotal binary-reputation lookups (default off).
+    binary_reputation_enabled: bool,
+    /// VirusTotal API key, pushed from the app's Keychain. Session-only — never
+    /// serialized, logged, or written to a snapshot.
+    virustotal_api_key: Option<String>,
+    /// VirusTotal verdicts keyed by executable path → (resolved_at_millis,
+    /// reputation). Populated by a detached background lookup; attached to
+    /// entities on a later enrich pass.
+    reputation_cache: HashMap<String, (u64, BinaryReputation)>,
+    /// Throttle for VirusTotal requests (free tier = 4/min). One lookup is
+    /// issued per `>= DEFAULT_MIN_REQUEST_INTERVAL_MILLIS`.
+    last_reputation_request_millis: u64,
 }
 
 struct Chau7FetchPlan {
@@ -299,6 +312,10 @@ impl Default for AdapterManager {
                 chau7_last_error: None,
                 cached_chau7_snapshot: None,
                 signing_cache: HashMap::new(),
+                binary_reputation_enabled: false,
+                virustotal_api_key: None,
+                reputation_cache: HashMap::new(),
+                last_reputation_request_millis: 0,
             })),
         }
     }
@@ -307,6 +324,20 @@ impl Default for AdapterManager {
 impl AdapterManager {
     pub fn set_diagnostics(&self, diagnostics: DiagnosticsStore) {
         self.state.lock().diagnostics = Some(diagnostics);
+    }
+
+    /// Push the binary-reputation consent + API key into the engine. Called by
+    /// the app whenever the toggle or the Keychain key changes. The key is held
+    /// in memory for the session only; it is never persisted by the engine.
+    pub fn set_binary_reputation_config(&self, enabled: bool, api_key: String) {
+        let mut guard = self.state.lock();
+        guard.binary_reputation_enabled = enabled;
+        let trimmed = api_key.trim();
+        guard.virustotal_api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        };
     }
 
     pub fn initial_capabilities(&self) -> BTreeMap<CapabilityKind, CapabilitySnapshot> {
@@ -1140,6 +1171,10 @@ impl AdapterManager {
             endpoint_security_sample,
             chau7_snapshot,
             mut signing_cache,
+            reputation_enabled,
+            reputation_key,
+            reputation_cache,
+            last_reputation_request_millis,
         ) = {
             let guard = self.state.lock();
             let chromium_targets = capabilities
@@ -1169,11 +1204,18 @@ impl AdapterManager {
                 endpoint_security_sample,
                 chau7_snapshot,
                 guard.signing_cache.clone(),
+                guard.binary_reputation_enabled,
+                guard.virustotal_api_key.clone(),
+                guard.reputation_cache.clone(),
+                guard.last_reputation_request_millis,
             )
         };
         // Tracks paths resolved during this pass so we can write them back into
         // the shared cache after the entity loop (codesign runs lock-free).
         let mut newly_signed: Vec<(String, (String, bool))> = Vec::new();
+        // Executable paths of risky entities (unsigned/ad-hoc + connected) that
+        // have no cached reputation yet — candidates for a background lookup.
+        let mut reputation_candidates: Vec<String> = Vec::new();
 
         for entity in entities {
             if matches!(
@@ -1418,6 +1460,20 @@ impl AdapterManager {
                 }
             }
 
+            // Binary reputation (opt-in): only for "risky" binaries — unsigned
+            // or ad-hoc AND currently connected. Signed binaries are never
+            // hashed or sent. Attach from cache; otherwise queue a candidate for
+            // the rate-limited background lookup below.
+            if reputation_enabled && entity_is_reputation_candidate(entity) {
+                if let Some(path) = entity.executable_path.clone() {
+                    if let Some((_, reputation)) = reputation_cache.get(&path) {
+                        entity.binary_reputation = Some(reputation.clone());
+                    } else if !reputation_candidates.contains(&path) {
+                        reputation_candidates.push(path);
+                    }
+                }
+            }
+
             // Chau7 enrichment: match tabs to entities, promote AI agents.
             //
             // Matching strategy (in priority order):
@@ -1638,7 +1694,84 @@ impl AdapterManager {
                 guard.signing_cache.insert(path, verdict);
             }
         }
+
+        // Fire at most one VirusTotal lookup per refresh, gated by the rate
+        // limiter (free tier = 4/min). The lookup runs on a detached thread so
+        // the slow external call never blocks the snapshot; its result lands in
+        // the cache and is attached on a later enrich pass.
+        let now = time::now_millis();
+        if reputation_enabled && RateLimiter::default().ready(last_reputation_request_millis, now) {
+            if let (Some(key), Some(path)) =
+                (reputation_key, reputation_candidates.into_iter().next())
+            {
+                // Reserve the slot immediately so concurrent ticks don't pile on.
+                self.state.lock().last_reputation_request_millis = now;
+                self.spawn_reputation_lookup(key, path, now);
+            }
+        }
     }
+
+    /// Detached background lookup: hash the binary, query VirusTotal (hash
+    /// only), and store the verdict in the cache. Never blocks the caller.
+    fn spawn_reputation_lookup(&self, api_key: String, path: String, now: u64) {
+        let state = Arc::clone(&self.state);
+        std::thread::spawn(move || {
+            let Some(sha256) = hash_file(&path) else {
+                return;
+            };
+            let outcome = VtClient::new(api_key).lookup(&sha256, now);
+            match outcome {
+                ReputationOutcome::Found(reputation) => {
+                    let detections = reputation.malicious + reputation.suspicious;
+                    let total = reputation.total_engines;
+                    state
+                        .lock()
+                        .reputation_cache
+                        .insert(path, (now, reputation));
+                    emit_adapter_refresh_event(
+                        &state,
+                        DiagnosticsLevel::Info,
+                        DiagnosticsSubsystem::Engine,
+                        "binary-reputation",
+                        "VirusTotal reputation resolved for a risky binary.",
+                        now,
+                        |builder| {
+                            builder
+                                .field("sha256", sha256)
+                                .field("detections", format!("{detections}/{total}"))
+                        },
+                    );
+                }
+                ReputationOutcome::Unknown => {
+                    // Cache an empty/unknown verdict so we don't re-hash and
+                    // re-query a binary VirusTotal has never seen.
+                    let reputation = BinaryReputation {
+                        sha256: sha256.clone(),
+                        permalink: aetower_reputation::permalink_for(&sha256),
+                        checked_at_millis: now,
+                        ..Default::default()
+                    };
+                    state
+                        .lock()
+                        .reputation_cache
+                        .insert(path, (now, reputation));
+                }
+                ReputationOutcome::RateLimited | ReputationOutcome::Error(_) => {
+                    // Leave the path uncached so it is retried on a later pass.
+                }
+            }
+        });
+    }
+}
+
+/// A binary is a reputation candidate when it is unsigned or ad-hoc *and*
+/// currently holds network connections — the same "risky" set the firewall-lite
+/// rules target. Signed binaries are never looked up.
+fn entity_is_reputation_candidate(entity: &EntitySnapshot) -> bool {
+    if entity.network_connections.is_empty() {
+        return false;
+    }
+    entity.is_adhoc || matches!(entity.signing_classification.as_str(), "unsigned" | "adhoc")
 }
 
 /// Resolve a binary's code-signing verdict via `codesign -dvvv`, reusing the
@@ -3979,6 +4112,7 @@ mod tests {
             network_connections: Vec::new(),
             signing_classification: "unknown".to_owned(),
             is_adhoc: false,
+            binary_reputation: None,
         };
 
         enrich_vscode_entity(&mut entity);
@@ -4061,6 +4195,7 @@ mod tests {
             network_connections: Vec::new(),
             signing_classification: "unknown".to_owned(),
             is_adhoc: false,
+            binary_reputation: None,
         };
 
         enrich_with_endpoint_security(
@@ -4290,6 +4425,7 @@ mod tests {
             network_connections: Vec::new(),
             signing_classification: "unknown".to_owned(),
             is_adhoc: false,
+            binary_reputation: None,
         }];
 
         manager.enrich_entities(&mut entities, &capabilities);

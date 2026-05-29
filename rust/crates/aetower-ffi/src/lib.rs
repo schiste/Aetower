@@ -597,6 +597,28 @@ pub struct EntitySnapshot {
     pub network_connections: Vec<NetworkConnection>,
     pub signing_classification: String,
     pub is_adhoc: bool,
+    pub binary_reputation: Option<BinaryReputation>,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum ReputationVerdict {
+    Clean,
+    Suspicious,
+    Malicious,
+    Unknown,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct BinaryReputation {
+    pub sha256: String,
+    pub malicious: u32,
+    pub suspicious: u32,
+    pub harmless: u32,
+    pub undetected: u32,
+    pub total_engines: u32,
+    pub verdict: ReputationVerdict,
+    pub permalink: String,
+    pub checked_at_millis: u64,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -905,6 +927,16 @@ impl MonitorEngine {
             .lock()
             .expect("engine lock poisoned")
             .configure_chau7_endpoint(socket_path);
+    }
+
+    /// Push binary-reputation consent + the VirusTotal API key into the engine.
+    /// Pass an empty key to clear it. The key is session-only (never persisted
+    /// by the engine).
+    pub fn set_binary_reputation_config(&self, enabled: bool, api_key: String) {
+        let Ok(engine) = self.inner.lock() else {
+            return;
+        };
+        engine.set_binary_reputation_config(enabled, api_key);
     }
 
     pub fn configure_telemetry(
@@ -2334,6 +2366,34 @@ impl From<model::EntitySnapshot> for EntitySnapshot {
                 .collect(),
             signing_classification: value.signing_classification,
             is_adhoc: value.is_adhoc,
+            binary_reputation: value.binary_reputation.map(Into::into),
+        }
+    }
+}
+
+impl From<model::ReputationVerdict> for ReputationVerdict {
+    fn from(value: model::ReputationVerdict) -> Self {
+        match value {
+            model::ReputationVerdict::Clean => Self::Clean,
+            model::ReputationVerdict::Suspicious => Self::Suspicious,
+            model::ReputationVerdict::Malicious => Self::Malicious,
+            model::ReputationVerdict::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<model::BinaryReputation> for BinaryReputation {
+    fn from(value: model::BinaryReputation) -> Self {
+        Self {
+            sha256: value.sha256,
+            malicious: value.malicious,
+            suspicious: value.suspicious,
+            harmless: value.harmless,
+            undetected: value.undetected,
+            total_engines: value.total_engines,
+            verdict: value.verdict.into(),
+            permalink: value.permalink,
+            checked_at_millis: value.checked_at_millis,
         }
     }
 }
