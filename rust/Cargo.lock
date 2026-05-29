@@ -158,6 +158,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aetower-regression"
+version = "0.1.0"
+dependencies = [
+ "aetower-model",
+]
+
+[[package]]
 name = "aetower-reputation"
 version = "0.1.0"
 dependencies = [

@@ -13,6 +13,7 @@ members = [
   "crates/aetower-sensors",
   "crates/aetower-telemetry",
   "crates/aetower-reputation",
+  "crates/aetower-regression",
   "crates/aetower-core",
   "crates/aetower-ffi",
   "crates/aetower-mcp",
