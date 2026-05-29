@@ -449,6 +449,46 @@ public struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            SettingsCard(
+                title: "Energy & sustainability",
+                subtitle: "Translate per-process power into running cost and carbon."
+            ) {
+                HStack {
+                    Text("Currency symbol")
+                        .font(.headline)
+                    Spacer()
+                    TextField("$", text: $settings.energyCurrencySymbol)
+                        .textFieldStyle(.roundedBorder)
+                        .aetowerUtilityTextInput()
+                        .frame(width: 60)
+                        .multilineTextAlignment(.center)
+                }
+
+                SettingDivider()
+
+                intervalSlider(
+                    title: "Electricity price (per kWh)",
+                    value: $settings.electricityPricePerKwh,
+                    range: 0...1,
+                    step: 0.01,
+                    format: "%.2f",
+                    valueWidth: 44,
+                    note: "Your electricity rate. Used for the $/hr cost translation."
+                )
+
+                SettingDivider()
+
+                intervalSlider(
+                    title: "Grid carbon intensity (gCO₂ per kWh)",
+                    value: $settings.gridCarbonIntensityGramsPerKwh,
+                    range: 0...1000,
+                    step: 10,
+                    format: "%.0f",
+                    valueWidth: 44,
+                    note: "Carbon intensity of your local grid. Defaults to the world average (~480). France ≈ 60; US ≈ 370."
+                )
+            }
         }
     }
 

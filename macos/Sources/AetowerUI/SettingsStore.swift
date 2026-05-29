@@ -246,6 +246,20 @@ public final class SettingsStore {
     public var frictionNotificationThreshold: Double {
         didSet { persist() }
     }
+    /// Electricity price used to translate per-process power into running cost
+    /// (currency per kWh). Default is the global average.
+    public var electricityPricePerKwh: Double {
+        didSet { persist() }
+    }
+    /// Grid carbon intensity (gCO₂ per kWh) for the sustainability translation.
+    /// Default is the world-average grid.
+    public var gridCarbonIntensityGramsPerKwh: Double {
+        didSet { persist() }
+    }
+    /// Currency symbol shown alongside energy cost figures.
+    public var energyCurrencySymbol: String {
+        didSet { persist() }
+    }
     public var appearanceMode: String {
         didSet { persist() }
     }
@@ -293,6 +307,9 @@ public final class SettingsStore {
         self.gpuSampleLowPowerIntervalSeconds = defaults.object(forKey: Self.gpuSampleLowPowerIntervalKey) as? Double ?? 60.0
         self.notificationsEnabled = defaults.object(forKey: Self.notificationsEnabledKey) as? Bool ?? false
         self.frictionNotificationThreshold = defaults.object(forKey: Self.frictionNotificationThresholdKey) as? Double ?? 60.0
+        self.electricityPricePerKwh = defaults.object(forKey: Self.electricityPricePerKwhKey) as? Double ?? 0.15
+        self.gridCarbonIntensityGramsPerKwh = defaults.object(forKey: Self.gridCarbonIntensityGramsPerKwhKey) as? Double ?? 480.0
+        self.energyCurrencySymbol = defaults.string(forKey: Self.energyCurrencySymbolKey) ?? "$"
         self.appearanceMode = defaults.string(forKey: Self.appearanceModeKey) ?? "system"
         self.operatorSafeModeEnabled = defaults.object(forKey: Self.operatorSafeModeEnabledKey) as? Bool ?? true
         self.binaryReputationEnabled = defaults.object(forKey: Self.binaryReputationEnabledKey) as? Bool ?? false
@@ -352,6 +369,9 @@ public final class SettingsStore {
     private static let gpuSampleLowPowerIntervalKey = "settings.gpuSampleLowPowerIntervalSeconds"
     private static let notificationsEnabledKey = "settings.notificationsEnabled"
     private static let frictionNotificationThresholdKey = "settings.frictionNotificationThreshold"
+    private static let electricityPricePerKwhKey = "settings.electricityPricePerKwh"
+    private static let gridCarbonIntensityGramsPerKwhKey = "settings.gridCarbonIntensityGramsPerKwh"
+    private static let energyCurrencySymbolKey = "settings.energyCurrencySymbol"
     private static let appearanceModeKey = "settings.appearanceMode"
     private static let operatorSafeModeEnabledKey = "settings.operatorSafeModeEnabled"
     private static let binaryReputationEnabledKey = "settings.binaryReputationEnabled"
@@ -438,6 +458,9 @@ extension SettingsStore {
         gpuSampleLowPowerIntervalSeconds = 60.0
         notificationsEnabled = false
         frictionNotificationThreshold = 60.0
+        electricityPricePerKwh = 0.15
+        gridCarbonIntensityGramsPerKwh = 480.0
+        energyCurrencySymbol = "$"
         appearanceMode = "system"
         operatorSafeModeEnabled = true
         binaryReputationEnabled = false
@@ -471,6 +494,9 @@ extension SettingsStore {
         defaults.set(gpuSampleLowPowerIntervalSeconds, forKey: Self.gpuSampleLowPowerIntervalKey)
         defaults.set(notificationsEnabled, forKey: Self.notificationsEnabledKey)
         defaults.set(frictionNotificationThreshold, forKey: Self.frictionNotificationThresholdKey)
+        defaults.set(electricityPricePerKwh, forKey: Self.electricityPricePerKwhKey)
+        defaults.set(gridCarbonIntensityGramsPerKwh, forKey: Self.gridCarbonIntensityGramsPerKwhKey)
+        defaults.set(energyCurrencySymbol, forKey: Self.energyCurrencySymbolKey)
         defaults.set(appearanceMode, forKey: Self.appearanceModeKey)
         defaults.set(operatorSafeModeEnabled, forKey: Self.operatorSafeModeEnabledKey)
         defaults.set(binaryReputationEnabled, forKey: Self.binaryReputationEnabledKey)
