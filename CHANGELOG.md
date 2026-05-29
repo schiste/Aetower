@@ -2,6 +2,25 @@
 
 All notable public changes to Aetower should be documented here.
 
+## 0.51 (build 418) - 2026-05-29
+
+Developer Preview maintenance release.
+
+Release metadata:
+
+- Bundle identifier: `com.aeptus.aetower`
+- Sparkle appcast: `https://aetower.dev/releases/appcast.xml`
+- Release archive prefix: `https://aetower.dev/releases/`
+
+- Changed the Aetower project license to `AGPL-3.0-only`.
+- Added corresponding source archive generation for public binary releases.
+- Added Cloudflare release-site publication for versioned and latest source
+  archives.
+- Added public release verification for source archive availability.
+- Added release preflight protection against dirty release source states.
+- Updated package metadata so Rust workspace crates report the AGPL license.
+- Embedded the Aetower license file in packaged macOS app bundles.
+
 ## 0.5 (build 414) - 2026-05-29
 
 First public `0.5` Developer Preview release.
