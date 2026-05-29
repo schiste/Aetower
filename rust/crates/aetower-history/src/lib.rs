@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use aetower_model::{
     AlertLevel, AlertThreshold, EntitySnapshot, HostPressureBand, HostSnapshot, HostTrend,
-    MetricTrend, Recommendation, ThermalState, ThresholdDirection, TimelineCategory, TimelineEvent,
-    TimelineSeverity, host_memory_pressure_score, host_pressure_band,
+    MetricTrend, Recommendation, RecommendationSeverity, ThermalForecast, ThermalState,
+    ThresholdDirection, TimelineCategory, TimelineEvent, TimelineSeverity,
+    host_memory_pressure_score, host_pressure_band,
     machine_friction_score as model_machine_friction_score,
 };
 
@@ -58,6 +59,9 @@ pub struct History {
     /// Remote hosts each entity was connected to on the previous tick, so we can
     /// emit a timeline event the first time an entity contacts a new host.
     previous_remote_hosts: HashMap<String, HashSet<String>>,
+    /// Whether a throttle forecast was active last tick — debounces the
+    /// "throttle imminent" timeline event to fire only on onset.
+    previous_forecast_active: bool,
 }
 
 struct MetricTrendState {
@@ -135,6 +139,8 @@ struct EntityBehaviorFlags {
 }
 
 const MAX_TREND_POINTS: usize = 30;
+/// Collector tick cadence in seconds (matches the collector's `TICK_SECONDS`).
+const TICK_SECONDS: f64 = 2.0;
 /// How often the z-score anomaly pass recomputes. At FAST_TICK (2 s) this is
 /// ~10 s, matching the collector's slow-counter cadence. Between recomputes
 /// the previous verdict is reused, so an entity stays flagged/unflagged until
@@ -195,6 +201,7 @@ impl History {
             ai_session_energy_nj: BTreeMap::new(),
             ai_session_absent_ticks: BTreeMap::new(),
             previous_remote_hosts: HashMap::new(),
+            previous_forecast_active: false,
         }
     }
 
@@ -238,7 +245,7 @@ impl History {
         captured_at_millis: u64,
         host: &HostSnapshot,
         entities: &mut [EntitySnapshot],
-    ) -> (Vec<TimelineEvent>, HostTrend) {
+    ) -> (Vec<TimelineEvent>, HostTrend, Option<ThermalForecast>) {
         for entity in entities.iter_mut() {
             entity.recent_change_summary = None;
         }
@@ -601,6 +608,8 @@ impl History {
             );
         }
 
+        let forecast = self.compute_thermal_forecast(captured_at_millis, host, entities);
+
         while self.timeline.len() > 120 {
             self.timeline.pop_front();
         }
@@ -608,7 +617,161 @@ impl History {
         (
             self.timeline.iter().cloned().collect(),
             self.host_history.snapshot(),
+            forecast,
         )
+    }
+
+    /// Heuristic throttle forecast from the recent max-temp slope. Only fires
+    /// while warming (`thermal_state >= Fair`) and a throttle is plausibly
+    /// imminent. Attaches an actionable recommendation to the top contributor
+    /// and emits a debounced timeline event on onset.
+    fn compute_thermal_forecast(
+        &mut self,
+        captured_at_millis: u64,
+        host: &HostSnapshot,
+        entities: &mut [EntitySnapshot],
+    ) -> Option<ThermalForecast> {
+        // CPU die temperature at which Apple-silicon parts begin aggressive
+        // throttling. Conservative + chip-agnostic — the whole forecast is an
+        // estimate, surfaced with a "~".
+        const THROTTLE_CEILING_CELSIUS: f32 = 100.0;
+        const MAX_FORECAST_MINUTES: f32 = 15.0;
+
+        let temps = &self.host_history.max_cpu_temperature;
+        let current_temp = *temps.back()?;
+        // Slope over the available window, °C per minute.
+        let slope_per_min = if temps.len() >= 3 {
+            let first = *temps.front()?;
+            let span_minutes = ((temps.len() - 1) as f64 * TICK_SECONDS / 60.0) as f32;
+            if span_minutes > 0.0 {
+                (current_temp - first) / span_minutes
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        // Already throttling.
+        if host.thermal_state == ThermalState::Critical {
+            let forecast = self.build_forecast(None, slope_per_min, host, entities);
+            self.maybe_emit_forecast_event(captured_at_millis, &forecast, true);
+            return forecast;
+        }
+
+        // Only forecast while warming and rising toward the ceiling.
+        let warming = host.thermal_state >= ThermalState::Fair && slope_per_min > 0.0;
+        if !warming || current_temp <= 0.0 {
+            self.maybe_emit_forecast_event(captured_at_millis, &None, false);
+            return None;
+        }
+        let minutes = (THROTTLE_CEILING_CELSIUS - current_temp) / slope_per_min;
+        if !(0.0..=MAX_FORECAST_MINUTES).contains(&minutes) {
+            self.maybe_emit_forecast_event(captured_at_millis, &None, false);
+            return None;
+        }
+
+        let forecast = self.build_forecast(Some(minutes), slope_per_min, host, entities);
+        self.maybe_emit_forecast_event(captured_at_millis, &forecast, true);
+        forecast
+    }
+
+    /// Assemble the forecast + attach a one-click recommendation to the top
+    /// resolvable thermal contributor.
+    fn build_forecast(
+        &self,
+        minutes_to_throttle: Option<f32>,
+        trend_celsius_per_min: f32,
+        host: &HostSnapshot,
+        entities: &mut [EntitySnapshot],
+    ) -> Option<ThermalForecast> {
+        let mut forecast = ThermalForecast {
+            minutes_to_throttle,
+            trend_celsius_per_min,
+            state: host.thermal_state,
+            top_contributor_entity_id: None,
+            top_contributor_pid: None,
+            top_contributor_label: None,
+        };
+
+        // First thermal contributor that resolves to a concrete pid.
+        for contributor_id in &self.thermal_contributors {
+            let Some(entity) = entities
+                .iter_mut()
+                .find(|entity| &entity.entity_id == contributor_id)
+            else {
+                continue;
+            };
+            let Some(pid) = heaviest_component_pid(entity) else {
+                continue;
+            };
+            forecast.top_contributor_entity_id = Some(entity.entity_id.clone());
+            forecast.top_contributor_pid = Some(pid);
+            forecast.top_contributor_label = Some(entity.display_name.clone());
+
+            // Suspend a background contributor; only renice the foreground app.
+            let action = if entity.metrics.is_foreground {
+                "lower-priority"
+            } else {
+                "suspend"
+            };
+            let detail = match minutes_to_throttle {
+                Some(mins) => format!(
+                    "{} is a top thermal contributor; throttling likely in ~{:.0} min at the current warming rate.",
+                    entity.display_name, mins
+                ),
+                None => format!(
+                    "{} is a top thermal contributor while the Mac is already throttling.",
+                    entity.display_name
+                ),
+            };
+            entity.recommendations.push(Recommendation {
+                title: "Cool down the Mac".to_owned(),
+                detail,
+                severity: RecommendationSeverity::Urgent,
+                suggested_action: Some(action.to_owned()),
+                target_pid: Some(pid),
+                target_label: Some(entity.display_name.clone()),
+            });
+            break;
+        }
+
+        Some(forecast)
+    }
+
+    fn maybe_emit_forecast_event(
+        &mut self,
+        captured_at_millis: u64,
+        forecast: &Option<ThermalForecast>,
+        active: bool,
+    ) {
+        if active
+            && !self.previous_forecast_active
+            && let Some(forecast) = forecast
+        {
+            let detail = match forecast.minutes_to_throttle {
+                Some(mins) => format!(
+                    "At the current warming rate (~{:.1} °C/min), throttling is likely in ~{:.0} min.{}",
+                    forecast.trend_celsius_per_min,
+                    mins,
+                    forecast
+                        .top_contributor_label
+                        .as_ref()
+                        .map(|label| format!(" Top contributor: {label}."))
+                        .unwrap_or_default()
+                ),
+                None => "The Mac is throttling now.".to_owned(),
+            };
+            self.push_event(
+                captured_at_millis,
+                TimelineCategory::Thermal,
+                TimelineSeverity::Warning,
+                forecast.top_contributor_entity_id.clone(),
+                "Throttle forecast".to_owned(),
+                detail,
+            );
+        }
+        self.previous_forecast_active = active;
     }
 
     fn push_event(
@@ -1511,6 +1674,22 @@ impl HostTrendState {
     }
 }
 
+/// The pid of an entity's heaviest (highest-CPU) process component, for use as
+/// a one-click action target.
+fn heaviest_component_pid(entity: &EntitySnapshot) -> Option<u32> {
+    entity
+        .components
+        .iter()
+        .filter(|component| component.kind == aetower_model::ComponentKind::Process)
+        .filter_map(|component| component.process_id.map(|pid| (pid, component.cpu_percent)))
+        .max_by(|left, right| {
+            left.1
+                .partial_cmp(&right.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(pid, _)| pid)
+}
+
 /// Highest CPU die temperature across all reported sensors, if any.
 fn max_cpu_temperature(host: &HostSnapshot) -> Option<f32> {
     host.cpu_temperatures
@@ -2059,14 +2238,14 @@ mod tests {
         let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
 
         // Cool tick — no alert event.
-        let (events, _) = history.update(1_000, &host_with_cpu_temperature(60.0), &mut entities);
+        let (events, _, _) = history.update(1_000, &host_with_cpu_temperature(60.0), &mut entities);
         assert!(
             events.is_empty(),
             "no transition from nominal to nominal should emit an event"
         );
 
         // Warming into the warning band.
-        let (events, _) = history.update(2_000, &host_with_cpu_temperature(92.0), &mut entities);
+        let (events, _, _) = history.update(2_000, &host_with_cpu_temperature(92.0), &mut entities);
         let warning_events: Vec<_> = events
             .iter()
             .filter(|event| event.title.starts_with("CPU temperature"))
@@ -2075,7 +2254,7 @@ mod tests {
         assert_eq!(warning_events[0].severity, TimelineSeverity::Warning);
 
         // Staying in the warning band — no duplicate event.
-        let (events, _) = history.update(3_000, &host_with_cpu_temperature(95.0), &mut entities);
+        let (events, _, _) = history.update(3_000, &host_with_cpu_temperature(95.0), &mut entities);
         assert!(
             events
                 .iter()
@@ -2086,7 +2265,8 @@ mod tests {
         );
 
         // Critical escalation.
-        let (events, _) = history.update(4_000, &host_with_cpu_temperature(102.0), &mut entities);
+        let (events, _, _) =
+            history.update(4_000, &host_with_cpu_temperature(102.0), &mut entities);
         let critical_events: Vec<_> = events
             .iter()
             .filter(|event| {
@@ -2097,7 +2277,7 @@ mod tests {
         assert_eq!(critical_events[0].severity, TimelineSeverity::Critical);
 
         // Recovery.
-        let (events, _) = history.update(5_000, &host_with_cpu_temperature(55.0), &mut entities);
+        let (events, _, _) = history.update(5_000, &host_with_cpu_temperature(55.0), &mut entities);
         let recovery_events: Vec<_> = events
             .iter()
             .filter(|event| {
@@ -2109,19 +2289,107 @@ mod tests {
         assert!(recovery_events[0].title.contains("normalized"));
     }
 
+    fn warming_host(celsius: f32, state: aetower_model::ThermalState) -> HostSnapshot {
+        HostSnapshot {
+            thermal_state: state,
+            cpu_temperatures: vec![aetower_model::TemperatureReading {
+                label: "p-cluster".to_owned(),
+                celsius,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn heavy_entity() -> aetower_model::EntitySnapshot {
+        aetower_model::EntitySnapshot {
+            entity_id: "e-heavy".to_owned(),
+            display_name: "Heavy".to_owned(),
+            entity_kind: aetower_model::EntityKind::App,
+            components: vec![aetower_model::ComponentSnapshot {
+                kind: aetower_model::ComponentKind::Process,
+                process_id: Some(4321),
+                cpu_percent: 80.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn thermal_forecast_appears_while_warming_and_clears_on_cooldown() {
+        let mut history = History::new();
+        let mut entities = vec![heavy_entity()];
+
+        // Rising temps while in the Fair thermal band over several ticks.
+        let mut last_forecast = None;
+        for (index, celsius) in [70.0, 78.0, 86.0, 92.0].iter().enumerate() {
+            let (_, _, forecast) = history.update(
+                (index as u64 + 1) * 1_000,
+                &warming_host(*celsius, aetower_model::ThermalState::Fair),
+                &mut entities,
+            );
+            last_forecast = Some(forecast);
+        }
+
+        let Some(Some(forecast)) = last_forecast else {
+            panic!("expected a throttle forecast while warming");
+        };
+        assert!(forecast.trend_celsius_per_min > 0.0);
+        let Some(minutes) = forecast.minutes_to_throttle else {
+            panic!("expected an estimated minutes-to-throttle");
+        };
+        assert!(minutes > 0.0 && minutes <= 15.0);
+        // Top contributor resolved to the heavy entity's pid + an action.
+        assert_eq!(forecast.top_contributor_pid, Some(4321));
+        assert!(
+            entities[0]
+                .recommendations
+                .iter()
+                .any(|rec| rec.suggested_action.as_deref() == Some("suspend")),
+            "a one-click cool-down action should be attached to the contributor"
+        );
+
+        // Cooling back to Nominal clears the forecast.
+        let (_, _, forecast) = history.update(
+            9_000,
+            &warming_host(55.0, aetower_model::ThermalState::Nominal),
+            &mut entities,
+        );
+        assert!(forecast.is_none(), "no forecast once cooled to nominal");
+    }
+
+    #[test]
+    fn no_thermal_forecast_when_nominal() {
+        let mut history = History::new();
+        let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
+        let mut last = None;
+        for (index, celsius) in [50.0, 51.0, 52.0].iter().enumerate() {
+            let (_, _, forecast) = history.update(
+                (index as u64 + 1) * 1_000,
+                &warming_host(*celsius, aetower_model::ThermalState::Nominal),
+                &mut entities,
+            );
+            last = Some(forecast);
+        }
+        assert!(
+            matches!(last, Some(None)),
+            "nominal state must not produce a throttle forecast"
+        );
+    }
+
     #[test]
     fn battery_health_below_threshold_fires_warning() {
         let mut history = History::new();
         let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
 
-        let (events, _) = history.update(1_000, &host_with_battery_health(95.0), &mut entities);
+        let (events, _, _) = history.update(1_000, &host_with_battery_health(95.0), &mut entities);
         assert!(
             !events
                 .iter()
                 .any(|event| event.title.starts_with("Battery health"))
         );
 
-        let (events, _) = history.update(2_000, &host_with_battery_health(75.0), &mut entities);
+        let (events, _, _) = history.update(2_000, &host_with_battery_health(75.0), &mut entities);
         let alerts: Vec<_> = events
             .iter()
             .filter(|event| event.title.starts_with("Battery health"))
@@ -2129,7 +2397,7 @@ mod tests {
         assert_eq!(alerts.len(), 1);
         assert_eq!(alerts[0].severity, TimelineSeverity::Warning);
 
-        let (events, _) = history.update(3_000, &host_with_battery_health(45.0), &mut entities);
+        let (events, _, _) = history.update(3_000, &host_with_battery_health(45.0), &mut entities);
         let critical: Vec<_> = events
             .iter()
             .filter(|event| {
@@ -2145,7 +2413,7 @@ mod tests {
         let mut history = History::new();
         let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
 
-        let (events, _) = history.update(1_000, &HostSnapshot::default(), &mut entities);
+        let (events, _, _) = history.update(1_000, &HostSnapshot::default(), &mut entities);
         assert!(
             !events
                 .iter()
@@ -2172,7 +2440,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let (events, _) = history.update(1_000, &nominal, &mut entities);
+        let (events, _, _) = history.update(1_000, &nominal, &mut entities);
         assert!(!events.iter().any(|event| event.title.contains("Fan")));
 
         // Same fan, but the SoC is now thermally stressed — this is the
@@ -2182,7 +2450,7 @@ mod tests {
             fans: nominal.fans.clone(),
             ..Default::default()
         };
-        let (events, _) = history.update(2_000, &stressed, &mut entities);
+        let (events, _, _) = history.update(2_000, &stressed, &mut entities);
         let fan_events: Vec<_> = events
             .iter()
             .filter(|event| event.title.contains("stalled"))
@@ -2210,7 +2478,8 @@ mod tests {
         let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
 
         // Step 1: CPU hits critical → event fires.
-        let (events, _) = history.update(1_000, &host_with_cpu_temperature(102.0), &mut entities);
+        let (events, _, _) =
+            history.update(1_000, &host_with_cpu_temperature(102.0), &mut entities);
         assert_eq!(
             events
                 .iter()
@@ -2222,14 +2491,14 @@ mod tests {
         // Step 2: readings disappear for several ticks. The gap
         // threshold is 15s, so we skip forward past it.
         let empty_host = HostSnapshot::default();
-        let (events, _) = history.update(5_000, &empty_host, &mut entities);
+        let (events, _, _) = history.update(5_000, &empty_host, &mut entities);
         assert!(
             !events
                 .iter()
                 .any(|event| event.title.contains("readings unavailable")),
             "gap event must not fire before the threshold"
         );
-        let (events, _) = history.update(20_000, &empty_host, &mut entities);
+        let (events, _, _) = history.update(20_000, &empty_host, &mut entities);
         let gap_events: Vec<_> = events
             .iter()
             .filter(|event| {
@@ -2246,7 +2515,8 @@ mod tests {
         // start from Nominal and re-emit a fresh Critical event, because
         // the user otherwise would have no indication that the machine
         // is still in trouble.
-        let (events, _) = history.update(22_000, &host_with_cpu_temperature(103.0), &mut entities);
+        let (events, _, _) =
+            history.update(22_000, &host_with_cpu_temperature(103.0), &mut entities);
         let fresh_events: Vec<_> = events
             .iter()
             .filter(|event| {
@@ -2266,9 +2536,9 @@ mod tests {
         let mut history = History::new();
         let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
 
-        let (_, _) = history.update(1_000, &host_with_cpu_temperature(95.0), &mut entities);
+        let (_, _, _) = history.update(1_000, &host_with_cpu_temperature(95.0), &mut entities);
         // Gap below threshold (15s).
-        let (events, _) = history.update(3_000, &HostSnapshot::default(), &mut entities);
+        let (events, _, _) = history.update(3_000, &HostSnapshot::default(), &mut entities);
         assert!(
             !events
                 .iter()
@@ -2277,7 +2547,7 @@ mod tests {
         );
         // Readings resume at same level — no event because previous state
         // is still Warning.
-        let (events, _) = history.update(5_000, &host_with_cpu_temperature(95.0), &mut entities);
+        let (events, _, _) = history.update(5_000, &host_with_cpu_temperature(95.0), &mut entities);
         assert!(
             !events
                 .iter()
@@ -2310,7 +2580,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let (events, _) = history.update(1_000, &stressed, &mut entities);
+        let (events, _, _) = history.update(1_000, &stressed, &mut entities);
         assert_eq!(
             events
                 .iter()
@@ -2327,7 +2597,7 @@ mod tests {
             fans: stressed.fans.clone(),
             ..Default::default()
         };
-        let (events, _) = history.update(2_000, &cooled, &mut entities);
+        let (events, _, _) = history.update(2_000, &cooled, &mut entities);
         let recovery: Vec<_> = events
             .iter()
             .filter(|event| event.title.contains("Fan") && event.timestamp_millis == 2_000)
@@ -2431,7 +2701,7 @@ mod tests {
         // Agent disappears — must be absent for 3 consecutive ticks
         // (the debounce window) before the session-end event fires.
         let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
-        let (events, _) = history.update(5_000, &host, &mut entities);
+        let (events, _, _) = history.update(5_000, &host, &mut entities);
         assert!(
             !events
                 .iter()
@@ -2441,7 +2711,7 @@ mod tests {
         let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
         let _ = history.update(7_000, &host, &mut entities);
         let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
-        let (events, _) = history.update(9_000, &host, &mut entities);
+        let (events, _, _) = history.update(9_000, &host, &mut entities);
         let session_end: Vec<_> = events
             .iter()
             .filter(|event| event.title.contains("session ended"))
@@ -2478,7 +2748,7 @@ mod tests {
 
         // Entity disappears for one tick.
         let mut entities: Vec<aetower_model::EntitySnapshot> = Vec::new();
-        let (events, _) = history.update(5_000, &host, &mut entities);
+        let (events, _, _) = history.update(5_000, &host, &mut entities);
         assert!(
             !events
                 .iter()
@@ -2512,7 +2782,7 @@ mod tests {
             gpu_memory_bytes: 12 * 1024 * 1024 * 1024,
             ..Default::default()
         };
-        let (events, _) = history.update(1_000, &host, &mut entities);
+        let (events, _, _) = history.update(1_000, &host, &mut entities);
         let gpu_events: Vec<_> = events
             .iter()
             .filter(|event| event.title.starts_with("GPU memory"))
@@ -2540,7 +2810,7 @@ mod tests {
             gpu_memory_bytes: (14.5 * 1024.0 * 1024.0 * 1024.0) as u64,
             ..Default::default()
         };
-        let (events, _) = history.update(2_000, &critical_host, &mut entities);
+        let (events, _, _) = history.update(2_000, &critical_host, &mut entities);
         let critical: Vec<_> = events
             .iter()
             .filter(|event| {
@@ -2570,7 +2840,7 @@ mod tests {
             gpu_memory_bytes: 8 * 1024 * 1024 * 1024,
             ..Default::default()
         };
-        let (events, _) = history.update(2_000, &recovered, &mut entities);
+        let (events, _, _) = history.update(2_000, &recovered, &mut entities);
         let recovery: Vec<_> = events
             .iter()
             .filter(|event| event.title.contains("GPU memory") && event.timestamp_millis == 2_000)

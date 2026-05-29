@@ -572,7 +572,7 @@ impl Engine {
                 runtime_lag_metrics.attribution_millis = pipeline_timings.attribution_millis as f32;
                 runtime_lag_metrics.friction_millis = pipeline_timings.friction_millis as f32;
                 runtime_lag_metrics.enrich_millis = enrich_millis as f32;
-                let (timeline, host_trend) =
+                let (timeline, host_trend, thermal_forecast) =
                     guard
                         .history
                         .update(captured_at_millis, &host, &mut entities);
@@ -616,7 +616,7 @@ impl Engine {
                     timeline,
                     ai_repo_summaries: adapters.ai_repo_summaries(),
                     chau7_sessions,
-                    thermal_forecast: None,
+                    thermal_forecast,
                 };
                 emit_boot_session_observed(
                     &diagnostics,
