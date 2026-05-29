@@ -64,6 +64,10 @@ public final class EngineBridge: @unchecked Sendable {
         engine.configureChau7Endpoint(socketPath: socketPath)
     }
 
+    public func setBinaryReputationConfig(enabled: Bool, apiKey: String) {
+        engine.setBinaryReputationConfig(enabled: enabled, apiKey: apiKey)
+    }
+
     public func configureTelemetry(endpoint: String?, enabled: Bool, exportIntervalSeconds: UInt32) {
         engine.configureTelemetry(
             endpoint: endpoint,

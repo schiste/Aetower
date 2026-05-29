@@ -252,6 +252,11 @@ public final class SettingsStore {
     public var operatorSafeModeEnabled: Bool {
         didSet { persist() }
     }
+    /// Opt-in consent for VirusTotal binary-reputation lookups (off by default).
+    /// The API key itself lives in the Keychain, not here.
+    public var binaryReputationEnabled: Bool {
+        didSet { persist() }
+    }
     public var exportPrivacyTier: ExportPrivacyTier {
         didSet { persist() }
     }
@@ -290,6 +295,7 @@ public final class SettingsStore {
         self.frictionNotificationThreshold = defaults.object(forKey: Self.frictionNotificationThresholdKey) as? Double ?? 60.0
         self.appearanceMode = defaults.string(forKey: Self.appearanceModeKey) ?? "system"
         self.operatorSafeModeEnabled = defaults.object(forKey: Self.operatorSafeModeEnabledKey) as? Bool ?? true
+        self.binaryReputationEnabled = defaults.object(forKey: Self.binaryReputationEnabledKey) as? Bool ?? false
         let persistedTier = defaults.string(forKey: Self.exportPrivacyTierKey)
         let legacySensitive = defaults.object(forKey: Self.includeSensitiveExportsKey) as? Bool ?? false
         self.exportPrivacyTier = ExportPrivacyTier(rawValue: persistedTier ?? "")
@@ -348,6 +354,7 @@ public final class SettingsStore {
     private static let frictionNotificationThresholdKey = "settings.frictionNotificationThreshold"
     private static let appearanceModeKey = "settings.appearanceMode"
     private static let operatorSafeModeEnabledKey = "settings.operatorSafeModeEnabled"
+    private static let binaryReputationEnabledKey = "settings.binaryReputationEnabled"
     private static let exportPrivacyTierKey = "settings.exportPrivacyTier"
     private static let autoRegisterLocalMcpClientsEnabledKey = "settings.autoRegisterLocalMcpClientsEnabled"
     private static let includeSensitiveExportsKey = "settings.includeSensitiveExports"
@@ -433,6 +440,8 @@ extension SettingsStore {
         frictionNotificationThreshold = 60.0
         appearanceMode = "system"
         operatorSafeModeEnabled = true
+        binaryReputationEnabled = false
+        KeychainHelper.delete(account: KeychainHelper.binaryReputationAccount)
         exportPrivacyTier = .redacted
         autoRegisterLocalMcpClientsEnabled = false
         if launchAtLoginEnabled {
@@ -464,6 +473,7 @@ extension SettingsStore {
         defaults.set(frictionNotificationThreshold, forKey: Self.frictionNotificationThresholdKey)
         defaults.set(appearanceMode, forKey: Self.appearanceModeKey)
         defaults.set(operatorSafeModeEnabled, forKey: Self.operatorSafeModeEnabledKey)
+        defaults.set(binaryReputationEnabled, forKey: Self.binaryReputationEnabledKey)
         defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
         defaults.set(autoRegisterLocalMcpClientsEnabled, forKey: Self.autoRegisterLocalMcpClientsEnabledKey)
         defaults.set(exportPrivacyTier == .full, forKey: Self.includeSensitiveExportsKey)

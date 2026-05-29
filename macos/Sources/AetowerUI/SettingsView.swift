@@ -14,6 +14,9 @@ public struct SettingsView: View {
     @State private var showAdvancedCollectionControls = false
     @State private var showResetLocalDataConfirmation = false
     @State private var editingAutomationRules: [AutomationRule] = []
+    /// In-memory draft of the VirusTotal API key. Loaded from / written to the
+    /// Keychain — never persisted to UserDefaults.
+    @State private var virusTotalKeyDraft: String = ""
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
@@ -678,6 +681,35 @@ public struct SettingsView: View {
                         note: "Exports host and entity gauges to an OTLP/HTTP metrics collector."
                     )
                 }
+
+                SettingsSetupCard(
+                    title: "Binary reputation",
+                    subtitle:
+                        "Checks unsigned or ad-hoc apps with network activity against VirusTotal.",
+                    systemImage: "checkmark.shield",
+                    badge: "VirusTotal",
+                    color: AetowerDesign.Status.warning
+                ) {
+                    Toggle("Enable VirusTotal reputation", isOn: $settings.binaryReputationEnabled)
+                    SecureField(
+                        "VirusTotal API key",
+                        text: $virusTotalKeyDraft,
+                        prompt: Text("Paste your VirusTotal API key")
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .aetowerUtilityTextInput()
+                    .disabled(!settings.binaryReputationEnabled)
+                    Text(
+                        "Only the file's SHA-256 is sent — never the file, its path, or any host context. Signed Apple/Developer-ID apps are never checked. The key is stored in your Keychain."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    Link(
+                        "Get a free VirusTotal API key",
+                        destination: URL(string: "https://www.virustotal.com/gui/join-us")!
+                    )
+                    .font(.caption)
+                }
             }
 
             HStack(spacing: AetowerDesign.Spacing.sm) {
@@ -705,6 +737,12 @@ public struct SettingsView: View {
                 Text(telemetryVerificationStatus)
                     .font(.caption)
                     .foregroundStyle(telemetryVerificationStatus.contains("failed") ? .orange : .secondary)
+            }
+        }
+        .onAppear {
+            if virusTotalKeyDraft.isEmpty {
+                virusTotalKeyDraft =
+                    KeychainHelper.retrieve(account: KeychainHelper.binaryReputationAccount) ?? ""
             }
         }
     }
@@ -1107,6 +1145,9 @@ public struct SettingsView: View {
     }
 
     private func applyIntegrationAndTelemetrySettings(_ settings: SettingsStore) {
+        // Persist the VirusTotal key to the Keychain before applying — an empty
+        // draft clears it. applyIntegrationSettings reads it back from there.
+        KeychainHelper.store(virusTotalKeyDraft, account: KeychainHelper.binaryReputationAccount)
         state.applyIntegrationSettings(settings)
         appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
         applyConfirmation = "Integration and telemetry settings applied."

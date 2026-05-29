@@ -914,6 +914,18 @@ public final class AppState {
 
         let chau7Endpoint = settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         bridge.configureChau7Endpoint(chau7Endpoint.isEmpty ? nil : chau7Endpoint)
+
+        // Binary reputation: only forward the key when the feature is enabled,
+        // and read it from the Keychain (never UserDefaults). An empty key
+        // disables lookups engine-side.
+        let virusTotalKey =
+            settings.binaryReputationEnabled
+            ? (KeychainHelper.retrieve(account: KeychainHelper.binaryReputationAccount) ?? "")
+            : ""
+        bridge.setBinaryReputationConfig(
+            enabled: settings.binaryReputationEnabled,
+            apiKey: virusTotalKey
+        )
         let telemetryEndpoint = SettingsStore.normalizedTelemetryEndpoint(settings.telemetryEndpoint)
         self.telemetryEnabled = settings.telemetryEnabled
         self.telemetryEndpoint = telemetryEndpoint
