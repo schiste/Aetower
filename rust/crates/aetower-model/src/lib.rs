@@ -503,6 +503,8 @@ pub struct AggregateMetrics {
     #[serde(default)]
     pub estimated_gpu_percent: f32,
     pub process_count: u32,
+    #[serde(default)]
+    pub thread_count: u32,
     pub is_foreground: bool,
 }
 
@@ -558,6 +560,8 @@ pub struct ComponentSnapshot {
     pub cwd: Option<String>,
     #[serde(default)]
     pub user: Option<String>,
+    #[serde(default)]
+    pub thread_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

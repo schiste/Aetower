@@ -458,6 +458,7 @@ mod tests {
             energy_nj_per_s: 0.0,
             cwd: None,
             user: None,
+            thread_count: 0,
         }
     }
 

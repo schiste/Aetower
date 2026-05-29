@@ -1540,6 +1540,7 @@ public struct AggregateMetrics {
      */
     public var estimatedGpuPercent: Float
     public var processCount: UInt32
+    public var threadCount: UInt32
     public var isForeground: Bool
 
     // Default memberwise initializers are never public by default, so we
@@ -1554,7 +1555,7 @@ public struct AggregateMetrics {
         /**
          * Heuristic GPU share attributed to this entity (0-100). Only non-zero
          * for AI agent entities; zero for everything else.
-         */estimatedGpuPercent: Float, processCount: UInt32, isForeground: Bool) {
+         */estimatedGpuPercent: Float, processCount: UInt32, threadCount: UInt32, isForeground: Bool) {
         self.cpuPercent = cpuPercent
         self.memoryResidentBytes = memoryResidentBytes
         self.memoryPhysicalFootprintBytes = memoryPhysicalFootprintBytes
@@ -1566,6 +1567,7 @@ public struct AggregateMetrics {
         self.energyNjPerS = energyNjPerS
         self.estimatedGpuPercent = estimatedGpuPercent
         self.processCount = processCount
+        self.threadCount = threadCount
         self.isForeground = isForeground
     }
 }
@@ -1610,6 +1612,9 @@ extension AggregateMetrics: Equatable, Hashable {
         if lhs.processCount != rhs.processCount {
             return false
         }
+        if lhs.threadCount != rhs.threadCount {
+            return false
+        }
         if lhs.isForeground != rhs.isForeground {
             return false
         }
@@ -1628,6 +1633,7 @@ extension AggregateMetrics: Equatable, Hashable {
         hasher.combine(energyNjPerS)
         hasher.combine(estimatedGpuPercent)
         hasher.combine(processCount)
+        hasher.combine(threadCount)
         hasher.combine(isForeground)
     }
 }
@@ -1652,6 +1658,7 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
                 energyNjPerS: FfiConverterDouble.read(from: &buf), 
                 estimatedGpuPercent: FfiConverterFloat.read(from: &buf), 
                 processCount: FfiConverterUInt32.read(from: &buf), 
+                threadCount: FfiConverterUInt32.read(from: &buf), 
                 isForeground: FfiConverterBool.read(from: &buf)
         )
     }
@@ -1668,6 +1675,7 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
         FfiConverterDouble.write(value.energyNjPerS, into: &buf)
         FfiConverterFloat.write(value.estimatedGpuPercent, into: &buf)
         FfiConverterUInt32.write(value.processCount, into: &buf)
+        FfiConverterUInt32.write(value.threadCount, into: &buf)
         FfiConverterBool.write(value.isForeground, into: &buf)
     }
 }
@@ -2425,10 +2433,11 @@ public struct ComponentSnapshot {
     public var memoryPhysicalFootprintBytes: UInt64
     public var cwd: String?
     public var user: String?
+    public var threadCount: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: ComponentKind, title: String, detail: String, adapterContext: AdapterContextSnapshot?, provenance: ProvenanceSnapshot?, processId: UInt32?, startTimeMillis: UInt64, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, memoryPhysicalFootprintBytes: UInt64, cwd: String?, user: String?) {
+    public init(kind: ComponentKind, title: String, detail: String, adapterContext: AdapterContextSnapshot?, provenance: ProvenanceSnapshot?, processId: UInt32?, startTimeMillis: UInt64, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, memoryPhysicalFootprintBytes: UInt64, cwd: String?, user: String?, threadCount: UInt32) {
         self.kind = kind
         self.title = title
         self.detail = detail
@@ -2445,6 +2454,7 @@ public struct ComponentSnapshot {
         self.memoryPhysicalFootprintBytes = memoryPhysicalFootprintBytes
         self.cwd = cwd
         self.user = user
+        self.threadCount = threadCount
     }
 }
 
@@ -2503,6 +2513,9 @@ extension ComponentSnapshot: Equatable, Hashable {
         if lhs.user != rhs.user {
             return false
         }
+        if lhs.threadCount != rhs.threadCount {
+            return false
+        }
         return true
     }
 
@@ -2523,6 +2536,7 @@ extension ComponentSnapshot: Equatable, Hashable {
         hasher.combine(memoryPhysicalFootprintBytes)
         hasher.combine(cwd)
         hasher.combine(user)
+        hasher.combine(threadCount)
     }
 }
 
@@ -2550,7 +2564,8 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
                 memoryBytes: FfiConverterUInt64.read(from: &buf), 
                 memoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf), 
                 cwd: FfiConverterOptionString.read(from: &buf), 
-                user: FfiConverterOptionString.read(from: &buf)
+                user: FfiConverterOptionString.read(from: &buf), 
+                threadCount: FfiConverterUInt32.read(from: &buf)
         )
     }
 
@@ -2571,6 +2586,7 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.memoryPhysicalFootprintBytes, into: &buf)
         FfiConverterOptionString.write(value.cwd, into: &buf)
         FfiConverterOptionString.write(value.user, into: &buf)
+        FfiConverterUInt32.write(value.threadCount, into: &buf)
     }
 }
 

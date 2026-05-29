@@ -97,6 +97,7 @@ private struct SubtreeAggregate {
     let cpuPercent: Float
     let memoryBytes: UInt64
     let processCount: Int
+    let threadCount: UInt32
 }
 
 private struct RelatedComponent {
@@ -195,7 +196,7 @@ private func buildTree(
         nodes.append(
             makeAdapterNode(
                 component,
-                aggregate: SubtreeAggregate(cpuPercent: 0, memoryBytes: 0, processCount: 0),
+                aggregate: SubtreeAggregate(cpuPercent: 0, memoryBytes: 0, processCount: 0, threadCount: 0),
                 depth: chau7Components.isEmpty ? 0 : 1,
                 isRoot: chau7Components.isEmpty
             )
@@ -243,6 +244,7 @@ private func subtreeAggregate(
     var totalCPU = relatedComponent.component.cpuPercent
     var totalMemory = relatedComponent.component.memoryBytes
     var totalCount = 1
+    var totalThreads = relatedComponent.component.threadCount
 
     if let pid = relatedComponent.component.processId, let kids = children[pid] {
         for child in kids {
@@ -250,22 +252,25 @@ private func subtreeAggregate(
             totalCPU += aggregate.cpuPercent
             totalMemory += aggregate.memoryBytes
             totalCount += aggregate.processCount
+            totalThreads += aggregate.threadCount
         }
     }
 
     return SubtreeAggregate(
         cpuPercent: totalCPU,
         memoryBytes: totalMemory,
-        processCount: totalCount
+        processCount: totalCount,
+        threadCount: totalThreads
     )
 }
 
 private func aggregateTotals<S: Sequence>(_ values: S) -> SubtreeAggregate where S.Element == SubtreeAggregate {
-    values.reduce(into: SubtreeAggregate(cpuPercent: 0, memoryBytes: 0, processCount: 0)) { result, value in
+    values.reduce(into: SubtreeAggregate(cpuPercent: 0, memoryBytes: 0, processCount: 0, threadCount: 0)) { result, value in
         result = SubtreeAggregate(
             cpuPercent: result.cpuPercent + value.cpuPercent,
             memoryBytes: result.memoryBytes + value.memoryBytes,
-            processCount: result.processCount + value.processCount
+            processCount: result.processCount + value.processCount,
+            threadCount: result.threadCount + value.threadCount
         )
     }
 }
@@ -332,6 +337,9 @@ private func processDetail(_ component: ComponentSnapshot, aggregate: SubtreeAgg
     var parts: [String] = []
     if aggregate.processCount > 1 {
         parts.append("\(aggregate.processCount) processes in group")
+    }
+    if aggregate.threadCount > 0 {
+        parts.append("\(aggregate.threadCount) threads")
     }
     if !component.detail.isEmpty {
         parts.append(component.detail)

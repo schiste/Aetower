@@ -1762,6 +1762,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 estimated_gpu_percent: 0.0,
                 process_count: 1,
+                thread_count: 0,
                 is_foreground: false,
             },
             friction: FrictionBreakdown::default(),
@@ -1782,6 +1783,7 @@ mod tests {
                 memory_physical_footprint_bytes: 0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             }],
             trend: MetricTrend::default(),
             badges: Vec::new(),
@@ -1822,6 +1824,7 @@ mod tests {
                 memory_physical_footprint_bytes: 0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             })
             .collect();
         entity.oldest_process_start_millis = processes

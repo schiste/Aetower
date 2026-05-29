@@ -1232,6 +1232,7 @@ impl AdapterManager {
                             memory_physical_footprint_bytes: 0,
                             cwd: None,
                             user: None,
+                            thread_count: 0,
                         });
                     }
                     if !targets.is_empty()
@@ -1306,6 +1307,7 @@ impl AdapterManager {
                             memory_physical_footprint_bytes: 0,
                             cwd: None,
                             user: None,
+                            thread_count: 0,
                         });
                     }
                     if !containers.is_empty()
@@ -1369,6 +1371,7 @@ impl AdapterManager {
                         memory_physical_footprint_bytes: 0,
                         cwd: None,
                         user: None,
+                        thread_count: 0,
                     });
                     if !entity
                         .badges
@@ -1511,6 +1514,7 @@ impl AdapterManager {
                         memory_physical_footprint_bytes: 0,
                         cwd: None,
                         user: None,
+                        thread_count: 0,
                     });
 
                     if tab.is_ai_agent() {
@@ -3308,6 +3312,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             memory_physical_footprint_bytes: 0,
             cwd: None,
             user: None,
+            thread_count: 0,
         });
     }
 
@@ -3353,6 +3358,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             memory_physical_footprint_bytes: 0,
             cwd: None,
             user: None,
+            thread_count: 0,
         });
         push_unique_badge(entity, "vscode-extension-host");
     }
@@ -3412,6 +3418,7 @@ fn enrich_vscode_entity(entity: &mut EntitySnapshot) {
             memory_physical_footprint_bytes: 0,
             cwd: None,
             user: None,
+            thread_count: 0,
         });
     }
 
@@ -3811,6 +3818,7 @@ mod tests {
                     memory_physical_footprint_bytes: 0,
                     cwd: None,
                     user: None,
+                    thread_count: 0,
                 },
                 ComponentSnapshot {
                     kind: ComponentKind::Process,
@@ -3831,6 +3839,7 @@ mod tests {
                     memory_physical_footprint_bytes: 0,
                     cwd: None,
                     user: None,
+                    thread_count: 0,
                 },
             ],
             trend: MetricTrend::default(),
@@ -3910,6 +3919,7 @@ mod tests {
                 memory_physical_footprint_bytes: 0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             }],
             trend: MetricTrend::default(),
             badges: Vec::new(),
@@ -4135,6 +4145,7 @@ mod tests {
                 memory_physical_footprint_bytes: 0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             }],
             trend: MetricTrend::default(),
             badges: Vec::new(),

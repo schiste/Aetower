@@ -59,6 +59,10 @@ pub fn build_entities(
         entry.metrics.wakeups_per_second += process.wakeups_per_second;
         entry.metrics.energy_nj_per_s += process.energy_nj_per_s;
         entry.metrics.process_count += 1;
+        entry.metrics.thread_count = entry
+            .metrics
+            .thread_count
+            .saturating_add(process.thread_count);
         entry.metrics.is_foreground =
             entry.metrics.is_foreground || is_foreground_match(seed, frontmost);
         if entry.metrics.is_foreground {
@@ -86,6 +90,7 @@ pub fn build_entities(
             memory_physical_footprint_bytes: process.memory_physical_footprint_bytes,
             cwd: process.cwd.clone(),
             user: process.user.clone(),
+            thread_count: process.thread_count,
         });
     }
 
@@ -558,6 +563,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 2,
@@ -576,6 +582,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
         ];
         let entity_id = "bundle:test".to_owned();
@@ -656,6 +663,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 11,
@@ -677,6 +685,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 1,
@@ -695,6 +704,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
         ];
         let identity = IdentityMap {
@@ -782,6 +792,7 @@ mod tests {
             energy_nj_per_s: 0.0,
             cwd: None,
             user: None,
+            thread_count: 0,
         };
 
         let detail = summarize_process(&process);
@@ -814,6 +825,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 21,
@@ -832,6 +844,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 10,
@@ -853,6 +866,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
         ];
         let identity = IdentityMap {
@@ -900,6 +914,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 1,
@@ -918,6 +933,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
         ];
         let identity = IdentityMap {
@@ -966,6 +982,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 3,
@@ -984,6 +1001,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 2,
@@ -1005,6 +1023,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 1,
@@ -1023,6 +1042,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
         ];
         let identity = IdentityMap {
@@ -1072,6 +1092,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 11,
@@ -1089,6 +1110,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 1,
@@ -1106,6 +1128,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
             RawProcessSample {
                 pid: 2,
@@ -1123,6 +1146,7 @@ mod tests {
                 energy_nj_per_s: 0.0,
                 cwd: None,
                 user: None,
+                thread_count: 0,
             },
         ];
         let identity = IdentityMap {

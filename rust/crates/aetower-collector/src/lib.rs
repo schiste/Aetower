@@ -38,6 +38,10 @@ pub struct RawProcessSample {
     pub cwd: Option<String>,
     #[serde(default)]
     pub user: Option<String>,
+    /// Live thread count from `proc_pidinfo(PROC_PIDTASKINFO)`. Sampled on the
+    /// slow counter cadence; 0 when unavailable or off-macOS.
+    #[serde(default)]
+    pub thread_count: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -125,6 +129,7 @@ struct ProcessCounterSample {
     disk_write_bytes: u64,
     wakeups_per_second: f32,
     energy_nj_per_s: f64,
+    thread_count: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -393,6 +398,14 @@ impl Collector {
                             .unwrap_or(0),
                     )
                 };
+                // Thread count comes from a separate `proc_pidinfo` call, so we
+                // gate it on the same slow cadence as the rusage counters.
+                let thread_count = if sample_rusage {
+                    platform::process_thread_count(pid)
+                        .unwrap_or_else(|| previous.map(|prev| prev.thread_count).unwrap_or(0))
+                } else {
+                    previous.map(|prev| prev.thread_count).unwrap_or(0)
+                };
                 // Use the cumulative byte counters; subtracting the previous
                 // tick's cumulative value below yields a true per-tick delta.
                 // (`read_bytes` is itself only the delta since the last refresh,
@@ -437,6 +450,7 @@ impl Collector {
                         disk_write_bytes: disk_write_total,
                         wakeups_per_second,
                         energy_nj_per_s,
+                        thread_count,
                     },
                 );
 
@@ -507,6 +521,7 @@ impl Collector {
                         self.cwd_cache.get(&pid).cloned()
                     },
                     user: identity.user,
+                    thread_count,
                 }
             })
             .collect();
@@ -974,6 +989,54 @@ mod platform {
             energy_nj: info.ri_billed_energy,
             physical_footprint_bytes: info.ri_phys_footprint,
         })
+    }
+
+    /// macOS `proc_taskinfo` (from `<sys/proc_info.h>`). We only read
+    /// `pti_threadnum`, but the kernel fills the whole struct, so the layout
+    /// must match exactly.
+    #[repr(C)]
+    #[derive(Default)]
+    struct ProcTaskInfo {
+        pti_virtual_size: u64,
+        pti_resident_size: u64,
+        pti_total_user: u64,
+        pti_total_system: u64,
+        pti_threads_user: u64,
+        pti_threads_system: u64,
+        pti_policy: i32,
+        pti_faults: i32,
+        pti_pageins: i32,
+        pti_cow_faults: i32,
+        pti_messages_sent: i32,
+        pti_messages_received: i32,
+        pti_syscalls_mach: i32,
+        pti_syscalls_unix: i32,
+        pti_csw: i32,
+        pti_threadnum: i32,
+        pti_numrunning: i32,
+        pti_priority: i32,
+    }
+
+    const PROC_PIDTASKINFO: i32 = 4;
+
+    /// Live thread count via `proc_pidinfo(PROC_PIDTASKINFO)`. `None` when the
+    /// process is gone or not inspectable.
+    pub fn process_thread_count(pid: u32) -> Option<u32> {
+        unsafe {
+            let mut info = ProcTaskInfo::default();
+            let size = mem::size_of::<ProcTaskInfo>() as i32;
+            let result = proc_pidinfo(
+                pid as i32,
+                PROC_PIDTASKINFO,
+                0,
+                &mut info as *mut _ as *mut c_void,
+                size,
+            );
+            if result <= 0 || info.pti_threadnum < 0 {
+                return None;
+            }
+            Some(info.pti_threadnum as u32)
+        }
     }
 
     const PROC_PIDVNODEPATHINFO: i32 = 9;
@@ -2280,6 +2343,10 @@ mod platform {
     }
 
     pub fn process_counters(_pid: u32) -> Option<ProcessRusageCounters> {
+        None
+    }
+
+    pub fn process_thread_count(_pid: u32) -> Option<u32> {
         None
     }
 

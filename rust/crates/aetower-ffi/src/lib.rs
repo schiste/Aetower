@@ -465,6 +465,7 @@ pub struct AggregateMetrics {
     /// for AI agent entities; zero for everything else.
     pub estimated_gpu_percent: f32,
     pub process_count: u32,
+    pub thread_count: u32,
     pub is_foreground: bool,
 }
 
@@ -509,6 +510,7 @@ pub struct ComponentSnapshot {
     pub memory_physical_footprint_bytes: u64,
     pub cwd: Option<String>,
     pub user: Option<String>,
+    pub thread_count: u32,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -2075,6 +2077,7 @@ impl From<model::AggregateMetrics> for AggregateMetrics {
             energy_nj_per_s: value.energy_nj_per_s,
             estimated_gpu_percent: value.estimated_gpu_percent,
             process_count: value.process_count,
+            thread_count: value.thread_count,
             is_foreground: value.is_foreground,
         }
     }
@@ -2213,6 +2216,7 @@ impl From<model::ComponentSnapshot> for ComponentSnapshot {
             memory_physical_footprint_bytes: value.memory_physical_footprint_bytes,
             cwd: value.cwd,
             user: value.user,
+            thread_count: value.thread_count,
         }
     }
 }
