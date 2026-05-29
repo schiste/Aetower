@@ -803,7 +803,7 @@ public struct SettingsView: View {
             status: status(for: .automation)
         ) {
             if editingAutomationRules.isEmpty {
-                Text("No automation rules yet. Add one to react to launches, exits, anomalies, or thermal/friction shifts.")
+                Text("No automation rules yet. Add one to react to launches, exits, anomalies, thermal/friction shifts, or an unsigned process opening a network connection.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -847,6 +847,37 @@ public struct SettingsView: View {
                         .aetowerUtilityTextInput()
                         .font(.system(size: 11, design: .monospaced))
                     }
+                    if rule.event.supportsConnectionPredicates {
+                        HStack {
+                            Menu {
+                                ForEach(SigningClass.allCases) { signingClass in
+                                    Button {
+                                        toggleSigningClass($rule, signingClass)
+                                    } label: {
+                                        Label(
+                                            signingClass.label,
+                                            systemImage: rule.signingClasses.contains(
+                                                signingClass.rawValue) ? "checkmark" : ""
+                                        )
+                                    }
+                                }
+                            } label: {
+                                Text("Signing: \(signingClassSummary(rule.signingClasses))")
+                            }
+                            .frame(maxWidth: 220)
+                            TextField(
+                                "remote host contains (optional)",
+                                text: $rule.remoteHostContains
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .aetowerUtilityTextInput()
+                        }
+                        Text(
+                            "Fires when a process whose signing class matches opens a connection to a matching host. Requires the privileged helper; connections are sampled, not blocked."
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    }
                 }
                 .padding(10)
                 .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
@@ -873,6 +904,25 @@ public struct SettingsView: View {
                 editingAutomationRules = state.automationRules
             }
         }
+    }
+
+    /// Toggle a signing class in/out of a network-connection rule's filter set.
+    private func toggleSigningClass(_ rule: Binding<AutomationRule>, _ signingClass: SigningClass) {
+        var classes = rule.wrappedValue.signingClasses
+        if let index = classes.firstIndex(of: signingClass.rawValue) {
+            classes.remove(at: index)
+        } else {
+            classes.append(signingClass.rawValue)
+        }
+        rule.wrappedValue.signingClasses = classes
+    }
+
+    /// Human-readable summary of a rule's selected signing classes for the menu
+    /// label ("Any signing" when none are selected).
+    private func signingClassSummary(_ classes: [String]) -> String {
+        if classes.isEmpty { return "Any signing" }
+        let labels = classes.compactMap { SigningClass(rawValue: $0)?.label }
+        return labels.isEmpty ? "Any signing" : labels.joined(separator: ", ")
     }
 
     @ViewBuilder

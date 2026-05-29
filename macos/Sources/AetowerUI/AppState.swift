@@ -626,7 +626,7 @@ public final class AppState {
         let activeRules = automationRules.filter(\.enabled)
         if !activeRules.isEmpty {
             for event in events where !seenAutomationEventIds.contains(event.id) {
-                for rule in activeRules where automationRuleMatches(rule, event) {
+                for rule in activeRules where automationRuleMatches(rule, event, in: snapshot) {
                     executeAutomationAction(rule, event: event)
                 }
             }
@@ -635,14 +635,81 @@ public final class AppState {
         seenAutomationEventIds = Set(events.map(\.id))
     }
 
-    private func automationRuleMatches(_ rule: AutomationRule, _ event: TimelineEvent) -> Bool {
-        if rule.event != .any, rule.event.rawValue != timelineCategoryKey(event.category) {
+    private func automationRuleMatches(
+        _ rule: AutomationRule,
+        _ event: TimelineEvent,
+        in snapshot: SystemSnapshot
+    ) -> Bool {
+        // Category gate. `.networkConnection` targets the `.network` category;
+        // every other concrete event matches a category whose key equals its
+        // raw value.
+        if let requiredCategory = requiredCategoryKey(for: rule.event),
+            requiredCategory != timelineCategoryKey(event.category)
+        {
             return false
         }
+
+        // Title/detail substring gate (shared by all rules).
         let needle = rule.titleContains.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return true }
-        return event.title.lowercased().contains(needle)
-            || event.detail.lowercased().contains(needle)
+        if !needle.isEmpty,
+            !(event.title.lowercased().contains(needle)
+                || event.detail.lowercased().contains(needle))
+        {
+            return false
+        }
+
+        // Connection-specific predicates (signing class + remote host) resolve
+        // against the connecting entity in the snapshot — a pure lookup, no
+        // codesign at match time.
+        if rule.event == .networkConnection {
+            return connectionPredicatesMatch(rule, event, in: snapshot)
+        }
+        return true
+    }
+
+    /// The timeline-category key a rule's event must match, or `nil` for `.any`
+    /// (no category constraint).
+    private func requiredCategoryKey(for event: AutomationEvent) -> String? {
+        switch event {
+        case .any: return nil
+        case .networkConnection: return "network"
+        default: return event.rawValue
+        }
+    }
+
+    /// Evaluate the signing-class and remote-host predicates for a
+    /// network-connection rule against the event's entity. An empty predicate
+    /// means "any"; a rule with neither predicate matches every connection
+    /// event that passed the category/title gates.
+    private func connectionPredicatesMatch(
+        _ rule: AutomationRule,
+        _ event: TimelineEvent,
+        in snapshot: SystemSnapshot
+    ) -> Bool {
+        if rule.signingClasses.isEmpty, rule.remoteHostContains.isEmpty {
+            return true
+        }
+        // Both predicates require the entity; if it's gone from the snapshot we
+        // can't verify, so don't fire (avoids false positives on stale events).
+        guard let entityId = event.entityId,
+            let entity = snapshot.entities.first(where: { $0.entityId == entityId })
+        else {
+            return false
+        }
+        if !rule.signingClasses.isEmpty,
+            !rule.signingClasses.contains(entity.signingClassification)
+        {
+            return false
+        }
+        if !rule.remoteHostContains.isEmpty {
+            let host = rule.remoteHostContains
+                .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let hit = entity.networkConnections.contains { connection in
+                connection.remote?.lowercased().contains(host) ?? false
+            }
+            if !hit { return false }
+        }
+        return true
     }
 
     private func timelineCategoryKey(_ category: TimelineCategory) -> String {

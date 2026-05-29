@@ -25,6 +25,7 @@ public enum AutomationEvent: String, CaseIterable, Identifiable, Codable, Sendab
     case host
     case thermal
     case anomaly
+    case networkConnection = "network-connection"
 
     public var id: String { rawValue }
 
@@ -36,6 +37,40 @@ public enum AutomationEvent: String, CaseIterable, Identifiable, Codable, Sendab
         case .host: return "Host change"
         case .thermal: return "Thermal change"
         case .anomaly: return "Anomaly detected"
+        case .networkConnection: return "Network connection"
+        }
+    }
+
+    /// True when this event can be further narrowed by the signing-class /
+    /// remote-host predicates (only network-connection rules use those).
+    public var supportsConnectionPredicates: Bool {
+        self == .networkConnection
+    }
+}
+
+/// Code-signing class of a process, mirroring the Rust classifier taxonomy
+/// (`aetower_model::classify_signature`). Raw values match the strings carried
+/// on `EntitySnapshot.signingClassification`, so a rule's stored classes match
+/// a live entity by exact string — and an unknown future class still
+/// round-trips through persistence.
+public enum SigningClass: String, CaseIterable, Identifiable, Codable, Sendable {
+    case unsigned
+    case adhoc
+    case developerID = "developer_id"
+    case macAppStore = "mac_app_store"
+    case apple
+    case other
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .unsigned: return "Unsigned"
+        case .adhoc: return "Ad-hoc"
+        case .developerID: return "Developer ID"
+        case .macAppStore: return "Mac App Store"
+        case .apple: return "Apple system"
+        case .other: return "Other"
         }
     }
 }
@@ -65,6 +100,13 @@ public struct AutomationRule: Codable, Identifiable, Sendable {
     public var titleContains: String
     public var actionKind: AutomationActionKind
     public var actionValue: String
+    /// For `networkConnection` rules: match only when the connecting entity's
+    /// signing class is one of these (raw `SigningClass` values). Empty = any
+    /// signing class. Ignored for non-network events.
+    public var signingClasses: [String]
+    /// For `networkConnection` rules: match only when a remote endpoint
+    /// contains this substring (case-insensitive). Empty = any host.
+    public var remoteHostContains: String
 
     public init(
         id: UUID = UUID(),
@@ -73,7 +115,9 @@ public struct AutomationRule: Codable, Identifiable, Sendable {
         event: AutomationEvent = .lifecycle,
         titleContains: String = "",
         actionKind: AutomationActionKind = .shortcut,
-        actionValue: String = ""
+        actionValue: String = "",
+        signingClasses: [String] = [],
+        remoteHostContains: String = ""
     ) {
         self.id = id
         self.enabled = enabled
@@ -82,6 +126,26 @@ public struct AutomationRule: Codable, Identifiable, Sendable {
         self.titleContains = titleContains
         self.actionKind = actionKind
         self.actionValue = actionValue
+        self.signingClasses = signingClasses
+        self.remoteHostContains = remoteHostContains
+    }
+
+    // Custom decoding so rules persisted before the connection predicates
+    // existed still load (synthesized Codable would reject the missing keys and
+    // `AutomationStore` would silently drop every saved rule).
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        name = try container.decode(String.self, forKey: .name)
+        event = try container.decode(AutomationEvent.self, forKey: .event)
+        titleContains = try container.decode(String.self, forKey: .titleContains)
+        actionKind = try container.decode(AutomationActionKind.self, forKey: .actionKind)
+        actionValue = try container.decode(String.self, forKey: .actionValue)
+        signingClasses =
+            try container.decodeIfPresent([String].self, forKey: .signingClasses) ?? []
+        remoteHostContains =
+            try container.decodeIfPresent(String.self, forKey: .remoteHostContains) ?? ""
     }
 }
 
