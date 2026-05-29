@@ -110,7 +110,11 @@ if [ "$RUN_MATRIX" -eq 1 ]; then
 fi
 
 printf '\n=== prepare Cloudflare Pages payload ===\n'
-sh "$ROOT/scripts/prepare-cloudflare-site.sh"
+if [ "$WITH_PKG" -eq 1 ]; then
+    AETOWER_INCLUDE_PKG_IN_SITE=1 sh "$ROOT/scripts/prepare-cloudflare-site.sh"
+else
+    sh "$ROOT/scripts/prepare-cloudflare-site.sh"
+fi
 
 printf '\n=== public preview release set ready ===\n'
 printf '  macOS app:       %s\n' "$ROOT/dist/Aetower.app"

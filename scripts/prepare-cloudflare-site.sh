@@ -11,6 +11,7 @@ BRAND_PREVIEW="${AETOWER_SITE_ICON_PREVIEW:-$ROOT/assets/brand/aetower-app-icon-
 THIRD_PARTY_NOTICES="${AETOWER_THIRD_PARTY_NOTICES_PATH:-$ROOT/dist/THIRD-PARTY-NOTICES.md}"
 HOMEBREW_CASK="${AETOWER_HOMEBREW_CASK_PATH:-$ROOT/dist/homebrew/Casks/aetower.rb}"
 PKG_INSTALLER="${AETOWER_PKG_PATH:-$ROOT/dist/Aetower.pkg}"
+INCLUDE_PKG="${AETOWER_INCLUDE_PKG_IN_SITE:-0}"
 FALLBACK_ICON="$ROOT/tmp/app-icon/Aetower.iconset/icon_512x512@2x.png"
 
 if [ ! -d "$APPCAST_DIR" ] || [ ! -f "$APPCAST_DIR/appcast.xml" ]; then
@@ -37,7 +38,12 @@ cp "$THIRD_PARTY_NOTICES" "$SITE_OUTPUT/third-party-notices.md"
 if [ -f "$HOMEBREW_CASK" ]; then
     cp "$HOMEBREW_CASK" "$SITE_OUTPUT/homebrew/Casks/aetower.rb"
 fi
-if [ -f "$PKG_INSTALLER" ]; then
+if [ "$INCLUDE_PKG" = "1" ]; then
+    if [ ! -f "$PKG_INSTALLER" ]; then
+        echo "missing pkg installer: $PKG_INSTALLER" >&2
+        echo "run sh scripts/package-macos-pkg.sh first or omit AETOWER_INCLUDE_PKG_IN_SITE=1" >&2
+        exit 1
+    fi
     PKG_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
     PKG_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
     cp "$PKG_INSTALLER" "$SITE_OUTPUT/releases/Aetower.pkg"

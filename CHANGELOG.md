@@ -2,7 +2,7 @@
 
 All notable public changes to Aetower should be documented here.
 
-## 0.5 (build 413) - 2026-05-29
+## 0.5 (build 414) - 2026-05-29
 
 First public `0.5` Developer Preview release.
 
@@ -20,7 +20,8 @@ Release metadata:
 - Added public-release publication checks for Sparkle appcast, immutable ZIP,
   direct ZIP, Homebrew cask, optional PKG, and third-party notices.
 - Added Cloudflare release-site publication of Homebrew cask artifacts and
-  optional signed PKG artifacts.
+  optional signed PKG artifacts, gated so stale local PKGs are never published
+  unless the current release run explicitly built a PKG.
 - Added release preflight validation that the changelog version/build matches
   the release metadata.
 
