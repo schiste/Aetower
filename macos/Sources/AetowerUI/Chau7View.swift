@@ -902,11 +902,33 @@ public struct Chau7View: View {
     }
 
     private var unavailableState: some View {
-        ContentUnavailableView(
-            "No live Chau7 entity",
-            systemImage: "terminal",
-            description: Text(chau7Capability?.detail ?? "Aetower cannot currently see a live Chau7 app entity.")
-        )
+        ContentUnavailableView {
+            Label("Chau7 isn't running", systemImage: "terminal")
+        } description: {
+            VStack(spacing: AetowerDesign.Spacing.sm) {
+                Text("Aetower is optimized to communicate with Chau7. When Chau7 is running, this tab surfaces live terminal sessions, AI-agent activity, and per-session resource attribution.")
+                if let detail = chau7Capability?.detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        } actions: {
+            HStack(spacing: AetowerDesign.Spacing.md) {
+                if let site = URL(string: "https://chau7.sh") {
+                    Link(destination: site) {
+                        Label("chau7.sh", systemImage: "globe")
+                    }
+                }
+                if let repo = URL(string: "https://github.com/aeptus/chau7") {
+                    Link(destination: repo) {
+                        Label("Chau7 on GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+                    }
+                }
+            }
+            .buttonStyle(.borderedProminent)
+        }
         .frame(maxWidth: .infinity, minHeight: 320)
     }
 
