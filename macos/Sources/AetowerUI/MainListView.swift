@@ -272,6 +272,20 @@ private struct EntityRow: View {
         return now >= start && now - start <= 30_000
     }
 
+    /// Distinct remote hosts this entity is connected to (host without port,
+    /// excluding listening wildcards) — powers the "talking to" indicator.
+    private var distinctRemoteHosts: [String] {
+        var seen = Set<String>()
+        var hosts: [String] = []
+        for connection in entity.networkConnections {
+            guard let remote = connection.remote else { continue }
+            let host = String(remote.split(separator: ":").first ?? Substring(remote))
+            if host.isEmpty || host == "*" { continue }
+            if seen.insert(host).inserted { hosts.append(host) }
+        }
+        return hosts
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             // Entity type icon
@@ -297,12 +311,17 @@ private struct EntityRow: View {
 
             // Badges
             if entity.entityKind == .aiAgent {
-                Text(aiAgentProviderLabel)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(aiAgentDotColor)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(aiAgentDotColor.opacity(0.15), in: Capsule())
+                HStack(spacing: 3) {
+                    ForEach(agentRuntimeBadges(for: entity)) { badge in
+                        Text(badge.label)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(badge.color)
+                            .lineLimit(1)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(badge.color.opacity(0.15), in: Capsule())
+                    }
+                }
             }
 
             if entity.metrics.isForeground {
@@ -314,6 +333,17 @@ private struct EntityRow: View {
                     .font(.system(size: 9))
                     .foregroundStyle(.orange)
                     .symbolEffect(.pulse.wholeSymbol, isActive: true)
+            }
+
+            if !distinctRemoteHosts.isEmpty {
+                HStack(spacing: 2) {
+                    Image(systemName: "network")
+                        .font(.system(size: 8))
+                    Text("\(distinctRemoteHosts.count)")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                }
+                .foregroundStyle(AetowerDesign.Tone.network)
+                .help("Talking to \(distinctRemoteHosts.prefix(5).joined(separator: ", "))")
             }
 
             // Metrics — centered, fixed width columns
@@ -378,20 +408,6 @@ private struct EntityRow: View {
         .onHover { isHovered = $0 }
         .help(rowHelpText)
         .animation(AetowerDesign.Motion.quick, value: isHovered)
-    }
-
-    private var aiAgentDotColor: Color {
-        if entity.badges.contains("claude") { return .blue }
-        if entity.badges.contains("codex") { return .green }
-        if entity.badges.contains("chatgpt") { return .orange }
-        return .purple
-    }
-
-    private var aiAgentProviderLabel: String {
-        if entity.badges.contains("claude") { return "Claude" }
-        if entity.badges.contains("codex") { return "Codex" }
-        if entity.badges.contains("chatgpt") { return "ChatGPT" }
-        return "AI"
     }
 
     private var entityUser: String {

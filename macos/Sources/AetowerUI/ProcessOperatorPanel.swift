@@ -28,6 +28,8 @@ struct ProcessOperatorPanel: View {
             VStack(alignment: .leading, spacing: 14) {
                 header
 
+                networkConnectionsSection
+
                 if processes.isEmpty {
                     ContentUnavailableView(
                         "No live process controls",
@@ -291,6 +293,37 @@ struct ProcessOperatorPanel: View {
     /// Static, on-demand metadata sections (ProcessSpy parity): bundle identity,
     /// code signature, entitlements, environment, and launchd startup entry.
     /// Each section renders only when the engine returned data for it.
+    @ViewBuilder
+    private var networkConnectionsSection: some View {
+        if !entity.networkConnections.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                SectionHeader("Network connections", detail: "\(entity.networkConnections.count)")
+                ForEach(Array(entity.networkConnections.prefix(12).enumerated()), id: \.offset) { _, connection in
+                    HStack(spacing: 8) {
+                        Text(connection.`protocol`.isEmpty ? "—" : connection.`protocol`)
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundStyle(AetowerDesign.Tone.network)
+                            .frame(width: 34, alignment: .leading)
+                        Text(connection.remote ?? connection.local)
+                            .font(.system(size: 11, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                        Spacer()
+                        Text(connection.state)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if entity.networkConnections.count > 12 {
+                    Text("+\(entity.networkConnections.count - 12) more")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private func inspectionMetadata(_ inspection: ProcessInspectionReportModel) -> some View {
         if let bundle = inspection.bundle, bundle.bundleId != nil || bundle.versionLabel != nil {
