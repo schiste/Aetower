@@ -190,6 +190,8 @@ public final class AppState {
     @ObservationIgnored
     private var lastAnomalyNotificationDates: [String: Date] = [:]
     @ObservationIgnored
+    private var lastBudgetBreachDates: [String: Date] = [:]
+    @ObservationIgnored
     private var suppressedAnomalyNotificationCount = 0
     @ObservationIgnored
     private var suppressedAnomalyEntityKeys = Set<String>()
@@ -637,6 +639,142 @@ public final class AppState {
         seenAutomationEventIds = Set(events.map(\.id))
     }
 
+    /// Per-agent FinOps guardrail: derive each AI agent's cost/token rate from
+    /// recent persisted history and fire the rule's action (+ a notification)
+    /// when it exceeds the budget threshold. Rates can't be metered per call, so
+    /// they're computed by diffing the cumulative agent_cost totals over time.
+    private func evaluateAgentBudgetRules(snapshot: SystemSnapshot) {
+        let budgetRules = automationRules.filter {
+            $0.enabled && $0.event == .agentBudget && $0.budgetThreshold > 0
+        }
+        guard !budgetRules.isEmpty else { return }
+        let nowMillis = snapshot.capturedAtMillis
+        // Baseline window: the last hour of persisted samples.
+        let windowStartMillis = nowMillis >= 3_600_000 ? nowMillis - 3_600_000 : 0
+        let now = Date()
+
+        for rule in budgetRules {
+            let metric = AgentBudgetMetric(rawValue: rule.budgetMetric) ?? .costPerHour
+            let scope = rule.titleContains
+                .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            for entity in snapshot.entities {
+                guard entity.entityKind == .aiAgent, let cost = entity.agentCost else { continue }
+                if !scope.isEmpty, !entity.displayName.lowercased().contains(scope) { continue }
+                guard
+                    let baseline = agentBudgetBaseline(
+                        entityId: entity.entityId,
+                        metric: metric,
+                        sinceMillis: windowStartMillis
+                    )
+                else { continue }
+                let elapsedSeconds = Double(nowMillis - baseline.millis) / 1000.0
+                // Need a meaningful window before a rate is trustworthy.
+                guard elapsedSeconds >= 300 else { continue }
+                let delta = agentMetricValue(cost, metric) - baseline.value
+                guard delta > 0 else { continue }
+                let ratePerHour = delta / (elapsedSeconds / 3600.0)
+                guard ratePerHour > rule.budgetThreshold else { continue }
+
+                let cooldownKey = "\(rule.id.uuidString):\(entity.entityId)"
+                if let last = lastBudgetBreachDates[cooldownKey],
+                    now.timeIntervalSince(last) < anomalyNotificationCooldown
+                {
+                    continue
+                }
+                lastBudgetBreachDates[cooldownKey] = now
+
+                fireBudgetNotification(
+                    entity: entity, rule: rule, metric: metric, rate: ratePerHour)
+                // The configured action runs regardless of notification settings.
+                let event = TimelineEvent(
+                    id: "agent-budget:\(cooldownKey):\(nowMillis)",
+                    timestampMillis: nowMillis,
+                    category: .anomaly,
+                    severity: .warning,
+                    entityId: entity.entityId,
+                    title: "AI agent budget exceeded: \(entity.displayName)",
+                    detail: budgetBreachDetail(
+                        metric: metric, rate: ratePerHour, threshold: rule.budgetThreshold)
+                )
+                executeAutomationAction(rule, event: event)
+            }
+        }
+    }
+
+    /// The cumulative value of the watched metric on an agent-cost summary.
+    private func agentMetricValue(_ cost: AgentCostSummary, _ metric: AgentBudgetMetric) -> Double {
+        switch metric {
+        case .costPerHour: return Double(cost.costUsd)
+        case .tokensPerHour: return Double(cost.totalInputTokens + cost.totalOutputTokens)
+        }
+    }
+
+    /// Oldest persisted sample of this agent within the window that carries an
+    /// agent_cost, used as the rate baseline. `historySnapshots` is ascending,
+    /// so the first match is the oldest.
+    private func agentBudgetBaseline(
+        entityId: String,
+        metric: AgentBudgetMetric,
+        sinceMillis: UInt64
+    ) -> (millis: UInt64, value: Double)? {
+        for snapshot in historySnapshots where snapshot.capturedAtMillis >= sinceMillis {
+            if let entity = snapshot.entities.first(where: { $0.entityId == entityId }),
+                let cost = entity.agentCost
+            {
+                return (snapshot.capturedAtMillis, agentMetricValue(cost, metric))
+            }
+        }
+        return nil
+    }
+
+    private func budgetRateLabel(metric: AgentBudgetMetric, rate: Double) -> String {
+        switch metric {
+        case .costPerHour: return String(format: "$%.2f/hr", rate)
+        case .tokensPerHour: return String(format: "%.0f tokens/hr", rate)
+        }
+    }
+
+    private func budgetBreachDetail(metric: AgentBudgetMetric, rate: Double, threshold: Double)
+        -> String
+    {
+        "Rate \(budgetRateLabel(metric: metric, rate: rate)) exceeds the \(budgetRateLabel(metric: metric, rate: threshold)) limit (derived from recent history)."
+    }
+
+    private func fireBudgetNotification(
+        entity: EntitySnapshot,
+        rule: AutomationRule,
+        metric: AgentBudgetMetric,
+        rate: Double
+    ) {
+        recordLocalDiagnosticsEvent(
+            level: .warn,
+            subsystem: .ui,
+            eventType: "agent-budget-breach",
+            message: "AI agent \(entity.displayName) exceeded its budget.",
+            entityId: entity.entityId,
+            fields: [
+                DiagnosticsField(key: "rule", value: rule.name),
+                DiagnosticsField(key: "metric", value: metric.rawValue),
+                DiagnosticsField(key: "rate", value: budgetRateLabel(metric: metric, rate: rate)),
+                DiagnosticsField(
+                    key: "threshold",
+                    value: budgetRateLabel(metric: metric, rate: rule.budgetThreshold)),
+            ]
+        )
+        guard notificationsEnabled, Bundle.main.bundleIdentifier != nil else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "AI Agent Budget Alert"
+        content.body =
+            "\(entity.displayName) is at \(budgetRateLabel(metric: metric, rate: rate)) — over the \(budgetRateLabel(metric: metric, rate: rule.budgetThreshold)) limit."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "agent-budget-\(rule.id.uuidString)-\(entity.entityId)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { _ in }
+    }
+
     private func automationRuleMatches(
         _ rule: AutomationRule,
         _ event: TimelineEvent,
@@ -1062,6 +1200,7 @@ public final class AppState {
             refreshOperatorState(force: force)
             if let updatedSnapshotValue {
                 evaluateAutomationRules(snapshot: updatedSnapshotValue)
+                evaluateAgentBudgetRules(snapshot: updatedSnapshotValue)
             }
             if let updatedSnapshotValue, lagMonitoringActive {
                 publishUiLagMetrics(
