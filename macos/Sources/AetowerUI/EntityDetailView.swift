@@ -331,6 +331,29 @@ public struct EntityDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(entity.displayName)
+        .toolbar {
+            if let bundleId = entity.bundleId, !bundleId.isEmpty {
+                ToolbarItem(placement: .automatic) {
+                    Menu {
+                        Button("Snooze 1 hour") {
+                            state.snoozeNotifications(
+                                bundleId: bundleId, displayName: entity.displayName, hours: 1)
+                        }
+                        Button("Snooze 4 hours") {
+                            state.snoozeNotifications(
+                                bundleId: bundleId, displayName: entity.displayName, hours: 4)
+                        }
+                        Button("Snooze 24 hours") {
+                            state.snoozeNotifications(
+                                bundleId: bundleId, displayName: entity.displayName, hours: 24)
+                        }
+                    } label: {
+                        Label("Snooze alerts", systemImage: "bell.slash")
+                    }
+                    .help("Mute notifications for this app temporarily.")
+                }
+            }
+        }
         .task(id: entity.entityId) {
             selectedSection = .summary
             state.loadEntityStaticAnalysis(entityID: entity.entityId)
