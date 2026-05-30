@@ -1,0 +1,229 @@
+{
+  "__inputs": [
+    {
+      "name": "datasource",
+      "label": "Prometheus",
+      "description": "Prometheus data source scraping the OTel collector that receives Aetower OTLP metrics.",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["aetower", "observability"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "Aetower",
+  "uid": "aetower-overview",
+  "panels": [
+    {
+      "type": "row",
+      "title": "Host",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Host CPU %",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "aetower_host_cpu_percent",
+          "legendFormat": "cpu"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Host memory used",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "aetower_host_memory_used_bytes",
+          "legendFormat": "memory"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU % / ANE %",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "aetower_host_gpu_percent",
+          "legendFormat": "gpu"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "aetower_host_ane_percent",
+          "legendFormat": "ane"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Thermal state (0 nominal → 3 critical)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "orange", "value": 2 },
+              { "color": "red", "value": 3 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 9 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "aetower_host_thermal_state",
+          "legendFormat": "thermal"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Friction (machine vs AI agents)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 9 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "aetower_host_machine_friction",
+          "legendFormat": "machine"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "aetower_host_ai_agent_friction",
+          "legendFormat": "ai agents"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Entities",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }
+    },
+    {
+      "type": "table",
+      "title": "Top friction entities",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "topk(10, aetower_entity_friction)",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Per-entity energy impact",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "topk(10, aetower_entity_energy_impact)",
+          "legendFormat": "{{entity_name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Per-entity network throughput",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "topk(10, aetower_entity_network_bps)",
+          "legendFormat": "{{entity_name}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Engine latency",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Pipeline stage latency (ms)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 26 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "aetower_host_engine_tick_millis",
+          "legendFormat": "tick"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "aetower_host_collect_millis",
+          "legendFormat": "collect"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "aetower_host_friction_millis",
+          "legendFormat": "friction"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "aetower_host_persist_millis",
+          "legendFormat": "persist"
+        }
+      ]
+    }
+  ]
+}

@@ -68,6 +68,8 @@ See [Getting Started](docs/getting-started.md) for the first-run flow.
 See [Download Aetower Developer Preview](docs/download.md) for the public
 download-page copy, privacy summary, update expectations, and support/reset
 guidance.
+See [Observability](docs/observability.md) for OTLP metric names, a
+Prometheus/OTel collector setup, and a ready-made Grafana dashboard.
 
 ## Local development
 
