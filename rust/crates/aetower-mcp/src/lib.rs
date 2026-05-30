@@ -41,6 +41,7 @@ use reports::history::{
     investigation_history_diff, load_history_snapshots, load_history_snapshots_raw,
     older_page_cursor, select_investigation_entity_ids,
 };
+pub use reports::persistence::persistence_scan_json;
 #[cfg(test)]
 use reports::process::{
     build_process_action, parse_lsof_resources, parse_sample_threads, parse_vmmap_region_line,
@@ -2378,7 +2379,7 @@ fn diagnostics_recent_error_age_millis(diagnostics: &DiagnosticsOverview) -> Opt
     (age_millis <= DIAGNOSTICS_ACTIVE_ERROR_WINDOW_MILLIS).then_some(age_millis)
 }
 
-fn current_unix_millis() -> Option<u64> {
+pub(crate) fn current_unix_millis() -> Option<u64> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)

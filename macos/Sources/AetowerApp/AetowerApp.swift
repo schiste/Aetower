@@ -82,6 +82,11 @@ struct AetowerApp: App {
                 Label("Sensors", systemImage: "thermometer.medium")
             }
 
+        PersistenceScannerView(state: state, settings: settings)
+            .tabItem {
+                Label("Startup & persistence", systemImage: "lock.shield")
+            }
+
         DiagnosticsView(state: state, settings: settings)
             .tabItem {
                 Label("Diagnostics", systemImage: "waveform.path.ecg.rectangle")

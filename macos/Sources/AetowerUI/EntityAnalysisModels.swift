@@ -476,6 +476,49 @@ struct ProcessSignatureInfoModel: Codable {
     }
 }
 
+// MARK: - Persistence scanner
+
+struct PersistenceScanReportModel: Codable {
+    let capturedAtMillis: UInt64
+    let items: [PersistenceItemModel]
+    let scannedLocations: [String]
+    let degraded: [DegradedSourceModel]
+}
+
+struct PersistenceItemModel: Codable, Identifiable {
+    let kind: String
+    let label: String?
+    let path: String
+    let program: String?
+    let runAtLoad: Bool?
+    let signature: ProcessSignatureInfoModel?
+    let isApple: Bool
+    let notes: [String]
+
+    var id: String { "\(kind):\(path):\(program ?? "")" }
+
+    /// Human label for the persistence source kind.
+    var kindLabel: String {
+        switch kind {
+        case "launch-agent": return "Launch Agent (/Library)"
+        case "launch-daemon": return "Launch Daemon (/Library)"
+        case "user-launch-agent": return "Launch Agent (user)"
+        case "system-launch-agent": return "Launch Agent (/System)"
+        case "system-launch-daemon": return "Launch Daemon (/System)"
+        case "login-item": return "Login Item"
+        case "cron": return "Cron"
+        default: return kind
+        }
+    }
+}
+
+struct DegradedSourceModel: Codable, Identifiable {
+    let source: String
+    let reason: String
+
+    var id: String { source }
+}
+
 struct ProcessEnvVarModel: Codable, Identifiable {
     let key: String
     let value: String

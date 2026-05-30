@@ -609,6 +609,12 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     
     func memoryBreakdownJson(entityId: String, topRegions: UInt32)  -> JsonQueryResult
     
+    /**
+     * Enumerate the machine's startup/persistence surface (launchd, login
+     * items, cron) with code-signing status. On-demand; no data source needed.
+     */
+    func persistenceScanJson()  -> JsonQueryResult
+    
     func processActionHistoryJson(windowMinutes: UInt32, limit: UInt32)  -> JsonQueryResult
     
     func processActionJson(pid: UInt32, action: String, dryRun: Bool, reason: String?)  -> JsonQueryResult
@@ -966,6 +972,17 @@ open func memoryBreakdownJson(entityId: String, topRegions: UInt32) -> JsonQuery
     uniffi_aetower_ffi_fn_method_monitorengine_memory_breakdown_json(self.uniffiClonePointer(),
         FfiConverterString.lower(entityId),
         FfiConverterUInt32.lower(topRegions),$0
+    )
+})
+}
+    
+    /**
+     * Enumerate the machine's startup/persistence surface (launchd, login
+     * items, cron) with code-signing status. On-demand; no data source needed.
+     */
+open func persistenceScanJson() -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_persistence_scan_json(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -9910,6 +9927,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_memory_breakdown_json() != 26789) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_persistence_scan_json() != 56592) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_process_action_history_json() != 26790) {

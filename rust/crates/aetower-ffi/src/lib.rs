@@ -5,10 +5,10 @@ use aetower_diagnostics as diagnostics;
 use aetower_mcp::{
     AetowerMcpDataSource, HistorySummaryResponse, LocalMcpServerHandle, default_socket_path,
     diff_snapshots_json, entity_process_tree_json, explain_anomalies_json, filter_entities_json,
-    is_socket_listener_reachable, memory_breakdown_json, process_action_history_json,
-    process_action_json, process_inspect_json, process_open_resources_json, process_sample_json,
-    profile_entity_json, self_memory_attribution_json, start_local_socket_server,
-    wakeup_attribution_json,
+    is_socket_listener_reachable, memory_breakdown_json, persistence_scan_json,
+    process_action_history_json, process_action_json, process_inspect_json,
+    process_open_resources_json, process_sample_json, profile_entity_json,
+    self_memory_attribution_json, start_local_socket_server, wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1376,6 +1376,12 @@ impl MonitorEngine {
             engine: Arc::clone(&self.inner),
         };
         json_query_result(process_inspect_json(&data_source, pid))
+    }
+
+    /// Enumerate the machine's startup/persistence surface (launchd, login
+    /// items, cron) with code-signing status. On-demand; no data source needed.
+    pub fn persistence_scan_json(&self) -> JsonQueryResult {
+        json_query_result(persistence_scan_json())
     }
 
     /// Evaluate a sandboxed Rhai filter expression against the latest snapshot,

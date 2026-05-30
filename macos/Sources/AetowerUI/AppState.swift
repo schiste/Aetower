@@ -137,6 +137,10 @@ public final class AppState {
     public private(set) var selfMemoryAttributionUpdatedAt: Date?
     public private(set) var timelinePayloadDiagnostics = TimelinePayloadDiagnosticsSummary.empty
     private(set) var processInspections: [UInt32: ProcessInspectionReportModel] = [:]
+    private(set) var persistenceScanReport: PersistenceScanReportModel?
+    private(set) var persistenceScanIsLoading = false
+    private(set) var persistenceScanError: String?
+    private(set) var persistenceScanCompletedAt: Date?
     private(set) var processOpenResources: [UInt32: ProcessOpenResourcesReportModel] = [:]
     private(set) var processSamples: [UInt32: ProcessSampleReportModel] = [:]
     private(set) var recentlyFinished: [FinishedProcessModel] = []
@@ -1827,6 +1831,31 @@ public final class AppState {
                 DiagnosticsField(key: "safe_mode_enabled", value: safeModeEnabled ? "true" : "false"),
             ]
         )
+    }
+
+    /// On-demand persistence/startup scan (launchd, login items, cron) with
+    /// code-signing status. Mirrors the process-inspection report flow.
+    func runPersistenceScan() {
+        let bridge = self.bridge
+        persistenceScanIsLoading = true
+        persistenceScanError = nil
+        Task(priority: .utility) { [weak self] in
+            let result = bridge.persistenceScanJSON()
+            await MainActor.run {
+                guard let self else { return }
+                self.persistenceScanIsLoading = false
+                if let report = self.decodeJsonQueryResult(
+                    result, as: PersistenceScanReportModel.self)
+                {
+                    self.persistenceScanReport = report
+                    self.persistenceScanCompletedAt = Date()
+                    self.persistenceScanError = nil
+                } else {
+                    self.persistenceScanError =
+                        result.errorMessage ?? "Persistence scan could not be collected."
+                }
+            }
+        }
     }
 
     func runProcessInspection(pid: UInt32) {

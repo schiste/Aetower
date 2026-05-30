@@ -1483,7 +1483,7 @@ fn containing_app_bundle(executable_path: &str) -> Option<std::path::PathBuf> {
         .map(std::path::Path::to_path_buf)
 }
 
-fn plist_value(plist_path: &std::path::Path, key: &str) -> Option<String> {
+pub(crate) fn plist_value(plist_path: &std::path::Path, key: &str) -> Option<String> {
     if !plist_path.exists() {
         return None;
     }
