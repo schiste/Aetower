@@ -26,6 +26,7 @@ public enum AutomationEvent: String, CaseIterable, Identifiable, Codable, Sendab
     case thermal
     case anomaly
     case networkConnection = "network-connection"
+    case agentBudget = "agent-budget"
 
     public var id: String { rawValue }
 
@@ -38,6 +39,7 @@ public enum AutomationEvent: String, CaseIterable, Identifiable, Codable, Sendab
         case .thermal: return "Thermal change"
         case .anomaly: return "Anomaly detected"
         case .networkConnection: return "Network connection"
+        case .agentBudget: return "AI agent budget"
         }
     }
 
@@ -45,6 +47,27 @@ public enum AutomationEvent: String, CaseIterable, Identifiable, Codable, Sendab
     /// remote-host predicates (only network-connection rules use those).
     public var supportsConnectionPredicates: Bool {
         self == .networkConnection
+    }
+
+    /// True when this event uses the budget metric + threshold fields
+    /// (only AI-agent-budget rules do).
+    public var supportsBudgetFields: Bool {
+        self == .agentBudget
+    }
+}
+
+/// The metric an agent-budget rule watches.
+public enum AgentBudgetMetric: String, CaseIterable, Identifiable, Codable, Sendable {
+    case costPerHour = "cost-per-hour"
+    case tokensPerHour = "tokens-per-hour"
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .costPerHour: return "Cost per hour ($)"
+        case .tokensPerHour: return "Tokens per hour"
+        }
     }
 }
 
@@ -107,6 +130,12 @@ public struct AutomationRule: Codable, Identifiable, Sendable {
     /// For `networkConnection` rules: match only when a remote endpoint
     /// contains this substring (case-insensitive). Empty = any host.
     public var remoteHostContains: String
+    /// For `agentBudget` rules: which rate to watch.
+    public var budgetMetric: String
+    /// For `agentBudget` rules: fire when the watched rate exceeds this value
+    /// ($/hr for cost, tokens/hr for tokens). `titleContains` scopes by agent
+    /// name (empty = any agent).
+    public var budgetThreshold: Double
 
     public init(
         id: UUID = UUID(),
@@ -117,7 +146,9 @@ public struct AutomationRule: Codable, Identifiable, Sendable {
         actionKind: AutomationActionKind = .shortcut,
         actionValue: String = "",
         signingClasses: [String] = [],
-        remoteHostContains: String = ""
+        remoteHostContains: String = "",
+        budgetMetric: String = AgentBudgetMetric.costPerHour.rawValue,
+        budgetThreshold: Double = 0
     ) {
         self.id = id
         self.enabled = enabled
@@ -128,6 +159,8 @@ public struct AutomationRule: Codable, Identifiable, Sendable {
         self.actionValue = actionValue
         self.signingClasses = signingClasses
         self.remoteHostContains = remoteHostContains
+        self.budgetMetric = budgetMetric
+        self.budgetThreshold = budgetThreshold
     }
 
     // Custom decoding so rules persisted before the connection predicates
@@ -146,6 +179,11 @@ public struct AutomationRule: Codable, Identifiable, Sendable {
             try container.decodeIfPresent([String].self, forKey: .signingClasses) ?? []
         remoteHostContains =
             try container.decodeIfPresent(String.self, forKey: .remoteHostContains) ?? ""
+        budgetMetric =
+            try container.decodeIfPresent(String.self, forKey: .budgetMetric)
+            ?? AgentBudgetMetric.costPerHour.rawValue
+        budgetThreshold =
+            try container.decodeIfPresent(Double.self, forKey: .budgetThreshold) ?? 0
     }
 }
 

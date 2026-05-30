@@ -956,6 +956,29 @@ public struct SettingsView: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                     }
+                    if rule.event.supportsBudgetFields {
+                        HStack {
+                            Picker("Metric", selection: $rule.budgetMetric) {
+                                ForEach(AgentBudgetMetric.allCases) { metric in
+                                    Text(metric.label).tag(metric.rawValue)
+                                }
+                            }
+                            .frame(maxWidth: 220)
+                            TextField(
+                                "threshold",
+                                value: $rule.budgetThreshold,
+                                format: .number
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .aetowerUtilityTextInput()
+                            .frame(maxWidth: 120)
+                        }
+                        Text(
+                            "Fires when an AI agent's rate exceeds the threshold (the rate is derived from recent persisted history). Use the title field above to scope to an agent name (blank = any agent)."
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    }
                 }
                 .padding(10)
                 .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
