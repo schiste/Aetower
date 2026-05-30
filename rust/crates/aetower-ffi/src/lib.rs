@@ -8,7 +8,8 @@ use aetower_mcp::{
     is_socket_listener_reachable, memory_breakdown_json, persistence_scan_json,
     process_action_history_json, process_action_json, process_inspect_json,
     process_open_resources_json, process_sample_json, profile_entity_json,
-    self_memory_attribution_json, start_local_socket_server, wakeup_attribution_json,
+    resource_holders_by_file_json, resource_holders_by_port_json, self_memory_attribution_json,
+    start_local_socket_server, wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1395,6 +1396,19 @@ impl MonitorEngine {
 
     pub fn process_open_resources_json(&self, pid: u32, limit: u32) -> JsonQueryResult {
         json_query_result(process_open_resources_json(pid, limit as usize))
+    }
+
+    /// Reverse pivot: list every process holding the given TCP/UDP port.
+    pub fn resource_holders_by_port_json(&self, port: u32) -> JsonQueryResult {
+        if port == 0 || port > u32::from(u16::MAX) {
+            return json_query_result(Err("port must be between 1 and 65535".to_owned()));
+        }
+        json_query_result(resource_holders_by_port_json(port as u16))
+    }
+
+    /// Reverse pivot: list every process holding the given file path.
+    pub fn resource_holders_by_file_json(&self, path: String) -> JsonQueryResult {
+        json_query_result(resource_holders_by_file_json(&path))
     }
 
     pub fn process_sample_json(

@@ -636,6 +636,16 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
      */
     func resetFanAuto(fanId: UInt8)  -> String
     
+    /**
+     * Reverse pivot: list every process holding the given file path.
+     */
+    func resourceHoldersByFileJson(path: String)  -> JsonQueryResult
+    
+    /**
+     * Reverse pivot: list every process holding the given TCP/UDP port.
+     */
+    func resourceHoldersByPortJson(port: UInt32)  -> JsonQueryResult
+    
     func selfMemoryAttributionJson(topRegions: UInt32)  -> JsonQueryResult
     
     /**
@@ -1066,6 +1076,28 @@ open func resetFanAuto(fanId: UInt8) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_reset_fan_auto(self.uniffiClonePointer(),
         FfiConverterUInt8.lower(fanId),$0
+    )
+})
+}
+    
+    /**
+     * Reverse pivot: list every process holding the given file path.
+     */
+open func resourceHoldersByFileJson(path: String) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_resource_holders_by_file_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(path),$0
+    )
+})
+}
+    
+    /**
+     * Reverse pivot: list every process holding the given TCP/UDP port.
+     */
+open func resourceHoldersByPortJson(port: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_resource_holders_by_port_json(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(port),$0
     )
 })
 }
@@ -9957,6 +9989,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_reset_fan_auto() != 1522) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_resource_holders_by_file_json() != 6923) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_resource_holders_by_port_json() != 5617) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_self_memory_attribution_json() != 32687) {

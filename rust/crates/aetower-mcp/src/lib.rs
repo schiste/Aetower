@@ -28,7 +28,8 @@ pub use reports::history::diff_snapshots_json;
 pub use reports::process::{
     entity_process_tree_json, memory_breakdown_json, process_action_history_json,
     process_action_json, process_inspect_json, process_open_resources_json, process_sample_json,
-    profile_entity_json, self_memory_attribution_json, wakeup_attribution_json,
+    profile_entity_json, resource_holders_by_file_json, resource_holders_by_port_json,
+    self_memory_attribution_json, wakeup_attribution_json,
 };
 
 pub use reports::diagnostics::explain_anomalies_json;
@@ -918,6 +919,30 @@ struct ProcessOpenResourcesReport {
     file_count: usize,
     socket_count: usize,
     resources: Vec<ProcessOpenResource>,
+}
+
+/// A single process holding a queried file or port (one `lsof` row), for the
+/// reverse "which process holds this?" pivot.
+#[derive(Debug, Clone, Serialize)]
+struct ResourceHolder {
+    pid: u32,
+    command: String,
+    user: String,
+    fd: String,
+    resource_type: String,
+    name: String,
+}
+
+/// Result of a system-wide reverse lookup: every process holding a given file
+/// path or port. `kind` is "file" or "port"; `query` echoes the lookup target.
+#[derive(Debug, Clone, Serialize)]
+struct ResourceHoldersReport {
+    captured_at_millis: u64,
+    query: String,
+    kind: String,
+    holder_count: usize,
+    returned: usize,
+    holders: Vec<ResourceHolder>,
 }
 
 #[derive(Debug, Clone, Serialize)]
