@@ -47,6 +47,13 @@ const CHAU7_REFRESH_INTERVAL_MILLIS: u64 = 30_000;
 // CPU spikes that show up in `aetower_runtime_burst_explanation`.
 const CHAU7_DEEP_REFRESH_INTERVAL_MILLIS: u64 = 300_000;
 const CHAU7_LIGHT_MAX_AI_TABS: usize = 4;
+/// Per-snapshot ceiling on *background* code-signing resolutions (cold cache,
+/// no network connection). Network-connected entities are still resolved
+/// eagerly; this only bounds the amortized fill that extends signing coverage
+/// to the rest of the running set over a handful of ticks. Each miss forks
+/// `codesign` (~10-30ms), so a small budget keeps any single tick cheap while
+/// the persistent cache converges to full coverage.
+const MAX_BACKGROUND_SIGNING_PER_TICK: usize = 4;
 const CHAU7_DEEP_MAX_AI_TABS: usize = 8;
 const CHAU7_DEEP_MAX_REPOS: usize = 3;
 const ENDPOINT_SECURITY_REFRESH_INTERVAL_MILLIS: u64 = 30_000;
@@ -1221,6 +1228,9 @@ impl AdapterManager {
         let mut newly_signed: Vec<(String, (String, bool))> = Vec::new();
         // App-version verdicts resolved this pass (bundle path → version).
         let mut newly_versioned: Vec<(String, Option<String>)> = Vec::new();
+        // Remaining budget for background (non-connected) codesign resolutions
+        // this pass — bounds the amortized coverage fill so no single tick spikes.
+        let mut signing_budget = MAX_BACKGROUND_SIGNING_PER_TICK;
         // Executable paths of risky entities (unsigned/ad-hoc + connected) that
         // have no cached reputation yet — candidates for a background lookup.
         let mut reputation_candidates: Vec<String> = Vec::new();
@@ -1449,20 +1459,30 @@ impl AdapterManager {
                 }
             }
 
-            // Resolve code-signing classification only for entities that
-            // currently hold connections — the bounded set the firewall-lite
-            // rules care about. Cached by executable path, so steady state is a
-            // hash lookup; a cold path forks `codesign` once.
-            if !entity.network_connections.is_empty() {
-                if let Some(path) = entity.executable_path.clone() {
-                    let verdict = if let Some(hit) = signing_cache.get(&path) {
-                        hit.clone()
-                    } else {
-                        let resolved = resolve_signing_classification(&path);
-                        signing_cache.insert(path.clone(), resolved.clone());
-                        newly_signed.push((path, resolved.clone()));
-                        resolved
-                    };
+            // Resolve code-signing classification with amortized full coverage.
+            // A cached verdict is always applied (a pure hash hit). On a miss we
+            // resolve eagerly for network-connected entities — the bounded set
+            // the firewall-lite rules care about, classified with no delay — and
+            // otherwise resolve under a small per-tick budget so coverage extends
+            // to the rest of the running set over a handful of ticks without
+            // spiking any single snapshot. Each resolved verdict is cached, so
+            // steady state is all hash hits.
+            if let Some(path) = entity.executable_path.clone() {
+                let connected = !entity.network_connections.is_empty();
+                let verdict = if let Some(hit) = signing_cache.get(&path) {
+                    Some(hit.clone())
+                } else if connected || signing_budget > 0 {
+                    let resolved = resolve_signing_classification(&path);
+                    signing_cache.insert(path.clone(), resolved.clone());
+                    newly_signed.push((path, resolved.clone()));
+                    if !connected {
+                        signing_budget -= 1;
+                    }
+                    Some(resolved)
+                } else {
+                    None
+                };
+                if let Some(verdict) = verdict {
                     entity.signing_classification = verdict.0;
                     entity.is_adhoc = verdict.1;
                 }

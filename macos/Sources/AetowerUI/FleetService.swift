@@ -30,6 +30,10 @@ public final class FleetService {
         public var friction: Float = 0
         public var cpuPercent: Float = 0
         public var entityCount: Int = 0
+        /// Number of running entities whose binary is unsigned or ad-hoc signed
+        /// — the fleet-wide security signal. Counts only resolved verdicts;
+        /// "unknown" (not yet classified) is excluded.
+        public var unsignedCount: Int = 0
         public var lastSeen: Date = .now
         public var isLocal: Bool = false
 
@@ -227,7 +231,18 @@ public final class FleetService {
         peer.cpuPercent = state.snapshot.host.cpuPercent
         peer.entityCount = state.snapshot.entities.count
         peer.friction = state.snapshot.entities.first?.friction.totalScore ?? 0
+        peer.unsignedCount = state.snapshot.entities.filter {
+            Self.isUnsigned(classification: $0.signingClassification, isAdhoc: $0.isAdhoc)
+        }.count
         peer.lastSeen = .now
+    }
+
+    /// A binary is flagged when it is ad-hoc signed or explicitly unsigned.
+    /// "unknown" means not-yet-classified (the amortized signing fill hasn't
+    /// reached it), so it is deliberately not counted — that keeps the headline
+    /// number honest while the engine's cache warms up.
+    nonisolated static func isUnsigned(classification: String, isAdhoc: Bool) -> Bool {
+        isAdhoc || classification == "unsigned"
     }
 
     private func applyRemoteSnapshot(_ data: Data, forPeerId peerId: String) {
@@ -240,6 +255,13 @@ public final class FleetService {
         if let first = entities.first, let friction = first["friction"] as? [String: Any] {
             peers[index].friction = (friction["total_score"] as? NSNumber)?.floatValue ?? 0
         }
+        // The peer serves its full snapshot, so each entity already carries its
+        // signing verdict — count the flagged ones with no extra round trip.
+        peers[index].unsignedCount = entities.filter { entity in
+            let classification = entity["signing_classification"] as? String ?? "unknown"
+            let isAdhoc = (entity["is_adhoc"] as? NSNumber)?.boolValue ?? false
+            return Self.isUnsigned(classification: classification, isAdhoc: isAdhoc)
+        }.count
         peers[index].lastSeen = .now
         activeConnections.removeValue(forKey: peerId)
     }

@@ -75,6 +75,8 @@ public struct FleetView: View {
                                 .frame(width: 55, alignment: .trailing)
                             Text("Entities")
                                 .frame(width: 50, alignment: .trailing)
+                            Text("Unsigned")
+                                .frame(width: 60, alignment: .trailing)
                             Text("Last seen")
                                 .frame(width: 70, alignment: .trailing)
                         }
@@ -137,6 +139,20 @@ private struct PeerRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 50, alignment: .trailing)
                 .contentTransition(.numericText())
+            HStack(spacing: 3) {
+                if peer.unsignedCount > 0 {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .font(.system(size: 9))
+                }
+                Text("\(peer.unsignedCount)")
+                    .font(.system(size: 11, design: .monospaced))
+            }
+            .foregroundStyle(peer.unsignedCount > 0 ? AetowerDesign.Status.warning : Color.secondary.opacity(0.5))
+            .frame(width: 60, alignment: .trailing)
+            .contentTransition(.numericText())
+            .help(peer.unsignedCount > 0
+                ? "\(peer.unsignedCount) running \(peer.unsignedCount == 1 ? "binary is" : "binaries are") unsigned or ad-hoc signed"
+                : "No unsigned or ad-hoc binaries detected")
             Text(peer.lastSeen, style: .relative)
                 .font(.system(size: 10))
                 .foregroundStyle(peer.isStale ? AetowerDesign.Status.warning : Color.secondary.opacity(0.5))
