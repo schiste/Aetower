@@ -203,6 +203,39 @@ public enum AutomationStore {
     }
 }
 
+/// One snoozed app: notifications for this `bundleId` are suppressed until
+/// `untilMillis` (Unix epoch milliseconds). Keyed by bundle id because it is
+/// stable across restarts, unlike the per-session entity id.
+public struct NotificationSnooze: Codable, Identifiable, Sendable {
+    public var bundleId: String
+    public var displayName: String
+    public var untilMillis: UInt64
+
+    public var id: String { bundleId }
+
+    public init(bundleId: String, displayName: String, untilMillis: UInt64) {
+        self.bundleId = bundleId
+        self.displayName = displayName
+        self.untilMillis = untilMillis
+    }
+}
+
+/// Standalone UserDefaults persistence for notification snoozes, mirroring
+/// `AutomationStore`.
+public enum NotificationSnoozeStore {
+    private static let key = "aetower.notificationSnoozes"
+
+    public static func load() -> [NotificationSnooze] {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
+        return (try? JSONDecoder().decode([NotificationSnooze].self, from: data)) ?? []
+    }
+
+    public static func save(_ snoozes: [NotificationSnooze]) {
+        guard let data = try? JSONEncoder().encode(snoozes) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
 @MainActor
 @Observable
 public final class SettingsStore {
@@ -284,6 +317,23 @@ public final class SettingsStore {
     public var frictionNotificationThreshold: Double {
         didSet { persist() }
     }
+    /// Per-category notification toggles (all gated by `notificationsEnabled`).
+    /// Drive the unified timeline-notification evaluator.
+    public var notifyThermal: Bool {
+        didSet { persist() }
+    }
+    public var notifyRegression: Bool {
+        didSet { persist() }
+    }
+    public var notifyRestartLoop: Bool {
+        didSet { persist() }
+    }
+    public var notifyNetwork: Bool {
+        didSet { persist() }
+    }
+    public var notifyAgentBudget: Bool {
+        didSet { persist() }
+    }
     /// Electricity price used to translate per-process power into running cost
     /// (currency per kWh). Default is the global average.
     public var electricityPricePerKwh: Double {
@@ -345,6 +395,11 @@ public final class SettingsStore {
         self.gpuSampleLowPowerIntervalSeconds = defaults.object(forKey: Self.gpuSampleLowPowerIntervalKey) as? Double ?? 60.0
         self.notificationsEnabled = defaults.object(forKey: Self.notificationsEnabledKey) as? Bool ?? false
         self.frictionNotificationThreshold = defaults.object(forKey: Self.frictionNotificationThresholdKey) as? Double ?? 60.0
+        self.notifyThermal = defaults.object(forKey: Self.notifyThermalKey) as? Bool ?? true
+        self.notifyRegression = defaults.object(forKey: Self.notifyRegressionKey) as? Bool ?? true
+        self.notifyRestartLoop = defaults.object(forKey: Self.notifyRestartLoopKey) as? Bool ?? true
+        self.notifyNetwork = defaults.object(forKey: Self.notifyNetworkKey) as? Bool ?? false
+        self.notifyAgentBudget = defaults.object(forKey: Self.notifyAgentBudgetKey) as? Bool ?? true
         self.electricityPricePerKwh = defaults.object(forKey: Self.electricityPricePerKwhKey) as? Double ?? 0.15
         self.gridCarbonIntensityGramsPerKwh = defaults.object(forKey: Self.gridCarbonIntensityGramsPerKwhKey) as? Double ?? 480.0
         self.energyCurrencySymbol = defaults.string(forKey: Self.energyCurrencySymbolKey) ?? "$"
@@ -407,6 +462,11 @@ public final class SettingsStore {
     private static let gpuSampleLowPowerIntervalKey = "settings.gpuSampleLowPowerIntervalSeconds"
     private static let notificationsEnabledKey = "settings.notificationsEnabled"
     private static let frictionNotificationThresholdKey = "settings.frictionNotificationThreshold"
+    private static let notifyThermalKey = "settings.notifyThermal"
+    private static let notifyRegressionKey = "settings.notifyRegression"
+    private static let notifyRestartLoopKey = "settings.notifyRestartLoop"
+    private static let notifyNetworkKey = "settings.notifyNetwork"
+    private static let notifyAgentBudgetKey = "settings.notifyAgentBudget"
     private static let electricityPricePerKwhKey = "settings.electricityPricePerKwh"
     private static let gridCarbonIntensityGramsPerKwhKey = "settings.gridCarbonIntensityGramsPerKwh"
     private static let energyCurrencySymbolKey = "settings.energyCurrencySymbol"
@@ -496,6 +556,11 @@ extension SettingsStore {
         gpuSampleLowPowerIntervalSeconds = 60.0
         notificationsEnabled = false
         frictionNotificationThreshold = 60.0
+        notifyThermal = true
+        notifyRegression = true
+        notifyRestartLoop = true
+        notifyNetwork = false
+        notifyAgentBudget = true
         electricityPricePerKwh = 0.15
         gridCarbonIntensityGramsPerKwh = 480.0
         energyCurrencySymbol = "$"
@@ -532,6 +597,11 @@ extension SettingsStore {
         defaults.set(gpuSampleLowPowerIntervalSeconds, forKey: Self.gpuSampleLowPowerIntervalKey)
         defaults.set(notificationsEnabled, forKey: Self.notificationsEnabledKey)
         defaults.set(frictionNotificationThreshold, forKey: Self.frictionNotificationThresholdKey)
+        defaults.set(notifyThermal, forKey: Self.notifyThermalKey)
+        defaults.set(notifyRegression, forKey: Self.notifyRegressionKey)
+        defaults.set(notifyRestartLoop, forKey: Self.notifyRestartLoopKey)
+        defaults.set(notifyNetwork, forKey: Self.notifyNetworkKey)
+        defaults.set(notifyAgentBudget, forKey: Self.notifyAgentBudgetKey)
         defaults.set(electricityPricePerKwh, forKey: Self.electricityPricePerKwhKey)
         defaults.set(gridCarbonIntensityGramsPerKwh, forKey: Self.gridCarbonIntensityGramsPerKwhKey)
         defaults.set(energyCurrencySymbol, forKey: Self.energyCurrencySymbolKey)

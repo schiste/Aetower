@@ -12,6 +12,24 @@ private struct LocalMcpSocketProbe {
     let detail: String
 }
 
+/// Notification categories driven by the unified timeline evaluator. `rawValue`
+/// is used in cooldown keys; `notificationTitle` is the user-facing heading.
+private enum NotificationCategory: String {
+    case thermal
+    case regression
+    case restartLoop = "restart-loop"
+    case network
+
+    var notificationTitle: String {
+        switch self {
+        case .thermal: return "Thermal Alert"
+        case .regression: return "Regression Detected"
+        case .restartLoop: return "Restart Loop"
+        case .network: return "Network Activity"
+        }
+    }
+}
+
 @MainActor
 @Observable
 public final class AppState {
@@ -191,6 +209,26 @@ public final class AppState {
     private var lastAnomalyNotificationDates: [String: Date] = [:]
     @ObservationIgnored
     private var lastBudgetBreachDates: [String: Date] = [:]
+    @ObservationIgnored
+    private var lastTimelineNotificationDates: [String: Date] = [:]
+    @ObservationIgnored
+    private var seenNotificationEventIds: Set<String> = []
+    @ObservationIgnored
+    private var notificationsSeeded = false
+    /// Per-category notification enable flags, mirrored from SettingsStore.
+    @ObservationIgnored
+    private var notifyThermal = true
+    @ObservationIgnored
+    private var notifyRegression = true
+    @ObservationIgnored
+    private var notifyRestartLoop = true
+    @ObservationIgnored
+    private var notifyNetwork = false
+    @ObservationIgnored
+    private var notifyAgentBudget = true
+    /// Active per-bundle notification snoozes, loaded from NotificationSnoozeStore.
+    @ObservationIgnored
+    private var notificationSnoozes: [NotificationSnooze] = NotificationSnoozeStore.load()
     @ObservationIgnored
     private var suppressedAnomalyNotificationCount = 0
     @ObservationIgnored
@@ -639,6 +677,116 @@ public final class AppState {
         seenAutomationEventIds = Set(events.map(\.id))
     }
 
+    /// Unified timeline-driven notification evaluator: posts a user
+    /// notification for each newly-observed timeline event whose category is
+    /// enabled, severity is high enough, and whose app is not snoozed — gated by
+    /// the master toggle and the existing per-key cooldown. Friction and
+    /// agent-budget alerts are threshold/rate-driven and handled separately.
+    private func evaluateTimelineNotifications(snapshot: SystemSnapshot) {
+        let events = snapshot.timeline
+        // Seed-guard: ignore the backlog present on the first snapshot so we
+        // don't alert for events that predate this session.
+        guard notificationsSeeded else {
+            seenNotificationEventIds = Set(events.map(\.id))
+            notificationsSeeded = true
+            return
+        }
+        if notificationsEnabled {
+            for event in events where !seenNotificationEventIds.contains(event.id) {
+                considerTimelineNotification(event, in: snapshot)
+            }
+        }
+        seenNotificationEventIds = Set(events.map(\.id))
+    }
+
+    private func considerTimelineNotification(_ event: TimelineEvent, in snapshot: SystemSnapshot) {
+        guard let category = notificationCategory(for: event) else { return }
+        // Severity floor: only Warning/Critical events notify.
+        guard event.severity == .warning || event.severity == .critical else { return }
+
+        let bundleId = event.entityId
+            .flatMap { id in snapshot.entities.first { $0.entityId == id } }
+            .flatMap { $0.bundleId }
+        if let bundleId, isSnoozed(bundleId: bundleId) { return }
+
+        let cooldownKey = "\(category.rawValue):\(bundleId ?? event.entityId ?? "system")"
+        let now = Date()
+        if let last = lastTimelineNotificationDates[cooldownKey],
+            now.timeIntervalSince(last) < anomalyNotificationCooldown
+        {
+            return
+        }
+        lastTimelineNotificationDates[cooldownKey] = now
+        postUserNotification(
+            identifier: "timeline-\(cooldownKey)-\(event.timestampMillis)",
+            title: category.notificationTitle,
+            body: event.detail.isEmpty ? event.title : event.detail
+        )
+    }
+
+    /// Map a timeline event to its notification category, honoring the
+    /// per-category enable toggles. Returns nil when the category is off or not
+    /// a notifiable kind. Restart loops are Lifecycle events distinguished by
+    /// title (the engine emits "restart loop" lifecycle events).
+    private func notificationCategory(for event: TimelineEvent) -> NotificationCategory? {
+        switch event.category {
+        case .thermal: return notifyThermal ? .thermal : nil
+        case .regression: return notifyRegression ? .regression : nil
+        case .network: return notifyNetwork ? .network : nil
+        case .lifecycle:
+            let isRestartLoop = event.title.lowercased().contains("restart")
+                || event.detail.lowercased().contains("restart loop")
+            return (isRestartLoop && notifyRestartLoop) ? .restartLoop : nil
+        default:
+            return nil
+        }
+    }
+
+    private func isSnoozed(bundleId: String) -> Bool {
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        return notificationSnoozes.contains { $0.bundleId == bundleId && $0.untilMillis > nowMillis }
+    }
+
+    /// Snooze all notifications for an app (by bundle id) for `hours`. Replaces
+    /// any existing entry for the same bundle and persists.
+    public func snoozeNotifications(bundleId: String, displayName: String, hours: Double) {
+        let untilMillis = UInt64((Date().timeIntervalSince1970 + hours * 3600) * 1000)
+        notificationSnoozes.removeAll { $0.bundleId == bundleId }
+        notificationSnoozes.append(
+            NotificationSnooze(
+                bundleId: bundleId, displayName: displayName, untilMillis: untilMillis))
+        persistSnoozes()
+    }
+
+    /// Active (non-expired) snoozes, for the settings list.
+    public var activeNotificationSnoozes: [NotificationSnooze] {
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        return notificationSnoozes.filter { $0.untilMillis > nowMillis }
+    }
+
+    public func clearSnooze(bundleId: String) {
+        notificationSnoozes.removeAll { $0.bundleId == bundleId }
+        persistSnoozes()
+    }
+
+    private func persistSnoozes() {
+        // Drop expired entries opportunistically so the store stays bounded.
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        notificationSnoozes.removeAll { $0.untilMillis <= nowMillis }
+        NotificationSnoozeStore.save(notificationSnoozes)
+    }
+
+    /// Post a user notification, reusing the master-toggle + bundle-id guards.
+    private func postUserNotification(identifier: String, title: String, body: String) {
+        guard notificationsEnabled, Bundle.main.bundleIdentifier != nil else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { _ in }
+    }
+
     /// Per-agent FinOps guardrail: derive each AI agent's cost/token rate from
     /// recent persisted history and fire the rule's action (+ a notification)
     /// when it exceeds the budget threshold. Rates can't be metered per call, so
@@ -761,18 +909,14 @@ public final class AppState {
                     value: budgetRateLabel(metric: metric, rate: rule.budgetThreshold)),
             ]
         )
-        guard notificationsEnabled, Bundle.main.bundleIdentifier != nil else { return }
-        let content = UNMutableNotificationContent()
-        content.title = "AI Agent Budget Alert"
-        content.body =
-            "\(entity.displayName) is at \(budgetRateLabel(metric: metric, rate: rate)) — over the \(budgetRateLabel(metric: metric, rate: rule.budgetThreshold)) limit."
-        content.sound = .default
-        let request = UNNotificationRequest(
+        guard notifyAgentBudget else { return }
+        if let bundleId = entity.bundleId, isSnoozed(bundleId: bundleId) { return }
+        postUserNotification(
             identifier: "agent-budget-\(rule.id.uuidString)-\(entity.entityId)",
-            content: content,
-            trigger: nil
+            title: "AI Agent Budget Alert",
+            body:
+                "\(entity.displayName) is at \(budgetRateLabel(metric: metric, rate: rate)) — over the \(budgetRateLabel(metric: metric, rate: rule.budgetThreshold)) limit."
         )
-        UNUserNotificationCenter.current().add(request) { _ in }
     }
 
     private func automationRuleMatches(
@@ -1022,6 +1166,11 @@ public final class AppState {
     public func applyNotificationSettings(_ settings: SettingsStore) {
         notificationsEnabled = settings.notificationsEnabled
         frictionNotificationThreshold = settings.frictionNotificationThreshold
+        notifyThermal = settings.notifyThermal
+        notifyRegression = settings.notifyRegression
+        notifyRestartLoop = settings.notifyRestartLoop
+        notifyNetwork = settings.notifyNetwork
+        notifyAgentBudget = settings.notifyAgentBudget
         if settings.notificationsEnabled {
             flushSuppressedAnomalySummaryIfNeeded(force: true)
             requestNotificationPermissionIfNeeded(trigger: "notifications-enabled")
@@ -1201,6 +1350,7 @@ public final class AppState {
             if let updatedSnapshotValue {
                 evaluateAutomationRules(snapshot: updatedSnapshotValue)
                 evaluateAgentBudgetRules(snapshot: updatedSnapshotValue)
+                evaluateTimelineNotifications(snapshot: updatedSnapshotValue)
             }
             if let updatedSnapshotValue, lagMonitoringActive {
                 publishUiLagMetrics(

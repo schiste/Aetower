@@ -1047,6 +1047,37 @@ public struct SettingsView: View {
                 valueWidth: 34,
                 note: "Notify when an app's friction score exceeds this threshold."
             )
+
+            SettingDivider()
+
+            Text("Alert categories")
+                .font(.headline)
+            Toggle("Thermal & throttle", isOn: $settings.notifyThermal)
+            Toggle("Regressions", isOn: $settings.notifyRegression)
+            Toggle("Restart loops", isOn: $settings.notifyRestartLoop)
+            Toggle("New network connections", isOn: $settings.notifyNetwork)
+            Toggle("AI agent budgets", isOn: $settings.notifyAgentBudget)
+            Text("Categories require notifications to be enabled above. Each app is rate-limited; use \"Snooze alerts\" in an app's detail view to mute it temporarily.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !state.activeNotificationSnoozes.isEmpty {
+                SettingDivider()
+                Text("Snoozed apps")
+                    .font(.headline)
+                ForEach(state.activeNotificationSnoozes) { snooze in
+                    HStack {
+                        Text(snooze.displayName.isEmpty ? snooze.bundleId : snooze.displayName)
+                            .font(.callout)
+                        Spacer()
+                        Button("Clear") {
+                            state.clearSnooze(bundleId: snooze.bundleId)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+            }
+
             Button("Re-check notification permission") {
                 state.applyNotificationSettings(settings)
             }
