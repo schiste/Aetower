@@ -213,6 +213,14 @@ public final class EngineBridge: @unchecked Sendable {
         engine.processOpenResourcesJson(pid: pid, limit: limit)
     }
 
+    public func resourceHoldersByPortJSON(port: UInt32) -> JsonQueryResult {
+        engine.resourceHoldersByPortJson(port: port)
+    }
+
+    public func resourceHoldersByFileJSON(path: String) -> JsonQueryResult {
+        engine.resourceHoldersByFileJson(path: path)
+    }
+
     public func processSampleJSON(
         pid: UInt32,
         durationSeconds: UInt32 = 3,

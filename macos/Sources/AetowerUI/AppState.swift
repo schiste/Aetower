@@ -142,6 +142,11 @@ public final class AppState {
     private(set) var persistenceScanError: String?
     private(set) var persistenceScanCompletedAt: Date?
     private(set) var processOpenResources: [UInt32: ProcessOpenResourcesReportModel] = [:]
+    /// Result of the most recent reverse resource-holder lookup (which process
+    /// holds a given file/port). Not pid-keyed — it's a system-wide query.
+    private(set) var resourceHolders: ResourceHoldersReportModel?
+    private(set) var resourceHoldersIsLoading = false
+    private(set) var resourceHoldersError: String?
     private(set) var processSamples: [UInt32: ProcessSampleReportModel] = [:]
     private(set) var recentlyFinished: [FinishedProcessModel] = []
     /// Entity ids matched by the active advanced (Rhai) filter; nil = no filter.
@@ -1896,6 +1901,42 @@ public final class AppState {
                     result: result,
                     fallback: "Open files and sockets could not be collected."
                 )
+            }
+        }
+    }
+
+    /// Target of a reverse resource-holder lookup.
+    enum ResourceHolderQuery {
+        case port(UInt32)
+        case file(String)
+    }
+
+    /// Reverse pivot: list every process holding a given file or port, via lsof.
+    /// A successful lookup that finds nothing decodes to an empty holder list
+    /// (not an error); only a malformed/failed query sets resourceHoldersError.
+    func runResourceHolders(_ query: ResourceHolderQuery) {
+        let bridge = self.bridge
+        resourceHoldersIsLoading = true
+        resourceHoldersError = nil
+        Task(priority: .utility) { [weak self] in
+            let result: JsonQueryResult
+            switch query {
+            case let .port(port):
+                result = bridge.resourceHoldersByPortJSON(port: port)
+            case let .file(path):
+                result = bridge.resourceHoldersByFileJSON(path: path)
+            }
+            await MainActor.run {
+                guard let self else { return }
+                self.resourceHolders = self.decodeJsonQueryResult(
+                    result,
+                    as: ResourceHoldersReportModel.self
+                )
+                self.resourceHoldersIsLoading = false
+                if self.resourceHolders == nil {
+                    self.resourceHoldersError =
+                        result.errorMessage ?? "Could not look up resource holders."
+                }
             }
         }
     }

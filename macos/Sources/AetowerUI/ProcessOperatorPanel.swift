@@ -1,6 +1,11 @@
 import SwiftUI
 import AetowerBridge
 
+/// Type filter for the open files & sockets list.
+private enum OpenResourceTypeFilter: Hashable {
+    case all, files, sockets
+}
+
 struct ProcessOperatorPanel: View {
     let entity: EntitySnapshot
     let processEntities: [EntitySnapshot]
@@ -10,6 +15,10 @@ struct ProcessOperatorPanel: View {
     @State private var selectedPID: UInt32?
     @State private var pendingAction: ProcessActionKind?
     @State private var actionReason = ""
+    @State private var openResourceFilter = ""
+    @State private var openResourceTypeFilter: OpenResourceTypeFilter = .all
+    @State private var holderQuery = ""
+    @State private var holderQueryIsPort = true
 
     init(
         entity: EntitySnapshot,
@@ -545,6 +554,123 @@ struct ProcessOperatorPanel: View {
         }
     }
 
+    /// Apply the text + type filter to a process's open resources.
+    private func filteredOpenResources(
+        _ report: ProcessOpenResourcesReportModel
+    ) -> [ProcessOpenResourceModel] {
+        let needle = openResourceFilter.trimmingCharacters(in: .whitespaces).lowercased()
+        return report.resources.filter { resource in
+            switch openResourceTypeFilter {
+            case .all: break
+            case .files where resource.isSocket: return false
+            case .sockets where !resource.isSocket: return false
+            default: break
+            }
+            guard !needle.isEmpty else { return true }
+            return resource.name.lowercased().contains(needle)
+                || resource.resourceType.lowercased().contains(needle)
+        }
+    }
+
+    /// Pivot from an open-resource row to "who else holds this": sockets pivot
+    /// by local port, files by path. Falls back to prefilling the lookup field
+    /// when a socket's port can't be parsed.
+    private func pivotToHolders(for resource: ProcessOpenResourceModel) {
+        if resource.isSocket {
+            if let port = Self.localPort(from: resource.name) {
+                holderQueryIsPort = true
+                holderQuery = String(port)
+                state.runResourceHolders(.port(port))
+            } else {
+                holderQueryIsPort = true
+                holderQuery = resource.name
+            }
+        } else {
+            holderQueryIsPort = false
+            holderQuery = resource.name
+            state.runResourceHolders(.file(resource.name))
+        }
+    }
+
+    /// Run the manual reverse-lookup from the text field.
+    private func runHolderLookup() {
+        let raw = holderQuery.trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return }
+        if holderQueryIsPort {
+            let digits = raw.hasPrefix(":") ? String(raw.dropFirst()) : raw
+            if let port = UInt32(digits) {
+                state.runResourceHolders(.port(port))
+            }
+        } else {
+            state.runResourceHolders(.file(raw))
+        }
+    }
+
+    /// Extract the local port from an lsof socket name such as
+    /// "TCP 127.0.0.1:8080->1.2.3.4:443" or "TCP *:443 (LISTEN)".
+    static func localPort(from name: String) -> UInt32? {
+        let local = name.split(separator: ">").first.map(String.init) ?? name
+        guard let colon = local.lastIndex(of: ":") else { return nil }
+        let digits = local[local.index(after: colon)...].prefix { $0.isNumber }
+        return UInt32(digits)
+    }
+
+    /// Reverse-pivot lookup: type a port or file path and list every holder.
+    private var resourceHolderLookup: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Picker("", selection: $holderQueryIsPort) {
+                    Text("Port").tag(true)
+                    Text("File").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 120)
+                TextField(holderQueryIsPort ? "Port e.g. 443" : "File path", text: $holderQuery)
+                    .aetowerUtilityTextInput()
+                    .onSubmit(runHolderLookup)
+                Button("Find holders", action: runHolderLookup)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            if state.resourceHoldersIsLoading {
+                ProgressView().controlSize(.small)
+            } else if let error = state.resourceHoldersError {
+                StatusLine(
+                    icon: "exclamationmark.triangle",
+                    color: AetowerDesign.Status.warning,
+                    text: error
+                )
+            } else if let holders = state.resourceHolders {
+                Text("\(holders.holderCount) holder\(holders.holderCount == 1 ? "" : "s") of \(holders.query)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                ForEach(holders.holders.prefix(12)) { holder in
+                    HStack(spacing: 8) {
+                        Text(holder.command)
+                            .font(.caption)
+                        Text("pid \(holder.pid)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Text(holder.user)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Text(holder.name)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                }
+            }
+        }
+        .padding(8)
+        .background(
+            AetowerDesign.Surface.card,
+            in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm)
+        )
+    }
+
     @ViewBuilder
     private func openResourcesSummary(pid: UInt32) -> some View {
         if let resources = state.processOpenResources[pid] {
@@ -553,7 +679,20 @@ struct ProcessOperatorPanel: View {
                     "Open files & sockets",
                     detail: "\(resources.fileCount) files · \(resources.socketCount) sockets · \(resources.returned)/\(resources.resourceCount) shown"
                 )
-                ForEach(resources.resources.prefix(10)) { resource in
+                HStack(spacing: 6) {
+                    TextField("Filter files & sockets", text: $openResourceFilter)
+                        .aetowerUtilityTextInput()
+                    Picker("", selection: $openResourceTypeFilter) {
+                        Text("All").tag(OpenResourceTypeFilter.all)
+                        Text("Files").tag(OpenResourceTypeFilter.files)
+                        Text("Sockets").tag(OpenResourceTypeFilter.sockets)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 170)
+                }
+                resourceHolderLookup
+                ForEach(filteredOpenResources(resources).prefix(40)) { resource in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(resource.fd)
                             .font(.system(size: 10, design: .monospaced))
@@ -567,6 +706,14 @@ struct ProcessOperatorPanel: View {
                             .font(.caption)
                             .lineLimit(1)
                         Spacer()
+                        Button {
+                            pivotToHolders(for: resource)
+                        } label: {
+                            Image(systemName: "arrow.up.right.circle")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Find every process holding this \(resource.isSocket ? "port" : "file")")
                     }
                 }
             }

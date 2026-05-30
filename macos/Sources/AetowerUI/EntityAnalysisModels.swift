@@ -552,6 +552,30 @@ struct ProcessOpenResourcesReportModel: Codable {
     let resources: [ProcessOpenResourceModel]
 }
 
+/// One process holding a queried file or port — the reverse "who holds this?"
+/// pivot row.
+struct ResourceHolderModel: Codable, Identifiable {
+    let pid: UInt32
+    let command: String
+    let user: String
+    let fd: String
+    let resourceType: String
+    let name: String
+
+    var id: String { "\(pid)-\(fd)-\(name)" }
+}
+
+struct ResourceHoldersReportModel: Codable {
+    let capturedAtMillis: UInt64
+    /// The looked-up target, echoed back (":443" or a file path).
+    let query: String
+    /// "port" or "file".
+    let kind: String
+    let holderCount: Int
+    let returned: Int
+    let holders: [ResourceHolderModel]
+}
+
 struct ProcessSampleReportModel: Codable {
     let capturedAtMillis: UInt64
     let pid: UInt32
