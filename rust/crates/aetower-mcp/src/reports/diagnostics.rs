@@ -509,6 +509,9 @@ pub(crate) fn build_recommendations(
             source: "host".to_owned(),
             expected_benefit: "Lower swap, better responsiveness, and less battery drain."
                 .to_owned(),
+            suggested_action: None,
+            target_pid: None,
+            target_label: None,
         });
     }
     if wakeup_finding(snapshot).is_some() {
@@ -524,6 +527,9 @@ pub(crate) fn build_recommendations(
             source: "host".to_owned(),
             expected_benefit: "Lower battery drain and smoother foreground interactivity."
                 .to_owned(),
+            suggested_action: None,
+            target_pid: None,
+            target_label: None,
         });
     }
     if history_store_finding(history).is_some() {
@@ -540,6 +546,9 @@ pub(crate) fn build_recommendations(
             source: "history".to_owned(),
             expected_benefit: "Faster History loads and healthier long-run storage behavior."
                 .to_owned(),
+            suggested_action: None,
+            target_pid: None,
+            target_label: None,
         });
     }
     if diagnostics_finding(diagnostics).is_some() {
@@ -553,6 +562,9 @@ pub(crate) fn build_recommendations(
             entity_id: None,
             source: "diagnostics".to_owned(),
             expected_benefit: "Cleaner operator signal and less noisy support output.".to_owned(),
+            suggested_action: None,
+            target_pid: None,
+            target_label: None,
         });
     }
     if mcp_helper_severity(runtime) != SeverityBand::Info {
@@ -569,6 +581,9 @@ pub(crate) fn build_recommendations(
             source: "mcp".to_owned(),
             expected_benefit: "Lower idle overhead and more trustworthy local-MCP session health."
                 .to_owned(),
+            suggested_action: None,
+            target_pid: None,
+            target_label: None,
         });
     }
     if self_runtime_severity(runtime) != SeverityBand::Info {
@@ -581,6 +596,9 @@ pub(crate) fn build_recommendations(
             expected_benefit:
                 "Lower observer-induced load and more trustworthy performance investigations."
                     .to_owned(),
+            suggested_action: None,
+            target_pid: None,
+            target_label: None,
         });
     }
     for entity in top_entities(snapshot, limit) {
@@ -598,6 +616,9 @@ pub(crate) fn build_recommendations(
                 expected_benefit:
                     "Higher-confidence attribution and lower friction in the affected group."
                         .to_owned(),
+                suggested_action: recommendation.suggested_action.clone(),
+                target_pid: recommendation.target_pid,
+                target_label: recommendation.target_label.clone(),
             });
         }
     }

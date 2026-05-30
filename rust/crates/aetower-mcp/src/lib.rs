@@ -374,6 +374,17 @@ struct RecommendationItem {
     entity_id: Option<String>,
     source: String,
     expected_benefit: String,
+    /// A safe one-click process action an agent can execute via
+    /// `aetower_process_action` (raw `ProcessActionKind`, e.g. "suspend",
+    /// "lower-priority"). `None` for advisory/host-level recommendations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggested_action: Option<String>,
+    /// The pid the suggested action targets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_pid: Option<u32>,
+    /// Human-readable label for the target process.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1939,6 +1950,9 @@ fn ai_recommendations(ai_entities: &[&aetower_model::EntitySnapshot]) -> Vec<Rec
                 source: entity.display_name.clone(),
                 expected_benefit: "Lower AI runtime friction and clearer operator action."
                     .to_owned(),
+                suggested_action: recommendation.suggested_action.clone(),
+                target_pid: recommendation.target_pid,
+                target_label: recommendation.target_label.clone(),
             });
         }
     }
@@ -3250,7 +3264,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "aetower_recommendations",
-            "description": "Return structured remediation recommendations derived from host load, history health, diagnostics, and entity recommendations.",
+            "description": "Return structured remediation recommendations derived from host load, history health, diagnostics, and entity recommendations. Items may include a suggested_action (e.g. \"suspend\", \"lower-priority\") with target_pid and target_label — pass these to aetower_process_action with dry_run:true to preview, then dry_run:false after confirming, to fix what is slowing the machine.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
