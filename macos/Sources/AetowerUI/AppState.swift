@@ -3116,6 +3116,8 @@ public final class AppState {
             "frictionNotificationThreshold": settings.frictionNotificationThreshold,
             "appearanceMode": settings.appearanceMode,
             "operatorSafeModeEnabled": settings.operatorSafeModeEnabled,
+            "monitorMetricCardPlacement": settings.monitorMetricCardPlacement.rawValue,
+            "monitorMetricCardFocus": settings.monitorMetricCardFocus.rawValue,
             "chromiumEndpointConfigured": !settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "dockerSocketPath": exportControlledValue(
                 settings.dockerSocketPath,

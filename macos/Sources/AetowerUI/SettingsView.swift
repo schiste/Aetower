@@ -418,6 +418,33 @@ public struct SettingsView: View {
                 SettingDivider()
 
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    Text("Monitor metric rings")
+                        .font(.headline)
+                    Picker("Metric ring placement", selection: $settings.monitorMetricCardPlacement) {
+                        ForEach(MonitorMetricCardPlacement.allCases) { placement in
+                            Text(placement.title).tag(placement)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Picker("Focused ring", selection: $settings.monitorMetricCardFocus) {
+                        ForEach(MonitorMetricCardFocus.allCases) { focus in
+                            Text(focus.title).tag(focus)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .disabled(!settings.monitorMetricCardPlacement.supportsFocusedMetric)
+
+                    Text(settings.monitorMetricCardPlacement.supportsFocusedMetric
+                        ? "Top and bottom placements can show one full-width ring, or switch back to all rings."
+                        : "Left and right placements use a compact vertical rail and always show all rings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                SettingDivider()
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                     Text("UI refresh interval")
                         .font(.headline)
                     Picker("UI refresh interval", selection: $settings.refreshIntervalSeconds) {

@@ -526,6 +526,17 @@ private struct GroupingCacheKey: Hashable {
     let filterSignature: String
 }
 
+private struct MonitorMetricCardDescriptor: Identifiable {
+    let id: MonitorMetricCardFocus
+    let title: String
+    let value: String
+    let subtitle: String
+    let samples: [Double]
+    let style: TrendMetricStyle
+    let valueAppearance: TrendMetricValueAppearance
+    let sampleValueFormatter: (Double) -> String
+}
+
 private struct GroupedEntityRow: View {
     let group: EntityGroup
     let isSelected: Bool
@@ -1142,8 +1153,7 @@ public struct MainListView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
             thermalForecastBanner
-            monitorOverviewSummary
-            monitorSplitView
+            monitorContentLayout
         }
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, 6)
@@ -1178,6 +1188,39 @@ public struct MainListView: View {
             groupingTask = nil
             searchFieldFocused = false
         }
+    }
+
+    @ViewBuilder
+    private var monitorContentLayout: some View {
+        switch settings.monitorMetricCardPlacement {
+        case .top:
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                monitorOverviewSummary
+                monitorSplitView
+            }
+        case .bottom:
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                monitorSplitView
+                monitorOverviewSummary
+            }
+        case .left:
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.lg) {
+                monitorMetricRail
+                monitorSplitView
+            }
+        case .right:
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.lg) {
+                monitorSplitView
+                monitorMetricRail
+            }
+        }
+    }
+
+    private var monitorMetricRail: some View {
+        ScrollView {
+            monitorOverviewSummary
+        }
+        .frame(minWidth: 190, idealWidth: 220, maxWidth: 250, maxHeight: .infinity, alignment: .top)
     }
 
     private var rankingPanel: some View {
@@ -1723,28 +1766,35 @@ public struct MainListView: View {
             fallback: Double(host.gpuMemoryBytes)
         )
 
-        return LazyVGrid(columns: monitorSummaryGridColumns, alignment: .leading, spacing: 12) {
-            TrendMetricCard(
+        let usingGpuPercent = host.gpuPercent > 0 || host.gpuMemoryBytes == 0
+        let gpuSamples = usingGpuPercent ? gpuPercentSamples : gpuMemorySamples
+        let gpuValue = usingGpuPercent
+            ? String(format: "%.0f%%", host.gpuPercent)
+            : formatBytes(host.gpuMemoryBytes)
+
+        let cards = [
+            MonitorMetricCardDescriptor(
+                id: .friction,
                 title: "Friction",
                 value: String(format: "%.0f", frictionScore),
                 subtitle: "overall machine score · \(trendWindowLabel(sampleCount: frictionSamples.count))",
                 samples: frictionSamples,
                 style: .friction,
                 valueAppearance: monitorFrictionAppearance(frictionScore),
-                sampleValueFormatter: { String(format: "%.0f", $0) },
-                minHeight: 124
-            )
-            TrendMetricCard(
+                sampleValueFormatter: { String(format: "%.0f", $0) }
+            ),
+            MonitorMetricCardDescriptor(
+                id: .cpu,
                 title: "CPU",
                 value: String(format: "%.0f%%", host.cpuPercent),
                 subtitle: "thermal \(thermalStateLabel(host.thermalState)) · \(trendWindowLabel(sampleCount: cpuSamples.count))",
                 samples: cpuSamples,
                 style: .cpu,
                 valueAppearance: monitorCPUAppearance(host),
-                sampleValueFormatter: { String(format: "%.0f%%", $0) },
-                minHeight: 124
-            )
-            TrendMetricCard(
+                sampleValueFormatter: { String(format: "%.0f%%", $0) }
+            ),
+            MonitorMetricCardDescriptor(
+                id: .memory,
                 title: "Memory",
                 value: formatBytes(host.memoryUsedBytes),
                 subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap · pressure trend",
@@ -1753,30 +1803,30 @@ public struct MainListView: View {
                 valueAppearance: monitorMemoryAppearance(host),
                 // Samples are the 0–100 memory pressure score, not bytes — label
                 // the hover stats with /100 so they don't read as bytes/percent.
-                sampleValueFormatter: { String(format: "%.0f/100", $0) },
-                minHeight: 124
-            )
-            TrendMetricCard(
+                sampleValueFormatter: { String(format: "%.0f/100", $0) }
+            ),
+            MonitorMetricCardDescriptor(
+                id: .disk,
                 title: "Disk",
                 value: formatRate(host.diskReadBps + host.diskWriteBps),
                 subtitle: "read + write · \(trendWindowLabel(sampleCount: diskSamples.count))",
                 samples: diskSamples,
                 style: .disk,
                 valueAppearance: monitorThroughputAppearance(host.diskReadBps + host.diskWriteBps, warning: 50 * 1_024 * 1_024, danger: 250 * 1_024 * 1_024),
-                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) },
-                minHeight: 124
-            )
-            TrendMetricCard(
+                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) }
+            ),
+            MonitorMetricCardDescriptor(
+                id: .network,
                 title: "Network",
                 value: formatRate(host.networkReceiveBps + host.networkSendBps),
                 subtitle: "send + receive · \(trendWindowLabel(sampleCount: networkSamples.count))",
                 samples: networkSamples,
                 style: .network,
                 valueAppearance: monitorThroughputAppearance(host.networkReceiveBps + host.networkSendBps, warning: 10 * 1_024 * 1_024, danger: 100 * 1_024 * 1_024),
-                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) },
-                minHeight: 124
-            )
-            TrendMetricCard(
+                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) }
+            ),
+            MonitorMetricCardDescriptor(
+                id: .wakeups,
                 title: "Wakeups",
                 value: formatWakeups(host.wakeupsPerSecond),
                 subtitle: hostWakeupBand(host.wakeupsPerSecond) == .severe
@@ -1785,27 +1835,68 @@ public struct MainListView: View {
                 samples: wakeupSamples,
                 style: .friction,
                 valueAppearance: monitorWakeupAppearance(host),
-                sampleValueFormatter: { formatWakeups(Float($0)) },
-                minHeight: 124
-            )
-            if host.gpuPercent > 0 || host.gpuMemoryBytes > 0 {
-                let usingGpuPercent = host.gpuPercent > 0
-                TrendMetricCard(
-                    title: "GPU",
-                    value: usingGpuPercent
-                        ? String(format: "%.0f%%", host.gpuPercent)
-                        : formatBytes(host.gpuMemoryBytes),
-                    subtitle: "\(hostGPUSummary(host)) · \(trendWindowLabel(sampleCount: usingGpuPercent ? gpuPercentSamples.count : gpuMemorySamples.count))",
-                    samples: usingGpuPercent ? gpuPercentSamples : gpuMemorySamples,
-                    style: .energy,
-                    valueAppearance: monitorGPUAppearance(host),
-                    sampleValueFormatter: usingGpuPercent
-                        ? { String(format: "%.0f%%", $0) }
-                        : { formatBytes(UInt64(max($0, 0))) },
-                    minHeight: 124
-                )
+                sampleValueFormatter: { formatWakeups(Float($0)) }
+            ),
+            MonitorMetricCardDescriptor(
+                id: .gpu,
+                title: "GPU",
+                value: gpuValue,
+                subtitle: "\(hostGPUSummary(host)) · \(trendWindowLabel(sampleCount: gpuSamples.count))",
+                samples: gpuSamples,
+                style: .energy,
+                valueAppearance: monitorGPUAppearance(host),
+                sampleValueFormatter: usingGpuPercent
+                    ? { String(format: "%.0f%%", $0) }
+                    : { formatBytes(UInt64(max($0, 0))) }
+            ),
+        ]
+
+        return monitorMetricCardsLayout(cards)
+    }
+
+    @ViewBuilder
+    private func monitorMetricCardsLayout(_ cards: [MonitorMetricCardDescriptor]) -> some View {
+        let visibleCards = visibleMonitorMetricCards(cards)
+        switch settings.monitorMetricCardPlacement {
+        case .left, .right:
+            LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                ForEach(visibleCards) { card in
+                    monitorMetricCard(card, minHeight: 106)
+                }
+            }
+        case .top, .bottom:
+            if settings.monitorMetricCardFocus != .all, visibleCards.count == 1, let card = visibleCards.first {
+                monitorMetricCard(card, minHeight: 168)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                LazyVGrid(columns: monitorSummaryGridColumns, alignment: .leading, spacing: 12) {
+                    ForEach(visibleCards) { card in
+                        monitorMetricCard(card, minHeight: 124)
+                    }
+                }
             }
         }
+    }
+
+    private func monitorMetricCard(_ card: MonitorMetricCardDescriptor, minHeight: CGFloat) -> some View {
+        TrendMetricCard(
+            title: card.title,
+            value: card.value,
+            subtitle: card.subtitle,
+            samples: card.samples,
+            style: card.style,
+            valueAppearance: card.valueAppearance,
+            sampleValueFormatter: card.sampleValueFormatter,
+            minHeight: minHeight
+        )
+    }
+
+    private func visibleMonitorMetricCards(_ cards: [MonitorMetricCardDescriptor]) -> [MonitorMetricCardDescriptor] {
+        guard settings.monitorMetricCardPlacement.supportsFocusedMetric else { return cards }
+        let focus = settings.monitorMetricCardFocus
+        guard focus != .all else { return cards }
+        let focused = cards.filter { $0.id == focus }
+        return focused.isEmpty ? cards : focused
     }
 
     private var advancedFilterButton: some View {

@@ -17,6 +17,59 @@ public enum CollectionProfile: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
 }
 
+public enum MonitorMetricCardPlacement: String, CaseIterable, Hashable, Identifiable {
+    case top
+    case left
+    case right
+    case bottom
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .top: return "Top"
+        case .left: return "Left"
+        case .right: return "Right"
+        case .bottom: return "Bottom"
+        }
+    }
+
+    public var supportsFocusedMetric: Bool {
+        switch self {
+        case .top, .bottom:
+            return true
+        case .left, .right:
+            return false
+        }
+    }
+}
+
+public enum MonitorMetricCardFocus: String, CaseIterable, Hashable, Identifiable {
+    case all
+    case friction
+    case cpu
+    case memory
+    case disk
+    case network
+    case wakeups
+    case gpu
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .all: return "All rings"
+        case .friction: return "Friction"
+        case .cpu: return "CPU"
+        case .memory: return "Memory"
+        case .disk: return "Disk"
+        case .network: return "Network"
+        case .wakeups: return "Wakeups"
+        case .gpu: return "GPU"
+        }
+    }
+}
+
 /// Which timeline event category an automation rule reacts to.
 public enum AutomationEvent: String, CaseIterable, Identifiable, Codable, Sendable {
     case any
@@ -354,6 +407,12 @@ public final class SettingsStore {
     public var operatorSafeModeEnabled: Bool {
         didSet { persist() }
     }
+    public var monitorMetricCardPlacement: MonitorMetricCardPlacement {
+        didSet { persist() }
+    }
+    public var monitorMetricCardFocus: MonitorMetricCardFocus {
+        didSet { persist() }
+    }
     /// Opt-in consent for VirusTotal binary-reputation lookups (off by default).
     /// The API key itself lives in the Keychain, not here.
     public var binaryReputationEnabled: Bool {
@@ -405,6 +464,12 @@ public final class SettingsStore {
         self.energyCurrencySymbol = defaults.string(forKey: Self.energyCurrencySymbolKey) ?? "$"
         self.appearanceMode = defaults.string(forKey: Self.appearanceModeKey) ?? "system"
         self.operatorSafeModeEnabled = defaults.object(forKey: Self.operatorSafeModeEnabledKey) as? Bool ?? true
+        self.monitorMetricCardPlacement = MonitorMetricCardPlacement(
+            rawValue: defaults.string(forKey: Self.monitorMetricCardPlacementKey) ?? ""
+        ) ?? .top
+        self.monitorMetricCardFocus = MonitorMetricCardFocus(
+            rawValue: defaults.string(forKey: Self.monitorMetricCardFocusKey) ?? ""
+        ) ?? .all
         self.binaryReputationEnabled = defaults.object(forKey: Self.binaryReputationEnabledKey) as? Bool ?? false
         let persistedTier = defaults.string(forKey: Self.exportPrivacyTierKey)
         let legacySensitive = defaults.object(forKey: Self.includeSensitiveExportsKey) as? Bool ?? false
@@ -472,6 +537,8 @@ public final class SettingsStore {
     private static let energyCurrencySymbolKey = "settings.energyCurrencySymbol"
     private static let appearanceModeKey = "settings.appearanceMode"
     private static let operatorSafeModeEnabledKey = "settings.operatorSafeModeEnabled"
+    private static let monitorMetricCardPlacementKey = "settings.monitorMetricCardPlacement"
+    private static let monitorMetricCardFocusKey = "settings.monitorMetricCardFocus"
     private static let binaryReputationEnabledKey = "settings.binaryReputationEnabled"
     private static let exportPrivacyTierKey = "settings.exportPrivacyTier"
     private static let autoRegisterLocalMcpClientsEnabledKey = "settings.autoRegisterLocalMcpClientsEnabled"
@@ -566,6 +633,8 @@ extension SettingsStore {
         energyCurrencySymbol = "$"
         appearanceMode = "system"
         operatorSafeModeEnabled = true
+        monitorMetricCardPlacement = .top
+        monitorMetricCardFocus = .all
         binaryReputationEnabled = false
         KeychainHelper.delete(account: KeychainHelper.binaryReputationAccount)
         exportPrivacyTier = .redacted
@@ -607,6 +676,8 @@ extension SettingsStore {
         defaults.set(energyCurrencySymbol, forKey: Self.energyCurrencySymbolKey)
         defaults.set(appearanceMode, forKey: Self.appearanceModeKey)
         defaults.set(operatorSafeModeEnabled, forKey: Self.operatorSafeModeEnabledKey)
+        defaults.set(monitorMetricCardPlacement.rawValue, forKey: Self.monitorMetricCardPlacementKey)
+        defaults.set(monitorMetricCardFocus.rawValue, forKey: Self.monitorMetricCardFocusKey)
         defaults.set(binaryReputationEnabled, forKey: Self.binaryReputationEnabledKey)
         defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
         defaults.set(autoRegisterLocalMcpClientsEnabled, forKey: Self.autoRegisterLocalMcpClientsEnabledKey)
