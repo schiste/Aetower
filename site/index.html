@@ -3,280 +3,504 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Aetower Developer Preview</title>
+    <title>Aetower — local macOS observability</title>
     <meta
       name="description"
-      content="Aetower is a local-first macOS observability app for developers, operators, and AI agents."
+      content="Aetower is a local-first macOS observability app for developers, operators, and AI agents. Process pressure, wakeups, memory, energy, code-signing, and agent impact — nothing leaves your Mac."
     />
+    <meta name="color-scheme" content="light dark" />
     <style>
       :root {
-        color-scheme: light;
-        --ink: #101716;
-        --muted: #546260;
-        --line: #d8e4df;
-        --accent: #36d683;
-        --violet: #7b3ff2;
-        --surface: #f7faf8;
+        color-scheme: light dark;
+        --bg: #fbfcfb;
+        --panel: #ffffff;
+        --ink: #11201c;
+        --muted: #5a6b66;
+        --faint: #8a9893;
+        --line: #e4ebe7;
+        --line-strong: #d2ddd7;
+        --accent: #1f9d57;
+        --accent-soft: rgba(31, 157, 87, 0.1);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0c100f;
+          --panel: #121715;
+          --ink: #e9efec;
+          --muted: #97a59f;
+          --faint: #6a7771;
+          --line: #1e2623;
+          --line-strong: #2a332f;
+          --accent: #45cf80;
+          --accent-soft: rgba(69, 207, 128, 0.12);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
       }
 
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: ui-rounded, "SF Pro Rounded", "Avenir Next", sans-serif;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+        font-size: 16px;
+        line-height: 1.55;
         color: var(--ink);
-        background:
-          radial-gradient(circle at 25% 20%, rgba(54, 214, 131, 0.22), transparent 28rem),
-          radial-gradient(circle at 75% 30%, rgba(123, 63, 242, 0.20), transparent 25rem),
-          linear-gradient(135deg, #ffffff, #eef7f2);
+        background: var(--bg);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .mono {
+        font-family:
+          ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
       }
 
       main {
-        box-sizing: border-box;
-        width: min(960px, 100%);
+        width: min(900px, 100%);
         margin: 0 auto;
-        padding: 72px 24px;
+        padding: 28px 24px 64px;
       }
 
-      .hero {
-        display: grid;
-        grid-template-columns: 132px 1fr;
-        gap: 32px;
+      /* Top bar */
+      .topbar {
+        display: flex;
         align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding-bottom: 28px;
+        border-bottom: 1px solid var(--line);
       }
 
-      .icon {
-        width: 132px;
-        height: 132px;
-        object-fit: contain;
-        filter: drop-shadow(0 24px 32px rgba(16, 23, 22, 0.18));
+      .wordmark {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 650;
+        letter-spacing: -0.01em;
+      }
+
+      .wordmark img {
+        width: 26px;
+        height: 26px;
+        border-radius: 6px;
+      }
+
+      .topbar-links {
+        display: flex;
+        gap: 4px;
+      }
+
+      .topbar-links a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+        color: var(--muted);
+        text-decoration: none;
+        transition:
+          color 140ms ease,
+          background 140ms ease;
+      }
+
+      .topbar-links a:hover {
+        color: var(--ink);
+        background: var(--accent-soft);
+      }
+
+      .topbar-links svg {
+        width: 17px;
+        height: 17px;
+        fill: currentColor;
+      }
+
+      /* Hero */
+      .hero {
+        padding: 64px 0 12px;
       }
 
       .eyebrow {
-        margin: 0 0 10px;
-        font-size: 13px;
-        font-weight: 800;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: var(--violet);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 22px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+
+      .eyebrow .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
       }
 
       h1 {
         margin: 0;
-        max-width: 720px;
-        font-size: clamp(44px, 7vw, 86px);
-        line-height: 0.92;
-        letter-spacing: -0.065em;
+        max-width: 18ch;
+        font-size: clamp(34px, 5.4vw, 54px);
+        line-height: 1.04;
+        letter-spacing: -0.03em;
+        font-weight: 660;
       }
 
       .lead {
-        max-width: 680px;
-        margin: 24px 0 0;
-        font-size: 20px;
-        line-height: 1.55;
+        max-width: 60ch;
+        margin: 22px 0 0;
+        font-size: 18px;
         color: var(--muted);
       }
 
-      .actions {
+      .lead strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      /* Download block */
+      .download {
         display: flex;
         flex-wrap: wrap;
-        gap: 14px;
-        margin-top: 34px;
+        align-items: center;
+        gap: 16px;
+        margin-top: 36px;
       }
 
-      a.button {
+      a.primary {
         display: inline-flex;
         align-items: center;
-        min-height: 48px;
-        padding: 0 20px;
-        border: 1px solid var(--ink);
-        border-radius: 999px;
-        color: var(--ink);
-        font-weight: 800;
-        text-decoration: none;
-        background: rgba(255, 255, 255, 0.72);
-      }
-
-      a.button.primary {
-        border-color: transparent;
-        background: var(--ink);
+        gap: 9px;
+        height: 46px;
+        padding: 0 22px;
+        border-radius: 10px;
+        background: var(--accent);
         color: #fff;
-      }
-
-      .socials {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-top: 18px;
-      }
-
-      .social-link {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        min-height: 38px;
-        padding: 0 14px;
-        border: 1px solid rgba(16, 23, 22, 0.14);
-        border-radius: 999px;
-        color: var(--ink);
-        font-size: 14px;
-        font-weight: 800;
+        font-weight: 600;
+        font-size: 15px;
         text-decoration: none;
-        background: rgba(255, 255, 255, 0.56);
-        box-shadow: 0 10px 28px rgba(16, 23, 22, 0.08);
         transition:
-          transform 160ms ease,
-          border-color 160ms ease,
-          background 160ms ease;
+          transform 140ms ease,
+          filter 140ms ease;
       }
 
-      .social-link:hover {
+      a.primary:hover {
+        filter: brightness(1.06);
         transform: translateY(-1px);
-        border-color: rgba(16, 23, 22, 0.32);
-        background: rgba(255, 255, 255, 0.82);
       }
 
-      .social-icon {
-        width: 17px;
-        height: 17px;
-        flex: 0 0 auto;
+      a.primary svg {
+        width: 16px;
+        height: 16px;
         fill: currentColor;
       }
 
-      .panel {
-        margin-top: 48px;
-        padding: 24px;
-        border: 1px solid var(--line);
-        border-radius: 28px;
-        background: rgba(255, 255, 255, 0.72);
-        backdrop-filter: blur(18px);
+      .download .note {
+        font-size: 13px;
+        color: var(--faint);
       }
 
-      .grid {
+      .secondary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 2px;
+        margin-top: 18px;
+        font-size: 14px;
+      }
+
+      .secondary a {
+        color: var(--muted);
+        text-decoration: none;
+        padding: 4px 10px;
+        border-radius: 7px;
+        transition:
+          color 140ms ease,
+          background 140ms ease;
+      }
+
+      .secondary a:hover {
+        color: var(--ink);
+        background: var(--accent-soft);
+      }
+
+      .secondary .sep {
+        color: var(--line-strong);
+        align-self: center;
+        user-select: none;
+      }
+
+      /* Inspect grid */
+      section.block {
+        margin-top: 72px;
+      }
+
+      .label {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--faint);
+        margin: 0 0 20px;
+      }
+
+      .inspect {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 20px;
+        gap: 1px;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
       }
 
-      h2 {
-        margin: 0 0 10px;
-        font-size: 18px;
+      .inspect div {
+        background: var(--panel);
+        padding: 20px;
       }
 
-      p {
+      .inspect .tick {
+        display: block;
+        width: 18px;
+        height: 3px;
+        border-radius: 2px;
+        margin-bottom: 13px;
+      }
+
+      .inspect h3 {
+        margin: 0 0 5px;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+
+      .inspect p {
         margin: 0;
+        font-size: 13.5px;
+        line-height: 1.5;
         color: var(--muted);
-        line-height: 1.55;
+      }
+
+      /* Local-first notes */
+      .notes {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 28px;
+        margin-top: 32px;
+      }
+
+      .notes h3 {
+        margin: 0 0 6px;
+        font-size: 14px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .notes h3 svg {
+        width: 14px;
+        height: 14px;
+        stroke: var(--accent);
+        fill: none;
+        stroke-width: 2;
+      }
+
+      .notes p {
+        margin: 0;
+        font-size: 13.5px;
+        color: var(--muted);
       }
 
       footer {
-        margin-top: 40px;
-        color: var(--muted);
+        margin-top: 72px;
+        padding-top: 24px;
+        border-top: 1px solid var(--line);
         font-size: 13px;
+        color: var(--faint);
+        line-height: 1.6;
       }
 
       footer a {
-        color: var(--ink);
-        font-weight: 700;
+        color: var(--muted);
         text-decoration: none;
+        border-bottom: 1px solid var(--line-strong);
       }
 
-      @media (max-width: 760px) {
-        .hero,
-        .grid {
+      footer a:hover {
+        color: var(--ink);
+      }
+
+      @media (max-width: 720px) {
+        .inspect,
+        .notes {
           grid-template-columns: 1fr;
         }
 
-        .icon {
-          width: 96px;
-          height: 96px;
+        .notes {
+          gap: 22px;
         }
       }
     </style>
   </head>
   <body>
     <main>
+      <header class="topbar">
+        <span class="wordmark">
+          <img src="/assets/aetower-app-icon-preview.png" alt="" />
+          Aetower
+        </span>
+        <nav class="topbar-links" aria-label="Project and author links">
+          <a
+            href="https://github.com/schiste/Aetower"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Aetower on GitHub"
+            title="GitHub"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.77.4.08.55-.18.55-.39 0-.19-.01-.84-.01-1.52-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.16-.28-.16-.68-.56-.01-.57.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.1-1.78-.21-3.64-.91-3.64-4.03 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.39 7.39 0 0 1 8 3.98c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.13-1.87 3.82-3.65 4.03.29.26.54.75.54 1.53 0 1.1-.01 1.99-.01 2.26 0 .21.15.47.55.39A8.08 8.08 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"
+              />
+            </svg>
+          </a>
+          <a
+            href="https://www.linkedin.com/in/christophehenner/"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Christophe Henner on LinkedIn"
+            title="LinkedIn"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M20.45 20.45h-3.56v-5.58c0-1.33-.03-3.04-1.85-3.04-1.85 0-2.13 1.44-2.13 2.94v5.68H9.35V9h3.41v1.56h.05c.47-.89 1.63-1.84 3.36-1.84 3.59 0 4.25 2.36 4.25 5.43v6.3h.03ZM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12Zm1.78 13.02H3.56V9h3.56v11.45ZM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0Z"
+              />
+            </svg>
+          </a>
+          <a
+            href="https://schiste.substack.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Schiste on Substack"
+            title="Substack"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 4h18v2.8H3V4Zm0 5.1h18v2.8H3V9.1Zm0 5.1h18V22l-9-5-9 5v-7.8Z" />
+            </svg>
+          </a>
+        </nav>
+      </header>
+
       <section class="hero">
-        <img class="icon" src="/assets/aetower-app-icon-preview.png" alt="Aetower icon" />
-        <div>
-          <p class="eyebrow">Developer Preview for macOS</p>
-          <h1>Local observability for operators and AI agents.</h1>
-          <p class="lead">
-            Aetower helps you inspect process pressure, wakeups, memory, energy friction,
-            diagnostics, and local agent impact without sending your machine data to a cloud service.
-          </p>
-          <div class="actions">
-            <a class="button primary" href="/releases/Aetower.pkg">Download Installer PKG</a>
-            <a class="button" href="/releases/Aetower.dmg">Drag-and-drop DMG</a>
-            <a class="button" href="/releases/Aetower.zip">Sparkle ZIP</a>
-            <a class="button" href="/releases/appcast.xml">Sparkle appcast</a>
-            <a class="button" href="/homebrew/Casks/aetower.rb">Homebrew cask</a>
-            <a class="button" href="/releases/Aetower-source.tar.gz">Source archive</a>
+        <p class="eyebrow"><span class="dot"></span> Developer Preview · macOS</p>
+        <h1>Local observability for operators and AI agents.</h1>
+        <p class="lead">
+          Aetower inspects process pressure, wakeups, memory, energy, code-signing, and local
+          agent impact — and <strong>nothing leaves your Mac</strong> unless you export it.
+        </p>
+
+        <div class="download">
+          <a class="primary" href="/releases/Aetower.pkg">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M8 1.5a.75.75 0 0 1 .75.75v6.69l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 0 1 1.06-1.06l2.22 2.22V2.25A.75.75 0 0 1 8 1.5ZM3 12.5a.75.75 0 0 1 .75.75v.25h8.5v-.25a.75.75 0 0 1 1.5 0v.5A1.25 1.25 0 0 1 12.5 15h-9A1.25 1.25 0 0 1 2.25 13.75v-.5A.75.75 0 0 1 3 12.5Z"
+              />
+            </svg>
+            Download for macOS
+          </a>
+          <span class="note mono">Aetower.pkg · Apple silicon</span>
+        </div>
+
+        <div class="secondary">
+          <a href="/releases/Aetower.dmg">Drag-and-drop DMG</a>
+          <span class="sep">·</span>
+          <a href="/releases/Aetower.zip">Sparkle ZIP</a>
+          <span class="sep">·</span>
+          <a href="/homebrew/Casks/aetower.rb">Homebrew cask</a>
+          <span class="sep">·</span>
+          <a href="/releases/Aetower-source.tar.gz">Source archive</a>
+          <span class="sep">·</span>
+          <a href="/releases/appcast.xml">Sparkle appcast</a>
+        </div>
+      </section>
+
+      <section class="block">
+        <p class="label">What it inspects</p>
+        <div class="inspect">
+          <div>
+            <span class="tick" style="background: #3b82f6"></span>
+            <h3>Process pressure</h3>
+            <p>CPU, threads, and a friction score that ranks what's actually straining the machine.</p>
           </div>
-          <div class="socials" aria-label="Project and author links">
-            <a
-              class="social-link"
-              href="https://github.com/schiste/Aetower"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open the Aetower GitHub repository"
-            >
-              <svg class="social-icon" viewBox="0 0 16 16" aria-hidden="true">
-                <path
-                  d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.77.4.08.55-.18.55-.39 0-.19-.01-.84-.01-1.52-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.16-.28-.16-.68-.56-.01-.57.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.1-1.78-.21-3.64-.91-3.64-4.03 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.39 7.39 0 0 1 8 3.98c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.13-1.87 3.82-3.65 4.03.29.26.54.75.54 1.53 0 1.1-.01 1.99-.01 2.26 0 .21.15.47.55.39A8.08 8.08 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"
-                />
-              </svg>
-              GitHub
-            </a>
-            <a
-              class="social-link"
-              href="https://www.linkedin.com/in/christophehenner/"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open Christophe Henner on LinkedIn"
-            >
-              <svg class="social-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M20.45 20.45h-3.56v-5.58c0-1.33-.03-3.04-1.85-3.04-1.85 0-2.13 1.44-2.13 2.94v5.68H9.35V9h3.41v1.56h.05c.47-.89 1.63-1.84 3.36-1.84 3.59 0 4.25 2.36 4.25 5.43v6.3h.03ZM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12Zm1.78 13.02H3.56V9h3.56v11.45ZM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0Z"
-                />
-              </svg>
-              LinkedIn
-            </a>
-            <a
-              class="social-link"
-              href="https://schiste.substack.com/"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open Schiste on Substack"
-            >
-              <svg class="social-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M3 4h18v2.8H3V4Zm0 5.1h18v2.8H3V9.1Zm0 5.1h18V22l-9-5-9 5v-7.8Z" />
-              </svg>
-              Substack
-            </a>
+          <div>
+            <span class="tick" style="background: #a855f7"></span>
+            <h3>Wakeups &amp; energy</h3>
+            <p>Idle wakeups and energy impact translated to battery, cost, and carbon.</p>
+          </div>
+          <div>
+            <span class="tick" style="background: #22c55e"></span>
+            <h3>Memory &amp; leaks</h3>
+            <p>Footprint over time with vmmap-backed region breakdowns for any process.</p>
+          </div>
+          <div>
+            <span class="tick" style="background: #f59e0b"></span>
+            <h3>Code-signing</h3>
+            <p>Cached signature verdicts that flag unsigned and ad-hoc binaries running across your fleet.</p>
+          </div>
+          <div>
+            <span class="tick" style="background: #ec4899"></span>
+            <h3>Startup &amp; persistence</h3>
+            <p>Launch agents, daemons, login items, and cron — each with its signing status.</p>
+          </div>
+          <div>
+            <span class="tick" style="background: #14b8a6"></span>
+            <h3>Agent impact</h3>
+            <p>Per-agent run timelines, budgets, and an MCP server for your own tooling.</p>
           </div>
         </div>
       </section>
 
-      <section class="panel grid" aria-label="Preview notes">
-        <div>
-          <h2>Local-first</h2>
-          <p>Runtime history and diagnostics stay on your Mac unless you export them.</p>
-        </div>
-        <div>
-          <h2>Conservative defaults</h2>
-          <p>Endpoint Security, telemetry, and automatic MCP registration are off by default.</p>
-        </div>
-        <div>
-          <h2>Installer first</h2>
-          <p>Use the PKG for the default install path; DMG, Homebrew, ZIP, and source are secondary options.</p>
+      <section class="block">
+        <p class="label">By default</p>
+        <div class="notes">
+          <div>
+            <h3>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              Local-first
+            </h3>
+            <p>Runtime history and diagnostics stay on your Mac unless you explicitly export them.</p>
+          </div>
+          <div>
+            <h3>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              Conservative
+            </h3>
+            <p>Endpoint Security, telemetry, and automatic MCP registration are all off until you opt in.</p>
+          </div>
+          <div>
+            <h3>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              Installer first
+            </h3>
+            <p>The PKG is the supported path; DMG, Homebrew, ZIP, and source are there if you prefer them.</p>
+          </div>
         </div>
       </section>
 
       <footer>
-        Aetower is a Developer Preview. Review local observability data before sharing screenshots,
+        Aetower is a Developer Preview — review local observability data before sharing screenshots,
         exports, or support bundles. Licensed under
-        <a href="https://spdx.org/licenses/AGPL-3.0-only.html">AGPL-3.0-only</a>.
-        <a href="/third-party-notices.md">Third-party notices</a>.
+        <a href="https://spdx.org/licenses/AGPL-3.0-only.html">AGPL-3.0-only</a> ·
+        <a href="/third-party-notices.md">Third-party notices</a>
       </footer>
     </main>
   </body>
