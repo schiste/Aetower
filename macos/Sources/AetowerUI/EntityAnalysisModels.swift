@@ -480,19 +480,54 @@ struct ProcessSignatureInfoModel: Codable {
 
 struct PersistenceScanReportModel: Codable {
     let capturedAtMillis: UInt64
+    let scanMode: String
+    let scanDurationMillis: UInt64
+    let cacheKey: String
+    let deepScanAvailable: Bool
+    let truncated: Bool
+    let summary: PersistenceScanSummaryModel
     let items: [PersistenceItemModel]
     let scannedLocations: [String]
     let degraded: [DegradedSourceModel]
 }
 
+struct PersistenceScanSummaryModel: Codable {
+    let totalItems: Int
+    let expectedCount: Int
+    let reviewCount: Int
+    let warningCount: Int
+    let dangerCount: Int
+    let recentlyModifiedCount: Int
+    let userScopeCount: Int
+    let systemScopeCount: Int
+    let missingTargetCount: Int
+    let unknownSignatureCount: Int
+    let unsignedOrAdhocCount: Int
+}
+
 struct PersistenceItemModel: Codable, Identifiable {
     let kind: String
+    let mechanism: String
+    let owner: String
     let label: String?
     let path: String
     let program: String?
+    let programName: String?
     let runAtLoad: Bool?
+    let disabled: Bool?
+    let sourceModifiedAtMillis: UInt64?
+    let sourceSizeBytes: UInt64?
+    let programExists: Bool?
+    let programModifiedAtMillis: UInt64?
+    let programSizeBytes: UInt64?
     let signature: ProcessSignatureInfoModel?
     let isApple: Bool
+    let riskLevel: String
+    let riskReasons: [String]
+    let actionHints: [String]
+    let hiddenLocation: Bool
+    let recentlyModified: Bool
+    let isUserScope: Bool
     let notes: [String]
 
     var id: String { "\(kind):\(path):\(program ?? "")" }
@@ -508,6 +543,19 @@ struct PersistenceItemModel: Codable, Identifiable {
         case "login-item": return "Login Item"
         case "cron": return "Cron"
         default: return kind
+        }
+    }
+
+    var displayTitle: String {
+        label ?? programName ?? program ?? path
+    }
+
+    var riskLabel: String {
+        switch riskLevel {
+        case "danger": return "Danger"
+        case "warning": return "Warning"
+        case "review": return "Review"
+        default: return "Expected"
         }
     }
 }

@@ -141,6 +141,7 @@ public final class AppState {
     private(set) var persistenceScanIsLoading = false
     private(set) var persistenceScanError: String?
     private(set) var persistenceScanCompletedAt: Date?
+    private(set) var persistenceChangedItemIds: Set<String> = []
     private(set) var processOpenResources: [UInt32: ProcessOpenResourcesReportModel] = [:]
     /// Result of the most recent reverse resource-holder lookup (which process
     /// holds a given file/port). Not pid-keyed — it's a system-wide query.
@@ -198,6 +199,8 @@ public final class AppState {
     private var selfMemoryAttributionTask: Task<Void, Never>?
     @ObservationIgnored
     private var diagnosticsLoadTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var persistenceScanTask: Task<Void, Never>?
     @ObservationIgnored
     private var lastObservedSequence: UInt64
     @ObservationIgnored
@@ -1838,20 +1841,35 @@ public final class AppState {
         )
     }
 
-    /// On-demand persistence/startup scan (launchd, login items, cron) with
-    /// code-signing status. Mirrors the process-inspection report flow.
-    func runPersistenceScan() {
+    /// Load the lightweight startup/persistence inventory once. The default tab
+    /// path should be fast and cached; explicit rescans/deep audits call
+    /// `runPersistenceScan` directly.
+    func ensurePersistenceScan() {
+        guard persistenceScanReport == nil, !persistenceScanIsLoading else { return }
+        runPersistenceScan(deep: false)
+    }
+
+    /// On-demand persistence/startup scan (launchd, login items, cron). The
+    /// default path is a lightweight metadata inventory; deep mode explicitly
+    /// enriches entries with code-signing data.
+    func runPersistenceScan(deep: Bool = false) {
         let bridge = self.bridge
+        persistenceScanTask?.cancel()
         persistenceScanIsLoading = true
         persistenceScanError = nil
-        Task(priority: .utility) { [weak self] in
-            let result = bridge.persistenceScanJSON()
+        persistenceScanTask = Task(priority: .utility) { [weak self] in
+            let result = deep ? bridge.persistenceDeepScanJSON() : bridge.persistenceScanJSON()
             await MainActor.run {
                 guard let self else { return }
+                guard !Task.isCancelled else { return }
                 self.persistenceScanIsLoading = false
                 if let report = self.decodeJsonQueryResult(
                     result, as: PersistenceScanReportModel.self)
                 {
+                    self.persistenceChangedItemIds = Self.changedPersistenceItemIds(
+                        before: self.persistenceScanReport?.items ?? [],
+                        after: report.items
+                    )
                     self.persistenceScanReport = report
                     self.persistenceScanCompletedAt = Date()
                     self.persistenceScanError = nil
@@ -1861,6 +1879,37 @@ public final class AppState {
                 }
             }
         }
+    }
+
+    private static func changedPersistenceItemIds(
+        before oldItems: [PersistenceItemModel],
+        after newItems: [PersistenceItemModel]
+    ) -> Set<String> {
+        var oldById: [String: String] = [:]
+        for item in oldItems {
+            oldById[item.id] = persistenceItemFingerprint(item)
+        }
+        return Set(
+            newItems.compactMap { item in
+                let fingerprint = persistenceItemFingerprint(item)
+                return oldById[item.id].map { $0 == fingerprint ? nil : item.id } ?? item.id
+            }
+        )
+    }
+
+    private static func persistenceItemFingerprint(_ item: PersistenceItemModel) -> String {
+        var parts: [String] = []
+        parts.append(item.kind)
+        parts.append(item.path)
+        parts.append(item.program ?? "")
+        parts.append(item.disabled.map(String.init) ?? "")
+        parts.append(item.sourceModifiedAtMillis.map(String.init) ?? "")
+        parts.append(item.sourceSizeBytes.map(String.init) ?? "")
+        parts.append(item.programExists.map(String.init) ?? "")
+        parts.append(item.programModifiedAtMillis.map(String.init) ?? "")
+        parts.append(item.programSizeBytes.map(String.init) ?? "")
+        parts.append(item.signature?.classification ?? "")
+        return parts.joined(separator: "|")
     }
 
     func runProcessInspection(pid: UInt32) {
