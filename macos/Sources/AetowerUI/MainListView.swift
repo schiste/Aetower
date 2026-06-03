@@ -1866,19 +1866,23 @@ public struct MainListView: View {
             }
         case .top, .bottom:
             if settings.monitorMetricCardFocus != .all, visibleCards.count == 1, let card = visibleCards.first {
-                monitorMetricCard(card, minHeight: 168)
+                monitorMetricCard(card, minHeight: 168, allowsPinning: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 LazyVGrid(columns: monitorSummaryGridColumns, alignment: .leading, spacing: 12) {
                     ForEach(visibleCards) { card in
-                        monitorMetricCard(card, minHeight: 124)
+                        monitorMetricCard(card, minHeight: 124, allowsPinning: true)
                     }
                 }
             }
         }
     }
 
-    private func monitorMetricCard(_ card: MonitorMetricCardDescriptor, minHeight: CGFloat) -> some View {
+    private func monitorMetricCard(
+        _ card: MonitorMetricCardDescriptor,
+        minHeight: CGFloat,
+        allowsPinning: Bool = false
+    ) -> some View {
         TrendMetricCard(
             title: card.title,
             value: card.value,
@@ -1889,6 +1893,34 @@ public struct MainListView: View {
             sampleValueFormatter: card.sampleValueFormatter,
             minHeight: minHeight
         )
+        .overlay(alignment: .topTrailing) {
+            if allowsPinning {
+                monitorMetricPinButton(card)
+            }
+        }
+    }
+
+    private func monitorMetricPinButton(_ card: MonitorMetricCardDescriptor) -> some View {
+        let isFocused = settings.monitorMetricCardFocus == card.id
+        return Button {
+            withAnimation(AetowerDesign.Motion.standard) {
+                settings.monitorMetricCardFocus = isFocused ? .all : card.id
+            }
+        } label: {
+            Image(systemName: isFocused ? "pin.slash.fill" : "pin.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(isFocused ? Color.accentColor : Color.secondary)
+                .frame(width: 22, height: 22)
+                .background(.regularMaterial, in: Circle())
+                .overlay(
+                    Circle()
+                        .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .padding(7)
+        .help(isFocused ? "Unpin \(card.title) and show all rings" : "Pin \(card.title) as the full-width ring")
+        .accessibilityLabel(isFocused ? "Unpin \(card.title)" : "Pin \(card.title)")
     }
 
     private func visibleMonitorMetricCards(_ cards: [MonitorMetricCardDescriptor]) -> [MonitorMetricCardDescriptor] {
