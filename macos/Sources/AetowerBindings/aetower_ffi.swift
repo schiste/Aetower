@@ -610,8 +610,14 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     func memoryBreakdownJson(entityId: String, topRegions: UInt32)  -> JsonQueryResult
     
     /**
+     * Deep startup/persistence audit with code-signing enrichment. Explicit
+     * because it may fork one codesign check per unique executable.
+     */
+    func persistenceDeepScanJson()  -> JsonQueryResult
+    
+    /**
      * Enumerate the machine's startup/persistence surface (launchd, login
-     * items, cron) with code-signing status. On-demand; no data source needed.
+     * items, cron) with cheap file metadata. On-demand; no data source needed.
      */
     func persistenceScanJson()  -> JsonQueryResult
     
@@ -987,8 +993,19 @@ open func memoryBreakdownJson(entityId: String, topRegions: UInt32) -> JsonQuery
 }
     
     /**
+     * Deep startup/persistence audit with code-signing enrichment. Explicit
+     * because it may fork one codesign check per unique executable.
+     */
+open func persistenceDeepScanJson() -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_persistence_deep_scan_json(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
      * Enumerate the machine's startup/persistence surface (launchd, login
-     * items, cron) with code-signing status. On-demand; no data source needed.
+     * items, cron) with cheap file metadata. On-demand; no data source needed.
      */
 open func persistenceScanJson() -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
@@ -9961,7 +9978,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_memory_breakdown_json() != 26789) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_aetower_ffi_checksum_method_monitorengine_persistence_scan_json() != 56592) {
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_persistence_deep_scan_json() != 27356) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_persistence_scan_json() != 55139) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_process_action_history_json() != 26790) {

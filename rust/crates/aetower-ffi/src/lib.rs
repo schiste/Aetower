@@ -5,8 +5,8 @@ use aetower_diagnostics as diagnostics;
 use aetower_mcp::{
     AetowerMcpDataSource, HistorySummaryResponse, LocalMcpServerHandle, default_socket_path,
     diff_snapshots_json, entity_process_tree_json, explain_anomalies_json, filter_entities_json,
-    is_socket_listener_reachable, memory_breakdown_json, persistence_scan_json,
-    process_action_history_json, process_action_json, process_inspect_json,
+    is_socket_listener_reachable, memory_breakdown_json, persistence_deep_scan_json,
+    persistence_scan_json, process_action_history_json, process_action_json, process_inspect_json,
     process_open_resources_json, process_sample_json, profile_entity_json,
     resource_holders_by_file_json, resource_holders_by_port_json, self_memory_attribution_json,
     start_local_socket_server, wakeup_attribution_json,
@@ -1380,9 +1380,15 @@ impl MonitorEngine {
     }
 
     /// Enumerate the machine's startup/persistence surface (launchd, login
-    /// items, cron) with code-signing status. On-demand; no data source needed.
+    /// items, cron) with cheap file metadata. On-demand; no data source needed.
     pub fn persistence_scan_json(&self) -> JsonQueryResult {
         json_query_result(persistence_scan_json())
+    }
+
+    /// Deep startup/persistence audit with code-signing enrichment. Explicit
+    /// because it may fork one codesign check per unique executable.
+    pub fn persistence_deep_scan_json(&self) -> JsonQueryResult {
+        json_query_result(persistence_deep_scan_json())
     }
 
     /// Evaluate a sandboxed Rhai filter expression against the latest snapshot,

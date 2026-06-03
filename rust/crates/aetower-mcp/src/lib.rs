@@ -42,7 +42,7 @@ use reports::history::{
     investigation_history_diff, load_history_snapshots, load_history_snapshots_raw,
     older_page_cursor, select_investigation_entity_ids,
 };
-pub use reports::persistence::persistence_scan_json;
+pub use reports::persistence::{persistence_deep_scan_json, persistence_scan_json};
 #[cfg(test)]
 use reports::process::{
     build_process_action, parse_lsof_resources, parse_sample_threads, parse_vmmap_region_line,

@@ -205,6 +205,10 @@ public final class EngineBridge: @unchecked Sendable {
         engine.persistenceScanJson()
     }
 
+    public func persistenceDeepScanJSON() -> JsonQueryResult {
+        engine.persistenceDeepScanJson()
+    }
+
     public func filterEntitiesJSON(expression: String) -> JsonQueryResult {
         engine.filterEntitiesJson(expression: expression)
     }
