@@ -6,34 +6,41 @@
     <title>Aetower — local macOS observability</title>
     <meta
       name="description"
-      content="Aetower is a local-first macOS observability app for developers, operators, and AI agents. Process pressure, wakeups, memory, energy, code-signing, and agent impact — nothing leaves your Mac."
+      content="Aetower is a local-first macOS observability app for developers, operators, and AI agents. See process pressure, agent consumption, and let an agent optimize performance over MCP — nothing leaves your Mac."
     />
     <meta name="color-scheme" content="light dark" />
     <style>
       :root {
         color-scheme: light dark;
-        --bg: #fbfcfb;
+        --green: #36d683;
+        --green-deep: #1f9d57;
+        --purple: #7b3ff2;
+        --purple-deep: #6a2fe0;
+
+        --bg: #f6f9f6;
+        --bg-tint-a: rgba(123, 63, 242, 0.08);
+        --bg-tint-b: rgba(54, 214, 131, 0.1);
         --panel: #ffffff;
-        --ink: #11201c;
-        --muted: #5a6b66;
-        --faint: #8a9893;
-        --line: #e4ebe7;
-        --line-strong: #d2ddd7;
-        --accent: #1f9d57;
-        --accent-soft: rgba(31, 157, 87, 0.1);
+        --ink: #14201c;
+        --muted: #55635e;
+        --faint: #889490;
+        --line: #e3eae6;
+        --line-strong: #d3ddd8;
       }
 
       @media (prefers-color-scheme: dark) {
         :root {
-          --bg: #0c100f;
-          --panel: #121715;
-          --ink: #e9efec;
-          --muted: #97a59f;
-          --faint: #6a7771;
-          --line: #1e2623;
-          --line-strong: #2a332f;
-          --accent: #45cf80;
-          --accent-soft: rgba(69, 207, 128, 0.12);
+          /* Deep purple-slate, deliberately not black. */
+          --bg: #17141f;
+          --bg-tint-a: rgba(123, 63, 242, 0.16);
+          --bg-tint-b: rgba(54, 214, 131, 0.12);
+          --panel: #1e1b29;
+          --ink: #ecefee;
+          --muted: #a3aab4;
+          --faint: #6f7787;
+          --line: #2a2740;
+          --line-strong: #38335200;
+          --line-strong: #393450;
         }
       }
 
@@ -49,43 +56,53 @@
         font-size: 16px;
         line-height: 1.55;
         color: var(--ink);
-        background: var(--bg);
+        background:
+          radial-gradient(60rem 32rem at 78% -8%, var(--bg-tint-a), transparent 70%),
+          radial-gradient(52rem 30rem at 2% 8%, var(--bg-tint-b), transparent 65%),
+          var(--bg);
+        background-attachment: fixed;
         -webkit-font-smoothing: antialiased;
       }
 
       .mono {
-        font-family:
-          ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
+        font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
       }
 
-      main {
-        width: min(900px, 100%);
+      .wrap {
+        width: min(1140px, 100%);
         margin: 0 auto;
-        padding: 28px 24px 64px;
+        padding: 0 32px;
       }
 
-      /* Top bar */
+      .brand-text {
+        background: linear-gradient(105deg, var(--purple), var(--green));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      /* ---- Top bar ---- */
       .topbar {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 16px;
-        padding-bottom: 28px;
-        border-bottom: 1px solid var(--line);
+        padding: 24px 0;
       }
 
       .wordmark {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 11px;
         font-weight: 650;
+        font-size: 17px;
         letter-spacing: -0.01em;
       }
 
       .wordmark img {
-        width: 26px;
-        height: 26px;
-        border-radius: 6px;
+        width: 28px;
+        height: 28px;
+        border-radius: 7px;
       }
 
       .topbar-links {
@@ -97,9 +114,9 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 34px;
-        height: 34px;
-        border-radius: 8px;
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
         color: var(--muted);
         text-decoration: none;
         transition:
@@ -109,51 +126,57 @@
 
       .topbar-links a:hover {
         color: var(--ink);
-        background: var(--accent-soft);
+        background: color-mix(in srgb, var(--purple) 14%, transparent);
       }
 
       .topbar-links svg {
-        width: 17px;
-        height: 17px;
+        width: 18px;
+        height: 18px;
         fill: currentColor;
       }
 
-      /* Hero */
+      /* ---- Hero ---- */
       .hero {
-        padding: 64px 0 12px;
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 56px;
+        align-items: center;
+        padding: 56px 0 24px;
       }
 
       .eyebrow {
         display: inline-flex;
         align-items: center;
-        gap: 8px;
+        gap: 9px;
         margin: 0 0 22px;
-        font-size: 12px;
+        padding: 6px 13px 6px 11px;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        font-size: 12.5px;
         font-weight: 600;
-        letter-spacing: 0.04em;
         color: var(--muted);
+        background: var(--panel);
       }
 
       .eyebrow .dot {
-        width: 6px;
-        height: 6px;
+        width: 7px;
+        height: 7px;
         border-radius: 50%;
-        background: var(--accent);
+        background: linear-gradient(135deg, var(--purple), var(--green));
       }
 
       h1 {
         margin: 0;
-        max-width: 18ch;
-        font-size: clamp(34px, 5.4vw, 54px);
-        line-height: 1.04;
-        letter-spacing: -0.03em;
-        font-weight: 660;
+        font-size: clamp(38px, 4.6vw, 60px);
+        line-height: 1.03;
+        letter-spacing: -0.035em;
+        font-weight: 680;
       }
 
       .lead {
-        max-width: 60ch;
+        max-width: 54ch;
         margin: 22px 0 0;
-        font-size: 18px;
+        font-size: 18.5px;
         color: var(--muted);
       }
 
@@ -162,35 +185,35 @@
         font-weight: 600;
       }
 
-      /* Download block */
       .download {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         gap: 16px;
-        margin-top: 36px;
+        margin-top: 34px;
       }
 
       a.primary {
         display: inline-flex;
         align-items: center;
         gap: 9px;
-        height: 46px;
-        padding: 0 22px;
-        border-radius: 10px;
-        background: var(--accent);
+        height: 48px;
+        padding: 0 24px;
+        border-radius: 11px;
+        background: linear-gradient(120deg, var(--purple), var(--green));
         color: #fff;
         font-weight: 600;
         font-size: 15px;
         text-decoration: none;
+        box-shadow: 0 12px 30px -12px color-mix(in srgb, var(--purple) 70%, transparent);
         transition:
           transform 140ms ease,
-          filter 140ms ease;
+          box-shadow 140ms ease;
       }
 
       a.primary:hover {
-        filter: brightness(1.06);
         transform: translateY(-1px);
+        box-shadow: 0 16px 34px -12px color-mix(in srgb, var(--purple) 80%, transparent);
       }
 
       a.primary svg {
@@ -207,16 +230,17 @@
       .secondary {
         display: flex;
         flex-wrap: wrap;
-        gap: 4px 2px;
-        margin-top: 18px;
+        align-items: center;
+        gap: 2px;
+        margin-top: 16px;
         font-size: 14px;
       }
 
       .secondary a {
         color: var(--muted);
         text-decoration: none;
-        padding: 4px 10px;
-        border-radius: 7px;
+        padding: 4px 11px;
+        border-radius: 8px;
         transition:
           color 140ms ease,
           background 140ms ease;
@@ -224,32 +248,172 @@
 
       .secondary a:hover {
         color: var(--ink);
-        background: var(--accent-soft);
+        background: color-mix(in srgb, var(--green) 16%, transparent);
       }
 
       .secondary .sep {
         color: var(--line-strong);
-        align-self: center;
         user-select: none;
       }
 
-      /* Inspect grid */
-      section.block {
-        margin-top: 72px;
+      /* ---- Hero product mock ---- */
+      .mock {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--panel);
+        box-shadow: 0 30px 60px -32px rgba(20, 16, 40, 0.4);
+        overflow: hidden;
+      }
+
+      .mock-bar {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 13px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .mock-bar i {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        background: var(--line-strong);
+      }
+
+      .mock-bar span {
+        margin-left: 8px;
+        font-size: 12px;
+        color: var(--faint);
+      }
+
+      .mock-body {
+        padding: 14px 16px 18px;
+      }
+
+      .mock-head {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--faint);
+        padding: 0 2px 10px;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 12px;
+        padding: 9px 2px;
+      }
+
+      .row + .row {
+        border-top: 1px solid var(--line);
+      }
+
+      .row .name {
+        font-size: 13.5px;
+        font-weight: 550;
+      }
+
+      .row .meter {
+        height: 6px;
+        border-radius: 4px;
+        margin-top: 6px;
+        background: color-mix(in srgb, var(--ink) 8%, transparent);
+        overflow: hidden;
+      }
+
+      .row .meter b {
+        display: block;
+        height: 100%;
+        border-radius: 4px;
+      }
+
+      .row .score {
+        font-variant-numeric: tabular-nums;
+        font-weight: 650;
+        font-size: 13px;
+        text-align: right;
+      }
+
+      .row .tag {
+        display: block;
+        font-size: 10.5px;
+        font-weight: 600;
+        color: var(--faint);
+      }
+
+      /* ---- Section scaffolding ---- */
+      section {
+        padding: 40px 0;
       }
 
       .label {
         font-size: 12px;
         font-weight: 600;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
         color: var(--faint);
-        margin: 0 0 20px;
+        margin: 0 0 22px;
       }
 
-      .inspect {
+      /* ---- Three reasons ---- */
+      .reasons {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+
+      .reason {
+        position: relative;
+        padding: 26px 24px 28px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--panel);
+        overflow: hidden;
+      }
+
+      .reason::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 3px;
+        background: linear-gradient(90deg, var(--purple), var(--green));
+        opacity: 0.9;
+      }
+
+      .reason .num {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+      }
+
+      .reason h3 {
+        margin: 14px 0 9px;
+        font-size: 19px;
+        line-height: 1.25;
+        letter-spacing: -0.02em;
+        font-weight: 640;
+      }
+
+      .reason p {
+        margin: 0;
+        font-size: 14.5px;
+        color: var(--muted);
+      }
+
+      .reason p .mono {
+        color: var(--ink);
+        font-size: 13px;
+      }
+
+      /* ---- Inspect strip ---- */
+      .inspect {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
         gap: 1px;
         background: var(--line);
         border: 1px solid var(--line);
@@ -259,42 +423,41 @@
 
       .inspect div {
         background: var(--panel);
-        padding: 20px;
+        padding: 18px 16px;
       }
 
       .inspect .tick {
         display: block;
-        width: 18px;
+        width: 16px;
         height: 3px;
         border-radius: 2px;
-        margin-bottom: 13px;
+        margin-bottom: 12px;
       }
 
-      .inspect h3 {
-        margin: 0 0 5px;
-        font-size: 15px;
+      .inspect h4 {
+        margin: 0 0 4px;
+        font-size: 13.5px;
         font-weight: 600;
         letter-spacing: -0.01em;
       }
 
       .inspect p {
         margin: 0;
-        font-size: 13.5px;
-        line-height: 1.5;
+        font-size: 12.5px;
+        line-height: 1.45;
         color: var(--muted);
       }
 
-      /* Local-first notes */
+      /* ---- Notes ---- */
       .notes {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
         gap: 28px;
-        margin-top: 32px;
       }
 
       .notes h3 {
         margin: 0 0 6px;
-        font-size: 14px;
+        font-size: 14.5px;
         font-weight: 600;
         display: flex;
         align-items: center;
@@ -302,22 +465,22 @@
       }
 
       .notes h3 svg {
-        width: 14px;
-        height: 14px;
-        stroke: var(--accent);
+        width: 15px;
+        height: 15px;
+        stroke: var(--green-deep);
         fill: none;
-        stroke-width: 2;
+        stroke-width: 2.2;
       }
 
       .notes p {
         margin: 0;
-        font-size: 13.5px;
+        font-size: 14px;
         color: var(--muted);
       }
 
       footer {
-        margin-top: 72px;
-        padding-top: 24px;
+        margin-top: 24px;
+        padding: 26px 0 56px;
         border-top: 1px solid var(--line);
         font-size: 13px;
         color: var(--faint);
@@ -334,20 +497,33 @@
         color: var(--ink);
       }
 
-      @media (max-width: 720px) {
-        .inspect,
+      @media (max-width: 920px) {
+        .hero {
+          grid-template-columns: 1fr;
+          gap: 40px;
+          padding-top: 36px;
+        }
+        .reasons,
         .notes {
           grid-template-columns: 1fr;
         }
+        .inspect {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
 
-        .notes {
-          gap: 22px;
+      @media (max-width: 520px) {
+        .wrap {
+          padding: 0 20px;
+        }
+        .inspect {
+          grid-template-columns: 1fr;
         }
       }
     </style>
   </head>
   <body>
-    <main>
+    <div class="wrap">
       <header class="topbar">
         <span class="wordmark">
           <img src="/assets/aetower-app-icon-preview.png" alt="" />
@@ -395,75 +571,148 @@
       </header>
 
       <section class="hero">
-        <p class="eyebrow"><span class="dot"></span> Developer Preview · macOS</p>
-        <h1>Local observability for operators and AI agents.</h1>
-        <p class="lead">
-          Aetower inspects process pressure, wakeups, memory, energy, code-signing, and local
-          agent impact — and <strong>nothing leaves your Mac</strong> unless you export it.
-        </p>
+        <div>
+          <p class="eyebrow"><span class="dot"></span> Developer Preview · macOS</p>
+          <h1>Local observability for operators and <span class="brand-text">AI agents</span>.</h1>
+          <p class="lead">
+            See what's actually straining your Mac — process pressure, wakeups, memory, energy,
+            and per-agent impact — and let an agent fix it over MCP.
+            <strong>Nothing leaves your machine</strong> unless you export it.
+          </p>
 
-        <div class="download">
-          <a class="primary" href="/releases/Aetower.pkg">
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path
-                d="M8 1.5a.75.75 0 0 1 .75.75v6.69l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 0 1 1.06-1.06l2.22 2.22V2.25A.75.75 0 0 1 8 1.5ZM3 12.5a.75.75 0 0 1 .75.75v.25h8.5v-.25a.75.75 0 0 1 1.5 0v.5A1.25 1.25 0 0 1 12.5 15h-9A1.25 1.25 0 0 1 2.25 13.75v-.5A.75.75 0 0 1 3 12.5Z"
-              />
-            </svg>
-            Download for macOS
-          </a>
-          <span class="note mono">Aetower.pkg · Apple silicon</span>
+          <div class="download">
+            <a class="primary" href="/releases/Aetower.pkg">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M8 1.5a.75.75 0 0 1 .75.75v6.69l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 0 1 1.06-1.06l2.22 2.22V2.25A.75.75 0 0 1 8 1.5ZM3 12.5a.75.75 0 0 1 .75.75v.25h8.5v-.25a.75.75 0 0 1 1.5 0v.5A1.25 1.25 0 0 1 12.5 15h-9A1.25 1.25 0 0 1 2.25 13.75v-.5A.75.75 0 0 1 3 12.5Z"
+                />
+              </svg>
+              Download for macOS
+            </a>
+            <span class="note mono">Aetower.pkg · Apple silicon</span>
+          </div>
+
+          <div class="secondary">
+            <a href="/releases/Aetower.dmg">DMG</a>
+            <span class="sep">·</span>
+            <a href="/releases/Aetower.zip">Sparkle ZIP</a>
+            <span class="sep">·</span>
+            <a href="/homebrew/Casks/aetower.rb">Homebrew</a>
+            <span class="sep">·</span>
+            <a href="/releases/Aetower-source.tar.gz">Source</a>
+            <span class="sep">·</span>
+            <a href="/releases/appcast.xml">Appcast</a>
+          </div>
         </div>
 
-        <div class="secondary">
-          <a href="/releases/Aetower.dmg">Drag-and-drop DMG</a>
-          <span class="sep">·</span>
-          <a href="/releases/Aetower.zip">Sparkle ZIP</a>
-          <span class="sep">·</span>
-          <a href="/homebrew/Casks/aetower.rb">Homebrew cask</a>
-          <span class="sep">·</span>
-          <a href="/releases/Aetower-source.tar.gz">Source archive</a>
-          <span class="sep">·</span>
-          <a href="/releases/appcast.xml">Sparkle appcast</a>
+        <!-- Evokes the app's entity-centric friction view -->
+        <div class="mock" aria-hidden="true">
+          <div class="mock-bar">
+            <i></i><i></i><i></i><span class="mono">Aetower — friction</span>
+          </div>
+          <div class="mock-body">
+            <div class="mock-head"><span>Entity</span><span>Friction</span></div>
+            <div class="row">
+              <div>
+                <div class="name">Google Chrome Helper</div>
+                <div class="meter"><b style="width: 86%; background: #ef4444"></b></div>
+              </div>
+              <div class="score" style="color: #ef4444">72<span class="tag">Critical</span></div>
+            </div>
+            <div class="row">
+              <div>
+                <div class="name mono">node · agent-worker</div>
+                <div class="meter"><b style="width: 54%; background: #f59e0b"></b></div>
+              </div>
+              <div class="score" style="color: #f59e0b">41<span class="tag">High</span></div>
+            </div>
+            <div class="row">
+              <div>
+                <div class="name">com.docker.vmnetd</div>
+                <div class="meter"><b style="width: 28%; background: var(--purple)"></b></div>
+              </div>
+              <div class="score" style="color: var(--purple)">19<span class="tag">Watch</span></div>
+            </div>
+            <div class="row">
+              <div>
+                <div class="name">WindowServer</div>
+                <div class="meter"><b style="width: 12%; background: var(--green-deep)"></b></div>
+              </div>
+              <div class="score" style="color: var(--green-deep)">7<span class="tag">Stable</span></div>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section class="block">
+      <section>
+        <p class="label">Three reasons to use Aetower</p>
+        <div class="reasons">
+          <div class="reason">
+            <span class="num brand-text">01</span>
+            <h3>Activity Monitor drives you crazy</h3>
+            <p>
+              A flat wall of processes with no story. Aetower groups by entity and ranks everything
+              with a single friction score, so the thing straining your Mac is at the top — not
+              buried on page three.
+            </p>
+          </div>
+          <div class="reason">
+            <span class="num brand-text">02</span>
+            <h3>See fast what your agents consume</h3>
+            <p>
+              Per-agent run timelines, CPU and memory impact, and budgets — so you know at a glance
+              whether the coding agent in the background is costing you a fan spin or a flat battery.
+            </p>
+          </div>
+          <div class="reason">
+            <span class="num brand-text">03</span>
+            <h3>Let an agent optimize performance</h3>
+            <p>
+              Aetower ships a local <span class="mono">MCP</span> server. Point your agent at it and
+              it can read the same friction, wakeup, and signing data — then act on it — to tune your
+              system's performance for you.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
         <p class="label">What it inspects</p>
         <div class="inspect">
           <div>
             <span class="tick" style="background: #3b82f6"></span>
-            <h3>Process pressure</h3>
-            <p>CPU, threads, and a friction score that ranks what's actually straining the machine.</p>
+            <h4>Process pressure</h4>
+            <p>CPU, threads, friction.</p>
           </div>
           <div>
-            <span class="tick" style="background: #a855f7"></span>
-            <h3>Wakeups &amp; energy</h3>
-            <p>Idle wakeups and energy impact translated to battery, cost, and carbon.</p>
+            <span class="tick" style="background: var(--purple)"></span>
+            <h4>Wakeups &amp; energy</h4>
+            <p>Battery, cost, carbon.</p>
           </div>
           <div>
-            <span class="tick" style="background: #22c55e"></span>
-            <h3>Memory &amp; leaks</h3>
-            <p>Footprint over time with vmmap-backed region breakdowns for any process.</p>
+            <span class="tick" style="background: var(--green)"></span>
+            <h4>Memory</h4>
+            <p>Footprint &amp; leaks.</p>
           </div>
           <div>
             <span class="tick" style="background: #f59e0b"></span>
-            <h3>Code-signing</h3>
-            <p>Cached signature verdicts that flag unsigned and ad-hoc binaries running across your fleet.</p>
+            <h4>Code-signing</h4>
+            <p>Unsigned / ad-hoc.</p>
           </div>
           <div>
             <span class="tick" style="background: #ec4899"></span>
-            <h3>Startup &amp; persistence</h3>
-            <p>Launch agents, daemons, login items, and cron — each with its signing status.</p>
+            <h4>Persistence</h4>
+            <p>Agents, daemons, cron.</p>
           </div>
           <div>
             <span class="tick" style="background: #14b8a6"></span>
-            <h3>Agent impact</h3>
-            <p>Per-agent run timelines, budgets, and an MCP server for your own tooling.</p>
+            <h4>Agent impact</h4>
+            <p>Timelines &amp; MCP.</p>
           </div>
         </div>
       </section>
 
-      <section class="block">
+      <section>
         <p class="label">By default</p>
         <div class="notes">
           <div>
@@ -502,6 +751,6 @@
         <a href="https://spdx.org/licenses/AGPL-3.0-only.html">AGPL-3.0-only</a> ·
         <a href="/third-party-notices.md">Third-party notices</a>
       </footer>
-    </main>
+    </div>
   </body>
 </html>
