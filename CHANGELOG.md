@@ -2,6 +2,33 @@
 
 All notable public changes to Aetower should be documented here.
 
+## 0.52 (build 460) - 2026-06-03
+
+Developer Preview feature release.
+
+Release metadata:
+
+- Bundle identifier: `com.aeptus.aetower`
+- Sparkle appcast: `https://aetower.dev/releases/appcast.xml`
+- Release archive prefix: `https://aetower.dev/releases/`
+
+- Added a redesigned public website with a cleaner visual system, real Monitor
+  screenshot, PKG-first install flow, and project/author links.
+- Added reverse resource pivot tools to show which process holds a file, port,
+  or socket, including MCP-facing reports and UI filtering for open resources.
+- Added startup and persistence inspection for login items, launch agents,
+  launch daemons, and related persistence surfaces.
+- Added richer code-signing classification with amortized full-coverage scans.
+- Added per-agent budget rules, alerting, timeline notifications, per-category
+  toggles, and snooze support.
+- Added actionable recommendation flows so users and agents can act on concrete
+  process guidance rather than generic friction text.
+- Added thermal throttle forecasting and contributor attribution.
+- Added slow-regression detection foundations, including app-version capture
+  and off-tick detector wiring.
+- Added energy translation for battery time, estimated cost, and carbon impact.
+- Added observability documentation, a metric reference, and a Grafana dashboard.
+
 ## 0.51 (build 418) - 2026-05-29
 
 Developer Preview maintenance release.
