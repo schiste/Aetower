@@ -40,6 +40,11 @@ rm -rf "$SITE_OUTPUT"
 mkdir -p "$SITE_OUTPUT/assets" "$SITE_OUTPUT/homebrew/Casks" "$SITE_OUTPUT/releases"
 cp "$SITE_SOURCE/index.html" "$SITE_OUTPUT/index.html"
 cp "$SITE_SOURCE/_headers" "$SITE_OUTPUT/_headers"
+# Static site assets checked into site/assets (e.g. product screenshots).
+# The brand icon is generated separately below and may overwrite its slot.
+if [ -d "$SITE_SOURCE/assets" ]; then
+  cp -R "$SITE_SOURCE/assets/." "$SITE_OUTPUT/assets/"
+fi
 cp "$APPCAST_DIR"/* "$SITE_OUTPUT/releases/"
 cp "$RELEASE_ARCHIVE" "$SITE_OUTPUT/releases/Aetower.zip"
 cp "$THIRD_PARTY_NOTICES" "$SITE_OUTPUT/third-party-notices.md"

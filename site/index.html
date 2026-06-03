@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Aetower — local macOS observability</title>
+    <title>Aetower · local macOS observability</title>
     <meta
       name="description"
-      content="Aetower is a local-first macOS observability app for developers, operators, and AI agents. See process pressure, agent consumption, and let an agent optimize performance over MCP — nothing leaves your Mac."
+      content="Aetower is a local-first macOS observability app for developers, operators, and AI agents. See process pressure, agent consumption, and manage performance from an app, CLI, or MCP. Nothing leaves your Mac."
     />
     <meta name="color-scheme" content="light dark" />
     <style>
@@ -17,15 +17,15 @@
         --purple: #7b3ff2;
         --purple-deep: #6a2fe0;
 
-        --bg: #f6f9f6;
-        --bg-tint-a: rgba(123, 63, 242, 0.08);
-        --bg-tint-b: rgba(54, 214, 131, 0.1);
+        --bg: #ffffff;
+        --bg-tint-a: transparent;
+        --bg-tint-b: transparent;
         --panel: #ffffff;
         --ink: #14201c;
         --muted: #55635e;
         --faint: #889490;
-        --line: #e3eae6;
-        --line-strong: #d3ddd8;
+        --line: #e8ece9;
+        --line-strong: #d8e0db;
       }
 
       @media (prefers-color-scheme: dark) {
@@ -256,13 +256,20 @@
         user-select: none;
       }
 
-      /* ---- Hero product mock ---- */
+      /* ---- Hero product shot ---- */
       .mock {
+        margin: 0;
         border: 1px solid var(--line);
         border-radius: 18px;
         background: var(--panel);
         box-shadow: 0 30px 60px -32px rgba(20, 16, 40, 0.4);
         overflow: hidden;
+      }
+
+      .mock.shot img {
+        display: block;
+        width: 100%;
+        height: auto;
       }
 
       .mock-bar {
@@ -575,8 +582,8 @@
           <p class="eyebrow"><span class="dot"></span> Developer Preview · macOS</p>
           <h1>Local observability for operators and <span class="brand-text">AI agents</span>.</h1>
           <p class="lead">
-            See what's actually straining your Mac — process pressure, wakeups, memory, energy,
-            and per-agent impact — and let an agent fix it over MCP.
+            See what's actually straining your Mac: process pressure, wakeups, memory, energy,
+            and per-agent impact. Manage it from a native app, a CLI, or an AI agent over MCP.
             <strong>Nothing leaves your machine</strong> unless you export it.
           </p>
 
@@ -605,43 +612,20 @@
           </div>
         </div>
 
-        <!-- Evokes the app's entity-centric friction view -->
-        <div class="mock" aria-hidden="true">
+        <!-- Real capture of the Monitor tab from the current build. -->
+        <figure class="mock shot">
           <div class="mock-bar">
-            <i></i><i></i><i></i><span class="mono">Aetower — friction</span>
+            <i></i><i></i><i></i><span class="mono">Aetower · Monitor</span>
           </div>
-          <div class="mock-body">
-            <div class="mock-head"><span>Entity</span><span>Friction</span></div>
-            <div class="row">
-              <div>
-                <div class="name">Google Chrome Helper</div>
-                <div class="meter"><b style="width: 86%; background: #ef4444"></b></div>
-              </div>
-              <div class="score" style="color: #ef4444">72<span class="tag">Critical</span></div>
-            </div>
-            <div class="row">
-              <div>
-                <div class="name mono">node · agent-worker</div>
-                <div class="meter"><b style="width: 54%; background: #f59e0b"></b></div>
-              </div>
-              <div class="score" style="color: #f59e0b">41<span class="tag">High</span></div>
-            </div>
-            <div class="row">
-              <div>
-                <div class="name">com.docker.vmnetd</div>
-                <div class="meter"><b style="width: 28%; background: var(--purple)"></b></div>
-              </div>
-              <div class="score" style="color: var(--purple)">19<span class="tag">Watch</span></div>
-            </div>
-            <div class="row">
-              <div>
-                <div class="name">WindowServer</div>
-                <div class="meter"><b style="width: 12%; background: var(--green-deep)"></b></div>
-              </div>
-              <div class="score" style="color: var(--green-deep)">7<span class="tag">Stable</span></div>
-            </div>
-          </div>
-        </div>
+          <img
+            src="/assets/aetower-monitor.png"
+            alt="Aetower's Monitor tab: a metric ring header for CPU, memory, disk, network, and wakeups above a friction-ranked list of running entities."
+            width="1600"
+            height="1000"
+            loading="lazy"
+            decoding="async"
+          />
+        </figure>
       </section>
 
       <section>
@@ -652,7 +636,7 @@
             <h3>Activity Monitor drives you crazy</h3>
             <p>
               A flat wall of processes with no story. Aetower groups by entity and ranks everything
-              with a single friction score, so the thing straining your Mac is at the top — not
+              with a single friction score, so the thing straining your Mac is at the top, not
               buried on page three.
             </p>
           </div>
@@ -660,17 +644,17 @@
             <span class="num brand-text">02</span>
             <h3>See fast what your agents consume</h3>
             <p>
-              Per-agent run timelines, CPU and memory impact, and budgets — so you know at a glance
+              Per-agent run timelines, CPU and memory impact, and budgets, so you know at a glance
               whether the coding agent in the background is costing you a fan spin or a flat battery.
             </p>
           </div>
           <div class="reason">
             <span class="num brand-text">03</span>
-            <h3>Let an agent optimize performance</h3>
+            <h3>Manage performance your way</h3>
             <p>
-              Aetower ships a local <span class="mono">MCP</span> server. Point your agent at it and
-              it can read the same friction, wakeup, and signing data — then act on it — to tune your
-              system's performance for you.
+              The same friction, wakeup, and signing data is reachable from a native macOS app, a
+              <span class="mono">CLI</span>, and a local <span class="mono">MCP</span> server. Read
+              it and act on it by hand, in a script, or by pointing an AI agent at it.
             </p>
           </div>
         </div>
@@ -746,7 +730,7 @@
       </section>
 
       <footer>
-        Aetower is a Developer Preview — review local observability data before sharing screenshots,
+        Aetower is a Developer Preview. Review local observability data before sharing screenshots,
         exports, or support bundles. Licensed under
         <a href="https://spdx.org/licenses/AGPL-3.0-only.html">AGPL-3.0-only</a> ·
         <a href="/third-party-notices.md">Third-party notices</a>
