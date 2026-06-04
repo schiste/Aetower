@@ -26,6 +26,15 @@ use serde_json::{Value, json};
 use tungstenite::{Message, connect};
 use url::Url;
 
+mod chau7_adapter;
+mod chromium_adapter;
+mod docker_adapter;
+mod endpoint_security_adapter;
+mod helper_adapter;
+mod registry;
+
+use registry::AdapterRegistry;
+
 const CHROMIUM_TIMEOUT: Duration = Duration::from_millis(300);
 const DOCKER_TIMEOUT: Duration = Duration::from_millis(300);
 const CHROMIUM_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
@@ -64,6 +73,7 @@ const MAX_CHAU7_TABS: usize = 30;
 #[derive(Clone)]
 pub struct AdapterManager {
     state: Arc<Mutex<AdapterState>>,
+    registry: Arc<AdapterRegistry>,
 }
 
 #[derive(Debug, Default)]
@@ -287,47 +297,49 @@ struct EndpointSecurityLifecycleEvent {
 
 impl Default for AdapterManager {
     fn default() -> Self {
+        let state = Arc::new(Mutex::new(AdapterState {
+            diagnostics: None,
+            chromium_endpoint: env::var("AETOWER_CHROMIUM_ENDPOINT").ok(),
+            docker_socket_path: docker_socket_path(),
+            privileged_helper_path: env::var("AETOWER_PRIVILEGED_HELPER").ok(),
+            privileged_helper_enabled: env::var("AETOWER_PRIVILEGED_HELPER_ENABLED")
+                .ok()
+                .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+                .unwrap_or(false),
+            chromium_samples: BTreeMap::new(),
+            last_chromium_fetch_millis: 0,
+            last_chromium_success_millis: 0,
+            chromium_last_error: None,
+            cached_chromium_targets: Vec::new(),
+            last_docker_fetch_millis: 0,
+            last_docker_success_millis: 0,
+            docker_last_error: None,
+            cached_docker_containers: Vec::new(),
+            last_privileged_helper_fetch_millis: 0,
+            last_privileged_helper_success_millis: 0,
+            privileged_helper_last_error: None,
+            cached_privileged_helper_sample: None,
+            last_endpoint_security_fetch_millis: 0,
+            last_endpoint_security_success_millis: 0,
+            endpoint_security_last_error: None,
+            cached_endpoint_security_status: None,
+            cached_endpoint_security_sample: None,
+            chau7_socket_path: chau7_socket_path(),
+            last_chau7_fetch_millis: 0,
+            last_chau7_deep_fetch_millis: 0,
+            last_chau7_success_millis: 0,
+            chau7_last_error: None,
+            cached_chau7_snapshot: None,
+            signing_cache: HashMap::new(),
+            binary_reputation_enabled: false,
+            virustotal_api_key: None,
+            reputation_cache: HashMap::new(),
+            last_reputation_request_millis: 0,
+            version_cache: HashMap::new(),
+        }));
         Self {
-            state: Arc::new(Mutex::new(AdapterState {
-                diagnostics: None,
-                chromium_endpoint: env::var("AETOWER_CHROMIUM_ENDPOINT").ok(),
-                docker_socket_path: docker_socket_path(),
-                privileged_helper_path: env::var("AETOWER_PRIVILEGED_HELPER").ok(),
-                privileged_helper_enabled: env::var("AETOWER_PRIVILEGED_HELPER_ENABLED")
-                    .ok()
-                    .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-                    .unwrap_or(false),
-                chromium_samples: BTreeMap::new(),
-                last_chromium_fetch_millis: 0,
-                last_chromium_success_millis: 0,
-                chromium_last_error: None,
-                cached_chromium_targets: Vec::new(),
-                last_docker_fetch_millis: 0,
-                last_docker_success_millis: 0,
-                docker_last_error: None,
-                cached_docker_containers: Vec::new(),
-                last_privileged_helper_fetch_millis: 0,
-                last_privileged_helper_success_millis: 0,
-                privileged_helper_last_error: None,
-                cached_privileged_helper_sample: None,
-                last_endpoint_security_fetch_millis: 0,
-                last_endpoint_security_success_millis: 0,
-                endpoint_security_last_error: None,
-                cached_endpoint_security_status: None,
-                cached_endpoint_security_sample: None,
-                chau7_socket_path: chau7_socket_path(),
-                last_chau7_fetch_millis: 0,
-                last_chau7_deep_fetch_millis: 0,
-                last_chau7_success_millis: 0,
-                chau7_last_error: None,
-                cached_chau7_snapshot: None,
-                signing_cache: HashMap::new(),
-                binary_reputation_enabled: false,
-                virustotal_api_key: None,
-                reputation_cache: HashMap::new(),
-                last_reputation_request_millis: 0,
-                version_cache: HashMap::new(),
-            })),
+            registry: Arc::new(AdapterRegistry::new(Arc::clone(&state))),
+            state,
         }
     }
 }
@@ -353,7 +365,7 @@ impl AdapterManager {
 
     pub fn initial_capabilities(&self) -> BTreeMap<CapabilityKind, CapabilitySnapshot> {
         let now = time::now_millis();
-        BTreeMap::from([
+        let mut capabilities = BTreeMap::from([
             (
                 CapabilityKind::Accessibility,
                 CapabilitySnapshot {
@@ -388,27 +400,11 @@ impl AdapterManager {
                     last_updated_millis: now,
                 },
             ),
-            (
-                CapabilityKind::ChromiumDebug,
-                self.capability_snapshot(CapabilityKind::ChromiumDebug, now),
-            ),
-            (
-                CapabilityKind::DockerSocket,
-                self.capability_snapshot(CapabilityKind::DockerSocket, now),
-            ),
-            (
-                CapabilityKind::PrivilegedHelper,
-                self.capability_snapshot(CapabilityKind::PrivilegedHelper, now),
-            ),
-            (
-                CapabilityKind::EndpointSecurity,
-                self.capability_snapshot(CapabilityKind::EndpointSecurity, now),
-            ),
-            (
-                CapabilityKind::Chau7,
-                self.capability_snapshot(CapabilityKind::Chau7, now),
-            ),
-        ])
+        ]);
+        for adapter in self.registry.adapters() {
+            capabilities.insert(adapter.capability_kind(), adapter.capability_snapshot(now));
+        }
+        capabilities
     }
 
     pub fn capability_snapshot(
@@ -416,17 +412,16 @@ impl AdapterManager {
         kind: CapabilityKind,
         last_updated_millis: u64,
     ) -> CapabilitySnapshot {
-        let guard = self.state.lock();
-        let (state, detail) = capability_status(&guard, &kind);
-        let status_millis =
-            capability_status_timestamp(&guard, &kind).unwrap_or(last_updated_millis);
-        let health = capability_health(&guard, &kind, time::now_millis());
-        CapabilitySnapshot {
-            kind,
-            state,
-            health,
-            detail,
-            last_updated_millis: status_millis,
+        if let Some(adapter) = self.registry.adapter_for(&kind) {
+            adapter.capability_snapshot(last_updated_millis)
+        } else {
+            CapabilitySnapshot {
+                kind,
+                state: CapabilityState::Unknown,
+                health: CapabilityHealth::Configured,
+                detail: String::new(),
+                last_updated_millis,
+            }
         }
     }
 
@@ -760,413 +755,7 @@ impl AdapterManager {
     }
 
     pub fn refresh_caches(&self, capabilities: &BTreeMap<CapabilityKind, CapabilitySnapshot>) {
-        let now = time::now_millis();
-        let (
-            chromium_fetch_plan,
-            docker_fetch_plan,
-            privileged_helper_fetch_path,
-            endpoint_security_fetch_path,
-            chau7_fetch_path,
-        ) = {
-            let guard = self.state.lock();
-
-            let chromium_fetch_plan = capabilities
-                .get(&CapabilityKind::ChromiumDebug)
-                .filter(|capability| capability.state == CapabilityState::Granted)
-                .and_then(|_| {
-                    let is_stale = now.saturating_sub(guard.last_chromium_fetch_millis)
-                        >= CHROMIUM_REFRESH_INTERVAL_MILLIS;
-                    if is_stale {
-                        guard
-                            .chromium_config()
-                            .map(|config| (config, guard.chromium_samples.clone()))
-                    } else {
-                        None
-                    }
-                });
-
-            let docker_fetch_plan = capabilities
-                .get(&CapabilityKind::DockerSocket)
-                .filter(|capability| capability.state == CapabilityState::Granted)
-                .and_then(|_| {
-                    let is_stale = now.saturating_sub(guard.last_docker_fetch_millis)
-                        >= DOCKER_REFRESH_INTERVAL_MILLIS;
-                    if is_stale {
-                        Some(DockerAdapterConfig {
-                            socket_path: guard.docker_socket_path.clone(),
-                        })
-                    } else {
-                        None
-                    }
-                });
-
-            let privileged_helper_fetch_path = capabilities
-                .get(&CapabilityKind::PrivilegedHelper)
-                .filter(|capability| capability.state == CapabilityState::Granted)
-                .and_then(|_| {
-                    let is_stale = now.saturating_sub(guard.last_privileged_helper_fetch_millis)
-                        >= PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS;
-                    if is_stale {
-                        guard.privileged_helper_path()
-                    } else {
-                        None
-                    }
-                });
-
-            let endpoint_security_fetch_path = guard.privileged_helper_path().filter(|path| {
-                now.saturating_sub(guard.last_endpoint_security_fetch_millis)
-                    >= ENDPOINT_SECURITY_REFRESH_INTERVAL_MILLIS
-                    && Path::new(path).exists()
-            });
-
-            let chau7_fetch_path = capabilities
-                .get(&CapabilityKind::Chau7)
-                .filter(|capability| capability.state == CapabilityState::Granted)
-                .and_then(|_| {
-                    let is_stale = now.saturating_sub(guard.last_chau7_fetch_millis)
-                        >= CHAU7_REFRESH_INTERVAL_MILLIS;
-                    if !is_stale {
-                        return None;
-                    }
-                    let socket_path = resolved_chau7_socket_path(&guard)?;
-                    let needs_deep_refresh = guard.cached_chau7_snapshot.is_none()
-                        || now.saturating_sub(guard.last_chau7_deep_fetch_millis)
-                            >= CHAU7_DEEP_REFRESH_INTERVAL_MILLIS;
-                    if needs_deep_refresh {
-                        Some(Chau7FetchPlan {
-                            socket_path,
-                            mode: "deep",
-                            options: crate::chau7::Chau7FetchOptions {
-                                max_ai_tabs: CHAU7_DEEP_MAX_AI_TABS,
-                                max_repos: CHAU7_DEEP_MAX_REPOS,
-                                include_deep_context: true,
-                            },
-                        })
-                    } else {
-                        Some(Chau7FetchPlan {
-                            socket_path,
-                            mode: "light",
-                            options: crate::chau7::Chau7FetchOptions {
-                                max_ai_tabs: CHAU7_LIGHT_MAX_AI_TABS,
-                                max_repos: 0,
-                                include_deep_context: false,
-                            },
-                        })
-                    }
-                });
-
-            (
-                chromium_fetch_plan,
-                docker_fetch_plan,
-                privileged_helper_fetch_path,
-                endpoint_security_fetch_path,
-                chau7_fetch_path,
-            )
-        };
-
-        // Fetch all adapters in parallel using scoped threads.
-        std::thread::scope(|s| {
-            let chromium_handle = chromium_fetch_plan.map(|(config, mut samples)| {
-                s.spawn(move || {
-                    fetch_chromium_targets(&config, &mut samples).map(|targets| (targets, samples))
-                })
-            });
-            let docker_handle =
-                docker_fetch_plan.map(|config| s.spawn(move || fetch_docker_containers(&config)));
-            let helper_handle = privileged_helper_fetch_path
-                .map(|path| s.spawn(move || fetch_privileged_helper_sample(&path)));
-            let endpoint_security_handle = endpoint_security_fetch_path
-                .map(|path| s.spawn(move || fetch_endpoint_security_sample(&path)));
-            let chau7_handle = chau7_fetch_path.map(|plan| {
-                s.spawn(move || {
-                    crate::chau7::fetch_snapshot_with_options(&plan.socket_path, plan.options)
-                        .map(|snapshot| (snapshot, plan.mode))
-                })
-            });
-
-            if let Some(handle) = chromium_handle {
-                emit_adapter_refresh_event(
-                    &self.state,
-                    DiagnosticsLevel::Debug,
-                    DiagnosticsSubsystem::AdapterChromium,
-                    "adapter-refresh-started",
-                    "Starting Chromium adapter refresh.",
-                    now,
-                    |builder| builder.adapter("chromium"),
-                );
-                match handle.join().expect("chromium thread panicked") {
-                    Ok((fetched, samples)) => {
-                        let mut guard = self.state.lock();
-                        guard.chromium_samples = samples;
-                        guard.cached_chromium_targets = fetched;
-                        guard.last_chromium_fetch_millis = now;
-                        guard.last_chromium_success_millis = now;
-                        guard.chromium_last_error = None;
-                        let item_count = guard.cached_chromium_targets.len();
-                        drop(guard);
-                        emit_adapter_refresh_event(
-                            &self.state,
-                            DiagnosticsLevel::Info,
-                            DiagnosticsSubsystem::AdapterChromium,
-                            "adapter-refresh-succeeded",
-                            "Chromium adapter refresh succeeded.",
-                            now,
-                            |builder| builder.adapter("chromium").field("item_count", item_count),
-                        );
-                    }
-                    Err(error) => {
-                        let mut guard = self.state.lock();
-                        guard.last_chromium_fetch_millis = now;
-                        guard.chromium_last_error = Some(error);
-                        let error = guard.chromium_last_error.clone().unwrap_or_default();
-                        drop(guard);
-                        emit_adapter_refresh_event(
-                            &self.state,
-                            DiagnosticsLevel::Error,
-                            DiagnosticsSubsystem::AdapterChromium,
-                            "adapter-refresh-failed",
-                            "Chromium adapter refresh failed.",
-                            now,
-                            |builder| builder.adapter("chromium").field("error", error),
-                        );
-                    }
-                }
-            }
-            if let Some(handle) = docker_handle {
-                emit_adapter_refresh_event(
-                    &self.state,
-                    DiagnosticsLevel::Debug,
-                    DiagnosticsSubsystem::AdapterDocker,
-                    "adapter-refresh-started",
-                    "Starting Docker adapter refresh.",
-                    now,
-                    |builder| builder.adapter("docker"),
-                );
-                match handle.join().expect("docker thread panicked") {
-                    Ok(fetched) => {
-                        let mut guard = self.state.lock();
-                        guard.cached_docker_containers = fetched;
-                        guard.last_docker_fetch_millis = now;
-                        guard.last_docker_success_millis = now;
-                        guard.docker_last_error = None;
-                        let item_count = guard.cached_docker_containers.len();
-                        drop(guard);
-                        emit_adapter_refresh_event(
-                            &self.state,
-                            DiagnosticsLevel::Info,
-                            DiagnosticsSubsystem::AdapterDocker,
-                            "adapter-refresh-succeeded",
-                            "Docker adapter refresh succeeded.",
-                            now,
-                            |builder| builder.adapter("docker").field("item_count", item_count),
-                        );
-                    }
-                    Err(error) => {
-                        let mut guard = self.state.lock();
-                        guard.last_docker_fetch_millis = now;
-                        guard.docker_last_error = Some(error);
-                        let error = guard.docker_last_error.clone().unwrap_or_default();
-                        drop(guard);
-                        emit_adapter_refresh_event(
-                            &self.state,
-                            DiagnosticsLevel::Error,
-                            DiagnosticsSubsystem::AdapterDocker,
-                            "adapter-refresh-failed",
-                            "Docker adapter refresh failed.",
-                            now,
-                            |builder| builder.adapter("docker").field("error", error),
-                        );
-                    }
-                }
-            }
-            if let Some(handle) = helper_handle {
-                emit_adapter_refresh_event(
-                    &self.state,
-                    DiagnosticsLevel::Debug,
-                    DiagnosticsSubsystem::AdapterHelper,
-                    "adapter-refresh-started",
-                    "Starting privileged helper refresh.",
-                    now,
-                    |builder| builder.adapter("helper"),
-                );
-                match handle.join().expect("helper thread panicked") {
-                    Ok(fetched) => {
-                        let mut guard = self.state.lock();
-                        guard.cached_privileged_helper_sample = Some(fetched);
-                        guard.last_privileged_helper_fetch_millis = now;
-                        guard.last_privileged_helper_success_millis = now;
-                        guard.privileged_helper_last_error = None;
-                        let item_count = guard
-                            .cached_privileged_helper_sample
-                            .as_ref()
-                            .map(|sample| sample.processes.len())
-                            .unwrap_or(0);
-                        drop(guard);
-                        emit_adapter_refresh_event(
-                            &self.state,
-                            DiagnosticsLevel::Info,
-                            DiagnosticsSubsystem::AdapterHelper,
-                            "adapter-refresh-succeeded",
-                            "Privileged helper refresh succeeded.",
-                            now,
-                            |builder| builder.adapter("helper").field("item_count", item_count),
-                        );
-                    }
-                    Err(error) => {
-                        let mut guard = self.state.lock();
-                        guard.last_privileged_helper_fetch_millis = now;
-                        guard.privileged_helper_last_error = Some(error);
-                        let error = guard
-                            .privileged_helper_last_error
-                            .clone()
-                            .unwrap_or_default();
-                        drop(guard);
-                        emit_adapter_refresh_event(
-                            &self.state,
-                            DiagnosticsLevel::Error,
-                            DiagnosticsSubsystem::AdapterHelper,
-                            "adapter-refresh-failed",
-                            "Privileged helper refresh failed.",
-                            now,
-                            |builder| builder.adapter("helper").field("error", error),
-                        );
-                    }
-                }
-            }
-            if let Some(handle) = endpoint_security_handle {
-                emit_adapter_refresh_event(
-                    &self.state,
-                    DiagnosticsLevel::Debug,
-                    DiagnosticsSubsystem::AdapterHelper,
-                    "adapter-refresh-started",
-                    "Starting Endpoint Security helper refresh.",
-                    now,
-                    |builder| builder.adapter("endpoint-security"),
-                );
-                match handle.join().expect("endpoint security thread panicked") {
-                    Ok(fetched) => {
-                        let mut guard = self.state.lock();
-                        guard.cached_endpoint_security_status = Some(fetched.status.clone());
-                        guard.cached_endpoint_security_sample = Some(fetched.clone());
-                        guard.last_endpoint_security_fetch_millis = now;
-                        guard.last_endpoint_security_success_millis = now;
-                        guard.endpoint_security_last_error = fetched.status.last_error.clone();
-                        let item_count = fetched.events.len();
-                        let live = fetched.status.can_stream_events;
-                        drop(guard);
-                        emit_adapter_refresh_event(
-                            &self.state,
-                            if live {
-                                DiagnosticsLevel::Info
-                            } else {
-                                DiagnosticsLevel::Warn
-                            },
-                            DiagnosticsSubsystem::AdapterHelper,
-                            if live {
-                                "adapter-refresh-succeeded"
-                            } else {
-                                "adapter-refresh-degraded"
-                            },
-                            if live {
-                                "Endpoint Security helper refresh succeeded."
-                            } else {
-                                "Endpoint Security helper is configured but not yet able to stream events."
-                            },
-                            now,
-                            |builder| {
-                                builder
-                                    .adapter("endpoint-security")
-                                    .field("item_count", item_count)
-                                    .field("live", live)
-                            },
-                        );
-                    }
-                    Err(error) => {
-                        let mut guard = self.state.lock();
-                        guard.last_endpoint_security_fetch_millis = now;
-                        guard.endpoint_security_last_error = Some(error);
-                        let error = guard
-                            .endpoint_security_last_error
-                            .clone()
-                            .unwrap_or_default();
-                        drop(guard);
-                        emit_adapter_refresh_event(
-                            &self.state,
-                            DiagnosticsLevel::Error,
-                            DiagnosticsSubsystem::AdapterHelper,
-                            "adapter-refresh-failed",
-                            "Endpoint Security helper refresh failed.",
-                            now,
-                            |builder| builder.adapter("endpoint-security").field("error", error),
-                        );
-                    }
-                }
-            }
-            if let Some(handle) = chau7_handle {
-                emit_adapter_refresh_event(
-                    &self.state,
-                    DiagnosticsLevel::Debug,
-                    DiagnosticsSubsystem::AdapterChau7,
-                    "adapter-refresh-started",
-                    "Starting Chau7 adapter refresh.",
-                    now,
-                    |builder| builder.adapter("chau7"),
-                );
-                match handle.join().expect("chau7 thread panicked") {
-                    Ok((mut fetched, mode)) => {
-                        let mut guard = self.state.lock();
-                        if mode == "light"
-                            && let Some(previous) = guard.cached_chau7_snapshot.as_ref()
-                        {
-                            fetched.inherit_deep_context_from(previous);
-                        }
-                        guard.cached_chau7_snapshot = Some(fetched);
-                        guard.last_chau7_fetch_millis = now;
-                        if mode == "deep" {
-                            guard.last_chau7_deep_fetch_millis = now;
-                        }
-                        guard.last_chau7_success_millis = now;
-                        guard.chau7_last_error = None;
-                        let item_count = guard
-                            .cached_chau7_snapshot
-                            .as_ref()
-                            .map(|snapshot| snapshot.tabs.len())
-                            .unwrap_or(0);
-                        drop(guard);
-                        emit_adapter_refresh_event(
-                            &self.state,
-                            DiagnosticsLevel::Info,
-                            DiagnosticsSubsystem::AdapterChau7,
-                            "adapter-refresh-succeeded",
-                            "Chau7 adapter refresh succeeded.",
-                            now,
-                            |builder| {
-                                builder
-                                    .adapter("chau7")
-                                    .field("item_count", item_count)
-                                    .field("mode", mode)
-                            },
-                        );
-                    }
-                    Err(error) => {
-                        let mut guard = self.state.lock();
-                        guard.last_chau7_fetch_millis = now;
-                        guard.chau7_last_error = Some(error);
-                        let error = guard.chau7_last_error.clone().unwrap_or_default();
-                        drop(guard);
-                        emit_adapter_refresh_event(
-                            &self.state,
-                            DiagnosticsLevel::Error,
-                            DiagnosticsSubsystem::AdapterChau7,
-                            "adapter-refresh-failed",
-                            "Chau7 adapter refresh failed.",
-                            now,
-                            |builder| builder.adapter("chau7").field("error", error),
-                        );
-                    }
-                }
-            }
-        });
+        self.registry.refresh_caches(capabilities);
     }
 
     #[allow(clippy::collapsible_if)]
@@ -1817,6 +1406,391 @@ impl AdapterManager {
     }
 }
 
+fn refresh_chromium_cache(state: &Arc<Mutex<AdapterState>>) {
+    let now = time::now_millis();
+    let fetch_plan = {
+        let guard = state.lock();
+        let is_stale = now.saturating_sub(guard.last_chromium_fetch_millis)
+            >= CHROMIUM_REFRESH_INTERVAL_MILLIS;
+        if is_stale {
+            guard
+                .chromium_config()
+                .map(|config| (config, guard.chromium_samples.clone()))
+        } else {
+            None
+        }
+    };
+    let Some((config, mut samples)) = fetch_plan else {
+        return;
+    };
+
+    emit_adapter_refresh_event(
+        state,
+        DiagnosticsLevel::Debug,
+        DiagnosticsSubsystem::AdapterChromium,
+        "adapter-refresh-started",
+        "Starting Chromium adapter refresh.",
+        now,
+        |builder| builder.adapter("chromium"),
+    );
+    match fetch_chromium_targets(&config, &mut samples) {
+        Ok(fetched) => {
+            let mut guard = state.lock();
+            guard.chromium_samples = samples;
+            guard.cached_chromium_targets = fetched;
+            guard.last_chromium_fetch_millis = now;
+            guard.last_chromium_success_millis = now;
+            guard.chromium_last_error = None;
+            let item_count = guard.cached_chromium_targets.len();
+            drop(guard);
+            emit_adapter_refresh_event(
+                state,
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::AdapterChromium,
+                "adapter-refresh-succeeded",
+                "Chromium adapter refresh succeeded.",
+                now,
+                |builder| builder.adapter("chromium").field("item_count", item_count),
+            );
+        }
+        Err(error) => {
+            let mut guard = state.lock();
+            guard.last_chromium_fetch_millis = now;
+            guard.chromium_last_error = Some(error);
+            let error = guard.chromium_last_error.clone().unwrap_or_default();
+            drop(guard);
+            emit_adapter_refresh_event(
+                state,
+                DiagnosticsLevel::Error,
+                DiagnosticsSubsystem::AdapterChromium,
+                "adapter-refresh-failed",
+                "Chromium adapter refresh failed.",
+                now,
+                |builder| builder.adapter("chromium").field("error", error),
+            );
+        }
+    }
+}
+
+fn refresh_docker_cache(state: &Arc<Mutex<AdapterState>>) {
+    let now = time::now_millis();
+    let fetch_plan = {
+        let guard = state.lock();
+        let is_stale =
+            now.saturating_sub(guard.last_docker_fetch_millis) >= DOCKER_REFRESH_INTERVAL_MILLIS;
+        is_stale.then(|| DockerAdapterConfig {
+            socket_path: guard.docker_socket_path.clone(),
+        })
+    };
+    let Some(config) = fetch_plan else {
+        return;
+    };
+
+    emit_adapter_refresh_event(
+        state,
+        DiagnosticsLevel::Debug,
+        DiagnosticsSubsystem::AdapterDocker,
+        "adapter-refresh-started",
+        "Starting Docker adapter refresh.",
+        now,
+        |builder| builder.adapter("docker"),
+    );
+    match fetch_docker_containers(&config) {
+        Ok(fetched) => {
+            let mut guard = state.lock();
+            guard.cached_docker_containers = fetched;
+            guard.last_docker_fetch_millis = now;
+            guard.last_docker_success_millis = now;
+            guard.docker_last_error = None;
+            let item_count = guard.cached_docker_containers.len();
+            drop(guard);
+            emit_adapter_refresh_event(
+                state,
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::AdapterDocker,
+                "adapter-refresh-succeeded",
+                "Docker adapter refresh succeeded.",
+                now,
+                |builder| builder.adapter("docker").field("item_count", item_count),
+            );
+        }
+        Err(error) => {
+            let mut guard = state.lock();
+            guard.last_docker_fetch_millis = now;
+            guard.docker_last_error = Some(error);
+            let error = guard.docker_last_error.clone().unwrap_or_default();
+            drop(guard);
+            emit_adapter_refresh_event(
+                state,
+                DiagnosticsLevel::Error,
+                DiagnosticsSubsystem::AdapterDocker,
+                "adapter-refresh-failed",
+                "Docker adapter refresh failed.",
+                now,
+                |builder| builder.adapter("docker").field("error", error),
+            );
+        }
+    }
+}
+
+fn refresh_privileged_helper_cache(state: &Arc<Mutex<AdapterState>>) {
+    let now = time::now_millis();
+    let fetch_path = {
+        let guard = state.lock();
+        let is_stale = now.saturating_sub(guard.last_privileged_helper_fetch_millis)
+            >= PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS;
+        if is_stale {
+            guard.privileged_helper_path()
+        } else {
+            None
+        }
+    };
+    let Some(path) = fetch_path else {
+        return;
+    };
+
+    emit_adapter_refresh_event(
+        state,
+        DiagnosticsLevel::Debug,
+        DiagnosticsSubsystem::AdapterHelper,
+        "adapter-refresh-started",
+        "Starting privileged helper refresh.",
+        now,
+        |builder| builder.adapter("helper"),
+    );
+    match fetch_privileged_helper_sample(&path) {
+        Ok(fetched) => {
+            let mut guard = state.lock();
+            guard.cached_privileged_helper_sample = Some(fetched);
+            guard.last_privileged_helper_fetch_millis = now;
+            guard.last_privileged_helper_success_millis = now;
+            guard.privileged_helper_last_error = None;
+            let item_count = guard
+                .cached_privileged_helper_sample
+                .as_ref()
+                .map(|sample| sample.processes.len())
+                .unwrap_or(0);
+            drop(guard);
+            emit_adapter_refresh_event(
+                state,
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::AdapterHelper,
+                "adapter-refresh-succeeded",
+                "Privileged helper refresh succeeded.",
+                now,
+                |builder| builder.adapter("helper").field("item_count", item_count),
+            );
+        }
+        Err(error) => {
+            let mut guard = state.lock();
+            guard.last_privileged_helper_fetch_millis = now;
+            guard.privileged_helper_last_error = Some(error);
+            let error = guard
+                .privileged_helper_last_error
+                .clone()
+                .unwrap_or_default();
+            drop(guard);
+            emit_adapter_refresh_event(
+                state,
+                DiagnosticsLevel::Error,
+                DiagnosticsSubsystem::AdapterHelper,
+                "adapter-refresh-failed",
+                "Privileged helper refresh failed.",
+                now,
+                |builder| builder.adapter("helper").field("error", error),
+            );
+        }
+    }
+}
+
+fn refresh_endpoint_security_cache(state: &Arc<Mutex<AdapterState>>) {
+    let now = time::now_millis();
+    let fetch_path = {
+        let guard = state.lock();
+        guard.privileged_helper_path().filter(|path| {
+            now.saturating_sub(guard.last_endpoint_security_fetch_millis)
+                >= ENDPOINT_SECURITY_REFRESH_INTERVAL_MILLIS
+                && Path::new(path).exists()
+        })
+    };
+    let Some(path) = fetch_path else {
+        return;
+    };
+
+    emit_adapter_refresh_event(
+        state,
+        DiagnosticsLevel::Debug,
+        DiagnosticsSubsystem::AdapterHelper,
+        "adapter-refresh-started",
+        "Starting Endpoint Security helper refresh.",
+        now,
+        |builder| builder.adapter("endpoint-security"),
+    );
+    match fetch_endpoint_security_sample(&path) {
+        Ok(fetched) => {
+            let mut guard = state.lock();
+            guard.cached_endpoint_security_status = Some(fetched.status.clone());
+            guard.cached_endpoint_security_sample = Some(fetched.clone());
+            guard.last_endpoint_security_fetch_millis = now;
+            guard.last_endpoint_security_success_millis = now;
+            guard.endpoint_security_last_error = fetched.status.last_error.clone();
+            let item_count = fetched.events.len();
+            let live = fetched.status.can_stream_events;
+            drop(guard);
+            emit_adapter_refresh_event(
+                state,
+                if live {
+                    DiagnosticsLevel::Info
+                } else {
+                    DiagnosticsLevel::Warn
+                },
+                DiagnosticsSubsystem::AdapterHelper,
+                if live {
+                    "adapter-refresh-succeeded"
+                } else {
+                    "adapter-refresh-degraded"
+                },
+                if live {
+                    "Endpoint Security helper refresh succeeded."
+                } else {
+                    "Endpoint Security helper is configured but not yet able to stream events."
+                },
+                now,
+                |builder| {
+                    builder
+                        .adapter("endpoint-security")
+                        .field("item_count", item_count)
+                        .field("live", live)
+                },
+            );
+        }
+        Err(error) => {
+            let mut guard = state.lock();
+            guard.last_endpoint_security_fetch_millis = now;
+            guard.endpoint_security_last_error = Some(error);
+            let error = guard
+                .endpoint_security_last_error
+                .clone()
+                .unwrap_or_default();
+            drop(guard);
+            emit_adapter_refresh_event(
+                state,
+                DiagnosticsLevel::Error,
+                DiagnosticsSubsystem::AdapterHelper,
+                "adapter-refresh-failed",
+                "Endpoint Security helper refresh failed.",
+                now,
+                |builder| builder.adapter("endpoint-security").field("error", error),
+            );
+        }
+    }
+}
+
+fn refresh_chau7_cache(state: &Arc<Mutex<AdapterState>>) {
+    let now = time::now_millis();
+    let fetch_plan = {
+        let guard = state.lock();
+        let is_stale =
+            now.saturating_sub(guard.last_chau7_fetch_millis) >= CHAU7_REFRESH_INTERVAL_MILLIS;
+        if !is_stale {
+            return;
+        }
+        let Some(socket_path) = resolved_chau7_socket_path(&guard) else {
+            return;
+        };
+        let needs_deep_refresh = guard.cached_chau7_snapshot.is_none()
+            || now.saturating_sub(guard.last_chau7_deep_fetch_millis)
+                >= CHAU7_DEEP_REFRESH_INTERVAL_MILLIS;
+        if needs_deep_refresh {
+            Some(Chau7FetchPlan {
+                socket_path,
+                mode: "deep",
+                options: crate::chau7::Chau7FetchOptions {
+                    max_ai_tabs: CHAU7_DEEP_MAX_AI_TABS,
+                    max_repos: CHAU7_DEEP_MAX_REPOS,
+                    include_deep_context: true,
+                },
+            })
+        } else {
+            Some(Chau7FetchPlan {
+                socket_path,
+                mode: "light",
+                options: crate::chau7::Chau7FetchOptions {
+                    max_ai_tabs: CHAU7_LIGHT_MAX_AI_TABS,
+                    max_repos: 0,
+                    include_deep_context: false,
+                },
+            })
+        }
+    };
+    let Some(plan) = fetch_plan else {
+        return;
+    };
+
+    emit_adapter_refresh_event(
+        state,
+        DiagnosticsLevel::Debug,
+        DiagnosticsSubsystem::AdapterChau7,
+        "adapter-refresh-started",
+        "Starting Chau7 adapter refresh.",
+        now,
+        |builder| builder.adapter("chau7"),
+    );
+    match crate::chau7::fetch_snapshot_with_options(&plan.socket_path, plan.options) {
+        Ok(mut fetched) => {
+            let mut guard = state.lock();
+            if plan.mode == "light"
+                && let Some(previous) = guard.cached_chau7_snapshot.as_ref()
+            {
+                fetched.inherit_deep_context_from(previous);
+            }
+            guard.cached_chau7_snapshot = Some(fetched);
+            guard.last_chau7_fetch_millis = now;
+            if plan.mode == "deep" {
+                guard.last_chau7_deep_fetch_millis = now;
+            }
+            guard.last_chau7_success_millis = now;
+            guard.chau7_last_error = None;
+            let item_count = guard
+                .cached_chau7_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.tabs.len())
+                .unwrap_or(0);
+            drop(guard);
+            emit_adapter_refresh_event(
+                state,
+                DiagnosticsLevel::Info,
+                DiagnosticsSubsystem::AdapterChau7,
+                "adapter-refresh-succeeded",
+                "Chau7 adapter refresh succeeded.",
+                now,
+                |builder| {
+                    builder
+                        .adapter("chau7")
+                        .field("item_count", item_count)
+                        .field("mode", plan.mode)
+                },
+            );
+        }
+        Err(error) => {
+            let mut guard = state.lock();
+            guard.last_chau7_fetch_millis = now;
+            guard.chau7_last_error = Some(error);
+            let error = guard.chau7_last_error.clone().unwrap_or_default();
+            drop(guard);
+            emit_adapter_refresh_event(
+                state,
+                DiagnosticsLevel::Error,
+                DiagnosticsSubsystem::AdapterChau7,
+                "adapter-refresh-failed",
+                "Chau7 adapter refresh failed.",
+                now,
+                |builder| builder.adapter("chau7").field("error", error),
+            );
+        }
+    }
+}
+
 /// A binary is a reputation candidate when it is unsigned or ad-hoc *and*
 /// currently holds network connections — the same "risky" set the firewall-lite
 /// rules target. Signed binaries are never looked up.
@@ -1971,6 +1945,32 @@ impl AdapterState {
             None
         }
     }
+}
+
+fn adapter_capability_snapshot(
+    state: &Arc<Mutex<AdapterState>>,
+    kind: CapabilityKind,
+    last_updated_millis: u64,
+) -> CapabilitySnapshot {
+    let guard = state.lock();
+    let (state, detail) = capability_status(&guard, &kind);
+    let status_millis = capability_status_timestamp(&guard, &kind).unwrap_or(last_updated_millis);
+    let health = capability_health(&guard, &kind, time::now_millis());
+    CapabilitySnapshot {
+        kind,
+        state,
+        health,
+        detail,
+        last_updated_millis: status_millis,
+    }
+}
+
+fn adapter_capability_health(
+    state: &Arc<Mutex<AdapterState>>,
+    kind: &CapabilityKind,
+) -> CapabilityHealth {
+    let guard = state.lock();
+    capability_health(&guard, kind, time::now_millis())
 }
 
 fn emit_adapter_refresh_event<F>(
@@ -4350,106 +4350,108 @@ mod tests {
 
     #[test]
     fn chau7_enrichment_surfaces_runtime_state_and_repo_events() {
-        let manager = AdapterManager {
-            state: Arc::new(Mutex::new(AdapterState {
-                cached_chau7_snapshot: Some(crate::chau7::Chau7Snapshot {
-                    tabs: vec![
-                        crate::chau7::Chau7Tab {
-                            tab_id: "tab-1".to_owned(),
-                            title: "Aetower coding".to_owned(),
-                            cwd: "/Users/test/Aetower".to_owned(),
-                            repo_root: Some("/Users/test/Aetower".to_owned()),
-                            git_branch: Some("master".to_owned()),
-                            ai_provider: Some("claude".to_owned()),
-                            ai_session_id: Some("session-1".to_owned()),
-                            status: "running".to_owned(),
-                            active_app: Some("Claude".to_owned()),
-                            window_id: 7,
-                        },
-                        crate::chau7::Chau7Tab {
-                            tab_id: "tab-2".to_owned(),
-                            title: "Detached scratchpad".to_owned(),
-                            cwd: "/Users/test/Scratch".to_owned(),
-                            repo_root: Some("/Users/test/Scratch".to_owned()),
-                            git_branch: Some("feature/demo".to_owned()),
-                            ai_provider: Some("codex".to_owned()),
-                            ai_session_id: Some("session-2".to_owned()),
-                            status: "idle".to_owned(),
-                            active_app: Some("Codex".to_owned()),
-                            window_id: 8,
-                        },
-                    ],
-                    sessions: vec![
-                        crate::chau7::Chau7Session {
-                            session_id: "session-1".to_owned(),
-                            provider: "claude".to_owned(),
-                            repo_path: "/Users/test/Aetower".to_owned(),
-                            run_count: 6,
-                            last_active: "2026-04-08T14:22:26.696Z".to_owned(),
-                        },
-                        crate::chau7::Chau7Session {
-                            session_id: "session-2".to_owned(),
-                            provider: "codex".to_owned(),
-                            repo_path: "/Users/test/Scratch".to_owned(),
-                            run_count: 2,
-                            last_active: "2026-04-08T14:25:00.000Z".to_owned(),
-                        },
-                    ],
-                    runtime_info: Some(crate::chau7::Chau7RuntimeInfo {
-                        app_version: Some("1.4.2".to_owned()),
-                        build_sha: Some("abc123def456".to_owned()),
-                        build_timestamp: Some("2026-04-08T14:20:00Z".to_owned()),
-                        build_channel: Some("dev".to_owned()),
-                    }),
-                    repo_stats: BTreeMap::from([(
-                        "/Users/test/Aetower".to_owned(),
-                        crate::chau7::Chau7RepoStats {
-                            total_runs: 6,
-                            total_tokens: 82_167_695,
-                            total_cost: 12.5,
-                            total_turns: 503,
-                            providers: vec!["claude".to_owned(), "codex".to_owned()],
-                        },
-                    )]),
-                    recent_runs: vec![],
-                    tab_statuses: BTreeMap::from([(
-                        "tab-1".to_owned(),
-                        crate::chau7::Chau7TabStatus {
-                            title: "Claude".to_owned(),
-                            git_branch: Some("master".to_owned()),
-                            status: "running".to_owned(),
-                            is_at_prompt: true,
-                            shell_loading: false,
-                            cto_active: true,
-                            raw_status: Some("running".to_owned()),
-                        },
-                    )]),
-                    runtime_sessions: BTreeMap::from([(
-                        "session-1".to_owned(),
-                        crate::chau7::Chau7RuntimeSessionStatus {
-                            state: "ready".to_owned(),
-                            turn_count: 3,
-                            last_completed_turn_id: Some("t_3".to_owned()),
-                            last_exit_reason: Some("error".to_owned()),
-                            pending_approval: Some(crate::chau7::Chau7PendingApproval {
-                                description: "Claude needs your permission to use Bash".to_owned(),
-                            }),
-                            active_run: Some(crate::chau7::Chau7ActiveRun {
-                                duration_so_far_ms: 438_172,
-                            }),
-                            child_session_count: 2,
-                        },
-                    )]),
-                    repo_events: BTreeMap::from([(
-                        "/Users/test/Aetower".to_owned(),
-                        vec![crate::chau7::Chau7RepoEvent {
-                            event_type: "permission".to_owned(),
-                            message: "Claude needs your permission to use Write".to_owned(),
-                        }],
-                    )]),
+        let state = Arc::new(Mutex::new(AdapterState {
+            cached_chau7_snapshot: Some(crate::chau7::Chau7Snapshot {
+                tabs: vec![
+                    crate::chau7::Chau7Tab {
+                        tab_id: "tab-1".to_owned(),
+                        title: "Aetower coding".to_owned(),
+                        cwd: "/Users/test/Aetower".to_owned(),
+                        repo_root: Some("/Users/test/Aetower".to_owned()),
+                        git_branch: Some("master".to_owned()),
+                        ai_provider: Some("claude".to_owned()),
+                        ai_session_id: Some("session-1".to_owned()),
+                        status: "running".to_owned(),
+                        active_app: Some("Claude".to_owned()),
+                        window_id: 7,
+                    },
+                    crate::chau7::Chau7Tab {
+                        tab_id: "tab-2".to_owned(),
+                        title: "Detached scratchpad".to_owned(),
+                        cwd: "/Users/test/Scratch".to_owned(),
+                        repo_root: Some("/Users/test/Scratch".to_owned()),
+                        git_branch: Some("feature/demo".to_owned()),
+                        ai_provider: Some("codex".to_owned()),
+                        ai_session_id: Some("session-2".to_owned()),
+                        status: "idle".to_owned(),
+                        active_app: Some("Codex".to_owned()),
+                        window_id: 8,
+                    },
+                ],
+                sessions: vec![
+                    crate::chau7::Chau7Session {
+                        session_id: "session-1".to_owned(),
+                        provider: "claude".to_owned(),
+                        repo_path: "/Users/test/Aetower".to_owned(),
+                        run_count: 6,
+                        last_active: "2026-04-08T14:22:26.696Z".to_owned(),
+                    },
+                    crate::chau7::Chau7Session {
+                        session_id: "session-2".to_owned(),
+                        provider: "codex".to_owned(),
+                        repo_path: "/Users/test/Scratch".to_owned(),
+                        run_count: 2,
+                        last_active: "2026-04-08T14:25:00.000Z".to_owned(),
+                    },
+                ],
+                runtime_info: Some(crate::chau7::Chau7RuntimeInfo {
+                    app_version: Some("1.4.2".to_owned()),
+                    build_sha: Some("abc123def456".to_owned()),
+                    build_timestamp: Some("2026-04-08T14:20:00Z".to_owned()),
+                    build_channel: Some("dev".to_owned()),
                 }),
-                ..AdapterState::default()
-            })),
+                repo_stats: BTreeMap::from([(
+                    "/Users/test/Aetower".to_owned(),
+                    crate::chau7::Chau7RepoStats {
+                        total_runs: 6,
+                        total_tokens: 82_167_695,
+                        total_cost: 12.5,
+                        total_turns: 503,
+                        providers: vec!["claude".to_owned(), "codex".to_owned()],
+                    },
+                )]),
+                recent_runs: vec![],
+                tab_statuses: BTreeMap::from([(
+                    "tab-1".to_owned(),
+                    crate::chau7::Chau7TabStatus {
+                        title: "Claude".to_owned(),
+                        git_branch: Some("master".to_owned()),
+                        status: "running".to_owned(),
+                        is_at_prompt: true,
+                        shell_loading: false,
+                        cto_active: true,
+                        raw_status: Some("running".to_owned()),
+                    },
+                )]),
+                runtime_sessions: BTreeMap::from([(
+                    "session-1".to_owned(),
+                    crate::chau7::Chau7RuntimeSessionStatus {
+                        state: "ready".to_owned(),
+                        turn_count: 3,
+                        last_completed_turn_id: Some("t_3".to_owned()),
+                        last_exit_reason: Some("error".to_owned()),
+                        pending_approval: Some(crate::chau7::Chau7PendingApproval {
+                            description: "Claude needs your permission to use Bash".to_owned(),
+                        }),
+                        active_run: Some(crate::chau7::Chau7ActiveRun {
+                            duration_so_far_ms: 438_172,
+                        }),
+                        child_session_count: 2,
+                    },
+                )]),
+                repo_events: BTreeMap::from([(
+                    "/Users/test/Aetower".to_owned(),
+                    vec![crate::chau7::Chau7RepoEvent {
+                        event_type: "permission".to_owned(),
+                        message: "Claude needs your permission to use Write".to_owned(),
+                    }],
+                )]),
+            }),
+            ..AdapterState::default()
+        }));
+        let manager = AdapterManager {
+            registry: Arc::new(super::registry::AdapterRegistry::new(Arc::clone(&state))),
+            state,
         };
 
         let capabilities = BTreeMap::from([(
