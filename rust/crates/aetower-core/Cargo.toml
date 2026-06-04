@@ -14,6 +14,7 @@ aetower-sensors = { path = "../aetower-sensors" }
 aetower-history = { path = "../aetower-history" }
 aetower-identity = { path = "../aetower-identity" }
 aetower-model = { path = "../aetower-model" }
+aetower-policy = { path = "../aetower-policy" }
 aetower-reputation = { path = "../aetower-reputation" }
 aetower-regression = { path = "../aetower-regression" }
 aetower-telemetry = { path = "../aetower-telemetry" }

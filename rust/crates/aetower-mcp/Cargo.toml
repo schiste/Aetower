@@ -11,6 +11,7 @@ name = "aetower_mcp"
 aetower-diagnostics = { path = "../aetower-diagnostics" }
 aetower-persistence = { path = "../aetower-persistence" }
 aetower-model = { path = "../aetower-model" }
+aetower-policy = { path = "../aetower-policy" }
 dirs = "5"
 libc = "0.2"
 rhai.workspace = true

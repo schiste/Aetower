@@ -44,6 +44,7 @@ dependencies = [
  "aetower-identity",
  "aetower-model",
  "aetower-persistence",
+ "aetower-policy",
  "aetower-regression",
  "aetower-reputation",
  "aetower-sensors",
@@ -129,6 +130,7 @@ dependencies = [
  "aetower-diagnostics",
  "aetower-model",
  "aetower-persistence",
+ "aetower-policy",
  "dirs",
  "libc",
  "rhai",
@@ -156,6 +158,13 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "aetower-policy"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

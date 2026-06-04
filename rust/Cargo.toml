@@ -12,6 +12,7 @@ members = [
   "crates/aetower-diagnostics",
   "crates/aetower-sensors",
   "crates/aetower-telemetry",
+  "crates/aetower-policy",
   "crates/aetower-reputation",
   "crates/aetower-regression",
   "crates/aetower-core",

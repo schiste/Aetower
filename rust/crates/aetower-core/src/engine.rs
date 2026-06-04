@@ -16,6 +16,11 @@ use aetower_model::{
     CapabilityKind, CapabilitySnapshot, CapabilityState, FrontmostAppState, HostSnapshot,
     HostTrend, RuntimeLagMetrics, SystemSnapshot, ThermalState,
 };
+use aetower_policy::{
+    COMPRESSED_MEMORY_CRITICAL_BYTES, COMPRESSED_MEMORY_WARNING_BYTES,
+    MEMORY_PRESSURE_CRITICAL_RATIO, MEMORY_PRESSURE_WARNING_RATIO, SWAP_CRITICAL_BYTES,
+    SWAP_WARNING_BYTES, WAKEUPS_CRITICAL, WAKEUPS_WARNING,
+};
 use aetower_telemetry::{OtlpConfig, TelemetryExporter};
 use aetower_time::{self as aet_time, ADAPTER_TICK, FAST_TICK};
 use parking_lot::Mutex;
@@ -66,15 +71,6 @@ const MCP_HELPER_LIFECYCLE_AGE_BUCKET_MILLIS: u64 = 15 * 60 * 1000;
 const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 12 * 60 * 60 * 1000;
 const SYSTEM_MARKER_PREDICATE: &str = "(eventMessage CONTAINS[c] \"Previous shutdown cause\") OR (eventMessage CONTAINS[c] \"Entering Sleep state\") OR (eventMessage CONTAINS[c] \"Wake reason\") OR (eventMessage CONTAINS[c] \"Wake from\") OR (eventMessage CONTAINS[c] \"panic(cpu\") OR (eventMessage CONTAINS[c] \"userspace watchdog timeout\") OR (eventMessage CONTAINS[c] \"thermal pressure\") OR (eventMessage CONTAINS[c] \"low power mode\")";
 const HOST_INCIDENT_PERSIST_INTERVAL_MILLIS: u64 = 60 * 60 * 1000;
-const MEMORY_PRESSURE_WARNING_RATIO: f64 = 0.80;
-const MEMORY_PRESSURE_CRITICAL_RATIO: f64 = 0.90;
-const COMPRESSED_MEMORY_WARNING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-const COMPRESSED_MEMORY_CRITICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
-const SWAP_WARNING_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-const SWAP_CRITICAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
-const WAKEUPS_WARNING: f32 = 12_000.0;
-const WAKEUPS_CRITICAL: f32 = 25_000.0;
-
 const UNIFIED_LOG_TIMESTAMP_FORMAT: &[::time::format_description::FormatItem<'static>] = format_description!(
     "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond][offset_hour sign:mandatory][offset_minute]"
 );

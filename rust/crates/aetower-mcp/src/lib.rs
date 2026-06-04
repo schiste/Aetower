@@ -11,6 +11,11 @@ use aetower_diagnostics::{
     DiagnosticsEvent, DiagnosticsLevel, DiagnosticsOverview, DiagnosticsQuery, DiagnosticsSubsystem,
 };
 use aetower_model::{RuntimeLagMetrics, SystemSnapshot};
+pub(crate) use aetower_policy::{
+    COMPRESSED_MEMORY_CRITICAL_BYTES, COMPRESSED_MEMORY_WARNING_BYTES,
+    MEMORY_PRESSURE_CRITICAL_RATIO, MEMORY_PRESSURE_WARNING_RATIO, SWAP_CRITICAL_BYTES,
+    SWAP_WARNING_BYTES, SeverityBand, WAKEUPS_CRITICAL, WAKEUPS_WARNING,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -114,14 +119,6 @@ const MIN_SELF_WATCH_INTERVAL_MILLIS: u64 = 250;
 const MAX_SELF_WATCH_INTERVAL_MILLIS: u64 = 60_000;
 const DEFAULT_RUNTIME_BURST_WINDOW_MINUTES: u64 = 10;
 const DEFAULT_RUNTIME_BURST_EVENT_LIMIT: usize = 64;
-pub(crate) const MEMORY_PRESSURE_WARNING_RATIO: f64 = 0.80;
-pub(crate) const MEMORY_PRESSURE_CRITICAL_RATIO: f64 = 0.90;
-pub(crate) const COMPRESSED_MEMORY_WARNING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-pub(crate) const COMPRESSED_MEMORY_CRITICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
-pub(crate) const SWAP_WARNING_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-pub(crate) const SWAP_CRITICAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
-pub(crate) const WAKEUPS_WARNING: f32 = 12_000.0;
-pub(crate) const WAKEUPS_CRITICAL: f32 = 25_000.0;
 const HISTORY_STORE_WARNING_BYTES: u64 = 512 * 1024 * 1024;
 const HISTORY_STORE_CRITICAL_BYTES: u64 = 1024 * 1024 * 1024;
 const HISTORY_WAL_WARNING_BYTES: u64 = 32 * 1024 * 1024;
@@ -155,24 +152,6 @@ pub struct HistorySummaryResponse {
     pub pending_writes: u64,
     pub store_modified_millis: Option<u64>,
     pub wal_modified_millis: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum SeverityBand {
-    Info,
-    Warning,
-    Critical,
-}
-
-impl SeverityBand {
-    pub(crate) fn score(self) -> u8 {
-        match self {
-            Self::Info => 1,
-            Self::Warning => 2,
-            Self::Critical => 3,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
