@@ -182,6 +182,7 @@ public enum ProcessOperatorQuickOperation: Equatable {
 
 public struct ProcessOperatorRequest: Identifiable, Equatable {
     public let id = UUID()
+    let createdAt = Date()
     let pid: UInt32
     let operation: ProcessOperatorQuickOperation
 }

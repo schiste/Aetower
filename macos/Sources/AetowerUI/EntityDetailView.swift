@@ -322,7 +322,7 @@ public struct EntityDetailView: View {
                     entity: entity,
                     state: state,
                     processEntities: processTreeSeedEntities,
-                    quickRequest: localOperatorRequest ?? processOperatorRequest
+                    quickRequest: effectiveOperatorRequest
                 )
                 sectionPicker
                 selectedSectionContent
@@ -425,6 +425,19 @@ public struct EntityDetailView: View {
             return
         case .why, .processes, .analysis:
             state.loadEntityStaticAnalysis(entityID: entity.entityId)
+        }
+    }
+
+    private var effectiveOperatorRequest: ProcessOperatorRequest? {
+        switch (localOperatorRequest, processOperatorRequest) {
+        case let (local?, external?):
+            return local.createdAt >= external.createdAt ? local : external
+        case let (local?, nil):
+            return local
+        case let (nil, external?):
+            return external
+        case (nil, nil):
+            return nil
         }
     }
 

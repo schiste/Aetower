@@ -62,7 +62,12 @@ struct ProcessOperatorPanel: View {
             .padding(.top, 4)
         }
         .task(id: entity.entityId) {
-            if selectedPID == nil {
+            let availablePIDs = Set(processes.map(\.id))
+            if let selectedPID, !availablePIDs.contains(selectedPID) {
+                self.selectedPID = processes.first?.id
+                pendingAction = nil
+                executingAction = nil
+            } else if selectedPID == nil {
                 selectedPID = processes.first?.id
             }
             if quickRequest != nil {
@@ -71,10 +76,6 @@ struct ProcessOperatorPanel: View {
                 return
             }
             state.refreshProcessActionHistory()
-        }
-        .onChange(of: selectedPID) { _, _ in
-            pendingAction = nil
-            executingAction = nil
         }
         .onChange(of: quickRequest?.id) { _, _ in
             applyQuickRequest()
@@ -105,7 +106,7 @@ struct ProcessOperatorPanel: View {
 
             ForEach(processes) { process in
                 Button {
-                    selectedPID = process.id
+                    selectProcessForNavigation(process.id)
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: selectedPID == process.id ? "largecircle.fill.circle" : "circle")
@@ -137,15 +138,15 @@ struct ProcessOperatorPanel: View {
     @ViewBuilder
     private func processContextMenu(for pid: UInt32) -> some View {
         Button("Inspect PID \(pid)") {
-            selectedPID = pid
+            selectProcessForNavigation(pid)
             state.runProcessInspection(pid: pid)
         }
         Button("Open files & sockets") {
-            selectedPID = pid
+            selectProcessForNavigation(pid)
             state.runProcessOpenResources(pid: pid)
         }
         Button("Run 3s sample") {
-            selectedPID = pid
+            selectProcessForNavigation(pid)
             state.runProcessSample(pid: pid)
         }
         Divider()
@@ -1005,17 +1006,27 @@ struct ProcessOperatorPanel: View {
 
     private func applyQuickRequest() {
         guard let quickRequest else { return }
-        selectedPID = quickRequest.pid
         switch quickRequest.operation {
         case .inspect:
+            selectProcessForNavigation(quickRequest.pid)
             state.runProcessInspection(pid: quickRequest.pid)
         case .resources:
+            selectProcessForNavigation(quickRequest.pid)
             state.runProcessOpenResources(pid: quickRequest.pid)
         case .sample:
+            selectProcessForNavigation(quickRequest.pid)
             state.runProcessSample(pid: quickRequest.pid)
         case .previewAction(let action):
             previewAction(action, pid: quickRequest.pid)
         }
+    }
+
+    private func selectProcessForNavigation(_ pid: UInt32) {
+        if selectedPID != pid {
+            pendingAction = nil
+            executingAction = nil
+        }
+        selectedPID = pid
     }
 
     private func targetSummary(_ targetPids: [UInt32], fallbackPID: UInt32?) -> String {
