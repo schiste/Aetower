@@ -2,6 +2,28 @@
 
 All notable public changes to Aetower should be documented here.
 
+## 0.53 (build 467) - 2026-06-04
+
+Developer Preview feature release.
+
+Release metadata:
+
+- Bundle identifier: `com.aeptus.aetower`
+- Sparkle appcast: `https://aetower.dev/releases/appcast.xml`
+- Release archive prefix: `https://aetower.dev/releases/`
+
+- Added a fast, operator-oriented Startup & Persistence view with richer risk
+  scoring, change detection, runtime correlation, deep audit support, and safe
+  reveal/copy/focus actions.
+- Added configurable Monitor metric-ring placement for top, bottom, left, or
+  right layouts.
+- Added Monitor ring focus controls for top and bottom layouts, including
+  full-width focused graphs and inline pin/unpin controls.
+- Added stable seven-ring Monitor presentation by keeping GPU visible even when
+  GPU activity is currently idle.
+- Added release/support metadata for Monitor metric-ring placement and focus
+  settings.
+
 ## 0.52 (build 462) - 2026-06-03
 
 Developer Preview feature release.
