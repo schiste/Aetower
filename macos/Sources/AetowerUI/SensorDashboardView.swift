@@ -35,6 +35,10 @@ public struct SensorDashboardView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                if hasAnySensor {
+                    atAGlanceStrip
+                }
+
                 if !hasAnySensor {
                     ContentUnavailableView(
                         "No sensor data",
@@ -55,6 +59,92 @@ public struct SensorDashboardView: View {
             }
             .frame(maxWidth: 920, alignment: .leading)
             .padding(AetowerDesign.Spacing.xxl)
+        }
+    }
+
+    private var atAGlanceStrip: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 142), spacing: AetowerDesign.Spacing.sm)],
+            alignment: .leading,
+            spacing: AetowerDesign.Spacing.sm
+        ) {
+            glanceCard(
+                "Thermal",
+                value: thermalSummaryLabel,
+                detail: thermalDetail,
+                systemImage: "thermometer.medium",
+                tone: thermalSummaryTone
+            )
+            glanceCard(
+                "Temperature",
+                value: peakTemperatureLabel,
+                detail: "highest reported package or GPU sensor",
+                systemImage: "thermometer.sun",
+                tone: peakTemperatureTone
+            )
+            glanceCard(
+                "Power",
+                value: totalAttributedWatts > 0 ? "~\(EnergyTranslation.formatPower(totalAttributedWatts))" : "No draw",
+                detail: totalAttributedWatts > 0 ? "attributed to observed processes" : "waiting for energy attribution",
+                systemImage: "bolt.fill",
+                tone: AetowerDesign.Tone.energy
+            )
+            glanceCard(
+                "Fans",
+                value: fanSummaryLabel,
+                detail: host.fans.isEmpty ? "not reported on this Mac" : "current hardware cooling",
+                systemImage: "fan",
+                tone: fanSummaryTone
+            )
+            glanceCard(
+                "Storage",
+                value: storageSummaryLabel,
+                detail: host.disks.isEmpty ? "no SMART channel yet" : "\(host.disks.count) SMART device(s)",
+                systemImage: "internaldrive",
+                tone: storageSummaryTone
+            )
+            glanceCard(
+                "Battery",
+                value: batterySummaryLabel,
+                detail: host.onBattery ? "running from battery" : "connected to AC power",
+                systemImage: host.onBattery ? "battery.75percent" : "powerplug",
+                tone: batterySummaryTone
+            )
+        }
+    }
+
+    private func glanceCard(
+        _ title: String,
+        value: String,
+        detail: String,
+        systemImage: String,
+        tone: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(tone)
+                Text(title.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text(value)
+                .font(.system(size: 19, weight: .semibold, design: .rounded))
+                .foregroundStyle(tone)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+            Text(detail)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(2)
+        }
+        .padding(AetowerDesign.Spacing.sm)
+        .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(tone.opacity(0.45))
+                .frame(height: 2)
         }
     }
 
@@ -375,6 +465,103 @@ public struct SensorDashboardView: View {
     private func temperatureTone(_ celsius: Float) -> Color {
         if celsius >= 90 { return AetowerDesign.Status.error }
         if celsius >= 75 { return AetowerDesign.Status.warning }
+        return AetowerDesign.Status.success
+    }
+
+    private var thermalSummaryLabel: String {
+        sensorEnumLabel(host.thermalState)
+    }
+
+    private var thermalDetail: String {
+        if let forecast = state.snapshot.thermalForecast,
+           let minutes = forecast.minutesToThrottle
+        {
+            return String(format: "throttle risk in ~%.0f min", minutes)
+        }
+        return host.lowPowerMode ? "low power mode enabled" : "current system pressure"
+    }
+
+    private var thermalSummaryTone: Color {
+        switch host.thermalState {
+        case .nominal: return AetowerDesign.Status.success
+        case .fair: return AetowerDesign.Status.warning
+        case .serious, .critical: return AetowerDesign.Status.error
+        }
+    }
+
+    private var peakTemperatureLabel: String {
+        guard let peak = peakTemperatureCelsius else {
+            return "No sensor"
+        }
+        return String(format: "%.1f °C", peak)
+    }
+
+    private var peakTemperatureTone: Color {
+        guard let peak = peakTemperatureCelsius else {
+            return AetowerDesign.Status.neutral
+        }
+        return temperatureTone(peak)
+    }
+
+    private var peakTemperatureCelsius: Float? {
+        let cpuPeaks = host.cpuTemperatures.map(\.celsius)
+        return (cpuPeaks + [host.gpuTemperatureCelsius].compactMap { $0 }).max()
+    }
+
+    private var fanSummaryLabel: String {
+        guard !host.fans.isEmpty else {
+            return "Passive"
+        }
+        let maxRpm = host.fans.map(\.currentRpm).max() ?? 0
+        return "\(host.fans.count) · \(Int(maxRpm)) rpm"
+    }
+
+    private var fanSummaryTone: Color {
+        guard let hottestFan = host.fans.max(by: { $0.currentRpm < $1.currentRpm }) else {
+            return AetowerDesign.Status.neutral
+        }
+        let range = max(1, hottestFan.maxRpm - hottestFan.minRpm)
+        let normalized = (hottestFan.currentRpm - hottestFan.minRpm) / range
+        if normalized >= 0.85 { return AetowerDesign.Status.error }
+        if normalized >= 0.6 { return AetowerDesign.Status.warning }
+        return AetowerDesign.Status.success
+    }
+
+    private var storageSummaryLabel: String {
+        guard !host.disks.isEmpty else {
+            return "No data"
+        }
+        let unhealthy = host.disks.filter {
+            let label = sensorEnumLabel($0.status).lowercased()
+            return label.contains("fail") || label.contains("warn") || label.contains("degrad")
+        }.count
+        return unhealthy == 0 ? "Healthy" : "\(unhealthy) flagged"
+    }
+
+    private var storageSummaryTone: Color {
+        guard !host.disks.isEmpty else {
+            return AetowerDesign.Status.neutral
+        }
+        return storageSummaryLabel == "Healthy" ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+    }
+
+    private var batterySummaryLabel: String {
+        if host.onBattery, let charge = host.batteryChargePercent {
+            return "\(charge)%"
+        }
+        if let health = host.batteryHealth?.healthPercent {
+            return String(format: "%.0f%% health", health)
+        }
+        return host.onBattery ? "Battery" : "AC power"
+    }
+
+    private var batterySummaryTone: Color {
+        if host.onBattery, let charge = host.batteryChargePercent, charge <= 20 {
+            return AetowerDesign.Status.warning
+        }
+        if let health = host.batteryHealth?.healthPercent, health < 80 {
+            return AetowerDesign.Status.warning
+        }
         return AetowerDesign.Status.success
     }
 
