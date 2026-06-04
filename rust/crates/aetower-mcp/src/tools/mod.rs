@@ -1,5 +1,6 @@
 //! MCP tool handlers, grouped by domain.
 
+pub(crate) mod descriptors;
 pub(crate) mod diagnostics;
 pub(crate) mod export;
 pub(crate) mod history;
