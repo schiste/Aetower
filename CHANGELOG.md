@@ -2,7 +2,7 @@
 
 All notable public changes to Aetower should be documented here.
 
-## 0.54 (build 478) - 2026-06-04
+## 0.54 (build 497) - 2026-06-04
 
 Developer Preview maintenance release.
 
