@@ -36,10 +36,10 @@ Do not present Developer Preview builds as production-ready or App Store-ready.
 
 ## Install and first run
 
-Latest Developer Preview: **0.51 build 418**.
+Latest Developer Preview: **0.54 build 478**.
 
 Download the release from
-[GitHub Releases](https://github.com/schiste/Aetower/releases/tag/v0.51).
+[GitHub Releases](https://github.com/schiste/Aetower/releases/tag/v0.54).
 The release pipeline now produces a signed/notarized drag-and-drop DMG,
 installer PKG, Sparkle ZIP, matching source archive, Homebrew cask artifact,
 Sparkle appcast, third-party notices, and checksums.

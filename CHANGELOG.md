@@ -2,6 +2,29 @@
 
 All notable public changes to Aetower should be documented here.
 
+## 0.54 (build 478) - 2026-06-04
+
+Developer Preview maintenance release.
+
+Release metadata:
+
+- Bundle identifier: `com.aeptus.aetower`
+- Sparkle appcast: `https://aetower.dev/releases/appcast.xml`
+- Release archive prefix: `https://aetower.dev/releases/`
+
+- Added a merged Activity workspace that combines History and Timeline into a
+  single section with Overview, History, Timeline, and Storage modes.
+- Added hardened process actions with per-click action IDs, PID identity
+  safeguards, target blast-radius metadata, richer command results, and
+  follow-up verification for terminate flows.
+- Added a guarded privileged-helper process action command path that remains
+  opt-in and disabled by default for public builds.
+- Added clearer process-action UI feedback, including sent-action state,
+  verification outcomes, command stderr/stdout, target outcomes, helper status,
+  and restore-previous-priority support.
+- Fixed Monitor click responsiveness by preventing ordinary entity/PID
+  selection from starting eager process inspections or static analysis spinners.
+
 ## 0.53 (build 467) - 2026-06-04
 
 Developer Preview feature release.
