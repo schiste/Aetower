@@ -30,31 +30,6 @@ private enum NotificationCategory: String {
     }
 }
 
-private struct ProcessActionRequestEnvelopePayload: Encodable {
-    let aetowerProcessActionContext = 1
-    let actionID: String?
-    let reason: String?
-    let expectedTargets: [ProcessActionTargetIdentityPayload]
-    let restoreNiceValue: Int?
-    let privilegedHelperApproved: Bool
-}
-
-private struct ProcessActionTargetIdentityPayload: Encodable {
-    let pid: UInt32
-    let startTimeMillis: UInt64?
-    let executablePath: String?
-    let displayName: String?
-    let niceValue: Int?
-
-    init(_ identity: ProcessActionTargetIdentityModel) {
-        self.pid = identity.pid
-        self.startTimeMillis = identity.startTimeMillis
-        self.executablePath = identity.executablePath
-        self.displayName = identity.displayName
-        self.niceValue = identity.niceValue
-    }
-}
-
 @MainActor
 @Observable
 public final class AppState {
@@ -182,16 +157,22 @@ public final class AppState {
     private(set) var automationRules: [AutomationRule] = AutomationStore.load()
     private var seenAutomationEventIds: Set<String> = []
     private var automationSeeded = false
-    private(set) var processActionPreviewReports: [String: ProcessActionReportModel] = [:]
-    private var processActionPreviewActionIDs: [String: String] = [:]
-    private(set) var processActionReports: [UInt32: ProcessActionReportModel] = [:]
-    private(set) var processActionHistory: ProcessActionHistoryReportModel?
+    var processActionPreviewReports: [String: ProcessActionReportModel] {
+        processActionController.processActionPreviewReports
+    }
+    var processActionReports: [UInt32: ProcessActionReportModel] {
+        processActionController.processActionReports
+    }
+    var processActionHistory: ProcessActionHistoryReportModel? {
+        processActionController.processActionHistory
+    }
     public var lastError: String?
 
     @ObservationIgnored
     private let bridge: EngineBridge
     @ObservationIgnored
     private let permissionCoordinator: PermissionCoordinator
+    private let processActionController: ProcessActionController
     @ObservationIgnored
     private let lagMonitor = LagMonitor()
     @ObservationIgnored
@@ -422,6 +403,7 @@ public final class AppState {
         )
         self.bridge = bridge
         self.permissionCoordinator = permissionCoordinator
+        self.processActionController = ProcessActionController(bridge: bridge)
         self.snapshot = initialSnapshot
         self.lastObservedSequence = initialSnapshot.sequence
     }
@@ -1627,15 +1609,24 @@ public final class AppState {
     }
 
     func entityAnalysisIsLoading(_ entityID: String, kind: EntityAnalysisKind) -> Bool {
-        entityAnalysisLoadingKeys.contains(entityAnalysisKey(entityID, kind: kind))
+        if kind == .processAction || kind == .processActionHistory {
+            return processActionController.isLoading(entityID, kind: kind)
+        }
+        return entityAnalysisLoadingKeys.contains(entityAnalysisKey(entityID, kind: kind))
     }
 
     func entityAnalysisError(_ entityID: String, kind: EntityAnalysisKind) -> String? {
-        entityAnalysisErrorMessages[entityAnalysisKey(entityID, kind: kind)]
+        if kind == .processAction || kind == .processActionHistory {
+            return processActionController.error(entityID, kind: kind)
+        }
+        return entityAnalysisErrorMessages[entityAnalysisKey(entityID, kind: kind)]
     }
 
     func entityAnalysisUpdatedAt(_ entityID: String, kind: EntityAnalysisKind) -> Date? {
-        entityAnalysisUpdatedAtByKey[entityAnalysisKey(entityID, kind: kind)]
+        if kind == .processAction || kind == .processActionHistory {
+            return processActionController.updatedAt(entityID, kind: kind)
+        }
+        return entityAnalysisUpdatedAtByKey[entityAnalysisKey(entityID, kind: kind)]
     }
 
     func loadEntityStaticAnalysis(entityID: String, force: Bool = false) {
@@ -2050,42 +2041,15 @@ public final class AppState {
         restoreNiceValue: Int? = nil,
         privilegedHelperApproved: Bool = false
     ) {
-        let bridge = self.bridge
-        let encodedReason = processActionRequestEnvelope(
+        processActionController.runProcessAction(
+            pid: pid,
+            action: action,
             reason: reason,
             actionID: actionID,
             expectedTargets: expectedTargets,
             restoreNiceValue: restoreNiceValue,
             privilegedHelperApproved: privilegedHelperApproved
         )
-        processActionReports[pid] = nil
-        setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processAction, isLoading: true)
-        Task(priority: .utility) { [weak self] in
-            let result = bridge.processActionJSON(
-                pid: pid,
-                action: action.rawValue,
-                dryRun: false,
-                reason: encodedReason
-            )
-            let historyResult = bridge.processActionHistoryJSON()
-            await MainActor.run {
-                guard let self else { return }
-                self.processActionReports[pid] = self.decodeJsonQueryResult(
-                    result,
-                    as: ProcessActionReportModel.self
-                )
-                self.finishEntityAnalysis(
-                    self.processAnalysisKey(pid),
-                    kind: .processAction,
-                    result: result,
-                    fallback: "Process action failed."
-                )
-                self.processActionHistory = self.decodeJsonQueryResult(
-                    historyResult,
-                    as: ProcessActionHistoryReportModel.self
-                )
-            }
-        }
     }
 
     func runProcessActionPreview(
@@ -2094,43 +2058,12 @@ public final class AppState {
         reason: String? = nil,
         actionID: String? = nil
     ) {
-        let bridge = self.bridge
-        let previewKey = processActionPreviewKey(pid: pid, action: action)
-        let resolvedActionID = trimmedNonEmpty(actionID) ?? UUID().uuidString
-        let encodedReason = processActionRequestEnvelope(
+        processActionController.runProcessActionPreview(
+            pid: pid,
+            action: action,
             reason: reason,
-            actionID: resolvedActionID,
-            expectedTargets: [],
-            restoreNiceValue: nil,
-            privilegedHelperApproved: false
+            actionID: actionID
         )
-        processActionPreviewActionIDs[previewKey] = resolvedActionID
-        processActionPreviewReports[previewKey] = nil
-        setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processAction, isLoading: true)
-        Task(priority: .utility) { [weak self] in
-            let result = bridge.processActionJSON(
-                pid: pid,
-                action: action.rawValue,
-                dryRun: true,
-                reason: encodedReason
-            )
-            await MainActor.run {
-                guard let self else { return }
-                guard self.processActionPreviewActionIDs[previewKey] == resolvedActionID else {
-                    return
-                }
-                self.processActionPreviewReports[previewKey] = self.decodeJsonQueryResult(
-                    result,
-                    as: ProcessActionReportModel.self
-                )
-                self.finishEntityAnalysis(
-                    self.processAnalysisKey(pid),
-                    kind: .processAction,
-                    result: result,
-                    fallback: "Process action preview failed."
-                )
-            }
-        }
     }
 
     func processActionPreview(
@@ -2138,9 +2071,11 @@ public final class AppState {
         action: ProcessActionKind,
         matchingActionID: String? = nil
     ) -> ProcessActionReportModel? {
-        let report = processActionPreviewReports[processActionPreviewKey(pid: pid, action: action)]
-        guard let matchingActionID else { return report }
-        return report?.actionId == matchingActionID ? report : nil
+        processActionController.processActionPreview(
+            pid: pid,
+            action: action,
+            matchingActionID: matchingActionID
+        )
     }
 
     func clearProcessActionPreview(
@@ -2148,77 +2083,18 @@ public final class AppState {
         action: ProcessActionKind,
         cancelLoading: Bool = false
     ) {
-        let previewKey = processActionPreviewKey(pid: pid, action: action)
-        processActionPreviewReports.removeValue(forKey: previewKey)
-        processActionPreviewActionIDs.removeValue(forKey: previewKey)
-        if cancelLoading {
-            setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processAction, isLoading: false)
-        }
+        processActionController.clearProcessActionPreview(
+            pid: pid,
+            action: action,
+            cancelLoading: cancelLoading
+        )
     }
 
     func refreshProcessActionHistory(windowMinutes: UInt32 = 60, limit: UInt32 = 25) {
-        let bridge = self.bridge
-        setEntityAnalysisLoading("process-actions", kind: .processActionHistory, isLoading: true)
-        Task(priority: .utility) { [weak self] in
-            let result = bridge.processActionHistoryJSON(
-                windowMinutes: windowMinutes,
-                limit: limit
-            )
-            await MainActor.run {
-                guard let self else { return }
-                self.processActionHistory = self.decodeJsonQueryResult(
-                    result,
-                    as: ProcessActionHistoryReportModel.self
-                )
-                self.finishEntityAnalysis(
-                    "process-actions",
-                    kind: .processActionHistory,
-                    result: result,
-                    fallback: "Process action history could not be loaded."
-                )
-            }
-        }
-    }
-
-    private func processActionPreviewKey(pid: UInt32, action: ProcessActionKind) -> String {
-        "\(pid)|\(action.rawValue)"
-    }
-
-    private func processActionRequestEnvelope(
-        reason: String?,
-        actionID: String?,
-        expectedTargets: [ProcessActionTargetIdentityModel],
-        restoreNiceValue: Int?,
-        privilegedHelperApproved: Bool
-    ) -> String? {
-        let trimmedReason = trimmedNonEmpty(reason)
-        let hasMetadata = trimmedNonEmpty(actionID) != nil
-            || !expectedTargets.isEmpty
-            || restoreNiceValue != nil
-            || privilegedHelperApproved
-        guard hasMetadata else {
-            return trimmedReason
-        }
-        let payload = ProcessActionRequestEnvelopePayload(
-            actionID: actionID,
-            reason: trimmedReason,
-            expectedTargets: expectedTargets.map(ProcessActionTargetIdentityPayload.init),
-            restoreNiceValue: restoreNiceValue,
-            privilegedHelperApproved: privilegedHelperApproved
+        processActionController.refreshProcessActionHistory(
+            windowMinutes: windowMinutes,
+            limit: limit
         )
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        guard let data = try? encoder.encode(payload),
-              let json = String(data: data, encoding: .utf8)
-        else {
-            return trimmedReason
-        }
-        return json
-    }
-
-    private func trimmedNonEmpty(_ value: String?) -> String? {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
     }
 
     public func loadHistory(force: Bool = false) {
