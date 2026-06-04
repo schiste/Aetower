@@ -4974,6 +4974,38 @@ mod tests {
     }
 
     #[test]
+    fn process_action_terminate_uses_follow_up_verification() {
+        let mut child = TestCommand::new("/bin/sh")
+            .arg("-c")
+            .arg("trap 'exit 0' TERM; while :; do sleep 1; done")
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn shell: {error}"));
+        let pid = child.id();
+        let context = ProcessActionRequestContext {
+            expected_targets: vec![expected_process_action_target(pid)],
+            ..ProcessActionRequestContext::default()
+        };
+
+        let report =
+            build_process_action_with_context(&FakeSource, pid, "terminate", false, context)
+                .unwrap_or_else(|error| panic!("{error}"));
+
+        let _ = child.wait();
+        assert!(report.executed);
+        assert!(report.success);
+        assert_eq!(report.signal, "TERM");
+        assert_eq!(report.verification, "verified-exited");
+        assert!(!report.follow_up_checks.is_empty());
+        assert_eq!(
+            report
+                .follow_up_checks
+                .last()
+                .map(|check| check.verification.as_str()),
+            Some("verified-exited")
+        );
+    }
+
+    #[test]
     fn process_action_suspend_and_resume_verify_disposable_child() {
         let mut child = TestCommand::new("/bin/sleep")
             .arg("30")

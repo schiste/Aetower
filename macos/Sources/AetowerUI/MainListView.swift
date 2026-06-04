@@ -178,6 +178,32 @@ private enum ListMode: String, CaseIterable, Identifiable {
     }
 }
 
+private struct SidePanelQuickStopSubmission: Equatable {
+    let entityID: String
+    let pid: UInt32
+    let action: ProcessActionKind
+    let actionID: String
+    let submittedAt: Date
+}
+
+private struct SidePanelQuickStatusLine: View {
+    let icon: String
+    let color: Color
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+                .frame(width: 14)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 private struct SortChip: View {
     let title: String
     let tone: Color
@@ -1141,6 +1167,7 @@ public struct MainListView: View {
     @State private var groupingTask: Task<[EntityGroup], Never>?
     @State private var isGrouping = false
     @State private var processOperatorRequest: ProcessOperatorRequest?
+    @State private var quickStopSubmission: SidePanelQuickStopSubmission?
     @State private var advancedFilterText = ""
     @State private var showAdvancedFilter = false
     @FocusState private var searchFieldFocused: Bool
@@ -1265,6 +1292,7 @@ public struct MainListView: View {
     private func detailPanel(for entity: EntitySnapshot) -> some View {
         let processTreeEntities = selectedProcessTreeEntities(for: entity)
         let quickStopPID = primaryProcessID(in: processTreeEntities)
+        let quickStopDisplayPID = quickStopPID ?? retainedQuickStopPID(for: entity.entityId)
 
         return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
@@ -1295,8 +1323,12 @@ public struct MainListView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
 
-                if let quickStopPID {
-                    sidePanelQuickStop(entity: entity, pid: quickStopPID)
+                if let quickStopDisplayPID {
+                    sidePanelQuickStop(
+                        entity: entity,
+                        pid: quickStopDisplayPID,
+                        targetVisible: quickStopPID != nil
+                    )
                 }
             }
             .padding(.horizontal, AetowerDesign.Spacing.lg)
@@ -1314,39 +1346,217 @@ public struct MainListView: View {
         }
     }
 
-    private func sidePanelQuickStop(entity: EntitySnapshot, pid: UInt32) -> some View {
-        HStack(spacing: 8) {
-            Label("Quick stop", systemImage: "hand.raised.fill")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+    private func sidePanelQuickStop(
+        entity: EntitySnapshot,
+        pid: UInt32,
+        targetVisible: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Label("Quick stop", systemImage: "hand.raised.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
-            Text("PID \(pid)")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.tertiary)
+                Text("PID \(pid)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
 
-            Spacer()
+                Spacer()
 
-            sidePanelStopButton(.terminate, entity: entity, pid: pid)
-            sidePanelStopButton(.forceKill, entity: entity, pid: pid)
+                sidePanelStopButton(.terminate, entity: entity, pid: pid, targetVisible: targetVisible)
+                sidePanelStopButton(.forceKill, entity: entity, pid: pid, targetVisible: targetVisible)
+            }
+
+            sidePanelQuickStopStatus(entity: entity, pid: pid, targetVisible: targetVisible)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
     }
 
-    private func sidePanelStopButton(_ action: ProcessActionKind, entity: EntitySnapshot, pid: UInt32) -> some View {
+    private func sidePanelStopButton(
+        _ action: ProcessActionKind,
+        entity: EntitySnapshot,
+        pid: UInt32,
+        targetVisible: Bool
+    ) -> some View {
         Button(role: action.isDestructive ? .destructive : nil) {
-            requestProcessOperation(
-                entityID: entity.entityId,
-                pid: pid,
-                operation: .previewAction(action)
-            )
+            runSidePanelQuickStop(action, entity: entity, pid: pid)
         } label: {
             Label(action.label, systemImage: action.systemImage)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(action == .forceKill ? AetowerDesign.Status.error : AetowerDesign.Status.warning)
         }
         .buttonStyle(.borderless)
+        .disabled(!targetVisible || state.entityAnalysisIsLoading(processAnalysisKey(pid), kind: .processAction))
+        .help(targetVisible ? "Validate the target, send \(action.label.lowercased()), and verify the result." : "Target PID is no longer visible.")
+    }
+
+    @ViewBuilder
+    private func sidePanelQuickStopStatus(
+        entity: EntitySnapshot,
+        pid: UInt32,
+        targetVisible: Bool
+    ) -> some View {
+        let submission = quickStopSubmissionMatching(entityID: entity.entityId, pid: pid)
+
+        if !targetVisible, submission != nil {
+            SidePanelQuickStatusLine(
+                icon: "checkmark.seal.fill",
+                color: AetowerDesign.Status.success,
+                text: "PID \(pid) is no longer visible in the current snapshot."
+            )
+        }
+
+        if let submission {
+            sidePanelQuickStopSubmissionStatus(submission)
+        }
+
+        if submission != nil,
+           let error = state.entityAnalysisError(processAnalysisKey(pid), kind: .processAction) {
+            SidePanelQuickStatusLine(
+                icon: "exclamationmark.triangle.fill",
+                color: AetowerDesign.Status.error,
+                text: error
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func sidePanelQuickStopSubmissionStatus(_ submission: SidePanelQuickStopSubmission) -> some View {
+        if state.entityAnalysisIsLoading(processAnalysisKey(submission.pid), kind: .processAction) {
+            SidePanelQuickStatusLine(
+                icon: "paperplane.fill",
+                color: AetowerDesign.Status.ready,
+                text: "\(submission.action.label) \(shortActionID(submission.actionID)) started; Aetower is validating the target, sending the signal, and waiting for verification."
+            )
+        }
+
+        if let report = state.processActionReports[submission.pid],
+           report.actionId == submission.actionID {
+            VStack(alignment: .leading, spacing: 6) {
+                SidePanelQuickStatusLine(
+                    icon: sidePanelQuickStopResultIcon(report),
+                    color: sidePanelQuickStopResultColor(report),
+                    text: "\(report.action) \(shortActionID(submission.actionID)): \(report.message)"
+                )
+                if let verification = sidePanelQuickStopEffectiveVerification(report) {
+                    Text("Verification: \(sidePanelQuickStopVerificationLabel(verification))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                sidePanelQuickStopFollowUpStatus(report)
+                if let stderr = report.commandResult?.stderr, !stderr.isEmpty {
+                    Text("macOS stderr: \(stderr)")
+                        .font(.caption2)
+                        .foregroundStyle(AetowerDesign.Status.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button("Clear quick-stop status") {
+                    quickStopSubmission = nil
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    @ViewBuilder
+    private func sidePanelQuickStopFollowUpStatus(_ report: ProcessActionReportModel) -> some View {
+        if let checks = report.followUpChecks, !checks.isEmpty {
+            ForEach(checks) { check in
+                Text("\(check.delayMillis / 1_000)s follow-up: \(sidePanelQuickStopVerificationLabel(check.verification))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func runSidePanelQuickStop(
+        _ action: ProcessActionKind,
+        entity: EntitySnapshot,
+        pid: UInt32
+    ) {
+        let actionID = UUID().uuidString
+        quickStopSubmission = SidePanelQuickStopSubmission(
+            entityID: entity.entityId,
+            pid: pid,
+            action: action,
+            actionID: actionID,
+            submittedAt: Date()
+        )
+        state.runVerifiedProcessAction(
+            pid: pid,
+            action: action,
+            reason: "Quick stop from Monitor side panel.",
+            actionID: actionID
+        )
+    }
+
+    private func quickStopSubmissionMatching(entityID: String, pid: UInt32) -> SidePanelQuickStopSubmission? {
+        guard let quickStopSubmission,
+              quickStopSubmission.entityID == entityID,
+              quickStopSubmission.pid == pid
+        else {
+            return nil
+        }
+        return quickStopSubmission
+    }
+
+    private func retainedQuickStopPID(for entityID: String) -> UInt32? {
+        if let quickStopSubmission, quickStopSubmission.entityID == entityID {
+            return quickStopSubmission.pid
+        }
+        return nil
+    }
+
+    private func shortActionID(_ actionID: String) -> String {
+        "#\(actionID.suffix(8))"
+    }
+
+    private func processAnalysisKey(_ pid: UInt32) -> String {
+        "pid:\(pid)"
+    }
+
+    private func sidePanelQuickStopResultIcon(_ report: ProcessActionReportModel) -> String {
+        guard report.success else { return "xmark.octagon.fill" }
+        return sidePanelQuickStopVerificationIsConfirmed(sidePanelQuickStopEffectiveVerification(report))
+            ? "checkmark.circle.fill"
+            : "exclamationmark.triangle.fill"
+    }
+
+    private func sidePanelQuickStopResultColor(_ report: ProcessActionReportModel) -> Color {
+        guard report.success else { return AetowerDesign.Status.error }
+        return sidePanelQuickStopVerificationIsConfirmed(sidePanelQuickStopEffectiveVerification(report))
+            ? AetowerDesign.Status.success
+            : AetowerDesign.Status.warning
+    }
+
+    private func sidePanelQuickStopEffectiveVerification(_ report: ProcessActionReportModel) -> String? {
+        report.followUpChecks?.last?.verification ?? report.verification
+    }
+
+    private func sidePanelQuickStopVerificationIsConfirmed(_ verification: String?) -> Bool {
+        switch verification {
+        case "verified-exited", "verified-suspended", "verified-running",
+            "verified-priority", "command-accepted", "preview":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func sidePanelQuickStopVerificationLabel(_ verification: String) -> String {
+        switch verification {
+        case "verified-exited", "exited": return "Exited / no longer running"
+        case "targets-still-visible", "still-visible": return "Still visible"
+        case "command-failed": return "Command failed"
+        case "preview": return "Preview only"
+        case "target-visible": return "Target visible"
+        case "target-not-visible": return "Target missing"
+        default: return verification.replacingOccurrences(of: "-", with: " ")
+        }
     }
 
     private var rankedEntitiesSection: some View {
@@ -2098,7 +2308,7 @@ public struct MainListView: View {
         if let selectedEntityGroup, selectedEntityGroup.root.entityId == entity.entityId {
             return selectedEntityGroup.members
         }
-        return state.snapshot.entities
+        return [entity]
     }
 
     private var normalizedSearchQuery: String {

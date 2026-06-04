@@ -1780,6 +1780,22 @@ public final class AppState {
         )
     }
 
+    func runVerifiedProcessAction(
+        pid: UInt32,
+        action: ProcessActionKind,
+        reason: String? = nil,
+        actionID: String? = nil,
+        privilegedHelperApproved: Bool = false
+    ) {
+        processActionController.runVerifiedProcessAction(
+            pid: pid,
+            action: action,
+            reason: reason,
+            actionID: actionID,
+            privilegedHelperApproved: privilegedHelperApproved
+        )
+    }
+
     func runProcessActionPreview(
         pid: UInt32,
         action: ProcessActionKind,

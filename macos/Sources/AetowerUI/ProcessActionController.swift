@@ -70,7 +70,7 @@ final class ProcessActionController {
         restoreNiceValue: Int? = nil,
         privilegedHelperApproved: Bool = false
     ) {
-        let encodedReason = processActionRequestEnvelope(
+        let encodedReason = Self.processActionRequestEnvelope(
             reason: reason,
             actionID: actionID,
             expectedTargets: expectedTargets,
@@ -107,6 +107,98 @@ final class ProcessActionController {
         }
     }
 
+    func runVerifiedProcessAction(
+        pid: UInt32,
+        action: ProcessActionKind,
+        reason: String? = nil,
+        actionID: String? = nil,
+        privilegedHelperApproved: Bool = false
+    ) {
+        let resolvedActionID = Self.trimmedNonEmpty(actionID) ?? UUID().uuidString
+        let previewReason = Self.processActionRequestEnvelope(
+            reason: reason,
+            actionID: resolvedActionID,
+            expectedTargets: [],
+            restoreNiceValue: nil,
+            privilegedHelperApproved: false
+        )
+        processActionReports[pid] = nil
+        setLoading(processAnalysisKey(pid), kind: .processAction, isLoading: true)
+        Task(priority: .utility) { [weak self, bridge] in
+            let previewResult = bridge.processActionJSON(
+                pid: pid,
+                action: action.rawValue,
+                dryRun: true,
+                reason: previewReason
+            )
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+            guard previewResult.errorMessage == nil,
+                  let previewJson = previewResult.json,
+                  let previewData = previewJson.data(using: .utf8),
+                  let preview = try? decoder.decode(ProcessActionReportModel.self, from: previewData)
+            else {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.finish(
+                        self.processAnalysisKey(pid),
+                        kind: .processAction,
+                        result: previewResult,
+                        fallback: "Process action preview failed before the signal was sent."
+                    )
+                }
+                return
+            }
+
+            guard let expectedTargets = preview.targetIdentities,
+                  !expectedTargets.isEmpty
+            else {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.finishWithError(
+                        self.processAnalysisKey(pid),
+                        kind: .processAction,
+                        message: "Signal not sent: Aetower could not capture target identity for PID \(pid)."
+                    )
+                }
+                return
+            }
+
+            let encodedReason = Self.processActionRequestEnvelope(
+                reason: reason,
+                actionID: resolvedActionID,
+                expectedTargets: expectedTargets,
+                restoreNiceValue: nil,
+                privilegedHelperApproved: privilegedHelperApproved
+            )
+            let result = bridge.processActionJSON(
+                pid: pid,
+                action: action.rawValue,
+                dryRun: false,
+                reason: encodedReason
+            )
+            let historyResult = bridge.processActionHistoryJSON()
+            await MainActor.run {
+                guard let self else { return }
+                self.processActionReports[pid] = self.decodeJsonQueryResult(
+                    result,
+                    as: ProcessActionReportModel.self
+                )
+                self.finish(
+                    self.processAnalysisKey(pid),
+                    kind: .processAction,
+                    result: result,
+                    fallback: "Process action failed."
+                )
+                self.processActionHistory = self.decodeJsonQueryResult(
+                    historyResult,
+                    as: ProcessActionHistoryReportModel.self
+                )
+            }
+        }
+    }
+
     func runProcessActionPreview(
         pid: UInt32,
         action: ProcessActionKind,
@@ -114,8 +206,8 @@ final class ProcessActionController {
         actionID: String? = nil
     ) {
         let previewKey = processActionPreviewKey(pid: pid, action: action)
-        let resolvedActionID = trimmedNonEmpty(actionID) ?? UUID().uuidString
-        let encodedReason = processActionRequestEnvelope(
+        let resolvedActionID = Self.trimmedNonEmpty(actionID) ?? UUID().uuidString
+        let encodedReason = Self.processActionRequestEnvelope(
             reason: reason,
             actionID: resolvedActionID,
             expectedTargets: [],
@@ -201,7 +293,7 @@ final class ProcessActionController {
         "\(pid)|\(action.rawValue)"
     }
 
-    private func processActionRequestEnvelope(
+    private static func processActionRequestEnvelope(
         reason: String?,
         actionID: String?,
         expectedTargets: [ProcessActionTargetIdentityModel],
@@ -265,6 +357,16 @@ final class ProcessActionController {
         }
     }
 
+    private func finishWithError(
+        _ entityID: String,
+        kind: EntityAnalysisKind,
+        message: String
+    ) {
+        let key = entityAnalysisKey(entityID, kind: kind)
+        loadingKeys.remove(key)
+        errorMessages[key] = message
+    }
+
     private func jsonDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -288,7 +390,7 @@ final class ProcessActionController {
         return nil
     }
 
-    private func trimmedNonEmpty(_ value: String?) -> String? {
+    private static func trimmedNonEmpty(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
     }

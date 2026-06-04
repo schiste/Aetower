@@ -163,6 +163,7 @@ pub(crate) fn build_process_action_with_context(
         &before_states,
         success,
     );
+    let verification = final_process_action_verification(&verification, &follow_up_checks);
     let message = if success {
         format!(
             "{} {}",
@@ -850,6 +851,16 @@ fn process_action_verification_sentence(verification: &str) -> &'static str {
         "priority-not-confirmed" => "Aetower could not confirm the requested nice value.",
         _ => "Aetower captured bounded post-action verification.",
     }
+}
+
+fn final_process_action_verification(
+    immediate_verification: &str,
+    follow_up_checks: &[ProcessActionFollowUpCheck],
+) -> String {
+    follow_up_checks
+        .last()
+        .map(|check| check.verification.clone())
+        .unwrap_or_else(|| immediate_verification.to_owned())
 }
 
 fn status_is_stopped(status: Option<&str>) -> bool {
