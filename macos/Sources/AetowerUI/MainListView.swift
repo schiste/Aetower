@@ -1640,8 +1640,8 @@ public struct MainListView: View {
         pid: UInt32,
         operation: ProcessOperatorQuickOperation
     ) {
-        selectEntity(entityID)
         processOperatorRequest = ProcessOperatorRequest(pid: pid, operation: operation)
+        selectEntity(entityID)
     }
 
     private func primaryProcessID(in members: [EntitySnapshot]) -> UInt32? {

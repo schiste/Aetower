@@ -70,15 +70,12 @@ struct ProcessOperatorPanel: View {
             } else if selectedPID == nil {
                 selectedPID = processes.first?.id
             }
-            if quickRequest != nil {
-                applyQuickRequest()
-                state.refreshProcessActionHistory()
-                return
-            }
             state.refreshProcessActionHistory()
         }
-        .onChange(of: quickRequest?.id) { _, _ in
+        .task(id: quickRequest?.id) {
+            guard quickRequest != nil else { return }
             applyQuickRequest()
+            state.refreshProcessActionHistory()
         }
     }
 
