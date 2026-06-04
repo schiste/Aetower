@@ -183,6 +183,7 @@ public final class AppState {
     private var seenAutomationEventIds: Set<String> = []
     private var automationSeeded = false
     private(set) var processActionPreviewReports: [String: ProcessActionReportModel] = [:]
+    private var processActionPreviewActionIDs: [String: String] = [:]
     private(set) var processActionReports: [UInt32: ProcessActionReportModel] = [:]
     private(set) var processActionHistory: ProcessActionHistoryReportModel?
     public var lastError: String?
@@ -2095,13 +2096,15 @@ public final class AppState {
     ) {
         let bridge = self.bridge
         let previewKey = processActionPreviewKey(pid: pid, action: action)
+        let resolvedActionID = trimmedNonEmpty(actionID) ?? UUID().uuidString
         let encodedReason = processActionRequestEnvelope(
             reason: reason,
-            actionID: actionID,
+            actionID: resolvedActionID,
             expectedTargets: [],
             restoreNiceValue: nil,
             privilegedHelperApproved: false
         )
+        processActionPreviewActionIDs[previewKey] = resolvedActionID
         processActionPreviewReports[previewKey] = nil
         setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processAction, isLoading: true)
         Task(priority: .utility) { [weak self] in
@@ -2113,6 +2116,9 @@ public final class AppState {
             )
             await MainActor.run {
                 guard let self else { return }
+                guard self.processActionPreviewActionIDs[previewKey] == resolvedActionID else {
+                    return
+                }
                 self.processActionPreviewReports[previewKey] = self.decodeJsonQueryResult(
                     result,
                     as: ProcessActionReportModel.self
@@ -2127,12 +2133,27 @@ public final class AppState {
         }
     }
 
-    func processActionPreview(pid: UInt32, action: ProcessActionKind) -> ProcessActionReportModel? {
-        processActionPreviewReports[processActionPreviewKey(pid: pid, action: action)]
+    func processActionPreview(
+        pid: UInt32,
+        action: ProcessActionKind,
+        matchingActionID: String? = nil
+    ) -> ProcessActionReportModel? {
+        let report = processActionPreviewReports[processActionPreviewKey(pid: pid, action: action)]
+        guard let matchingActionID else { return report }
+        return report?.actionId == matchingActionID ? report : nil
     }
 
-    func clearProcessActionPreview(pid: UInt32, action: ProcessActionKind) {
-        processActionPreviewReports.removeValue(forKey: processActionPreviewKey(pid: pid, action: action))
+    func clearProcessActionPreview(
+        pid: UInt32,
+        action: ProcessActionKind,
+        cancelLoading: Bool = false
+    ) {
+        let previewKey = processActionPreviewKey(pid: pid, action: action)
+        processActionPreviewReports.removeValue(forKey: previewKey)
+        processActionPreviewActionIDs.removeValue(forKey: previewKey)
+        if cancelLoading {
+            setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processAction, isLoading: false)
+        }
     }
 
     func refreshProcessActionHistory(windowMinutes: UInt32 = 60, limit: UInt32 = 25) {

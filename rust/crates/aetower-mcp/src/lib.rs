@@ -3243,7 +3243,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "aetower_process_action",
-            "description": "Preview or execute a guarded process action. Defaults to dry_run=true; set dry_run=false only after explicit operator approval. Executed reports include command_result, target_outcomes, and a bounded verification status so callers can tell whether macOS accepted the command and whether the target post-condition was confirmed.",
+            "description": "Preview or execute a guarded process action. Defaults to dry_run=true. Execution requires explicit operator approval plus expected_targets copied from the dry-run preview so Aetower can reject PID reuse or target-set drift. Executed reports include command_result, target_outcomes, and a bounded verification status so callers can tell whether macOS accepted the command and whether the target post-condition was confirmed.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -3269,7 +3269,7 @@ fn tool_definitions() -> Vec<Value> {
                     },
                     "expected_targets": {
                         "type": "array",
-                        "description": "Optional identity guard from a preview response. Execution is refused if the PID no longer matches the previewed start time or executable path.",
+                        "description": "Required for dry_run=false. Copy target_identities from the matching dry-run preview. Execution is refused if the planned targets changed or if a PID no longer matches the previewed start time or executable path.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -3466,6 +3466,16 @@ mod tests {
     use super::*;
     use aetower_diagnostics::{DiagnosticsLevel, DiagnosticsSubsystem};
 
+    fn expected_process_action_target(pid: u32) -> ProcessActionTargetIdentity {
+        ProcessActionTargetIdentity {
+            pid,
+            start_time_millis: None,
+            executable_path: None,
+            display_name: None,
+            nice_value: None,
+        }
+    }
+
     #[derive(Default)]
     struct FakeSource;
 
@@ -3615,6 +3625,60 @@ mod tests {
                 )
                 .build(),
             ])
+        }
+    }
+
+    struct ProcessSnapshotSource {
+        snapshot: SystemSnapshot,
+    }
+
+    impl AetowerMcpDataSource for ProcessSnapshotSource {
+        fn latest_snapshot(&self) -> Result<SystemSnapshot, String> {
+            Ok(self.snapshot.clone())
+        }
+
+        fn latest_snapshot_if_newer(
+            &self,
+            last_sequence: u64,
+        ) -> Result<Option<SystemSnapshot>, String> {
+            Ok((last_sequence < self.snapshot.sequence).then_some(self.snapshot.clone()))
+        }
+
+        fn latest_sequence(&self) -> Result<u64, String> {
+            Ok(self.snapshot.sequence)
+        }
+
+        fn latest_runtime_lag_metrics(&self) -> Result<RuntimeLagMetrics, String> {
+            FakeSource.latest_runtime_lag_metrics()
+        }
+
+        fn history_range_summary(
+            &self,
+            start_millis: u64,
+            end_millis: u64,
+        ) -> Result<HistorySummaryResponse, String> {
+            FakeSource.history_range_summary(start_millis, end_millis)
+        }
+
+        fn load_history_page(
+            &self,
+            _start_millis: u64,
+            _end_millis: u64,
+            _before_millis_exclusive: Option<u64>,
+            _limit: u32,
+        ) -> Result<Vec<SystemSnapshot>, String> {
+            Ok(vec![self.snapshot.clone()])
+        }
+
+        fn diagnostics_overview(&self) -> Result<DiagnosticsOverview, String> {
+            FakeSource.diagnostics_overview()
+        }
+
+        fn query_diagnostics(
+            &self,
+            query: DiagnosticsQuery,
+        ) -> Result<Vec<DiagnosticsEvent>, String> {
+            FakeSource.query_diagnostics(query)
         }
     }
 
@@ -5429,6 +5493,20 @@ mod tests {
     }
 
     #[test]
+    fn process_action_execution_requires_preview_targets() {
+        let error = build_process_action_with_context(
+            &FakeSource,
+            42,
+            "terminate",
+            false,
+            ProcessActionRequestContext::default(),
+        )
+        .expect_err("execution without preview targets should fail closed");
+
+        assert!(error.contains("requires expected_targets"));
+    }
+
+    #[test]
     fn process_action_refuses_expected_identity_mismatch() {
         let context = ProcessActionRequestContext {
             action_id: Some("unit-action".to_owned()),
@@ -5449,21 +5527,60 @@ mod tests {
     }
 
     #[test]
+    fn process_action_refuses_tree_target_drift_after_preview() {
+        let source = ProcessSnapshotSource {
+            snapshot: SystemSnapshot {
+                sequence: 2,
+                entities: vec![aetower_model::EntitySnapshot {
+                    entity_id: "tree".to_owned(),
+                    display_name: "Tree".to_owned(),
+                    components: vec![
+                        aetower_model::ComponentSnapshot {
+                            title: "Root proc".to_owned(),
+                            process_id: Some(10),
+                            ..aetower_model::ComponentSnapshot::default()
+                        },
+                        aetower_model::ComponentSnapshot {
+                            title: "Child proc".to_owned(),
+                            process_id: Some(11),
+                            parent_summary: Some("Root proc pid 10".to_owned()),
+                            ..aetower_model::ComponentSnapshot::default()
+                        },
+                    ],
+                    ..aetower_model::EntitySnapshot::default()
+                }],
+                ..SystemSnapshot::default()
+            },
+        };
+        let context = ProcessActionRequestContext {
+            action_id: Some("unit-action".to_owned()),
+            expected_targets: vec![expected_process_action_target(10)],
+            ..ProcessActionRequestContext::default()
+        };
+
+        let error =
+            build_process_action_with_context(&source, 10, "terminate-tree", false, context)
+                .expect_err("tree target expansion after preview should fail closed");
+
+        assert!(error.contains("target set does not match"));
+        assert!(error.contains("11"));
+    }
+
+    #[test]
     fn process_action_force_kill_verifies_disposable_child() {
         let mut child = TestCommand::new("/bin/sleep")
             .arg("30")
             .spawn()
             .unwrap_or_else(|error| panic!("spawn sleep: {error}"));
         let pid = child.id();
+        let context = ProcessActionRequestContext {
+            expected_targets: vec![expected_process_action_target(pid)],
+            ..ProcessActionRequestContext::default()
+        };
 
-        let report = build_process_action(
-            &FakeSource,
-            pid,
-            "force-kill",
-            false,
-            Some("test".to_owned()),
-        )
-        .unwrap_or_else(|error| panic!("{error}"));
+        let report =
+            build_process_action_with_context(&FakeSource, pid, "force-kill", false, context)
+                .unwrap_or_else(|error| panic!("{error}"));
 
         let _ = child.wait();
         assert!(report.executed);
@@ -5491,15 +5608,31 @@ mod tests {
             .unwrap_or_else(|error| panic!("spawn sleep: {error}"));
         let pid = child.id();
 
-        let suspend_report =
-            build_process_action(&FakeSource, pid, "suspend", false, Some("test".to_owned()))
-                .unwrap_or_else(|error| panic!("{error}"));
+        let suspend_report = build_process_action_with_context(
+            &FakeSource,
+            pid,
+            "suspend",
+            false,
+            ProcessActionRequestContext {
+                expected_targets: vec![expected_process_action_target(pid)],
+                ..ProcessActionRequestContext::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
         assert!(suspend_report.success);
         assert_eq!(suspend_report.verification, "verified-suspended");
 
-        let resume_report =
-            build_process_action(&FakeSource, pid, "resume", false, Some("test".to_owned()))
-                .unwrap_or_else(|error| panic!("{error}"));
+        let resume_report = build_process_action_with_context(
+            &FakeSource,
+            pid,
+            "resume",
+            false,
+            ProcessActionRequestContext {
+                expected_targets: vec![expected_process_action_target(pid)],
+                ..ProcessActionRequestContext::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
         assert!(resume_report.success);
         assert_eq!(resume_report.verification, "verified-running");
 

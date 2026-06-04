@@ -1119,6 +1119,7 @@ pub(crate) fn build_process_action_with_context(
         snapshot.as_ref(),
         &request_context.expected_targets,
         &plan.target_pids,
+        !dry_run,
     )?;
     let action_id = normalized_action_id(request_context.action_id.as_deref(), pid);
     let target_identities = process_action_target_identities(snapshot.as_ref(), &plan.target_pids);
@@ -1381,21 +1382,33 @@ fn verify_expected_process_identities(
     snapshot: Option<&SystemSnapshot>,
     expected_targets: &[ProcessActionTargetIdentity],
     planned_targets: &[u32],
+    require_expected_targets: bool,
 ) -> Result<(), String> {
     if expected_targets.is_empty() {
+        if require_expected_targets {
+            return Err(
+                "Refusing process action: execution requires expected_targets from a dry-run preview."
+                    .to_owned(),
+            );
+        }
         return Ok(());
     }
     let planned = planned_targets
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
+    let expected = expected_targets
+        .iter()
+        .map(|target| target.pid)
+        .collect::<std::collections::BTreeSet<_>>();
+    if expected != planned {
+        let missing = planned.difference(&expected).copied().collect::<Vec<_>>();
+        let unexpected = expected.difference(&planned).copied().collect::<Vec<_>>();
+        return Err(format!(
+            "Refusing process action: preview target set does not match current plan. Missing expected identities for {missing:?}; unexpected preview identities {unexpected:?}."
+        ));
+    }
     for expected in expected_targets {
-        if !planned.contains(&expected.pid) {
-            return Err(format!(
-                "Refusing process action: preview expected PID {} but the current plan does not target it.",
-                expected.pid
-            ));
-        }
         let current =
             snapshot.and_then(|snapshot| process_component_context(snapshot, expected.pid));
         if expected.start_time_millis.is_some() || expected.executable_path.is_some() {

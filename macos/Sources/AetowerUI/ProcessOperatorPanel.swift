@@ -13,7 +13,7 @@ struct ProcessOperatorPanel: View {
     let quickRequest: ProcessOperatorRequest?
 
     @State private var selectedPID: UInt32?
-    @State private var pendingAction: ProcessActionKind?
+    @State private var pendingAction: ProcessActionDraft?
     @State private var executingAction: ProcessActionSubmission?
     @State private var actionReason = ""
     @State private var openResourceFilter = ""
@@ -213,8 +213,9 @@ struct ProcessOperatorPanel: View {
                 .font(.caption)
                 .aetowerUtilityTextInput()
 
-            if let pendingAction {
-                actionPreview(pid: pid, action: pendingAction)
+            if let pendingAction,
+               pendingAction.pid == pid {
+                actionPreview(pendingAction)
             }
 
             if let executingAction,
@@ -235,8 +236,15 @@ struct ProcessOperatorPanel: View {
     }
 
     @ViewBuilder
-    private func actionPreview(pid: UInt32, action: ProcessActionKind) -> some View {
-        if let preview = state.processActionPreview(pid: pid, action: action) {
+    private func actionPreview(_ draft: ProcessActionDraft) -> some View {
+        let pid = draft.pid
+        let action = draft.action
+        if let preview = state.processActionPreview(
+            pid: pid,
+            action: action,
+            matchingActionID: draft.actionID
+        ) {
+            let executionBlocker = processActionExecutionBlocker(preview: preview, draft: draft)
             VStack(alignment: .leading, spacing: 8) {
                 SectionHeader("Action preview", detail: action.label)
                 Text(action.confirmationDetail)
@@ -259,9 +267,17 @@ struct ProcessOperatorPanel: View {
                 ForEach(preview.safetyNotes, id: \.self) { note in
                     StatusLine(icon: "shield.lefthalf.filled", color: .orange, text: note)
                 }
+                if let executionBlocker {
+                    StatusLine(
+                        icon: "lock.trianglebadge.exclamationmark",
+                        color: AetowerDesign.Status.warning,
+                        text: executionBlocker
+                    )
+                }
                 HStack {
                     Button(action.label, role: action.isDestructive ? .destructive : nil) {
-                        let actionID = preview.actionId ?? UUID().uuidString
+                        let actionID = draft.actionID
+                        let expectedTargets = preview.targetIdentities ?? []
                         executingAction = ProcessActionSubmission(
                             pid: pid,
                             action: action,
@@ -273,16 +289,16 @@ struct ProcessOperatorPanel: View {
                             action: action,
                             reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
                             actionID: actionID,
-                            expectedTargets: preview.targetIdentities ?? []
+                            expectedTargets: expectedTargets
                         )
                         state.clearProcessActionPreview(pid: pid, action: action)
                         pendingAction = nil
                         actionReason = ""
                     }
-                    .disabled(isLoading(pid, .processAction))
+                    .disabled(isLoading(pid, .processAction) || executionBlocker != nil)
 
                     Button("Cancel") {
-                        state.clearProcessActionPreview(pid: pid, action: action)
+                        state.clearProcessActionPreview(pid: pid, action: action, cancelLoading: true)
                         pendingAction = nil
                     }
                     .buttonStyle(.borderless)
@@ -417,26 +433,36 @@ struct ProcessOperatorPanel: View {
         if report.action == "lower-priority",
            let restoreNiceValue = report.targetOutcomes?.first?.niceBefore {
             let targetPID = report.targetPids.first ?? report.pid
-            Button {
-                let restoreActionID = UUID().uuidString
-                executingAction = ProcessActionSubmission(
-                    pid: targetPID,
-                    action: .normalPriority,
-                    actionID: restoreActionID,
-                    submittedAt: Date()
+            if let expectedTargets = report.targetIdentities,
+               !expectedTargets.isEmpty,
+               targetIdentitiesHaveStableIdentity(expectedTargets) {
+                Button {
+                    let restoreActionID = UUID().uuidString
+                    executingAction = ProcessActionSubmission(
+                        pid: targetPID,
+                        action: .normalPriority,
+                        actionID: restoreActionID,
+                        submittedAt: Date()
+                    )
+                    state.runProcessAction(
+                        pid: targetPID,
+                        action: .normalPriority,
+                        reason: "Restore nice value \(restoreNiceValue) from action \(report.actionId ?? "unknown").",
+                        actionID: restoreActionID,
+                        expectedTargets: expectedTargets,
+                        restoreNiceValue: restoreNiceValue
+                    )
+                } label: {
+                    Label("Restore previous priority (\(restoreNiceValue))", systemImage: "arrow.uturn.backward.circle")
+                }
+                .buttonStyle(.bordered)
+            } else {
+                StatusLine(
+                    icon: "lock.trianglebadge.exclamationmark",
+                    color: AetowerDesign.Status.warning,
+                    text: "Restore blocked: the original action did not record stable target identities."
                 )
-                state.runProcessAction(
-                    pid: targetPID,
-                    action: .normalPriority,
-                    reason: "Restore nice value \(restoreNiceValue) from action \(report.actionId ?? "unknown").",
-                    actionID: restoreActionID,
-                    expectedTargets: report.targetIdentities ?? [],
-                    restoreNiceValue: restoreNiceValue
-                )
-            } label: {
-                Label("Restore previous priority (\(restoreNiceValue))", systemImage: "arrow.uturn.backward.circle")
             }
-            .buttonStyle(.bordered)
         }
     }
 
@@ -994,14 +1020,57 @@ struct ProcessOperatorPanel: View {
 
     private func previewAction(_ action: ProcessActionKind, pid: UInt32) {
         selectedPID = pid
-        pendingAction = action
         let actionID = UUID().uuidString
+        pendingAction = ProcessActionDraft(
+            pid: pid,
+            action: action,
+            actionID: actionID
+        )
         state.runProcessActionPreview(
             pid: pid,
             action: action,
             reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
             actionID: actionID
         )
+    }
+
+    private func processActionExecutionBlocker(
+        preview: ProcessActionReportModel,
+        draft: ProcessActionDraft
+    ) -> String? {
+        if preview.actionId != draft.actionID {
+            return "Execution blocked: this preview does not match the current action UUID."
+        }
+        if !preview.dryRun || preview.executed {
+            return "Execution blocked: expected a dry-run preview before executing."
+        }
+        let targetPids = preview.targetPids.isEmpty ? [preview.pid] : preview.targetPids
+        guard let identities = preview.targetIdentities,
+              !identities.isEmpty
+        else {
+            return "Execution blocked: preview did not include target identities. Refresh and preview again."
+        }
+        let expectedPIDs = Set(targetPids)
+        let identityPIDs = Set(identities.map(\.pid))
+        if expectedPIDs != identityPIDs {
+            return "Execution blocked: target identities do not cover every planned PID."
+        }
+        if !targetIdentitiesHaveStableIdentity(identities) {
+            return "Execution blocked: at least one target lacks a stable start time or executable path for PID-reuse protection."
+        }
+        if (preview.targetOutcomes ?? []).contains(where: { !$0.visibleBefore }) {
+            return "Execution blocked: preview says at least one target is not visible right now."
+        }
+        return nil
+    }
+
+    private func targetIdentitiesHaveStableIdentity(
+        _ identities: [ProcessActionTargetIdentityModel]
+    ) -> Bool {
+        !identities.contains { identity in
+            (identity.startTimeMillis ?? 0) == 0
+                && identity.executablePath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+        }
     }
 
     private func applyQuickRequest() {
@@ -1202,6 +1271,12 @@ struct ProcessOperatorPanel: View {
 private struct OperatorProcess: Identifiable {
     let id: UInt32
     let component: ComponentSnapshot
+}
+
+private struct ProcessActionDraft: Equatable {
+    let pid: UInt32
+    let action: ProcessActionKind
+    let actionID: String
 }
 
 private struct ProcessActionSubmission: Equatable {
