@@ -98,6 +98,13 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string(&snapshot)?);
             Ok(())
         }
+        "process-action" => {
+            // Explicit elevated fallback for operator-approved process actions.
+            // The parent app must pass this only after a user confirmation.
+            let result = apply_process_action_command(&command_args)?;
+            println!("{}", serde_json::to_string(&result)?);
+            Ok(())
+        }
         other => {
             bail!("unsupported command: {other}")
         }
@@ -114,9 +121,105 @@ struct FanControlResult {
     requested_rpm: Option<f32>,
 }
 
+#[derive(Debug, Serialize)]
+struct ProcessActionHelperResult {
+    action: String,
+    target_pids: Vec<u32>,
+    command: String,
+    success: bool,
+    exit_status: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
 enum FanCommand {
     Set,
     Reset,
+}
+
+fn apply_process_action_command(args: &[String]) -> Result<ProcessActionHelperResult> {
+    let (action, pid_args) = args
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("process-action requires an action and at least one pid"))?;
+    let target_pids = parse_process_action_pids(pid_args)?;
+    let helper_pid = std::process::id();
+    if target_pids.contains(&helper_pid) {
+        bail!("refusing to target the running helper process");
+    }
+
+    let (program, command_args) = process_action_command_parts(action, &target_pids)?;
+    let command_label = format!("{program} {}", command_args.join(" "));
+    let output = Command::new(program)
+        .args(&command_args)
+        .output()
+        .with_context(|| format!("failed to run {program}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    if !output.status.success() {
+        bail!(
+            "process-action helper command failed with status {}{}",
+            output.status,
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
+        );
+    }
+    Ok(ProcessActionHelperResult {
+        action: action.to_owned(),
+        target_pids,
+        command: command_label,
+        success: true,
+        exit_status: output.status.code(),
+        stdout,
+        stderr,
+    })
+}
+
+fn parse_process_action_pids(values: &[String]) -> Result<Vec<u32>> {
+    if values.is_empty() {
+        bail!("process-action requires at least one pid");
+    }
+    let mut pids = Vec::new();
+    for value in values {
+        let pid = value
+            .parse::<u32>()
+            .with_context(|| format!("invalid pid: {value}"))?;
+        if pid <= 1 {
+            bail!("refusing protected pid {pid}");
+        }
+        pids.push(pid);
+    }
+    pids.sort_unstable();
+    pids.dedup();
+    Ok(pids)
+}
+
+fn process_action_command_parts(
+    action: &str,
+    target_pids: &[u32],
+) -> Result<(&'static str, Vec<String>)> {
+    match action {
+        "TERM" | "KILL" | "STOP" | "CONT" => {
+            let mut args = vec![format!("-{action}")];
+            args.extend(target_pids.iter().map(u32::to_string));
+            Ok(("/bin/kill", args))
+        }
+        value if value.starts_with("renice:") => {
+            let nice = value
+                .trim_start_matches("renice:")
+                .parse::<i32>()
+                .with_context(|| format!("invalid nice action: {value}"))?;
+            if !(-20..=20).contains(&nice) {
+                bail!("nice value out of range: {nice}");
+            }
+            let mut args = vec![nice.to_string(), "-p".to_owned()];
+            args.extend(target_pids.iter().map(u32::to_string));
+            Ok(("/usr/bin/renice", args))
+        }
+        other => bail!("unsupported process action: {other}"),
+    }
 }
 
 /// Upper bound on the RPM the helper will accept, as a hardware-
