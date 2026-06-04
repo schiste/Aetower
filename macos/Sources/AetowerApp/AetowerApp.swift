@@ -17,6 +17,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+private enum ActivityWorkspaceTab: String, CaseIterable, Hashable, Identifiable {
+    case overview
+    case history
+    case timeline
+    case storage
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .overview: return "Overview"
+        case .history: return "History"
+        case .timeline: return "Timeline"
+        case .storage: return "Storage"
+        }
+    }
+
+    var role: String {
+        switch self {
+        case .overview: return "Time-domain summary"
+        case .history: return "Persisted snapshots"
+        case .timeline: return "Recent events"
+        case .storage: return "Store health"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .overview:
+            return "Recent changes, event pressure, history coverage, and load status."
+        case .history:
+            return "Stored snapshots, trends, recurring entities, and before/after comparisons."
+        case .timeline:
+            return "Live events, alerts, anomalies, regressions, and recently finished processes."
+        case .storage:
+            return "History DB/WAL size, retention coverage, quarantine, and maintenance state."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .overview: return "rectangle.grid.2x2"
+        case .history: return "clock.arrow.trianglehead.counterclockwise.rotate.90"
+        case .timeline: return "timeline.selection"
+        case .storage: return "externaldrive"
+        }
+    }
+}
+
 private enum AgentsWorkspaceTab: String, CaseIterable, Hashable, Identifiable {
     case chau7
     case aiAgents
@@ -373,6 +422,609 @@ private struct AgentsWorkspaceView: View {
     }
 }
 
+private struct ActivityWorkspaceView: View {
+    let state: AppState
+    let settings: SettingsStore
+    @State private var selectedTab: ActivityWorkspaceTab = .overview
+
+    var body: some View {
+        VStack(spacing: 0) {
+            activityHeader
+            Divider()
+            HStack(spacing: 0) {
+                navigationRail
+                Divider()
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    private var activityHeader: some View {
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Activity")
+                    .font(.title3.weight(.semibold))
+                Text("History and timeline in one place: what changed, when it changed, and how much persisted data backs the story.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                activityStatusPill(
+                    title: "Events",
+                    value: "\(state.snapshot.timeline.count)",
+                    systemImage: "timeline.selection",
+                    tint: timelineTint
+                )
+                activityStatusPill(
+                    title: "Snapshots",
+                    value: historySnapshotLabel,
+                    systemImage: "clock",
+                    tint: historyTint
+                )
+                activityStatusPill(
+                    title: "Store",
+                    value: historyStoreLabel,
+                    systemImage: "externaldrive",
+                    tint: storageTint
+                )
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(.bar)
+    }
+
+    private var navigationRail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("ACTIVITY")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 12)
+
+                ForEach(ActivityWorkspaceTab.allCases) { tab in
+                    moduleButton(tab)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+        }
+        .frame(width: 292)
+        .background(.regularMaterial)
+    }
+
+    private func moduleButton(_ tab: ActivityWorkspaceTab) -> some View {
+        let isSelected = selectedTab == tab
+        return Button {
+            selectedTab = tab
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: tab.systemImage)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                        .frame(width: 22)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(tab.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text(tab.role)
+                            .font(.caption2)
+                            .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    }
+
+                    Spacer()
+                }
+
+                Text(tab.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(moduleSignal(for: tab))
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(signalTint(for: tab))
+                    .lineLimit(1)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected ? Color.accentColor.opacity(0.11) : Color.secondary.opacity(0.055),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.32) : Color.clear, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch selectedTab {
+        case .overview:
+            overview
+        case .history:
+            HistoryView(state: state, settings: settings)
+        case .timeline:
+            TimelineView(state: state, settings: settings)
+        case .storage:
+            storage
+        }
+    }
+
+    private var overview: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Activity overview")
+                        .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    Text("Summary-first view of current events, persisted coverage, and the cost of loading time-based data.")
+                        .foregroundStyle(.secondary)
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 170), spacing: 12)],
+                    alignment: .leading,
+                    spacing: 12
+                ) {
+                    activityMetric(
+                        "Timeline events",
+                        value: "\(state.snapshot.timeline.count)",
+                        detail: timelinePressureDetail,
+                        systemImage: "timeline.selection",
+                        tone: timelineTint
+                    )
+                    activityMetric(
+                        "Critical",
+                        value: "\(criticalEventCount)",
+                        detail: "\(warningEventCount) warning event(s)",
+                        systemImage: "exclamationmark.triangle",
+                        tone: criticalEventCount > 0 ? .red : timelineTint
+                    )
+                    activityMetric(
+                        "Loaded history",
+                        value: "\(state.historySnapshots.count)",
+                        detail: state.historyIsLoading ? "loading now" : "snapshots in memory",
+                        systemImage: "clock",
+                        tone: historyTint
+                    )
+                    activityMetric(
+                        "Persisted range",
+                        value: historyRangeCountLabel,
+                        detail: historyCoverageLabel,
+                        systemImage: "tray.full",
+                        tone: storageTint
+                    )
+                    activityMetric(
+                        "Last load",
+                        value: String(format: "%.0f ms", state.historyLastLoadDurationMillis),
+                        detail: state.historyLoadStatus ?? "history loader idle",
+                        systemImage: "speedometer",
+                        tone: state.historyLastLoadDurationMillis > 750 ? .orange : .green
+                    )
+                    activityMetric(
+                        "Safe mode",
+                        value: settings.operatorSafeModeEnabled ? "On" : "Off",
+                        detail: settings.operatorSafeModeEnabled ? "bounded heavy views" : "full detail by default",
+                        systemImage: "shield.lefthalf.filled",
+                        tone: settings.operatorSafeModeEnabled ? .green : .orange
+                    )
+                }
+
+                recentTimelinePreview
+                historyStatusPanel
+            }
+            .frame(maxWidth: 1040, alignment: .leading)
+            .padding(24)
+        }
+    }
+
+    private var recentTimelinePreview: some View {
+        GroupBox("Recent timeline") {
+            if recentEvents.isEmpty {
+                ContentUnavailableView(
+                    "No timeline events yet",
+                    systemImage: "timeline.selection",
+                    description: Text("Aetower will show spikes, anomalies, and state changes here as they arrive.")
+                )
+                .frame(maxWidth: .infinity)
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(recentEvents, id: \.id) { event in
+                        HStack(alignment: .top, spacing: 10) {
+                            Circle()
+                                .fill(timelineSeverityColor(event.severity))
+                                .frame(width: 9, height: 9)
+                                .padding(.top, 6)
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 7) {
+                                    Text(event.title)
+                                        .font(.subheadline.weight(.semibold))
+                                    Text(timelineCategoryLabel(event.category))
+                                        .font(.caption2.weight(.medium))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 3)
+                                        .background(Color.secondary.opacity(0.08), in: Capsule())
+                                }
+                                if !event.detail.isEmpty {
+                                    Text(event.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Text(relativeActivityTime(event.timestampMillis))
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 6)
+            }
+        }
+    }
+
+    private var historyStatusPanel: some View {
+        GroupBox("History status") {
+            VStack(alignment: .leading, spacing: 10) {
+                if let historyLoadError = state.historyLoadError {
+                    Label(historyLoadError, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                if let summary = historySummary {
+                    activityDetailLine("Snapshots", "\(summary.snapshotCount) persisted · \(summary.rangeCount) in selected range")
+                    activityDetailLine("Coverage", historyCoverageLabel)
+                    activityDetailLine("Store", "\(formatActivityBytes(summary.storeBytes)) DB · \(formatActivityBytes(summary.walBytes)) WAL")
+                    if summary.quarantineCount > 0 {
+                        activityDetailLine("Quarantine", "\(summary.quarantineCount) incompatible row(s)")
+                    }
+                    if summary.pendingWrites > 0 {
+                        activityDetailLine("Pending writes", "\(summary.pendingWrites)")
+                    }
+                } else {
+                    Text("No persisted history summary is loaded yet. Open History to load a selected range.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 6)
+        }
+    }
+
+    private var storage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Activity storage")
+                        .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    Text("Storage health for persisted snapshots, retention coverage, quarantine, and the last maintenance pass.")
+                        .foregroundStyle(.secondary)
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 180), spacing: 12)],
+                    alignment: .leading,
+                    spacing: 12
+                ) {
+                    activityMetric(
+                        "Database",
+                        value: formatActivityBytes(historySummary?.storeBytes ?? 0),
+                        detail: "snapshot store",
+                        systemImage: "externaldrive",
+                        tone: storageTint
+                    )
+                    activityMetric(
+                        "WAL",
+                        value: formatActivityBytes(historySummary?.walBytes ?? 0),
+                        detail: "write-ahead log",
+                        systemImage: "arrow.triangle.2.circlepath",
+                        tone: walTint
+                    )
+                    activityMetric(
+                        "Snapshots",
+                        value: historySummary.map { "\($0.snapshotCount)" } ?? "0",
+                        detail: "\(state.historySnapshots.count) loaded in UI",
+                        systemImage: "tray.full",
+                        tone: historyTint
+                    )
+                    activityMetric(
+                        "Quarantine",
+                        value: historySummary.map { "\($0.quarantineCount)" } ?? "0",
+                        detail: "incompatible persisted rows",
+                        systemImage: "cross.case",
+                        tone: (historySummary?.quarantineCount ?? 0) > 0 ? .orange : .green
+                    )
+                    activityMetric(
+                        "Pending writes",
+                        value: historySummary.map { "\($0.pendingWrites)" } ?? "0",
+                        detail: "history queue backlog",
+                        systemImage: "hourglass",
+                        tone: (historySummary?.pendingWrites ?? 0) > 0 ? .orange : .green
+                    )
+                    activityMetric(
+                        "Last maintenance",
+                        value: maintenanceStatusLabel,
+                        detail: maintenanceDetailLabel,
+                        systemImage: "wrench.and.screwdriver",
+                        tone: state.historyMaintenanceReport?.cancelled == true ? .orange : .green
+                    )
+                }
+
+                historyStatusPanel
+                maintenancePanel
+            }
+            .frame(maxWidth: 1040, alignment: .leading)
+            .padding(24)
+        }
+    }
+
+    @ViewBuilder
+    private var maintenancePanel: some View {
+        if let maintenance = state.historyMaintenanceReport {
+            GroupBox("Last maintenance pass") {
+                VStack(alignment: .leading, spacing: 10) {
+                    activityDetailLine("Elapsed", "\(maintenance.elapsedMillis) ms")
+                    activityDetailLine("Checkpointed", maintenance.checkpointed ? "yes" : "no")
+                    activityDetailLine("Vacuumed", maintenance.vacuumed ? "yes" : "no")
+                    activityDetailLine("Pruned rows", "\(maintenance.prunedRows)")
+                    activityDetailLine(
+                        "Before",
+                        "\(formatActivityBytes(maintenance.storeBytesBefore)) DB · \(formatActivityBytes(maintenance.walBytesBefore)) WAL"
+                    )
+                    activityDetailLine(
+                        "After",
+                        "\(formatActivityBytes(maintenance.storeBytesAfter)) DB · \(formatActivityBytes(maintenance.walBytesAfter)) WAL"
+                    )
+                    if let aggressiveReason = maintenance.aggressiveReason {
+                        activityDetailLine("Aggressive reason", aggressiveReason)
+                    }
+                }
+                .padding(.top, 6)
+            }
+        }
+    }
+
+    private func activityMetric(
+        _ title: String,
+        value: String,
+        detail: String,
+        systemImage: String,
+        tone: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(tone)
+                Text(title.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text(value)
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .foregroundStyle(tone)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(detail)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(2)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
+        .background(Color.secondary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func activityStatusPill(title: String, value: String, systemImage: String, tint: Color) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title.uppercased())
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Text(value)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(tint.opacity(0.08), in: Capsule())
+    }
+
+    private func activityDetailLine(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var historySummary: HistoryRangeSummary? {
+        state.historyStoreSummary ?? state.historyRangeSummary
+    }
+
+    private var historySnapshotLabel: String {
+        if state.historyIsLoading {
+            return "Loading"
+        }
+        return "\(state.historySnapshots.count)"
+    }
+
+    private var historyStoreLabel: String {
+        guard let historySummary else {
+            return "No summary"
+        }
+        return formatActivityBytes(historySummary.storeBytes + historySummary.walBytes)
+    }
+
+    private var historyRangeCountLabel: String {
+        guard let historySummary else {
+            return "0"
+        }
+        return "\(historySummary.rangeCount)"
+    }
+
+    private var historyCoverageLabel: String {
+        guard let historySummary,
+              let oldest = historySummary.oldestMillis,
+              let newest = historySummary.newestMillis
+        else {
+            return "No coverage window loaded"
+        }
+        return "\(relativeActivityTime(oldest)) to \(relativeActivityTime(newest))"
+    }
+
+    private var timelinePressureDetail: String {
+        "\(warningEventCount) warning · \(criticalEventCount) critical"
+    }
+
+    private var recentEvents: [TimelineEvent] {
+        Array(state.snapshot.timeline.sorted { $0.timestampMillis > $1.timestampMillis }.prefix(5))
+    }
+
+    private var warningEventCount: Int {
+        state.snapshot.timeline.filter { $0.severity == .warning }.count
+    }
+
+    private var criticalEventCount: Int {
+        state.snapshot.timeline.filter { $0.severity == .critical }.count
+    }
+
+    private var timelineTint: Color {
+        if criticalEventCount > 0 { return .red }
+        if warningEventCount > 0 { return .orange }
+        return .green
+    }
+
+    private var historyTint: Color {
+        if state.historyLoadError != nil { return .orange }
+        if state.historyIsLoading { return .blue }
+        return state.historySnapshots.isEmpty ? .orange : .green
+    }
+
+    private var storageTint: Color {
+        let summary = historySummary
+        if (summary?.quarantineCount ?? 0) > 0 || (summary?.pendingWrites ?? 0) > 0 {
+            return .orange
+        }
+        return summary == nil ? .secondary : .green
+    }
+
+    private var walTint: Color {
+        guard let summary = historySummary else {
+            return .secondary
+        }
+        if summary.walBytes > max(summary.storeBytes / 2, 64 * 1024 * 1024) {
+            return .orange
+        }
+        return .green
+    }
+
+    private var maintenanceStatusLabel: String {
+        guard let maintenance = state.historyMaintenanceReport else {
+            return "None"
+        }
+        if maintenance.cancelled {
+            return "Cancelled"
+        }
+        if maintenance.vacuumed || maintenance.checkpointed || maintenance.prunedRows > 0 {
+            return "Ran"
+        }
+        return "No-op"
+    }
+
+    private var maintenanceDetailLabel: String {
+        guard let maintenance = state.historyMaintenanceReport else {
+            return "no maintenance report this session"
+        }
+        return "\(maintenance.elapsedMillis) ms · \(maintenance.prunedRows) pruned"
+    }
+
+    private func moduleSignal(for tab: ActivityWorkspaceTab) -> String {
+        switch tab {
+        case .overview:
+            return "\(state.snapshot.timeline.count) events · \(state.historySnapshots.count) loaded"
+        case .history:
+            return state.historyIsLoading ? "loading persisted snapshots" : "\(state.historySnapshots.count) loaded snapshots"
+        case .timeline:
+            return timelinePressureDetail
+        case .storage:
+            return "\(historyStoreLabel) · \(historySummary?.pendingWrites ?? 0) pending"
+        }
+    }
+
+    private func signalTint(for tab: ActivityWorkspaceTab) -> Color {
+        switch tab {
+        case .overview:
+            return timelineTint
+        case .history:
+            return historyTint
+        case .timeline:
+            return timelineTint
+        case .storage:
+            return storageTint
+        }
+    }
+
+    private func timelineSeverityColor(_ severity: TimelineSeverity) -> Color {
+        switch severity {
+        case .info: return .blue
+        case .warning: return .orange
+        case .critical: return .red
+        }
+    }
+
+    private func timelineCategoryLabel(_ category: TimelineCategory) -> String {
+        switch category {
+        case .lifecycle: return "lifecycle"
+        case .friction: return "friction"
+        case .host: return "host"
+        case .thermal: return "thermal"
+        case .anomaly: return "anomaly"
+        case .network: return "network"
+        case .regression: return "regression"
+        }
+    }
+
+    private func relativeActivityTime(_ millis: UInt64) -> String {
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        guard nowMillis >= millis else {
+            return "just now"
+        }
+        let seconds = (nowMillis - millis) / 1000
+        if seconds < 60 { return "\(seconds)s ago" }
+        if seconds < 3_600 { return "\(seconds / 60)m ago" }
+        if seconds < 86_400 { return "\(seconds / 3_600)h ago" }
+        return "\(seconds / 86_400)d ago"
+    }
+
+    private func formatActivityBytes(_ bytes: UInt64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .binary
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.isAdaptive = true
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+}
+
 private struct SystemWorkspaceView: View {
     let state: AppState
     let settings: SettingsStore
@@ -662,14 +1314,9 @@ struct AetowerApp: App {
                         Label("Monitor", systemImage: "gauge.with.needle")
                     }
 
-                HistoryView(state: state, settings: settings)
+                ActivityWorkspaceView(state: state, settings: settings)
                     .tabItem {
-                        Label("History", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
-                    }
-
-                TimelineView(state: state, settings: settings)
-                    .tabItem {
-                        Label("Timeline", systemImage: "timeline.selection")
+                        Label("Activity", systemImage: "timeline.selection")
                     }
 
                 AgentsWorkspaceView(state: state)
