@@ -2,6 +2,46 @@ import AppKit
 import AetowerBridge
 import SwiftUI
 
+private enum PersistenceSection: String, CaseIterable, Identifiable {
+    case summary
+    case attention
+    case activeNow
+    case allItems
+    case locations
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .summary: return "Summary"
+        case .attention: return "Attention"
+        case .activeNow: return "Active Now"
+        case .allItems: return "All Items"
+        case .locations: return "Locations"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .summary: return "rectangle.grid.2x2"
+        case .attention: return "exclamationmark.triangle"
+        case .activeNow: return "waveform.path.ecg"
+        case .allItems: return "list.bullet.rectangle"
+        case .locations: return "folder"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .summary: return "Inventory, risk, scan mode, and cost."
+        case .attention: return "Risky, changed, or currently active items."
+        case .activeNow: return "Startup entries linked to live processes."
+        case .allItems: return "Full inventory with filter and search."
+        case .locations: return "Scanned paths and unavailable sources."
+        }
+    }
+}
+
 /// Fast, operator-oriented startup/persistence inventory. The default path is a
 /// cached metadata scan; code signing and deeper process inspection are explicit
 /// actions so this tab does not stall Aetower while opening.
@@ -10,7 +50,8 @@ public struct PersistenceScannerView: View {
     let settings: SettingsStore
 
     @State private var hideAppleSigned = true
-    @State private var filter: PersistenceFilter = .attention
+    @State private var filter: PersistenceFilter = .all
+    @State private var selectedSection: PersistenceSection = .summary
     @State private var searchText = ""
     @State private var expandedItemID: String?
 
@@ -78,10 +119,9 @@ public struct PersistenceScannerView: View {
 
     private func reportContent(_ report: PersistenceScanReportModel) -> some View {
         let runtimeIndex = PersistenceRuntimeIndex(snapshot: state.snapshot)
-        let items = filteredItems(report, runtimeIndex: runtimeIndex)
         return LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-            summaryStrip(report, runtimeIndex: runtimeIndex)
             controls(report)
+            sectionSwitcher(report, runtimeIndex: runtimeIndex)
             if let error = state.persistenceScanError {
                 Text(error)
                     .font(.caption)
@@ -90,12 +130,119 @@ public struct PersistenceScannerView: View {
             if report.truncated {
                 warningBanner("Inventory reached the safety cap. Results are truncated to keep Aetower responsive.")
             }
+            sectionContent(report, runtimeIndex: runtimeIndex)
+        }
+    }
+
+    private func sectionSwitcher(
+        _ report: PersistenceScanReportModel,
+        runtimeIndex: PersistenceRuntimeIndex
+    ) -> some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 170), spacing: AetowerDesign.Spacing.sm)],
+            alignment: .leading,
+            spacing: AetowerDesign.Spacing.sm
+        ) {
+            ForEach(PersistenceSection.allCases) { section in
+                sectionButton(section, count: sectionCount(section, report: report, runtimeIndex: runtimeIndex))
+            }
+        }
+    }
+
+    private func sectionButton(_ section: PersistenceSection, count: Int) -> some View {
+        let isSelected = selectedSection == section
+        return Button {
+            withAnimation(AetowerDesign.Motion.quick) {
+                selectedSection = section
+                expandedItemID = nil
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Image(systemName: section.systemImage)
+                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    Text(section.title)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text("\(count)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Text(section.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            .padding(AetowerDesign.Spacing.sm)
+            .frame(maxWidth: .infinity, minHeight: 86, alignment: .topLeading)
+            .background(
+                isSelected ? Color.accentColor.opacity(0.11) : AetowerDesign.Surface.card,
+                in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.32) : Color.clear, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func sectionContent(
+        _ report: PersistenceScanReportModel,
+        runtimeIndex: PersistenceRuntimeIndex
+    ) -> some View {
+        switch selectedSection {
+        case .summary:
+            summaryStrip(report, runtimeIndex: runtimeIndex)
+            summaryGuidance(report, runtimeIndex: runtimeIndex)
+        case .attention:
+            itemList(
+                title: "Attention",
+                emptyTitle: "No startup items need attention",
+                emptyDescription: "Aetower found no risky, changed, or active startup entries with the current search settings.",
+                items: filteredItems(report, runtimeIndex: runtimeIndex, section: .attention),
+                runtimeIndex: runtimeIndex
+            )
+        case .activeNow:
+            itemList(
+                title: "Active now",
+                emptyTitle: "No active startup items",
+                emptyDescription: "No startup entries are currently linked to live process metrics.",
+                items: filteredItems(report, runtimeIndex: runtimeIndex, section: .activeNow),
+                runtimeIndex: runtimeIndex
+            )
+        case .allItems:
+            itemList(
+                title: "All startup items",
+                emptyTitle: "No matching startup items",
+                emptyDescription: "Change the filter or search text to broaden the inventory.",
+                items: filteredItems(report, runtimeIndex: runtimeIndex, section: .allItems),
+                runtimeIndex: runtimeIndex
+            )
+        case .locations:
+            locationsSection(report)
+        }
+    }
+
+    private func itemList(
+        title: String,
+        emptyTitle: String,
+        emptyDescription: String,
+        items: [PersistenceItemModel],
+        runtimeIndex: PersistenceRuntimeIndex
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+
             if items.isEmpty {
                 ContentUnavailableView(
-                    "No matching startup items",
+                    emptyTitle,
                     systemImage: "line.3.horizontal.decrease.circle",
-                    description: Text("Change the filter or search text to broaden the inventory.")
+                    description: Text(emptyDescription)
                 )
+                .frame(maxWidth: .infinity)
             } else {
                 ForEach(groupedKinds(items), id: \.self) { kind in
                     section(
@@ -105,10 +252,85 @@ public struct PersistenceScannerView: View {
                     )
                 }
             }
-            if !report.degraded.isEmpty {
+        }
+    }
+
+    private func summaryGuidance(
+        _ report: PersistenceScanReportModel,
+        runtimeIndex: PersistenceRuntimeIndex
+    ) -> some View {
+        let attentionCount = sectionCount(.attention, report: report, runtimeIndex: runtimeIndex)
+        let activeCount = sectionCount(.activeNow, report: report, runtimeIndex: runtimeIndex)
+        return GroupBox("How to use this scan") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                guidanceLine(
+                    "Start with Attention",
+                    detail: attentionCount == 0
+                        ? "No risky, changed, or active entries require review right now."
+                        : "\(attentionCount) entry or entries deserve review before browsing the full inventory.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                guidanceLine(
+                    "Check Active Now",
+                    detail: "\(activeCount) startup entries are linked to live process metrics in the current Monitor snapshot.",
+                    systemImage: "waveform.path.ecg"
+                )
+                guidanceLine(
+                    "Use Deep audit selectively",
+                    detail: report.scanMode == "deep"
+                        ? "This scan includes signing detail for targets."
+                        : "Fast scan avoids code-signing every target. Run deep audit when an entry is unexpected.",
+                    systemImage: "signature"
+                )
+            }
+            .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
+    private func guidanceLine(_ title: String, detail: String, systemImage: String) -> some View {
+        HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: systemImage)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func locationsSection(_ report: PersistenceScanReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            scannedLocations(report)
+            if report.degraded.isEmpty {
+                ContentUnavailableView(
+                    "All sources available",
+                    systemImage: "checkmark.shield",
+                    description: Text("Aetower did not report unavailable startup sources for this scan.")
+                )
+                .frame(maxWidth: .infinity)
+            } else {
                 degradedSection(report.degraded)
             }
-            scannedLocations(report)
+        }
+    }
+
+    private func sectionCount(
+        _ section: PersistenceSection,
+        report: PersistenceScanReportModel,
+        runtimeIndex: PersistenceRuntimeIndex
+    ) -> Int {
+        switch section {
+        case .summary:
+            return Int(report.summary.totalItems)
+        case .locations:
+            return report.scannedLocations.count + report.degraded.count
+        case .attention, .activeNow, .allItems:
+            return filteredItems(report, runtimeIndex: runtimeIndex, section: section).count
         }
     }
 
@@ -223,17 +445,19 @@ public struct PersistenceScannerView: View {
             }
 
             HStack(spacing: AetowerDesign.Spacing.md) {
-                Picker("Filter", selection: $filter) {
-                    ForEach(PersistenceFilter.allCases) { option in
-                        Text(option.label).tag(option)
+                if selectedSection == .allItems {
+                    Picker("Filter", selection: $filter) {
+                        ForEach(PersistenceFilter.allCases) { option in
+                            Text(option.label).tag(option)
+                        }
                     }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
 
                 TextField("Search label, path, executable, reason", text: $searchText)
                     .textFieldStyle(.roundedBorder)
                     .aetowerUtilityTextInput()
-                    .frame(maxWidth: 360)
+                    .frame(maxWidth: selectedSection == .allItems ? 360 : 520)
             }
 
             Text(report.scanMode == "deep"
@@ -246,31 +470,23 @@ public struct PersistenceScannerView: View {
 
     private func filteredItems(
         _ report: PersistenceScanReportModel,
-        runtimeIndex: PersistenceRuntimeIndex
+        runtimeIndex: PersistenceRuntimeIndex,
+        section: PersistenceSection
     ) -> [PersistenceItemModel] {
         let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return report.items
             .filter { item in
                 if hideAppleSigned && item.isApple { return false }
                 if !needle.isEmpty && !searchCorpus(item).contains(needle) { return false }
-                switch filter {
+                switch section {
+                case .summary, .locations:
+                    return true
                 case .attention:
                     return itemNeedsAttention(item, runtimeIndex: runtimeIndex)
-                case .active:
+                case .activeNow:
                     return !runtimeIndex.matches(for: item).isEmpty
-                case .changed:
-                    return isChanged(item)
-                case .unsigned:
-                    return item.signature?.classification == "unsigned"
-                        || item.signature?.classification == "adhoc"
-                        || item.signature?.classification == "other"
-                        || (!item.isApple && item.signature == nil && item.kind != "cron")
-                case .user:
-                    return item.isUserScope
-                case .system:
-                    return !item.isUserScope
-                case .all:
-                    return true
+                case .allItems:
+                    return matchesAllItemsFilter(item, runtimeIndex: runtimeIndex)
                 }
             }
             .sorted { lhs, rhs in
@@ -279,6 +495,31 @@ public struct PersistenceScannerView: View {
                 if leftRank != rightRank { return leftRank > rightRank }
                 return lhs.displayTitle.localizedCaseInsensitiveCompare(rhs.displayTitle) == .orderedAscending
             }
+    }
+
+    private func matchesAllItemsFilter(
+        _ item: PersistenceItemModel,
+        runtimeIndex: PersistenceRuntimeIndex
+    ) -> Bool {
+        switch filter {
+        case .attention:
+            return itemNeedsAttention(item, runtimeIndex: runtimeIndex)
+        case .active:
+            return !runtimeIndex.matches(for: item).isEmpty
+        case .changed:
+            return isChanged(item)
+        case .unsigned:
+            return item.signature?.classification == "unsigned"
+                || item.signature?.classification == "adhoc"
+                || item.signature?.classification == "other"
+                || (!item.isApple && item.signature == nil && item.kind != "cron")
+        case .user:
+            return item.isUserScope
+        case .system:
+            return !item.isUserScope
+        case .all:
+            return true
+        }
     }
 
     private func itemNeedsAttention(
