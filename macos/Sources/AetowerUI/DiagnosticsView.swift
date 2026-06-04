@@ -9,6 +9,46 @@ private enum DiagnosticsLevelFilter: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private enum DiagnosticsSection: String, CaseIterable, Identifiable {
+    case health
+    case mcp
+    case uiPayloads
+    case memory
+    case eventStream
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .health: return "Health"
+        case .mcp: return "MCP"
+        case .uiPayloads: return "UI Payloads"
+        case .memory: return "Memory"
+        case .eventStream: return "Event Stream"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .health: return "heart.text.square"
+        case .mcp: return "point.3.connected.trianglepath.dotted"
+        case .uiPayloads: return "rectangle.stack"
+        case .memory: return "memorychip"
+        case .eventStream: return "list.bullet.rectangle"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .health: return "Runtime health and operator recommendations."
+        case .mcp: return "Local server, helpers, clients, and transport pressure."
+        case .uiPayloads: return "History and Timeline decode/filter cost."
+        case .memory: return "Aetower self-memory and vmmap attribution."
+        case .eventStream: return "Filtered diagnostics events and raw fields."
+        }
+    }
+}
+
 private struct DiagnosticsEventCluster: Identifiable {
     let representative: DiagnosticsEvent
     let events: [DiagnosticsEvent]
@@ -54,6 +94,7 @@ public struct DiagnosticsView: View {
     @State private var isLive = true
     @State private var isVisible = false
     @State private var includePersisted = true
+    @State private var selectedSection: DiagnosticsSection = .health
     @State private var showClearDiagnosticsConfirmation = false
     @FocusState private var searchFieldFocused: Bool
 
@@ -74,15 +115,9 @@ public struct DiagnosticsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                controls
-                sessionHealth
-                recommendations
-                selfMemoryAttribution
-                localMcpServerState
-                mcpLifecycle
-                overview
-                uiPayloadDiagnostics
-                eventStream
+                diagnosticsActions
+                sectionSwitcher
+                selectedSectionContent
             }
             .padding(AetowerDesign.Spacing.xxl)
         }
@@ -106,13 +141,14 @@ public struct DiagnosticsView: View {
             guard !Task.isCancelled, candidate == searchText else { return }
             debouncedSearchText = candidate
         }
-        .task(id: "\(isVisible)-\(isLive)-\(includePersisted)-\(debouncedSearchText)-\(levelFilter.rawValue)-\(subsystemFilter.map(subsystemLabel) ?? "all")") {
+        .task(id: "\(isVisible)-\(selectedSection.rawValue)-\(isLive)-\(includePersisted)-\(debouncedSearchText)-\(levelFilter.rawValue)-\(subsystemFilter.map(subsystemLabel) ?? "all")") {
             guard isVisible else { return }
+            guard selectedSection == .eventStream else { return }
             state.loadDiagnosticsQuery(currentQuery, force: true)
             guard isLive else { return }
-            while !Task.isCancelled && isVisible && isLive {
+            while !Task.isCancelled && isVisible && isLive && selectedSection == .eventStream {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                guard !Task.isCancelled && isVisible && isLive else { break }
+                guard !Task.isCancelled && isVisible && isLive && selectedSection == .eventStream else { break }
                 state.loadDiagnosticsQuery(currentQuery)
             }
         }
@@ -126,8 +162,108 @@ public struct DiagnosticsView: View {
         }
     }
 
+    private var diagnosticsActions: some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            Button("Reload events") {
+                state.loadDiagnosticsQuery(currentQuery, force: true)
+            }
+            .buttonStyle(.bordered)
+
+            Button("Export JSON") {
+                state.exportDiagnostics()
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button("Export support bundle") {
+                state.exportSupportBundle(settings)
+            }
+            .buttonStyle(.bordered)
+
+            Button("Clear diagnostics", role: .destructive) {
+                showClearDiagnosticsConfirmation = true
+            }
+            .buttonStyle(.bordered)
+
+            Spacer()
+
+            Text(diagnosticsLoadStatus)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var sectionSwitcher: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 170), spacing: AetowerDesign.Spacing.sm)],
+            alignment: .leading,
+            spacing: AetowerDesign.Spacing.sm
+        ) {
+            ForEach(DiagnosticsSection.allCases) { section in
+                diagnosticsSectionButton(section)
+            }
+        }
+    }
+
+    private func diagnosticsSectionButton(_ section: DiagnosticsSection) -> some View {
+        let isSelected = selectedSection == section
+        return Button {
+            withAnimation(AetowerDesign.Motion.quick) {
+                selectedSection = section
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Image(systemName: section.systemImage)
+                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    Text(section.title)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                }
+                Text(sectionSignal(section))
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(sectionSignalColor(section))
+                    .lineLimit(1)
+                Text(section.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            .padding(AetowerDesign.Spacing.sm)
+            .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
+            .background(
+                isSelected ? Color.accentColor.opacity(0.11) : AetowerDesign.Surface.card,
+                in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.32) : Color.clear, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var selectedSectionContent: some View {
+        switch selectedSection {
+        case .health:
+            sessionHealth
+            recommendations
+            overview
+        case .mcp:
+            localMcpServerState
+            mcpLifecycle
+        case .uiPayloads:
+            uiPayloadDiagnostics
+        case .memory:
+            selfMemoryAttribution
+        case .eventStream:
+            controls
+            eventStream
+        }
+    }
+
     private var controls: some View {
-        GroupBox("Controls") {
+        GroupBox("Event stream filters") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
                     Picker("Severity", selection: $levelFilter) {
@@ -166,26 +302,6 @@ public struct DiagnosticsView: View {
                         .toggleStyle(.switch)
 
                     Spacer()
-
-                    Button("Reload") {
-                        state.loadDiagnosticsQuery(currentQuery, force: true)
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("Export JSON") {
-                        state.exportDiagnostics()
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Button("Export support bundle") {
-                        state.exportSupportBundle(settings)
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("Clear diagnostics", role: .destructive) {
-                        showClearDiagnosticsConfirmation = true
-                    }
-                    .buttonStyle(.bordered)
                 }
 
                 TextField("Search messages, fields, entity ids, adapters, or capabilities", text: $searchText)
@@ -786,6 +902,36 @@ public struct DiagnosticsView: View {
             }
         }
         return clusters
+    }
+
+    private func sectionSignal(_ section: DiagnosticsSection) -> String {
+        switch section {
+        case .health:
+            return "\(diagnosticsHealthTitle) · \(aetowerOverheadTitle)"
+        case .mcp:
+            return "\(state.runtimeLagMetrics.mcpActiveClientCount) clients · \(state.runtimeLagMetrics.mcpHelperCount) helpers"
+        case .uiPayloads:
+            return "\(state.timelinePayloadDiagnostics.filteredEventCount)/\(state.timelinePayloadDiagnostics.totalEventCount) timeline events"
+        case .memory:
+            return byteCount(state.selfMemoryAttribution?.currentResidentBytes ?? state.runtimeLagMetrics.selfMemoryBytes)
+        case .eventStream:
+            return "\(state.diagnosticsEvents.count) loaded · \(eventClusters.count) groups"
+        }
+    }
+
+    private func sectionSignalColor(_ section: DiagnosticsSection) -> Color {
+        switch section {
+        case .health:
+            return healthColor(diagnosticsHealthTitle) ?? .secondary
+        case .mcp:
+            return mcpLifecycleColor ?? .secondary
+        case .uiPayloads:
+            return state.timelinePayloadDiagnostics.safeModeEnabled ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+        case .memory:
+            return AetowerDesign.Tone.memory
+        case .eventStream:
+            return levelFilter == .error ? AetowerDesign.Status.error : .secondary
+        }
     }
 
     private var currentQuery: DiagnosticsQuery {
