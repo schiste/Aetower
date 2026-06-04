@@ -356,7 +356,9 @@ public struct EntityDetailView: View {
         }
         .task(id: entity.entityId) {
             selectedSection = .summary
-            state.loadEntityStaticAnalysis(entityID: entity.entityId)
+        }
+        .onChange(of: selectedSection) { _, _ in
+            loadStaticAnalysisIfNeeded()
         }
     }
 
@@ -415,6 +417,15 @@ public struct EntityDetailView: View {
             }
         }
         .pickerStyle(.segmented)
+    }
+
+    private func loadStaticAnalysisIfNeeded() {
+        switch selectedSection {
+        case .summary, .components:
+            return
+        case .why, .processes, .analysis:
+            state.loadEntityStaticAnalysis(entityID: entity.entityId)
+        }
     }
 
     @ViewBuilder

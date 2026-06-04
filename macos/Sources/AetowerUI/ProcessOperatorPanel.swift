@@ -70,14 +70,11 @@ struct ProcessOperatorPanel: View {
                 state.refreshProcessActionHistory()
                 return
             }
-            if let pid = selectedPID {
-                state.runProcessInspection(pid: pid)
-            }
             state.refreshProcessActionHistory()
         }
-        .onChange(of: selectedPID) { _, pid in
-            guard let pid else { return }
-            state.runProcessInspection(pid: pid)
+        .onChange(of: selectedPID) { _, _ in
+            pendingAction = nil
+            executingAction = nil
         }
         .onChange(of: quickRequest?.id) { _, _ in
             applyQuickRequest()
