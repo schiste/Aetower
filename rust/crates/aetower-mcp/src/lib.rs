@@ -45,8 +45,9 @@ use reports::history::{
 pub use reports::persistence::{persistence_deep_scan_json, persistence_scan_json};
 #[cfg(test)]
 use reports::process::{
-    build_process_action, parse_lsof_resources, parse_sample_threads, parse_vmmap_region_line,
-    process_action_history_item, process_action_plan,
+    build_process_action, build_process_action_with_context, parse_lsof_resources,
+    parse_sample_threads, parse_vmmap_region_line, process_action_history_item,
+    process_action_plan,
 };
 use reports::process::{
     build_process_tree_report, entity_process_ids, format_metric_value,
@@ -632,6 +633,10 @@ enum DynamicToolRequest {
         action: String,
         dry_run: bool,
         reason: Option<String>,
+        action_id: Option<String>,
+        expected_targets: Vec<ProcessActionTargetIdentity>,
+        restore_nice_value: Option<i32>,
+        privileged_helper_approved: bool,
     },
     ProcessActionHistory {
         window_minutes: u64,
@@ -958,19 +963,95 @@ struct ProcessSampleReport {
 #[derive(Debug, Clone, Serialize)]
 struct ProcessActionReport {
     captured_at_millis: u64,
+    action_id: String,
     pid: u32,
     target_pids: Vec<u32>,
+    target_identities: Vec<ProcessActionTargetIdentity>,
+    blast_radius: ProcessActionBlastRadius,
     action: String,
     signal: String,
     dry_run: bool,
     executed: bool,
     success: bool,
     command: String,
+    verification: String,
+    target_outcomes: Vec<ProcessActionTargetOutcome>,
+    follow_up_checks: Vec<ProcessActionFollowUpCheck>,
+    command_result: Option<ProcessActionCommandResult>,
+    privileged_helper_status: String,
     reason: Option<String>,
     entity_id: Option<String>,
     display_name: Option<String>,
     message: String,
     safety_notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ProcessActionTargetIdentity {
+    pid: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_time_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    executable_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nice_value: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessActionBlastRadius {
+    target_count: usize,
+    tree_action: bool,
+    confirmation_required: bool,
+    summary: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessActionTargetOutcome {
+    pid: u32,
+    visible_before: bool,
+    visible_after: Option<bool>,
+    nice_before: Option<i32>,
+    status_after: Option<String>,
+    nice_after: Option<i32>,
+    verification: String,
+    detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessActionFollowUpCheck {
+    delay_millis: u64,
+    verification: String,
+    target_outcomes: Vec<ProcessActionTargetOutcome>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessActionCommandResult {
+    exit_status: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ProcessActionRequestContext {
+    action_id: Option<String>,
+    reason: Option<String>,
+    expected_targets: Vec<ProcessActionTargetIdentity>,
+    restore_nice_value: Option<i32>,
+    privileged_helper_approved: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ProcessActionReasonEnvelope {
+    aetower_process_action_context: Option<u8>,
+    action_id: Option<String>,
+    reason: Option<String>,
+    #[serde(default)]
+    expected_targets: Vec<ProcessActionTargetIdentity>,
+    restore_nice_value: Option<i32>,
+    #[serde(default)]
+    privileged_helper_approved: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -988,11 +1069,17 @@ struct ProcessActionPlan {
 #[derive(Debug, Clone, Serialize)]
 struct ProcessActionHistoryItem {
     timestamp_millis: u64,
+    action_id: Option<String>,
     pid: Option<u32>,
     target_pids: Vec<u32>,
     action: Option<String>,
     signal: Option<String>,
     success: bool,
+    verification: Option<String>,
+    exit_status: Option<i32>,
+    stderr: Option<String>,
+    blast_radius: Option<usize>,
+    privileged_helper_status: Option<String>,
     reason: Option<String>,
     entity_id: Option<String>,
     display_name: Option<String>,
@@ -3156,7 +3243,7 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "aetower_process_action",
-            "description": "Preview or execute a guarded process action. Defaults to dry_run=true; set dry_run=false only after explicit operator approval.",
+            "description": "Preview or execute a guarded process action. Defaults to dry_run=true; set dry_run=false only after explicit operator approval. Executed reports include command_result, target_outcomes, and a bounded verification status so callers can tell whether macOS accepted the command and whether the target post-condition was confirmed.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -3175,7 +3262,38 @@ fn tool_definitions() -> Vec<Value> {
                         ]
                     },
                     "dry_run": { "type": "boolean" },
-                    "reason": { "type": "string" }
+                    "reason": { "type": "string" },
+                    "action_id": {
+                        "type": "string",
+                        "description": "Optional caller-provided correlation id. Reuse the preview action_id when executing."
+                    },
+                    "expected_targets": {
+                        "type": "array",
+                        "description": "Optional identity guard from a preview response. Execution is refused if the PID no longer matches the previewed start time or executable path.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "pid": { "type": "integer", "minimum": 2 },
+                                "start_time_millis": { "type": "integer", "minimum": 0 },
+                                "executable_path": { "type": "string" },
+                                "display_name": { "type": "string" },
+                                "nice_value": { "type": "integer", "minimum": -20, "maximum": 20 }
+                            },
+                            "required": ["pid"],
+                            "additionalProperties": false
+                        },
+                        "maxItems": 256
+                    },
+                    "restore_nice_value": {
+                        "type": "integer",
+                        "minimum": -20,
+                        "maximum": 20,
+                        "description": "For normal-priority, restore this exact nice value instead of assuming 0."
+                    },
+                    "privileged_helper_approved": {
+                        "type": "boolean",
+                        "description": "Explicit operator approval for an elevated retry. Current public builds report approved-but-unavailable rather than silently escalating."
+                    }
                 },
                 "required": ["pid", "action"],
                 "additionalProperties": false
@@ -3340,7 +3458,9 @@ mod tests {
         fs,
         io::{Cursor, Write},
         os::unix::fs::PermissionsExt,
+        process::Command as TestCommand,
         sync::{Arc, Mutex},
+        time::Duration as TestDuration,
     };
 
     use super::*;
@@ -5297,10 +5417,95 @@ mod tests {
 
         assert!(!report.executed);
         assert!(report.success);
+        assert!(!report.action_id.is_empty());
         assert_eq!(report.target_pids, vec![42]);
         assert_eq!(report.signal, "TERM");
         assert_eq!(report.command, "/bin/kill -TERM 42");
+        assert_eq!(report.verification, "preview");
+        assert_eq!(report.target_outcomes.len(), 1);
+        assert_eq!(report.target_outcomes[0].verification, "target-not-visible");
+        assert!(report.command_result.is_none());
         assert_eq!(report.reason.as_deref(), Some("test"));
+    }
+
+    #[test]
+    fn process_action_refuses_expected_identity_mismatch() {
+        let context = ProcessActionRequestContext {
+            action_id: Some("unit-action".to_owned()),
+            expected_targets: vec![ProcessActionTargetIdentity {
+                pid: 42,
+                start_time_millis: Some(99),
+                executable_path: Some("/tmp/other".to_owned()),
+                display_name: None,
+                nice_value: None,
+            }],
+            ..ProcessActionRequestContext::default()
+        };
+
+        let error = build_process_action_with_context(&FakeSource, 42, "terminate", false, context)
+            .expect_err("identity mismatch should fail closed");
+
+        assert!(error.contains("Refusing process action"));
+    }
+
+    #[test]
+    fn process_action_force_kill_verifies_disposable_child() {
+        let mut child = TestCommand::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn sleep: {error}"));
+        let pid = child.id();
+
+        let report = build_process_action(
+            &FakeSource,
+            pid,
+            "force-kill",
+            false,
+            Some("test".to_owned()),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+
+        let _ = child.wait();
+        assert!(report.executed);
+        assert!(report.success);
+        assert_eq!(report.signal, "KILL");
+        assert_eq!(report.verification, "verified-exited");
+        assert_eq!(report.blast_radius.target_count, 1);
+        assert_eq!(report.target_outcomes.len(), 1);
+        assert_eq!(report.target_outcomes[0].pid, pid);
+        assert_eq!(report.target_outcomes[0].verification, "exited");
+        assert_eq!(
+            report
+                .command_result
+                .as_ref()
+                .and_then(|result| result.exit_status),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn process_action_suspend_and_resume_verify_disposable_child() {
+        let mut child = TestCommand::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn sleep: {error}"));
+        let pid = child.id();
+
+        let suspend_report =
+            build_process_action(&FakeSource, pid, "suspend", false, Some("test".to_owned()))
+                .unwrap_or_else(|error| panic!("{error}"));
+        assert!(suspend_report.success);
+        assert_eq!(suspend_report.verification, "verified-suspended");
+
+        let resume_report =
+            build_process_action(&FakeSource, pid, "resume", false, Some("test".to_owned()))
+                .unwrap_or_else(|error| panic!("{error}"));
+        assert!(resume_report.success);
+        assert_eq!(resume_report.verification, "verified-running");
+
+        let _ = child.kill();
+        let _ = child.wait();
+        std::thread::sleep(TestDuration::from_millis(10));
     }
 
     #[test]
@@ -5379,11 +5584,17 @@ node      42 user   12u  IPv4 0x123456789abcdef      0t0  TCP 127.0.0.1:3000 (LI
         )
         .timestamp_millis(123)
         .entity_id("entity")
+        .field("action_id", "action-1")
         .field("pid", 42)
         .field("target_pids", "42,43")
         .field("action", "terminate")
         .field("signal", "TERM")
         .field("success", true)
+        .field("verification", "verified-exited")
+        .field("exit_status", 0)
+        .field("stderr", "Operation not permitted")
+        .field("blast_radius", 2)
+        .field("privileged_helper_status", "not-requested")
         .field("reason", "test")
         .field("display_name", "Example")
         .build();
@@ -5391,10 +5602,19 @@ node      42 user   12u  IPv4 0x123456789abcdef      0t0  TCP 127.0.0.1:3000 (LI
         let item = process_action_history_item(event);
 
         assert_eq!(item.timestamp_millis, 123);
+        assert_eq!(item.action_id.as_deref(), Some("action-1"));
         assert_eq!(item.pid, Some(42));
         assert_eq!(item.target_pids, vec![42, 43]);
         assert_eq!(item.action.as_deref(), Some("terminate"));
         assert_eq!(item.display_name.as_deref(), Some("Example"));
+        assert_eq!(item.verification.as_deref(), Some("verified-exited"));
+        assert_eq!(item.exit_status, Some(0));
+        assert_eq!(item.stderr.as_deref(), Some("Operation not permitted"));
+        assert_eq!(item.blast_radius, Some(2));
+        assert_eq!(
+            item.privileged_helper_status.as_deref(),
+            Some("not-requested")
+        );
         assert!(item.success);
     }
 

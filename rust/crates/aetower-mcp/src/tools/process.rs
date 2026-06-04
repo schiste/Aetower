@@ -132,6 +132,14 @@ impl AetowerMcpServer {
             dry_run: bool,
             #[serde(default)]
             reason: Option<String>,
+            #[serde(default)]
+            action_id: Option<String>,
+            #[serde(default)]
+            expected_targets: Vec<ProcessActionTargetIdentity>,
+            #[serde(default)]
+            restore_nice_value: Option<i32>,
+            #[serde(default)]
+            privileged_helper_approved: bool,
         }
 
         let args: Args = parse_args(arguments)?;
@@ -140,6 +148,10 @@ impl AetowerMcpServer {
             action: args.action,
             dry_run: args.dry_run,
             reason: args.reason,
+            action_id: args.action_id,
+            expected_targets: args.expected_targets,
+            restore_nice_value: args.restore_nice_value,
+            privileged_helper_approved: args.privileged_helper_approved,
         };
         let result = self.execute_dynamic_request(&request).map_err(tool_error)?;
         Ok(result)
