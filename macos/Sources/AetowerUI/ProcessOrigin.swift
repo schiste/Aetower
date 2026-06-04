@@ -375,7 +375,7 @@ private func originSummary(
     if let launcher { detailLines.append("Launched by: \(launcher)") }
     if let executable { detailLines.append("Executable: \(executable)") }
 
-    let baseTokens = [
+    var baseTokens = [
         "origin:\(kind.rawValue)",
         kind.rawValue,
         kind.chipLabel.localizedLowercase,
@@ -385,6 +385,9 @@ private func originSummary(
         executable?.localizedLowercase,
         host?.localizedLowercase,
     ].compactMap { $0 }
+    if let host {
+        baseTokens.append("host:\(originSearchToken(host))")
+    }
 
     return ProcessOriginSummary(
         kind: kind,
@@ -506,4 +509,10 @@ private func appBundleName(from path: String?) -> String? {
 
 private func firstNonEmpty(_ values: [String]) -> String? {
     values.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+}
+
+private func originSearchToken(_ value: String) -> String {
+    value
+        .localizedLowercase
+        .replacingOccurrences(of: " ", with: "-")
 }

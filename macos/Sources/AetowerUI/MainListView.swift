@@ -273,6 +273,21 @@ private struct RowSignalBadge: View {
     }
 }
 
+private struct ProcessOriginChip: View {
+    let summary: ProcessOriginSummary
+
+    var body: some View {
+        Label(summary.chipLabel, systemImage: summary.kind.systemImage)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(summary.kind.tint)
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(summary.kind.tint.opacity(0.14), in: Capsule())
+            .help(summary.detailLines.joined(separator: "\n"))
+    }
+}
+
 private struct RowFrictionHighlights {
     let title: Bool
     let cpu: Bool
@@ -288,6 +303,10 @@ private struct EntityRow: View {
     let entity: EntitySnapshot
     let isSelected: Bool
     @State private var isHovered = false
+
+    private var origin: ProcessOriginSummary {
+        processOrigin(for: entity)
+    }
 
     /// A process group is "new" when its most recently started process began
     /// within the last 30 seconds — surfaces freshly launched apps at a glance.
@@ -345,6 +364,8 @@ private struct EntityRow: View {
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            ProcessOriginChip(summary: origin)
 
             if isNewlyLaunched {
                 Text("NEW")
@@ -481,6 +502,7 @@ private struct EntityRow: View {
             "Processes: \(entityProcessCount)",
             "Wakeups: \(formatWakeups(entity.metrics.wakeupsPerSecond))",
             entity.recentChangeSummary,
+            origin.subtitle,
             entity.launcherSummary.map { "Launch lineage: \($0)" },
             entity.attributionNotes.first,
         ]
@@ -548,6 +570,7 @@ private struct EntityGroup {
 private struct GroupingCacheKey: Hashable {
     let sequence: UInt64
     let query: String
+    let originFilter: ProcessOriginFilter
     let sortKey: SortKey
     let filterSignature: String
 }
@@ -568,6 +591,10 @@ private struct GroupedEntityRow: View {
     let isSelected: Bool
     @State private var isHovered = false
 
+    private var origin: ProcessOriginSummary {
+        processOrigin(for: group.members)
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: entityIcon)
@@ -579,6 +606,8 @@ private struct GroupedEntityRow: View {
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            ProcessOriginChip(summary: origin)
 
             if group.members.count > 1 {
                 Text("+\(group.members.count - 1)")
@@ -665,7 +694,8 @@ private struct GroupedEntityRow: View {
     private var helpText: String {
         let names = group.members.prefix(6).map(\.displayName).joined(separator: ", ")
         let user = group.userSummary.isEmpty ? "" : " · user \(group.userSummary)"
-        let metrics = "\(formatWakeups(group.wakeupsPerSecond)) · \(formatRate(group.diskBps)) disk · \(formatRate(group.networkBps)) network\(user)"
+        let origin = processOrigin(for: group.members)
+        let metrics = "\(formatWakeups(group.wakeupsPerSecond)) · \(formatRate(group.diskBps)) disk · \(formatRate(group.networkBps)) network · \(origin.subtitle)\(user)"
         if group.members.count > 6 {
             return "Collapsed entities: \(names), +\(group.members.count - 6) more · \(group.processCount) grouped processes · \(metrics)"
         }
@@ -892,6 +922,7 @@ private func entityTextHaystacks(_ entity: EntitySnapshot) -> [String] {
         entity.badges.joined(separator: " "),
         entity.friction.reasons.joined(separator: " "),
     ]
+    haystacks.append(contentsOf: processOrigin(for: entity).searchTokens)
     for component in entity.components {
         haystacks.append(component.title)
         haystacks.append(component.detail)
@@ -1035,8 +1066,31 @@ private func textFieldPredicate(field: String, value: String) -> ((EntitySnapsho
         return { entity in entity.bundleId?.localizedLowercase.contains(value) == true }
     case "badge":
         return { entity in entity.badges.contains { $0.localizedLowercase.contains(value) } }
+    case "origin", "source", "kind", "host":
+        return { entity in processOriginMatchesSearch(processOrigin(for: entity), value: value) }
     default:
         return nil
+    }
+}
+
+private func processOriginMatchesSearch(_ origin: ProcessOriginSummary, value: String) -> Bool {
+    let normalizedValue = normalizedProcessOriginSearchValue(value)
+    if origin.kind.rawValue == normalizedValue {
+        return true
+    }
+    return origin.searchTokens.contains { token in
+        token.localizedLowercase.contains(normalizedValue)
+    }
+}
+
+private func normalizedProcessOriginSearchValue(_ value: String) -> String {
+    switch value {
+    case "apps", "applications", "application": return "app"
+    case "helpers": return "helper"
+    case "systems": return "system"
+    case "services", "daemons", "daemon": return "service"
+    case "term", "terminal", "shell": return "cli"
+    default: return value
     }
 }
 
@@ -1159,6 +1213,7 @@ public struct MainListView: View {
     let settings: SettingsStore
     @State private var selectedEntityID: String?
     @State private var searchText = ""
+    @State private var originFilter: ProcessOriginFilter = .all
     @State private var sortKey: SortKey = .friction
     @State private var focusedIndex: Int = 0
     @State private var listMode: ListMode = .grouped
@@ -1323,6 +1378,8 @@ public struct MainListView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
 
+                sidePanelOriginSummary(processOrigin(for: processTreeEntities))
+
                 if let quickStopDisplayPID {
                     sidePanelQuickStop(
                         entity: entity,
@@ -1344,6 +1401,29 @@ public struct MainListView: View {
                 processOperatorRequest: processOperatorRequest
             )
         }
+    }
+
+    private func sidePanelOriginSummary(_ origin: ProcessOriginSummary) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                ProcessOriginChip(summary: origin)
+                Text(origin.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+            }
+            ForEach(Array(origin.detailLines.dropFirst().prefix(3)), id: \.self) { line in
+                Text(line)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
+        .help(origin.detailLines.joined(separator: "\n"))
     }
 
     private func sidePanelQuickStop(
@@ -1610,11 +1690,46 @@ public struct MainListView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
 
+                Menu {
+                    ForEach(ProcessOriginFilter.allCases) { filter in
+                        Button {
+                            originFilter = filter
+                            focusedIndex = 0
+                            if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
+                                self.selectedEntityID = nil
+                            }
+                        } label: {
+                            HStack {
+                                Text(filter.label)
+                                if filter == originFilter {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(originFilter.menuLabel)
+                            .font(.caption.weight(.medium))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundStyle(originFilter == .all ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
+                    .padding(.horizontal, AetowerDesign.Spacing.sm)
+                    .padding(.vertical, AetowerDesign.Spacing.xs)
+                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+
                 HStack(spacing: 4) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
-                    TextField("Search…  cpu>50  path:/Applications  /helper/i", text: $searchText)
+                    TextField("Search…  origin:cli  cpu>50  path:/Applications", text: $searchText)
                         .textFieldStyle(.plain)
                         .aetowerUtilityTextInput()
                         .focused($searchFieldFocused)
@@ -1624,7 +1739,7 @@ public struct MainListView: View {
                 .padding(.horizontal, AetowerDesign.Spacing.sm)
                 .padding(.vertical, AetowerDesign.Spacing.xs)
                 .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
-                .frame(maxWidth: 160)
+                .frame(maxWidth: 190)
 
                 advancedFilterButton
 
@@ -2195,16 +2310,20 @@ public struct MainListView: View {
     }
 
     private var filteredEntities: [EntitySnapshot] {
-        filterEntities(applyAdvancedFilter(state.snapshot.entities), query: normalizedSearchQuery).sorted {
+        filterEntities(
+            applyOriginFilter(applyAdvancedFilter(state.snapshot.entities)),
+            query: normalizedSearchQuery
+        ).sorted {
             compareEntities($0, $1, by: sortKey)
         }
     }
 
     private var burdenLeaderEntities: [EntitySnapshot] {
         var seen = Set<String>()
+        let eligibleEntities = filteredEntities
         let ids = buildBurdenLeaders(snapshot: state.snapshot).map(\.entityId).filter { seen.insert($0).inserted }
         return ids.compactMap { id in
-            state.snapshot.entities.first(where: { $0.entityId == id })
+            eligibleEntities.first(where: { $0.entityId == id })
         }
     }
 
@@ -2320,6 +2439,7 @@ public struct MainListView: View {
         return GroupingCacheKey(
             sequence: state.snapshot.sequence,
             query: normalizedSearchQuery,
+            originFilter: originFilter,
             sortKey: sortKey,
             filterSignature: advancedFilterSignature
         )
@@ -2337,13 +2457,18 @@ public struct MainListView: View {
         return entities.filter { ids.contains($0.entityId) }
     }
 
+    private func applyOriginFilter(_ entities: [EntitySnapshot]) -> [EntitySnapshot] {
+        guard originFilter != .all else { return entities }
+        return entities.filter { processOrigin(for: $0).matches(originFilter) }
+    }
+
     private var isGroupedMode: Bool {
         listMode == .grouped
     }
 
     private var groupingTaskToken: String {
         guard let key = currentGroupingCacheKey else { return "flat" }
-        return "\(key.sequence)|\(key.query)|\(key.sortKey.rawValue)"
+        return "\(key.sequence)|\(key.query)|\(key.originFilter.rawValue)|\(key.sortKey.rawValue)"
     }
 
     private func listSectionHeader(_ title: String) -> some View {
@@ -2460,6 +2585,7 @@ public struct MainListView: View {
         }
 
         if state.snapshot.entities.contains(where: { $0.entityId == requestedEntityID }) {
+            originFilter = .all
             listMode = .flat
             selectedEntityID = requestedEntityID
         }
@@ -2482,7 +2608,9 @@ public struct MainListView: View {
 
         groupingTask?.cancel()
 
-        let entities = applyAdvancedFilter(state.snapshot.entities)
+        let entities = applyAdvancedFilter(state.snapshot.entities).filter {
+            key.originFilter.matches(processOrigin(for: $0).kind)
+        }
         let query = key.query
         let sortKey = key.sortKey
         isGrouping = true

@@ -23,6 +23,7 @@ final class ProcessOriginTests: XCTestCase {
         XCTAssertTrue(origin.subtitle.contains("CLI"))
         XCTAssertTrue(origin.subtitle.contains("Chau7"))
         XCTAssertTrue(origin.searchTokens.contains("origin:cli"))
+        XCTAssertTrue(origin.searchTokens.contains("host:chau7-session"))
     }
 
     func testApplicationBundleClassifiesClaudeDesktopAsApp() {
