@@ -9,90 +9,184 @@ public struct FleetView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-            // Header with toggle
-            HStack {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-                    Text("Fleet Monitoring")
-                        .font(.headline)
-                    Text("Discover other Aetower instances on your local network.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button {
-                    if fleet.isEnabled { fleet.stop() } else { fleet.start(state: state) }
-                } label: {
-                    HStack(spacing: AetowerDesign.Spacing.xs) {
-                        Circle()
-                            .fill(fleet.isEnabled ? AetowerDesign.Status.success : AetowerDesign.Status.neutral.opacity(0.3))
-                            .frame(width: 8, height: 8)
-                        Text(fleet.isEnabled ? "On" : "Off")
-                            .font(.caption.weight(.medium))
-                    }
-                    .padding(.horizontal, AetowerDesign.Spacing.sm)
-                    .padding(.vertical, AetowerDesign.Spacing.xs)
-                    .background(
-                        fleet.isEnabled ? AetowerDesign.Status.success.opacity(0.12) : AetowerDesign.Surface.badge,
-                        in: Capsule()
-                    )
-                    .overlay(
-                        Capsule().stroke(
-                            fleet.isEnabled ? AetowerDesign.Status.success.opacity(0.3) : AetowerDesign.Status.neutral.opacity(0.15),
-                            lineWidth: 1
-                        )
-                    )
-                }
-                .buttonStyle(.plain)
-                .animation(AetowerDesign.Motion.quick, value: fleet.isEnabled)
-            }
-            .padding(.horizontal, AetowerDesign.Spacing.lg)
-            .padding(.top, AetowerDesign.Spacing.md)
-
+            header
             Divider()
-
             if !fleet.isEnabled {
-                ContentUnavailableView(
-                    "Fleet monitoring is off",
-                    systemImage: "network",
-                    description: Text("Enable the toggle above to discover peers via Bonjour and share your system snapshot on the local network.")
+                setupFirstView
+            } else {
+                fleetContent
+            }
+            Spacer()
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                Text("Fleet Monitoring")
+                    .font(.headline)
+                Text("Discover other Aetower instances on your local network.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                if fleet.isEnabled { fleet.stop() } else { fleet.start(state: state) }
+            } label: {
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    Circle()
+                        .fill(fleet.isEnabled ? AetowerDesign.Status.success : AetowerDesign.Status.neutral.opacity(0.3))
+                        .frame(width: 8, height: 8)
+                    Text(fleet.isEnabled ? "On" : "Off")
+                        .font(.caption.weight(.medium))
+                }
+                .padding(.horizontal, AetowerDesign.Spacing.sm)
+                .padding(.vertical, AetowerDesign.Spacing.xs)
+                .background(
+                    fleet.isEnabled ? AetowerDesign.Status.success.opacity(0.12) : AetowerDesign.Surface.badge,
+                    in: Capsule()
                 )
-            } else if fleet.peers.isEmpty {
+                .overlay(
+                    Capsule().stroke(
+                        fleet.isEnabled ? AetowerDesign.Status.success.opacity(0.3) : AetowerDesign.Status.neutral.opacity(0.15),
+                        lineWidth: 1
+                    )
+                )
+            }
+            .buttonStyle(.plain)
+            .animation(AetowerDesign.Motion.quick, value: fleet.isEnabled)
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
+        .padding(.top, AetowerDesign.Spacing.md)
+    }
+
+    private var setupFirstView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    Text("Set up local fleet visibility")
+                        .font(.system(size: 26, weight: .semibold, design: .rounded))
+                    Text("Fleet is off by default. Enable it only when you want nearby Macs running Aetower to discover this instance and exchange current system snapshots.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 210), spacing: AetowerDesign.Spacing.md)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.md
+                ) {
+                    setupCard(
+                        "Local network only",
+                        detail: "Uses Bonjour/mDNS and TCP on the local network. This is not an internet telemetry feature.",
+                        systemImage: "network",
+                        tone: AetowerDesign.Tone.network
+                    )
+                    setupCard(
+                        "Shares current snapshot",
+                        detail: "Peers can request the current Aetower snapshot while Fleet is enabled, including host metrics and entity summaries.",
+                        systemImage: "rectangle.stack",
+                        tone: AetowerDesign.Status.warning
+                    )
+                    setupCard(
+                        "Stops cleanly",
+                        detail: "Turning Fleet off cancels the listener, browser, timer, in-flight connections, and visible peers.",
+                        systemImage: "power",
+                        tone: AetowerDesign.Status.success
+                    )
+                }
+
+                GroupBox("Before enabling") {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                        privacyLine("Only enable this on trusted networks.")
+                        privacyLine("Other Aetower instances can see this Mac's current host and process snapshot while Fleet is on.")
+                        privacyLine("Fleet is useful for labs and multi-Mac debugging; it is intentionally opt-in for personal machines.")
+                    }
+                    .padding(.top, AetowerDesign.Spacing.xs)
+                }
+
+                Button {
+                    fleet.start(state: state)
+                } label: {
+                    Label("Enable local Fleet", systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: 920, alignment: .leading)
+            .padding(AetowerDesign.Spacing.xxl)
+        }
+    }
+
+    @ViewBuilder
+    private var fleetContent: some View {
+        if fleet.peers.isEmpty {
+            VStack(spacing: AetowerDesign.Spacing.md) {
                 ContentUnavailableView(
                     "Searching for peers...",
                     systemImage: "antenna.radiowaves.left.and.right",
                     description: Text("Browsing for other Aetower instances on the local network. Make sure fleet is enabled on other Macs too.")
                 )
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: AetowerDesign.Spacing.xs) {
-                        // Column headers
-                        HStack(spacing: AetowerDesign.Spacing.sm) {
-                            Text("Peer")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Text("CPU")
-                                .frame(width: 50, alignment: .trailing)
-                            Text("Friction")
-                                .frame(width: 55, alignment: .trailing)
-                            Text("Entities")
-                                .frame(width: 50, alignment: .trailing)
-                            Text("Unsigned")
-                                .frame(width: 60, alignment: .trailing)
-                            Text("Last seen")
-                                .frame(width: 70, alignment: .trailing)
-                        }
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, AetowerDesign.Spacing.lg)
+                Text("While Fleet is enabled, this Mac is advertising Aetower on the local network and can serve its current snapshot to peers.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Text("Peer")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("CPU")
+                            .frame(width: 50, alignment: .trailing)
+                        Text("Friction")
+                            .frame(width: 55, alignment: .trailing)
+                        Text("Entities")
+                            .frame(width: 50, alignment: .trailing)
+                        Text("Unsigned")
+                            .frame(width: 60, alignment: .trailing)
+                        Text("Last seen")
+                            .frame(width: 70, alignment: .trailing)
+                    }
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, AetowerDesign.Spacing.lg)
 
-                        ForEach(fleet.peers) { peer in
-                            PeerRow(peer: peer)
-                                .padding(.horizontal, AetowerDesign.Spacing.sm)
-                        }
+                    ForEach(fleet.peers) { peer in
+                        PeerRow(peer: peer)
+                            .padding(.horizontal, AetowerDesign.Spacing.sm)
                     }
                 }
+                .padding(.top, AetowerDesign.Spacing.md)
             }
+        }
+    }
 
-            Spacer()
+    private func setupCard(_ title: String, detail: String, systemImage: String, tone: Color) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: systemImage)
+                .font(.title3)
+                .foregroundStyle(tone)
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .frame(maxWidth: .infinity, minHeight: 142, alignment: .topLeading)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
+    }
+
+    private func privacyLine(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: "checkmark.circle")
+                .foregroundStyle(AetowerDesign.Status.success)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
