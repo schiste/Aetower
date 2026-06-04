@@ -45,10 +45,16 @@ cp "$SITE_SOURCE/_headers" "$SITE_OUTPUT/_headers"
 if [ -d "$SITE_SOURCE/assets" ]; then
   cp -R "$SITE_SOURCE/assets/." "$SITE_OUTPUT/assets/"
 fi
-cp "$APPCAST_DIR"/* "$SITE_OUTPUT/releases/"
+for APPCAST_FILE in "$APPCAST_DIR"/*; do
+    [ -f "$APPCAST_FILE" ] || continue
+    cp "$APPCAST_FILE" "$SITE_OUTPUT/releases/"
+done
 cp "$RELEASE_ARCHIVE" "$SITE_OUTPUT/releases/Aetower.zip"
 cp "$THIRD_PARTY_NOTICES" "$SITE_OUTPUT/third-party-notices.md"
-cp "$SOURCE_ARCHIVE_DIR"/* "$SITE_OUTPUT/releases/"
+for SOURCE_ARCHIVE in "$SOURCE_ARCHIVE_DIR"/*; do
+    [ -f "$SOURCE_ARCHIVE" ] || continue
+    cp "$SOURCE_ARCHIVE" "$SITE_OUTPUT/releases/"
+done
 if [ -f "$HOMEBREW_CASK" ]; then
     cp "$HOMEBREW_CASK" "$SITE_OUTPUT/homebrew/Casks/aetower.rb"
 fi
