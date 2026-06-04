@@ -30,6 +30,31 @@ private enum NotificationCategory: String {
     }
 }
 
+private struct ProcessActionRequestEnvelopePayload: Encodable {
+    let aetowerProcessActionContext = 1
+    let actionID: String?
+    let reason: String?
+    let expectedTargets: [ProcessActionTargetIdentityPayload]
+    let restoreNiceValue: Int?
+    let privilegedHelperApproved: Bool
+}
+
+private struct ProcessActionTargetIdentityPayload: Encodable {
+    let pid: UInt32
+    let startTimeMillis: UInt64?
+    let executablePath: String?
+    let displayName: String?
+    let niceValue: Int?
+
+    init(_ identity: ProcessActionTargetIdentityModel) {
+        self.pid = identity.pid
+        self.startTimeMillis = identity.startTimeMillis
+        self.executablePath = identity.executablePath
+        self.displayName = identity.displayName
+        self.niceValue = identity.niceValue
+    }
+}
+
 @MainActor
 @Observable
 public final class AppState {
@@ -2018,16 +2043,28 @@ public final class AppState {
     func runProcessAction(
         pid: UInt32,
         action: ProcessActionKind,
-        reason: String? = nil
+        reason: String? = nil,
+        actionID: String? = nil,
+        expectedTargets: [ProcessActionTargetIdentityModel] = [],
+        restoreNiceValue: Int? = nil,
+        privilegedHelperApproved: Bool = false
     ) {
         let bridge = self.bridge
+        let encodedReason = processActionRequestEnvelope(
+            reason: reason,
+            actionID: actionID,
+            expectedTargets: expectedTargets,
+            restoreNiceValue: restoreNiceValue,
+            privilegedHelperApproved: privilegedHelperApproved
+        )
+        processActionReports[pid] = nil
         setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processAction, isLoading: true)
         Task(priority: .utility) { [weak self] in
             let result = bridge.processActionJSON(
                 pid: pid,
                 action: action.rawValue,
                 dryRun: false,
-                reason: reason
+                reason: encodedReason
             )
             let historyResult = bridge.processActionHistoryJSON()
             await MainActor.run {
@@ -2053,17 +2090,26 @@ public final class AppState {
     func runProcessActionPreview(
         pid: UInt32,
         action: ProcessActionKind,
-        reason: String? = nil
+        reason: String? = nil,
+        actionID: String? = nil
     ) {
         let bridge = self.bridge
         let previewKey = processActionPreviewKey(pid: pid, action: action)
+        let encodedReason = processActionRequestEnvelope(
+            reason: reason,
+            actionID: actionID,
+            expectedTargets: [],
+            restoreNiceValue: nil,
+            privilegedHelperApproved: false
+        )
+        processActionPreviewReports[previewKey] = nil
         setEntityAnalysisLoading(processAnalysisKey(pid), kind: .processAction, isLoading: true)
         Task(priority: .utility) { [weak self] in
             let result = bridge.processActionJSON(
                 pid: pid,
                 action: action.rawValue,
                 dryRun: true,
-                reason: reason
+                reason: encodedReason
             )
             await MainActor.run {
                 guard let self else { return }
@@ -2115,6 +2161,43 @@ public final class AppState {
 
     private func processActionPreviewKey(pid: UInt32, action: ProcessActionKind) -> String {
         "\(pid)|\(action.rawValue)"
+    }
+
+    private func processActionRequestEnvelope(
+        reason: String?,
+        actionID: String?,
+        expectedTargets: [ProcessActionTargetIdentityModel],
+        restoreNiceValue: Int?,
+        privilegedHelperApproved: Bool
+    ) -> String? {
+        let trimmedReason = trimmedNonEmpty(reason)
+        let hasMetadata = trimmedNonEmpty(actionID) != nil
+            || !expectedTargets.isEmpty
+            || restoreNiceValue != nil
+            || privilegedHelperApproved
+        guard hasMetadata else {
+            return trimmedReason
+        }
+        let payload = ProcessActionRequestEnvelopePayload(
+            actionID: actionID,
+            reason: trimmedReason,
+            expectedTargets: expectedTargets.map(ProcessActionTargetIdentityPayload.init),
+            restoreNiceValue: restoreNiceValue,
+            privilegedHelperApproved: privilegedHelperApproved
+        )
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        guard let data = try? encoder.encode(payload),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            return trimmedReason
+        }
+        return json
+    }
+
+    private func trimmedNonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     public func loadHistory(force: Bool = false) {

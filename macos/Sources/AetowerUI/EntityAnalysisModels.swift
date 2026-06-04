@@ -635,14 +635,22 @@ struct ProcessSampleReportModel: Codable {
 
 struct ProcessActionReportModel: Codable {
     let capturedAtMillis: UInt64
+    let actionId: String?
     let pid: UInt32
     let targetPids: [UInt32]
+    let targetIdentities: [ProcessActionTargetIdentityModel]?
+    let blastRadius: ProcessActionBlastRadiusModel?
     let action: String
     let signal: String
     let dryRun: Bool
     let executed: Bool
     let success: Bool
     let command: String
+    let verification: String?
+    let targetOutcomes: [ProcessActionTargetOutcomeModel]?
+    let followUpChecks: [ProcessActionFollowUpCheckModel]?
+    let commandResult: ProcessActionCommandResultModel?
+    let privilegedHelperStatus: String?
     let reason: String?
     let entityId: String?
     let displayName: String?
@@ -650,13 +658,63 @@ struct ProcessActionReportModel: Codable {
     let safetyNotes: [String]
 }
 
+struct ProcessActionTargetIdentityModel: Codable, Identifiable {
+    let pid: UInt32
+    let startTimeMillis: UInt64?
+    let executablePath: String?
+    let displayName: String?
+    let niceValue: Int?
+
+    var id: UInt32 { pid }
+}
+
+struct ProcessActionBlastRadiusModel: Codable {
+    let targetCount: Int
+    let treeAction: Bool
+    let confirmationRequired: Bool
+    let summary: String
+}
+
+struct ProcessActionTargetOutcomeModel: Codable, Identifiable {
+    let pid: UInt32
+    let visibleBefore: Bool
+    let visibleAfter: Bool?
+    let niceBefore: Int?
+    let statusAfter: String?
+    let niceAfter: Int?
+    let verification: String
+    let detail: String
+
+    var id: UInt32 { pid }
+}
+
+struct ProcessActionCommandResultModel: Codable {
+    let exitStatus: Int?
+    let stdout: String
+    let stderr: String
+}
+
+struct ProcessActionFollowUpCheckModel: Codable, Identifiable {
+    let delayMillis: UInt64
+    let verification: String
+    let targetOutcomes: [ProcessActionTargetOutcomeModel]
+
+    var id: UInt64 { delayMillis }
+}
+
 struct ProcessActionHistoryItemModel: Codable, Identifiable {
     let timestampMillis: UInt64
+    let actionId: String?
     let pid: UInt32?
     let targetPids: [UInt32]
     let action: String?
     let signal: String?
     let success: Bool
+    let verification: String?
+    let exitStatus: Int?
+    let stderr: String?
+    let blastRadius: Int?
+    let privilegedHelperStatus: String?
     let reason: String?
     let entityId: String?
     let displayName: String?

@@ -14,6 +14,7 @@ struct ProcessOperatorPanel: View {
 
     @State private var selectedPID: UInt32?
     @State private var pendingAction: ProcessActionKind?
+    @State private var executingAction: ProcessActionSubmission?
     @State private var actionReason = ""
     @State private var openResourceFilter = ""
     @State private var openResourceTypeFilter: OpenResourceTypeFilter = .all
@@ -218,12 +219,15 @@ struct ProcessOperatorPanel: View {
                 actionPreview(pid: pid, action: pendingAction)
             }
 
+            if let executingAction,
+                executingAction.pid == pid,
+                isLoading(pid, .processAction)
+            {
+                actionSubmissionStatus(executingAction)
+            }
+
             if let report = state.processActionReports[pid] {
-                StatusLine(
-                    icon: report.success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
-                    color: report.success ? .green : .orange,
-                    text: "\(targetSummary(report.targetPids, fallbackPID: report.pid)) · \(report.message) · \(report.command)"
-                )
+                actionResult(report)
             }
 
             if let error = state.entityAnalysisError(processAnalysisKey(pid), kind: .processAction) {
@@ -242,16 +246,36 @@ struct ProcessOperatorPanel: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 MetricLabel("Targets", targetList(preview.targetPids, fallbackPID: preview.pid))
+                if let blastRadius = preview.blastRadius,
+                   blastRadius.confirmationRequired {
+                    StatusLine(
+                        icon: "scope",
+                        color: AetowerDesign.Status.warning,
+                        text: "Blast radius: \(blastRadius.summary)"
+                    )
+                }
+                if let actionID = preview.actionId {
+                    MetricLabel("Action ID", actionID)
+                }
                 MonospaceBlock(preview.command)
                 ForEach(preview.safetyNotes, id: \.self) { note in
                     StatusLine(icon: "shield.lefthalf.filled", color: .orange, text: note)
                 }
                 HStack {
                     Button(action.label, role: action.isDestructive ? .destructive : nil) {
+                        let actionID = preview.actionId ?? UUID().uuidString
+                        executingAction = ProcessActionSubmission(
+                            pid: pid,
+                            action: action,
+                            actionID: actionID,
+                            submittedAt: Date()
+                        )
                         state.runProcessAction(
                             pid: pid,
                             action: action,
-                            reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                            reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                            actionID: actionID,
+                            expectedTargets: preview.targetIdentities ?? []
                         )
                         state.clearProcessActionPreview(pid: pid, action: action)
                         pendingAction = nil
@@ -272,6 +296,149 @@ struct ProcessOperatorPanel: View {
             .background(AetowerDesign.Surface.alertInfo, in: RoundedRectangle(cornerRadius: 10))
         } else if isLoading(pid, .processAction) {
             ProgressView("Previewing \(action.label.lowercased()) targets…")
+        }
+    }
+
+    private func actionSubmissionStatus(_ submission: ProcessActionSubmission) -> some View {
+        StatusLine(
+            icon: "paperplane.fill",
+            color: AetowerDesign.Status.ready,
+            text: "\(submission.action.label) \(shortActionID(submission.actionID)) sent at \(operatorClockTime(submission.submittedAt)); waiting for macOS response and Aetower verification."
+        )
+    }
+
+    private func actionResult(_ report: ProcessActionReportModel) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(
+                "Action result",
+                detail: actionResultDetail(report)
+            )
+            StatusLine(
+                icon: actionStatusIcon(success: report.success, verification: report.verification),
+                color: actionStatusColor(success: report.success, verification: report.verification),
+                text: "\(targetSummary(report.targetPids, fallbackPID: report.pid)) · \(report.message)"
+            )
+            if let verification = report.verification {
+                StatusLine(
+                    icon: verificationIcon(verification),
+                    color: verificationColor(verification, success: report.success),
+                    text: "Verification: \(verificationLabel(verification))"
+                )
+            }
+            if let actionID = report.actionId {
+                MetricLabel("Action ID", actionID)
+            }
+            if let privilegedStatus = report.privilegedHelperStatus,
+               privilegedStatus != "not-requested" {
+                StatusLine(
+                    icon: "lock.shield",
+                    color: AetowerDesign.Status.warning,
+                    text: "Privileged helper: \(verificationLabel(privilegedStatus))"
+                )
+            }
+            if let commandResult = report.commandResult {
+                LazyVGrid(columns: operatorColumns, alignment: .leading, spacing: 8) {
+                    MetricLabel("Exit status", commandResult.exitStatus.map(String.init) ?? "signal/unknown")
+                    MetricLabel("Executed", report.executed ? "Yes" : "No")
+                }
+                if !commandResult.stderr.isEmpty {
+                    StatusLine(
+                        icon: "text.bubble",
+                        color: AetowerDesign.Status.warning,
+                        text: "macOS stderr: \(commandResult.stderr)"
+                    )
+                }
+                if !commandResult.stdout.isEmpty {
+                    MonospaceBlock(commandResult.stdout)
+                }
+            }
+            MonospaceBlock(report.command)
+            actionTargetOutcomes(report.targetOutcomes ?? [])
+            actionFollowUpChecks(report.followUpChecks ?? [])
+            restorePriorityAction(report)
+        }
+        .padding(10)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func actionTargetOutcomes(_ outcomes: [ProcessActionTargetOutcomeModel]) -> some View {
+        if !outcomes.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Target verification")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(outcomes.prefix(8)) { outcome in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("PID \(outcome.pid)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(width: 64, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(verificationLabel(outcome.verification))
+                                .font(.caption.weight(.medium))
+                            Text(outcome.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(targetOutcomeMetadata(outcome))
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                    }
+                }
+                if outcomes.count > 8 {
+                    Text("+\(outcomes.count - 8) more targets")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func actionFollowUpChecks(_ checks: [ProcessActionFollowUpCheckModel]) -> some View {
+        if !checks.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Follow-up verification")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(checks) { check in
+                    StatusLine(
+                        icon: verificationIcon(check.verification),
+                        color: verificationColor(check.verification, success: true),
+                        text: "\(check.delayMillis / 1_000)s: \(verificationLabel(check.verification))"
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func restorePriorityAction(_ report: ProcessActionReportModel) -> some View {
+        if report.action == "lower-priority",
+           let restoreNiceValue = report.targetOutcomes?.first?.niceBefore {
+            let targetPID = report.targetPids.first ?? report.pid
+            Button {
+                let restoreActionID = UUID().uuidString
+                executingAction = ProcessActionSubmission(
+                    pid: targetPID,
+                    action: .normalPriority,
+                    actionID: restoreActionID,
+                    submittedAt: Date()
+                )
+                state.runProcessAction(
+                    pid: targetPID,
+                    action: .normalPriority,
+                    reason: "Restore nice value \(restoreNiceValue) from action \(report.actionId ?? "unknown").",
+                    actionID: restoreActionID,
+                    expectedTargets: report.targetIdentities ?? [],
+                    restoreNiceValue: restoreNiceValue
+                )
+            } label: {
+                Label("Restore previous priority (\(restoreNiceValue))", systemImage: "arrow.uturn.backward.circle")
+            }
+            .buttonStyle(.bordered)
         }
     }
 
@@ -745,13 +912,23 @@ struct ProcessOperatorPanel: View {
             if let history = state.processActionHistory, !history.actions.isEmpty {
                 ForEach(history.actions.prefix(5)) { action in
                     HStack(spacing: 8) {
-                        Image(systemName: action.success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .foregroundStyle(action.success ? .green : .orange)
+                        Image(systemName: actionStatusIcon(success: action.success, verification: action.verification))
+                            .foregroundStyle(actionStatusColor(success: action.success, verification: action.verification))
                         Text(action.action ?? "process-action")
                             .font(.caption)
+                        if let actionID = action.actionId {
+                            Text(shortActionID(actionID))
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                        }
                         Text(targetSummary(action.targetPids, fallbackPID: action.pid))
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.secondary)
+                        if let verification = action.verification {
+                            Text(verificationLabel(verification))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                         Spacer()
                         Text(operatorRelativeTime(action.timestampMillis))
                             .font(.caption2)
@@ -820,10 +997,12 @@ struct ProcessOperatorPanel: View {
     private func previewAction(_ action: ProcessActionKind, pid: UInt32) {
         selectedPID = pid
         pendingAction = action
+        let actionID = UUID().uuidString
         state.runProcessActionPreview(
             pid: pid,
             action: action,
-            reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            actionID: actionID
         )
     }
 
@@ -864,6 +1043,130 @@ struct ProcessOperatorPanel: View {
         return "\(visible), +\(targets.count - 8) more"
     }
 
+    private func actionResultDetail(_ report: ProcessActionReportModel) -> String {
+        let outcome = report.verification.map(verificationLabel) ?? (report.success ? "accepted" : "failed")
+        return "\(report.action) · \(outcome)"
+    }
+
+    private func verificationLabel(_ verification: String) -> String {
+        switch verification {
+        case "preview": return "Preview only"
+        case "target-visible": return "Target visible"
+        case "target-not-visible": return "Target missing"
+        case "verified-exited", "exited": return "Exited / no longer running"
+        case "targets-still-visible", "still-visible": return "Still visible"
+        case "verified-suspended", "suspended": return "Suspended"
+        case "suspend-not-confirmed", "not-suspended": return "Suspend not confirmed"
+        case "verified-running", "running": return "Running"
+        case "resume-not-confirmed": return "Resume not confirmed"
+        case "still-suspended": return "Still suspended"
+        case "verified-priority", "priority-lowered", "priority-normal": return "Priority verified"
+        case "priority-not-confirmed": return "Priority not confirmed"
+        case "command-failed": return "Command failed"
+        case "command-accepted": return "Command accepted"
+        case "used": return "Used"
+        case "approved-not-needed": return "Approved, not needed"
+        case "approved-but-unavailable": return "Approved but unavailable"
+        case "approved-but-failed": return "Approved but failed"
+        case "not-requested": return "Not requested"
+        case "not-visible": return "No longer visible"
+        default: return verification.replacingOccurrences(of: "-", with: " ")
+        }
+    }
+
+    private func verificationIcon(_ verification: String) -> String {
+        switch verification {
+        case "verified-exited", "exited", "verified-suspended", "suspended",
+            "verified-running", "running", "verified-priority", "priority-lowered",
+            "priority-normal", "command-accepted":
+            return "checkmark.seal.fill"
+        case "command-failed":
+            return "xmark.octagon.fill"
+        case "targets-still-visible", "still-visible", "suspend-not-confirmed",
+            "not-suspended", "resume-not-confirmed", "still-suspended",
+            "priority-not-confirmed":
+            return "exclamationmark.triangle.fill"
+        default:
+            return "info.circle"
+        }
+    }
+
+    private func verificationColor(_ verification: String, success: Bool) -> Color {
+        if verification == "command-failed" || !success {
+            return AetowerDesign.Status.error
+        }
+        switch verification {
+        case "verified-exited", "exited", "verified-suspended", "suspended",
+            "verified-running", "running", "verified-priority", "priority-lowered",
+            "priority-normal", "command-accepted":
+            return AetowerDesign.Status.success
+        case "targets-still-visible", "still-visible", "suspend-not-confirmed",
+            "not-suspended", "resume-not-confirmed", "still-suspended",
+            "priority-not-confirmed":
+            return AetowerDesign.Status.warning
+        default:
+            return .secondary
+        }
+    }
+
+    private func actionStatusIcon(success: Bool, verification: String?) -> String {
+        if !success {
+            return "xmark.octagon.fill"
+        }
+        guard let verification else {
+            return "checkmark.circle.fill"
+        }
+        return verificationIsConfirmed(verification)
+            ? "checkmark.circle.fill"
+            : "exclamationmark.triangle.fill"
+    }
+
+    private func actionStatusColor(success: Bool, verification: String?) -> Color {
+        if !success {
+            return AetowerDesign.Status.error
+        }
+        guard let verification else {
+            return AetowerDesign.Status.success
+        }
+        return verificationIsConfirmed(verification)
+            ? AetowerDesign.Status.success
+            : AetowerDesign.Status.warning
+    }
+
+    private func verificationIsConfirmed(_ verification: String) -> Bool {
+        switch verification {
+        case "verified-exited", "verified-suspended", "verified-running",
+            "verified-priority", "command-accepted", "preview":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func targetOutcomeMetadata(_ outcome: ProcessActionTargetOutcomeModel) -> String {
+        var parts = [
+            "before \(outcome.visibleBefore ? "visible" : "missing")",
+        ]
+        if let visibleAfter = outcome.visibleAfter {
+            parts.append("after \(visibleAfter ? "visible" : "missing")")
+        }
+        if let niceBefore = outcome.niceBefore {
+            parts.append("nice before \(niceBefore)")
+        }
+        if let statusAfter = outcome.statusAfter {
+            parts.append("stat \(statusAfter)")
+        }
+        if let niceAfter = outcome.niceAfter {
+            parts.append("nice \(niceAfter)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func shortActionID(_ actionID: String) -> String {
+        let suffix = actionID.suffix(8)
+        return "#\(suffix)"
+    }
+
     private func isLoading(_ pid: UInt32, _ kind: EntityAnalysisKind) -> Bool {
         state.entityAnalysisIsLoading(processAnalysisKey(pid), kind: kind)
     }
@@ -891,6 +1194,13 @@ struct ProcessOperatorPanel: View {
 private struct OperatorProcess: Identifiable {
     let id: UInt32
     let component: ComponentSnapshot
+}
+
+private struct ProcessActionSubmission: Equatable {
+    let pid: UInt32
+    let action: ProcessActionKind
+    let actionID: String
+    let submittedAt: Date
 }
 
 private struct SectionHeader: View {
@@ -1009,6 +1319,17 @@ private func operatorRelativeTime(_ timestampMillis: UInt64) -> String {
         return "\(Int(delta / 60))m ago"
     }
     return "\(Int(delta / 3600))h ago"
+}
+
+private let processActionClockFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.timeStyle = .medium
+    formatter.dateStyle = .none
+    return formatter
+}()
+
+private func operatorClockTime(_ date: Date) -> String {
+    processActionClockFormatter.string(from: date)
 }
 
 private extension String {
