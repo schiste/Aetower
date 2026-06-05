@@ -376,21 +376,6 @@ private struct EntityRow: View {
                     .background(AetowerDesign.Status.success.opacity(0.15), in: Capsule())
             }
 
-            // Badges
-            if entity.entityKind == .aiAgent {
-                HStack(spacing: 3) {
-                    ForEach(agentRuntimeBadges(for: entity)) { badge in
-                        Text(badge.label)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(badge.color)
-                            .lineLimit(1)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(badge.color.opacity(0.15), in: Capsule())
-                    }
-                }
-            }
-
             if entity.metrics.isForeground {
                 Circle().fill(.blue).frame(width: 5, height: 5)
             }

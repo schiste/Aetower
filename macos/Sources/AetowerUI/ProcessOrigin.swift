@@ -188,18 +188,6 @@ func processOrigin(from signals: ProcessOriginSignals) -> ProcessOriginSummary {
     let launcher = firstNonEmpty(signals.launchedByValues)
     let host = originHostSummary(from: signals)
 
-    if isAppHelper(signals: signals, paths: allPaths, loweredText: loweredText) {
-        return originSummary(
-            kind: .helper,
-            subtitle: helperSubtitle(executable: executable, parent: parentSummary),
-            parent: parentSummary,
-            executable: executable,
-            launcher: launcher,
-            host: host,
-            extraTokens: ["helper"]
-        )
-    }
-
     if isCliProcess(signals: signals, paths: allPaths, loweredText: loweredText) {
         return originSummary(
             kind: .cli,
@@ -209,6 +197,18 @@ func processOrigin(from signals: ProcessOriginSignals) -> ProcessOriginSummary {
             launcher: launcher,
             host: host,
             extraTokens: ["cli", "terminal", "shell"]
+        )
+    }
+
+    if isAppHelper(signals: signals, paths: allPaths, loweredText: loweredText) {
+        return originSummary(
+            kind: .helper,
+            subtitle: helperSubtitle(executable: executable, parent: parentSummary),
+            parent: parentSummary,
+            executable: executable,
+            launcher: launcher,
+            host: host,
+            extraTokens: ["helper"]
         )
     }
 
@@ -320,6 +320,9 @@ private func isAppHelper(
     if signals.entityKind == .app || signals.entityKind == .browser {
         return false
     }
+    if hasExplicitCliIdentity(signals: signals, paths: paths, loweredText: loweredText) {
+        return false
+    }
     if paths.contains(where: isAppBundleHelperPath) {
         return true
     }
@@ -327,7 +330,21 @@ private func isAppHelper(
         $0.contains("helpertree")
             || $0.contains("helper tree")
             || $0.contains(" helper")
+        }
+}
+
+private func hasExplicitCliIdentity(
+    signals: ProcessOriginSignals,
+    paths: [String],
+    loweredText: [String]
+) -> Bool {
+    if signals.entityKind == .terminalSession || signals.entityKind == .aiAgent {
+        return true
     }
+    if paths.contains(where: isShellExecutablePath) {
+        return true
+    }
+    return loweredText.contains(where: containsShellProvenance)
 }
 
 private func isSystemProcess(
@@ -484,6 +501,11 @@ private func isCommandLineToolPath(_ path: String) -> Bool {
         || lowered.contains("/.volta/tools/")
         || lowered.contains("/.npm/")
         || lowered.contains("/node_modules/.bin/")
+}
+
+private func isShellExecutablePath(_ path: String) -> Bool {
+    let executable = (path as NSString).lastPathComponent.localizedLowercase
+    return ["zsh", "bash", "fish", "tcsh", "csh", "sh"].contains(executable)
 }
 
 private func containsShellProvenance(_ value: String) -> Bool {

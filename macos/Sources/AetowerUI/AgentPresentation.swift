@@ -6,12 +6,6 @@ import SwiftUI
 // so there is a single source of truth. Where the per-view copies had drifted,
 // the shared version takes the superset behavior (noted inline).
 
-struct AgentRuntimeBadge: Identifiable {
-    let id: String
-    let label: String
-    let color: Color
-}
-
 private let agentNonRuntimeBadges: Set<String> = [
     "ai-agent",
     "ai-model",
@@ -36,25 +30,6 @@ private let agentNonRuntimeBadges: Set<String> = [
 /// The Chau7 session component for an entity, if one is attached.
 func agentSessionComponent(for entity: EntitySnapshot) -> ComponentSnapshot? {
     entity.components.first { $0.adapterContext?.kind == .chau7Session }
-}
-
-/// Provider/model badges for visible agent identity chips.
-///
-/// These are intentionally derived from stable backend badge tokens rather than
-/// display names, so optional integrations (Chau7) and raw process recognition
-/// both feed the same UI.
-func agentRuntimeBadges(for entity: EntitySnapshot) -> [AgentRuntimeBadge] {
-    let ids = agentRuntimeBadgeIDs(for: entity)
-    if ids.isEmpty, entity.entityKind == .aiAgent {
-        return [AgentRuntimeBadge(id: "ai", label: "AI", color: .purple)]
-    }
-    return ids.map {
-        AgentRuntimeBadge(
-            id: $0,
-            label: AetowerDesign.agentLabel($0),
-            color: AetowerDesign.agentColor($0)
-        )
-    }
 }
 
 private func agentRuntimeBadgeIDs(for entity: EntitySnapshot) -> [String] {

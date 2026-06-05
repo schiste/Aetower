@@ -69,4 +69,45 @@ final class ProcessOriginTests: XCTestCase {
         XCTAssertTrue(origin.subtitle.contains("Helper"))
         XCTAssertTrue(origin.searchTokens.contains("origin:helper"))
     }
+
+    func testShellSessionWinsOverHelperParentText() {
+        let origin = processOrigin(from: ProcessOriginSignals(
+            entityKind: .terminalSession,
+            displayName: "zsh",
+            bundleId: nil,
+            executablePath: "/bin/zsh",
+            componentExecutablePaths: ["/bin/zsh"],
+            commandLines: ["zsh"],
+            parentSummaries: ["Google Chrome Helper (pid 41421)"],
+            launchedByValues: [],
+            provenanceLabels: ["Helper tree", "Shell session"],
+            provenanceKindNames: ["helperTree", "shellSession"],
+            adapterKindNames: [],
+            users: ["christophehenner"]
+        ))
+
+        XCTAssertEqual(origin.kind, .cli)
+        XCTAssertTrue(origin.subtitle.contains("Command-line"))
+        XCTAssertTrue(origin.searchTokens.contains("origin:cli"))
+    }
+
+    func testBrowserMainProcessWithShellParentRemainsApp() {
+        let origin = processOrigin(from: ProcessOriginSignals(
+            entityKind: .browser,
+            displayName: "Google Chrome",
+            bundleId: "local.google-chrome",
+            executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            componentExecutablePaths: ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+            commandLines: ["Google Chrome --remote-debugging-pipe"],
+            parentSummaries: ["zsh (pid 42717)"],
+            launchedByValues: [],
+            provenanceLabels: ["Application bundle"],
+            provenanceKindNames: ["appBundle"],
+            adapterKindNames: [],
+            users: ["christophehenner"]
+        ))
+
+        XCTAssertEqual(origin.kind, .app)
+        XCTAssertTrue(origin.searchTokens.contains("origin:app"))
+    }
 }
