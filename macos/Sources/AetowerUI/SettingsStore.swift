@@ -413,6 +413,12 @@ public final class SettingsStore {
     public var monitorMetricCardFocus: MonitorMetricCardFocus {
         didSet { persist() }
     }
+    /// Draw the Monitor rings on a fixed absolute axis (0–100, or 0 to the
+    /// danger threshold for disk/network/wakeups) instead of auto-scaling each
+    /// ring to its recent range. Off by default.
+    public var metricRingsFixedScaling: Bool {
+        didSet { persist() }
+    }
     /// Opt-in consent for VirusTotal binary-reputation lookups (off by default).
     /// The API key itself lives in the Keychain, not here.
     public var binaryReputationEnabled: Bool {
@@ -470,6 +476,7 @@ public final class SettingsStore {
         self.monitorMetricCardFocus = MonitorMetricCardFocus(
             rawValue: defaults.string(forKey: Self.monitorMetricCardFocusKey) ?? ""
         ) ?? .all
+        self.metricRingsFixedScaling = defaults.object(forKey: Self.metricRingsFixedScalingKey) as? Bool ?? false
         self.binaryReputationEnabled = defaults.object(forKey: Self.binaryReputationEnabledKey) as? Bool ?? false
         let persistedTier = defaults.string(forKey: Self.exportPrivacyTierKey)
         let legacySensitive = defaults.object(forKey: Self.includeSensitiveExportsKey) as? Bool ?? false
@@ -539,6 +546,7 @@ public final class SettingsStore {
     private static let operatorSafeModeEnabledKey = "settings.operatorSafeModeEnabled"
     private static let monitorMetricCardPlacementKey = "settings.monitorMetricCardPlacement"
     private static let monitorMetricCardFocusKey = "settings.monitorMetricCardFocus"
+    private static let metricRingsFixedScalingKey = "settings.metricRingsFixedScaling"
     private static let binaryReputationEnabledKey = "settings.binaryReputationEnabled"
     private static let exportPrivacyTierKey = "settings.exportPrivacyTier"
     private static let autoRegisterLocalMcpClientsEnabledKey = "settings.autoRegisterLocalMcpClientsEnabled"
@@ -635,6 +643,7 @@ extension SettingsStore {
         operatorSafeModeEnabled = true
         monitorMetricCardPlacement = .top
         monitorMetricCardFocus = .all
+        metricRingsFixedScaling = false
         binaryReputationEnabled = false
         KeychainHelper.delete(account: KeychainHelper.binaryReputationAccount)
         exportPrivacyTier = .redacted
@@ -678,6 +687,7 @@ extension SettingsStore {
         defaults.set(operatorSafeModeEnabled, forKey: Self.operatorSafeModeEnabledKey)
         defaults.set(monitorMetricCardPlacement.rawValue, forKey: Self.monitorMetricCardPlacementKey)
         defaults.set(monitorMetricCardFocus.rawValue, forKey: Self.monitorMetricCardFocusKey)
+        defaults.set(metricRingsFixedScaling, forKey: Self.metricRingsFixedScalingKey)
         defaults.set(binaryReputationEnabled, forKey: Self.binaryReputationEnabledKey)
         defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
         defaults.set(autoRegisterLocalMcpClientsEnabled, forKey: Self.autoRegisterLocalMcpClientsEnabledKey)

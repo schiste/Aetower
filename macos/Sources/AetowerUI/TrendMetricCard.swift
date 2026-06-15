@@ -60,6 +60,10 @@ struct TrendMetricCard: View {
     let valueAppearance: TrendMetricValueAppearance
     let minHeight: CGFloat
     let sampleValueFormatter: (Double) -> String
+    /// When set, the sparkline draws on a fixed `0...fixedCeiling` axis. `nil`
+    /// keeps relative auto-scaling (the default for every caller except the
+    /// Monitor rings in fixed-scaling mode).
+    let fixedCeiling: Double?
     @State private var isHovered = false
     @State private var hoverX: CGFloat? = nil
 
@@ -71,7 +75,8 @@ struct TrendMetricCard: View {
         style: TrendMetricStyle,
         valueAppearance: TrendMetricValueAppearance = .neutral,
         sampleValueFormatter: @escaping (Double) -> String = TrendMetricCard.defaultSampleFormatter,
-        minHeight: CGFloat = 104
+        minHeight: CGFloat = 104,
+        fixedCeiling: Double? = nil
     ) {
         self.title = title
         self.value = value
@@ -81,6 +86,7 @@ struct TrendMetricCard: View {
         self.valueAppearance = valueAppearance
         self.sampleValueFormatter = sampleValueFormatter
         self.minHeight = minHeight
+        self.fixedCeiling = fixedCeiling
     }
 
     var body: some View {
@@ -88,7 +94,8 @@ struct TrendMetricCard: View {
             tone: style.color,
             samples: samples,
             minHeight: minHeight,
-            hoverX: hoverX
+            hoverX: hoverX,
+            fixedCeiling: fixedCeiling
         ) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)

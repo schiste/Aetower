@@ -440,6 +440,11 @@ public struct SettingsView: View {
                         : "Left and right placements use a compact vertical rail and always show all rings.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Toggle("Fixed 0–100 ring scaling", isOn: $settings.metricRingsFixedScaling)
+                    Text("Draw every ring on an absolute axis (0–100, or 0 to the danger threshold for disk, network, and wakeups) instead of auto-scaling to each ring's recent range.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 SettingDivider()

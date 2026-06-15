@@ -569,6 +569,25 @@ private struct MonitorMetricCardDescriptor: Identifiable {
     let style: TrendMetricStyle
     let valueAppearance: TrendMetricValueAppearance
     let sampleValueFormatter: (Double) -> String
+    /// Absolute top of the y-axis when the user enables fixed ring scaling.
+    /// 0–100-native metrics use 100; unbounded ones reuse the danger
+    /// thresholds in `MonitorRingCeiling`. A value of 0 means "no fixed
+    /// ceiling available" (e.g. GPU memory) and falls back to relative.
+    let fixedCeiling: Double
+}
+
+/// Fixed-mode ceilings for the unbounded Monitor rings, kept in lockstep with
+/// the danger thresholds used for value coloring so the axis and the warning
+/// bands can't drift apart.
+private enum MonitorRingCeiling {
+    /// Disk read+write danger threshold (also `monitorThroughputAppearance` danger).
+    static let diskBps: Double = 250 * 1_024 * 1_024
+    /// Network send+receive danger threshold.
+    static let networkBps: Double = 100 * 1_024 * 1_024
+    /// Wakeup "storm" band (`hostWakeupBand` severe, MonitorFormatters).
+    static let wakeupsPerSecond: Double = 3_000
+    /// 0–100-native metrics (friction, CPU %, memory pressure, GPU %).
+    static let percent: Double = 100
 }
 
 private struct GroupedEntityRow: View {
@@ -2091,7 +2110,8 @@ public struct MainListView: View {
                 samples: frictionSamples,
                 style: .friction,
                 valueAppearance: monitorFrictionAppearance(frictionScore),
-                sampleValueFormatter: { String(format: "%.0f", $0) }
+                sampleValueFormatter: { String(format: "%.0f", $0) },
+                fixedCeiling: MonitorRingCeiling.percent
             ),
             MonitorMetricCardDescriptor(
                 id: .cpu,
@@ -2101,7 +2121,8 @@ public struct MainListView: View {
                 samples: cpuSamples,
                 style: .cpu,
                 valueAppearance: monitorCPUAppearance(host),
-                sampleValueFormatter: { String(format: "%.0f%%", $0) }
+                sampleValueFormatter: { String(format: "%.0f%%", $0) },
+                fixedCeiling: MonitorRingCeiling.percent
             ),
             MonitorMetricCardDescriptor(
                 id: .memory,
@@ -2113,7 +2134,8 @@ public struct MainListView: View {
                 valueAppearance: monitorMemoryAppearance(host),
                 // Samples are the 0–100 memory pressure score, not bytes — label
                 // the hover stats with /100 so they don't read as bytes/percent.
-                sampleValueFormatter: { String(format: "%.0f/100", $0) }
+                sampleValueFormatter: { String(format: "%.0f/100", $0) },
+                fixedCeiling: MonitorRingCeiling.percent
             ),
             MonitorMetricCardDescriptor(
                 id: .disk,
@@ -2123,7 +2145,8 @@ public struct MainListView: View {
                 samples: diskSamples,
                 style: .disk,
                 valueAppearance: monitorThroughputAppearance(host.diskReadBps + host.diskWriteBps, warning: 50 * 1_024 * 1_024, danger: 250 * 1_024 * 1_024),
-                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) }
+                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) },
+                fixedCeiling: MonitorRingCeiling.diskBps
             ),
             MonitorMetricCardDescriptor(
                 id: .network,
@@ -2133,7 +2156,8 @@ public struct MainListView: View {
                 samples: networkSamples,
                 style: .network,
                 valueAppearance: monitorThroughputAppearance(host.networkReceiveBps + host.networkSendBps, warning: 10 * 1_024 * 1_024, danger: 100 * 1_024 * 1_024),
-                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) }
+                sampleValueFormatter: { formatRate(UInt64(max($0, 0))) },
+                fixedCeiling: MonitorRingCeiling.networkBps
             ),
             MonitorMetricCardDescriptor(
                 id: .wakeups,
@@ -2145,7 +2169,8 @@ public struct MainListView: View {
                 samples: wakeupSamples,
                 style: .friction,
                 valueAppearance: monitorWakeupAppearance(host),
-                sampleValueFormatter: { formatWakeups(Float($0)) }
+                sampleValueFormatter: { formatWakeups(Float($0)) },
+                fixedCeiling: MonitorRingCeiling.wakeupsPerSecond
             ),
             MonitorMetricCardDescriptor(
                 id: .gpu,
@@ -2157,7 +2182,10 @@ public struct MainListView: View {
                 valueAppearance: monitorGPUAppearance(host),
                 sampleValueFormatter: usingGpuPercent
                     ? { String(format: "%.0f%%", $0) }
-                    : { formatBytes(UInt64(max($0, 0))) }
+                    : { formatBytes(UInt64(max($0, 0))) },
+                // GPU % has a true 0–100 axis; the GPU-memory fallback has no
+                // fixed ceiling, so 0 keeps that case on relative scaling.
+                fixedCeiling: usingGpuPercent ? MonitorRingCeiling.percent : 0
             ),
         ]
 
@@ -2201,7 +2229,8 @@ public struct MainListView: View {
             style: card.style,
             valueAppearance: card.valueAppearance,
             sampleValueFormatter: card.sampleValueFormatter,
-            minHeight: minHeight
+            minHeight: minHeight,
+            fixedCeiling: settings.metricRingsFixedScaling ? card.fixedCeiling : nil
         )
         .overlay(alignment: .topTrailing) {
             if allowsPinning {

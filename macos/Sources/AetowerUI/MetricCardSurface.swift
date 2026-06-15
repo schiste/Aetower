@@ -9,6 +9,11 @@ struct MetricCardSurface<OverlayContent: View, HoverOverlay: View>: View {
     let contentPadding: CGFloat
     let minHeight: CGFloat
     let hoverX: CGFloat?
+    /// When set (> 0), the sparkline is drawn on a fixed `0...fixedCeiling`
+    /// axis instead of auto-scaling to the data window. `nil` keeps the
+    /// relative behavior, so only callers that opt in (the Monitor rings)
+    /// are affected.
+    let fixedCeiling: Double?
     let overlayContent: OverlayContent
     let hoverOverlay: HoverOverlay
 
@@ -21,6 +26,7 @@ struct MetricCardSurface<OverlayContent: View, HoverOverlay: View>: View {
         contentPadding: CGFloat = 10,
         minHeight: CGFloat = 104,
         hoverX: CGFloat? = nil,
+        fixedCeiling: Double? = nil,
         @ViewBuilder overlayContent: () -> OverlayContent,
         @ViewBuilder hoverOverlay: () -> HoverOverlay
     ) {
@@ -32,6 +38,7 @@ struct MetricCardSurface<OverlayContent: View, HoverOverlay: View>: View {
         self.contentPadding = contentPadding
         self.minHeight = minHeight
         self.hoverX = hoverX
+        self.fixedCeiling = fixedCeiling
         self.overlayContent = overlayContent()
         self.hoverOverlay = hoverOverlay()
     }
@@ -43,7 +50,7 @@ struct MetricCardSurface<OverlayContent: View, HoverOverlay: View>: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(tone.opacity(strokeOpacity), lineWidth: 1)
 
-            MetricCardSparkline(samples: samples, color: tone, hoverX: hoverX)
+            MetricCardSparkline(samples: samples, color: tone, hoverX: hoverX, fixedCeiling: fixedCeiling)
                 .padding(6)
                 .opacity(sparklineOpacity)
 
@@ -61,6 +68,7 @@ private struct MetricCardSparkline: View {
     let samples: [Double]
     let color: Color
     let hoverX: CGFloat?
+    var fixedCeiling: Double? = nil
     @State private var drawProgress: CGFloat = 0
 
     var body: some View {
@@ -142,13 +150,20 @@ private struct MetricCardSparkline: View {
     }
 
     private var normalizedSamples: [Double] {
-        // Normalize linearly, but clamp the top of the range at the 95th
-        // percentile so a single burst (common in disk/network series) doesn't
-        // squash all the ordinary variation into a flat sliver. Fall back to the
-        // true max when that percentile collapses onto the floor (e.g. a mostly
-        // idle/zero series) so a sparse signal still shows. Bounded metrics
-        // (CPU %, 0–100 scores) have no outliers, so the percentile ≈ max and
-        // this stays equivalent to plain min/max scaling.
+        // Fixed mode: draw on an absolute 0...ceiling axis (zero-baselined),
+        // so graph height means the same thing every refresh. Values above the
+        // ceiling peg at the top. Used by the Monitor rings when the user
+        // enables fixed scaling.
+        if let ceiling = fixedCeiling, ceiling > 0 {
+            return samples.map { Swift.max(0, Swift.min(1, $0 / ceiling)) }
+        }
+        // Relative mode (default): normalize linearly, but clamp the top of the
+        // range at the 95th percentile so a single burst (common in disk/network
+        // series) doesn't squash all the ordinary variation into a flat sliver.
+        // Fall back to the true max when that percentile collapses onto the floor
+        // (e.g. a mostly idle/zero series) so a sparse signal still shows.
+        // Bounded metrics (CPU %, 0–100 scores) have no outliers, so the
+        // percentile ≈ max and this stays equivalent to plain min/max scaling.
         guard let minimum = samples.min(), let maximum = samples.max() else { return [] }
         let sorted = samples.sorted()
         let p95 = sorted[Int((Double(sorted.count) - 1.0) * 0.95)]
