@@ -40,6 +40,11 @@ const DOCKER_TIMEOUT: Duration = Duration::from_millis(300);
 const CHROMIUM_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
 const DOCKER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
 const PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
+// Peer adapters are optional services. When they are down, keep retrying but
+// double the retry interval after each failed refresh so a dead socket is not
+// hammered on the normal polling cadence. Success or reconfiguration resets it.
+const ADAPTER_REFRESH_BACKOFF_CAP_MILLIS: u64 = 5 * 60 * 1000;
+const ADAPTER_REFRESH_BACKOFF_MAX_SHIFT: u32 = 8;
 const CHROMIUM_FETCH_BUDGET: Duration = Duration::from_millis(750);
 const DOCKER_FETCH_BUDGET: Duration = Duration::from_millis(750);
 // 30 s instead of 10 s: the chau7 adapter fires ~40 serial JSON-RPC calls per
@@ -86,10 +91,12 @@ struct AdapterState {
     chromium_samples: BTreeMap<String, ChromiumRuntimeSample>,
     last_chromium_fetch_millis: u64,
     last_chromium_success_millis: u64,
+    chromium_consecutive_failures: u32,
     chromium_last_error: Option<String>,
     cached_chromium_targets: Vec<ChromiumPageTarget>,
     last_docker_fetch_millis: u64,
     last_docker_success_millis: u64,
+    docker_consecutive_failures: u32,
     docker_last_error: Option<String>,
     cached_docker_containers: Vec<DockerContainer>,
     last_privileged_helper_fetch_millis: u64,
@@ -105,6 +112,7 @@ struct AdapterState {
     last_chau7_fetch_millis: u64,
     last_chau7_deep_fetch_millis: u64,
     last_chau7_success_millis: u64,
+    chau7_consecutive_failures: u32,
     chau7_last_error: Option<String>,
     cached_chau7_snapshot: Option<crate::chau7::Chau7Snapshot>,
     /// Code-signing verdicts keyed by executable path. Resolving a signature
@@ -309,10 +317,12 @@ impl Default for AdapterManager {
             chromium_samples: BTreeMap::new(),
             last_chromium_fetch_millis: 0,
             last_chromium_success_millis: 0,
+            chromium_consecutive_failures: 0,
             chromium_last_error: None,
             cached_chromium_targets: Vec::new(),
             last_docker_fetch_millis: 0,
             last_docker_success_millis: 0,
+            docker_consecutive_failures: 0,
             docker_last_error: None,
             cached_docker_containers: Vec::new(),
             last_privileged_helper_fetch_millis: 0,
@@ -328,6 +338,7 @@ impl Default for AdapterManager {
             last_chau7_fetch_millis: 0,
             last_chau7_deep_fetch_millis: 0,
             last_chau7_success_millis: 0,
+            chau7_consecutive_failures: 0,
             chau7_last_error: None,
             cached_chau7_snapshot: None,
             signing_cache: HashMap::new(),
@@ -432,6 +443,7 @@ impl AdapterManager {
         guard.cached_chromium_targets.clear();
         guard.last_chromium_fetch_millis = 0;
         guard.last_chromium_success_millis = 0;
+        guard.chromium_consecutive_failures = 0;
         guard.chromium_last_error = None;
     }
 
@@ -445,6 +457,7 @@ impl AdapterManager {
         guard.cached_docker_containers.clear();
         guard.last_docker_fetch_millis = 0;
         guard.last_docker_success_millis = 0;
+        guard.docker_consecutive_failures = 0;
         guard.docker_last_error = None;
     }
 
@@ -465,6 +478,7 @@ impl AdapterManager {
         guard.last_chau7_fetch_millis = 0;
         guard.last_chau7_deep_fetch_millis = 0;
         guard.last_chau7_success_millis = 0;
+        guard.chau7_consecutive_failures = 0;
         guard.chau7_last_error = None;
     }
 
@@ -1410,8 +1424,12 @@ fn refresh_chromium_cache(state: &Arc<Mutex<AdapterState>>) {
     let now = time::now_millis();
     let fetch_plan = {
         let guard = state.lock();
-        let is_stale = now.saturating_sub(guard.last_chromium_fetch_millis)
-            >= CHROMIUM_REFRESH_INTERVAL_MILLIS;
+        let refresh_interval_millis = adapter_refresh_interval_millis(
+            CHROMIUM_REFRESH_INTERVAL_MILLIS,
+            guard.chromium_consecutive_failures,
+        );
+        let is_stale =
+            now.saturating_sub(guard.last_chromium_fetch_millis) >= refresh_interval_millis;
         if is_stale {
             guard
                 .chromium_config()
@@ -1440,6 +1458,7 @@ fn refresh_chromium_cache(state: &Arc<Mutex<AdapterState>>) {
             guard.cached_chromium_targets = fetched;
             guard.last_chromium_fetch_millis = now;
             guard.last_chromium_success_millis = now;
+            guard.chromium_consecutive_failures = 0;
             guard.chromium_last_error = None;
             let item_count = guard.cached_chromium_targets.len();
             drop(guard);
@@ -1457,16 +1476,29 @@ fn refresh_chromium_cache(state: &Arc<Mutex<AdapterState>>) {
             let mut guard = state.lock();
             guard.last_chromium_fetch_millis = now;
             guard.chromium_last_error = Some(error);
+            guard.chromium_consecutive_failures =
+                guard.chromium_consecutive_failures.saturating_add(1);
             let error = guard.chromium_last_error.clone().unwrap_or_default();
+            let consecutive_failures = guard.chromium_consecutive_failures;
+            let next_retry_interval_millis = adapter_refresh_interval_millis(
+                CHROMIUM_REFRESH_INTERVAL_MILLIS,
+                consecutive_failures,
+            );
             drop(guard);
             emit_adapter_refresh_event(
                 state,
-                DiagnosticsLevel::Error,
+                adapter_refresh_failure_level(&error),
                 DiagnosticsSubsystem::AdapterChromium,
                 "adapter-refresh-failed",
                 "Chromium adapter refresh failed.",
                 now,
-                |builder| builder.adapter("chromium").field("error", error),
+                |builder| {
+                    builder
+                        .adapter("chromium")
+                        .field("error", error)
+                        .field("consecutive_failures", consecutive_failures)
+                        .field("next_retry_interval_millis", next_retry_interval_millis)
+                },
             );
         }
     }
@@ -1476,8 +1508,12 @@ fn refresh_docker_cache(state: &Arc<Mutex<AdapterState>>) {
     let now = time::now_millis();
     let fetch_plan = {
         let guard = state.lock();
+        let refresh_interval_millis = adapter_refresh_interval_millis(
+            DOCKER_REFRESH_INTERVAL_MILLIS,
+            guard.docker_consecutive_failures,
+        );
         let is_stale =
-            now.saturating_sub(guard.last_docker_fetch_millis) >= DOCKER_REFRESH_INTERVAL_MILLIS;
+            now.saturating_sub(guard.last_docker_fetch_millis) >= refresh_interval_millis;
         is_stale.then(|| DockerAdapterConfig {
             socket_path: guard.docker_socket_path.clone(),
         })
@@ -1501,6 +1537,7 @@ fn refresh_docker_cache(state: &Arc<Mutex<AdapterState>>) {
             guard.cached_docker_containers = fetched;
             guard.last_docker_fetch_millis = now;
             guard.last_docker_success_millis = now;
+            guard.docker_consecutive_failures = 0;
             guard.docker_last_error = None;
             let item_count = guard.cached_docker_containers.len();
             drop(guard);
@@ -1518,16 +1555,28 @@ fn refresh_docker_cache(state: &Arc<Mutex<AdapterState>>) {
             let mut guard = state.lock();
             guard.last_docker_fetch_millis = now;
             guard.docker_last_error = Some(error);
+            guard.docker_consecutive_failures = guard.docker_consecutive_failures.saturating_add(1);
             let error = guard.docker_last_error.clone().unwrap_or_default();
+            let consecutive_failures = guard.docker_consecutive_failures;
+            let next_retry_interval_millis = adapter_refresh_interval_millis(
+                DOCKER_REFRESH_INTERVAL_MILLIS,
+                consecutive_failures,
+            );
             drop(guard);
             emit_adapter_refresh_event(
                 state,
-                DiagnosticsLevel::Error,
+                adapter_refresh_failure_level(&error),
                 DiagnosticsSubsystem::AdapterDocker,
                 "adapter-refresh-failed",
                 "Docker adapter refresh failed.",
                 now,
-                |builder| builder.adapter("docker").field("error", error),
+                |builder| {
+                    builder
+                        .adapter("docker")
+                        .field("error", error)
+                        .field("consecutive_failures", consecutive_failures)
+                        .field("next_retry_interval_millis", next_retry_interval_millis)
+                },
             );
         }
     }
@@ -1690,8 +1739,11 @@ fn refresh_chau7_cache(state: &Arc<Mutex<AdapterState>>) {
     let now = time::now_millis();
     let fetch_plan = {
         let guard = state.lock();
-        let is_stale =
-            now.saturating_sub(guard.last_chau7_fetch_millis) >= CHAU7_REFRESH_INTERVAL_MILLIS;
+        let refresh_interval_millis = adapter_refresh_interval_millis(
+            CHAU7_REFRESH_INTERVAL_MILLIS,
+            guard.chau7_consecutive_failures,
+        );
+        let is_stale = now.saturating_sub(guard.last_chau7_fetch_millis) >= refresh_interval_millis;
         if !is_stale {
             return;
         }
@@ -1750,6 +1802,7 @@ fn refresh_chau7_cache(state: &Arc<Mutex<AdapterState>>) {
                 guard.last_chau7_deep_fetch_millis = now;
             }
             guard.last_chau7_success_millis = now;
+            guard.chau7_consecutive_failures = 0;
             guard.chau7_last_error = None;
             let item_count = guard
                 .cached_chau7_snapshot
@@ -1776,16 +1829,28 @@ fn refresh_chau7_cache(state: &Arc<Mutex<AdapterState>>) {
             let mut guard = state.lock();
             guard.last_chau7_fetch_millis = now;
             guard.chau7_last_error = Some(error);
+            guard.chau7_consecutive_failures = guard.chau7_consecutive_failures.saturating_add(1);
             let error = guard.chau7_last_error.clone().unwrap_or_default();
+            let consecutive_failures = guard.chau7_consecutive_failures;
+            let next_retry_interval_millis = adapter_refresh_interval_millis(
+                CHAU7_REFRESH_INTERVAL_MILLIS,
+                consecutive_failures,
+            );
             drop(guard);
             emit_adapter_refresh_event(
                 state,
-                DiagnosticsLevel::Error,
+                adapter_refresh_failure_level(&error),
                 DiagnosticsSubsystem::AdapterChau7,
                 "adapter-refresh-failed",
                 "Chau7 adapter refresh failed.",
                 now,
-                |builder| builder.adapter("chau7").field("error", error),
+                |builder| {
+                    builder
+                        .adapter("chau7")
+                        .field("error", error)
+                        .field("consecutive_failures", consecutive_failures)
+                        .field("next_retry_interval_millis", next_retry_interval_millis)
+                },
             );
         }
     }
@@ -1993,6 +2058,42 @@ fn emit_adapter_refresh_event<F>(
     let builder = DiagnosticsEvent::builder(level, subsystem, event_type, message)
         .timestamp_millis(timestamp_millis);
     diagnostics.emit(decorate(builder).build());
+}
+
+fn adapter_refresh_interval_millis(base_interval_millis: u64, consecutive_failures: u32) -> u64 {
+    let shift = consecutive_failures.min(ADAPTER_REFRESH_BACKOFF_MAX_SHIFT);
+    let multiplier = 1_u64 << shift;
+    base_interval_millis
+        .saturating_mul(multiplier)
+        .min(ADAPTER_REFRESH_BACKOFF_CAP_MILLIS)
+}
+
+fn adapter_refresh_failure_level(error: &str) -> DiagnosticsLevel {
+    if is_peer_unavailable_adapter_error(error) {
+        DiagnosticsLevel::Warn
+    } else {
+        DiagnosticsLevel::Error
+    }
+}
+
+fn is_peer_unavailable_adapter_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    [
+        "connection refused",
+        "no such file or directory",
+        "operation timed out",
+        "timed out",
+        "no response for ",
+        "broken pipe",
+        "connection reset",
+        "connection aborted",
+        "not connected",
+        "resource temporarily unavailable",
+        "would block",
+        "deadline",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
 }
 
 fn capability_status(state: &AdapterState, kind: &CapabilityKind) -> (CapabilityState, String) {
@@ -3884,6 +3985,7 @@ fn read_http_body(stream: &mut impl Read) -> Result<String, String> {
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
+    use aetower_diagnostics::DiagnosticsLevel;
     use aetower_model::{
         AggregateMetrics, AttributionConfidence, CapabilityHealth, CapabilitySnapshot,
         ComponentKind, ComponentSnapshot, EntityKind, EntitySnapshot, FrictionBreakdown,
@@ -3895,10 +3997,11 @@ mod tests {
         AdapterManager, AdapterState, CapabilityKind, CapabilityState, ChromiumTarget,
         DockerBlkioEntry, DockerContainerStats, DockerContainerSummary, DockerNetworkStats,
         EndpointSecurityLifecycleEvent, EndpointSecuritySample, EndpointSecurityStatusSnapshot,
-        adapter_runtime_detail, capability_status, docker_block_io_totals, docker_cpu_percent,
-        docker_network_totals, endpoint_security_runtime_detail, enrich_vscode_entity,
-        enrich_with_endpoint_security, parse_connection_string, parse_http_endpoint,
-        resolved_chau7_socket_path, sanitize_chau7_socket_path, workspace_hint_from_command_line,
+        adapter_refresh_failure_level, adapter_refresh_interval_millis, adapter_runtime_detail,
+        capability_status, docker_block_io_totals, docker_cpu_percent, docker_network_totals,
+        endpoint_security_runtime_detail, enrich_vscode_entity, enrich_with_endpoint_security,
+        parse_connection_string, parse_http_endpoint, resolved_chau7_socket_path,
+        sanitize_chau7_socket_path, workspace_hint_from_command_line,
     };
 
     #[test]
@@ -4045,6 +4148,34 @@ mod tests {
         );
         assert!(degraded.contains("status degraded"));
         assert!(degraded.contains("last error: tcp connect failed"));
+    }
+
+    #[test]
+    fn adapter_refresh_backoff_expands_and_caps() {
+        assert_eq!(adapter_refresh_interval_millis(30_000, 0), 30_000);
+        assert_eq!(adapter_refresh_interval_millis(30_000, 1), 60_000);
+        assert_eq!(adapter_refresh_interval_millis(30_000, 2), 120_000);
+        assert_eq!(adapter_refresh_interval_millis(30_000, 3), 240_000);
+        assert_eq!(adapter_refresh_interval_millis(30_000, 4), 300_000);
+        assert_eq!(adapter_refresh_interval_millis(30_000, 12), 300_000);
+    }
+
+    #[test]
+    fn adapter_refresh_failure_level_downgrades_peer_unavailable_errors() {
+        for error in [
+            "connect /Users/me/.chau7/mcp.sock: Connection refused (os error 61)",
+            "unix connect failed: No such file or directory (os error 2)",
+            "no response for tools/call after 24 lines (all were notifications or transient timeouts)",
+            "read initialize: Operation timed out",
+            "write tools/call: Broken pipe",
+        ] {
+            assert_eq!(adapter_refresh_failure_level(error), DiagnosticsLevel::Warn);
+        }
+
+        assert_eq!(
+            adapter_refresh_failure_level("parse tabs: invalid type: string"),
+            DiagnosticsLevel::Error
+        );
     }
 
     #[test]

@@ -1068,6 +1068,32 @@ mod tests {
     }
 
     #[test]
+    fn warn_adapter_refresh_failures_do_not_count_as_errors() {
+        let store = DiagnosticsStore::new(16);
+
+        store.emit(
+            DiagnosticsEvent::builder(
+                DiagnosticsLevel::Warn,
+                DiagnosticsSubsystem::AdapterChau7,
+                "adapter-refresh-failed",
+                "Chau7 adapter refresh failed.",
+            )
+            .timestamp_millis(1_000)
+            .field(
+                "error",
+                "connect ~/.chau7/mcp.sock: Connection refused (os error 61)",
+            )
+            .build(),
+        );
+
+        let overview = store.overview();
+        assert_eq!(overview.error_count, 0);
+        assert_eq!(overview.warn_count, 1);
+        assert_eq!(overview.last_error_millis, None);
+        assert_eq!(overview.last_error_message, None);
+    }
+
+    #[test]
     fn coalescing_keeps_distinct_incident_severities() {
         let store = DiagnosticsStore::new(16);
         store.emit(
