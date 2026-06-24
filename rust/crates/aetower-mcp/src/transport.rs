@@ -30,7 +30,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use crate::{AetowerMcpDataSource, AetowerMcpServer, DynamicExecutionMode};
+use crate::{AetowerMcpDataSource, AetowerMcpServer};
 
 pub(crate) const SOCKET_DIR_MODE: u32 = 0o700;
 pub(crate) const SOCKET_FILE_MODE: u32 = 0o600;
@@ -193,12 +193,10 @@ pub fn start_local_socket_server(
                     thread_stats.active_clients.fetch_add(1, Ordering::Relaxed);
                     publish_mcp_runtime_stats(&source, &thread_stats);
                     let stats = Arc::clone(&thread_stats);
-                    let dynamic_mode = DynamicExecutionMode::Local;
                     let join_handle = thread::spawn(move || {
                         if let Err(err) = handle_connection(
                             stream,
                             Arc::clone(&source),
-                            dynamic_mode,
                             connection_running,
                             Arc::clone(&stats),
                         ) {
@@ -557,7 +555,6 @@ impl Drop for McpSocketConnection {
 pub(crate) fn handle_connection(
     stream: UnixStream,
     data_source: Arc<dyn AetowerMcpDataSource>,
-    dynamic_mode: DynamicExecutionMode,
     running: Arc<AtomicBool>,
     stats: Arc<McpRuntimeStats>,
 ) -> Result<(), String> {
@@ -567,7 +564,7 @@ pub(crate) fn handle_connection(
         // probe or the accept-loop wakeup). Nothing to do; close cleanly.
         return Ok(());
     }
-    let server = AetowerMcpServer::new_with_stats(data_source, dynamic_mode, Some(stats));
+    let server = AetowerMcpServer::new_with_stats(data_source, Some(stats));
     let mut framing = None;
 
     loop {

@@ -422,11 +422,12 @@ fn collect_process_action_target_states(
 fn process_action_target_state(pid: u32) -> ProcessActionTargetState {
     let ps = process_ps_summary(pid).ok();
     let visible = ps.is_some() || process_exists(pid);
-    let status = ps.and_then(|summary| summary.status);
+    let status = ps.as_ref().and_then(|summary| summary.status.clone());
+    let nice = ps.as_ref().and_then(|summary| summary.nice_value);
     ProcessActionTargetState {
         visible,
         status,
-        nice: process_nice_value(pid),
+        nice,
     }
 }
 
@@ -873,21 +874,6 @@ fn status_is_zombie(status: Option<&str>) -> bool {
 
 fn target_is_effectively_exited(after: &ProcessActionTargetState) -> bool {
     !after.visible || status_is_zombie(after.status.as_deref())
-}
-
-fn process_nice_value(pid: u32) -> Option<i32> {
-    let pid_argument = pid.to_string();
-    let output = Command::new("/bin/ps")
-        .args(["-p", pid_argument.as_str(), "-o", "ni="])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<i32>()
-        .ok()
 }
 
 pub(crate) fn process_action_plan(

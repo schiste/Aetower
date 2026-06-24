@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    path::Path,
     process::Command,
     sync::{Arc, atomic::Ordering},
     thread,
@@ -274,6 +274,23 @@ pub(crate) struct RecentChangeItem {
     entity_id: Option<String>,
     title: String,
     detail: String,
+}
+
+pub(crate) fn recent_change_from_timeline_event(
+    event: &aetower_model::TimelineEvent,
+) -> RecentChangeItem {
+    RecentChangeItem {
+        timestamp_millis: event.timestamp_millis,
+        severity: match event.severity {
+            aetower_model::TimelineSeverity::Info => SeverityBand::Info,
+            aetower_model::TimelineSeverity::Warning => SeverityBand::Warning,
+            aetower_model::TimelineSeverity::Critical => SeverityBand::Critical,
+        },
+        source: format!("timeline:{:?}", event.category).to_lowercase(),
+        entity_id: event.entity_id.clone(),
+        title: event.title.clone(),
+        detail: event.detail.clone(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -788,6 +805,7 @@ struct ProcessPsSummary {
     status: Option<String>,
     cpu_percent: Option<f32>,
     resident_bytes: Option<u64>,
+    nice_value: Option<i32>,
     command: Option<String>,
 }
 
@@ -1118,32 +1136,18 @@ pub trait AetowerMcpDataSource: Send + Sync + 'static {
     }
 }
 
-#[derive(Clone)]
-pub(crate) enum DynamicExecutionMode {
-    Local,
-}
-
-pub fn default_app_support_dir() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("Aetower")
-}
-
 pub(crate) struct AetowerMcpServer {
     data_source: Arc<dyn AetowerMcpDataSource>,
-    dynamic_mode: DynamicExecutionMode,
     mcp_stats: Option<Arc<McpRuntimeStats>>,
 }
 
 impl AetowerMcpServer {
     pub(crate) fn new_with_stats(
         data_source: Arc<dyn AetowerMcpDataSource>,
-        dynamic_mode: DynamicExecutionMode,
         mcp_stats: Option<Arc<McpRuntimeStats>>,
     ) -> Self {
         Self {
             data_source,
-            dynamic_mode,
             mcp_stats,
         }
     }
@@ -1178,7 +1182,7 @@ impl AetowerMcpServer {
             })),
             "notifications/initialized" => return None,
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tool_definitions() })),
+            "tools/list" => Ok(tools::descriptors::tool_list_result()),
             "tools/call" => self.handle_tool_call(params).or_else(Ok),
             "resources/list" => Ok(json!({ "resources": [] })),
             "prompts/list" => Ok(json!({ "prompts": [] })),
@@ -1224,11 +1228,7 @@ impl AetowerMcpServer {
     }
 
     fn execute_dynamic_request(&self, request: &DynamicToolRequest) -> Result<Value, String> {
-        match &self.dynamic_mode {
-            DynamicExecutionMode::Local => {
-                process_dynamic_tool_request(&*self.data_source, request)
-            }
-        }
+        process_dynamic_tool_request(&*self.data_source, request)
     }
 }
 
@@ -1485,12 +1485,17 @@ pub(crate) fn top_external_memory_entities(
     snapshot: &SystemSnapshot,
     limit: usize,
 ) -> Vec<&aetower_model::EntitySnapshot> {
-    let mut entities = top_memory_entities(snapshot, snapshot.entities.len().max(1))
-        .into_iter()
-        .filter(|entity| !is_aetower_entity(entity))
-        .collect::<Vec<_>>();
-    entities.truncate(limit.max(1));
-    entities
+    top_external_entities(
+        snapshot,
+        limit,
+        |entity| entity.metrics.memory_resident_bytes > 0,
+        |left, right| {
+            right
+                .metrics
+                .memory_resident_bytes
+                .cmp(&left.metrics.memory_resident_bytes)
+        },
+    )
 }
 
 pub(crate) fn top_wakeup_entities(
@@ -1517,10 +1522,37 @@ pub(crate) fn top_external_wakeup_entities(
     snapshot: &SystemSnapshot,
     limit: usize,
 ) -> Vec<&aetower_model::EntitySnapshot> {
-    let mut entities = top_wakeup_entities(snapshot, snapshot.entities.len().max(1))
-        .into_iter()
-        .filter(|entity| !is_aetower_entity(entity))
+    top_external_entities(
+        snapshot,
+        limit,
+        |entity| entity.metrics.wakeups_per_second > 0.0,
+        |left, right| {
+            right
+                .metrics
+                .wakeups_per_second
+                .partial_cmp(&left.metrics.wakeups_per_second)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        },
+    )
+}
+
+fn top_external_entities<Include, Compare>(
+    snapshot: &SystemSnapshot,
+    limit: usize,
+    include: Include,
+    compare: Compare,
+) -> Vec<&aetower_model::EntitySnapshot>
+where
+    Include: Fn(&aetower_model::EntitySnapshot) -> bool,
+    Compare:
+        Fn(&&aetower_model::EntitySnapshot, &&aetower_model::EntitySnapshot) -> std::cmp::Ordering,
+{
+    let mut entities = snapshot
+        .entities
+        .iter()
+        .filter(|entity| !is_aetower_entity(entity) && include(entity))
         .collect::<Vec<_>>();
+    entities.sort_by(compare);
     entities.truncate(limit.max(1));
     entities
 }
@@ -1732,87 +1764,91 @@ fn common_chau7_build_identity(
 
 fn ai_burden_leaders(ai_entities: &[&aetower_model::EntitySnapshot]) -> Vec<AiBurdenLeaderReport> {
     let mut leaders = Vec::new();
-    if let Some(entity) = ai_entities
-        .iter()
-        .max_by(|left, right| {
-            left.metrics
-                .cpu_percent
-                .partial_cmp(&right.metrics.cpu_percent)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .filter(|entity| entity.metrics.cpu_percent > 0.0)
-    {
-        leaders.push(AiBurdenLeaderReport {
-            kind: "cpu".to_owned(),
-            entity_id: entity.entity_id.clone(),
-            display_name: entity.display_name.clone(),
-            value_label: format!("{:.0}%", entity.metrics.cpu_percent),
-        });
-    }
+    push_metric_leader(
+        &mut leaders,
+        ai_entities,
+        "cpu",
+        |entity| entity.metrics.cpu_percent,
+        |value| value > 0.0,
+        |value| format!("{value:.0}%"),
+    );
     if let Some(entity) = ai_entities
         .iter()
         .max_by_key(|entity| entity.metrics.memory_resident_bytes)
         .filter(|entity| entity.metrics.memory_resident_bytes > 0)
     {
-        leaders.push(AiBurdenLeaderReport {
-            kind: "memory".to_owned(),
-            entity_id: entity.entity_id.clone(),
-            display_name: entity.display_name.clone(),
-            value_label: format_bytes(entity.metrics.memory_resident_bytes),
-        });
+        push_leader(
+            &mut leaders,
+            "memory",
+            entity,
+            format_bytes(entity.metrics.memory_resident_bytes),
+        );
     }
-    if let Some(entity) = ai_entities
-        .iter()
-        .max_by(|left, right| {
-            left.metrics
-                .energy_nj_per_s
-                .partial_cmp(&right.metrics.energy_nj_per_s)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .filter(|entity| entity.metrics.energy_nj_per_s > 0.0)
-    {
-        leaders.push(AiBurdenLeaderReport {
-            kind: "energy".to_owned(),
-            entity_id: entity.entity_id.clone(),
-            display_name: entity.display_name.clone(),
-            value_label: format_energy(entity.metrics.energy_nj_per_s),
-        });
-    }
-    if let Some(entity) = ai_entities
-        .iter()
-        .max_by(|left, right| {
-            left.metrics
-                .estimated_gpu_percent
-                .partial_cmp(&right.metrics.estimated_gpu_percent)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .filter(|entity| entity.metrics.estimated_gpu_percent > 0.0)
-    {
-        leaders.push(AiBurdenLeaderReport {
-            kind: "gpu".to_owned(),
-            entity_id: entity.entity_id.clone(),
-            display_name: entity.display_name.clone(),
-            value_label: format!("{:.0}%", entity.metrics.estimated_gpu_percent),
-        });
-    }
-    if let Some(entity) = ai_entities
-        .iter()
-        .max_by(|left, right| {
-            left.metrics
-                .wakeups_per_second
-                .partial_cmp(&right.metrics.wakeups_per_second)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .filter(|entity| entity.metrics.wakeups_per_second > 0.0)
-    {
-        leaders.push(AiBurdenLeaderReport {
-            kind: "wakeups".to_owned(),
-            entity_id: entity.entity_id.clone(),
-            display_name: entity.display_name.clone(),
-            value_label: format!("{:.0}/s", entity.metrics.wakeups_per_second),
-        });
-    }
+    push_metric_leader(
+        &mut leaders,
+        ai_entities,
+        "energy",
+        |entity| entity.metrics.energy_nj_per_s,
+        |value| value > 0.0,
+        format_energy,
+    );
+    push_metric_leader(
+        &mut leaders,
+        ai_entities,
+        "gpu",
+        |entity| entity.metrics.estimated_gpu_percent,
+        |value| value > 0.0,
+        |value| format!("{value:.0}%"),
+    );
+    push_metric_leader(
+        &mut leaders,
+        ai_entities,
+        "wakeups",
+        |entity| entity.metrics.wakeups_per_second,
+        |value| value > 0.0,
+        |value| format!("{value:.0}/s"),
+    );
     leaders
+}
+
+fn push_metric_leader<Metric, GetMetric, IsIncluded, FormatValue>(
+    leaders: &mut Vec<AiBurdenLeaderReport>,
+    ai_entities: &[&aetower_model::EntitySnapshot],
+    kind: &str,
+    metric: GetMetric,
+    is_included: IsIncluded,
+    format_value: FormatValue,
+) where
+    Metric: Copy + PartialOrd,
+    GetMetric: Fn(&aetower_model::EntitySnapshot) -> Metric,
+    IsIncluded: Fn(Metric) -> bool,
+    FormatValue: Fn(Metric) -> String,
+{
+    if let Some(entity) = ai_entities
+        .iter()
+        .max_by(|left, right| {
+            metric(left)
+                .partial_cmp(&metric(right))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .filter(|entity| is_included(metric(entity)))
+    {
+        push_leader(leaders, kind, entity, format_value(metric(entity)));
+    }
+}
+
+fn push_leader(
+    leaders: &mut Vec<AiBurdenLeaderReport>,
+    kind: &str,
+    entity: &aetower_model::EntitySnapshot,
+    value_label: String,
+) {
+    leaders.push(AiBurdenLeaderReport {
+        kind: kind.to_owned(),
+        entity_id: entity.entity_id.clone(),
+        display_name: entity.display_name.clone(),
+        value_label,
+    });
 }
 
 fn ai_approval_queue(ai_entities: &[&aetower_model::EntitySnapshot]) -> Vec<AiApprovalReport> {
@@ -2821,6 +2857,7 @@ fn parse_args<T: serde::de::DeserializeOwned>(arguments: Value) -> Result<T, Val
         .map_err(|error| jsonrpc_error(-32602, format!("invalid tool arguments: {error}")))
 }
 
+#[cfg(test)]
 fn tool_definitions() -> Vec<Value> {
     tools::descriptors::tool_definitions()
 }
@@ -3360,7 +3397,6 @@ mod tests {
     fn fake_server() -> AetowerMcpServer {
         AetowerMcpServer {
             data_source: Arc::new(FakeSource),
-            dynamic_mode: DynamicExecutionMode::Local,
             mcp_stats: None,
         }
     }
@@ -3368,7 +3404,6 @@ mod tests {
     fn history_broken_server() -> AetowerMcpServer {
         AetowerMcpServer {
             data_source: Arc::new(HistoryBrokenSource),
-            dynamic_mode: DynamicExecutionMode::Local,
             mcp_stats: None,
         }
     }
@@ -4049,7 +4084,6 @@ mod tests {
     fn tool_call_reports_data_source_errors() {
         let response = AetowerMcpServer {
             data_source: Arc::new(BrokenSource),
-            dynamic_mode: DynamicExecutionMode::Local,
             mcp_stats: None,
         }
         .handle_message(json!({
@@ -4561,7 +4595,6 @@ mod tests {
                     .map(|index| test_history_snapshot(index * 1_000, index))
                     .collect(),
             }),
-            dynamic_mode: DynamicExecutionMode::Local,
             mcp_stats: None,
         };
         let response = match server.handle_message(json!({

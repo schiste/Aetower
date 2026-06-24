@@ -122,10 +122,11 @@ pub(crate) fn process_tree_roots(
     }
 
     let mut reports = Vec::new();
+    let mut aggregate_cache = BTreeMap::new();
     let total_aggregate = roots
         .iter()
         .fold(ProcessAggregate::default(), |aggregate, root| {
-            let next = subtree_aggregate(root, &children);
+            let next = subtree_aggregate_cached(root, &children, &mut aggregate_cache);
             ProcessAggregate {
                 subtree_cpu_percent: aggregate.subtree_cpu_percent + next.subtree_cpu_percent,
                 subtree_memory_bytes: aggregate.subtree_memory_bytes + next.subtree_memory_bytes,
@@ -133,20 +134,14 @@ pub(crate) fn process_tree_roots(
             }
         });
 
-    let mut sorted_roots = roots;
-    sorted_roots.sort_by(|left, right| {
-        let left_aggregate = subtree_aggregate(left, &children);
-        let right_aggregate = subtree_aggregate(right, &children);
-        right_aggregate
-            .subtree_cpu_percent
-            .partial_cmp(&left_aggregate.subtree_cpu_percent)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| {
-                right_aggregate
-                    .subtree_memory_bytes
-                    .cmp(&left_aggregate.subtree_memory_bytes)
-            })
-    });
+    let mut sorted_roots = roots
+        .into_iter()
+        .map(|root| {
+            let aggregate = subtree_aggregate_cached(&root, &children, &mut aggregate_cache);
+            (root, aggregate)
+        })
+        .collect::<Vec<_>>();
+    sorted_roots.sort_by(|left, right| compare_root_aggregate(&left.1, &right.1));
 
     let chau7_sessions = adapter_components
         .iter()
@@ -185,15 +180,28 @@ pub(crate) fn process_tree_roots(
                     .adapter_context
                     .as_ref()
                     .and_then(|context| context.status.clone()),
-                children: sorted_roots
-                    .iter()
-                    .map(|root| process_tree_node(root, &children, "session-child"))
-                    .collect(),
+                children: {
+                    let mut child_nodes = Vec::new();
+                    for (root, _) in &sorted_roots {
+                        child_nodes.push(process_tree_node(
+                            root,
+                            &children,
+                            "session-child",
+                            &mut aggregate_cache,
+                        ));
+                    }
+                    child_nodes
+                },
             });
         }
     } else {
-        for root in &sorted_roots {
-            reports.push(process_tree_node(root, &children, "process-root"));
+        for (root, _) in &sorted_roots {
+            reports.push(process_tree_node(
+                root,
+                &children,
+                "process-root",
+                &mut aggregate_cache,
+            ));
         }
     }
 
@@ -239,25 +247,26 @@ pub(crate) fn process_tree_node(
     related: &RelatedProcessComponent,
     children: &BTreeMap<u32, Vec<RelatedProcessComponent>>,
     relation: &str,
+    aggregate_cache: &mut BTreeMap<u32, ProcessAggregate>,
 ) -> ProcessTreeNodeReport {
-    let aggregate = subtree_aggregate(related, children);
+    let aggregate = subtree_aggregate_cached(related, children, aggregate_cache);
     let child_nodes = related
         .component
         .process_id
         .and_then(|pid| children.get(&pid))
         .map(|child_components| {
-            let mut child_components = child_components.clone();
-            child_components.sort_by(|left, right| {
-                let left_aggregate = subtree_aggregate(left, children);
-                let right_aggregate = subtree_aggregate(right, children);
-                right_aggregate
-                    .subtree_cpu_percent
-                    .partial_cmp(&left_aggregate.subtree_cpu_percent)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            let mut child_components = child_components
+                .iter()
+                .cloned()
+                .map(|child| {
+                    let aggregate = subtree_aggregate_cached(&child, children, aggregate_cache);
+                    (child, aggregate)
+                })
+                .collect::<Vec<_>>();
+            child_components.sort_by(|left, right| compare_child_aggregate(&left.1, &right.1));
             child_components
                 .iter()
-                .map(|child| process_tree_node(child, children, "child"))
+                .map(|(child, _)| process_tree_node(child, children, "child", aggregate_cache))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -292,10 +301,16 @@ pub(crate) fn process_tree_node(
     }
 }
 
-pub(crate) fn subtree_aggregate(
+fn subtree_aggregate_cached(
     related: &RelatedProcessComponent,
     children: &BTreeMap<u32, Vec<RelatedProcessComponent>>,
+    cache: &mut BTreeMap<u32, ProcessAggregate>,
 ) -> ProcessAggregate {
+    if let Some(pid) = related.component.process_id
+        && let Some(aggregate) = cache.get(&pid)
+    {
+        return *aggregate;
+    }
     let mut aggregate = ProcessAggregate {
         subtree_cpu_percent: related.component.cpu_percent,
         subtree_memory_bytes: related.component.memory_bytes,
@@ -305,13 +320,34 @@ pub(crate) fn subtree_aggregate(
         && let Some(child_components) = children.get(&pid)
     {
         for child in child_components {
-            let child_aggregate = subtree_aggregate(child, children);
+            let child_aggregate = subtree_aggregate_cached(child, children, cache);
             aggregate.subtree_cpu_percent += child_aggregate.subtree_cpu_percent;
             aggregate.subtree_memory_bytes += child_aggregate.subtree_memory_bytes;
             aggregate.subtree_process_count += child_aggregate.subtree_process_count;
         }
     }
+    if let Some(pid) = related.component.process_id {
+        cache.insert(pid, aggregate);
+    }
     aggregate
+}
+
+fn compare_root_aggregate(left: &ProcessAggregate, right: &ProcessAggregate) -> std::cmp::Ordering {
+    right
+        .subtree_cpu_percent
+        .partial_cmp(&left.subtree_cpu_percent)
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| right.subtree_memory_bytes.cmp(&left.subtree_memory_bytes))
+}
+
+fn compare_child_aggregate(
+    left: &ProcessAggregate,
+    right: &ProcessAggregate,
+) -> std::cmp::Ordering {
+    right
+        .subtree_cpu_percent
+        .partial_cmp(&left.subtree_cpu_percent)
+        .unwrap_or(std::cmp::Ordering::Equal)
 }
 
 pub(crate) fn related_entities_for_process_tree(

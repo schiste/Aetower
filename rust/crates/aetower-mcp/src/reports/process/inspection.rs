@@ -184,6 +184,8 @@ pub(crate) fn process_ps_summary(pid: u32) -> Result<ProcessPsSummary, String> {
             "-o".to_owned(),
             "rss=".to_owned(),
             "-o".to_owned(),
+            "ni=".to_owned(),
+            "-o".to_owned(),
             "command=".to_owned(),
         ],
     )?;
@@ -590,7 +592,7 @@ pub(crate) fn parse_ps_summary(output: &str) -> Result<ProcessPsSummary, String>
         .find(|line| !line.is_empty())
         .ok_or_else(|| "ps returned no process rows".to_owned())?;
     let parts = line.split_whitespace().collect::<Vec<_>>();
-    if parts.len() < 5 {
+    if parts.len() < 6 {
         return Err(format!("ps row had too few columns: {line}"));
     }
     Ok(ProcessPsSummary {
@@ -602,6 +604,7 @@ pub(crate) fn parse_ps_summary(output: &str) -> Result<ProcessPsSummary, String>
             .parse::<u64>()
             .ok()
             .map(|rss_kib| rss_kib.saturating_mul(1024)),
-        command: (parts.len() > 5).then(|| parts[5..].join(" ")),
+        nice_value: parts[5].parse::<i32>().ok(),
+        command: (parts.len() > 6).then(|| parts[6..].join(" ")),
     })
 }

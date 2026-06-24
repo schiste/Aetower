@@ -38,6 +38,18 @@ pub fn process_open_resources_json(pid: u32, limit: usize) -> Result<String, Str
 /// Defensive cap on holders returned for one reverse lookup.
 const MAX_HOLDERS: usize = 200;
 
+struct LsofColumns<'a> {
+    command: &'a str,
+    pid: u32,
+    user: &'a str,
+    fd: &'a str,
+    resource_type: &'a str,
+    device: &'a str,
+    size_or_offset: &'a str,
+    node: &'a str,
+    name: String,
+}
+
 /// Reverse pivot: every process currently holding `port` (TCP or UDP).
 pub(crate) fn build_resource_holders_by_port(port: u16) -> Result<ResourceHoldersReport, String> {
     if port == 0 {
@@ -98,18 +110,14 @@ pub(crate) fn parse_lsof_holders(output: &str) -> Vec<ResourceHolder> {
 }
 
 pub(crate) fn parse_lsof_holder_line(line: &str) -> Option<ResourceHolder> {
-    let parts = line.split_whitespace().collect::<Vec<_>>();
-    if parts.len() < 9 {
-        return None;
-    }
-    let pid = parts[1].parse::<u32>().ok()?;
+    let columns = parse_lsof_columns(line)?;
     Some(ResourceHolder {
-        pid,
-        command: parts[0].to_owned(),
-        user: parts[2].to_owned(),
-        fd: parts[3].to_owned(),
-        resource_type: parts[4].to_owned(),
-        name: parts[8..].join(" "),
+        pid: columns.pid,
+        command: columns.command.to_owned(),
+        user: columns.user.to_owned(),
+        fd: columns.fd.to_owned(),
+        resource_type: columns.resource_type.to_owned(),
+        name: columns.name,
     })
 }
 
@@ -132,21 +140,40 @@ pub(crate) fn parse_lsof_resources(output: &str) -> Vec<ProcessOpenResource> {
 }
 
 pub(crate) fn parse_lsof_resource_line(line: &str) -> Option<ProcessOpenResource> {
-    let parts = line.split_whitespace().collect::<Vec<_>>();
-    if parts.len() < 9 {
-        return None;
-    }
-    let resource_type = parts[4].to_owned();
-    let name = parts[8..].join(" ");
+    let columns = parse_lsof_columns(line)?;
+    let resource_type = columns.resource_type.to_owned();
+    let name = columns.name;
+    let detail = Some(format!(
+        "{} {} {}",
+        columns.device, columns.size_or_offset, columns.node
+    ));
     let is_socket = matches!(resource_type.as_str(), "IPv4" | "IPv6" | "unix")
         || name.contains("TCP ")
         || name.contains("UDP ")
         || name.contains("->");
     Some(ProcessOpenResource {
-        fd: parts[3].to_owned(),
+        fd: columns.fd.to_owned(),
         resource_type,
         name,
-        detail: Some(parts[5..8].join(" ")),
+        detail,
         is_socket,
+    })
+}
+
+fn parse_lsof_columns(line: &str) -> Option<LsofColumns<'_>> {
+    let parts = line.split_whitespace().collect::<Vec<_>>();
+    if parts.len() < 9 {
+        return None;
+    }
+    Some(LsofColumns {
+        command: parts[0],
+        pid: parts[1].parse::<u32>().ok()?,
+        user: parts[2],
+        fd: parts[3],
+        resource_type: parts[4],
+        device: parts[5],
+        size_or_offset: parts[6],
+        node: parts[7],
+        name: parts[8..].join(" "),
     })
 }

@@ -17,8 +17,8 @@ use crate::{
     SeverityBand, TopFinding, WAKEUPS_CRITICAL, WAKEUPS_WARNING, capability_action_label,
     capability_operator_label, capability_severity, diagnostics_finding, format_bytes,
     format_entity_burden_labels, history_store_finding, is_aetower_entity, memory_pressure_finding,
-    top_entities, top_external_memory_entities, top_external_wakeup_entities, top_memory_entities,
-    top_wakeup_entities, wakeup_finding,
+    recent_change_from_timeline_event, top_entities, top_external_memory_entities,
+    top_external_wakeup_entities, top_memory_entities, top_wakeup_entities, wakeup_finding,
 };
 
 pub(crate) fn build_top_findings(
@@ -232,18 +232,7 @@ pub(crate) fn build_recent_changes(
         .timeline
         .iter()
         .filter(|event| event.timestamp_millis >= since)
-        .map(|event| RecentChangeItem {
-            timestamp_millis: event.timestamp_millis,
-            severity: match event.severity {
-                aetower_model::TimelineSeverity::Info => SeverityBand::Info,
-                aetower_model::TimelineSeverity::Warning => SeverityBand::Warning,
-                aetower_model::TimelineSeverity::Critical => SeverityBand::Critical,
-            },
-            source: format!("timeline:{:?}", event.category).to_lowercase(),
-            entity_id: event.entity_id.clone(),
-            title: event.title.clone(),
-            detail: event.detail.clone(),
-        })
+        .map(recent_change_from_timeline_event)
         .collect::<Vec<_>>();
 
     for entity in &snapshot.entities {

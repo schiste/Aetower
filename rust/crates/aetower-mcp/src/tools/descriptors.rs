@@ -4,6 +4,8 @@
 //! keeps docs, input schemas, defaults, validation bounds, and handler wiring in
 //! one place so new tools cannot drift between `tools/list` and `tools/call`.
 
+use std::sync::LazyLock;
+
 use serde_json::{Value, json};
 
 use crate::*;
@@ -106,22 +108,34 @@ impl ToolDescriptor {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn tool_definitions() -> Vec<Value> {
-    tool_descriptors()
-        .iter()
-        .map(ToolDescriptor::definition)
-        .collect()
+    TOOL_DEFINITIONS.clone()
+}
+
+pub(crate) fn tool_list_result() -> Value {
+    TOOL_LIST_RESULT.clone()
 }
 
 pub(crate) fn dispatch_tool(server: &AetowerMcpServer, name: &str, arguments: Value) -> ToolResult {
-    tool_descriptors()
-        .into_iter()
+    TOOL_DESCRIPTORS
+        .iter()
         .find(|descriptor| descriptor.name == name)
         .map(|descriptor| descriptor.call(server, arguments))
         .unwrap_or_else(|| Ok(tool_error(format!("Unknown tool: {name}"))))
 }
 
-fn tool_descriptors() -> Vec<ToolDescriptor> {
+static TOOL_DEFINITIONS: LazyLock<Vec<Value>> = LazyLock::new(|| {
+    TOOL_DESCRIPTORS
+        .iter()
+        .map(ToolDescriptor::definition)
+        .collect()
+});
+
+static TOOL_LIST_RESULT: LazyLock<Value> =
+    LazyLock::new(|| json!({ "tools": TOOL_DEFINITIONS.clone() }));
+
+static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
     vec![
         ToolDescriptor::with_args(
             "aetower_current_snapshot",
@@ -412,7 +426,7 @@ fn tool_descriptors() -> Vec<ToolDescriptor> {
             AetowerMcpServer::tool_export_query,
         ),
     ]
-}
+});
 
 fn diagnostics_properties(include_summary_limit: bool) -> Vec<ToolProperty> {
     let mut properties = Vec::new();

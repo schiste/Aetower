@@ -152,30 +152,21 @@ impl AetowerMcpServer {
             .data_source
             .latest_runtime_lag_metrics()
             .map_err(tool_error)?;
+        let window_start_millis = snapshot
+            .captured_at_millis
+            .saturating_sub(args.history_window_hours.saturating_mul(60 * 60 * 1000));
         let history = self
             .data_source
-            .history_range_summary(
-                snapshot
-                    .captured_at_millis
-                    .saturating_sub(args.history_window_hours.saturating_mul(60 * 60 * 1000)),
-                snapshot.captured_at_millis,
-            )
+            .history_range_summary(window_start_millis, snapshot.captured_at_millis)
             .map_err(tool_error)?;
         let history_events = self
             .data_source
-            .query_diagnostics(history_diagnostics_query(
-                snapshot
-                    .captured_at_millis
-                    .saturating_sub(args.history_window_hours.saturating_mul(60 * 60 * 1000)),
-                64,
-            ))
+            .query_diagnostics(history_diagnostics_query(window_start_millis, 64))
             .map_err(tool_error)?;
         let runtime_events = self
             .data_source
             .query_diagnostics(runtime_diagnostics_query(
-                snapshot
-                    .captured_at_millis
-                    .saturating_sub(args.history_window_hours.saturating_mul(60 * 60 * 1000)),
+                window_start_millis,
                 DEFAULT_RUNTIME_BURST_EVENT_LIMIT,
             ))
             .map_err(tool_error)?;

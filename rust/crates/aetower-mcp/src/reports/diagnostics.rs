@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use aetower_diagnostics::{DiagnosticsEvent, DiagnosticsLevel, DiagnosticsOverview};
+use aetower_diagnostics::{
+    DiagnosticsEvent, DiagnosticsLevel, DiagnosticsOverview, DiagnosticsSubsystem,
+};
 use aetower_model::SystemSnapshot;
 use serde_json::Value;
 
@@ -57,18 +59,7 @@ pub(crate) fn build_anomaly_explanations(
                     event.timestamp_millis >= since
                         && event.entity_id.as_deref() == Some(entity.entity_id.as_str())
                 })
-                .map(|event| RecentChangeItem {
-                    timestamp_millis: event.timestamp_millis,
-                    severity: match event.severity {
-                        aetower_model::TimelineSeverity::Info => SeverityBand::Info,
-                        aetower_model::TimelineSeverity::Warning => SeverityBand::Warning,
-                        aetower_model::TimelineSeverity::Critical => SeverityBand::Critical,
-                    },
-                    source: format!("timeline:{:?}", event.category).to_lowercase(),
-                    entity_id: event.entity_id.clone(),
-                    title: event.title.clone(),
-                    detail: event.detail.clone(),
-                })
+                .map(recent_change_from_timeline_event)
                 .take(3)
                 .collect::<Vec<_>>();
             let driver_summary = drivers
@@ -261,9 +252,9 @@ pub(crate) fn build_diagnostics_summary_report(
         let subsystem_label = diagnostics_subsystem_label(&event.subsystem);
         let level_label = diagnostics_level_label(&event.level);
         let key = (
-            subsystem_label.clone(),
+            subsystem_label.to_owned(),
             event.event_type.clone(),
-            level_label.clone(),
+            level_label.to_owned(),
         );
         let detail = diagnostic_field_value(&event, "detail");
         let sample_fields = diagnostic_sample_fields(&event);
@@ -280,9 +271,9 @@ pub(crate) fn build_diagnostics_summary_report(
                 }
             })
             .or_insert_with(|| DiagnosticsSummaryGroup {
-                subsystem: subsystem_label,
+                subsystem: subsystem_label.to_owned(),
                 event_type: event.event_type,
-                level: level_label,
+                level: level_label.to_owned(),
                 count: 1,
                 first_millis: event.timestamp_millis,
                 latest_millis: event.timestamp_millis,
@@ -369,20 +360,35 @@ pub(crate) fn diagnostics_summary_recommendations(
     recommendations
 }
 
-pub(crate) fn diagnostics_level_label(level: &DiagnosticsLevel) -> String {
-    serde_json::to_value(level)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| format!("{level:?}").to_ascii_lowercase())
+pub(crate) fn diagnostics_level_label(level: &DiagnosticsLevel) -> &'static str {
+    match level {
+        DiagnosticsLevel::Trace => "trace",
+        DiagnosticsLevel::Debug => "debug",
+        DiagnosticsLevel::Info => "info",
+        DiagnosticsLevel::Warn => "warn",
+        DiagnosticsLevel::Error => "error",
+    }
 }
 
-pub(crate) fn diagnostics_subsystem_label(
-    subsystem: &aetower_diagnostics::DiagnosticsSubsystem,
-) -> String {
-    serde_json::to_value(subsystem)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| format!("{subsystem:?}").to_ascii_lowercase())
+pub(crate) fn diagnostics_subsystem_label(subsystem: &DiagnosticsSubsystem) -> &'static str {
+    match subsystem {
+        DiagnosticsSubsystem::Engine => "engine",
+        DiagnosticsSubsystem::Collector => "collector",
+        DiagnosticsSubsystem::Identity => "identity",
+        DiagnosticsSubsystem::Attribution => "attribution",
+        DiagnosticsSubsystem::Friction => "friction",
+        DiagnosticsSubsystem::History => "history",
+        DiagnosticsSubsystem::Persistence => "persistence",
+        DiagnosticsSubsystem::Telemetry => "telemetry",
+        DiagnosticsSubsystem::Gpu => "gpu",
+        DiagnosticsSubsystem::Ffi => "ffi",
+        DiagnosticsSubsystem::Ui => "ui",
+        DiagnosticsSubsystem::AdapterChromium => "adapter-chromium",
+        DiagnosticsSubsystem::AdapterDocker => "adapter-docker",
+        DiagnosticsSubsystem::AdapterHelper => "adapter-helper",
+        DiagnosticsSubsystem::AdapterChau7 => "adapter-chau7",
+        DiagnosticsSubsystem::AdapterVsCode => "adapter-vs-code",
+    }
 }
 
 pub(crate) fn diagnostic_field_value(event: &DiagnosticsEvent, key: &str) -> Option<String> {
@@ -460,14 +466,17 @@ pub(crate) fn host_wakeup_guidance(
 }
 
 pub(crate) fn host_load_detail(snapshot: &SystemSnapshot) -> String {
-    let external = top_entities(snapshot, snapshot.entities.len().max(1))
-        .into_iter()
+    let sorted_entities = top_entities(snapshot, snapshot.entities.len().max(1));
+    let external = sorted_entities
+        .iter()
+        .copied()
         .filter(|entity| !is_aetower_entity(entity))
         .take(3)
         .collect::<Vec<_>>();
     if external.is_empty() {
-        let fallback = top_entities(snapshot, 3)
+        let fallback = sorted_entities
             .into_iter()
+            .take(3)
             .map(|entity| entity.display_name.clone())
             .collect::<Vec<_>>()
             .join(", ");
