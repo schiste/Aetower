@@ -9,8 +9,8 @@ use aetower_model::{
 };
 
 pub struct History {
-    previous_scores: BTreeMap<String, f32>,
-    previous_anomaly: BTreeMap<String, bool>,
+    previous_scores: HashMap<String, f32>,
+    previous_anomaly: HashMap<String, bool>,
     /// Wrapping counter gating how often the z-score anomaly pass runs. The
     /// pass computes a mean+stddev over each entity's friction trend every
     /// tick, which is the dominant per-tick cost in `update`. Friction
@@ -24,9 +24,10 @@ pub struct History {
     entity_index: HashMap<String, u16>,
     entity_reverse_index: Vec<String>,
     next_entity_idx: u16,
-    cooccurrence: BTreeMap<(u16, u16), u32>,
+    cooccurrence: HashMap<(u16, u16), u32>,
     cooccurrence_tick: u32,
-    metric_history: BTreeMap<String, MetricTrendState>,
+    cooccurrence_sample_count: u32,
+    metric_history: HashMap<String, MetricTrendState>,
     host_history: HostTrendState,
     timeline: VecDeque<TimelineEvent>,
     previous_processes: HashMap<ProcessKey, ProcessObservation>,
@@ -34,7 +35,7 @@ pub struct History {
     last_restart_loop_report: BTreeMap<String, u64>,
     previous_pressure_band: PressureBand,
     previous_wakeup_band: WakeupBand,
-    previous_entity_behaviors: BTreeMap<String, EntityBehaviorFlags>,
+    previous_entity_behaviors: HashMap<String, EntityBehaviorFlags>,
     sensor_alert_thresholds: Vec<AlertThreshold>,
     previous_sensor_alert_levels: BTreeMap<String, AlertLevel>,
     /// Millisecond timestamp of the most recent tick on which we saw a
@@ -172,21 +173,25 @@ const SENSOR_KEY_GPU_MEMORY: &str = "gpu_memory_ratio";
 /// enough that when readings return after an SMC outage, the user sees a
 /// fresh alert rather than continuing silence.
 const SENSOR_GAP_MILLIS: u64 = 15_000;
+const COOCCURRENCE_SAMPLE_INTERVAL_TICKS: u32 = 5;
+const COOCCURRENCE_MIN_SAMPLES: u32 = 3;
+const COOCCURRENCE_WINDOW_SAMPLES: u32 = 12;
 
 impl History {
     pub fn new() -> Self {
         Self {
-            previous_scores: BTreeMap::new(),
-            previous_anomaly: BTreeMap::new(),
+            previous_scores: HashMap::new(),
+            previous_anomaly: HashMap::new(),
             anomaly_tick: 0,
             previous_thermal_state: ThermalState::Nominal,
             thermal_contributors: Vec::new(),
             entity_index: HashMap::new(),
             entity_reverse_index: Vec::new(),
             next_entity_idx: 0,
-            cooccurrence: BTreeMap::new(),
+            cooccurrence: HashMap::new(),
             cooccurrence_tick: 0,
-            metric_history: BTreeMap::new(),
+            cooccurrence_sample_count: 0,
+            metric_history: HashMap::new(),
             host_history: HostTrendState::default(),
             timeline: VecDeque::with_capacity(256),
             previous_processes: HashMap::new(),
@@ -194,7 +199,7 @@ impl History {
             last_restart_loop_report: BTreeMap::new(),
             previous_pressure_band: PressureBand::Nominal,
             previous_wakeup_band: WakeupBand::Nominal,
-            previous_entity_behaviors: BTreeMap::new(),
+            previous_entity_behaviors: HashMap::new(),
             sensor_alert_thresholds: default_sensor_alert_thresholds(),
             previous_sensor_alert_levels: BTreeMap::new(),
             last_sensor_reading_millis: BTreeMap::new(),
@@ -249,7 +254,7 @@ impl History {
         for entity in entities.iter_mut() {
             entity.recent_change_summary = None;
         }
-        let active_entity_ids: Vec<String> = entities
+        let active_entity_id_set: HashSet<String> = entities
             .iter()
             .map(|entity| entity.entity_id.clone())
             .collect();
@@ -414,27 +419,41 @@ impl History {
                 .insert(entity.entity_id.clone(), current);
         }
         self.previous_remote_hosts
-            .retain(|id, _| active_entity_ids.contains(id));
+            .retain(|id, _| active_entity_id_set.contains(id));
 
         // Feature 6: Co-occurrence tracking with compact u16 indices.
-        self.cooccurrence_tick += 1;
-        let active_indices: Vec<u16> = active_entity_ids
-            .iter()
-            .map(|id| self.intern_entity_id(id))
-            .collect();
-        for (i, &a) in active_indices.iter().enumerate() {
-            for &b in active_indices.iter().skip(i + 1) {
-                let key = if a < b { (a, b) } else { (b, a) };
-                *self.cooccurrence.entry(key).or_insert(0) += 1;
+        //
+        // This is a heuristic grouping hint, not a strict metric. Sampling
+        // every few ticks avoids an O(n^2) pair update on every engine tick
+        // while still converging on stable "usually runs together" signals.
+        self.cooccurrence_tick = self.cooccurrence_tick.wrapping_add(1);
+        let sample_cooccurrence = self
+            .cooccurrence_tick
+            .is_multiple_of(COOCCURRENCE_SAMPLE_INTERVAL_TICKS);
+        if sample_cooccurrence {
+            let active_indices: Vec<u16> = entities
+                .iter()
+                .map(|entity| self.intern_entity_id(&entity.entity_id))
+                .collect();
+            self.cooccurrence_sample_count = self.cooccurrence_sample_count.saturating_add(1);
+            for (i, &a) in active_indices.iter().enumerate() {
+                for &b in active_indices.iter().skip(i + 1) {
+                    let key = if a < b { (a, b) } else { (b, a) };
+                    *self.cooccurrence.entry(key).or_insert(0) += 1;
+                }
             }
+
+            let active_idx_set: HashSet<u16> = active_indices.iter().copied().collect();
+            self.cooccurrence
+                .retain(|(a, b), _| active_idx_set.contains(a) && active_idx_set.contains(b));
         }
-        if self.cooccurrence_tick >= 15 {
-            let threshold = (self.cooccurrence_tick as f32 * 0.8) as u32;
-            let names: BTreeMap<String, String> = entities
+        if self.cooccurrence_sample_count >= COOCCURRENCE_MIN_SAMPLES {
+            let threshold = (self.cooccurrence_sample_count as f32 * 0.8).ceil() as u32;
+            let names: HashMap<String, String> = entities
                 .iter()
                 .map(|e| (e.entity_id.clone(), e.display_name.clone()))
                 .collect();
-            let mut suggestions: BTreeMap<String, String> = BTreeMap::new();
+            let mut suggestions: HashMap<String, String> = HashMap::new();
             for (&(a_idx, b_idx), count) in &self.cooccurrence {
                 if *count < threshold {
                     continue;
@@ -457,31 +476,17 @@ impl History {
                     entity.grouping_suggestion = suggestions.remove(&entity.entity_id);
                 }
             }
+            self.compact_cooccurrence_window();
         }
 
-        self.metric_history.retain(|entity_id, _| {
-            active_entity_ids
-                .iter()
-                .any(|active_id| active_id == entity_id)
-        });
-        self.previous_scores.retain(|entity_id, _| {
-            active_entity_ids
-                .iter()
-                .any(|active_id| active_id == entity_id)
-        });
-        self.previous_anomaly.retain(|entity_id, _| {
-            active_entity_ids
-                .iter()
-                .any(|active_id| active_id == entity_id)
-        });
-        self.previous_entity_behaviors.retain(|entity_id, _| {
-            active_entity_ids
-                .iter()
-                .any(|active_id| active_id == entity_id)
-        });
-        let active_idx_set: HashSet<u16> = active_indices.iter().copied().collect();
-        self.cooccurrence
-            .retain(|(a, b), _| active_idx_set.contains(a) && active_idx_set.contains(b));
+        self.metric_history
+            .retain(|entity_id, _| active_entity_id_set.contains(entity_id));
+        self.previous_scores
+            .retain(|entity_id, _| active_entity_id_set.contains(entity_id));
+        self.previous_anomaly
+            .retain(|entity_id, _| active_entity_id_set.contains(entity_id));
+        self.previous_entity_behaviors
+            .retain(|entity_id, _| active_entity_id_set.contains(entity_id));
 
         for entity in entities.iter().take(5) {
             let previous = self
@@ -619,6 +624,19 @@ impl History {
             self.host_history.snapshot(),
             forecast,
         )
+    }
+
+    fn compact_cooccurrence_window(&mut self) {
+        if self.cooccurrence_sample_count < COOCCURRENCE_WINDOW_SAMPLES {
+            return;
+        }
+
+        let retained_samples = (COOCCURRENCE_WINDOW_SAMPLES / 2).max(COOCCURRENCE_MIN_SAMPLES);
+        for count in self.cooccurrence.values_mut() {
+            *count = (*count / 2).min(retained_samples);
+        }
+        self.cooccurrence.retain(|_, count| *count > 0);
+        self.cooccurrence_sample_count = retained_samples;
     }
 
     /// Heuristic throttle forecast from the recent max-temp slope. Only fires

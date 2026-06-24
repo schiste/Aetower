@@ -2,7 +2,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
@@ -22,6 +22,24 @@ const MAX_PENDING_HISTORY_WRITES: u64 = 64;
 const MIN_SIZE_PRESSURE_SNAPSHOT_TARGET: u64 = 120;
 const HISTORY_MAINTENANCE_WARN_MILLIS: u64 = 5_000;
 const HISTORY_MAINTENANCE_WAL_WARNING_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_COALESCED_WRITE_GAP_MILLIS: u64 = 60_000;
+const HISTORY_TOP_ENTITY_SIGNATURE_LIMIT: usize = 8;
+const HOST_CPU_BUCKET_PERCENT: f32 = 2.0;
+const HOST_WAKEUP_BUCKET_PER_SECOND: f32 = 50.0;
+const HOST_THROUGHPUT_BUCKET_BYTES: u64 = 512 * 1024;
+const MEMORY_BUCKET_BYTES: u64 = 16 * 1024 * 1024;
+const ENTITY_CPU_BUCKET_PERCENT: f32 = 2.0;
+const ENTITY_FRICTION_BUCKET_POINTS: f32 = 2.0;
+const ENTITY_WAKEUP_BUCKET_PER_SECOND: f32 = 25.0;
+const HISTORY_PERSISTED_ENTITY_LIMIT: usize = 64;
+const HISTORY_PERSISTED_TREND_LIMIT: usize = 12;
+const HISTORY_PERSISTED_TIMELINE_LIMIT: usize = 128;
+const HISTORY_PERSISTED_RECOMMENDATION_LIMIT: usize = 3;
+const HISTORY_PERSISTED_SESSION_MARKER_LIMIT: usize = 8;
+const HISTORY_PERSISTED_HOST_VECTOR_LIMIT: usize = 16;
+const HISTORY_PERSISTED_AI_REPO_LIMIT: usize = 64;
+const HISTORY_PERSISTED_CHAU7_SESSION_LIMIT: usize = 64;
+const HISTORY_PERSISTED_CHAU7_LINK_LIMIT: usize = 16;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedSnapshotEnvelope {
@@ -36,6 +54,331 @@ struct QuarantineCandidate<'a> {
     format_version: i64,
     json_blob: Option<&'a str>,
     bincode_blob: Option<&'a [u8]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HistorySnapshotSignature {
+    host: HostWriteSignature,
+    entity_count: u32,
+    top_entities: Vec<EntityWriteSignature>,
+    capability_states: Vec<CapabilityWriteSignature>,
+    timeline_tail: Option<TimelineWriteSignature>,
+    ai_repo_count: u32,
+    chau7_session_count: u32,
+    thermal_forecast_active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HostWriteSignature {
+    cpu_bucket: i32,
+    memory_bucket: u64,
+    swap_bucket: u64,
+    compressed_memory_bucket: u64,
+    disk_bucket: u64,
+    network_bucket: u64,
+    wakeup_bucket: i32,
+    thermal_state: String,
+    low_power_mode: bool,
+    on_battery: bool,
+    ai_agent_count: u32,
+    gpu_bucket: i32,
+    gpu_memory_bucket: u64,
+    frontmost_app_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EntityWriteSignature {
+    entity_id: String,
+    friction_bucket: i32,
+    cpu_bucket: i32,
+    memory_bucket: u64,
+    disk_bucket: u64,
+    network_bucket: u64,
+    wakeup_bucket: i32,
+    process_count: u32,
+    anomaly_detected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityWriteSignature {
+    kind: String,
+    state: String,
+    health: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TimelineWriteSignature {
+    id: String,
+    timestamp_millis: u64,
+    severity: String,
+    category: String,
+    entity_id: Option<String>,
+}
+
+impl HistorySnapshotSignature {
+    fn from_snapshot(snapshot: &SystemSnapshot) -> Self {
+        let mut capability_states = snapshot
+            .capabilities
+            .iter()
+            .map(|capability| CapabilityWriteSignature {
+                kind: format!("{:?}", capability.kind),
+                state: format!("{:?}", capability.state),
+                health: format!("{:?}", capability.health),
+            })
+            .collect::<Vec<_>>();
+        capability_states.sort_by(|lhs, rhs| lhs.kind.cmp(&rhs.kind));
+
+        Self {
+            host: HostWriteSignature::from_snapshot(snapshot),
+            entity_count: snapshot.entities.len().min(u32::MAX as usize) as u32,
+            top_entities: snapshot
+                .entities
+                .iter()
+                .take(HISTORY_TOP_ENTITY_SIGNATURE_LIMIT)
+                .map(EntityWriteSignature::from_entity)
+                .collect(),
+            capability_states,
+            timeline_tail: snapshot
+                .timeline
+                .last()
+                .map(TimelineWriteSignature::from_event),
+            ai_repo_count: snapshot.ai_repo_summaries.len().min(u32::MAX as usize) as u32,
+            chau7_session_count: snapshot.chau7_sessions.len().min(u32::MAX as usize) as u32,
+            thermal_forecast_active: snapshot.thermal_forecast.is_some(),
+        }
+    }
+}
+
+impl HostWriteSignature {
+    fn from_snapshot(snapshot: &SystemSnapshot) -> Self {
+        let host = &snapshot.host;
+        Self {
+            cpu_bucket: bucket_f32(host.cpu_percent, HOST_CPU_BUCKET_PERCENT),
+            memory_bucket: bucket_u64(host.memory_used_bytes, MEMORY_BUCKET_BYTES),
+            swap_bucket: bucket_u64(host.swap_used_bytes, MEMORY_BUCKET_BYTES),
+            compressed_memory_bucket: bucket_u64(host.compressed_memory_bytes, MEMORY_BUCKET_BYTES),
+            disk_bucket: bucket_u64(
+                host.disk_read_bps.saturating_add(host.disk_write_bps),
+                HOST_THROUGHPUT_BUCKET_BYTES,
+            ),
+            network_bucket: bucket_u64(
+                host.network_receive_bps
+                    .saturating_add(host.network_send_bps),
+                HOST_THROUGHPUT_BUCKET_BYTES,
+            ),
+            wakeup_bucket: bucket_f32(host.wakeups_per_second, HOST_WAKEUP_BUCKET_PER_SECOND),
+            thermal_state: format!("{:?}", host.thermal_state),
+            low_power_mode: host.low_power_mode,
+            on_battery: host.on_battery,
+            ai_agent_count: host.ai_agent_count,
+            gpu_bucket: bucket_f32(host.gpu_percent, HOST_CPU_BUCKET_PERCENT),
+            gpu_memory_bucket: bucket_u64(host.gpu_memory_bytes, MEMORY_BUCKET_BYTES),
+            frontmost_app_name: host.frontmost_app_name.clone(),
+        }
+    }
+}
+
+impl EntityWriteSignature {
+    fn from_entity(entity: &aetower_model::EntitySnapshot) -> Self {
+        Self {
+            entity_id: entity.entity_id.clone(),
+            friction_bucket: bucket_f32(entity.friction.total_score, ENTITY_FRICTION_BUCKET_POINTS),
+            cpu_bucket: bucket_f32(entity.metrics.cpu_percent, ENTITY_CPU_BUCKET_PERCENT),
+            memory_bucket: bucket_u64(
+                aetower_model::entity_effective_memory_bytes(&entity.metrics),
+                MEMORY_BUCKET_BYTES,
+            ),
+            disk_bucket: bucket_u64(
+                entity
+                    .metrics
+                    .disk_read_bps
+                    .saturating_add(entity.metrics.disk_write_bps),
+                HOST_THROUGHPUT_BUCKET_BYTES,
+            ),
+            network_bucket: bucket_u64(
+                entity
+                    .metrics
+                    .network_receive_bps
+                    .saturating_add(entity.metrics.network_send_bps),
+                HOST_THROUGHPUT_BUCKET_BYTES,
+            ),
+            wakeup_bucket: bucket_f32(
+                entity.metrics.wakeups_per_second,
+                ENTITY_WAKEUP_BUCKET_PER_SECOND,
+            ),
+            process_count: entity.metrics.process_count,
+            anomaly_detected: entity.anomaly_detected,
+        }
+    }
+}
+
+impl TimelineWriteSignature {
+    fn from_event(event: &aetower_model::TimelineEvent) -> Self {
+        Self {
+            id: event.id.clone(),
+            timestamp_millis: event.timestamp_millis,
+            severity: format!("{:?}", event.severity),
+            category: format!("{:?}", event.category),
+            entity_id: event.entity_id.clone(),
+        }
+    }
+}
+
+fn bucket_f32(value: f32, bucket_size: f32) -> i32 {
+    if !value.is_finite() || bucket_size <= 0.0 {
+        return 0;
+    }
+    (value / bucket_size).round() as i32
+}
+
+fn bucket_u64(value: u64, bucket_size: u64) -> u64 {
+    if bucket_size == 0 {
+        return value;
+    }
+    value.saturating_add(bucket_size / 2) / bucket_size
+}
+
+fn compact_snapshot_for_history(snapshot: &SystemSnapshot) -> SystemSnapshot {
+    let mut compact = snapshot.clone();
+
+    compact.host.frontmost_window_title = None;
+    compact
+        .host
+        .fans
+        .truncate(HISTORY_PERSISTED_HOST_VECTOR_LIMIT);
+    compact
+        .host
+        .cpu_temperatures
+        .truncate(HISTORY_PERSISTED_HOST_VECTOR_LIMIT);
+    compact
+        .host
+        .power_readings
+        .truncate(HISTORY_PERSISTED_HOST_VECTOR_LIMIT);
+    compact
+        .host
+        .network_interfaces
+        .truncate(HISTORY_PERSISTED_HOST_VECTOR_LIMIT);
+    compact
+        .host
+        .disks
+        .truncate(HISTORY_PERSISTED_HOST_VECTOR_LIMIT);
+    compact
+        .host
+        .bluetooth_devices
+        .truncate(HISTORY_PERSISTED_HOST_VECTOR_LIMIT);
+    compact
+        .host
+        .per_core_cpu
+        .truncate(HISTORY_PERSISTED_HOST_VECTOR_LIMIT);
+
+    truncate_tail(
+        &mut compact.host_trend.machine_friction,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+    truncate_tail(
+        &mut compact.host_trend.cpu_percent,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+    truncate_tail(
+        &mut compact.host_trend.memory_used_bytes,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+    truncate_tail(
+        &mut compact.host_trend.memory_pressure_score,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+    truncate_tail(
+        &mut compact.host_trend.disk_activity_bps,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+    truncate_tail(
+        &mut compact.host_trend.network_activity_bps,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+    truncate_tail(
+        &mut compact.host_trend.wakeups_per_second,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+    truncate_tail(
+        &mut compact.host_trend.compressed_memory_bytes,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+    truncate_tail(
+        &mut compact.host_trend.ai_agent_friction,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+    truncate_tail(
+        &mut compact.host_trend.gpu_percent,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+    truncate_tail(
+        &mut compact.host_trend.gpu_memory_bytes,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+    truncate_tail(
+        &mut compact.host_trend.max_cpu_temperature,
+        HISTORY_PERSISTED_TREND_LIMIT,
+    );
+
+    truncate_tail(&mut compact.timeline, HISTORY_PERSISTED_TIMELINE_LIMIT);
+    compact
+        .ai_repo_summaries
+        .truncate(HISTORY_PERSISTED_AI_REPO_LIMIT);
+    compact
+        .chau7_sessions
+        .truncate(HISTORY_PERSISTED_CHAU7_SESSION_LIMIT);
+    for session in &mut compact.chau7_sessions {
+        session
+            .linked_entity_ids
+            .truncate(HISTORY_PERSISTED_CHAU7_LINK_LIMIT);
+    }
+
+    compact.entities.truncate(HISTORY_PERSISTED_ENTITY_LIMIT);
+    for entity in &mut compact.entities {
+        entity.primary_provenance = None;
+        entity.launcher_summary = None;
+        entity.attribution_notes.clear();
+        entity.active_window_title = None;
+        entity.components.clear();
+        entity.network_connections.clear();
+        entity
+            .friction
+            .contributors
+            .truncate(HISTORY_PERSISTED_RECOMMENDATION_LIMIT);
+        entity
+            .recommendations
+            .truncate(HISTORY_PERSISTED_RECOMMENDATION_LIMIT);
+        entity
+            .session_markers
+            .truncate(HISTORY_PERSISTED_SESSION_MARKER_LIMIT);
+        truncate_tail(&mut entity.trend.friction, HISTORY_PERSISTED_TREND_LIMIT);
+        truncate_tail(&mut entity.trend.cpu_percent, HISTORY_PERSISTED_TREND_LIMIT);
+        truncate_tail(
+            &mut entity.trend.memory_resident_bytes,
+            HISTORY_PERSISTED_TREND_LIMIT,
+        );
+        truncate_tail(
+            &mut entity.trend.disk_activity_bps,
+            HISTORY_PERSISTED_TREND_LIMIT,
+        );
+        truncate_tail(
+            &mut entity.trend.network_activity_bps,
+            HISTORY_PERSISTED_TREND_LIMIT,
+        );
+        truncate_tail(
+            &mut entity.trend.wakeups_per_second,
+            HISTORY_PERSISTED_TREND_LIMIT,
+        );
+    }
+
+    compact
+}
+
+fn truncate_tail<T>(items: &mut Vec<T>, limit: usize) {
+    if items.len() > limit {
+        let drop_count = items.len() - limit;
+        items.drain(0..drop_count);
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -93,6 +436,9 @@ pub struct HistoryStore {
     write_interval: u32,
     diagnostics: Option<DiagnosticsStore>,
     writer: HistoryWriter,
+    last_persisted_signature: Option<HistorySnapshotSignature>,
+    last_persisted_millis: Option<u64>,
+    coalesced_write_count: u64,
     /// `Some` only when the most recent `open()` ran the auto_vacuum
     /// migration. Drained by `set_diagnostics` so the audit-trail event is
     /// emitted exactly once per process, *after* the sink is wired up
@@ -132,6 +478,9 @@ impl HistoryStore {
             write_interval: write_interval.max(1),
             diagnostics: None,
             writer,
+            last_persisted_signature: None,
+            last_persisted_millis: None,
+            coalesced_write_count: 0,
             pending_migration_event,
         })
     }
@@ -171,7 +520,12 @@ impl HistoryStore {
             return;
         }
         self.write_counter = 0;
-        self.enqueue_store(snapshot, "history-write-backpressure");
+        let Some(signature) = self.prepare_store(snapshot, "interval") else {
+            return;
+        };
+        if self.enqueue_store(snapshot, "history-write-backpressure") {
+            self.mark_snapshot_persisted(snapshot, signature);
+        }
     }
 
     /// Queue a snapshot immediately, bypassing the tick-based write interval.
@@ -179,10 +533,65 @@ impl HistoryStore {
     /// contention, so maintenance windows do not permanently drop the newest
     /// history point.
     pub fn store_immediately(&mut self, snapshot: &SystemSnapshot) {
-        self.enqueue_store(snapshot, "history-deferred-write-backpressure");
+        let Some(signature) = self.prepare_store(snapshot, "immediate") else {
+            return;
+        };
+        if self.enqueue_store(snapshot, "history-deferred-write-backpressure") {
+            self.mark_snapshot_persisted(snapshot, signature);
+        }
     }
 
-    fn enqueue_store(&mut self, snapshot: &SystemSnapshot, event_type: &'static str) {
+    fn prepare_store(
+        &mut self,
+        snapshot: &SystemSnapshot,
+        trigger: &'static str,
+    ) -> Option<HistorySnapshotSignature> {
+        let signature = HistorySnapshotSignature::from_snapshot(snapshot);
+        let signature_changed = self.last_persisted_signature.as_ref() != Some(&signature);
+        let gap_elapsed = self
+            .last_persisted_millis
+            .map(|last| {
+                snapshot.captured_at_millis.saturating_sub(last) >= MAX_COALESCED_WRITE_GAP_MILLIS
+            })
+            .unwrap_or(true);
+
+        if signature_changed || gap_elapsed {
+            return Some(signature);
+        }
+
+        self.coalesced_write_count = self.coalesced_write_count.saturating_add(1);
+        if self.coalesced_write_count.is_multiple_of(60)
+            && let Some(diagnostics) = self.diagnostics.as_ref()
+        {
+            diagnostics.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Info,
+                    DiagnosticsSubsystem::Persistence,
+                    "history-write-coalesced",
+                    "Skipped persisted history writes because live snapshots were materially unchanged.",
+                )
+                .field("coalesced_writes", self.coalesced_write_count)
+                .field("trigger", trigger)
+                .field("last_persisted_millis", self.last_persisted_millis.unwrap_or(0))
+                .field("current_millis", snapshot.captured_at_millis)
+                .field("max_gap_millis", MAX_COALESCED_WRITE_GAP_MILLIS)
+                .build(),
+            );
+        }
+        None
+    }
+
+    fn mark_snapshot_persisted(
+        &mut self,
+        snapshot: &SystemSnapshot,
+        signature: HistorySnapshotSignature,
+    ) {
+        self.last_persisted_signature = Some(signature);
+        self.last_persisted_millis = Some(snapshot.captured_at_millis);
+        self.coalesced_write_count = 0;
+    }
+
+    fn enqueue_store(&mut self, snapshot: &SystemSnapshot, event_type: &'static str) -> bool {
         let pending_writes = self.writer.pending_writes();
         if pending_writes >= MAX_PENDING_HISTORY_WRITES {
             if let Some(diagnostics) = self.diagnostics.as_ref() {
@@ -197,9 +606,9 @@ impl HistoryStore {
                     .build(),
                 );
             }
-            return;
+            return false;
         }
-        let _ = self.writer.store(snapshot.clone());
+        self.writer.store(snapshot.clone()).is_ok()
     }
 
     /// Load snapshots in a time range (inclusive).
@@ -511,27 +920,7 @@ impl HistoryStore {
             vacuumed = true;
         }
         let (store_bytes_after, wal_bytes_after) = self.store_file_sizes();
-        if let Some(diagnostics) = self.diagnostics.as_ref() {
-            diagnostics.emit(
-                DiagnosticsEvent::builder(
-                    DiagnosticsLevel::Info,
-                    DiagnosticsSubsystem::Persistence,
-                    "history-maintained",
-                    "Ran persisted history maintenance.",
-                )
-                .field("aggressive", aggressive)
-                .field("checkpointed", true)
-                .field("vacuumed", vacuumed)
-                .field("store_bytes_before", store_bytes_before)
-                .field("wal_bytes_before", wal_bytes_before)
-                .field("store_bytes_after", store_bytes_after)
-                .field("wal_bytes_after", wal_bytes_after)
-                .field("cancelled", false)
-                .field("elapsed_millis", started.elapsed().as_millis())
-                .build(),
-            );
-        }
-        Ok(HistoryMaintenanceReport {
+        let report = HistoryMaintenanceReport {
             store_bytes_before,
             wal_bytes_before,
             store_bytes_after,
@@ -542,7 +931,30 @@ impl HistoryStore {
             aggressive_reason,
             cancelled: false,
             elapsed_millis: started.elapsed().as_millis() as u64,
-        })
+        };
+        if history_storage_maintenance_should_emit(&report, aggressive)
+            && let Some(diagnostics) = self.diagnostics.as_ref()
+        {
+            diagnostics.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Info,
+                    DiagnosticsSubsystem::Persistence,
+                    "history-maintained",
+                    "Ran persisted history maintenance.",
+                )
+                .field("aggressive", aggressive)
+                .field("checkpointed", report.checkpointed)
+                .field("vacuumed", report.vacuumed)
+                .field("store_bytes_before", report.store_bytes_before)
+                .field("wal_bytes_before", report.wal_bytes_before)
+                .field("store_bytes_after", report.store_bytes_after)
+                .field("wal_bytes_after", report.wal_bytes_after)
+                .field("cancelled", report.cancelled)
+                .field("elapsed_millis", report.elapsed_millis)
+                .build(),
+            );
+        }
+        Ok(report)
     }
 
     pub fn maintain_with_policy(
@@ -635,6 +1047,24 @@ impl HistoryStore {
         }
         if quarantine_count >= policy.aggressive_quarantine_rows {
             aggressive_reasons.push("quarantine-rows".to_owned());
+        }
+        let hard_pressure = store_bytes_before >= policy.hard_max_store_bytes
+            || snapshot_count > policy.hard_max_snapshot_count
+            || quarantine_count > policy.hard_max_quarantine_rows;
+        let wal_checkpoint_due = wal_bytes_before > 0;
+        if pruned_rows == 0 && !threshold_aggressive && !hard_pressure && !wal_checkpoint_due {
+            return Ok(HistoryMaintenanceReport {
+                store_bytes_before,
+                wal_bytes_before,
+                store_bytes_after: store_bytes_before,
+                wal_bytes_after: wal_bytes_before,
+                checkpointed: false,
+                vacuumed: false,
+                pruned_rows: 0,
+                aggressive_reason: None,
+                cancelled: false,
+                elapsed_millis: started.elapsed().as_millis() as u64,
+            });
         }
 
         let mut report = self.maintain_storage_inner(threshold_aggressive, cancel)?;
@@ -773,10 +1203,13 @@ impl HistoryStore {
 
         report.elapsed_millis = started.elapsed().as_millis() as u64;
 
-        if let Some(diagnostics) = self.diagnostics.as_ref() {
+        let level = history_retention_maintenance_level(&report, &policy, quarantine_count);
+        if history_retention_maintenance_should_emit(&report, &level)
+            && let Some(diagnostics) = self.diagnostics.as_ref()
+        {
             diagnostics.emit(
                 DiagnosticsEvent::builder(
-                    history_retention_maintenance_level(&report, &policy, quarantine_count),
+                    level,
                     DiagnosticsSubsystem::Persistence,
                     "history-retention-maintained",
                     "Applied persisted history retention and maintenance policy.",
@@ -1094,6 +1527,19 @@ fn cancelled_maintenance_report(
     }
 }
 
+fn history_storage_maintenance_should_emit(
+    report: &HistoryMaintenanceReport,
+    aggressive: bool,
+) -> bool {
+    aggressive
+        || report.cancelled
+        || report.vacuumed
+        || report.elapsed_millis >= HISTORY_MAINTENANCE_WARN_MILLIS
+        || report.wal_bytes_after >= HISTORY_MAINTENANCE_WAL_WARNING_BYTES
+        || report.store_bytes_after != report.store_bytes_before
+        || report.wal_bytes_after != report.wal_bytes_before
+}
+
 fn history_retention_maintenance_level(
     report: &HistoryMaintenanceReport,
     policy: &HistoryRetentionPolicy,
@@ -1104,11 +1550,26 @@ fn history_retention_maintenance_level(
         || (report.wal_bytes_after >= HISTORY_MAINTENANCE_WAL_WARNING_BYTES
             && report.wal_bytes_after >= report.wal_bytes_before);
 
-    if report.cancelled || slow || quarantine_count > 0 || wal_unexpected {
+    if report.cancelled
+        || slow
+        || quarantine_count >= policy.aggressive_quarantine_rows
+        || wal_unexpected
+    {
         DiagnosticsLevel::Warn
     } else {
         DiagnosticsLevel::Info
     }
+}
+
+fn history_retention_maintenance_should_emit(
+    report: &HistoryMaintenanceReport,
+    level: &DiagnosticsLevel,
+) -> bool {
+    matches!(level, DiagnosticsLevel::Warn | DiagnosticsLevel::Error)
+        || report.pruned_rows > 0
+        || report.vacuumed
+        || report.cancelled
+        || report.aggressive_reason.is_some()
 }
 
 pub fn load_range_page_read_only(
@@ -1236,33 +1697,64 @@ impl Drop for HistoryStore {
     }
 }
 
+fn record_writer_error(last_error: &Arc<Mutex<Option<String>>>, error: String) {
+    if let Ok(mut guard) = last_error.lock()
+        && guard.is_none()
+    {
+        *guard = Some(error);
+    }
+}
+
+fn drain_writer_error(last_error: &Arc<Mutex<Option<String>>>) -> Result<(), String> {
+    let mut guard = last_error
+        .lock()
+        .map_err(|_| "history writer error state poisoned".to_owned())?;
+    match guard.take() {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 impl HistoryWriter {
     fn spawn(path: PathBuf) -> Result<Self, String> {
         let (command_tx, command_rx) = mpsc::channel();
+        let (ready_tx, ready_rx) = mpsc::channel();
         let pending_writes = Arc::new(AtomicUsize::new(0));
         let pending_for_thread = Arc::clone(&pending_writes);
+        let last_error = Arc::new(Mutex::new(None));
+        let last_error_for_thread = Arc::clone(&last_error);
         let handle = thread::spawn(move || {
             let conn = match Connection::open(&path) {
                 Ok(conn) => conn,
-                Err(_) => return,
+                Err(error) => {
+                    let _ = ready_tx.send(Err(format!(
+                        "open history writer {}: {error}",
+                        path.display()
+                    )));
+                    return;
+                }
             };
             // Writer thread opens its own connection to the same file; by
             // the time this runs the main connection has already migrated
             // auto_vacuum mode, so configure_connection will find it set
             // and skip the VACUUM. The migration outcome (if any) is
             // discarded here — only the main store reports it.
-            if configure_connection(&conn, &path).is_err() {
+            if let Err(error) = configure_connection(&conn, &path) {
+                let _ = ready_tx.send(Err(format!("configure history writer: {error}")));
                 return;
             }
+            let _ = ready_tx.send(Ok(()));
 
             while let Ok(command) = command_rx.recv() {
                 match command {
                     HistoryCommand::Store(snapshot) => {
-                        let _ = store_snapshot(&conn, &snapshot);
+                        if let Err(error) = store_snapshot(&conn, &snapshot) {
+                            record_writer_error(&last_error_for_thread, error);
+                        }
                         pending_for_thread.fetch_sub(1, Ordering::Relaxed);
                     }
                     HistoryCommand::Flush(reply) => {
-                        let _ = reply.send(Ok(()));
+                        let _ = reply.send(drain_writer_error(&last_error_for_thread));
                     }
                     HistoryCommand::Prune(cutoff_millis, reply) => {
                         let result = conn
@@ -1329,18 +1821,33 @@ impl HistoryWriter {
             }
         });
 
-        Ok(Self {
-            command_tx,
-            pending_writes,
-            handle: Some(handle),
-        })
+        match ready_rx.recv() {
+            Ok(Ok(())) => Ok(Self {
+                command_tx,
+                pending_writes,
+                handle: Some(handle),
+            }),
+            Ok(Err(error)) => {
+                let _ = handle.join();
+                Err(error)
+            }
+            Err(error) => {
+                let _ = handle.join();
+                Err(format!("history writer startup: {error}"))
+            }
+        }
     }
 
     fn store(&self, snapshot: SystemSnapshot) -> Result<(), String> {
         self.pending_writes.fetch_add(1, Ordering::Relaxed);
-        self.command_tx
+        if let Err(error) = self
+            .command_tx
             .send(HistoryCommand::Store(Box::new(snapshot)))
-            .map_err(|error| format!("history writer queue: {error}"))
+        {
+            self.pending_writes.fetch_sub(1, Ordering::Relaxed);
+            return Err(format!("history writer queue: {error}"));
+        }
+        Ok(())
     }
 
     fn flush(&self) -> Result<(), String> {
@@ -1541,7 +2048,7 @@ fn decode_snapshot_blob(blob: &[u8], format_version: i64) -> Result<SystemSnapsh
 fn store_snapshot(conn: &Connection, snapshot: &SystemSnapshot) -> Result<usize, String> {
     let envelope = PersistedSnapshotEnvelope {
         version: SNAPSHOT_FORMAT_VERSION as u16,
-        snapshot: snapshot.clone(),
+        snapshot: compact_snapshot_for_history(snapshot),
     };
     let blob = bincode::serialize(&envelope).map_err(|e| format!("serialize snapshot: {e}"))?;
     conn.execute(
@@ -1586,6 +2093,125 @@ mod tests {
         }
     }
 
+    fn material_snapshot(sequence: u64, captured_at_millis: u64) -> SystemSnapshot {
+        SystemSnapshot {
+            sequence,
+            captured_at_millis,
+            host: aetower_model::HostSnapshot {
+                cpu_percent: ((sequence % 50) as f32 + 1.0) * 3.0,
+                memory_used_bytes: sequence.saturating_add(1) * MEMORY_BUCKET_BYTES,
+                wakeups_per_second: sequence as f32 * 30.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn bulky_snapshot(sequence: u64, captured_at_millis: u64) -> SystemSnapshot {
+        let mut snapshot = material_snapshot(sequence, captured_at_millis);
+        snapshot.host.frontmost_window_title = Some("frontmost-window-title".repeat(256));
+        snapshot.host_trend.cpu_percent = (0..128).map(|value| value as f32).collect();
+        snapshot.host_trend.memory_used_bytes =
+            (0..128).map(|value| value * MEMORY_BUCKET_BYTES).collect();
+        snapshot.timeline = (0..200)
+            .map(|idx| aetower_model::TimelineEvent {
+                id: format!("timeline-{idx}"),
+                timestamp_millis: captured_at_millis + idx,
+                title: format!("Timeline event {idx}"),
+                detail: "history detail ".repeat(128),
+                ..Default::default()
+            })
+            .collect();
+        snapshot.chau7_sessions = (0..96)
+            .map(|idx| aetower_model::Chau7SessionSummary {
+                id: format!("session-{idx}"),
+                title: "session title ".repeat(64),
+                linked_entity_ids: (0..64)
+                    .map(|entity_idx| format!("entity-{entity_idx}"))
+                    .collect(),
+                ..Default::default()
+            })
+            .collect();
+        snapshot.entities = (0..96)
+            .map(|idx| {
+                let trend_values = (0..96).map(|value| value as f32).collect::<Vec<_>>();
+                aetower_model::EntitySnapshot {
+                    entity_id: format!("entity-{idx}"),
+                    display_name: format!("Entity {idx}"),
+                    entity_kind: aetower_model::EntityKind::App,
+                    executable_path: Some(format!("/Applications/Entity{idx}.app/Contents/MacOS/entity")),
+                    metrics: aetower_model::AggregateMetrics {
+                        cpu_percent: idx as f32,
+                        memory_resident_bytes: (idx + 1) * MEMORY_BUCKET_BYTES,
+                        disk_read_bps: 1024 * idx,
+                        network_receive_bps: 2048 * idx,
+                        process_count: 8,
+                        ..Default::default()
+                    },
+                    friction: aetower_model::FrictionBreakdown {
+                        total_score: idx as f32,
+                        contributors: (0..8)
+                            .map(|contributor_idx| aetower_model::FrictionContributor {
+                                key: format!("contributor-{contributor_idx}"),
+                                label: format!("Contributor {contributor_idx}"),
+                                score: contributor_idx as f32,
+                                detail: "contributor detail ".repeat(64),
+                            })
+                            .collect(),
+                        ..Default::default()
+                    },
+                    components: (0..8)
+                        .map(|component_idx| aetower_model::ComponentSnapshot {
+                            title: format!("component-{component_idx}"),
+                            detail: "component detail ".repeat(128),
+                            command_line: Some("command argument ".repeat(256)),
+                            executable_path: Some(format!(
+                                "/Applications/Entity{idx}.app/Contents/MacOS/helper-{component_idx}"
+                            )),
+                            cpu_percent: idx as f32,
+                            memory_bytes: (idx + 1) * MEMORY_BUCKET_BYTES,
+                            ..Default::default()
+                        })
+                        .collect(),
+                    trend: aetower_model::MetricTrend {
+                        friction: trend_values.clone(),
+                        cpu_percent: trend_values,
+                        memory_resident_bytes: (0..96)
+                            .map(|value| value * MEMORY_BUCKET_BYTES)
+                            .collect(),
+                        disk_activity_bps: (0..96).map(|value| value * 1024).collect(),
+                        network_activity_bps: (0..96).map(|value| value * 2048).collect(),
+                        wakeups_per_second: (0..96).map(|value| value as f32).collect(),
+                    },
+                    recommendations: (0..8)
+                        .map(|recommendation_idx| aetower_model::Recommendation {
+                            title: format!("Recommendation {recommendation_idx}"),
+                            detail: "recommendation detail ".repeat(128),
+                            ..Default::default()
+                        })
+                        .collect(),
+                    session_markers: (0..16)
+                        .map(|marker_idx| aetower_model::SessionMarker {
+                            timestamp_millis: captured_at_millis + marker_idx,
+                            label: format!("marker-{marker_idx}"),
+                            ..Default::default()
+                        })
+                        .collect(),
+                    network_connections: (0..16)
+                        .map(|conn_idx| aetower_model::NetworkConnection {
+                            protocol: "tcp".to_owned(),
+                            local: format!("127.0.0.1:{}", 10_000 + conn_idx),
+                            remote: Some(format!("203.0.113.{conn_idx}:443")),
+                            state: "ESTABLISHED".to_owned(),
+                        })
+                        .collect(),
+                    ..Default::default()
+                }
+            })
+            .collect();
+        snapshot
+    }
+
     #[test]
     fn retention_maintenance_successful_pruning_is_info() {
         let report = HistoryMaintenanceReport {
@@ -1604,7 +2230,8 @@ mod tests {
 
     #[test]
     fn retention_maintenance_warns_for_operational_risk() {
-        let policy = test_retention_policy();
+        let mut policy = test_retention_policy();
+        policy.aggressive_quarantine_rows = 4;
         let cancelled = HistoryMaintenanceReport {
             cancelled: true,
             ..HistoryMaintenanceReport::default()
@@ -1633,14 +2260,32 @@ mod tests {
         );
         assert_eq!(
             history_retention_maintenance_level(&HistoryMaintenanceReport::default(), &policy, 1),
+            DiagnosticsLevel::Info
+        );
+        assert_eq!(
+            history_retention_maintenance_level(
+                &HistoryMaintenanceReport::default(),
+                &policy,
+                policy.aggressive_quarantine_rows
+            ),
             DiagnosticsLevel::Warn
         );
     }
 
     #[test]
+    fn quiet_retention_maintenance_noop_is_not_emitted() {
+        let report = HistoryMaintenanceReport::default();
+        let level = history_retention_maintenance_level(&report, &test_retention_policy(), 0);
+
+        assert_eq!(level, DiagnosticsLevel::Info);
+        assert!(!history_retention_maintenance_should_emit(&report, &level));
+    }
+
+    #[test]
     fn store_and_load_roundtrip() {
         let path = temp_db();
-        let mut store = HistoryStore::open(&path, 1).unwrap();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
 
         let snapshot = SystemSnapshot {
             sequence: 42,
@@ -1662,15 +2307,138 @@ mod tests {
         let mut store = HistoryStore::open(&path, 3).unwrap();
 
         for i in 0..9 {
+            store.maybe_store(&material_snapshot(i, i * 1000));
+        }
+
+        let loaded = store
+            .load_range(0, 100_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
+        assert_eq!(loaded.len(), 3); // writes at tick 3, 6, 9
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn unchanged_snapshots_are_coalesced() {
+        let path = temp_db();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+
+        for i in 0..5 {
             store.maybe_store(&SystemSnapshot {
                 sequence: i,
-                captured_at_millis: i * 1000,
+                captured_at_millis: (i + 1) * 1_000,
                 ..Default::default()
             });
         }
 
-        let loaded = store.load_range(0, 100_000).unwrap();
-        assert_eq!(loaded.len(), 3); // writes at tick 3, 6, 9
+        let loaded = store
+            .load_range(0, 10_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].sequence, 0);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn material_snapshot_change_bypasses_coalescing() {
+        let path = temp_db();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+
+        store.maybe_store(&material_snapshot(1, 1_000));
+        store.maybe_store(&material_snapshot(2, 2_000));
+
+        let loaded = store
+            .load_range(0, 10_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].sequence, 1);
+        assert_eq!(loaded[1].sequence, 2);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn persisted_snapshots_are_compacted_before_serialization() {
+        let path = temp_db();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+        let snapshot = bulky_snapshot(42, 1_000);
+        let full_blob = bincode::serialize(&PersistedSnapshotEnvelope {
+            version: SNAPSHOT_FORMAT_VERSION as u16,
+            snapshot: snapshot.clone(),
+        })
+        .unwrap_or_else(|error| panic!("serialize full snapshot: {error}"));
+
+        store.maybe_store(&snapshot);
+        store
+            .writer
+            .flush()
+            .unwrap_or_else(|error| panic!("flush writer: {error}"));
+
+        let persisted_blob_len = store
+            .conn
+            .query_row("SELECT length(bincode_blob) FROM snapshots", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap_or_else(|error| panic!("read persisted blob length: {error}"))
+            as usize;
+        assert!(
+            persisted_blob_len * 4 < full_blob.len(),
+            "compacted blob was {persisted_blob_len} bytes vs {} full bytes",
+            full_blob.len()
+        );
+
+        let loaded = store
+            .load_range(0, 10_000)
+            .unwrap_or_else(|error| panic!("load compacted snapshot: {error}"));
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].entities.len(), HISTORY_PERSISTED_ENTITY_LIMIT);
+        assert_eq!(loaded[0].timeline.len(), HISTORY_PERSISTED_TIMELINE_LIMIT);
+        assert!(loaded[0]
+            .entities
+            .iter()
+            .all(|entity| entity.components.is_empty() && entity.network_connections.is_empty()));
+        assert!(
+            loaded[0]
+                .entities
+                .iter()
+                .all(|entity| entity.trend.cpu_percent.len() <= HISTORY_PERSISTED_TREND_LIMIT)
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn max_coalesced_gap_preserves_sparse_baseline() {
+        let path = temp_db();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+
+        store.maybe_store(&SystemSnapshot {
+            sequence: 1,
+            captured_at_millis: 1_000,
+            ..Default::default()
+        });
+        store.maybe_store(&SystemSnapshot {
+            sequence: 2,
+            captured_at_millis: MAX_COALESCED_WRITE_GAP_MILLIS,
+            ..Default::default()
+        });
+        store.maybe_store(&SystemSnapshot {
+            sequence: 3,
+            captured_at_millis: MAX_COALESCED_WRITE_GAP_MILLIS + 1_000,
+            ..Default::default()
+        });
+
+        let loaded = store
+            .load_range(0, MAX_COALESCED_WRITE_GAP_MILLIS + 10_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].sequence, 1);
+        assert_eq!(loaded[1].sequence, 3);
 
         std::fs::remove_file(&path).ok();
     }
@@ -1704,20 +2472,19 @@ mod tests {
     #[test]
     fn prune_removes_old_data() {
         let path = temp_db();
-        let mut store = HistoryStore::open(&path, 1).unwrap();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
 
         for i in 0..5 {
-            store.maybe_store(&SystemSnapshot {
-                sequence: i,
-                captured_at_millis: i * 1000,
-                ..Default::default()
-            });
+            store.maybe_store(&material_snapshot(i, i * 1000));
         }
 
         let deleted = store.prune(3000).unwrap();
         assert_eq!(deleted, 3); // 0, 1000, 2000
 
-        let remaining = store.load_range(0, 100_000).unwrap();
+        let remaining = store
+            .load_range(0, 100_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
         assert_eq!(remaining.len(), 2); // 3000, 4000
 
         std::fs::remove_file(&path).ok();
@@ -1726,7 +2493,8 @@ mod tests {
     #[test]
     fn load_range_reads_legacy_bincode_rows() {
         let path = temp_db();
-        let store = HistoryStore::open(&path, 1).unwrap();
+        let store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
         let snapshot = SystemSnapshot {
             sequence: 7,
             captured_at_millis: 7000,
@@ -1741,7 +2509,9 @@ mod tests {
             )
             .unwrap();
 
-        let loaded = store.load_range(0, 10_000).unwrap();
+        let loaded = store
+            .load_range(0, 10_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].sequence, 7);
 
@@ -1751,7 +2521,8 @@ mod tests {
     #[test]
     fn incompatible_rows_are_quarantined_once() {
         let path = temp_db();
-        let store = HistoryStore::open(&path, 1).unwrap();
+        let store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
         store
             .conn
             .execute(
@@ -1760,7 +2531,9 @@ mod tests {
             )
             .unwrap();
 
-        let first = store.load_range(0, 10_000).unwrap();
+        let first = store
+            .load_range(0, 10_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
         assert!(first.is_empty());
 
         let quarantined = store
@@ -1771,7 +2544,9 @@ mod tests {
             .unwrap();
         assert_eq!(quarantined, 1);
 
-        let second = store.load_range(0, 10_000).unwrap();
+        let second = store
+            .load_range(0, 10_000)
+            .unwrap_or_else(|error| panic!("load_range: {error}"));
         assert!(second.is_empty());
 
         let remaining = store
@@ -1788,7 +2563,8 @@ mod tests {
     #[test]
     fn clear_all_removes_snapshots_and_quarantine_rows() {
         let path = temp_db();
-        let mut store = HistoryStore::open(&path, 1).unwrap();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
         store.maybe_store(&SystemSnapshot {
             sequence: 1,
             captured_at_millis: 1_000,
@@ -1833,14 +2609,11 @@ mod tests {
     #[test]
     fn load_range_page_returns_latest_then_older_samples() {
         let path = temp_db();
-        let mut store = HistoryStore::open(&path, 1).unwrap();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
 
         for i in 0..6 {
-            store.maybe_store(&SystemSnapshot {
-                sequence: i,
-                captured_at_millis: (i + 1) * 1_000,
-                ..Default::default()
-            });
+            store.maybe_store(&material_snapshot(i, (i + 1) * 1_000));
         }
 
         let latest = store.load_range_page(0, 10_000, None, 2).unwrap();
@@ -1859,14 +2632,11 @@ mod tests {
     #[test]
     fn range_summary_reports_counts_and_bounds() {
         let path = temp_db();
-        let mut store = HistoryStore::open(&path, 1).unwrap();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
 
         for i in 0..4 {
-            store.maybe_store(&SystemSnapshot {
-                sequence: i,
-                captured_at_millis: (i + 1) * 2_000,
-                ..Default::default()
-            });
+            store.maybe_store(&material_snapshot(i, (i + 1) * 2_000));
         }
 
         let summary = store.range_summary(2_000, 6_000).unwrap();
@@ -1887,11 +2657,7 @@ mod tests {
         };
 
         for i in 0..6 {
-            store.maybe_store(&SystemSnapshot {
-                sequence: i,
-                captured_at_millis: i * 1_000,
-                ..Default::default()
-            });
+            store.maybe_store(&material_snapshot(i, i * 1_000));
         }
 
         let report = store
@@ -1920,6 +2686,80 @@ mod tests {
             .map(|snapshot| snapshot.sequence)
             .collect();
         assert_eq!(sequences, vec![3, 4, 5]);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn maintain_with_policy_skips_repeated_noop_maintenance() {
+        let path = temp_db();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+        store.maybe_store(&material_snapshot(1, 1_000));
+        store
+            .maintain_storage(false)
+            .unwrap_or_else(|error| panic!("pre-clean maintenance: {error}"));
+
+        let report = store
+            .maintain_with_policy(HistoryRetentionPolicy {
+                max_age_millis: u64::MAX,
+                emergency_max_age_millis: u64::MAX,
+                soft_max_store_bytes: u64::MAX,
+                hard_max_store_bytes: u64::MAX,
+                max_wal_bytes: u64::MAX,
+                target_snapshot_count: u64::MAX,
+                soft_max_snapshot_count: u64::MAX,
+                hard_max_snapshot_count: u64::MAX,
+                aggressive_quarantine_rows: u64::MAX,
+                hard_max_quarantine_rows: u64::MAX,
+            })
+            .unwrap_or_else(|error| panic!("maintain_with_policy: {error}"));
+
+        assert!(!report.cancelled);
+        assert!(!report.vacuumed);
+        assert_eq!(report.pruned_rows, 0);
+        assert!(report.aggressive_reason.is_none());
+        assert!(report.wal_bytes_after <= report.wal_bytes_before);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn maintain_with_policy_checkpoints_nonempty_wal_without_prune() {
+        let path = temp_db();
+        let store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+        store
+            .conn
+            .execute("CREATE TABLE wal_pressure(value INTEGER)", [])
+            .unwrap_or_else(|error| panic!("create wal pressure table: {error}"));
+        store
+            .conn
+            .execute("INSERT INTO wal_pressure(value) VALUES (1)", [])
+            .unwrap_or_else(|error| panic!("insert wal pressure row: {error}"));
+        let (_, wal_bytes_before) = store.store_file_sizes();
+        assert!(wal_bytes_before > 0, "test setup did not create a WAL");
+
+        let report = store
+            .maintain_with_policy(HistoryRetentionPolicy {
+                max_age_millis: u64::MAX,
+                emergency_max_age_millis: u64::MAX,
+                soft_max_store_bytes: u64::MAX,
+                hard_max_store_bytes: u64::MAX,
+                max_wal_bytes: u64::MAX,
+                target_snapshot_count: u64::MAX,
+                soft_max_snapshot_count: u64::MAX,
+                hard_max_snapshot_count: u64::MAX,
+                aggressive_quarantine_rows: u64::MAX,
+                hard_max_quarantine_rows: u64::MAX,
+            })
+            .unwrap_or_else(|error| panic!("maintain_with_policy: {error}"));
+
+        assert!(!report.cancelled);
+        assert!(report.checkpointed);
+        assert!(!report.vacuumed);
+        assert_eq!(report.pruned_rows, 0);
+        assert!(report.wal_bytes_after < wal_bytes_before);
 
         std::fs::remove_file(&path).ok();
     }
@@ -1974,11 +2814,7 @@ mod tests {
             HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
 
         for i in 0..8 {
-            store.maybe_store(&SystemSnapshot {
-                sequence: i,
-                captured_at_millis: (i + 1) * 1_000,
-                ..Default::default()
-            });
+            store.maybe_store(&material_snapshot(i, (i + 1) * 1_000));
         }
         store
             .writer
@@ -2034,11 +2870,7 @@ mod tests {
             HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
 
         for i in 0..130 {
-            store.maybe_store(&SystemSnapshot {
-                sequence: i,
-                captured_at_millis: (i + 1) * 1_000,
-                ..Default::default()
-            });
+            store.maybe_store(&material_snapshot(i, (i + 1) * 1_000));
             if i % 40 == 39 {
                 store
                     .writer

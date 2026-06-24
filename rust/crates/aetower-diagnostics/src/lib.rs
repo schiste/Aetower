@@ -831,7 +831,11 @@ fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)>
         "history-store-busy"
         | "history-write-backpressure"
         | "history-deferred-write-backpressure" => 5 * 60 * 1000,
-        "history-maintenance-over-budget" | "history-maintenance-failed" => 15 * 60 * 1000,
+        "history-maintained"
+        | "history-retention-maintained"
+        | "history-maintenance-deferred"
+        | "history-maintenance-over-budget"
+        | "history-maintenance-failed" => 15 * 60 * 1000,
         "tick-over-budget" => 5 * 60 * 1000,
         "mcp-helper-lifecycle" => 60 * 1000,
         "mcp-helper-reaped" => 5 * 60 * 1000,
@@ -882,6 +886,8 @@ fn should_persist_event(event: &DiagnosticsEvent) -> bool {
                 | "telemetry-verification-failed"
                 | "runtime-heartbeat"
                 | "history-pruned"
+                | "history-retention-maintained"
+                | "history-maintenance-deferred"
                 | "notification-settings-disabled"
                 | "notification-permission-ready"
                 | "notification-permission-denied"

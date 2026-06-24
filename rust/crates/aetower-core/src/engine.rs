@@ -37,6 +37,19 @@ const ADAPTER_IDLE_SLEEP: Duration = Duration::from_secs(5);
 const TELEMETRY_DISABLED_SLEEP: Duration = Duration::from_secs(30);
 const HISTORY_MAINTENANCE_INITIAL_DELAY: Duration = Duration::from_secs(45);
 const HISTORY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(10 * 60);
+const HISTORY_MAINTENANCE_BUSY_DEFER_INTERVAL: Duration = Duration::from_secs(2 * 60);
+const HISTORY_MAINTENANCE_DEFER_LOG_INTERVAL_MILLIS: u64 = 15 * 60 * 1000;
+const HISTORY_MAINTENANCE_RUNTIME_METRICS_STALE_MILLIS: u64 = 30 * 1000;
+const HISTORY_MAINTENANCE_ENGINE_OVERRUN_RATIO: f32 = 1.25;
+const HISTORY_MAINTENANCE_MIN_ENGINE_OVERRUN_MILLIS: f32 = 1_000.0;
+const HISTORY_MAINTENANCE_SELF_CPU_BUSY_PERCENT: f32 = 40.0;
+const HISTORY_MAINTENANCE_UI_REFRESH_BUSY_MILLIS: f32 = 250.0;
+const HISTORY_MAINTENANCE_BRIDGE_BUSY_MILLIS: f32 = 500.0;
+const HISTORY_MAINTENANCE_RENDER_BUSY_MILLIS: f32 = 300.0;
+const HISTORY_MAINTENANCE_COMMIT_BUSY_MILLIS: f32 = 100.0;
+const HISTORY_MAINTENANCE_INPUT_BUSY_MILLIS: f32 = 200.0;
+const HISTORY_MAINTENANCE_HISTORY_QUEUE_BUSY_DEPTH: u32 = 8;
+const HISTORY_MAINTENANCE_DIAGNOSTICS_QUEUE_BUSY_DEPTH: u32 = 512;
 // Regression detection runs off-tick over persisted history: a short delay
 // after launch, then every few hours. The window is bounded to ~7 days and
 // downsampled to keep the load_range read cheap.
@@ -566,10 +579,6 @@ impl Engine {
                 // serializing a snapshot, telemetry exporter, adapter worker);
                 // long updates implicate History::update itself (z-score
                 // pass, retention bookkeeping, timeline growth).
-                let history_started = Instant::now();
-                let mut guard = state.lock();
-                let state_lock_wait_millis = history_started.elapsed().as_secs_f64() * 1000.0;
-                let history_update_started = Instant::now();
                 let mut runtime_lag_metrics = runtime_lag_metrics;
                 runtime_lag_metrics.updated_at_millis = captured_at_millis;
                 runtime_lag_metrics.collect_millis = collect_millis as f32;
@@ -577,11 +586,18 @@ impl Engine {
                 runtime_lag_metrics.attribution_millis = pipeline_timings.attribution_millis as f32;
                 runtime_lag_metrics.friction_millis = pipeline_timings.friction_millis as f32;
                 runtime_lag_metrics.enrich_millis = enrich_millis as f32;
+                let history_started = Instant::now();
+                let mut guard = state.lock();
+                let state_lock_wait_millis = history_started.elapsed().as_secs_f64() * 1000.0;
+                let history_update_started = Instant::now();
                 let (timeline, host_trend, thermal_forecast) =
                     guard
                         .history
                         .update(captured_at_millis, &host, &mut entities);
                 let history_update_millis = history_update_started.elapsed().as_secs_f64() * 1000.0;
+                guard.sequence += 1;
+                let sequence = guard.sequence;
+                drop(guard);
                 let history_millis = history_started.elapsed().as_secs_f64() * 1000.0;
                 runtime_lag_metrics.history_millis = history_millis as f32;
                 // Surface long state-lock waits as a forensic breadcrumb.
@@ -609,10 +625,9 @@ impl Engine {
                         .build(),
                     );
                 }
-                guard.sequence += 1;
                 let chau7_sessions = adapters.chau7_session_summaries(&entities);
-                guard.latest_snapshot = SystemSnapshot {
-                    sequence: guard.sequence,
+                let latest_snapshot = SystemSnapshot {
+                    sequence,
                     captured_at_millis,
                     host,
                     host_trend,
@@ -623,18 +638,29 @@ impl Engine {
                     chau7_sessions,
                     thermal_forecast,
                 };
+                let entity_count = latest_snapshot.entities.len();
+                let target_tick =
+                    runtime_config.target_tick(&latest_snapshot.host, &latest_snapshot.entities);
+                let snapshot_for_state = latest_snapshot.clone();
+                {
+                    let mut guard = state.lock();
+                    guard.latest_snapshot = snapshot_for_state;
+                }
                 emit_boot_session_observed(
                     &diagnostics,
-                    &guard.latest_snapshot,
+                    &latest_snapshot,
                     &mut last_boot_session_key,
                 );
                 emit_host_incident_snapshots(
                     &diagnostics,
-                    &guard.latest_snapshot,
+                    &latest_snapshot,
                     &mut host_incident_state,
                     Some(&history_maintenance_wake_clone),
                 );
                 // Persist snapshot (best-effort, throttled by write_interval).
+                // This must stay outside `state.lock()`: persistence clones and
+                // enqueues the snapshot, and the writer thread owns the SQLite
+                // connection used for the real disk I/O.
                 let persist_started = Instant::now();
                 let mut history_store_busy = false;
                 let mut deferred_history_recovered = false;
@@ -649,14 +675,14 @@ impl Engine {
                                 deferred_history_recovered = true;
                                 history_store_busy_since_millis = None;
                             }
-                            store.maybe_store(&guard.latest_snapshot);
+                            store.maybe_store(&latest_snapshot);
                             store.pending_writes()
                         } else {
                             0
                         }
                     } else {
                         history_store_busy = true;
-                        deferred_history_snapshot = Some(guard.latest_snapshot.clone());
+                        deferred_history_snapshot = Some(latest_snapshot.clone());
                         history_store_busy_since_millis.get_or_insert(captured_at_millis);
                         u64::from(deferred_history_snapshot.is_some())
                     };
@@ -672,7 +698,7 @@ impl Engine {
                             "Deferred the latest history write because maintenance held the store lock.",
                         )
                         .timestamp_millis(captured_at_millis)
-                        .sequence(guard.latest_snapshot.sequence)
+                        .sequence(latest_snapshot.sequence)
                         .field("deferred_snapshot", true)
                         .field("deferred_for_millis", deferred_for_millis)
                         .build(),
@@ -686,7 +712,7 @@ impl Engine {
                             "Flushed a deferred history write after store maintenance released the lock.",
                         )
                         .timestamp_millis(captured_at_millis)
-                        .sequence(guard.latest_snapshot.sequence)
+                        .sequence(latest_snapshot.sequence)
                         .field("deferred_age_millis", deferred_history_age_millis)
                         .field("pending_writes", history_queue_depth)
                         .build(),
@@ -710,10 +736,6 @@ impl Engine {
                     runtime_lag_metrics.self_wakeups_per_second = self_process.wakeups_per_second;
                     runtime_lag_metrics.self_energy_nj_per_s = self_process.energy_nj_per_s;
                 }
-                let sequence = guard.latest_snapshot.sequence;
-                let entity_count = guard.latest_snapshot.entities.len();
-                let target_tick = runtime_config
-                    .target_tick(&guard.latest_snapshot.host, &guard.latest_snapshot.entities);
                 runtime_lag_metrics.target_tick_millis = target_tick.as_millis() as f32;
                 emit_mcp_helper_lifecycle(
                     &diagnostics,
@@ -797,11 +819,15 @@ impl Engine {
                 );
                 let tick_millis = tick_started.elapsed().as_millis();
                 runtime_lag_metrics.engine_tick_millis = tick_millis as f32;
-                if should_emit_runtime_heartbeat(
-                    guard.last_runtime_heartbeat_millis,
-                    captured_at_millis,
-                ) {
-                    let top_entity = guard.latest_snapshot.entities.first();
+                let should_emit_heartbeat = {
+                    let guard = state.lock();
+                    should_emit_runtime_heartbeat(
+                        guard.last_runtime_heartbeat_millis,
+                        captured_at_millis,
+                    )
+                };
+                if should_emit_heartbeat {
+                    let top_entity = latest_snapshot.entities.first();
                     diagnostics.emit(
                         DiagnosticsEvent::builder(
                             DiagnosticsLevel::Info,
@@ -911,10 +937,14 @@ impl Engine {
                         .field("stale_mcp_helper_count", stale_mcp_helper_count)
                         .build(),
                     );
-                    guard.last_runtime_heartbeat_millis = captured_at_millis;
                 }
-                guard.runtime_lag_metrics = runtime_lag_metrics;
-                drop(guard);
+                {
+                    let mut guard = state.lock();
+                    guard.runtime_lag_metrics = runtime_lag_metrics;
+                    if should_emit_heartbeat {
+                        guard.last_runtime_heartbeat_millis = captured_at_millis;
+                    }
+                }
                 let is_over_budget = tick_millis > target_tick.as_millis();
                 let level = if is_over_budget {
                     DiagnosticsLevel::Warn
@@ -1070,6 +1100,7 @@ impl Engine {
             }
         }));
 
+        let state = Arc::clone(&self.state);
         let persistence = Arc::clone(&self.persistence);
         let diagnostics = self.diagnostics.clone();
         let running = Arc::clone(&self.running);
@@ -1081,7 +1112,36 @@ impl Engine {
                 &maintenance_wake,
                 HISTORY_MAINTENANCE_INITIAL_DELAY,
             );
+            let mut last_busy_defer_log_millis = 0;
             while running.load(Ordering::SeqCst) {
+                if let Some(reason) = history_maintenance_busy_reason(&state) {
+                    let now = aet_time::now_millis();
+                    if now.saturating_sub(last_busy_defer_log_millis)
+                        >= HISTORY_MAINTENANCE_DEFER_LOG_INTERVAL_MILLIS
+                    {
+                        diagnostics.emit(
+                            DiagnosticsEvent::builder(
+                                DiagnosticsLevel::Info,
+                                DiagnosticsSubsystem::Persistence,
+                                "history-maintenance-deferred",
+                                "Deferred persisted history maintenance while runtime load was elevated.",
+                            )
+                            .field("reason", reason)
+                            .field(
+                                "defer_millis",
+                                HISTORY_MAINTENANCE_BUSY_DEFER_INTERVAL.as_millis(),
+                            )
+                            .build(),
+                        );
+                        last_busy_defer_log_millis = now;
+                    }
+                    sleep_until_wake_or_stop(
+                        &running,
+                        &maintenance_wake,
+                        HISTORY_MAINTENANCE_BUSY_DEFER_INTERVAL,
+                    );
+                    continue;
+                }
                 let started = Instant::now();
                 let policy = default_history_retention_policy();
                 let result = if let Some(guard) = persistence.try_lock() {
@@ -1801,6 +1861,53 @@ fn default_history_retention_policy() -> aetower_persistence::HistoryRetentionPo
         aggressive_quarantine_rows: HISTORY_AGGRESSIVE_QUARANTINE_ROWS,
         hard_max_quarantine_rows: HISTORY_HARD_MAX_QUARANTINE_ROWS,
     }
+}
+
+fn history_maintenance_busy_reason(state: &Arc<Mutex<EngineState>>) -> Option<&'static str> {
+    let Some(guard) = state.try_lock() else {
+        return Some("state-lock-busy");
+    };
+    let metrics = &guard.runtime_lag_metrics;
+    let now = aet_time::now_millis();
+    if metrics.updated_at_millis == 0
+        || now.saturating_sub(metrics.updated_at_millis)
+            > HISTORY_MAINTENANCE_RUNTIME_METRICS_STALE_MILLIS
+    {
+        return None;
+    }
+
+    if metrics.target_tick_millis > 0.0
+        && metrics.engine_tick_millis
+            >= (metrics.target_tick_millis * HISTORY_MAINTENANCE_ENGINE_OVERRUN_RATIO)
+                .max(HISTORY_MAINTENANCE_MIN_ENGINE_OVERRUN_MILLIS)
+    {
+        return Some("engine-tick-overrun");
+    }
+    if metrics.self_cpu_percent >= HISTORY_MAINTENANCE_SELF_CPU_BUSY_PERCENT {
+        return Some("self-cpu");
+    }
+    if metrics.ui_refresh_millis >= HISTORY_MAINTENANCE_UI_REFRESH_BUSY_MILLIS {
+        return Some("ui-refresh");
+    }
+    if metrics.bridge_fetch_millis >= HISTORY_MAINTENANCE_BRIDGE_BUSY_MILLIS {
+        return Some("bridge-fetch");
+    }
+    if metrics.snapshot_to_render_millis >= HISTORY_MAINTENANCE_RENDER_BUSY_MILLIS {
+        return Some("snapshot-to-render");
+    }
+    if metrics.render_commit_millis >= HISTORY_MAINTENANCE_COMMIT_BUSY_MILLIS {
+        return Some("render-commit");
+    }
+    if metrics.input_max_latency_millis >= HISTORY_MAINTENANCE_INPUT_BUSY_MILLIS {
+        return Some("input-latency");
+    }
+    if metrics.history_queue_depth >= HISTORY_MAINTENANCE_HISTORY_QUEUE_BUSY_DEPTH {
+        return Some("history-queue");
+    }
+    if metrics.diagnostics_queue_depth >= HISTORY_MAINTENANCE_DIAGNOSTICS_QUEUE_BUSY_DEPTH {
+        return Some("diagnostics-queue");
+    }
+    None
 }
 
 /// Emit a DiagnosticsEvent whenever a sensor capability transitions
@@ -2535,6 +2642,47 @@ fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn engine_state_with_runtime_metrics(
+        runtime_lag_metrics: RuntimeLagMetrics,
+    ) -> Arc<Mutex<EngineState>> {
+        Arc::new(Mutex::new(EngineState {
+            sequence: 0,
+            latest_snapshot: SystemSnapshot::default(),
+            capabilities: std::collections::BTreeMap::new(),
+            frontmost_app_state: None,
+            history: History::new(),
+            runtime_lag_metrics,
+            runtime_config: RuntimeCollectionConfig::default(),
+            last_runtime_heartbeat_millis: 0,
+        }))
+    }
+
+    #[test]
+    fn history_maintenance_busy_reason_detects_recent_ui_load() {
+        let state = engine_state_with_runtime_metrics(RuntimeLagMetrics {
+            updated_at_millis: aet_time::now_millis(),
+            input_max_latency_millis: HISTORY_MAINTENANCE_INPUT_BUSY_MILLIS,
+            ..RuntimeLagMetrics::default()
+        });
+
+        assert_eq!(
+            history_maintenance_busy_reason(&state),
+            Some("input-latency")
+        );
+    }
+
+    #[test]
+    fn history_maintenance_busy_reason_ignores_stale_metrics() {
+        let state = engine_state_with_runtime_metrics(RuntimeLagMetrics {
+            updated_at_millis: aet_time::now_millis()
+                .saturating_sub(HISTORY_MAINTENANCE_RUNTIME_METRICS_STALE_MILLIS + 1),
+            input_max_latency_millis: HISTORY_MAINTENANCE_INPUT_BUSY_MILLIS,
+            ..RuntimeLagMetrics::default()
+        });
+
+        assert_eq!(history_maintenance_busy_reason(&state), None);
+    }
 
     /// Pin the relationship between the engine-side retention policy and the
     /// persistence-side VACUUM gate. The original bug fixed in
