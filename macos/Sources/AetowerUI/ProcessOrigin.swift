@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import AetowerBridge
 
-enum ProcessOriginKind: String, CaseIterable, Hashable, Identifiable {
+enum ProcessOriginKind: String, CaseIterable, Hashable, Identifiable, Sendable {
     case app
     case cli
     case helper
@@ -62,7 +62,7 @@ enum ProcessOriginKind: String, CaseIterable, Hashable, Identifiable {
     }
 }
 
-enum ProcessOriginFilter: String, CaseIterable, Hashable, Identifiable {
+enum ProcessOriginFilter: String, CaseIterable, Hashable, Identifiable, Sendable {
     case all
     case apps
     case cli
@@ -105,7 +105,7 @@ enum ProcessOriginFilter: String, CaseIterable, Hashable, Identifiable {
     }
 }
 
-struct ProcessOriginSummary: Hashable {
+struct ProcessOriginSummary: Hashable, Sendable {
     let kind: ProcessOriginKind
     let label: String
     let subtitle: String
@@ -116,6 +116,48 @@ struct ProcessOriginSummary: Hashable {
 
     func matches(_ filter: ProcessOriginFilter) -> Bool {
         filter.matches(kind)
+    }
+}
+
+struct ProcessOriginSnapshotCache: Sendable {
+    let sequence: UInt64
+    private let summariesByEntityID: [String: ProcessOriginSummary]
+
+    init(snapshot: SystemSnapshot) {
+        self.init(sequence: snapshot.sequence, entities: snapshot.entities)
+    }
+
+    init(sequence: UInt64, entities: [EntitySnapshot]) {
+        self.sequence = sequence
+        summariesByEntityID = Dictionary(
+            uniqueKeysWithValues: entities.map { entity in
+                (entity.entityId, processOrigin(for: entity))
+            }
+        )
+    }
+
+    func summary(for entity: EntitySnapshot) -> ProcessOriginSummary {
+        summariesByEntityID[entity.entityId] ?? processOrigin(for: entity)
+    }
+
+    func summary(for entities: [EntitySnapshot]) -> ProcessOriginSummary {
+        let summaries = entities.map { summary(for: $0) }
+        return processOrigin(from: summaries)
+    }
+}
+
+@MainActor
+final class ProcessOriginSnapshotCacheStore: ObservableObject {
+    private var cache: ProcessOriginSnapshotCache?
+
+    func cache(for snapshot: SystemSnapshot) -> ProcessOriginSnapshotCache {
+        if let cache, cache.sequence == snapshot.sequence {
+            return cache
+        }
+
+        let refreshed = ProcessOriginSnapshotCache(snapshot: snapshot)
+        cache = refreshed
+        return refreshed
     }
 }
 
@@ -139,7 +181,10 @@ func processOrigin(for entity: EntitySnapshot) -> ProcessOriginSummary {
 }
 
 func processOrigin(for entities: [EntitySnapshot]) -> ProcessOriginSummary {
-    let summaries = entities.map(processOrigin(for:))
+    processOrigin(from: entities.map(processOrigin(for:)))
+}
+
+private func processOrigin(from summaries: [ProcessOriginSummary]) -> ProcessOriginSummary {
     guard let first = summaries.first else {
         return ProcessOriginSummary(
             kind: .unknown,

@@ -301,12 +301,9 @@ private struct RowFrictionHighlights {
 
 private struct EntityRow: View {
     let entity: EntitySnapshot
+    let origin: ProcessOriginSummary
     let isSelected: Bool
     @State private var isHovered = false
-
-    private var origin: ProcessOriginSummary {
-        processOrigin(for: entity)
-    }
 
     /// A process group is "new" when its most recently started process began
     /// within the last 30 seconds — surfaces freshly launched apps at a glance.
@@ -592,12 +589,9 @@ private enum MonitorRingCeiling {
 
 private struct GroupedEntityRow: View {
     let group: EntityGroup
+    let origin: ProcessOriginSummary
     let isSelected: Bool
     @State private var isHovered = false
-
-    private var origin: ProcessOriginSummary {
-        processOrigin(for: group.members)
-    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -698,7 +692,6 @@ private struct GroupedEntityRow: View {
     private var helpText: String {
         let names = group.members.prefix(6).map(\.displayName).joined(separator: ", ")
         let user = group.userSummary.isEmpty ? "" : " · user \(group.userSummary)"
-        let origin = processOrigin(for: group.members)
         let metrics = "\(formatWakeups(group.wakeupsPerSecond)) · \(formatRate(group.diskBps)) disk · \(formatRate(group.networkBps)) network · \(origin.subtitle)\(user)"
         if group.members.count > 6 {
             return "Collapsed entities: \(names), +\(group.members.count - 6) more · \(group.processCount) grouped processes · \(metrics)"
@@ -908,9 +901,10 @@ private func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup]
 
 private func filterEntities(
     _ entities: [EntitySnapshot],
-    query: String
+    query: String,
+    originCache: ProcessOriginSnapshotCache
 ) -> [EntitySnapshot] {
-    let predicates = parseSearchQuery(query)
+    let predicates = parseSearchQuery(query, originCache: originCache)
     guard !predicates.isEmpty else {
         return entities
     }
@@ -920,13 +914,16 @@ private func filterEntities(
 
 /// All free-text haystacks for an entity (lowercased), used by bare-term and
 /// `field`-less matching.
-private func entityTextHaystacks(_ entity: EntitySnapshot) -> [String] {
+private func entityTextHaystacks(
+    _ entity: EntitySnapshot,
+    originCache: ProcessOriginSnapshotCache
+) -> [String] {
     var haystacks = [
         entity.displayName,
         entity.badges.joined(separator: " "),
         entity.friction.reasons.joined(separator: " "),
     ]
-    haystacks.append(contentsOf: processOrigin(for: entity).searchTokens)
+    haystacks.append(contentsOf: originCache.summary(for: entity).searchTokens)
     for component in entity.components {
         haystacks.append(component.title)
         haystacks.append(component.detail)
@@ -943,15 +940,24 @@ private func entityTextHaystacks(_ entity: EntitySnapshot) -> [String] {
     return haystacks.map { $0.localizedLowercase }
 }
 
-private func entityMatchesSubstring(_ entity: EntitySnapshot, _ needle: String) -> Bool {
-    entityTextHaystacks(entity).contains { $0.contains(needle) }
+private func entityMatchesSubstring(
+    _ entity: EntitySnapshot,
+    _ needle: String,
+    originCache: ProcessOriginSnapshotCache
+) -> Bool {
+    entityTextHaystacks(entity, originCache: originCache).contains { $0.contains(needle) }
 }
 
 /// Parse a search query into a list of AND-ed predicates. Supports bare
 /// substrings (default), `/regex/flags`, `field:value` text filters, and
 /// `field>n` / `field<n` / `field=n` numeric comparisons.
-private func parseSearchQuery(_ query: String) -> [(EntitySnapshot) -> Bool] {
-    tokenizeSearchQuery(query).compactMap(searchPredicate(for:))
+private func parseSearchQuery(
+    _ query: String,
+    originCache: ProcessOriginSnapshotCache
+) -> [(EntitySnapshot) -> Bool] {
+    tokenizeSearchQuery(query).compactMap { token in
+        searchPredicate(for: token, originCache: originCache)
+    }
 }
 
 /// Split on whitespace, but keep a `/.../`‑delimited regex (which may contain
@@ -1003,13 +1009,16 @@ private func tokenizeSearchQuery(_ query: String) -> [String] {
     return tokens
 }
 
-private func searchPredicate(for token: String) -> ((EntitySnapshot) -> Bool)? {
+private func searchPredicate(
+    for token: String,
+    originCache: ProcessOriginSnapshotCache
+) -> ((EntitySnapshot) -> Bool)? {
     guard !token.isEmpty else { return nil }
 
     // /regex/flags
     if token.hasPrefix("/"), let regex = compileRegexToken(token) {
         return { entity in
-            entityTextHaystacks(entity).contains { haystack in
+            entityTextHaystacks(entity, originCache: originCache).contains { haystack in
                 regex.firstMatch(in: haystack, range: NSRange(haystack.startIndex..., in: haystack)) != nil
             }
         }
@@ -1024,14 +1033,14 @@ private func searchPredicate(for token: String) -> ((EntitySnapshot) -> Bool)? {
     if let colon = token.firstIndex(of: ":") {
         let field = String(token[..<colon]).localizedLowercase
         let value = String(token[token.index(after: colon)...]).localizedLowercase
-        if !value.isEmpty, let predicate = textFieldPredicate(field: field, value: value) {
+        if !value.isEmpty, let predicate = textFieldPredicate(field: field, value: value, originCache: originCache) {
             return predicate
         }
     }
 
     // bare substring
     let needle = token.localizedLowercase
-    return { entityMatchesSubstring($0, needle) }
+    return { entityMatchesSubstring($0, needle, originCache: originCache) }
 }
 
 private func compileRegexToken(_ token: String) -> NSRegularExpression? {
@@ -1046,7 +1055,11 @@ private func compileRegexToken(_ token: String) -> NSRegularExpression? {
     return try? NSRegularExpression(pattern: pattern, options: options)
 }
 
-private func textFieldPredicate(field: String, value: String) -> ((EntitySnapshot) -> Bool)? {
+private func textFieldPredicate(
+    field: String,
+    value: String,
+    originCache: ProcessOriginSnapshotCache
+) -> ((EntitySnapshot) -> Bool)? {
     switch field {
     case "name":
         return { entity in
@@ -1071,7 +1084,7 @@ private func textFieldPredicate(field: String, value: String) -> ((EntitySnapsho
     case "badge":
         return { entity in entity.badges.contains { $0.localizedLowercase.contains(value) } }
     case "origin", "source", "kind", "host":
-        return { entity in processOriginMatchesSearch(processOrigin(for: entity), value: value) }
+        return { entity in processOriginMatchesSearch(originCache.summary(for: entity), value: value) }
     default:
         return nil
     }
@@ -1201,9 +1214,10 @@ private func sortGroups(_ groups: [EntityGroup], by sortKey: SortKey) -> [Entity
 private func buildGroupedEntities(
     from entities: [EntitySnapshot],
     query: String,
-    sortKey: SortKey
+    sortKey: SortKey,
+    originCache: ProcessOriginSnapshotCache
 ) -> [EntityGroup] {
-    sortGroups(buildEntityGroups(from: filterEntities(entities, query: query)), by: sortKey)
+    sortGroups(buildEntityGroups(from: filterEntities(entities, query: query, originCache: originCache)), by: sortKey)
 }
 
 private func extractParentPIDForGrouping(from parentSummary: String) -> UInt32? {
@@ -1229,11 +1243,16 @@ public struct MainListView: View {
     @State private var quickStopSubmission: SidePanelQuickStopSubmission?
     @State private var advancedFilterText = ""
     @State private var showAdvancedFilter = false
+    @StateObject private var processOriginCacheStore = ProcessOriginSnapshotCacheStore()
     @FocusState private var searchFieldFocused: Bool
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
         self.settings = settings
+    }
+
+    private var processOriginCache: ProcessOriginSnapshotCache {
+        processOriginCacheStore.cache(for: state.snapshot)
     }
 
     public var body: some View {
@@ -1382,7 +1401,7 @@ public struct MainListView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
 
-                sidePanelOriginSummary(processOrigin(for: processTreeEntities))
+                sidePanelOriginSummary(processOriginCache.summary(for: processTreeEntities))
 
                 if let quickStopDisplayPID {
                     sidePanelQuickStop(
@@ -1829,6 +1848,7 @@ public struct MainListView: View {
                             } label: {
                                 EntityRow(
                                     entity: entity,
+                                    origin: processOriginCache.summary(for: entity),
                                     isSelected: selectedEntityID == entity.entityId
                                 )
                             }
@@ -1850,6 +1870,7 @@ public struct MainListView: View {
                             } label: {
                                 GroupedEntityRow(
                                     group: group,
+                                    origin: processOriginCache.summary(for: group.members),
                                     isSelected: selectedEntityID == group.root.entityId
                                 )
                             }
@@ -1868,6 +1889,7 @@ public struct MainListView: View {
                             } label: {
                                 EntityRow(
                                     entity: entity,
+                                    origin: processOriginCache.summary(for: entity),
                                     isSelected: selectedEntityID == entity.entityId
                                 )
                             }
@@ -2326,7 +2348,8 @@ public struct MainListView: View {
     private var filteredEntities: [EntitySnapshot] {
         filterEntities(
             applyOriginFilter(applyAdvancedFilter(state.snapshot.entities)),
-            query: normalizedSearchQuery
+            query: normalizedSearchQuery,
+            originCache: processOriginCache
         ).sorted {
             compareEntities($0, $1, by: sortKey)
         }
@@ -2473,7 +2496,8 @@ public struct MainListView: View {
 
     private func applyOriginFilter(_ entities: [EntitySnapshot]) -> [EntitySnapshot] {
         guard originFilter != .all else { return entities }
-        return entities.filter { processOrigin(for: $0).matches(originFilter) }
+        let originCache = processOriginCache
+        return entities.filter { originCache.summary(for: $0).matches(originFilter) }
     }
 
     private var isGroupedMode: Bool {
@@ -2482,7 +2506,7 @@ public struct MainListView: View {
 
     private var groupingTaskToken: String {
         guard let key = currentGroupingCacheKey else { return "flat" }
-        return "\(key.sequence)|\(key.query)|\(key.originFilter.rawValue)|\(key.sortKey.rawValue)"
+        return "\(key.sequence)|\(key.query)|\(key.originFilter.rawValue)|\(key.sortKey.rawValue)|\(key.filterSignature)"
     }
 
     private func listSectionHeader(_ title: String) -> some View {
@@ -2622,15 +2646,16 @@ public struct MainListView: View {
 
         groupingTask?.cancel()
 
+        let originCache = processOriginCache
         let entities = applyAdvancedFilter(state.snapshot.entities).filter {
-            key.originFilter.matches(processOrigin(for: $0).kind)
+            key.originFilter.matches(originCache.summary(for: $0).kind)
         }
         let query = key.query
         let sortKey = key.sortKey
         isGrouping = true
 
         let task = Task.detached(priority: .utility) {
-            buildGroupedEntities(from: entities, query: query, sortKey: sortKey)
+            buildGroupedEntities(from: entities, query: query, sortKey: sortKey, originCache: originCache)
         }
         groupingTask = task
 
