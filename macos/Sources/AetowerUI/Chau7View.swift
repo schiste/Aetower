@@ -86,6 +86,15 @@ public struct Chau7View: View {
         }
     }
 
+    private struct DerivedSessions {
+        let linkedEntities: [EntitySnapshot]
+        let linkedEntityIDs: Set<String>
+        let buildIdentity: BuildIdentity?
+        let sessionSummaries: [SessionSummary]
+        let selectedSession: SessionSummary?
+        let timelineEvents: [TimelineEvent]
+    }
+
     private struct Recommendation: Identifiable {
         let id: String
         let title: String
@@ -139,95 +148,34 @@ public struct Chau7View: View {
         state.snapshot.capabilities.first { $0.kind == .chau7 }
     }
 
-    private var linkedEntities: [EntitySnapshot] {
-        state.snapshot.entities.filter(isChau7Linked)
-    }
-
-    private var linkedEntityIDs: Set<String> {
-        Set(linkedEntities.map(\.entityId))
-    }
-
-    private var buildIdentity: BuildIdentity? {
-        let contexts = linkedEntities
-            .flatMap(\.components)
-            .compactMap(\.adapterContext)
-            .filter { $0.kind == .chau7Session }
-
-        guard let chosen = contexts.first(where: { $0.buildSha != nil || $0.appVersion != nil }) ?? contexts.first else {
-            return nil
+    private var derivedSessions: DerivedSessions {
+        let entities = state.snapshot.entities
+        var entityByID: [String: EntitySnapshot] = [:]
+        entityByID.reserveCapacity(entities.count)
+        for entity in entities {
+            entityByID[entity.entityId] = entity
         }
 
-        return BuildIdentity(
-            version: chosen.appVersion,
-            sha: chosen.buildSha,
-            timestamp: chosen.buildTimestamp,
-            channel: chosen.buildChannel
+        let linkedEntities = entities.filter(isChau7Linked)
+        let linkedEntityIDs = Set(linkedEntities.map(\.entityId))
+        let rawSessions = state.snapshot.chau7Sessions.compactMap {
+            sessionSummary(from: $0, entityByID: entityByID)
+        }
+        let sessionSummaries = rawSessions.isEmpty
+            ? linkedSessionSummaries(from: linkedEntities).sorted(by: sessionSummarySort)
+            : rawSessions.sorted(by: sessionSummarySort)
+        let selectedSession = selectedSessionKey.flatMap { selectedSessionKey in
+            sessionSummaries.first { $0.id == selectedSessionKey }
+        }
+
+        return DerivedSessions(
+            linkedEntities: linkedEntities,
+            linkedEntityIDs: linkedEntityIDs,
+            buildIdentity: buildIdentity(from: linkedEntities),
+            sessionSummaries: sessionSummaries,
+            selectedSession: selectedSession,
+            timelineEvents: chau7TimelineEvents(linkedEntityIDs: linkedEntityIDs)
         )
-    }
-
-    private var sessionSummaries: [SessionSummary] {
-        let rawSessions = state.snapshot.chau7Sessions.compactMap(sessionSummary(from:))
-        if !rawSessions.isEmpty {
-            return rawSessions.sorted(by: sessionSummarySort)
-        }
-        return linkedSessionSummaries.sorted(by: sessionSummarySort)
-    }
-
-    private var linkedSessionSummaries: [SessionSummary] {
-        let grouped = Dictionary(grouping: linkedEntities.filter { $0.entityKind == .aiAgent || $0.entityKind == .terminalSession }) { entity in
-            sessionContext(for: entity)?.sessionId ?? entity.entityId
-        }
-
-        return grouped.compactMap { key, members in
-            guard let primary = members.max(by: { $0.friction.totalScore < $1.friction.totalScore }) else {
-                return nil
-            }
-            let contexts = members.compactMap(sessionContext)
-            let detail = members.compactMap { sessionComponent(for: $0)?.detail }.first { !$0.isEmpty }
-            return SessionSummary(
-                id: key,
-                tabId: nil,
-                sessionId: contexts.compactMap(\.sessionId).first,
-                title: primary.displayName,
-                provider: agentProviderLabel(for: primary) ?? "shell",
-                workspace: agentProjectContext(for: primary),
-                repoRoot: contexts.compactMap(\.repoRoot).first,
-                gitBranch: nil,
-                status: contexts.compactMap(\.status).first ?? "unknown",
-                activeApp: nil,
-                windowId: 0,
-                runCount: 0,
-                lastActive: "",
-                turnCount: 0,
-                childSessionCount: 0,
-                pendingApprovalDescription: members
-                    .flatMap(\.recommendations)
-                    .first(where: { $0.title == "Resolve pending agent approval" })?
-                    .detail,
-                lastExitReason: members
-                    .flatMap(\.attributionNotes)
-                    .first(where: { $0.localizedCaseInsensitiveContains("exited with") }),
-                activeRunDurationMillis: 0,
-                isAtPrompt: members.contains { $0.badges.contains("at-prompt") },
-                shellLoading: members.contains { $0.badges.contains("shell-loading") },
-                ctoActive: members.contains { $0.badges.contains("cto-active") },
-                linkedEntityIds: members.map(\.entityId),
-                entities: members,
-                totalCpuPercent: members.reduce(0) { $0 + $1.metrics.cpuPercent },
-                totalResidentBytes: members.reduce(0) { $0 + $1.metrics.memoryResidentBytes },
-                totalFootprintBytes: members.reduce(0) { $0 + $1.metrics.memoryPhysicalFootprintBytes },
-                totalWakeups: members.reduce(0) { $0 + $1.metrics.wakeupsPerSecond },
-                totalDiskBps: members.reduce(0) { $0 + $1.metrics.diskReadBps + $1.metrics.diskWriteBps },
-                totalFriction: members.reduce(0) { $0 + $1.friction.totalScore },
-                detail: detail,
-                hasLiveAttribution: true
-            )
-        }
-    }
-
-    private var selectedSession: SessionSummary? {
-        guard let selectedSessionKey else { return nil }
-        return sessionSummaries.first { $0.id == selectedSessionKey }
     }
 
     private var topBranches: [ProcessTreeNodeReportModel] {
@@ -299,7 +247,7 @@ public struct Chau7View: View {
         )
     }
 
-    private var recommendations: [Recommendation] {
+    private func recommendations(derivedSessions: DerivedSessions) -> [Recommendation] {
         guard let entity = chau7Entity else { return [] }
 
         var items: [Recommendation] = entity.recommendations.enumerated().map { index, recommendation in
@@ -351,12 +299,12 @@ public struct Chau7View: View {
             )
         }
 
-        if sessionSummaries.contains(where: \.approvalNeeded) {
+        if derivedSessions.sessionSummaries.contains(where: \.approvalNeeded) {
             items.append(
                 Recommendation(
                     id: "approval-queue",
                     title: "Pending approvals are blocking live Chau7 sessions",
-                    detail: "\(sessionSummaries.filter(\.approvalNeeded).count) live Chau7 session(s) are waiting on approval.",
+                    detail: "\(derivedSessions.sessionSummaries.filter(\.approvalNeeded).count) live Chau7 session(s) are waiting on approval.",
                     tone: AetowerDesign.Status.warning,
                     footer: "Resolve blocked sessions before concluding that the app itself is idle or healthy."
                 )
@@ -366,7 +314,7 @@ public struct Chau7View: View {
         return Array(items.prefix(6))
     }
 
-    private var forensicsItems: [ForensicsItem] {
+    private func forensicsItems(derivedSessions: DerivedSessions) -> [ForensicsItem] {
         var items: [ForensicsItem] = []
 
         if let capability = chau7Capability {
@@ -396,7 +344,7 @@ public struct Chau7View: View {
             )
         }
 
-        items.append(contentsOf: chau7TimelineEvents.prefix(5).map { event in
+        items.append(contentsOf: derivedSessions.timelineEvents.prefix(5).map { event in
             ForensicsItem(
                 id: event.id,
                 title: event.title,
@@ -409,7 +357,7 @@ public struct Chau7View: View {
         return items
     }
 
-    private var chau7TimelineEvents: [TimelineEvent] {
+    private func chau7TimelineEvents(linkedEntityIDs: Set<String>) -> [TimelineEvent] {
         let ids = linkedEntityIDs.union(chau7Entity.map { [$0.entityId] } ?? [])
         return state.snapshot.timeline.filter { event in
             if let entityId = event.entityId, ids.contains(entityId) {
@@ -421,20 +369,22 @@ public struct Chau7View: View {
     }
 
     public var body: some View {
+        let derivedSessions = derivedSessions
+
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
                 headerSection
 
                 if let entity = chau7Entity {
-                    runtimeSummarySection(entity)
-                    sessionMapSection
+                    runtimeSummarySection(entity, derivedSessions: derivedSessions)
+                    sessionMapSection(derivedSessions)
                     processTreeSection(entity)
                     memorySection(entity)
                     compareSection
-                    approvalQueueSection
-                    recommendationsSection
-                    recentChangesSection
-                    freezeForensicsSection
+                    approvalQueueSection(derivedSessions.sessionSummaries)
+                    recommendationsSection(recommendations(derivedSessions: derivedSessions))
+                    recentChangesSection(derivedSessions.timelineEvents)
+                    freezeForensicsSection(forensicsItems(derivedSessions: derivedSessions))
                 } else {
                     unavailableState
                 }
@@ -451,13 +401,13 @@ public struct Chau7View: View {
                 state.loadEntityStaticAnalysis(entityID: entityID, force: true)
             }
             initializeComparisonIfNeeded()
-            ensureSelectedSessionValid()
+            ensureSelectedSessionValid(derivedSessions.sessionSummaries)
         }
         .onChange(of: state.historySnapshots.count) { _, _ in
             initializeComparisonIfNeeded()
         }
         .onChange(of: state.snapshot.sequence) { _, _ in
-            ensureSelectedSessionValid()
+            ensureSelectedSessionValid(derivedSessions.sessionSummaries)
         }
     }
 
@@ -471,11 +421,14 @@ public struct Chau7View: View {
     }
 
     @ViewBuilder
-    private func runtimeSummarySection(_ entity: EntitySnapshot) -> some View {
-        let sessionsAtPrompt = sessionSummaries.filter {
+    private func runtimeSummarySection(
+        _ entity: EntitySnapshot,
+        derivedSessions: DerivedSessions
+    ) -> some View {
+        let sessionsAtPrompt = derivedSessions.sessionSummaries.filter {
             $0.isAtPrompt || $0.status.localizedCaseInsensitiveContains("prompt")
         }.count
-        let approvals = sessionSummaries.filter(\.approvalNeeded).count
+        let approvals = derivedSessions.sessionSummaries.filter(\.approvalNeeded).count
 
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             AnalysisMetadataStrip(
@@ -519,15 +472,15 @@ public struct Chau7View: View {
                 )
                 chau7MetricCard(
                     title: "Sessions",
-                    value: "\(sessionSummaries.count)",
+                    value: "\(derivedSessions.sessionSummaries.count)",
                     subtitle: "\(sessionsAtPrompt) at prompt · \(approvals) approval",
                     samples: state.historySnapshots.suffix(24).map { Double($0.entities.filter(isChau7Linked).count) },
                     tone: AetowerDesign.Status.ready
                 )
                 chau7MetricCard(
                     title: "Build",
-                    value: buildIdentity?.label ?? "Unknown build",
-                    subtitle: buildIdentity?.timestamp ?? (chau7Capability?.detail ?? "No build metadata surfaced yet."),
+                    value: derivedSessions.buildIdentity?.label ?? "Unknown build",
+                    subtitle: derivedSessions.buildIdentity?.timestamp ?? (chau7Capability?.detail ?? "No build metadata surfaced yet."),
                     samples: entity.trend.friction.map { Double($0) },
                     tone: AetowerDesign.Tone.friction
                 )
@@ -535,7 +488,7 @@ public struct Chau7View: View {
         }
     }
 
-    private var sessionMapSection: some View {
+    private func sessionMapSection(_ derivedSessions: DerivedSessions) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             AnalysisMetadataStrip(
                 descriptor: AnalysisDescriptor(
@@ -549,19 +502,19 @@ public struct Chau7View: View {
             Text("Sessions")
                 .font(.title3.weight(.semibold))
 
-            if sessionSummaries.isEmpty {
+            if derivedSessions.sessionSummaries.isEmpty {
                 sectionPlaceholder("No Chau7 tabs or sessions are visible right now.")
             } else {
                 HStack(alignment: .top, spacing: AetowerDesign.Spacing.lg) {
                     VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                        ForEach(sessionSummaries) { session in
+                        ForEach(derivedSessions.sessionSummaries) { session in
                             sessionRow(session, isSelected: selectedSessionKey == session.id)
                         }
                     }
                     .frame(maxWidth: 420, alignment: .topLeading)
 
                     VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-                        if let selectedSession {
+                        if let selectedSession = derivedSessions.selectedSession {
                             sessionDetailPanel(selectedSession)
                         } else {
                             sectionPlaceholder("Select a Chau7 tab or session to inspect its linked processes and live performance.")
@@ -762,7 +715,7 @@ public struct Chau7View: View {
         }
     }
 
-    private var approvalQueueSection: some View {
+    private func approvalQueueSection(_ sessionSummaries: [SessionSummary]) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             Text("Approval queue")
                 .font(.title3.weight(.semibold))
@@ -787,7 +740,7 @@ public struct Chau7View: View {
         }
     }
 
-    private var recommendationsSection: some View {
+    private func recommendationsSection(_ recommendations: [Recommendation]) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             Text("Recommendations")
                 .font(.title3.weight(.semibold))
@@ -802,7 +755,7 @@ public struct Chau7View: View {
         }
     }
 
-    private var recentChangesSection: some View {
+    private func recentChangesSection(_ timelineEvents: [TimelineEvent]) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             Text("Recent changes")
                 .font(.title3.weight(.semibold))
@@ -816,17 +769,17 @@ public struct Chau7View: View {
                 )
             )
 
-            if chau7TimelineEvents.isEmpty {
+            if timelineEvents.isEmpty {
                 sectionPlaceholder("No Chau7-specific timeline events are present in the current snapshot.")
             } else {
-                ForEach(chau7TimelineEvents.prefix(10), id: \.id) { event in
+                ForEach(timelineEvents.prefix(10), id: \.id) { event in
                     timelineRow(event)
                 }
             }
         }
     }
 
-    private var freezeForensicsSection: some View {
+    private func freezeForensicsSection(_ forensicsItems: [ForensicsItem]) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             HStack {
                 Text("Freeze / Crash Forensics")
@@ -981,35 +934,35 @@ public struct Chau7View: View {
                     if !session.status.isEmpty {
                         agentStateBadge(
                             session.status.replacingOccurrences(of: "-", with: " ").capitalized,
-                            color: statusTone(session.status)
+                            color: agentStatusTone(session.status)
                         )
                     }
                     if session.approvalNeeded {
                         agentStateBadge("Approval needed", color: AetowerDesign.Status.warning)
                     }
                     if let sessionId = session.sessionId {
-                        agentStateBadge(shortSessionId(sessionId), color: AetowerDesign.Status.ready)
+                        agentStateBadge(agentShortSessionId(sessionId), color: AetowerDesign.Status.ready)
                     }
                 }
 
                 if let workspace = session.workspace {
-                    Text(shortenPath(workspace))
+                    Text(agentShortenPath(workspace))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
 
                 HStack(spacing: AetowerDesign.Spacing.sm) {
-                    metricPill("CPU \(String(format: "%.0f%%", session.totalCpuPercent))", color: AetowerDesign.Tone.cpu)
-                    metricPill(formatBytes(session.totalResidentBytes), color: AetowerDesign.Tone.memory)
+                    agentMetricPill("CPU \(String(format: "%.0f%%", session.totalCpuPercent))", color: AetowerDesign.Tone.cpu)
+                    agentMetricPill(formatBytes(session.totalResidentBytes), color: AetowerDesign.Tone.memory)
                     if session.totalFootprintBytes > 0 {
-                        metricPill("fp \(formatBytes(session.totalFootprintBytes))", color: AetowerDesign.Tone.memory)
+                        agentMetricPill("fp \(formatBytes(session.totalFootprintBytes))", color: AetowerDesign.Tone.memory)
                     }
                     if session.totalWakeups > 0 {
-                        metricPill("\(String(format: "%.0f", session.totalWakeups))/s", color: AetowerDesign.Status.warning)
+                        agentMetricPill("\(String(format: "%.0f", session.totalWakeups))/s", color: AetowerDesign.Status.warning)
                     }
                     if session.totalDiskBps > 0 {
-                        metricPill(formatRate(session.totalDiskBps), color: AetowerDesign.Tone.network)
+                        agentMetricPill(formatRate(session.totalDiskBps), color: AetowerDesign.Tone.network)
                     }
                 }
 
@@ -1062,7 +1015,7 @@ public struct Chau7View: View {
                 if !session.status.isEmpty {
                     agentStateBadge(
                         session.status.replacingOccurrences(of: "-", with: " ").capitalized,
-                        color: statusTone(session.status)
+                        color: agentStatusTone(session.status)
                     )
                 }
             }
@@ -1100,7 +1053,7 @@ public struct Chau7View: View {
 
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                 if let repoRoot = session.repoRoot ?? session.workspace {
-                    detailLine("Repository", shortenPath(repoRoot))
+                    detailLine("Repository", agentShortenPath(repoRoot))
                 }
                 if let branch = session.gitBranch, !branch.isEmpty {
                     detailLine("Branch", branch)
@@ -1184,14 +1137,14 @@ public struct Chau7View: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(spacing: AetowerDesign.Spacing.sm) {
-                metricPill("CPU \(String(format: "%.1f%%", process.cpuPercent))", color: AetowerDesign.Tone.cpu)
-                metricPill(formatBytes(process.residentBytes), color: AetowerDesign.Tone.memory)
+                agentMetricPill("CPU \(String(format: "%.1f%%", process.cpuPercent))", color: AetowerDesign.Tone.cpu)
+                agentMetricPill(formatBytes(process.residentBytes), color: AetowerDesign.Tone.memory)
                 if process.footprintBytes > 0 {
-                    metricPill("fp \(formatBytes(process.footprintBytes))", color: AetowerDesign.Tone.memory)
+                    agentMetricPill("fp \(formatBytes(process.footprintBytes))", color: AetowerDesign.Tone.memory)
                 }
             }
             if let cwd = process.cwd, !cwd.isEmpty {
-                Text(shortenPath(cwd))
+                Text(agentShortenPath(cwd))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
@@ -1356,16 +1309,6 @@ public struct Chau7View: View {
         .background(Color.secondary.opacity(0.08), in: Capsule())
     }
 
-    private func metricPill(_ label: String, color: Color) -> some View {
-        Text(label)
-            .font(.caption)
-            .fontWeight(.medium)
-            .foregroundStyle(color)
-            .padding(.horizontal, AetowerDesign.Spacing.sm)
-            .padding(.vertical, AetowerDesign.Spacing.xxs)
-            .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
-    }
-
     private func detailLine(_ label: String, _ value: String) -> some View {
         LabeledContent(label) {
             Text(value)
@@ -1375,10 +1318,81 @@ public struct Chau7View: View {
         }
     }
 
-    private func sessionSummary(from raw: Chau7SessionSummary) -> SessionSummary? {
-        let entities = raw.linkedEntityIds.compactMap { entityID in
-            state.snapshot.entities.first { $0.entityId == entityID }
+    private func buildIdentity(from linkedEntities: [EntitySnapshot]) -> BuildIdentity? {
+        let contexts = linkedEntities
+            .flatMap(\.components)
+            .compactMap(\.adapterContext)
+            .filter { $0.kind == .chau7Session }
+
+        guard let chosen = contexts.first(where: { $0.buildSha != nil || $0.appVersion != nil }) ?? contexts.first else {
+            return nil
         }
+
+        return BuildIdentity(
+            version: chosen.appVersion,
+            sha: chosen.buildSha,
+            timestamp: chosen.buildTimestamp,
+            channel: chosen.buildChannel
+        )
+    }
+
+    private func linkedSessionSummaries(from linkedEntities: [EntitySnapshot]) -> [SessionSummary] {
+        let grouped = Dictionary(grouping: linkedEntities.filter { $0.entityKind == .aiAgent || $0.entityKind == .terminalSession }) { entity in
+            sessionContext(for: entity)?.sessionId ?? entity.entityId
+        }
+
+        return grouped.compactMap { key, members in
+            guard let primary = members.max(by: { $0.friction.totalScore < $1.friction.totalScore }) else {
+                return nil
+            }
+            let contexts = members.compactMap(sessionContext)
+            let detail = members.compactMap { agentSessionComponent(for: $0)?.detail }.first { !$0.isEmpty }
+            return SessionSummary(
+                id: key,
+                tabId: nil,
+                sessionId: contexts.compactMap(\.sessionId).first,
+                title: primary.displayName,
+                provider: agentProviderLabel(for: primary) ?? "shell",
+                workspace: agentProjectContext(for: primary),
+                repoRoot: contexts.compactMap(\.repoRoot).first,
+                gitBranch: nil,
+                status: contexts.compactMap(\.status).first ?? "unknown",
+                activeApp: nil,
+                windowId: 0,
+                runCount: 0,
+                lastActive: "",
+                turnCount: 0,
+                childSessionCount: 0,
+                pendingApprovalDescription: members
+                    .flatMap(\.recommendations)
+                    .first(where: { $0.title == "Resolve pending agent approval" })?
+                    .detail,
+                lastExitReason: members
+                    .flatMap(\.attributionNotes)
+                    .first(where: { $0.localizedCaseInsensitiveContains("exited with") }),
+                activeRunDurationMillis: 0,
+                isAtPrompt: members.contains { $0.badges.contains("at-prompt") },
+                shellLoading: members.contains { $0.badges.contains("shell-loading") },
+                ctoActive: members.contains { $0.badges.contains("cto-active") },
+                linkedEntityIds: members.map(\.entityId),
+                entities: members,
+                totalCpuPercent: members.reduce(0) { $0 + $1.metrics.cpuPercent },
+                totalResidentBytes: members.reduce(0) { $0 + $1.metrics.memoryResidentBytes },
+                totalFootprintBytes: members.reduce(0) { $0 + $1.metrics.memoryPhysicalFootprintBytes },
+                totalWakeups: members.reduce(0) { $0 + $1.metrics.wakeupsPerSecond },
+                totalDiskBps: members.reduce(0) { $0 + $1.metrics.diskReadBps + $1.metrics.diskWriteBps },
+                totalFriction: members.reduce(0) { $0 + $1.friction.totalScore },
+                detail: detail,
+                hasLiveAttribution: true
+            )
+        }
+    }
+
+    private func sessionSummary(
+        from raw: Chau7SessionSummary,
+        entityByID: [String: EntitySnapshot]
+    ) -> SessionSummary? {
+        let entities = raw.linkedEntityIds.compactMap { entityByID[$0] }
         let provider = raw.provider.isEmpty ? "shell" : raw.provider
         let detail = sessionDetailText(for: raw)
 
@@ -1386,7 +1400,7 @@ public struct Chau7View: View {
             id: raw.id,
             tabId: raw.tabId,
             sessionId: raw.sessionId,
-            title: raw.title.isEmpty ? (raw.sessionId.map(shortSessionId) ?? "Terminal tab") : raw.title,
+            title: raw.title.isEmpty ? (raw.sessionId.map(agentShortSessionId) ?? "Terminal tab") : raw.title,
             provider: provider,
             workspace: raw.workspacePath ?? raw.repoRoot,
             repoRoot: raw.repoRoot,
@@ -1469,9 +1483,7 @@ public struct Chau7View: View {
     }
 
     private func linkedEntities(for session: SessionSummary) -> [EntitySnapshot] {
-        session.linkedEntityIds.compactMap { entityID in
-            state.snapshot.entities.first { $0.entityId == entityID }
-        }
+        session.entities
     }
 
     private func sessionProcesses(for session: SessionSummary) -> [SessionProcessSummary] {
@@ -1508,7 +1520,7 @@ public struct Chau7View: View {
             }
     }
 
-    private func ensureSelectedSessionValid() {
+    private func ensureSelectedSessionValid(_ sessionSummaries: [SessionSummary]) {
         guard !sessionSummaries.isEmpty else {
             selectedSessionKey = nil
             return
@@ -1533,12 +1545,8 @@ public struct Chau7View: View {
             || entity.components.contains { $0.adapterContext?.kind == .chau7Session }
     }
 
-    private func sessionComponent(for entity: EntitySnapshot) -> ComponentSnapshot? {
-        entity.components.first { $0.adapterContext?.kind == .chau7Session }
-    }
-
     private func sessionContext(for entity: EntitySnapshot) -> AdapterContextSnapshot? {
-        sessionComponent(for: entity)?.adapterContext
+        agentSessionComponent(for: entity)?.adapterContext
     }
 
     private func graphicsResidentBytes(in breakdown: EntityMemoryBreakdownReportModel) -> UInt64 {
@@ -1555,17 +1563,6 @@ public struct Chau7View: View {
         breakdown.regions
             .filter { $0.regionType.hasPrefix("MALLOC_") }
             .reduce(0) { $0 + $1.residentBytes }
-    }
-
-    private func statusTone(_ status: String) -> Color {
-        let normalized = status.localizedLowercase
-        if normalized.contains("approval") || normalized.contains("error") {
-            return AetowerDesign.Status.warning
-        }
-        if normalized.contains("finished") || normalized.contains("prompt") || normalized.contains("idle") {
-            return AetowerDesign.Status.success
-        }
-        return AetowerDesign.Status.ready
     }
 
     private func severityColor(_ severity: TimelineSeverity) -> Color {
@@ -1603,22 +1600,6 @@ public struct Chau7View: View {
         let prefix = delta > 0 ? "+" : delta < 0 ? "-" : ""
         let magnitude = abs(delta)
         return prefix + valueLabel(magnitude, suffix: suffix, bytesMode: bytesMode, rateMode: rateMode)
-    }
-
-    private func shortenPath(_ path: String) -> String {
-        if let home = FileManager.default.homeDirectoryForCurrentUser.path.removingPercentEncoding,
-           path.hasPrefix(home)
-        {
-            return "~" + path.dropFirst(home.count)
-        }
-        return path
-    }
-
-    private func shortSessionId(_ sessionID: String) -> String {
-        if sessionID.count <= 10 {
-            return sessionID
-        }
-        return String(sessionID.prefix(8))
     }
 
     private func humanizeDuration(_ millis: UInt64) -> String {

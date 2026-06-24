@@ -39,34 +39,6 @@ private enum MonitorByteFormatters {
 
 // MARK: - Host summary helpers
 
-func hostStatusSummary(_ host: HostSnapshot) -> String {
-    var parts = [powerStatusSummary(host)]
-    parts.append("thermal \(thermalStateLabel(host.thermalState))")
-    if host.compressedMemoryBytes > 0 {
-        parts.append("compressed \(formatBytes(host.compressedMemoryBytes))")
-    }
-    if host.gpuPercent > 0 || host.anePercent > 0 {
-        parts.append(hostGPUSummary(host))
-    }
-    if host.wakeupsPerSecond > 0 {
-        parts.append("\(formatWakeups(host.wakeupsPerSecond)) wakeups")
-    }
-    if host.lowPowerMode {
-        parts.append("low power mode")
-    }
-    return parts.joined(separator: " · ")
-}
-
-func powerStatusSummary(_ host: HostSnapshot) -> String {
-    if host.onBattery {
-        if let batteryChargePercent = host.batteryChargePercent {
-            return "battery \(batteryChargePercent)%"
-        }
-        return "battery power"
-    }
-    return "AC power"
-}
-
 func hostGPUSummary(_ host: HostSnapshot) -> String {
     if host.anePercent > 0 {
         return "ANE \(String(format: "%.1f%%", host.anePercent)) · \(formatBytes(host.gpuMemoryBytes)) GPU memory"
@@ -99,21 +71,6 @@ func trendLabel(samples: [Double], stableText: String) -> String {
     return stableText
 }
 
-func frictionTrendSummary(_ entity: EntitySnapshot) -> String {
-    "\(trendLabel(samples: entity.trend.friction.map { Double($0) }, stableText: "recent score")) · \(trendWindowLabel(sampleCount: entity.trend.friction.count))"
-}
-
-func cpuTrendSummary(_ entity: EntitySnapshot) -> String {
-    "\(trendLabel(samples: entity.trend.cpuPercent.map { Double($0) }, stableText: "recent load")) · \(trendWindowLabel(sampleCount: entity.trend.cpuPercent.count))"
-}
-
-func memoryTrendSummary(_ entity: EntitySnapshot) -> String {
-    if entity.metrics.memoryPhysicalFootprintBytes > 0 {
-        return "resident \(formatBytes(entity.metrics.memoryResidentBytes)) · charged \(formatBytes(entityEffectiveMemoryBytes(entity)))"
-    }
-    return "resident \(formatBytes(entity.metrics.memoryResidentBytes)) · \(trendWindowLabel(sampleCount: entity.trend.memoryResidentBytes.count))"
-}
-
 func memoryMetricNote(residentBytes: UInt64, footprintBytes: UInt64) -> String {
     if footprintBytes > 0 {
         if footprintBytes == residentBytes {
@@ -124,31 +81,12 @@ func memoryMetricNote(residentBytes: UInt64, footprintBytes: UInt64) -> String {
     return "Resident is available. Footprint is unavailable for this sample."
 }
 
-func diskTrendSummary(_ entity: EntitySnapshot) -> String {
-    "\(trendLabel(samples: entity.trend.diskActivityBps.map { Double($0) }, stableText: "recent throughput")) · \(trendWindowLabel(sampleCount: entity.trend.diskActivityBps.count))"
-}
-
-func networkTrendSummary(_ entity: EntitySnapshot) -> String {
-    "\(trendLabel(samples: entity.trend.networkActivityBps.map { Double($0) }, stableText: "recent throughput")) · \(trendWindowLabel(sampleCount: entity.trend.networkActivityBps.count))"
-}
-
-func wakeupsTrendSummary(_ entity: EntitySnapshot) -> String {
-    "\(trendLabel(samples: entity.trend.wakeupsPerSecond.map { Double($0) }, stableText: "recent wakeups")) · \(trendWindowLabel(sampleCount: entity.trend.wakeupsPerSecond.count))"
-}
-
 func trendWindowLabel(sampleCount: Int) -> String {
     let seconds = min(sampleCount * 2, 300)
     return "last \(seconds)s"
 }
 
 // MARK: - Host band classification
-
-func hostCompressedSummary(_ host: HostSnapshot) -> String {
-    if host.compressedMemoryBytes > 0 {
-        return "compressed \(formatBytes(host.compressedMemoryBytes))"
-    }
-    return "memory pressure nominal"
-}
 
 enum HostBand {
     case nominal
@@ -170,12 +108,6 @@ func hostWakeupBand(_ wakeupsPerSecond: Float) -> HostBand {
     if wakeupsPerSecond >= 3_000 { return .severe }
     if wakeupsPerSecond >= 1_500 { return .elevated }
     return .nominal
-}
-
-func wakeupsLeaderSubtitle(for entity: EntitySnapshot) -> String {
-    let components = entity.components.filter { $0.kind == .process }
-    if components.count <= 1 { return "single-process hotspot" }
-    return "\(components.count) processes in group"
 }
 
 // MARK: - Memory helpers
@@ -206,12 +138,6 @@ func entityEffectiveMemoryBytes(_ entity: EntitySnapshot) -> UInt64 {
 
 func entityMemoryLoadPercent(_ entity: EntitySnapshot, totalBytes: UInt64) -> Double {
     memoryLoadPercent(bytes: entityEffectiveMemoryBytes(entity), totalBytes: totalBytes)
-}
-
-func entityMemoryTrendPercents(_ entity: EntitySnapshot, totalBytes: UInt64) -> [Double] {
-    entity.trend.memoryResidentBytes.map {
-        memoryLoadPercent(bytes: $0, totalBytes: totalBytes)
-    }
 }
 
 // MARK: - Age label

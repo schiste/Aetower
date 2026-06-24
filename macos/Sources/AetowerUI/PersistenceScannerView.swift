@@ -54,13 +54,39 @@ public struct PersistenceScannerView: View {
     @State private var selectedSection: PersistenceSection = .summary
     @State private var searchText = ""
     @State private var expandedItemID: String?
+    @State private var runtimeIndex: PersistenceRuntimeIndex
+    @State private var runtimeIndexSequence: UInt64
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
         self.settings = settings
+        _runtimeIndex = State(initialValue: PersistenceRuntimeIndex(snapshot: state.snapshot))
+        _runtimeIndexSequence = State(initialValue: state.snapshot.sequence)
     }
 
     private var report: PersistenceScanReportModel? { state.persistenceScanReport }
+
+    private struct DerivedInventory {
+        let attentionItems: [PersistenceItemModel]
+        let activeNowItems: [PersistenceItemModel]
+        let allItems: [PersistenceItemModel]
+        let activeSummaryCount: Int
+        let attentionSummaryCount: Int
+        let changedSummaryCount: Int
+
+        func items(for section: PersistenceSection) -> [PersistenceItemModel] {
+            switch section {
+            case .attention:
+                return attentionItems
+            case .activeNow:
+                return activeNowItems
+            case .allItems:
+                return allItems
+            case .summary, .locations:
+                return []
+            }
+        }
+    }
 
     public var body: some View {
         ScrollView {
@@ -79,6 +105,9 @@ public struct PersistenceScannerView: View {
         }
         .onAppear {
             state.ensurePersistenceScan()
+        }
+        .task(id: state.snapshot.sequence) {
+            refreshRuntimeIndexIfNeeded(snapshot: state.snapshot)
         }
     }
 
@@ -118,10 +147,11 @@ public struct PersistenceScannerView: View {
     }
 
     private func reportContent(_ report: PersistenceScanReportModel) -> some View {
-        let runtimeIndex = PersistenceRuntimeIndex(snapshot: state.snapshot)
+        let runtimeIndex = runtimeIndex
+        let inventory = derivedInventory(report, runtimeIndex: runtimeIndex)
         return LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
             controls(report)
-            sectionSwitcher(report, runtimeIndex: runtimeIndex)
+            sectionSwitcher(report, inventory: inventory)
             if let error = state.persistenceScanError {
                 Text(error)
                     .font(.caption)
@@ -130,13 +160,13 @@ public struct PersistenceScannerView: View {
             if report.truncated {
                 warningBanner("Inventory reached the safety cap. Results are truncated to keep Aetower responsive.")
             }
-            sectionContent(report, runtimeIndex: runtimeIndex)
+            sectionContent(report, runtimeIndex: runtimeIndex, inventory: inventory)
         }
     }
 
     private func sectionSwitcher(
         _ report: PersistenceScanReportModel,
-        runtimeIndex: PersistenceRuntimeIndex
+        inventory: DerivedInventory
     ) -> some View {
         LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 170), spacing: AetowerDesign.Spacing.sm)],
@@ -144,7 +174,7 @@ public struct PersistenceScannerView: View {
             spacing: AetowerDesign.Spacing.sm
         ) {
             ForEach(PersistenceSection.allCases) { section in
-                sectionButton(section, count: sectionCount(section, report: report, runtimeIndex: runtimeIndex))
+                sectionButton(section, count: sectionCount(section, report: report, inventory: inventory))
             }
         }
     }
@@ -190,18 +220,19 @@ public struct PersistenceScannerView: View {
     @ViewBuilder
     private func sectionContent(
         _ report: PersistenceScanReportModel,
-        runtimeIndex: PersistenceRuntimeIndex
+        runtimeIndex: PersistenceRuntimeIndex,
+        inventory: DerivedInventory
     ) -> some View {
         switch selectedSection {
         case .summary:
-            summaryStrip(report, runtimeIndex: runtimeIndex)
-            summaryGuidance(report, runtimeIndex: runtimeIndex)
+            summaryStrip(report, inventory: inventory)
+            summaryGuidance(report, inventory)
         case .attention:
             itemList(
                 title: "Attention",
                 emptyTitle: "No startup items need attention",
                 emptyDescription: "Aetower found no risky, changed, or active startup entries with the current search settings.",
-                items: filteredItems(report, runtimeIndex: runtimeIndex, section: .attention),
+                items: inventory.items(for: .attention),
                 runtimeIndex: runtimeIndex
             )
         case .activeNow:
@@ -209,7 +240,7 @@ public struct PersistenceScannerView: View {
                 title: "Active now",
                 emptyTitle: "No active startup items",
                 emptyDescription: "No startup entries are currently linked to live process metrics.",
-                items: filteredItems(report, runtimeIndex: runtimeIndex, section: .activeNow),
+                items: inventory.items(for: .activeNow),
                 runtimeIndex: runtimeIndex
             )
         case .allItems:
@@ -217,7 +248,7 @@ public struct PersistenceScannerView: View {
                 title: "All startup items",
                 emptyTitle: "No matching startup items",
                 emptyDescription: "Change the filter or search text to broaden the inventory.",
-                items: filteredItems(report, runtimeIndex: runtimeIndex, section: .allItems),
+                items: inventory.items(for: .allItems),
                 runtimeIndex: runtimeIndex
             )
         case .locations:
@@ -244,10 +275,11 @@ public struct PersistenceScannerView: View {
                 )
                 .frame(maxWidth: .infinity)
             } else {
+                let itemsByKind = Dictionary(grouping: items, by: \.kind)
                 ForEach(groupedKinds(items), id: \.self) { kind in
                     section(
                         kind: kind,
-                        items: items.filter { $0.kind == kind },
+                        items: itemsByKind[kind] ?? [],
                         runtimeIndex: runtimeIndex
                     )
                 }
@@ -257,10 +289,10 @@ public struct PersistenceScannerView: View {
 
     private func summaryGuidance(
         _ report: PersistenceScanReportModel,
-        runtimeIndex: PersistenceRuntimeIndex
+        _ inventory: DerivedInventory
     ) -> some View {
-        let attentionCount = sectionCount(.attention, report: report, runtimeIndex: runtimeIndex)
-        let activeCount = sectionCount(.activeNow, report: report, runtimeIndex: runtimeIndex)
+        let attentionCount = inventory.attentionItems.count
+        let activeCount = inventory.activeNowItems.count
         return GroupBox("How to use this scan") {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                 guidanceLine(
@@ -322,7 +354,7 @@ public struct PersistenceScannerView: View {
     private func sectionCount(
         _ section: PersistenceSection,
         report: PersistenceScanReportModel,
-        runtimeIndex: PersistenceRuntimeIndex
+        inventory: DerivedInventory
     ) -> Int {
         switch section {
         case .summary:
@@ -330,17 +362,14 @@ public struct PersistenceScannerView: View {
         case .locations:
             return report.scannedLocations.count + report.degraded.count
         case .attention, .activeNow, .allItems:
-            return filteredItems(report, runtimeIndex: runtimeIndex, section: section).count
+            return inventory.items(for: section).count
         }
     }
 
     private func summaryStrip(
         _ report: PersistenceScanReportModel,
-        runtimeIndex: PersistenceRuntimeIndex
+        inventory: DerivedInventory
     ) -> some View {
-        let activeCount = report.items.filter { !runtimeIndex.matches(for: $0).isEmpty }.count
-        let attentionCount = report.items.filter { itemNeedsAttention($0, runtimeIndex: runtimeIndex) }.count
-        let changedCount = report.items.filter { isChanged($0) }.count
         return LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 160), spacing: AetowerDesign.Spacing.sm)],
             alignment: .leading,
@@ -354,21 +383,21 @@ public struct PersistenceScannerView: View {
             )
             summaryCard(
                 "Attention",
-                value: "\(attentionCount)",
+                value: "\(inventory.attentionSummaryCount)",
                 detail: "\(report.summary.dangerCount) danger · \(report.summary.warningCount) warning",
-                tone: attentionCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+                tone: inventory.attentionSummaryCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
             )
             summaryCard(
                 "Active now",
-                value: "\(activeCount)",
+                value: "\(inventory.activeSummaryCount)",
                 detail: "Linked to live process metrics",
-                tone: activeCount > 0 ? AetowerDesign.Tone.cpu : AetowerDesign.Status.neutral
+                tone: inventory.activeSummaryCount > 0 ? AetowerDesign.Tone.cpu : AetowerDesign.Status.neutral
             )
             summaryCard(
                 "Changed",
-                value: "\(changedCount)",
+                value: "\(inventory.changedSummaryCount)",
                 detail: "Since last scan or last 7 days",
-                tone: changedCount > 0 ? AetowerDesign.Tone.network : AetowerDesign.Status.neutral
+                tone: inventory.changedSummaryCount > 0 ? AetowerDesign.Tone.network : AetowerDesign.Status.neutral
             )
             summaryCard(
                 report.scanMode == "deep" ? "Signing" : "Fast scan",
@@ -466,6 +495,26 @@ public struct PersistenceScannerView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func refreshRuntimeIndexIfNeeded(snapshot: SystemSnapshot) {
+        guard runtimeIndexSequence != snapshot.sequence else { return }
+        runtimeIndex = PersistenceRuntimeIndex(snapshot: snapshot)
+        runtimeIndexSequence = snapshot.sequence
+    }
+
+    private func derivedInventory(
+        _ report: PersistenceScanReportModel,
+        runtimeIndex: PersistenceRuntimeIndex
+    ) -> DerivedInventory {
+        DerivedInventory(
+            attentionItems: filteredItems(report, runtimeIndex: runtimeIndex, section: .attention),
+            activeNowItems: filteredItems(report, runtimeIndex: runtimeIndex, section: .activeNow),
+            allItems: filteredItems(report, runtimeIndex: runtimeIndex, section: .allItems),
+            activeSummaryCount: report.items.filter { !runtimeIndex.matches(for: $0).isEmpty }.count,
+            attentionSummaryCount: report.items.filter { itemNeedsAttention($0, runtimeIndex: runtimeIndex) }.count,
+            changedSummaryCount: report.items.filter { isChanged($0) }.count
+        )
     }
 
     private func filteredItems(

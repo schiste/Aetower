@@ -106,6 +106,8 @@ public struct DiagnosticsView: View {
     }
 
     public var body: some View {
+        let eventClusters = eventClusters
+
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
@@ -116,8 +118,8 @@ public struct DiagnosticsView: View {
                 }
 
                 diagnosticsActions
-                sectionSwitcher
-                selectedSectionContent
+                sectionSwitcher(eventClusters: eventClusters)
+                selectedSectionContent(eventClusters: eventClusters)
             }
             .padding(AetowerDesign.Spacing.xxl)
         }
@@ -192,19 +194,22 @@ public struct DiagnosticsView: View {
         }
     }
 
-    private var sectionSwitcher: some View {
+    private func sectionSwitcher(eventClusters: [DiagnosticsEventCluster]) -> some View {
         LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 170), spacing: AetowerDesign.Spacing.sm)],
             alignment: .leading,
             spacing: AetowerDesign.Spacing.sm
         ) {
             ForEach(DiagnosticsSection.allCases) { section in
-                diagnosticsSectionButton(section)
+                diagnosticsSectionButton(section, eventClusters: eventClusters)
             }
         }
     }
 
-    private func diagnosticsSectionButton(_ section: DiagnosticsSection) -> some View {
+    private func diagnosticsSectionButton(
+        _ section: DiagnosticsSection,
+        eventClusters: [DiagnosticsEventCluster]
+    ) -> some View {
         let isSelected = selectedSection == section
         return Button {
             withAnimation(AetowerDesign.Motion.quick) {
@@ -219,7 +224,7 @@ public struct DiagnosticsView: View {
                         .font(.subheadline.weight(.semibold))
                     Spacer()
                 }
-                Text(sectionSignal(section))
+                Text(sectionSignal(section, eventClusters: eventClusters))
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(sectionSignalColor(section))
                     .lineLimit(1)
@@ -243,7 +248,7 @@ public struct DiagnosticsView: View {
     }
 
     @ViewBuilder
-    private var selectedSectionContent: some View {
+    private func selectedSectionContent(eventClusters: [DiagnosticsEventCluster]) -> some View {
         switch selectedSection {
         case .health:
             sessionHealth
@@ -258,7 +263,7 @@ public struct DiagnosticsView: View {
             selfMemoryAttribution
         case .eventStream:
             controls
-            eventStream
+            eventStream(eventClusters)
         }
     }
 
@@ -799,10 +804,9 @@ public struct DiagnosticsView: View {
         }
     }
 
-    private var eventStream: some View {
-        let clusters = eventClusters
-        return GroupBox("Event stream") {
-            if clusters.isEmpty {
+    private func eventStream(_ eventClusters: [DiagnosticsEventCluster]) -> some View {
+        GroupBox("Event stream") {
+            if eventClusters.isEmpty {
                 ContentUnavailableView(
                     "No diagnostics match this filter",
                     systemImage: "waveform.path.ecg.rectangle",
@@ -811,11 +815,11 @@ public struct DiagnosticsView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    Text(eventStreamSummaryText(clusterCount: clusters.count))
+                    Text(eventStreamSummaryText(clusterCount: eventClusters.count))
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    ForEach(clusters) { cluster in
+                    ForEach(eventClusters) { cluster in
                         let event = cluster.representative
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
@@ -878,7 +882,7 @@ public struct DiagnosticsView: View {
                             }
                         }
                         .padding(.vertical, 4)
-                        if cluster.id != clusters.last?.id {
+                        if cluster.id != eventClusters.last?.id {
                             Divider()
                         }
                     }
@@ -904,7 +908,10 @@ public struct DiagnosticsView: View {
         return clusters
     }
 
-    private func sectionSignal(_ section: DiagnosticsSection) -> String {
+    private func sectionSignal(
+        _ section: DiagnosticsSection,
+        eventClusters: [DiagnosticsEventCluster]
+    ) -> String {
         switch section {
         case .health:
             return "\(diagnosticsHealthTitle) · \(aetowerOverheadTitle)"

@@ -91,6 +91,23 @@ public struct SettingsView: View {
         }
     }
 
+    private struct IntegrationValidation {
+        let issues: [SettingsValidationIssue]
+
+        @MainActor
+        init(settings: SettingsStore) {
+            self.issues = SettingsValidationIssue.integrationIssues(for: settings)
+        }
+
+        var hasBlockingIssues: Bool {
+            issues.contains { $0.severity == .error }
+        }
+
+        func issues(for target: SettingsValidationTarget) -> [SettingsValidationIssue] {
+            issues.filter { $0.target == target }
+        }
+    }
+
     public var body: some View {
         @Bindable var settings = settings
         HStack(spacing: 0) {
@@ -240,18 +257,6 @@ public struct SettingsView: View {
             return false
         }
         return appliedIntegrationSnapshot != SettingsIntegrationSnapshot(settings)
-    }
-
-    private var integrationValidationIssues: [SettingsValidationIssue] {
-        SettingsValidationIssue.integrationIssues(for: settings)
-    }
-
-    private var hasBlockingIntegrationValidationIssues: Bool {
-        integrationValidationIssues.contains { $0.severity == .error }
-    }
-
-    private func integrationIssues(for target: SettingsValidationTarget) -> [SettingsValidationIssue] {
-        integrationValidationIssues.filter { $0.target == target }
     }
 
     private var setupChecklistProgress: (completed: Int, total: Int) {
@@ -623,6 +628,7 @@ public struct SettingsView: View {
     @ViewBuilder
     private var integrationsSection: some View {
         @Bindable var settings = settings
+        let validation = IntegrationValidation(settings: settings)
         SettingsCard(
             title: "Integration endpoints",
             subtitle: "Endpoint fields are staged until you apply them.",
@@ -636,7 +642,7 @@ public struct SettingsView: View {
                 )
             }
 
-            if hasBlockingIntegrationValidationIssues {
+            if validation.hasBlockingIssues {
                 SettingsNotice(
                     title: "Some integration settings need attention",
                     detail: "Fix the highlighted values before applying this page.",
@@ -663,7 +669,7 @@ public struct SettingsView: View {
                     Text("Use a local `/json` or `/json/list` endpoint. Leave blank to disable browser attribution.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    SettingsValidationList(issues: integrationIssues(for: .chromiumEndpoint))
+                    SettingsValidationList(issues: validation.issues(for: .chromiumEndpoint))
                 }
 
                 SettingsSetupCard(
@@ -684,7 +690,7 @@ public struct SettingsView: View {
                     Text("Leave blank to use the default Docker socket path.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    SettingsValidationList(issues: integrationIssues(for: .dockerSocketPath))
+                    SettingsValidationList(issues: validation.issues(for: .dockerSocketPath))
                 }
 
                 SettingsSetupCard(
@@ -702,7 +708,7 @@ public struct SettingsView: View {
                     Text("Enable only after installing and signing the helper outside Aetower.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    SettingsValidationList(issues: integrationIssues(for: .privilegedHelperPath))
+                    SettingsValidationList(issues: validation.issues(for: .privilegedHelperPath))
                 }
 
                 SettingsSetupCard(
@@ -723,7 +729,7 @@ public struct SettingsView: View {
                     Text("Leave blank for the default local Chau7 socket. If set manually, use an absolute path.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    SettingsValidationList(issues: integrationIssues(for: .chau7Endpoint))
+                    SettingsValidationList(issues: validation.issues(for: .chau7Endpoint))
                 }
 
                 SettingsSetupCard(
@@ -742,7 +748,7 @@ public struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
                     .aetowerUtilityTextInput()
                     .focused($focusedField, equals: .telemetryEndpoint)
-                    SettingsValidationList(issues: integrationIssues(for: .telemetryEndpoint))
+                    SettingsValidationList(issues: validation.issues(for: .telemetryEndpoint))
 
                     intervalSlider(
                         title: "Metrics export interval",
@@ -790,14 +796,14 @@ public struct SettingsView: View {
                     applyIntegrationAndTelemetrySettings(settings)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(hasBlockingIntegrationValidationIssues)
+                .disabled(validation.hasBlockingIssues)
 
                 Button("Send test metrics") {
                     focusedField = nil
                     state.verifyTelemetryExport(settings)
                 }
                 .buttonStyle(.bordered)
-                .disabled(hasBlockingIntegrationValidationIssues)
+                .disabled(validation.hasBlockingIssues)
             }
 
             if let applyConfirmation {

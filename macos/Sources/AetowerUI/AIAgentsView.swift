@@ -400,7 +400,7 @@ package struct AIAgentsView: View {
                                     .foregroundStyle(AetowerDesign.Tone.cpu)
                             }
                             if let workspace = trend.workspace {
-                                Text(shortenPath(workspace))
+                                Text(agentShortenPath(workspace))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -449,11 +449,11 @@ package struct AIAgentsView: View {
                             .fontWeight(.semibold)
                         Spacer()
                         if let sessionId = item.sessionId {
-                            agentStateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.warning)
+                            agentStateBadge("Session \(agentShortSessionId(sessionId))", color: AetowerDesign.Status.warning)
                         }
                     }
                     if let workspace = item.workspace {
-                        Text(shortenPath(workspace))
+                        Text(agentShortenPath(workspace))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -486,12 +486,12 @@ package struct AIAgentsView: View {
                             .fontWeight(.semibold)
                         Spacer()
                         if let sessionId = item.sessionId {
-                            agentStateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.ready)
+                            agentStateBadge("Session \(agentShortSessionId(sessionId))", color: AetowerDesign.Status.ready)
                         }
                         agentStateBadge("\(item.childSessionCount) child", color: AetowerDesign.Status.ready)
                     }
                     if let workspace = item.workspace {
-                        Text(shortenPath(workspace))
+                        Text(agentShortenPath(workspace))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -525,7 +525,7 @@ package struct AIAgentsView: View {
                         if let workspace = group.workspace {
                             Text("—")
                                 .foregroundStyle(.tertiary)
-                            Text(shortenPath(workspace))
+                            Text(agentShortenPath(workspace))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -537,14 +537,14 @@ package struct AIAgentsView: View {
                     }
 
                     HStack(spacing: AetowerDesign.Spacing.sm) {
-                        metricPill(
+                        agentMetricPill(
                             label: String(format: "CPU %.0f%%", group.totalCpuPercent),
                             color: AetowerDesign.Tone.cpu
                         )
-                        metricPill(label: formatBytes(group.totalMemoryBytes), color: AetowerDesign.Tone.memory)
-                        metricPill(label: agentFormatEnergy(njPerS: group.totalEnergyNjPerS), color: AetowerDesign.Tone.energy)
+                        agentMetricPill(label: formatBytes(group.totalMemoryBytes), color: AetowerDesign.Tone.memory)
+                        agentMetricPill(label: agentFormatEnergy(njPerS: group.totalEnergyNjPerS), color: AetowerDesign.Tone.energy)
                         if group.totalCostUsd > 0 {
-                            metricPill(
+                            agentMetricPill(
                                 label: String(format: "$%.2f", group.totalCostUsd),
                                 color: AetowerDesign.Status.neutral
                             )
@@ -597,7 +597,7 @@ package struct AIAgentsView: View {
                 if let workspace = agentProjectContext(for: entity) {
                     Text("—")
                         .foregroundStyle(.tertiary)
-                    Text(shortenPath(workspace))
+                    Text(agentShortenPath(workspace))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -609,25 +609,25 @@ package struct AIAgentsView: View {
 
             HStack(spacing: AetowerDesign.Spacing.md) {
                 if entity.metrics.estimatedGpuPercent > 0 {
-                    metricPill(
+                    agentMetricPill(
                         label: "GPU \(Int(entity.metrics.estimatedGpuPercent))%",
                         color: AetowerDesign.Tone.gpu
                     )
                 }
-                metricPill(
+                agentMetricPill(
                     label: agentFormatEnergy(njPerS: entity.metrics.energyNjPerS),
                     color: AetowerDesign.Tone.energy
                 )
-                metricPill(
+                agentMetricPill(
                     label: String(format: "CPU %.0f%%", entity.metrics.cpuPercent),
                     color: AetowerDesign.Tone.cpu
                 )
-                metricPill(
+                agentMetricPill(
                     label: formatBytes(entity.metrics.memoryResidentBytes),
                     color: AetowerDesign.Tone.memory
                 )
                 if entity.metrics.wakeupsPerSecond > 0 {
-                    metricPill(
+                    agentMetricPill(
                         label: String(format: "%.0f wake/s", entity.metrics.wakeupsPerSecond),
                         color: AetowerDesign.Status.warning
                     )
@@ -637,31 +637,31 @@ package struct AIAgentsView: View {
             if let cost = entity.agentCost {
                 HStack(spacing: AetowerDesign.Spacing.md) {
                     if cost.costUsd > 0 {
-                        metricPill(
+                        agentMetricPill(
                             label: String(format: "$%.2f", cost.costUsd),
                             color: AetowerDesign.Status.success
                         )
                     }
                     if cost.totalInputTokens > 0 {
-                        metricPill(
+                        agentMetricPill(
                             label: "In \(formatTokens(cost.totalInputTokens))",
                             color: AetowerDesign.Status.ready
                         )
                     }
                     if cost.totalOutputTokens > 0 {
-                        metricPill(
+                        agentMetricPill(
                             label: "Out \(formatTokens(cost.totalOutputTokens))",
                             color: AetowerDesign.Status.ready
                         )
                     }
                     if cost.totalRuns > 0 {
-                        metricPill(
+                        agentMetricPill(
                             label: "\(cost.totalRuns) run\(cost.totalRuns == 1 ? "" : "s")",
                             color: AetowerDesign.Status.ready
                         )
                     }
                     if cost.sessionEnergyNj > 0 {
-                        metricPill(
+                        agentMetricPill(
                             label: formatSessionEnergy(nj: cost.sessionEnergyNj),
                             color: AetowerDesign.Status.warning
                         )
@@ -852,16 +852,6 @@ package struct AIAgentsView: View {
         )
     }
 
-    private func metricPill(label: String, color: Color) -> some View {
-        Text(label)
-            .font(.caption)
-            .fontWeight(.medium)
-            .foregroundStyle(color)
-            .padding(.horizontal, AetowerDesign.Spacing.sm)
-            .padding(.vertical, AetowerDesign.Spacing.xxs)
-            .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
-    }
-
     private func severityColor(_ severity: TimelineSeverity) -> Color {
         switch severity {
         case .critical: return AetowerDesign.Status.error
@@ -880,12 +870,8 @@ package struct AIAgentsView: View {
         return AetowerDesign.Status.success
     }
 
-    private func sessionComponent(for entity: EntitySnapshot) -> ComponentSnapshot? {
-        entity.components.first { $0.adapterContext?.kind == .chau7Session }
-    }
-
     private func dataBadges(for entity: EntitySnapshot) -> [DataBadge] {
-        let sessionLinked = sessionComponent(for: entity)?.adapterContext?.sessionId != nil
+        let sessionLinked = agentSessionComponent(for: entity)?.adapterContext?.sessionId != nil
         let projectLinked = agentProjectContext(for: entity) != nil
         let gpuEstimated = entity.metrics.estimatedGpuPercent > 0
 
@@ -925,7 +911,7 @@ package struct AIAgentsView: View {
     }
 
     private func chau7SessionInfo(for entity: EntitySnapshot) -> Chau7SessionInfo? {
-        guard let component = sessionComponent(for: entity) else {
+        guard let component = agentSessionComponent(for: entity) else {
             return nil
         }
         return Chau7SessionInfo(
@@ -944,10 +930,10 @@ package struct AIAgentsView: View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
             HStack(spacing: AetowerDesign.Spacing.xs) {
                 if let status = info.status, !status.isEmpty {
-                    agentStateBadge(status.replacingOccurrences(of: "-", with: " ").capitalized, color: statusTone(status))
+                    agentStateBadge(status.replacingOccurrences(of: "-", with: " ").capitalized, color: agentStatusTone(status))
                 }
                 if let sessionId = info.sessionId, !sessionId.isEmpty {
-                    agentStateBadge("Session \(shortSessionId(sessionId))", color: AetowerDesign.Status.ready)
+                    agentStateBadge("Session \(agentShortSessionId(sessionId))", color: AetowerDesign.Status.ready)
                 }
                 if entity.badges.contains("cto-active") {
                     agentStateBadge("CTO active", color: AetowerDesign.Status.ready)
@@ -1166,7 +1152,7 @@ package struct AIAgentsView: View {
             return ApprovalItem(
                 entityId: entity.entityId,
                 displayName: entity.displayName,
-                sessionId: sessionComponent(for: entity)?.adapterContext?.sessionId,
+                sessionId: agentSessionComponent(for: entity)?.adapterContext?.sessionId,
                 workspace: agentProjectContext(for: entity),
                 detail: detail,
                 impact: impactSummary(for: entity)
@@ -1189,7 +1175,7 @@ package struct AIAgentsView: View {
             return DelegationItem(
                 entityId: entity.entityId,
                 displayName: entity.displayName,
-                sessionId: sessionComponent(for: entity)?.adapterContext?.sessionId,
+                sessionId: agentSessionComponent(for: entity)?.adapterContext?.sessionId,
                 workspace: agentProjectContext(for: entity),
                 childSessionCount: childCount,
                 detail: detail,
@@ -1311,24 +1297,6 @@ package struct AIAgentsView: View {
         )
     }
 
-    private func shortSessionId(_ sessionId: String) -> String {
-        if sessionId.count <= 10 {
-            return sessionId
-        }
-        return String(sessionId.prefix(8))
-    }
-
-    private func statusTone(_ status: String) -> Color {
-        let normalized = status.localizedLowercase
-        if normalized.contains("approval") || normalized.contains("error") {
-            return AetowerDesign.Status.warning
-        }
-        if normalized.contains("idle") || normalized.contains("finished") || normalized.contains("prompt") {
-            return AetowerDesign.Status.success
-        }
-        return AetowerDesign.Status.ready
-    }
-
     /// Cached regex — NSRegularExpression is expensive to compile and
     /// was previously allocated on every call to this function.
     private static let childSessionRegex: NSRegularExpression? =
@@ -1388,15 +1356,6 @@ package struct AIAgentsView: View {
             return String(format: "%.1fk tok", Double(tokens) / 1000)
         }
         return "\(tokens) tok"
-    }
-
-    private func shortenPath(_ path: String) -> String {
-        if let home = FileManager.default.homeDirectoryForCurrentUser.path
-            .removingPercentEncoding,
-           path.hasPrefix(home) {
-            return "~" + path.dropFirst(home.count)
-        }
-        return path
     }
 
     private func formatTimestamp(_ millis: UInt64) -> String {

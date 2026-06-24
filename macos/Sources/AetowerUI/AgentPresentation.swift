@@ -32,6 +32,47 @@ func agentSessionComponent(for entity: EntitySnapshot) -> ComponentSnapshot? {
     entity.components.first { $0.adapterContext?.kind == .chau7Session }
 }
 
+func agentShortSessionId(_ sessionId: String) -> String {
+    if sessionId.count <= 10 {
+        return sessionId
+    }
+    return String(sessionId.prefix(8))
+}
+
+func agentStatusTone(_ status: String) -> Color {
+    let normalized = status.localizedLowercase
+    if normalized.contains("approval") || normalized.contains("error") {
+        return AetowerDesign.Status.warning
+    }
+    if normalized.contains("idle") || normalized.contains("finished") || normalized.contains("prompt") {
+        return AetowerDesign.Status.success
+    }
+    return AetowerDesign.Status.ready
+}
+
+func agentShortenPath(_ path: String) -> String {
+    if let home = FileManager.default.homeDirectoryForCurrentUser.path.removingPercentEncoding,
+       path.hasPrefix(home)
+    {
+        return "~" + path.dropFirst(home.count)
+    }
+    return path
+}
+
+func agentMetricPill(_ label: String, color: Color) -> some View {
+    Text(label)
+        .font(.caption)
+        .fontWeight(.medium)
+        .foregroundStyle(color)
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+        .padding(.vertical, AetowerDesign.Spacing.xxs)
+        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
+}
+
+func agentMetricPill(label: String, color: Color) -> some View {
+    agentMetricPill(label, color: color)
+}
+
 private func agentRuntimeBadgeIDs(for entity: EntitySnapshot) -> [String] {
     var ids: [String] = []
     var seen = Set<String>()
