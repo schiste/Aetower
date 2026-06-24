@@ -50,7 +50,6 @@ dependencies = [
  "aetower-sensors",
  "aetower-telemetry",
  "aetower-time",
- "anyhow",
  "dirs",
  "parking_lot",
  "serde",
@@ -129,7 +128,6 @@ version = "0.1.0"
 dependencies = [
  "aetower-diagnostics",
  "aetower-model",
- "aetower-persistence",
  "aetower-policy",
  "dirs",
  "libc",
@@ -179,9 +177,7 @@ name = "aetower-reputation"
 version = "0.1.0"
 dependencies = [
  "aetower-model",
- "aetower-time",
  "reqwest",
- "serde",
  "serde_json",
  "sha2",
 ]

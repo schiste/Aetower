@@ -19,7 +19,6 @@ aetower-reputation = { path = "../aetower-reputation" }
 aetower-regression = { path = "../aetower-regression" }
 aetower-telemetry = { path = "../aetower-telemetry" }
 aetower-time = { path = "../aetower-time" }
-anyhow.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true

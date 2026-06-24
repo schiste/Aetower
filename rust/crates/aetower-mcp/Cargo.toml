@@ -9,7 +9,6 @@ name = "aetower_mcp"
 
 [dependencies]
 aetower-diagnostics = { path = "../aetower-diagnostics" }
-aetower-persistence = { path = "../aetower-persistence" }
 aetower-model = { path = "../aetower-model" }
 aetower-policy = { path = "../aetower-policy" }
 dirs = "5"
