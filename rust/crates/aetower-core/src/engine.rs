@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -165,7 +165,7 @@ impl RuntimeCollectionConfig {
 
 struct EngineState {
     sequence: u64,
-    latest_snapshot: SystemSnapshot,
+    latest_snapshot: Arc<SystemSnapshot>,
     capabilities: BTreeMap<CapabilityKind, CapabilitySnapshot>,
     frontmost_app_state: Option<FrontmostAppState>,
     history: History,
@@ -251,7 +251,7 @@ struct UnifiedLogEntry {
 impl EngineState {
     fn publish_mutation(&mut self) {
         self.sequence = self.sequence.saturating_add(1);
-        self.latest_snapshot.sequence = self.sequence;
+        Arc::make_mut(&mut self.latest_snapshot).sequence = self.sequence;
     }
 }
 
@@ -331,7 +331,7 @@ impl Engine {
         Self {
             state: Arc::new(Mutex::new(EngineState {
                 sequence: 0,
-                latest_snapshot: snapshot,
+                latest_snapshot: Arc::new(snapshot),
                 capabilities,
                 frontmost_app_state: None,
                 history: History::new(),
@@ -386,7 +386,7 @@ impl Engine {
                 BTreeMap::<&'static str, PersistedHostIncidentState>::new();
             let mut recently_reaped_mcp_helpers = BTreeMap::<u32, u64>::new();
             let mut mcp_helper_lifecycle = McpHelperLifecycleState::default();
-            let mut deferred_history_snapshot: Option<SystemSnapshot> = None;
+            let mut deferred_history_snapshot: Option<Arc<SystemSnapshot>> = None;
             let mut history_store_busy_since_millis: Option<u64> = None;
 
             while running.load(Ordering::SeqCst) {
@@ -410,11 +410,13 @@ impl Engine {
                 let collect_started = Instant::now();
                 let raw = collector.collect();
                 let collect_millis = collect_started.elapsed().as_secs_f64() * 1000.0;
+                let process_ids = process_id_set(&raw.processes);
                 let (mcp_helper_count, stale_mcp_helper_count, oldest_mcp_helper_age_millis) =
-                    summarize_mcp_helpers(&raw.processes, captured_at_millis);
+                    summarize_mcp_helpers(&raw.processes, captured_at_millis, &process_ids);
                 let reaped_mcp_helpers = reap_stale_mcp_helpers(
                     &raw.processes,
                     captured_at_millis,
+                    &process_ids,
                     &mut recently_reaped_mcp_helpers,
                 );
                 if reaped_mcp_helpers > 0 {
@@ -523,7 +525,6 @@ impl Engine {
                 let pipeline_output =
                     run_entity_pipeline(&raw.processes, &host, frontmost_app_state.as_ref());
                 let crate::pipeline::EntityPipelineOutput {
-                    identity: _identity,
                     mut entities,
                     timings: pipeline_timings,
                 } = pipeline_output;
@@ -626,7 +627,7 @@ impl Engine {
                     );
                 }
                 let chau7_sessions = adapters.chau7_session_summaries(&entities);
-                let latest_snapshot = SystemSnapshot {
+                let latest_snapshot = Arc::new(SystemSnapshot {
                     sequence,
                     captured_at_millis,
                     host,
@@ -637,23 +638,22 @@ impl Engine {
                     ai_repo_summaries: adapters.ai_repo_summaries(),
                     chau7_sessions,
                     thermal_forecast,
-                };
+                });
                 let entity_count = latest_snapshot.entities.len();
                 let target_tick =
                     runtime_config.target_tick(&latest_snapshot.host, &latest_snapshot.entities);
-                let snapshot_for_state = latest_snapshot.clone();
                 {
                     let mut guard = state.lock();
-                    guard.latest_snapshot = snapshot_for_state;
+                    guard.latest_snapshot = Arc::clone(&latest_snapshot);
                 }
                 emit_boot_session_observed(
                     &diagnostics,
-                    &latest_snapshot,
+                    latest_snapshot.as_ref(),
                     &mut last_boot_session_key,
                 );
                 emit_host_incident_snapshots(
                     &diagnostics,
-                    &latest_snapshot,
+                    latest_snapshot.as_ref(),
                     &mut host_incident_state,
                     Some(&history_maintenance_wake_clone),
                 );
@@ -671,18 +671,18 @@ impl Engine {
                             if let Some(deferred_snapshot) = deferred_history_snapshot.take() {
                                 deferred_history_age_millis = captured_at_millis
                                     .saturating_sub(deferred_snapshot.captured_at_millis);
-                                store.store_immediately(&deferred_snapshot);
+                                store.store_immediately(deferred_snapshot.as_ref());
                                 deferred_history_recovered = true;
                                 history_store_busy_since_millis = None;
                             }
-                            store.maybe_store(&latest_snapshot);
+                            store.maybe_store(latest_snapshot.as_ref());
                             store.pending_writes()
                         } else {
                             0
                         }
                     } else {
                         history_store_busy = true;
-                        deferred_history_snapshot = Some(latest_snapshot.clone());
+                        deferred_history_snapshot = Some(Arc::clone(&latest_snapshot));
                         history_store_busy_since_millis.get_or_insert(captured_at_millis);
                         u64::from(deferred_history_snapshot.is_some())
                     };
@@ -1084,11 +1084,11 @@ impl Engine {
                     let (snapshot, lag_metrics) = {
                         let guard = state.lock();
                         (
-                            guard.latest_snapshot.clone(),
+                            Arc::clone(&guard.latest_snapshot),
                             guard.runtime_lag_metrics.clone(),
                         )
                     };
-                    let _ = telemetry.lock().export(&snapshot, &lag_metrics);
+                    let _ = telemetry.lock().export(snapshot.as_ref(), &lag_metrics);
                 }
 
                 let sleep_for = if enabled {
@@ -1316,12 +1316,13 @@ impl Engine {
     }
 
     pub fn latest_snapshot(&self) -> SystemSnapshot {
-        self.state.lock().latest_snapshot.clone()
+        self.state.lock().latest_snapshot.as_ref().clone()
     }
 
     pub fn latest_snapshot_if_newer(&self, last_sequence: u64) -> Option<SystemSnapshot> {
         let guard = self.state.lock();
-        (guard.latest_snapshot.sequence > last_sequence).then(|| guard.latest_snapshot.clone())
+        (guard.latest_snapshot.sequence > last_sequence)
+            .then(|| guard.latest_snapshot.as_ref().clone())
     }
 
     pub fn latest_sequence(&self) -> u64 {
@@ -1436,7 +1437,8 @@ impl Engine {
                 capability.detail = detail;
             }
         }
-        guard.latest_snapshot.capabilities = guard.capabilities.values().cloned().collect();
+        let capabilities = guard.capabilities.values().cloned().collect();
+        Arc::make_mut(&mut guard.latest_snapshot).capabilities = capabilities;
         guard.publish_mutation();
     }
 
@@ -1586,11 +1588,13 @@ impl Engine {
         let (snapshot, lag_metrics) = {
             let guard = self.state.lock();
             (
-                guard.latest_snapshot.clone(),
+                Arc::clone(&guard.latest_snapshot),
                 guard.runtime_lag_metrics.clone(),
             )
         };
-        self.telemetry.lock().verify_export(&snapshot, &lag_metrics)
+        self.telemetry
+            .lock()
+            .verify_export(snapshot.as_ref(), &lag_metrics)
     }
 
     pub fn load_history_range(&self, start_millis: u64, end_millis: u64) -> Vec<SystemSnapshot> {
@@ -1682,7 +1686,8 @@ impl Engine {
             self.adapters
                 .capability_snapshot(kind, aet_time::now_millis()),
         );
-        guard.latest_snapshot.capabilities = guard.capabilities.values().cloned().collect();
+        let capabilities = guard.capabilities.values().cloned().collect();
+        Arc::make_mut(&mut guard.latest_snapshot).capabilities = capabilities;
         guard.publish_mutation();
     }
 }
@@ -1696,8 +1701,8 @@ impl Default for Engine {
 fn summarize_mcp_helpers(
     processes: &[crate::collector::RawProcessSample],
     captured_at_millis: u64,
+    process_ids: &BTreeSet<u32>,
 ) -> (u32, u32, u64) {
-    let process_ids = process_id_set(processes);
     let mut total = 0u32;
     let mut stale = 0u32;
     let mut oldest_age = 0u64;
@@ -1709,7 +1714,7 @@ fn summarize_mcp_helpers(
         total = total.saturating_add(1);
         let age = captured_at_millis.saturating_sub(process.start_time_millis);
         oldest_age = oldest_age.max(age);
-        if age >= MCP_HELPER_STALE_MILLIS && is_orphaned_process(process, &process_ids) {
+        if age >= MCP_HELPER_STALE_MILLIS && is_orphaned_process(process, process_ids) {
             stale = stale.saturating_add(1);
         }
     }
@@ -1777,12 +1782,12 @@ fn emit_mcp_helper_lifecycle(
 fn reap_stale_mcp_helpers(
     processes: &[crate::collector::RawProcessSample],
     captured_at_millis: u64,
+    process_ids: &BTreeSet<u32>,
     recently_reaped: &mut BTreeMap<u32, u64>,
 ) -> u32 {
     recently_reaped.retain(|_, last_attempt| {
         captured_at_millis.saturating_sub(*last_attempt) < MCP_HELPER_REAP_RETRY_MILLIS
     });
-    let process_ids = process_id_set(processes);
     let mut reaped = 0u32;
 
     for process in processes {
@@ -1790,7 +1795,7 @@ fn reap_stale_mcp_helpers(
             continue;
         }
         let age = captured_at_millis.saturating_sub(process.start_time_millis);
-        if age < MCP_HELPER_STALE_MILLIS || !is_orphaned_process(process, &process_ids) {
+        if age < MCP_HELPER_STALE_MILLIS || !is_orphaned_process(process, process_ids) {
             continue;
         }
         if recently_reaped.contains_key(&process.pid) {
@@ -1805,9 +1810,7 @@ fn reap_stale_mcp_helpers(
     reaped
 }
 
-fn process_id_set(
-    processes: &[crate::collector::RawProcessSample],
-) -> std::collections::BTreeSet<u32> {
+fn process_id_set(processes: &[crate::collector::RawProcessSample]) -> BTreeSet<u32> {
     processes.iter().map(|process| process.pid).collect()
 }
 
@@ -1821,7 +1824,7 @@ fn is_mcp_helper_process(process: &crate::collector::RawProcessSample) -> bool {
 
 fn is_orphaned_process(
     process: &crate::collector::RawProcessSample,
-    process_ids: &std::collections::BTreeSet<u32>,
+    process_ids: &BTreeSet<u32>,
 ) -> bool {
     match process.parent_pid {
         None => true,
@@ -2648,7 +2651,7 @@ mod tests {
     ) -> Arc<Mutex<EngineState>> {
         Arc::new(Mutex::new(EngineState {
             sequence: 0,
-            latest_snapshot: SystemSnapshot::default(),
+            latest_snapshot: Arc::new(SystemSnapshot::default()),
             capabilities: std::collections::BTreeMap::new(),
             frontmost_app_state: None,
             history: History::new(),
@@ -2996,7 +2999,8 @@ mod tests {
             sample(12, Some(1), 800_000, "aetower-mcp"),
             sample(13, Some(10), 1_000, "aetower-mcp"),
         ];
-        let (total, stale, oldest_age) = summarize_mcp_helpers(&processes, 1_000_000);
+        let process_ids = process_id_set(&processes);
+        let (total, stale, oldest_age) = summarize_mcp_helpers(&processes, 1_000_000, &process_ids);
         assert_eq!(total, 3);
         assert_eq!(stale, 1);
         assert_eq!(oldest_age, 999_000);

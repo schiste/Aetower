@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use aetower_model::{EntitySnapshot, FrontmostAppState, HostSnapshot};
 
-use crate::{attribution, collector::RawProcessSample, friction, identity, identity::IdentityMap};
+use crate::{attribution, collector::RawProcessSample, friction, identity};
 
 pub struct EntityPipelineTimings {
     pub identity_millis: f64,
@@ -11,7 +11,6 @@ pub struct EntityPipelineTimings {
 }
 
 pub struct EntityPipelineOutput {
-    pub identity: IdentityMap,
     pub entities: Vec<EntitySnapshot>,
     pub timings: EntityPipelineTimings,
 }
@@ -34,7 +33,6 @@ pub fn run_entity_pipeline(
     let friction_millis = elapsed_millis(friction_started_at);
 
     EntityPipelineOutput {
-        identity,
         entities,
         timings: EntityPipelineTimings {
             identity_millis,

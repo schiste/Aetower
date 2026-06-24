@@ -26,11 +26,6 @@ use serde_json::{Value, json};
 use tungstenite::{Message, connect};
 use url::Url;
 
-mod chau7_adapter;
-mod chromium_adapter;
-mod docker_adapter;
-mod endpoint_security_adapter;
-mod helper_adapter;
 mod registry;
 
 use registry::AdapterRegistry;
@@ -2028,14 +2023,6 @@ fn adapter_capability_snapshot(
         detail,
         last_updated_millis: status_millis,
     }
-}
-
-fn adapter_capability_health(
-    state: &Arc<Mutex<AdapterState>>,
-    kind: &CapabilityKind,
-) -> CapabilityHealth {
-    let guard = state.lock();
-    capability_health(&guard, kind, time::now_millis())
 }
 
 fn emit_adapter_refresh_event<F>(

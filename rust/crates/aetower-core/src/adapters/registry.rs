@@ -5,11 +5,73 @@ use parking_lot::Mutex;
 
 use crate::adapter_trait::Adapter;
 
-use super::{
-    AdapterState, chau7_adapter::Chau7Adapter, chromium_adapter::ChromiumAdapter,
-    docker_adapter::DockerAdapter, endpoint_security_adapter::EndpointSecurityAdapter,
-    helper_adapter::HelperAdapter,
-};
+use super::{AdapterState, adapter_capability_snapshot};
+
+type RefreshCacheFn = fn(&Arc<Mutex<AdapterState>>);
+
+struct AdapterDefinition {
+    name: &'static str,
+    capability_kind: CapabilityKind,
+    refresh_cache: RefreshCacheFn,
+}
+
+const ADAPTER_DEFINITIONS: &[AdapterDefinition] = &[
+    AdapterDefinition {
+        name: "Chromium",
+        capability_kind: CapabilityKind::ChromiumDebug,
+        refresh_cache: super::refresh_chromium_cache,
+    },
+    AdapterDefinition {
+        name: "Docker",
+        capability_kind: CapabilityKind::DockerSocket,
+        refresh_cache: super::refresh_docker_cache,
+    },
+    AdapterDefinition {
+        name: "Privileged Helper",
+        capability_kind: CapabilityKind::PrivilegedHelper,
+        refresh_cache: super::refresh_privileged_helper_cache,
+    },
+    AdapterDefinition {
+        name: "Endpoint Security",
+        capability_kind: CapabilityKind::EndpointSecurity,
+        refresh_cache: super::refresh_endpoint_security_cache,
+    },
+    AdapterDefinition {
+        name: "Chau7",
+        capability_kind: CapabilityKind::Chau7,
+        refresh_cache: super::refresh_chau7_cache,
+    },
+];
+
+struct GenericAdapter {
+    state: Arc<Mutex<AdapterState>>,
+    definition: &'static AdapterDefinition,
+}
+
+impl GenericAdapter {
+    fn new(state: Arc<Mutex<AdapterState>>, definition: &'static AdapterDefinition) -> Self {
+        debug_assert!(!definition.name.is_empty());
+        Self { state, definition }
+    }
+}
+
+impl Adapter for GenericAdapter {
+    fn capability_kind(&self) -> CapabilityKind {
+        self.definition.capability_kind.clone()
+    }
+
+    fn refresh_cache(&self) {
+        (self.definition.refresh_cache)(&self.state);
+    }
+
+    fn capability_snapshot(&self, last_updated_millis: u64) -> CapabilitySnapshot {
+        adapter_capability_snapshot(
+            &self.state,
+            self.definition.capability_kind.clone(),
+            last_updated_millis,
+        )
+    }
+}
 
 pub(super) struct AdapterRegistry {
     adapters: Vec<Arc<dyn Adapter>>,
@@ -18,13 +80,13 @@ pub(super) struct AdapterRegistry {
 impl AdapterRegistry {
     pub(super) fn new(state: Arc<Mutex<AdapterState>>) -> Self {
         Self {
-            adapters: vec![
-                Arc::new(ChromiumAdapter::new(Arc::clone(&state))),
-                Arc::new(DockerAdapter::new(Arc::clone(&state))),
-                Arc::new(HelperAdapter::new(Arc::clone(&state))),
-                Arc::new(EndpointSecurityAdapter::new(Arc::clone(&state))),
-                Arc::new(Chau7Adapter::new(state)),
-            ],
+            adapters: ADAPTER_DEFINITIONS
+                .iter()
+                .map(|definition| {
+                    Arc::new(GenericAdapter::new(Arc::clone(&state), definition))
+                        as Arc<dyn Adapter>
+                })
+                .collect(),
         }
     }
 
