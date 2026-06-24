@@ -69,6 +69,9 @@ pub fn build_entities(
             entry.active_window_title = frontmost.and_then(|state| state.window_title.clone());
         }
 
+        let ancestor_roles =
+            collect_ancestor_roles(process, &seed.entity_id, &process_index, identity);
+
         entry.components.push(ComponentSnapshot {
             kind: if seed.entity_kind == EntityKind::TerminalSession {
                 ComponentKind::Command
@@ -78,13 +81,13 @@ pub fn build_entities(
             title: process.name.clone(),
             detail: summarize_process(process),
             adapter_context: None,
-            provenance: component_provenance(process, &seed.entity_id, &process_index, identity),
+            provenance: component_provenance(process, &ancestor_roles),
             process_id: Some(process.pid),
             start_time_millis: process.start_time_millis,
             executable_path: process.exe.clone(),
             command_line: command_line(process),
             parent_summary: parent_summary(process, &process_index),
-            launched_by: launched_by(process, &seed.entity_id, &process_index, identity),
+            launched_by: launched_by(&ancestor_roles),
             cpu_percent: process.cpu_percent,
             memory_bytes: process.memory_bytes,
             memory_physical_footprint_bytes: process.memory_physical_footprint_bytes,
@@ -315,58 +318,78 @@ fn parent_summary(
     Some(format_process_label(parent))
 }
 
-fn launched_by(
+#[derive(Default)]
+struct AncestorRoles<'a> {
+    immediate_parent: Option<&'a RawProcessSample>,
+    top_same_entity_ancestor: Option<&'a RawProcessSample>,
+    shell_ancestor: Option<&'a RawProcessSample>,
+    login_item_ancestor: Option<&'a RawProcessSample>,
+    service_manager_ancestor: Option<&'a RawProcessSample>,
+}
+
+fn collect_ancestor_roles<'a>(
     process: &RawProcessSample,
     entity_id: &str,
-    process_index: &BTreeMap<u32, &RawProcessSample>,
+    process_index: &BTreeMap<u32, &'a RawProcessSample>,
     identity: &IdentityMap,
-) -> Option<String> {
+) -> AncestorRoles<'a> {
     let mut next_pid = process.parent_pid;
-    let mut immediate_parent: Option<&RawProcessSample> = None;
-    let mut top_same_entity_ancestor: Option<&RawProcessSample> = None;
-    let mut shell_ancestor: Option<&RawProcessSample> = None;
-    let mut login_item_ancestor: Option<&RawProcessSample> = None;
-    let mut service_manager_ancestor: Option<&RawProcessSample> = None;
+    let mut roles = AncestorRoles::default();
 
     while let Some(pid) = next_pid {
         let Some(ancestor) = process_index.get(&pid).copied() else {
             break;
         };
-        if immediate_parent.is_none() {
-            immediate_parent = Some(ancestor);
+        if roles.immediate_parent.is_none() {
+            roles.immediate_parent = Some(ancestor);
         }
         if identity
             .pid_to_entity
             .get(&ancestor.pid)
             .is_some_and(|ancestor_entity_id| ancestor_entity_id == entity_id)
         {
-            top_same_entity_ancestor = Some(ancestor);
+            roles.top_same_entity_ancestor = Some(ancestor);
         }
-        if shell_ancestor.is_none() && is_shell_process(ancestor) {
-            shell_ancestor = Some(ancestor);
+        if roles.shell_ancestor.is_none() && is_shell_process(ancestor) {
+            roles.shell_ancestor = Some(ancestor);
         }
-        if login_item_ancestor.is_none() && is_login_item_launcher(ancestor) {
-            login_item_ancestor = Some(ancestor);
+        if roles.login_item_ancestor.is_none() && is_login_item_launcher(ancestor) {
+            roles.login_item_ancestor = Some(ancestor);
         }
-        if service_manager_ancestor.is_none() && is_service_manager(ancestor) {
-            service_manager_ancestor = Some(ancestor);
+        if roles.service_manager_ancestor.is_none() && is_service_manager(ancestor) {
+            roles.service_manager_ancestor = Some(ancestor);
         }
         next_pid = ancestor.parent_pid;
     }
 
-    shell_ancestor
+    roles
+}
+
+fn launched_by(ancestor_roles: &AncestorRoles<'_>) -> Option<String> {
+    ancestor_roles
+        .shell_ancestor
         .map(format_shell_session_label)
-        .or_else(|| top_same_entity_ancestor.map(format_process_label))
-        .or_else(|| login_item_ancestor.map(format_login_item_label))
-        .or_else(|| service_manager_ancestor.map(format_service_manager_label))
-        .or_else(|| immediate_parent.map(format_process_label))
+        .or_else(|| {
+            ancestor_roles
+                .top_same_entity_ancestor
+                .map(format_process_label)
+        })
+        .or_else(|| {
+            ancestor_roles
+                .login_item_ancestor
+                .map(format_login_item_label)
+        })
+        .or_else(|| {
+            ancestor_roles
+                .service_manager_ancestor
+                .map(format_service_manager_label)
+        })
+        .or_else(|| ancestor_roles.immediate_parent.map(format_process_label))
 }
 
 fn component_provenance(
     process: &RawProcessSample,
-    entity_id: &str,
-    process_index: &BTreeMap<u32, &RawProcessSample>,
-    identity: &IdentityMap,
+    ancestor_roles: &AncestorRoles<'_>,
 ) -> Option<ProvenanceSnapshot> {
     if process
         .exe
@@ -381,61 +404,28 @@ fn component_provenance(
         ));
     }
 
-    let mut next_pid = process.parent_pid;
-    let mut top_same_entity_ancestor: Option<&RawProcessSample> = None;
-    let mut shell_ancestor: Option<&RawProcessSample> = None;
-    let mut login_item_ancestor: Option<&RawProcessSample> = None;
-    let mut service_manager_ancestor: Option<&RawProcessSample> = None;
-    let mut immediate_parent: Option<&RawProcessSample> = None;
-
-    while let Some(pid) = next_pid {
-        let Some(ancestor) = process_index.get(&pid).copied() else {
-            break;
-        };
-        if immediate_parent.is_none() {
-            immediate_parent = Some(ancestor);
-        }
-        if identity
-            .pid_to_entity
-            .get(&ancestor.pid)
-            .is_some_and(|ancestor_entity_id| ancestor_entity_id == entity_id)
-        {
-            top_same_entity_ancestor = Some(ancestor);
-        }
-        if shell_ancestor.is_none() && is_shell_process(ancestor) {
-            shell_ancestor = Some(ancestor);
-        }
-        if login_item_ancestor.is_none() && is_login_item_launcher(ancestor) {
-            login_item_ancestor = Some(ancestor);
-        }
-        if service_manager_ancestor.is_none() && is_service_manager(ancestor) {
-            service_manager_ancestor = Some(ancestor);
-        }
-        next_pid = ancestor.parent_pid;
-    }
-
-    if let Some(shell) = shell_ancestor {
+    if let Some(shell) = ancestor_roles.shell_ancestor {
         Some(provenance(
             ProvenanceKind::ShellSession,
             &format!("Shell session via {}", process_display_name(shell)),
             "shell lineage",
             AttributionConfidence::High,
         ))
-    } else if top_same_entity_ancestor.is_some() {
+    } else if ancestor_roles.top_same_entity_ancestor.is_some() {
         Some(provenance(
             ProvenanceKind::HelperTree,
             "App helper subprocess",
             "same-entity ancestor lineage",
             AttributionConfidence::Medium,
         ))
-    } else if let Some(login_item) = login_item_ancestor {
+    } else if let Some(login_item) = ancestor_roles.login_item_ancestor {
         Some(provenance(
             ProvenanceKind::LoginItem,
             &format!("Login item via {}", process_display_name(login_item)),
             "loginwindow/xpcproxy lineage",
             AttributionConfidence::Medium,
         ))
-    } else if service_manager_ancestor.is_some() {
+    } else if ancestor_roles.service_manager_ancestor.is_some() {
         Some(provenance(
             ProvenanceKind::ServiceManager,
             "launchd service manager",
@@ -443,7 +433,7 @@ fn component_provenance(
             AttributionConfidence::High,
         ))
     } else {
-        immediate_parent.map(|parent| {
+        ancestor_roles.immediate_parent.map(|parent| {
             provenance(
                 ProvenanceKind::ParentProcess,
                 &format!("Parent process {}", process_display_name(parent)),

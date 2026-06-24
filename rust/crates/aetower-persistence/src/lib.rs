@@ -14,7 +14,7 @@ use aetower_diagnostics::{
     DiagnosticsEvent, DiagnosticsLevel, DiagnosticsStore, DiagnosticsSubsystem,
 };
 use aetower_model::SystemSnapshot;
-use rusqlite::{Connection, OpenFlags, params};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
 const SNAPSHOT_FORMAT_VERSION: i64 = 2;
@@ -826,14 +826,6 @@ impl HistoryStore {
         self.maintain_storage_inner(aggressive, None)
     }
 
-    pub fn maintain_storage_cancellable(
-        &self,
-        aggressive: bool,
-        cancel: Arc<AtomicBool>,
-    ) -> Result<HistoryMaintenanceReport, String> {
-        self.maintain_storage_inner(aggressive, Some(&cancel))
-    }
-
     fn maintain_storage_inner(
         &self,
         aggressive: bool,
@@ -850,8 +842,9 @@ impl HistoryStore {
         if cancellation_requested(cancel) {
             return Ok(cancelled_maintenance_report(
                 started,
-                store_bytes_before,
-                wal_bytes_before,
+                (store_bytes_before, wal_bytes_before),
+                (store_bytes_before, wal_bytes_before),
+                false,
                 aggressive_reason,
             ));
         }
@@ -870,52 +863,37 @@ impl HistoryStore {
         )?;
         if checkpoint_cancelled {
             let (store_bytes_after, wal_bytes_after) = self.store_file_sizes();
-            return Ok(HistoryMaintenanceReport {
-                store_bytes_before,
-                wal_bytes_before,
-                store_bytes_after,
-                wal_bytes_after,
-                checkpointed: false,
-                vacuumed: false,
-                pruned_rows: 0,
+            return Ok(cancelled_maintenance_report(
+                started,
+                (store_bytes_before, wal_bytes_before),
+                (store_bytes_after, wal_bytes_after),
+                false,
                 aggressive_reason,
-                cancelled: true,
-                elapsed_millis: started.elapsed().as_millis() as u64,
-            });
+            ));
         }
         let mut vacuumed = false;
         if aggressive && self.should_vacuum()? {
             if cancellation_requested(cancel) {
                 let (store_bytes_after, wal_bytes_after) = self.store_file_sizes();
-                return Ok(HistoryMaintenanceReport {
-                    store_bytes_before,
-                    wal_bytes_before,
-                    store_bytes_after,
-                    wal_bytes_after,
-                    checkpointed: true,
-                    vacuumed: false,
-                    pruned_rows: 0,
+                return Ok(cancelled_maintenance_report(
+                    started,
+                    (store_bytes_before, wal_bytes_before),
+                    (store_bytes_after, wal_bytes_after),
+                    true,
                     aggressive_reason,
-                    cancelled: true,
-                    elapsed_millis: started.elapsed().as_millis() as u64,
-                });
+                ));
             }
             let vacuum_cancelled =
                 self.execute_batch_cancellable("VACUUM;", cancel, "vacuum history store")?;
             if vacuum_cancelled {
                 let (store_bytes_after, wal_bytes_after) = self.store_file_sizes();
-                return Ok(HistoryMaintenanceReport {
-                    store_bytes_before,
-                    wal_bytes_before,
-                    store_bytes_after,
-                    wal_bytes_after,
-                    checkpointed: true,
-                    vacuumed: false,
-                    pruned_rows: 0,
+                return Ok(cancelled_maintenance_report(
+                    started,
+                    (store_bytes_before, wal_bytes_before),
+                    (store_bytes_after, wal_bytes_after),
+                    true,
                     aggressive_reason,
-                    cancelled: true,
-                    elapsed_millis: started.elapsed().as_millis() as u64,
-                });
+                ));
             }
             vacuumed = true;
         }
@@ -983,8 +961,9 @@ impl HistoryStore {
         if cancellation_requested(cancel) {
             return Ok(cancelled_maintenance_report(
                 started,
-                store_bytes_before,
-                wal_bytes_before,
+                (store_bytes_before, wal_bytes_before),
+                (store_bytes_before, wal_bytes_before),
+                false,
                 None,
             ));
         }
@@ -1017,8 +996,9 @@ impl HistoryStore {
             if cancellation_requested(cancel) {
                 return Ok(cancelled_maintenance_report(
                     started,
-                    store_bytes_before,
-                    wal_bytes_before,
+                    (store_bytes_before, wal_bytes_before),
+                    (store_bytes_before, wal_bytes_before),
+                    false,
                     None,
                 ));
             }
@@ -1509,16 +1489,17 @@ fn file_modified_millis(path: &Path) -> Option<u64> {
 
 fn cancelled_maintenance_report(
     started: Instant,
-    store_bytes: u64,
-    wal_bytes: u64,
+    (store_bytes_before, wal_bytes_before): (u64, u64),
+    (store_bytes_after, wal_bytes_after): (u64, u64),
+    checkpointed: bool,
     aggressive_reason: Option<String>,
 ) -> HistoryMaintenanceReport {
     HistoryMaintenanceReport {
-        store_bytes_before: store_bytes,
-        wal_bytes_before: wal_bytes,
-        store_bytes_after: store_bytes,
-        wal_bytes_after: wal_bytes,
-        checkpointed: false,
+        store_bytes_before,
+        wal_bytes_before,
+        store_bytes_after,
+        wal_bytes_after,
+        checkpointed,
         vacuumed: false,
         pruned_rows: 0,
         aggressive_reason,
@@ -1570,118 +1551,6 @@ fn history_retention_maintenance_should_emit(
         || report.vacuumed
         || report.cancelled
         || report.aggressive_reason.is_some()
-}
-
-pub fn load_range_page_read_only(
-    path: &Path,
-    start_millis: u64,
-    end_millis: u64,
-    before_millis_exclusive: Option<u64>,
-    limit: u32,
-) -> Result<Vec<SystemSnapshot>, String> {
-    let conn = open_read_only_connection(path)?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT captured_at_millis, sequence, format_version, bincode_blob, json_blob FROM snapshots
-             WHERE captured_at_millis >= ?1
-               AND captured_at_millis <= ?2
-               AND (?3 IS NULL OR captured_at_millis < ?3)
-             ORDER BY captured_at_millis DESC
-             LIMIT ?4",
-        )
-        .map_err(|e| format!("prepare read-only history page: {e}"))?;
-
-    let rows = stmt
-        .query_map(
-            params![
-                start_millis as i64,
-                end_millis as i64,
-                before_millis_exclusive.map(|value| value as i64),
-                limit.max(1) as i64
-            ],
-            |row| {
-                let captured_at_millis: i64 = row.get(0)?;
-                let sequence: i64 = row.get(1)?;
-                let format_version: i64 = row.get(2)?;
-                let bincode_blob: Option<Vec<u8>> = row.get(3)?;
-                let json_blob: Option<String> = row.get(4)?;
-                Ok((
-                    captured_at_millis,
-                    sequence,
-                    format_version,
-                    bincode_blob,
-                    json_blob,
-                ))
-            },
-        )
-        .map_err(|e| format!("query read-only history page: {e}"))?;
-
-    let mut snapshots = Vec::new();
-    for row in rows {
-        let (captured_at_millis, sequence, format_version, bincode_blob, json_blob) =
-            row.map_err(|e| format!("read-only history row: {e}"))?;
-        let snapshot = decode_snapshot_record(
-            captured_at_millis as u64,
-            sequence as u64,
-            format_version,
-            bincode_blob.as_deref(),
-            json_blob.as_deref(),
-        )?;
-        snapshots.push(snapshot);
-    }
-    snapshots.reverse();
-    Ok(snapshots)
-}
-
-pub fn range_summary_read_only(
-    path: &Path,
-    start_millis: u64,
-    end_millis: u64,
-) -> Result<HistoryRangeSummary, String> {
-    let conn = open_read_only_connection(path)?;
-    let (range_count, oldest_millis, newest_millis): (u64, Option<u64>, Option<u64>) = conn
-        .query_row(
-            "SELECT COUNT(*), MIN(captured_at_millis), MAX(captured_at_millis)
-             FROM snapshots
-             WHERE captured_at_millis >= ?1 AND captured_at_millis <= ?2",
-            params![start_millis as i64, end_millis as i64],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)? as u64,
-                    row.get::<_, Option<i64>>(1)?.map(|value| value as u64),
-                    row.get::<_, Option<i64>>(2)?.map(|value| value as u64),
-                ))
-            },
-        )
-        .map_err(|e| format!("read-only range summary: {e}"))?;
-    let snapshot_count = conn
-        .query_row("SELECT COUNT(*) FROM snapshots", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .map(|count| count as u64)
-        .map_err(|e| format!("read-only snapshot count: {e}"))?;
-    let quarantine_count = conn
-        .query_row("SELECT COUNT(*) FROM snapshot_quarantine", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .map(|count| count as u64)
-        .map_err(|e| format!("read-only quarantine count: {e}"))?;
-    let store_bytes = fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
-    let wal_path = PathBuf::from(format!("{}-wal", path.display()));
-    let wal_bytes = fs::metadata(&wal_path).map(|meta| meta.len()).unwrap_or(0);
-
-    Ok(HistoryRangeSummary {
-        store_bytes,
-        wal_bytes,
-        snapshot_count,
-        quarantine_count,
-        range_count,
-        oldest_millis,
-        newest_millis,
-        pending_writes: 0,
-        store_modified_millis: file_modified_millis(path),
-        wal_modified_millis: file_modified_millis(&wal_path),
-    })
 }
 
 impl HistoryStore {
@@ -2009,30 +1878,6 @@ fn configure_connection(
         [],
     );
     Ok(migration)
-}
-
-fn open_read_only_connection(path: &Path) -> Result<Connection, String> {
-    Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|error| format!("open read-only {}: {error}", path.display()))
-}
-
-fn decode_snapshot_record(
-    captured_at_millis: u64,
-    sequence: u64,
-    format_version: i64,
-    bincode_blob: Option<&[u8]>,
-    json_blob: Option<&str>,
-) -> Result<SystemSnapshot, String> {
-    if let Some(blob) = bincode_blob {
-        return decode_snapshot_blob(blob, format_version);
-    }
-    if let Some(json) = json_blob {
-        return serde_json::from_str(json).map_err(|error| format!("json deserialize: {error}"));
-    }
-    Err(format!(
-        "snapshot {} at {} has no persisted payload",
-        sequence, captured_at_millis
-    ))
 }
 
 fn decode_snapshot_blob(blob: &[u8], format_version: i64) -> Result<SystemSnapshot, String> {

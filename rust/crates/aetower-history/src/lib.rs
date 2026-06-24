@@ -4,8 +4,7 @@ use aetower_model::{
     AlertLevel, AlertThreshold, EntitySnapshot, HostPressureBand, HostSnapshot, HostTrend,
     MetricTrend, Recommendation, RecommendationSeverity, ThermalForecast, ThermalState,
     ThresholdDirection, TimelineCategory, TimelineEvent, TimelineSeverity,
-    host_memory_pressure_score, host_pressure_band,
-    machine_friction_score as model_machine_friction_score,
+    host_memory_pressure_score, host_pressure_band, machine_friction_score,
 };
 
 pub struct History {
@@ -210,21 +209,6 @@ impl History {
         }
     }
 
-    /// Replace the active alert thresholds.
-    ///
-    /// Kept public so a future settings UI can wire user-customised
-    /// thresholds through the engine without having to rebuild the
-    /// history state. Calling this resets the "previous level" map so
-    /// the next tick re-emits any currently-active alert under the new
-    /// thresholds — this is the conservative choice because a user who
-    /// just tightened a threshold probably wants to see the alert fire
-    /// immediately rather than waiting for another transition.
-    pub fn set_sensor_alert_thresholds(&mut self, thresholds: Vec<AlertThreshold>) {
-        self.sensor_alert_thresholds = thresholds;
-        self.previous_sensor_alert_levels.clear();
-        self.last_sensor_reading_millis.clear();
-    }
-
     fn intern_entity_id(&mut self, entity_id: &str) -> u16 {
         if let Some(&idx) = self.entity_index.get(entity_id) {
             return idx;
@@ -238,11 +222,6 @@ impl History {
         }
         self.entity_reverse_index[idx as usize] = entity_id.to_owned();
         idx
-    }
-
-    /// Entity IDs currently blamed for thermal throttling.
-    pub fn thermal_contributors(&self) -> &[String] {
-        &self.thermal_contributors
     }
 
     pub fn update(
@@ -1752,10 +1731,6 @@ fn push_point<T>(series: &mut VecDeque<T>, value: T) {
     series.push_back(value);
 }
 
-fn machine_friction_score(host: &HostSnapshot) -> f32 {
-    model_machine_friction_score(host)
-}
-
 /// Z-score anomaly detection: returns true if `current` is more than 2
 /// standard deviations above the mean of `series`.  Requires at least 5
 /// samples to avoid false positives during warmup.
@@ -1914,10 +1889,9 @@ fn wakeup_band(wakeups_per_second: f32) -> WakeupBand {
 
 /// Default thresholds used when the history tracker is first constructed.
 ///
-/// These are the values Aetower ships with; a future settings UI can
-/// replace them via `History::set_sensor_alert_thresholds`. The numbers
-/// were chosen to match the conventional bands used by iStat Menus,
-/// Sensei, and Apple's own System Information:
+/// These are the values Aetower ships with. The numbers were chosen to
+/// match the conventional bands used by iStat Menus, Sensei, and Apple's
+/// own System Information:
 ///
 /// - **CPU temperature**: 90°C is where M-series SoCs start throttling
 ///   aggressively, and 100°C is the hard thermal cut-off. Anything

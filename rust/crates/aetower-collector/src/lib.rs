@@ -565,15 +565,6 @@ impl Collector {
             })
             .collect();
         let process_sampling_millis = process_sampling_started.elapsed().as_secs_f64() * 1000.0;
-        let self_process = all_processes
-            .iter()
-            .find(|process| process.pid == self.self_pid)
-            .cloned();
-        let processes = all_processes
-            .iter()
-            .filter(|process| process.pid != self.self_pid)
-            .cloned()
-            .collect::<Vec<_>>();
         self.previous_process_counters = next_process_counters;
 
         // Update CWD cache: insert fresh values, prune dead PIDs.
@@ -593,6 +584,10 @@ impl Collector {
                 }
             }
         }
+        let (self_processes, processes): (Vec<_>, Vec<_>) = all_processes
+            .into_iter()
+            .partition(|process| process.pid == self.self_pid);
+        let self_process = self_processes.into_iter().next();
 
         let post_process_started = std::time::Instant::now();
         // Per-process `disk_read_bytes` is the bytes moved during the last tick;

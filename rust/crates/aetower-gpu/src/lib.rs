@@ -80,6 +80,9 @@ mod platform {
                 merged.gpu_percent = merged.gpu_percent.max(sample.gpu_percent);
                 merged.ane_percent = merged.ane_percent.max(sample.ane_percent);
                 merged.gpu_memory_bytes = merged.gpu_memory_bytes.max(sample.gpu_memory_bytes);
+                if merged.gpu_temperature_celsius.is_none() {
+                    merged.gpu_temperature_celsius = sample.gpu_temperature_celsius;
+                }
                 found = true;
             }
             let _ = unsafe { IOObjectRelease(entry) };

@@ -180,8 +180,90 @@ fn is_browser_name(name: &str) -> bool {
 /// Names are matched case-sensitively against `RawProcessSample.name`
 /// which is derived from `sysinfo::Process::name()` — on macOS this
 /// is the binary file name, not the bundle display name.
+struct AiRuntime {
+    names: &'static [&'static str],
+    badge: &'static str,
+    display: &'static str,
+    is_model: bool,
+}
+
+const AI_RUNTIMES: &[AiRuntime] = &[
+    AiRuntime {
+        names: &["claude", "claude-code"],
+        badge: "claude",
+        display: "Claude Code",
+        is_model: false,
+    },
+    AiRuntime {
+        names: &["codex"],
+        badge: "codex",
+        display: "Codex",
+        is_model: false,
+    },
+    AiRuntime {
+        names: &["aider"],
+        badge: "aider",
+        display: "Aider",
+        is_model: false,
+    },
+    AiRuntime {
+        names: &["cursor-agent"],
+        badge: "cursor-agent",
+        display: "Cursor Agent",
+        is_model: false,
+    },
+    AiRuntime {
+        names: &["ollama", "ollama-runner", "ollama_llama_server"],
+        badge: "ollama",
+        display: "Ollama",
+        is_model: true,
+    },
+    AiRuntime {
+        names: &["mlx_lm", "mlx-lm-server", "mlx_lm.server"],
+        badge: "mlx-lm",
+        display: "MLX Language Model",
+        is_model: true,
+    },
+    AiRuntime {
+        names: &["llama-server", "llama-cli", "llama-bench"],
+        badge: "llama-cpp",
+        display: "llama.cpp",
+        is_model: true,
+    },
+    AiRuntime {
+        names: &["llamafile"],
+        badge: "llamafile",
+        display: "Llamafile",
+        is_model: true,
+    },
+    AiRuntime {
+        names: &["lm-studio", "lmstudio", "LM Studio"],
+        badge: "lm-studio",
+        display: "LM Studio",
+        is_model: true,
+    },
+    AiRuntime {
+        names: &["koboldcpp"],
+        badge: "koboldcpp",
+        display: "KoboldCpp",
+        is_model: true,
+    },
+    AiRuntime {
+        names: &["whisper", "whisper-server", "whisper-cpp"],
+        badge: "whisper",
+        display: "Whisper",
+        is_model: true,
+    },
+];
+
+fn ai_runtime(name: &str) -> Option<&'static AiRuntime> {
+    AI_RUNTIMES
+        .iter()
+        .find(|runtime| runtime.names.contains(&name))
+}
+
 fn is_ai_agent_exe(name: &str) -> bool {
-    ai_runtime_badge(name).is_some()
+    ai_runtime(name).is_some()
 }
 
 fn ai_runtime_badges(name: &str, lineage_badge: &str) -> Vec<String> {
@@ -196,63 +278,20 @@ fn ai_runtime_badges(name: &str, lineage_badge: &str) -> Vec<String> {
 }
 
 fn ai_runtime_badge(name: &str) -> Option<&'static str> {
-    match name {
-        // AI coding agents
-        "claude" | "claude-code" => Some("claude"),
-        "codex" => Some("codex"),
-        "aider" => Some("aider"),
-        "cursor-agent" => Some("cursor-agent"),
-        // Local LLM servers
-        "ollama" | "ollama-runner" | "ollama_llama_server" => Some("ollama"),
-        "mlx_lm" | "mlx-lm-server" | "mlx_lm.server" => Some("mlx-lm"),
-        "llama-server" | "llama-cli" | "llama-bench" => Some("llama-cpp"),
-        "llamafile" => Some("llamafile"),
-        "lm-studio" | "lmstudio" | "LM Studio" => Some("lm-studio"),
-        "koboldcpp" => Some("koboldcpp"),
-        // Local ML inference
-        "whisper" | "whisper-server" | "whisper-cpp" => Some("whisper"),
-        _ => None,
-    }
+    ai_runtime(name).map(|runtime| runtime.badge)
 }
 
 fn is_ai_model_exe(name: &str) -> bool {
-    matches!(
-        name,
-        "ollama"
-            | "ollama-runner"
-            | "ollama_llama_server"
-            | "mlx_lm"
-            | "mlx-lm-server"
-            | "mlx_lm.server"
-            | "llama-server"
-            | "llama-cli"
-            | "llama-bench"
-            | "llamafile"
-            | "lm-studio"
-            | "lmstudio"
-            | "LM Studio"
-            | "koboldcpp"
-            | "whisper"
-            | "whisper-server"
-            | "whisper-cpp"
-    )
+    ai_runtime(name)
+        .map(|runtime| runtime.is_model)
+        .unwrap_or(false)
 }
 
 fn ai_agent_display_name(process: &RawProcessSample) -> String {
-    match process.name.as_str() {
-        "claude" | "claude-code" => "Claude Code".to_owned(),
-        "codex" => "Codex".to_owned(),
-        "aider" => "Aider".to_owned(),
-        "cursor-agent" => "Cursor Agent".to_owned(),
-        "ollama" | "ollama-runner" | "ollama_llama_server" => "Ollama".to_owned(),
-        "mlx_lm" | "mlx-lm-server" | "mlx_lm.server" => "MLX Language Model".to_owned(),
-        "llama-server" | "llama-cli" | "llama-bench" => "llama.cpp".to_owned(),
-        "llamafile" => "Llamafile".to_owned(),
-        "lm-studio" | "lmstudio" | "LM Studio" => "LM Studio".to_owned(),
-        "koboldcpp" => "KoboldCpp".to_owned(),
-        "whisper" | "whisper-server" | "whisper-cpp" => "Whisper".to_owned(),
-        other => other.to_owned(),
-    }
+    ai_runtime(&process.name).map_or_else(
+        || process.name.clone(),
+        |runtime| runtime.display.to_owned(),
+    )
 }
 
 fn normalized_name(name: &str) -> String {

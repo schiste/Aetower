@@ -450,45 +450,6 @@ impl DiagnosticsStore {
     }
 }
 
-pub fn read_recent_persisted(
-    path: impl AsRef<Path>,
-    limit: usize,
-) -> io::Result<Vec<DiagnosticsEvent>> {
-    let file = File::open(path)?;
-    let mut retained = VecDeque::with_capacity(limit.max(1));
-    for line in BufReader::new(file).lines().map_while(Result::ok) {
-        let Ok(event) = serde_json::from_str::<DiagnosticsEvent>(&line) else {
-            continue;
-        };
-        if retained.len() >= limit.max(1) {
-            retained.pop_front();
-        }
-        retained.push_back(event);
-    }
-    Ok(retained.into_iter().collect())
-}
-
-pub fn query_persisted(
-    path: impl AsRef<Path>,
-    query: &DiagnosticsQuery,
-) -> io::Result<Vec<DiagnosticsEvent>> {
-    let events = read_recent_persisted(path, query.limit.max(1).saturating_mul(4))?;
-    let normalized_search = query
-        .search
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_ascii_lowercase());
-
-    let mut filtered = events
-        .into_iter()
-        .filter(|event| diagnostics_event_matches(event, query, normalized_search.as_deref()))
-        .collect::<Vec<_>>();
-    filtered.sort_by(|left, right| right.timestamp_millis.cmp(&left.timestamp_millis));
-    filtered.truncate(query.limit.max(1));
-    Ok(filtered)
-}
-
 impl Default for DiagnosticsStore {
     fn default() -> Self {
         Self::new(2_000)

@@ -158,6 +158,7 @@ impl TelemetryExporter {
         }
 
         let payload = build_resource_metrics(snapshot, lag_metrics);
+        let metric_count = count_metrics(&payload);
         let body =
             serde_json::to_vec(&payload).map_err(|error| format!("telemetry encode: {error}"))?;
         let result = self.post_json(&body);
@@ -182,7 +183,7 @@ impl TelemetryExporter {
                     .sequence(snapshot.sequence)
                     .field("endpoint", &self.config.endpoint)
                     .field("payload_bytes", body.len())
-                    .field("metric_count", count_metrics(snapshot))
+                    .field("metric_count", metric_count)
                     .field("latency_millis", latency_millis)
                     .build(),
                 ),
@@ -204,7 +205,7 @@ impl TelemetryExporter {
                     .sequence(snapshot.sequence)
                     .field("endpoint", &self.config.endpoint)
                     .field("payload_bytes", body.len())
-                    .field("metric_count", count_metrics(snapshot))
+                    .field("metric_count", metric_count)
                     .field("latency_millis", latency_millis)
                     .field("error", error)
                     .build(),
@@ -595,8 +596,13 @@ fn entity_metrics(entity: &EntitySnapshot, timestamp: &str) -> Vec<Metric> {
     ]
 }
 
-fn count_metrics(snapshot: &SystemSnapshot) -> usize {
-    26 + snapshot.entities.len() * 6
+fn count_metrics(payload: &ResourceMetricsEnvelope) -> usize {
+    payload
+        .resource_metrics
+        .iter()
+        .flat_map(|resource| resource.scope_metrics.iter())
+        .map(|scope| scope.metrics.len())
+        .sum()
 }
 
 fn host_double_metric(
@@ -703,7 +709,9 @@ impl TelemetryExporter {
 
 #[cfg(test)]
 mod tests {
-    use super::{OtlpConfig, TelemetryExporter, build_resource_metrics, metric_names};
+    use super::{
+        OtlpConfig, TelemetryExporter, build_resource_metrics, count_metrics, metric_names,
+    };
     use aetower_model::{
         EntitySnapshot, HostSnapshot, RuntimeLagMetrics, SystemSnapshot, ThermalState,
     };
@@ -749,11 +757,11 @@ mod tests {
             input_avg_latency_millis: 2.5,
             ..RuntimeLagMetrics::default()
         };
-        let payload =
-            serde_json::to_value(build_resource_metrics(&snapshot, &lag_metrics)).unwrap();
+        let payload = serde_json::to_value(build_resource_metrics(&snapshot, &lag_metrics))
+            .unwrap_or_else(|error| panic!("serialize resource metrics: {error}"));
         let metrics = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
             .as_array()
-            .unwrap();
+            .unwrap_or_else(|| panic!("resource metrics array should exist"));
         assert!(
             metrics
                 .iter()
@@ -774,6 +782,23 @@ mod tests {
                 .iter()
                 .any(|metric| metric["name"] == metric_names::HOST_INPUT_AVG_LATENCY)
         );
+    }
+
+    #[test]
+    fn metric_count_matches_emitted_host_and_entity_metrics() {
+        let snapshot = SystemSnapshot {
+            entities: vec![EntitySnapshot::default(), EntitySnapshot::default()],
+            ..SystemSnapshot::default()
+        };
+        let payload = build_resource_metrics(&snapshot, &RuntimeLagMetrics::default());
+        let serialized = serde_json::to_value(&payload)
+            .unwrap_or_else(|error| panic!("serialize resource metrics: {error}"));
+        let metrics = serialized["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
+            .as_array()
+            .unwrap_or_else(|| panic!("resource metrics array should exist"));
+
+        assert_eq!(count_metrics(&payload), metrics.len());
+        assert_eq!(count_metrics(&payload), 30 + snapshot.entities.len() * 6);
     }
 
     #[test]
