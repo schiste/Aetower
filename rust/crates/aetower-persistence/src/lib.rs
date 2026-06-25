@@ -40,6 +40,8 @@ const HISTORY_PERSISTED_HOST_VECTOR_LIMIT: usize = 16;
 const HISTORY_PERSISTED_AI_REPO_LIMIT: usize = 64;
 const HISTORY_PERSISTED_CHAU7_SESSION_LIMIT: usize = 64;
 const HISTORY_PERSISTED_CHAU7_LINK_LIMIT: usize = 16;
+const HISTORY_ROLLUP_BUCKETS_MILLIS: [u64; 2] = [60_000, 3_600_000];
+const HISTORY_ROLLUP_RETENTION_MILLIS: u64 = 30 * 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedSnapshotEnvelope {
@@ -1010,6 +1012,12 @@ impl HistoryStore {
                     policy.max_age_millis / 3_600_000
                 ));
             }
+            let rollup_cutoff = newest_millis.saturating_sub(HISTORY_ROLLUP_RETENTION_MILLIS);
+            let deleted_rollups = self.prune_rollups(rollup_cutoff)?;
+            if deleted_rollups > 0 {
+                pruned_rows = pruned_rows.saturating_add(deleted_rollups);
+                aggressive_reasons.push("rollup-retention".to_owned());
+            }
         }
 
         let threshold_aggressive = store_bytes_before >= policy.soft_max_store_bytes
@@ -1389,6 +1397,16 @@ impl HistoryStore {
             freelist_count,
         ))
     }
+
+    fn prune_rollups(&self, cutoff_millis: u64) -> Result<u64, String> {
+        self.conn
+            .execute(
+                "DELETE FROM history_rollups WHERE bucket_start_millis < ?1",
+                params![cutoff_millis as i64],
+            )
+            .map(|deleted| deleted as u64)
+            .map_err(|error| format!("prune history rollups: {error}"))
+    }
 }
 
 /// Minimum freelist size (in bytes) before VACUUM is worth running. Public so
@@ -1681,6 +1699,10 @@ impl HistoryWriter {
                                 conn.execute("DELETE FROM snapshot_quarantine", [])
                                     .map_err(|e| format!("clear quarantine: {e}"))
                             })
+                            .and_then(|_| {
+                                conn.execute("DELETE FROM history_rollups", [])
+                                    .map_err(|e| format!("clear rollups: {e}"))
+                            })
                             .map(|_| ());
                         pending_for_thread.store(0, Ordering::Relaxed);
                         let _ = reply.send(result);
@@ -1869,8 +1891,26 @@ fn configure_connection(
             json_blob TEXT,
             bincode_blob BLOB
         );
+        CREATE TABLE IF NOT EXISTS history_rollups (
+            bucket_millis INTEGER NOT NULL,
+            bucket_start_millis INTEGER NOT NULL,
+            bucket_end_millis INTEGER NOT NULL,
+            sample_count INTEGER NOT NULL,
+            sum_cpu_percent REAL NOT NULL,
+            sum_memory_used_bytes REAL NOT NULL,
+            sum_memory_pressure_score REAL NOT NULL,
+            sum_wakeups_per_second REAL NOT NULL,
+            sum_machine_friction REAL NOT NULL,
+            max_machine_friction REAL NOT NULL,
+            sum_gpu_percent REAL NOT NULL,
+            top_entity_json TEXT,
+            updated_at_millis INTEGER NOT NULL,
+            PRIMARY KEY (bucket_millis, bucket_start_millis)
+        );
         CREATE INDEX IF NOT EXISTS idx_snapshots_time
-            ON snapshots(captured_at_millis);",
+            ON snapshots(captured_at_millis);
+        CREATE INDEX IF NOT EXISTS idx_history_rollups_time
+            ON history_rollups(bucket_millis, bucket_start_millis);",
     )
     .map_err(|e| format!("schema: {e}"))?;
     let _ = conn.execute(
@@ -1896,7 +1936,8 @@ fn store_snapshot(conn: &Connection, snapshot: &SystemSnapshot) -> Result<usize,
         snapshot: compact_snapshot_for_history(snapshot),
     };
     let blob = bincode::serialize(&envelope).map_err(|e| format!("serialize snapshot: {e}"))?;
-    conn.execute(
+    let inserted = conn
+        .execute(
         "INSERT INTO snapshots (captured_at_millis, sequence, format_version, bincode_blob) VALUES (?1, ?2, ?3, ?4)",
         params![
             snapshot.captured_at_millis as i64,
@@ -1905,7 +1946,80 @@ fn store_snapshot(conn: &Connection, snapshot: &SystemSnapshot) -> Result<usize,
             blob
         ],
     )
-    .map_err(|e| format!("insert: {e}"))
+        .map_err(|e| format!("insert: {e}"))?;
+    upsert_history_rollups(conn, snapshot)?;
+    Ok(inserted)
+}
+
+fn upsert_history_rollups(conn: &Connection, snapshot: &SystemSnapshot) -> Result<(), String> {
+    let memory_pressure_score = aetower_model::host_memory_pressure_score(&snapshot.host);
+    let machine_friction = aetower_model::machine_friction_score(&snapshot.host);
+    let top_entity_json = snapshot
+        .entities
+        .first()
+        .map(|entity| {
+            serde_json::json!({
+                "entity_id": entity.entity_id.as_str(),
+                "display_name": entity.display_name.as_str(),
+                "friction": entity.friction.total_score,
+            })
+            .to_string()
+        })
+        .unwrap_or_default();
+
+    for bucket_millis in HISTORY_ROLLUP_BUCKETS_MILLIS {
+        let bucket_start_millis =
+            snapshot.captured_at_millis / bucket_millis.max(1) * bucket_millis.max(1);
+        let bucket_end_millis = bucket_start_millis.saturating_add(bucket_millis.saturating_sub(1));
+        conn.execute(
+            "INSERT INTO history_rollups (
+                bucket_millis,
+                bucket_start_millis,
+                bucket_end_millis,
+                sample_count,
+                sum_cpu_percent,
+                sum_memory_used_bytes,
+                sum_memory_pressure_score,
+                sum_wakeups_per_second,
+                sum_machine_friction,
+                max_machine_friction,
+                sum_gpu_percent,
+                top_entity_json,
+                updated_at_millis
+             ) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11)
+             ON CONFLICT(bucket_millis, bucket_start_millis) DO UPDATE SET
+                bucket_end_millis = MAX(history_rollups.bucket_end_millis, excluded.bucket_end_millis),
+                sample_count = history_rollups.sample_count + excluded.sample_count,
+                sum_cpu_percent = history_rollups.sum_cpu_percent + excluded.sum_cpu_percent,
+                sum_memory_used_bytes = history_rollups.sum_memory_used_bytes + excluded.sum_memory_used_bytes,
+                sum_memory_pressure_score = history_rollups.sum_memory_pressure_score + excluded.sum_memory_pressure_score,
+                sum_wakeups_per_second = history_rollups.sum_wakeups_per_second + excluded.sum_wakeups_per_second,
+                sum_machine_friction = history_rollups.sum_machine_friction + excluded.sum_machine_friction,
+                max_machine_friction = MAX(history_rollups.max_machine_friction, excluded.max_machine_friction),
+                sum_gpu_percent = history_rollups.sum_gpu_percent + excluded.sum_gpu_percent,
+                top_entity_json = CASE
+                    WHEN excluded.max_machine_friction >= history_rollups.max_machine_friction
+                    THEN excluded.top_entity_json
+                    ELSE history_rollups.top_entity_json
+                END,
+                updated_at_millis = excluded.updated_at_millis",
+            params![
+                bucket_millis as i64,
+                bucket_start_millis as i64,
+                bucket_end_millis as i64,
+                snapshot.host.cpu_percent as f64,
+                snapshot.host.memory_used_bytes as f64,
+                memory_pressure_score as f64,
+                snapshot.host.wakeups_per_second as f64,
+                machine_friction as f64,
+                snapshot.host.gpu_percent as f64,
+                top_entity_json,
+                aetower_time::now_millis() as i64,
+            ],
+        )
+        .map_err(|error| format!("upsert history rollup: {error}"))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2055,6 +2169,47 @@ mod tests {
             })
             .collect();
         snapshot
+    }
+
+    #[test]
+    fn persisted_snapshots_update_minute_and_hour_rollups() {
+        let path = temp_db();
+        let mut store = match HistoryStore::open(&path, 1) {
+            Ok(store) => store,
+            Err(error) => panic!("open: {error}"),
+        };
+        store.maybe_store(&material_snapshot(1, 61_000));
+        store.maybe_store(&material_snapshot(2, 62_000));
+        if let Err(error) = store.writer.flush() {
+            panic!("flush: {error}");
+        }
+
+        let rows = {
+            let mut stmt = match store.conn.prepare(
+                "SELECT bucket_millis, sample_count
+                 FROM history_rollups
+                 ORDER BY bucket_millis",
+            ) {
+                Ok(stmt) => stmt,
+                Err(error) => panic!("prepare: {error}"),
+            };
+            let mapped = match stmt
+                .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))
+            {
+                Ok(mapped) => mapped,
+                Err(error) => panic!("query: {error}"),
+            };
+            match mapped.collect::<Result<Vec<_>, _>>() {
+                Ok(rows) => rows,
+                Err(error) => panic!("rows: {error}"),
+            }
+        };
+
+        assert_eq!(rows, vec![(60_000, 2), (3_600_000, 2)]);
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
     }
 
     #[test]
