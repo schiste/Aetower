@@ -829,7 +829,7 @@ mod platform {
     use core_foundation_sys::{
         array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef},
         base::{CFRelease, CFTypeRef, kCFAllocatorDefault},
-        dictionary::{CFDictionaryGetValueIfPresent, CFDictionaryRef},
+        dictionary::{CFDictionaryGetValueIfPresent, CFDictionaryRef, CFMutableDictionaryRef},
         number::{
             CFBooleanGetValue, CFBooleanRef, CFNumberGetValue, CFNumberRef, kCFNumberSInt32Type,
         },
@@ -851,6 +851,12 @@ mod platform {
     const K_IOPS_DESIGN_CAPACITY_KEY: &str = "DesignCapacity";
     const K_IOPS_BATTERY_HEALTH_KEY: &str = "BatteryHealth";
     const K_IOPS_TEMPERATURE_KEY: &str = "Temperature";
+
+    type KernReturn = i32;
+    type IoObject = u32;
+    type IoIterator = IoObject;
+    type IoRegistryEntry = IoObject;
+    type MachPort = u32;
 
     #[link(name = "Foundation", kind = "framework")]
     unsafe extern "C" {}
@@ -893,6 +899,20 @@ mod platform {
             buffer: *mut c_void,
             buffersize: i32,
         ) -> i32;
+        fn IOServiceMatching(name: *const c_char) -> CFMutableDictionaryRef;
+        fn IOServiceGetMatchingServices(
+            master_port: MachPort,
+            matching: CFMutableDictionaryRef,
+            existing: *mut IoIterator,
+        ) -> KernReturn;
+        fn IOIteratorNext(iterator: IoIterator) -> IoObject;
+        fn IOObjectRelease(object: IoObject) -> KernReturn;
+        fn IORegistryEntryCreateCFProperties(
+            entry: IoRegistryEntry,
+            properties: *mut CFMutableDictionaryRef,
+            allocator: *const c_void,
+            options: u32,
+        ) -> KernReturn;
     }
 
     #[link(name = "objc")]
@@ -1965,35 +1985,80 @@ mod platform {
         None
     }
 
-    /// Sample battery levels for wireless input peripherals.
-    ///
-    /// macOS exposes these through the IORegistry under
-    /// `AppleDeviceManagementHIDEventService` — one node per connected HID
-    /// device with `BatteryPercent`, `Product`, `DeviceAddress`, and
-    /// `Transport` keys. We parse `ioreg` text output rather than linking
-    /// `IOBluetooth.framework` (deprecated on newer macOS) or opening a
-    /// raw IOKit iterator (requires more C FFI than the value justifies).
-    ///
-    /// Built-in trackpads/keyboards are filtered out via the
-    /// `Transport == "FIFO"` check — they have no battery and would clutter
-    /// the UI. Everything else with a `BatteryPercent` is included.
+    /// Sample battery levels for wireless input peripherals directly from
+    /// IORegistry. This replaces the old `ioreg` subprocess path on the
+    /// periodic collector tick while keeping the same source of truth:
+    /// `AppleDeviceManagementHIDEventService` entries with `BatteryPercent`,
+    /// `Product`, `DeviceAddress`, and `Transport` properties.
     pub fn sample_bluetooth_devices() -> Vec<BluetoothDeviceBattery> {
-        let Some(output) = run_ioreg(&["-r", "-l", "-c", "AppleDeviceManagementHIDEventService"])
-        else {
+        let Ok(class_name) = std::ffi::CString::new("AppleDeviceManagementHIDEventService") else {
             return Vec::new();
         };
-        parse_bluetooth_devices(&output)
+
+        let matching = unsafe { IOServiceMatching(class_name.as_ptr()) };
+        if matching.is_null() {
+            return Vec::new();
+        }
+
+        let mut iterator: IoIterator = 0;
+        let result = unsafe { IOServiceGetMatchingServices(0, matching, &mut iterator) };
+        if result != KERN_SUCCESS || iterator == 0 {
+            return Vec::new();
+        }
+
+        let mut devices = Vec::new();
+        loop {
+            let entry = unsafe { IOIteratorNext(iterator) };
+            if entry == 0 {
+                break;
+            }
+            if let Some(device) = read_bluetooth_device(entry) {
+                devices.push(device);
+            }
+            let _ = unsafe { IOObjectRelease(entry) };
+        }
+        let _ = unsafe { IOObjectRelease(iterator) };
+        devices
     }
 
-    fn run_ioreg(args: &[&str]) -> Option<String> {
-        let output = std::process::Command::new("/usr/sbin/ioreg")
-            .args(args)
-            .output()
-            .ok()?;
-        if !output.status.success() {
+    fn read_bluetooth_device(entry: IoRegistryEntry) -> Option<BluetoothDeviceBattery> {
+        let mut properties: CFMutableDictionaryRef = ptr::null_mut();
+        let result = unsafe {
+            IORegistryEntryCreateCFProperties(entry, &mut properties, kCFAllocatorDefault, 0)
+        };
+        if result != KERN_SUCCESS || properties.is_null() {
             return None;
         }
-        String::from_utf8(output.stdout).ok()
+
+        let device = bluetooth_device_from_properties(properties);
+        unsafe { CFRelease(properties.cast()) };
+        device
+    }
+
+    fn bluetooth_device_from_properties(
+        properties: CFDictionaryRef,
+    ) -> Option<BluetoothDeviceBattery> {
+        let transport = cf_dictionary_string(properties, "Transport");
+        if matches!(transport.as_deref(), Some("FIFO")) {
+            return None;
+        }
+
+        let battery_percent = cf_dictionary_i32(properties, "BatteryPercent")
+            .and_then(|value| u8::try_from(value).ok());
+        battery_percent?;
+
+        let name = cf_dictionary_string(properties, "Product")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "Unknown device".to_owned());
+        let address = cf_dictionary_string(properties, "DeviceAddress").unwrap_or_default();
+        let device_type = classify_bluetooth_device(&name);
+
+        Some(BluetoothDeviceBattery {
+            name,
+            address,
+            battery_percent,
+            device_type,
+        })
     }
 
     /// Split ioreg output into per-device blocks and extract the fields we care
@@ -2031,6 +2096,7 @@ mod platform {
     ///    that block's own `{` and `}` — anything after the closing brace
     ///    belongs to a sibling or child and is discarded by the block
     ///    boundary, even though the parser already isolates it.
+    #[cfg(test)]
     fn parse_bluetooth_devices(ioreg_output: &str) -> Vec<BluetoothDeviceBattery> {
         let mut devices = Vec::new();
         let mut current: Option<Vec<&str>> = None;
@@ -2063,6 +2129,7 @@ mod platform {
     /// level child looks like `  +-o Bar`, and deeper descendants add more
     /// indent. We only care about locating the marker itself, so we trim
     /// leading whitespace and the vertical-bar decoration before checking.
+    #[cfg(test)]
     fn is_ioreg_node_marker(line: &str) -> bool {
         let trimmed = line.trim_start_matches([' ', '\t', '|']);
         trimmed.starts_with("+-o ")
@@ -2076,6 +2143,7 @@ mod platform {
     /// it. Tracking this inner scope means even if a future ioreg format
     /// emits property-shaped lines outside the dict block, they cannot
     /// pollute the device record.
+    #[cfg(test)]
     fn parse_bluetooth_block(lines: &[&str]) -> Option<BluetoothDeviceBattery> {
         let mut name = None;
         let mut address = None;
@@ -2133,6 +2201,7 @@ mod platform {
         })
     }
 
+    #[cfg(test)]
     fn extract_string_property(line: &str, key: &str) -> Option<String> {
         let prefix = format!("\"{key}\" = \"");
         let rest = line.strip_prefix(&prefix)?;
@@ -2140,6 +2209,7 @@ mod platform {
         Some(rest[..end].to_owned())
     }
 
+    #[cfg(test)]
     fn extract_integer_property(line: &str, key: &str) -> Option<i64> {
         let prefix = format!("\"{key}\" = ");
         let rest = line.strip_prefix(&prefix)?;
