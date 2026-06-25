@@ -561,11 +561,13 @@ private struct MonitorMetricCardDescriptor: Identifiable {
     let id: MonitorMetricCardFocus
     let title: String
     let value: String
+    let fixedScaleValue: String?
     let subtitle: String
     let samples: [Double]
     let style: TrendMetricStyle
     let valueAppearance: TrendMetricValueAppearance
     let sampleValueFormatter: (Double) -> String
+    let fixedScaleSampleValueFormatter: ((Double) -> String)?
     /// Absolute top of the y-axis when the user enables fixed ring scaling.
     /// 0–100-native metrics use 100; unbounded ones reuse the danger
     /// thresholds in `MonitorRingCeiling`. A value of 0 means "no fixed
@@ -2122,69 +2124,81 @@ public struct MainListView: View {
         let gpuValue = usingGpuPercent
             ? String(format: "%.0f%%", host.gpuPercent)
             : formatBytes(host.gpuMemoryBytes)
+        let memoryPressure = hostMemoryPressureScore(host)
 
         let cards = [
             MonitorMetricCardDescriptor(
                 id: .friction,
                 title: "Friction",
                 value: String(format: "%.0f", frictionScore),
+                fixedScaleValue: String(format: "%.0f%%", frictionScore),
                 subtitle: "overall machine score · \(trendWindowLabel(sampleCount: frictionSamples.count))",
                 samples: frictionSamples,
                 style: .friction,
                 valueAppearance: monitorFrictionAppearance(frictionScore),
                 sampleValueFormatter: { String(format: "%.0f", $0) },
+                fixedScaleSampleValueFormatter: { String(format: "%.0f%%", $0) },
                 fixedCeiling: MonitorRingCeiling.percent
             ),
             MonitorMetricCardDescriptor(
                 id: .cpu,
                 title: "CPU",
                 value: String(format: "%.0f%%", host.cpuPercent),
+                fixedScaleValue: nil,
                 subtitle: "thermal \(thermalStateLabel(host.thermalState)) · \(trendWindowLabel(sampleCount: cpuSamples.count))",
                 samples: cpuSamples,
                 style: .cpu,
                 valueAppearance: monitorCPUAppearance(host),
                 sampleValueFormatter: { String(format: "%.0f%%", $0) },
+                fixedScaleSampleValueFormatter: nil,
                 fixedCeiling: MonitorRingCeiling.percent
             ),
             MonitorMetricCardDescriptor(
                 id: .memory,
                 title: "Memory",
                 value: formatBytes(host.memoryUsedBytes),
-                subtitle: "\(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap · pressure trend",
+                fixedScaleValue: String(format: "%.0f%%", memoryPressure),
+                subtitle: "\(formatBytes(host.memoryUsedBytes)) used · \(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap · pressure trend",
                 samples: memorySamples,
                 style: .memory,
                 valueAppearance: monitorMemoryAppearance(host),
                 // Samples are the 0–100 memory pressure score, not bytes — label
                 // the hover stats with /100 so they don't read as bytes/percent.
                 sampleValueFormatter: { String(format: "%.0f/100", $0) },
+                fixedScaleSampleValueFormatter: { String(format: "%.0f%%", $0) },
                 fixedCeiling: MonitorRingCeiling.percent
             ),
             MonitorMetricCardDescriptor(
                 id: .disk,
                 title: "Disk",
                 value: formatRate(host.diskReadBps + host.diskWriteBps),
+                fixedScaleValue: nil,
                 subtitle: "read + write · \(trendWindowLabel(sampleCount: diskSamples.count))",
                 samples: diskSamples,
                 style: .disk,
                 valueAppearance: monitorThroughputAppearance(host.diskReadBps + host.diskWriteBps, warning: 50 * 1_024 * 1_024, danger: 250 * 1_024 * 1_024),
                 sampleValueFormatter: { formatRate(UInt64(max($0, 0))) },
+                fixedScaleSampleValueFormatter: nil,
                 fixedCeiling: MonitorRingCeiling.diskBps
             ),
             MonitorMetricCardDescriptor(
                 id: .network,
                 title: "Network",
                 value: formatRate(host.networkReceiveBps + host.networkSendBps),
+                fixedScaleValue: nil,
                 subtitle: "send + receive · \(trendWindowLabel(sampleCount: networkSamples.count))",
                 samples: networkSamples,
                 style: .network,
                 valueAppearance: monitorThroughputAppearance(host.networkReceiveBps + host.networkSendBps, warning: 10 * 1_024 * 1_024, danger: 100 * 1_024 * 1_024),
                 sampleValueFormatter: { formatRate(UInt64(max($0, 0))) },
+                fixedScaleSampleValueFormatter: nil,
                 fixedCeiling: MonitorRingCeiling.networkBps
             ),
             MonitorMetricCardDescriptor(
                 id: .wakeups,
                 title: "Wakeups",
                 value: formatWakeups(host.wakeupsPerSecond),
+                fixedScaleValue: nil,
                 subtitle: hostWakeupBand(host.wakeupsPerSecond) == .severe
                     ? "wakeup storm band · \(trendWindowLabel(sampleCount: wakeupSamples.count))"
                     : "current host wakeup rate · \(trendWindowLabel(sampleCount: wakeupSamples.count))",
@@ -2192,12 +2206,14 @@ public struct MainListView: View {
                 style: .friction,
                 valueAppearance: monitorWakeupAppearance(host),
                 sampleValueFormatter: { formatWakeups(Float($0)) },
+                fixedScaleSampleValueFormatter: nil,
                 fixedCeiling: MonitorRingCeiling.wakeupsPerSecond
             ),
             MonitorMetricCardDescriptor(
                 id: .gpu,
                 title: "GPU",
                 value: gpuValue,
+                fixedScaleValue: usingGpuPercent ? String(format: "%.0f%%", host.gpuPercent) : nil,
                 subtitle: "\(hostGPUSummary(host)) · \(trendWindowLabel(sampleCount: gpuSamples.count))",
                 samples: gpuSamples,
                 style: .energy,
@@ -2205,6 +2221,9 @@ public struct MainListView: View {
                 sampleValueFormatter: usingGpuPercent
                     ? { String(format: "%.0f%%", $0) }
                     : { formatBytes(UInt64(max($0, 0))) },
+                fixedScaleSampleValueFormatter: usingGpuPercent
+                    ? { String(format: "%.0f%%", $0) }
+                    : nil,
                 // GPU % has a true 0–100 axis; the GPU-memory fallback has no
                 // fixed ceiling, so 0 keeps that case on relative scaling.
                 fixedCeiling: usingGpuPercent ? MonitorRingCeiling.percent : 0
@@ -2247,12 +2266,12 @@ public struct MainListView: View {
         let fixedCeiling = fixedScaling && card.fixedCeiling > 0 ? card.fixedCeiling : nil
         return TrendMetricCard(
             title: card.title,
-            value: card.value,
+            value: monitorMetricValue(card, fixedScaling: fixedScaling),
             subtitle: monitorMetricSubtitle(card, fixedScaling: fixedScaling),
             samples: card.samples,
             style: card.style,
             valueAppearance: card.valueAppearance,
-            sampleValueFormatter: card.sampleValueFormatter,
+            sampleValueFormatter: monitorMetricSampleFormatter(card, fixedScaling: fixedScaling),
             minHeight: minHeight,
             fixedCeiling: fixedCeiling
         )
@@ -2262,6 +2281,26 @@ public struct MainListView: View {
                 monitorMetricPinButton(card)
             }
         }
+    }
+
+    private func monitorMetricValue(
+        _ card: MonitorMetricCardDescriptor,
+        fixedScaling: Bool
+    ) -> String {
+        if fixedScaling, let fixedScaleValue = card.fixedScaleValue {
+            return fixedScaleValue
+        }
+        return card.value
+    }
+
+    private func monitorMetricSampleFormatter(
+        _ card: MonitorMetricCardDescriptor,
+        fixedScaling: Bool
+    ) -> (Double) -> String {
+        if fixedScaling, let fixedScaleSampleValueFormatter = card.fixedScaleSampleValueFormatter {
+            return fixedScaleSampleValueFormatter
+        }
+        return card.sampleValueFormatter
     }
 
     private func monitorMetricSubtitle(
