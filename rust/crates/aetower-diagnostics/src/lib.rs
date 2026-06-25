@@ -800,6 +800,7 @@ fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)>
         | "history-maintenance-deferred"
         | "history-maintenance-over-budget"
         | "history-maintenance-failed" => 15 * 60 * 1000,
+        "operator-safe-cadence-active" => 5 * 60 * 1000,
         "tick-over-budget" => 5 * 60 * 1000,
         "mcp-helper-lifecycle" => 60 * 1000,
         "mcp-helper-reaped" => 5 * 60 * 1000,

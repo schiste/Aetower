@@ -144,6 +144,9 @@ impl RuntimeCollectionConfig {
         if host.on_battery || host.low_power_mode {
             return self.low_power_tick;
         }
+        if host_pressure_safe_mode_reason(host).is_some() {
+            return self.low_power_tick;
+        }
         let has_anomaly = entities.iter().any(|entity| entity.anomaly_detected);
         let hot_entity = entities
             .first()
@@ -263,10 +266,6 @@ pub struct Engine {
     persistence: Arc<Mutex<Option<aetower_persistence::HistoryStore>>>,
     telemetry: Arc<Mutex<TelemetryExporter>>,
     history_maintenance_cancel: Arc<AtomicBool>,
-    // Set by `emit_host_incident_snapshots` when host memory pressure is
-    // critical. Causes the maintenance worker to skip its remaining sleep and
-    // run an immediate pruning pass instead of waiting for the next cycle.
-    history_maintenance_wake: Arc<AtomicBool>,
     system_marker_generation: Arc<AtomicU64>,
     diagnostics: DiagnosticsStore,
     running: Arc<AtomicBool>,
@@ -345,7 +344,6 @@ impl Engine {
             persistence: Arc::new(Mutex::new(persistence)),
             telemetry: Arc::new(Mutex::new(telemetry_exporter)),
             history_maintenance_cancel: Arc::new(AtomicBool::new(false)),
-            history_maintenance_wake: Arc::new(AtomicBool::new(false)),
             system_marker_generation: Arc::new(AtomicU64::new(0)),
             diagnostics,
             running: Arc::new(AtomicBool::new(false)),
@@ -370,7 +368,6 @@ impl Engine {
         let persistence = Arc::clone(&self.persistence);
         let running = Arc::clone(&self.running);
         let diagnostics = self.diagnostics.clone();
-        let history_maintenance_wake_clone = Arc::clone(&self.history_maintenance_wake);
         self.worker = Some(thread::spawn(move || {
             let mut collector = Collector::new();
             let mut gpu_sample = aetower_gpu::GpuSample::default();
@@ -644,6 +641,12 @@ impl Engine {
                 let entity_count = latest_snapshot.entities.len();
                 let target_tick =
                     runtime_config.target_tick(&latest_snapshot.host, &latest_snapshot.entities);
+                emit_operator_safe_cadence_if_needed(
+                    &diagnostics,
+                    latest_snapshot.as_ref(),
+                    target_tick,
+                    runtime_config.adaptive_cadence,
+                );
                 {
                     let mut guard = state.lock();
                     guard.latest_snapshot = Arc::clone(&latest_snapshot);
@@ -657,7 +660,6 @@ impl Engine {
                     &diagnostics,
                     latest_snapshot.as_ref(),
                     &mut host_incident_state,
-                    Some(&history_maintenance_wake_clone),
                 );
                 // Persist snapshot (best-effort, throttled by write_interval).
                 // This must stay outside `state.lock()`: persistence clones and
@@ -1107,13 +1109,8 @@ impl Engine {
         let diagnostics = self.diagnostics.clone();
         let running = Arc::clone(&self.running);
         let maintenance_cancel = Arc::clone(&self.history_maintenance_cancel);
-        let maintenance_wake = Arc::clone(&self.history_maintenance_wake);
         self.history_maintenance_worker = Some(thread::spawn(move || {
-            sleep_until_wake_or_stop(
-                &running,
-                &maintenance_wake,
-                HISTORY_MAINTENANCE_INITIAL_DELAY,
-            );
+            sleep_with_stop(&running, HISTORY_MAINTENANCE_INITIAL_DELAY);
             let mut last_busy_defer_log_millis = 0;
             while running.load(Ordering::SeqCst) {
                 if let Some(reason) = history_maintenance_busy_reason(&state) {
@@ -1137,11 +1134,7 @@ impl Engine {
                         );
                         last_busy_defer_log_millis = now;
                     }
-                    sleep_until_wake_or_stop(
-                        &running,
-                        &maintenance_wake,
-                        HISTORY_MAINTENANCE_BUSY_DEFER_INTERVAL,
-                    );
+                    sleep_with_stop(&running, HISTORY_MAINTENANCE_BUSY_DEFER_INTERVAL);
                     continue;
                 }
                 let started = Instant::now();
@@ -1211,7 +1204,7 @@ impl Engine {
                     }
                     None => {}
                 }
-                sleep_until_wake_or_stop(&running, &maintenance_wake, next_sleep);
+                sleep_with_stop(&running, next_sleep);
             }
         }));
 
@@ -1872,6 +1865,9 @@ fn history_maintenance_busy_reason(state: &Arc<Mutex<EngineState>>) -> Option<&'
     let Some(guard) = state.try_lock() else {
         return Some("state-lock-busy");
     };
+    if let Some(reason) = host_pressure_safe_mode_reason(&guard.latest_snapshot.host) {
+        return Some(reason);
+    }
     let metrics = &guard.runtime_lag_metrics;
     let now = aet_time::now_millis();
     if metrics.updated_at_millis == 0
@@ -2126,23 +2122,6 @@ fn sleep_with_stop(running: &AtomicBool, duration: Duration) {
     }
 }
 
-/// Variant of `sleep_with_stop` that also breaks early when the wake flag is
-/// set, and clears the flag on consumption. Used by the history maintenance
-/// worker so host-memory-pressure events can shortcut its scheduled sleep.
-fn sleep_until_wake_or_stop(running: &AtomicBool, wake: &AtomicBool, duration: Duration) {
-    let started_at = Instant::now();
-    while running.load(Ordering::SeqCst) && started_at.elapsed() < duration {
-        if wake.swap(false, Ordering::SeqCst) {
-            return;
-        }
-        let remaining = duration.saturating_sub(started_at.elapsed());
-        thread::sleep(remaining.min(Duration::from_millis(250)));
-    }
-    // Consume any wake signal that arrived during the natural sleep so the
-    // next cycle starts from a clean state.
-    wake.store(false, Ordering::SeqCst);
-}
-
 fn should_emit_runtime_heartbeat(last_heartbeat_millis: u64, captured_at_millis: u64) -> bool {
     last_heartbeat_millis == 0
         || captured_at_millis.saturating_sub(last_heartbeat_millis)
@@ -2195,7 +2174,6 @@ fn emit_host_incident_snapshots(
     diagnostics: &DiagnosticsStore,
     snapshot: &SystemSnapshot,
     state: &mut BTreeMap<&'static str, PersistedHostIncidentState>,
-    history_maintenance_wake: Option<&Arc<AtomicBool>>,
 ) {
     let incidents = collect_host_incidents(snapshot);
     let captured_at_millis = snapshot.captured_at_millis;
@@ -2204,18 +2182,6 @@ fn emit_host_incident_snapshots(
         .map(|incident| incident.key)
         .collect::<Vec<_>>();
     state.retain(|key, _| active_keys.iter().any(|active| active == key));
-
-    // If host memory pressure is critical, ask the history maintenance worker
-    // to wake early instead of waiting for its next scheduled cycle. Pruning
-    // history.db while the host is in critical pressure both relieves on-disk
-    // size and frees the compressed/cached pages backing past query results.
-    if let Some(wake) = history_maintenance_wake
-        && incidents.iter().any(|incident| {
-            incident.key == "memory-pressure" && incident.severity == DiagnosticsLevel::Error
-        })
-    {
-        wake.store(true, Ordering::SeqCst);
-    }
 
     for incident in incidents {
         let suppressed_count = match state.get_mut(incident.key) {
@@ -2293,11 +2259,7 @@ fn emit_host_incident_snapshots(
 fn collect_host_incidents(snapshot: &SystemSnapshot) -> Vec<HostIncidentSnapshot> {
     let mut incidents = Vec::new();
     let host = &snapshot.host;
-    let memory_ratio = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        host.memory_used_bytes as f64 / host.memory_total_bytes as f64
-    };
+    let memory_ratio = host_memory_pressure_ratio(host);
     let memory_severity = if memory_ratio >= MEMORY_PRESSURE_CRITICAL_RATIO
         || host.swap_used_bytes >= SWAP_CRITICAL_BYTES
         || host.compressed_memory_bytes >= COMPRESSED_MEMORY_CRITICAL_BYTES
@@ -2404,6 +2366,75 @@ fn collect_host_incidents(snapshot: &SystemSnapshot) -> Vec<HostIncidentSnapshot
     }
 
     incidents
+}
+
+fn emit_operator_safe_cadence_if_needed(
+    diagnostics: &DiagnosticsStore,
+    snapshot: &SystemSnapshot,
+    target_tick: Duration,
+    adaptive_cadence: bool,
+) {
+    if !adaptive_cadence {
+        return;
+    }
+    let Some(reason) = host_pressure_safe_mode_reason(&snapshot.host) else {
+        return;
+    };
+    diagnostics.emit(
+        DiagnosticsEvent::builder(
+            DiagnosticsLevel::Warn,
+            DiagnosticsSubsystem::Engine,
+            "operator-safe-cadence-active",
+            "Adaptive cadence widened while host pressure was elevated.",
+        )
+        .timestamp_millis(snapshot.captured_at_millis)
+        .sequence(snapshot.sequence)
+        .field("incident_key", "operator-safe-cadence")
+        .field("reason", reason)
+        .field("target_tick_millis", target_tick.as_millis())
+        .field(
+            "memory_used_ratio",
+            format!("{:.3}", host_memory_pressure_ratio(&snapshot.host)),
+        )
+        .field(
+            "compressed_memory_bytes",
+            snapshot.host.compressed_memory_bytes,
+        )
+        .field("swap_used_bytes", snapshot.host.swap_used_bytes)
+        .field(
+            "wakeups_per_second",
+            format!("{:.1}", snapshot.host.wakeups_per_second),
+        )
+        .field(
+            "thermal_state",
+            format!("{:?}", snapshot.host.thermal_state),
+        )
+        .build(),
+    );
+}
+
+fn host_pressure_safe_mode_reason(host: &HostSnapshot) -> Option<&'static str> {
+    if host_memory_pressure_ratio(host) >= MEMORY_PRESSURE_CRITICAL_RATIO
+        || host.swap_used_bytes >= SWAP_CRITICAL_BYTES
+        || host.compressed_memory_bytes >= COMPRESSED_MEMORY_CRITICAL_BYTES
+    {
+        return Some("host-memory-pressure");
+    }
+    if host.wakeups_per_second >= WAKEUPS_CRITICAL {
+        return Some("host-wakeup-storm");
+    }
+    if host.thermal_state >= ThermalState::Serious {
+        return Some("host-thermal-pressure");
+    }
+    None
+}
+
+fn host_memory_pressure_ratio(host: &HostSnapshot) -> f64 {
+    if host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        host.memory_used_bytes as f64 / host.memory_total_bytes as f64
+    }
 }
 
 fn last_persisted_system_marker_millis(diagnostics: &DiagnosticsStore) -> Option<u64> {
@@ -2734,6 +2765,39 @@ mod tests {
         assert_eq!(history_maintenance_busy_reason(&state), None);
     }
 
+    #[test]
+    fn history_maintenance_busy_reason_defers_on_host_pressure_even_with_stale_metrics() {
+        let state = engine_state_with_runtime_metrics(RuntimeLagMetrics {
+            updated_at_millis: aet_time::now_millis()
+                .saturating_sub(HISTORY_MAINTENANCE_RUNTIME_METRICS_STALE_MILLIS + 1),
+            ..RuntimeLagMetrics::default()
+        });
+        state.lock().latest_snapshot = Arc::new(SystemSnapshot {
+            host: HostSnapshot {
+                memory_used_bytes: 15 * 1024 * 1024 * 1024,
+                memory_total_bytes: 16 * 1024 * 1024 * 1024,
+                ..HostSnapshot::default()
+            },
+            ..SystemSnapshot::default()
+        });
+
+        assert_eq!(
+            history_maintenance_busy_reason(&state),
+            Some("host-memory-pressure")
+        );
+    }
+
+    #[test]
+    fn adaptive_cadence_uses_low_power_tick_under_host_pressure() {
+        let config = RuntimeCollectionConfig::default();
+        let host = HostSnapshot {
+            wakeups_per_second: WAKEUPS_CRITICAL,
+            ..HostSnapshot::default()
+        };
+
+        assert_eq!(config.target_tick(&host, &[]), config.low_power_tick);
+    }
+
     /// Pin the relationship between the engine-side retention policy and the
     /// persistence-side VACUUM gate. The original bug fixed in
     /// `perf(persistence): trigger VACUUM by absolute waste, not file size`
@@ -2995,13 +3059,13 @@ mod tests {
             ..SystemSnapshot::default()
         };
 
-        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state, None);
+        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state);
         snapshot.sequence = 2;
         snapshot.captured_at_millis = 2_000;
-        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state, None);
+        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state);
         snapshot.sequence = 3;
         snapshot.captured_at_millis = 61 * 60 * 1000;
-        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state, None);
+        emit_host_incident_snapshots(&diagnostics, &snapshot, &mut state);
 
         let events = diagnostics.recent(10);
         assert_eq!(events.len(), 2);
