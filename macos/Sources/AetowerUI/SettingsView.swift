@@ -14,10 +14,10 @@ public struct SettingsView: View {
     @State private var showAdvancedCollectionControls = false
     @State private var showResetLocalDataConfirmation = false
     @State private var editingAutomationRules: [AutomationRule] = []
-    @State private var hasLoadedVirusTotalKeyDraft = false
-    /// In-memory draft of the VirusTotal API key. Loaded from / written to the
-    /// Keychain — never persisted to UserDefaults.
-    @State private var virusTotalKeyDraft: String = ""
+    @State private var hasLoadedIntegrationDraft = false
+    /// In-memory integration draft. Values are written to SettingsStore/Keychain
+    /// only when the user applies them, so endpoint edits are genuinely staged.
+    @State private var integrationDraft = SettingsIntegrationDraft()
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
@@ -96,8 +96,8 @@ public struct SettingsView: View {
         let issues: [SettingsValidationIssue]
 
         @MainActor
-        init(settings: SettingsStore) {
-            self.issues = SettingsValidationIssue.integrationIssues(for: settings)
+        init(draft: SettingsIntegrationDraft) {
+            self.issues = SettingsValidationIssue.integrationIssues(for: draft)
         }
 
         var hasBlockingIssues: Bool {
@@ -126,7 +126,7 @@ public struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .onAppear {
-            loadVirusTotalKeyDraftIfNeeded()
+            loadIntegrationDraftIfNeeded()
             if appliedIntegrationSnapshot == nil {
                 appliedIntegrationSnapshot = currentIntegrationSnapshot
             }
@@ -262,7 +262,11 @@ public struct SettingsView: View {
     }
 
     private var currentIntegrationSnapshot: SettingsIntegrationSnapshot {
-        SettingsIntegrationSnapshot(settings, virusTotalKeyDraft: virusTotalKeyDraft)
+        SettingsIntegrationSnapshot(integrationDraft)
+    }
+
+    private var persistedIntegrationSnapshot: SettingsIntegrationSnapshot {
+        SettingsIntegrationSnapshot(settings)
     }
 
     private var setupChecklistProgress: (completed: Int, total: Int) {
@@ -633,8 +637,7 @@ public struct SettingsView: View {
 
     @ViewBuilder
     private var integrationsSection: some View {
-        @Bindable var settings = settings
-        let validation = IntegrationValidation(settings: settings)
+        let validation = IntegrationValidation(draft: integrationDraft)
         SettingsCard(
             title: "Integration endpoints",
             subtitle: "Endpoint fields are staged until you apply them.",
@@ -666,7 +669,7 @@ public struct SettingsView: View {
                 ) {
                     TextField(
                         "Browser debug endpoint",
-                        text: $settings.chromiumEndpoint,
+                        text: $integrationDraft.chromiumEndpoint,
                         prompt: Text("http://127.0.0.1:9222/json/list")
                     )
                     .textFieldStyle(.roundedBorder)
@@ -687,7 +690,7 @@ public struct SettingsView: View {
                 ) {
                     TextField(
                         "Docker socket",
-                        text: $settings.dockerSocketPath,
+                        text: $integrationDraft.dockerSocketPath,
                         prompt: Text(SettingsStore.defaultDockerSocketPath)
                     )
                     .textFieldStyle(.roundedBorder)
@@ -706,8 +709,8 @@ public struct SettingsView: View {
                     badge: "Advanced",
                     color: AetowerDesign.Status.warning
                 ) {
-                    Toggle("Enable signed helper", isOn: $settings.privilegedHelperEnabled)
-                    TextField("Signed helper path", text: $settings.privilegedHelperPath)
+                    Toggle("Enable signed helper", isOn: $integrationDraft.privilegedHelperEnabled)
+                    TextField("Signed helper path", text: $integrationDraft.privilegedHelperPath)
                         .textFieldStyle(.roundedBorder)
                         .aetowerUtilityTextInput()
                         .focused($focusedField, equals: .privilegedHelperPath)
@@ -726,7 +729,7 @@ public struct SettingsView: View {
                 ) {
                     TextField(
                         "Chau7 session socket",
-                        text: $settings.chau7Endpoint,
+                        text: $integrationDraft.chau7Endpoint,
                         prompt: Text("Leave blank for auto-detect")
                     )
                     .textFieldStyle(.roundedBorder)
@@ -745,10 +748,10 @@ public struct SettingsView: View {
                     badge: "OTLP/HTTP",
                     color: AetowerDesign.Status.ready
                 ) {
-                    Toggle("Enable observability export", isOn: $settings.telemetryEnabled)
+                    Toggle("Enable observability export", isOn: $integrationDraft.telemetryEnabled)
                     TextField(
                         "Metrics collector endpoint",
-                        text: $settings.telemetryEndpoint,
+                        text: $integrationDraft.telemetryEndpoint,
                         prompt: Text(SettingsStore.defaultTelemetryEndpoint)
                     )
                     .textFieldStyle(.roundedBorder)
@@ -758,7 +761,7 @@ public struct SettingsView: View {
 
                     intervalSlider(
                         title: "Metrics export interval",
-                        value: $settings.telemetryExportIntervalSeconds,
+                        value: $integrationDraft.telemetryExportIntervalSeconds,
                         range: 5...120,
                         step: 5,
                         format: "%.0fs",
@@ -774,15 +777,15 @@ public struct SettingsView: View {
                     badge: "VirusTotal",
                     color: AetowerDesign.Status.warning
                 ) {
-                    Toggle("Enable VirusTotal reputation", isOn: $settings.binaryReputationEnabled)
+                    Toggle("Enable VirusTotal reputation", isOn: $integrationDraft.binaryReputationEnabled)
                     SecureField(
                         "VirusTotal API key",
-                        text: $virusTotalKeyDraft,
+                        text: $integrationDraft.virusTotalKey,
                         prompt: Text("Paste your VirusTotal API key")
                     )
                     .textFieldStyle(.roundedBorder)
                     .aetowerUtilityTextInput()
-                    .disabled(!settings.binaryReputationEnabled)
+                    .disabled(!integrationDraft.binaryReputationEnabled)
                     Text(
                         "Only the file's SHA-256 is sent — never the file, its path, or any host context. Signed Apple/Developer-ID apps are never checked. The key is stored in your Keychain."
                     )
@@ -799,13 +802,16 @@ public struct SettingsView: View {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 Button("Apply integration settings") {
                     focusedField = nil
-                    applyIntegrationAndTelemetrySettings(settings)
+                    applyIntegrationAndTelemetrySettings()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(validation.hasBlockingIssues)
 
                 Button("Send test metrics") {
                     focusedField = nil
+                    applyIntegrationAndTelemetrySettings(
+                        confirmation: "Integration settings applied before telemetry verification."
+                    )
                     state.verifyTelemetryExport(settings)
                 }
                 .buttonStyle(.bordered)
@@ -824,7 +830,7 @@ public struct SettingsView: View {
             }
         }
         .onAppear {
-            loadVirusTotalKeyDraftIfNeeded()
+            loadIntegrationDraftIfNeeded()
         }
     }
 
@@ -1198,7 +1204,7 @@ public struct SettingsView: View {
                             Button(capabilityActionLabel(capability)) {
                                 state.performCapabilityAction(capability, settings: settings)
                                 if isAdapterCapability(capability.kind) {
-                                    appliedIntegrationSnapshot = currentIntegrationSnapshot
+                                    appliedIntegrationSnapshot = persistedIntegrationSnapshot
                                 }
                             }
                             .buttonStyle(.borderedProminent)
@@ -1217,8 +1223,8 @@ public struct SettingsView: View {
                     .foregroundStyle(.secondary)
                 Button("Reset to defaults", role: .destructive) {
                     settings.resetToDefaults()
-                    virusTotalKeyDraft = ""
-                    hasLoadedVirusTotalKeyDraft = true
+                    integrationDraft = SettingsIntegrationDraft(settings: settings, virusTotalKey: "")
+                    hasLoadedIntegrationDraft = true
                     state.applyNotificationSettings(settings)
                     state.applyRuntimeCollectionSettings(settings)
                     state.applyIntegrationSettings(settings)
@@ -1281,21 +1287,26 @@ public struct SettingsView: View {
         }
     }
 
-    private func applyIntegrationAndTelemetrySettings(_ settings: SettingsStore) {
+    private func applyIntegrationAndTelemetrySettings(
+        confirmation: String = "Integration and telemetry settings applied."
+    ) {
+        var normalizedDraft = integrationDraft
+        normalizedDraft.normalize()
+        integrationDraft = normalizedDraft
+        normalizedDraft.apply(to: settings)
         // Persist the VirusTotal key to the Keychain before applying — an empty
         // draft clears it. applyIntegrationSettings reads it back from there.
-        virusTotalKeyDraft = virusTotalKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        KeychainHelper.store(virusTotalKeyDraft, account: KeychainHelper.binaryReputationAccount)
+        KeychainHelper.store(normalizedDraft.virusTotalKey, account: KeychainHelper.binaryReputationAccount)
         state.applyIntegrationSettings(settings)
         appliedIntegrationSnapshot = currentIntegrationSnapshot
-        applyConfirmation = "Integration and telemetry settings applied."
+        applyConfirmation = confirmation
         clearApplyConfirmationLater()
     }
 
     private func resetLocalAetowerData() {
         settings.resetToDefaults()
-        virusTotalKeyDraft = ""
-        hasLoadedVirusTotalKeyDraft = true
+        integrationDraft = SettingsIntegrationDraft(settings: settings, virusTotalKey: "")
+        hasLoadedIntegrationDraft = true
         state.clearHistory()
         state.clearDiagnostics()
         state.applyNotificationSettings(settings)
@@ -1307,10 +1318,13 @@ public struct SettingsView: View {
         clearApplyConfirmationLater()
     }
 
-    private func loadVirusTotalKeyDraftIfNeeded() {
-        guard !hasLoadedVirusTotalKeyDraft else { return }
-        virusTotalKeyDraft = KeychainHelper.retrieve(account: KeychainHelper.binaryReputationAccount) ?? ""
-        hasLoadedVirusTotalKeyDraft = true
+    private func loadIntegrationDraftIfNeeded() {
+        guard !hasLoadedIntegrationDraft else { return }
+        integrationDraft = SettingsIntegrationDraft(
+            settings: settings,
+            virusTotalKey: KeychainHelper.retrieve(account: KeychainHelper.binaryReputationAccount) ?? ""
+        )
+        hasLoadedIntegrationDraft = true
     }
 
     private func isAdapterCapability(_ kind: CapabilityKind) -> Bool {
@@ -1440,6 +1454,62 @@ private struct SettingsStatus {
     }
 }
 
+private struct SettingsIntegrationDraft: Equatable {
+    var chromiumEndpoint = ""
+    var dockerSocketPath = SettingsStore.defaultDockerSocketPath
+    var privilegedHelperEnabled = false
+    var privilegedHelperPath = ""
+    var chau7Endpoint = ""
+    var telemetryEnabled = false
+    var telemetryEndpoint = SettingsStore.defaultTelemetryEndpoint
+    var telemetryExportIntervalSeconds = 30.0
+    var binaryReputationEnabled = false
+    var virusTotalKey = ""
+
+    @MainActor
+    init(settings: SettingsStore, virusTotalKey: String) {
+        chromiumEndpoint = settings.chromiumEndpoint
+        dockerSocketPath = settings.dockerSocketPath
+        privilegedHelperEnabled = settings.privilegedHelperEnabled
+        privilegedHelperPath = settings.privilegedHelperPath
+        chau7Endpoint = settings.chau7Endpoint
+        telemetryEnabled = settings.telemetryEnabled
+        telemetryEndpoint = settings.telemetryEndpoint
+        telemetryExportIntervalSeconds = settings.telemetryExportIntervalSeconds
+        binaryReputationEnabled = settings.binaryReputationEnabled
+        self.virusTotalKey = virusTotalKey
+        normalize()
+    }
+
+    init() {}
+
+    mutating func normalize() {
+        chromiumEndpoint = chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        dockerSocketPath = dockerSocketPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        privilegedHelperPath = privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        chau7Endpoint = chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        telemetryEndpoint = telemetryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        telemetryExportIntervalSeconds = max(
+            SettingsStore.minimumTelemetryExportIntervalSeconds,
+            telemetryExportIntervalSeconds
+        )
+        virusTotalKey = virusTotalKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @MainActor
+    func apply(to settings: SettingsStore) {
+        settings.chromiumEndpoint = chromiumEndpoint
+        settings.dockerSocketPath = dockerSocketPath
+        settings.privilegedHelperEnabled = privilegedHelperEnabled
+        settings.privilegedHelperPath = privilegedHelperPath
+        settings.chau7Endpoint = chau7Endpoint
+        settings.telemetryEnabled = telemetryEnabled
+        settings.telemetryEndpoint = telemetryEndpoint
+        settings.telemetryExportIntervalSeconds = telemetryExportIntervalSeconds
+        settings.binaryReputationEnabled = binaryReputationEnabled
+    }
+}
+
 private struct SettingsIntegrationSnapshot: Equatable {
     let chromiumEndpoint: String
     let dockerSocketPath: String
@@ -1469,6 +1539,21 @@ private struct SettingsIntegrationSnapshot: Equatable {
             ?? KeychainHelper.retrieve(account: KeychainHelper.binaryReputationAccount)
             ?? ""
         virusTotalKeySignature = Self.redactedKeySignature(key)
+    }
+
+    init(_ draft: SettingsIntegrationDraft) {
+        chromiumEndpoint = draft.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        dockerSocketPath = SettingsStore.normalizedDockerSocketPath(draft.dockerSocketPath)
+        privilegedHelperEnabled = draft.privilegedHelperEnabled
+        privilegedHelperPath = draft.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        chau7Endpoint = draft.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        telemetryEnabled = draft.telemetryEnabled
+        telemetryEndpoint = SettingsStore.normalizedTelemetryEndpoint(draft.telemetryEndpoint)
+        telemetryExportIntervalSeconds = SettingsStore.normalizedTelemetryExportIntervalSeconds(
+            draft.telemetryExportIntervalSeconds
+        )
+        binaryReputationEnabled = draft.binaryReputationEnabled
+        virusTotalKeySignature = Self.redactedKeySignature(draft.virusTotalKey)
     }
 
     private static func redactedKeySignature(_ value: String) -> String {
@@ -1620,10 +1705,10 @@ private struct SettingsValidationIssue: Identifiable {
     }
 
     @MainActor
-    static func integrationIssues(for settings: SettingsStore) -> [SettingsValidationIssue] {
+    static func integrationIssues(for draft: SettingsIntegrationDraft) -> [SettingsValidationIssue] {
         var issues: [SettingsValidationIssue] = []
 
-        let chromiumEndpoint = settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chromiumEndpoint = draft.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         if !chromiumEndpoint.isEmpty {
             if !isHTTPURL(chromiumEndpoint) {
                 issues.append(SettingsValidationIssue(
@@ -1641,7 +1726,7 @@ private struct SettingsValidationIssue: Identifiable {
             }
         }
 
-        let dockerSocketPath = settings.dockerSocketPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let dockerSocketPath = draft.dockerSocketPath.trimmingCharacters(in: .whitespacesAndNewlines)
         if !dockerSocketPath.isEmpty && !isAbsolutePath(dockerSocketPath) {
             issues.append(SettingsValidationIssue(
                 target: .dockerSocketPath,
@@ -1650,8 +1735,8 @@ private struct SettingsValidationIssue: Identifiable {
             ))
         }
 
-        let helperPath = settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if settings.privilegedHelperEnabled && helperPath.isEmpty {
+        let helperPath = draft.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if draft.privilegedHelperEnabled && helperPath.isEmpty {
             issues.append(SettingsValidationIssue(
                 target: .privilegedHelperPath,
                 severity: .error,
@@ -1665,7 +1750,7 @@ private struct SettingsValidationIssue: Identifiable {
             ))
         }
 
-        let chau7Endpoint = settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chau7Endpoint = draft.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         if !chau7Endpoint.isEmpty && !isAbsolutePath(chau7Endpoint) {
             issues.append(SettingsValidationIssue(
                 target: .chau7Endpoint,
@@ -1674,15 +1759,15 @@ private struct SettingsValidationIssue: Identifiable {
             ))
         }
 
-        let telemetryEndpoint = SettingsStore.normalizedTelemetryEndpoint(settings.telemetryEndpoint)
-        if settings.telemetryEnabled && !isHTTPURL(telemetryEndpoint) {
+        let telemetryEndpoint = SettingsStore.normalizedTelemetryEndpoint(draft.telemetryEndpoint)
+        if draft.telemetryEnabled && !isHTTPURL(telemetryEndpoint) {
             issues.append(SettingsValidationIssue(
                 target: .telemetryEndpoint,
                 severity: .error,
                 message: "Use a full http:// or https:// metrics collector endpoint."
             ))
-        } else if !settings.telemetryEnabled,
-                  !settings.telemetryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        } else if !draft.telemetryEnabled,
+                  !draft.telemetryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !isHTTPURL(telemetryEndpoint) {
             issues.append(SettingsValidationIssue(
                 target: .telemetryEndpoint,

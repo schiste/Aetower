@@ -292,11 +292,11 @@ public enum NotificationSnoozeStore {
 @MainActor
 @Observable
 public final class SettingsStore {
-    public static let defaultDockerSocketPath = "/var/run/docker.sock"
-    public static let defaultTelemetryEndpoint = "http://localhost:4318/v1/metrics"
-    public static let minimumTelemetryExportIntervalSeconds = 5.0
-    public static let minimumEngineTickSeconds = 0.5
-    public static let minimumGPUSampleIntervalSeconds = 5.0
+    public nonisolated static let defaultDockerSocketPath = "/var/run/docker.sock"
+    public nonisolated static let defaultTelemetryEndpoint = "http://localhost:4318/v1/metrics"
+    public nonisolated static let minimumTelemetryExportIntervalSeconds = 5.0
+    public nonisolated static let minimumEngineTickSeconds = 0.5
+    public nonisolated static let minimumGPUSampleIntervalSeconds = 5.0
 
     public var showMenuBarExtra: Bool {
         didSet { persist() }
@@ -565,21 +565,21 @@ public final class SettingsStore {
         return legacySensitive ? .full : .redacted
     }
 
-    public static func normalizedDockerSocketPath(_ value: String) -> String {
+    public nonisolated static func normalizedDockerSocketPath(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? defaultDockerSocketPath : trimmed
     }
 
-    public static func normalizedTelemetryEndpoint(_ value: String) -> String {
+    public nonisolated static func normalizedTelemetryEndpoint(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? defaultTelemetryEndpoint : trimmed
     }
 
-    public static func normalizedTelemetryExportIntervalSeconds(_ value: Double) -> UInt32 {
+    public nonisolated static func normalizedTelemetryExportIntervalSeconds(_ value: Double) -> UInt32 {
         UInt32(max(Int(minimumTelemetryExportIntervalSeconds), Int(value.rounded())))
     }
 
-    public static func milliseconds(from seconds: Double, minimumSeconds: Double) -> UInt64 {
+    public nonisolated static func milliseconds(from seconds: Double, minimumSeconds: Double) -> UInt64 {
         UInt64(max(Int((minimumSeconds * 1000).rounded()), Int((seconds * 1000).rounded())))
     }
 
