@@ -557,6 +557,109 @@ private struct GroupingCacheKey: Hashable {
     let filterSignature: String
 }
 
+private struct MonitorSectionCacheKey: Hashable {
+    let sequence: UInt64
+    let query: String
+    let originFilter: ProcessOriginFilter
+    let sortKey: SortKey
+    let filterSignature: String
+}
+
+private struct MonitorEntitySections {
+    let filteredEntities: [EntitySnapshot]
+    let burdenLeaderEntities: [EntitySnapshot]
+    let burdenLeaderEntityIDs: Set<String>
+    let allProcessEntities: [EntitySnapshot]
+    let flatVisibleEntityIDs: [String]
+    let burdenLeaderProcessCount: Int
+    let flatVisibleProcessCount: Int
+
+    static let empty = MonitorEntitySections(
+        filteredEntities: [],
+        burdenLeaderEntities: [],
+        burdenLeaderEntityIDs: [],
+        allProcessEntities: [],
+        flatVisibleEntityIDs: [],
+        burdenLeaderProcessCount: 0,
+        flatVisibleProcessCount: 0
+    )
+}
+
+@MainActor
+private final class MonitorEntitySectionCacheStore: ObservableObject {
+    private var key: MonitorSectionCacheKey?
+    private var sections = MonitorEntitySections.empty
+
+    func sections(
+        for key: MonitorSectionCacheKey,
+        snapshot: SystemSnapshot,
+        originCache: ProcessOriginSnapshotCache,
+        advancedFilterEntityIds: Set<String>?
+    ) -> MonitorEntitySections {
+        if self.key == key {
+            return sections
+        }
+
+        let advancedFilteredEntities: [EntitySnapshot]
+        if let advancedFilterEntityIds {
+            advancedFilteredEntities = snapshot.entities.filter {
+                advancedFilterEntityIds.contains($0.entityId)
+            }
+        } else {
+            advancedFilteredEntities = snapshot.entities
+        }
+
+        let originFilteredEntities: [EntitySnapshot]
+        if key.originFilter == .all {
+            originFilteredEntities = advancedFilteredEntities
+        } else {
+            originFilteredEntities = advancedFilteredEntities.filter {
+                originCache.summary(for: $0).matches(key.originFilter)
+            }
+        }
+
+        let filteredEntities = filterEntities(
+            originFilteredEntities,
+            query: key.query,
+            originCache: originCache
+        ).sorted {
+            compareEntities($0, $1, by: key.sortKey)
+        }
+        let eligibleByID = Dictionary(
+            uniqueKeysWithValues: filteredEntities.map { ($0.entityId, $0) }
+        )
+        var seenLeaderIDs = Set<String>()
+        let burdenLeaderEntities = buildBurdenLeaders(snapshot: snapshot)
+            .map(\.entityId)
+            .filter { seenLeaderIDs.insert($0).inserted }
+            .compactMap { eligibleByID[$0] }
+        let burdenLeaderEntityIDs = Set(burdenLeaderEntities.map(\.entityId))
+        let allProcessEntities = filteredEntities.filter {
+            !burdenLeaderEntityIDs.contains($0.entityId)
+        }
+        let burdenLeaderProcessCount = burdenLeaderEntities.reduce(0) { total, entity in
+            total + visibleProcessComponentCount(entity)
+        }
+        let flatVisibleProcessCount = burdenLeaderProcessCount + allProcessEntities.reduce(0) { total, entity in
+            total + visibleProcessComponentCount(entity)
+        }
+
+        let refreshed = MonitorEntitySections(
+            filteredEntities: filteredEntities,
+            burdenLeaderEntities: burdenLeaderEntities,
+            burdenLeaderEntityIDs: burdenLeaderEntityIDs,
+            allProcessEntities: allProcessEntities,
+            flatVisibleEntityIDs: burdenLeaderEntities.map(\.entityId)
+                + allProcessEntities.map(\.entityId),
+            burdenLeaderProcessCount: burdenLeaderProcessCount,
+            flatVisibleProcessCount: flatVisibleProcessCount
+        )
+        self.key = key
+        sections = refreshed
+        return refreshed
+    }
+}
+
 private struct MonitorMetricCardDescriptor: Identifiable {
     let id: MonitorMetricCardFocus
     let title: String
@@ -1246,6 +1349,7 @@ public struct MainListView: View {
     @State private var advancedFilterText = ""
     @State private var showAdvancedFilter = false
     @StateObject private var processOriginCacheStore = ProcessOriginSnapshotCacheStore()
+    @StateObject private var monitorSectionCacheStore = MonitorEntitySectionCacheStore()
     @FocusState private var searchFieldFocused: Bool
 
     public init(state: AppState, settings: SettingsStore) {
@@ -2411,30 +2515,19 @@ public struct MainListView: View {
     }
 
     private var filteredEntities: [EntitySnapshot] {
-        filterEntities(
-            applyOriginFilter(applyAdvancedFilter(state.snapshot.entities)),
-            query: normalizedSearchQuery,
-            originCache: processOriginCache
-        ).sorted {
-            compareEntities($0, $1, by: sortKey)
-        }
+        monitorSections.filteredEntities
     }
 
     private var burdenLeaderEntities: [EntitySnapshot] {
-        var seen = Set<String>()
-        let eligibleEntities = filteredEntities
-        let ids = buildBurdenLeaders(snapshot: state.snapshot).map(\.entityId).filter { seen.insert($0).inserted }
-        return ids.compactMap { id in
-            eligibleEntities.first(where: { $0.entityId == id })
-        }
+        monitorSections.burdenLeaderEntities
     }
 
     private var burdenLeaderEntityIDs: Set<String> {
-        Set(burdenLeaderEntities.map(\.entityId))
+        monitorSections.burdenLeaderEntityIDs
     }
 
     private var allProcessEntities: [EntitySnapshot] {
-        filteredEntities.filter { !burdenLeaderEntityIDs.contains($0.entityId) }
+        monitorSections.allProcessEntities
     }
 
     private var allProcessGroups: [EntityGroup] {
@@ -2499,30 +2592,34 @@ public struct MainListView: View {
     }
 
     private var visibleEntityIDs: [String] {
-        let burdenLeaderIDs = burdenLeaderEntities.map(\.entityId)
+        let sections = monitorSections
         if isGroupedMode {
-            return burdenLeaderIDs + allProcessGroups.map(\.root.entityId)
+            return sections.burdenLeaderEntities.map(\.entityId) + allProcessGroups.map(\.root.entityId)
         }
-        return burdenLeaderIDs + allProcessEntities.map(\.entityId)
+        return sections.flatVisibleEntityIDs
     }
 
     private var visibleProcessCount: Int {
+        let sections = monitorSections
         if isGroupedMode {
-            let burdenLeaderProcessCount = burdenLeaderEntities.reduce(0) { total, entity in
-                total + entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
-            }
-            return burdenLeaderProcessCount + allProcessGroups.reduce(0) { $0 + $1.processCount }
+            return sections.burdenLeaderProcessCount + allProcessGroups.reduce(0) { $0 + $1.processCount }
         }
-        return burdenLeaderEntities.reduce(0) { total, entity in
-            total + entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
-        } + allProcessEntities.reduce(0) { total, entity in
-            total + entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
-        }
+        return sections.flatVisibleProcessCount
     }
 
     private var groupedEntities: [EntityGroup] {
         guard let key = currentGroupingCacheKey else { return [] }
         return groupedEntitiesCache[key] ?? displayedGroupedEntities
+    }
+
+    private var monitorSections: MonitorEntitySections {
+        guard let key = currentMonitorSectionCacheKey else { return .empty }
+        return monitorSectionCacheStore.sections(
+            for: key,
+            snapshot: state.snapshot,
+            originCache: processOriginCache,
+            advancedFilterEntityIds: state.advancedFilterEntityIds
+        )
     }
 
     private func selectedProcessTreeEntities(for entity: EntitySnapshot) -> [EntitySnapshot] {
@@ -2547,22 +2644,22 @@ public struct MainListView: View {
         )
     }
 
+    private var currentMonitorSectionCacheKey: MonitorSectionCacheKey? {
+        MonitorSectionCacheKey(
+            sequence: state.snapshot.sequence,
+            query: normalizedSearchQuery,
+            originFilter: originFilter,
+            sortKey: sortKey,
+            filterSignature: advancedFilterSignature
+        )
+    }
+
     /// Stable signature of the active advanced filter so the grouping cache
     /// invalidates when the filter set changes ("" = no filter).
     private var advancedFilterSignature: String {
         guard let ids = state.advancedFilterEntityIds else { return "" }
+        guard !ids.isEmpty else { return "<empty>" }
         return ids.sorted().joined(separator: ",")
-    }
-
-    private func applyAdvancedFilter(_ entities: [EntitySnapshot]) -> [EntitySnapshot] {
-        guard let ids = state.advancedFilterEntityIds else { return entities }
-        return entities.filter { ids.contains($0.entityId) }
-    }
-
-    private func applyOriginFilter(_ entities: [EntitySnapshot]) -> [EntitySnapshot] {
-        guard originFilter != .all else { return entities }
-        let originCache = processOriginCache
-        return entities.filter { originCache.summary(for: $0).matches(originFilter) }
     }
 
     private var isGroupedMode: Bool {
@@ -2712,15 +2809,12 @@ public struct MainListView: View {
         groupingTask?.cancel()
 
         let originCache = processOriginCache
-        let entities = applyAdvancedFilter(state.snapshot.entities).filter {
-            key.originFilter.matches(originCache.summary(for: $0).kind)
-        }
-        let query = key.query
+        let entities = monitorSections.filteredEntities
         let sortKey = key.sortKey
         isGrouping = true
 
         let task = Task.detached(priority: .utility) {
-            buildGroupedEntities(from: entities, query: query, sortKey: sortKey, originCache: originCache)
+            buildGroupedEntities(from: entities, query: "", sortKey: sortKey, originCache: originCache)
         }
         groupingTask = task
 
@@ -2771,6 +2865,12 @@ public struct MainListView: View {
         }
     }
 
+}
+
+private func visibleProcessComponentCount(_ entity: EntitySnapshot) -> Int {
+    entity.components.reduce(0) { total, component in
+        total + (component.kind != .adapterContext && component.processId != nil ? 1 : 0)
+    }
 }
 
 private func compareEntities(_ left: EntitySnapshot, _ right: EntitySnapshot, by sortKey: SortKey) -> Bool {
