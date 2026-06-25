@@ -339,6 +339,67 @@ struct EntityProfileReportModel: Codable {
     let summary: String
 }
 
+struct WakeupDataSourceStatusModel: Codable, Identifiable {
+    let key: String
+    let title: String
+    let status: String
+    let detail: String
+    let nextAction: String?
+
+    var id: String { key }
+}
+
+struct TimerInventoryReportModel: Codable {
+    let status: String
+    let detail: String
+    let inferredTimerThreads: [SampledStackReportModel]
+    let recommendedIntegrationFields: [String]
+}
+
+struct Chau7RenderPipelineSampleModel: Codable, Identifiable {
+    let timestamp: String
+    let liveViews: UInt32
+    let polls: UInt32
+    let changed: UInt32
+    let draws: UInt32
+    let syncCalls: UInt32
+    let syncMib: Float
+    let fullRefresh: UInt32
+    let physicalMb: UInt32
+    let peakMb: UInt32
+
+    var id: String { timestamp }
+}
+
+struct Chau7RenderViewSampleModel: Codable, Identifiable {
+    let timestamp: String
+    let viewId: String
+    let state: String
+    let tab: String
+    let session: String
+    let mode: String
+    let reasons: [String]
+    let polls: UInt32
+    let changed: UInt32
+    let draws: UInt32
+    let syncCalls: UInt32
+    let syncMib: Float
+
+    var id: String {
+        "\(timestamp)-\(viewId)"
+    }
+}
+
+struct DisplayLinkStateReportModel: Codable {
+    let status: String
+    let detail: String
+    let source: String?
+    let latestPipeline: Chau7RenderPipelineSampleModel?
+    let recentPipeline: [Chau7RenderPipelineSampleModel]
+    let views: [Chau7RenderViewSampleModel]
+    let recommendedIntegrationFields: [String]
+}
+
 struct WakeupAttributionReportModel: Codable {
     let capturedAtMillis: UInt64
     let entityId: String
@@ -348,6 +409,12 @@ struct WakeupAttributionReportModel: Codable {
     let queueBreakdown: [SampledStackReportModel]
     let dominantCause: String?
     let attributionMode: String
+    let processWakeupsPerSecond: Float?
+    let sampledThreadBreakdown: [SampledStackReportModel]?
+    let exactThreadWakeupCounters: WakeupDataSourceStatusModel?
+    let timerInventory: TimerInventoryReportModel?
+    let displayLinkState: DisplayLinkStateReportModel?
+    let dataSources: [WakeupDataSourceStatusModel]?
     let caveats: [String]
 }
 

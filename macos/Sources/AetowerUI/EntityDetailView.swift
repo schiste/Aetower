@@ -1155,23 +1155,7 @@ public struct EntityDetailView: View {
                     state.runEntityWakeupAttribution(entityID: entity.entityId)
                 } content: {
                     if let attribution = state.entityWakeupAttributions[entity.entityId] {
-                        VStack(alignment: .leading, spacing: 8) {
-                            if let dominantCause = attribution.dominantCause {
-                                Text(dominantCause)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            ForEach(attribution.queueBreakdown.prefix(4)) { stack in
-                                SampledStackCard(stack: stack)
-                            }
-                            if !attribution.caveats.isEmpty {
-                                Text(attribution.caveats.joined(separator: " "))
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
+                        wakeupDiagnosticsBody(attribution)
                     }
                 }
             }

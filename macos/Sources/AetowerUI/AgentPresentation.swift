@@ -200,3 +200,173 @@ func sampledStackBody(_ stack: SampledStackReportModel) -> some View {
         }
     }
 }
+
+@ViewBuilder
+func wakeupDiagnosticsBody(_ attribution: WakeupAttributionReportModel) -> some View {
+    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+        if let processWakeups = attribution.processWakeupsPerSecond {
+            Text("Process wakeups: \(formatWakeups(processWakeups))")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+
+        if let dataSources = attribution.dataSources, !dataSources.isEmpty {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 150), spacing: AetowerDesign.Spacing.xs)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.xs
+            ) {
+                ForEach(dataSources) { source in
+                    wakeupDataSourceBadge(source)
+                }
+            }
+        }
+
+        if let dominantCause = attribution.dominantCause {
+            Text(dominantCause)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if let counters = attribution.exactThreadWakeupCounters {
+            wakeupStatusBlock(title: counters.title, status: counters.status, detail: counters.detail, nextAction: counters.nextAction)
+        }
+
+        if let timerInventory = attribution.timerInventory {
+            wakeupStatusBlock(
+                title: "Timer inventory",
+                status: timerInventory.status,
+                detail: timerInventory.detail,
+                integrationFields: timerInventory.recommendedIntegrationFields
+            )
+            ForEach(timerInventory.inferredTimerThreads.prefix(3)) { stack in
+                sampledStackBody(stack)
+                    .padding(AetowerDesign.Spacing.sm)
+                    .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
+            }
+        }
+
+        if let displayLinkState = attribution.displayLinkState {
+            wakeupStatusBlock(
+                title: "Display-link / render state",
+                status: displayLinkState.status,
+                detail: displayLinkState.detail,
+                integrationFields: displayLinkState.recommendedIntegrationFields
+            )
+            if let latest = displayLinkState.latestPipeline {
+                Text("\(latest.liveViews) live views · \(latest.polls) polls · \(latest.draws) draws · \(String(format: "%.1f MiB", latest.syncMib)) sync")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(displayLinkState.views.suffix(4)) { view in
+                wakeupRenderViewRow(view)
+            }
+        }
+
+        ForEach((attribution.sampledThreadBreakdown ?? attribution.queueBreakdown).prefix(4)) { stack in
+            sampledStackBody(stack)
+                .padding(AetowerDesign.Spacing.sm)
+                .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
+        }
+
+        if !attribution.caveats.isEmpty {
+            Text(attribution.caveats.joined(separator: " "))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private func wakeupDataSourceBadge(_ source: WakeupDataSourceStatusModel) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+        Text(source.title)
+            .font(.caption2.weight(.medium))
+            .lineLimit(1)
+        Text(source.status)
+            .font(.caption2.monospaced())
+            .foregroundStyle(wakeupStatusColor(source.status))
+            .lineLimit(1)
+    }
+    .padding(.horizontal, AetowerDesign.Spacing.sm)
+    .padding(.vertical, AetowerDesign.Spacing.xs)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(wakeupStatusColor(source.status).opacity(0.08), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
+}
+
+private func wakeupStatusBlock(
+    title: String,
+    status: String,
+    detail: String,
+    nextAction: String? = nil,
+    integrationFields: [String] = []
+) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: AetowerDesign.Spacing.xs) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+            Text(status)
+                .font(.caption2.monospaced())
+                .foregroundStyle(wakeupStatusColor(status))
+        }
+        Text(detail)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        if let nextAction, !nextAction.isEmpty {
+            Text("Next: \(nextAction)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if !integrationFields.isEmpty {
+            Text("Integration fields: \(integrationFields.prefix(8).joined(separator: ", "))")
+                .font(.caption2.monospaced())
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private func wakeupRenderViewRow(_ view: Chau7RenderViewSampleModel) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+        HStack {
+            Text("View \(view.viewId)")
+                .font(.caption.weight(.semibold))
+            Text(view.state)
+                .font(.caption2.monospaced())
+                .foregroundStyle(wakeupStatusColor(view.state))
+            Spacer()
+            Text("\(view.draws) draws · \(String(format: "%.1f MiB", view.syncMib))")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        Text("\(view.tab) · \(view.session) · \(view.mode)")
+            .font(.caption2.monospaced())
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        if !view.reasons.isEmpty {
+            Text(view.reasons.prefix(4).joined(separator: " · "))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(2)
+        }
+    }
+    .padding(AetowerDesign.Spacing.sm)
+    .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
+}
+
+private func wakeupStatusColor(_ status: String) -> Color {
+    let lowered = status.lowercased()
+    if lowered.contains("unavailable") || lowered.contains("requires") {
+        return AetowerDesign.Status.warning
+    }
+    if lowered.contains("heuristic") || lowered.contains("inference") || lowered.contains("derived") {
+        return AetowerDesign.Status.warning
+    }
+    if lowered.contains("available") || lowered == "active" {
+        return AetowerDesign.Status.success
+    }
+    return .secondary
+}

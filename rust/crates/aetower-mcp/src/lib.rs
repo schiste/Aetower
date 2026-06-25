@@ -774,6 +774,64 @@ struct SampledStackReport {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct WakeupDataSourceStatus {
+    key: String,
+    title: String,
+    status: String,
+    detail: String,
+    next_action: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TimerInventoryReport {
+    status: String,
+    detail: String,
+    inferred_timer_threads: Vec<SampledStackReport>,
+    recommended_integration_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Chau7RenderPipelineSample {
+    timestamp: String,
+    live_views: u32,
+    polls: u32,
+    changed: u32,
+    draws: u32,
+    sync_calls: u32,
+    sync_mib: f32,
+    full_refresh: u32,
+    physical_mb: u32,
+    peak_mb: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Chau7RenderViewSample {
+    timestamp: String,
+    view_id: String,
+    state: String,
+    tab: String,
+    session: String,
+    mode: String,
+    reasons: Vec<String>,
+    polls: u32,
+    changed: u32,
+    draws: u32,
+    sync_calls: u32,
+    sync_mib: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DisplayLinkStateReport {
+    status: String,
+    detail: String,
+    source: Option<String>,
+    latest_pipeline: Option<Chau7RenderPipelineSample>,
+    recent_pipeline: Vec<Chau7RenderPipelineSample>,
+    views: Vec<Chau7RenderViewSample>,
+    recommended_integration_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct EntityProfileReport {
     captured_at_millis: u64,
     entity_id: String,
@@ -795,6 +853,12 @@ struct WakeupAttributionReport {
     queue_breakdown: Vec<SampledStackReport>,
     dominant_cause: Option<String>,
     attribution_mode: String,
+    process_wakeups_per_second: f32,
+    sampled_thread_breakdown: Vec<SampledStackReport>,
+    exact_thread_wakeup_counters: WakeupDataSourceStatus,
+    timer_inventory: TimerInventoryReport,
+    display_link_state: DisplayLinkStateReport,
+    data_sources: Vec<WakeupDataSourceStatus>,
     caveats: Vec<String>,
 }
 

@@ -832,23 +832,7 @@ public struct Chau7View: View {
                 if state.entityAnalysisIsLoading(entity.entityId, kind: .wakeupAttribution) {
                     ProgressView("Collecting Chau7 wakeup attribution…")
                 } else if let attribution = state.entityWakeupAttributions[entity.entityId] {
-                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                        if let dominantCause = attribution.dominantCause {
-                            Text(dominantCause)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        ForEach(attribution.queueBreakdown.prefix(4)) { stack in
-                            sampledStackRow(stack)
-                        }
-                        if !attribution.caveats.isEmpty {
-                            Text(attribution.caveats.joined(separator: " "))
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
+                    wakeupDiagnosticsBody(attribution)
                 }
             }
         }
