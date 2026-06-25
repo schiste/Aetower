@@ -913,6 +913,7 @@ mod platform {
             allocator: *const c_void,
             options: u32,
         ) -> KernReturn;
+        fn IORegistryEntryGetName(entry: IoRegistryEntry, name: *mut c_char) -> KernReturn;
     }
 
     #[link(name = "objc")]
@@ -1636,20 +1637,19 @@ mod platform {
         }
     }
 
-    /// Sample SMART data for every physical disk known to diskutil.
+    /// Sample SMART data for every physical disk.
     ///
     /// macOS does not publish NVMe SMART data through a public Rust-friendly
     /// API — `IONVMeSMARTUserClient` requires opening an IOUserClient with
     /// privileges that the sandboxed app does not hold. The pragmatic path is
-    /// to shell out to `diskutil info -plist`, which Apple documents and
-    /// supports on every recent macOS version. Its output is a standard
-    /// Apple plist XML blob.
+    /// to read whole-disk identifiers directly from IORegistry, then shell out
+    /// to `diskutil info -plist <id>` for Apple's supported SMART summary.
+    /// That avoids a periodic `diskutil list` subprocess and still preserves
+    /// wear, spare, temperature, and SMART status fidelity.
     ///
-    /// We parse two commands:
-    /// - `diskutil list -plist physical` enumerates whole-disk identifiers
-    ///   (`disk0`, `disk1`, ...). Partitions are ignored because SMART is
-    ///   per-physical-device, not per-volume.
-    /// - `diskutil info -plist <id>` returns the SMART status and a nested
+    /// If IORegistry enumeration fails, we fall back to `diskutil list -plist
+    /// physical` for compatibility. `diskutil info -plist <id>` returns the
+    /// SMART status and a nested
     ///   `SMARTDeviceSpecificKeysMayVaryNotGuaranteed` dictionary with the
     ///   actual counters (percentage used, spare, temperature, hours).
     ///
@@ -1657,10 +1657,13 @@ mod platform {
     /// silently rather than aborting the whole sample — a single flaky
     /// external enclosure shouldn't black out the disk panel.
     pub fn sample_disks() -> Vec<DiskHealthSnapshot> {
-        let Some(list_plist) = run_diskutil(&["list", "-plist", "physical"]) else {
-            return Vec::new();
-        };
-        let device_ids = parse_whole_disk_identifiers(&list_plist);
+        let device_ids = native_whole_disk_identifiers()
+            .filter(|device_ids| !device_ids.is_empty())
+            .or_else(|| {
+                run_diskutil(&["list", "-plist", "physical"])
+                    .map(|list_plist| parse_whole_disk_identifiers(&list_plist))
+            })
+            .unwrap_or_default();
         let mut disks = Vec::with_capacity(device_ids.len());
         for device_id in device_ids {
             let Some(info_plist) = run_diskutil(&["info", "-plist", &device_id]) else {
@@ -1671,6 +1674,97 @@ mod platform {
             }
         }
         disks
+    }
+
+    fn native_whole_disk_identifiers() -> Option<Vec<String>> {
+        let class_name = std::ffi::CString::new("IOMedia").ok()?;
+        let matching = unsafe { IOServiceMatching(class_name.as_ptr()) };
+        if matching.is_null() {
+            return None;
+        }
+
+        let mut iterator: IoIterator = 0;
+        let result = unsafe { IOServiceGetMatchingServices(0, matching, &mut iterator) };
+        if result != KERN_SUCCESS || iterator == 0 {
+            return None;
+        }
+
+        let mut identifiers = Vec::new();
+        loop {
+            let entry = unsafe { IOIteratorNext(iterator) };
+            if entry == 0 {
+                break;
+            }
+            if let Some(identifier) = native_whole_disk_identifier(entry) {
+                identifiers.push(identifier);
+            }
+            let _ = unsafe { IOObjectRelease(entry) };
+        }
+        let _ = unsafe { IOObjectRelease(iterator) };
+        identifiers.sort();
+        identifiers.dedup();
+        Some(identifiers)
+    }
+
+    fn native_whole_disk_identifier(entry: IoRegistryEntry) -> Option<String> {
+        let mut properties: CFMutableDictionaryRef = ptr::null_mut();
+        let result = unsafe {
+            IORegistryEntryCreateCFProperties(entry, &mut properties, kCFAllocatorDefault, 0)
+        };
+        if result != KERN_SUCCESS || properties.is_null() {
+            return None;
+        }
+
+        let entry_name = io_registry_entry_name(entry).unwrap_or_default();
+        let whole = cf_dictionary_bool(properties, "Whole");
+        let bsd_name = cf_dictionary_string(properties, "BSD Name");
+        let content = cf_dictionary_string(properties, "Content");
+        unsafe { CFRelease(properties.cast()) };
+
+        accept_iomedia_disk_identifier(&entry_name, bsd_name.as_deref(), content.as_deref(), whole)
+    }
+
+    fn io_registry_entry_name(entry: IoRegistryEntry) -> Option<String> {
+        let mut buffer = [0i8; 256];
+        let result = unsafe { IORegistryEntryGetName(entry, buffer.as_mut_ptr()) };
+        if result != KERN_SUCCESS {
+            return None;
+        }
+        Some(unsafe { CStr::from_ptr(buffer.as_ptr()) })
+            .map(|name| name.to_string_lossy().trim().to_owned())
+            .filter(|name| !name.is_empty())
+    }
+
+    fn accept_iomedia_disk_identifier(
+        entry_name: &str,
+        bsd_name: Option<&str>,
+        content: Option<&str>,
+        whole: bool,
+    ) -> Option<String> {
+        if !whole {
+            return None;
+        }
+        let bsd_name = bsd_name?;
+        if !is_whole_disk_bsd_name(bsd_name) {
+            return None;
+        }
+        let content = content.unwrap_or_default();
+        if !(content.is_empty()
+            || content.ends_with("_partition_scheme")
+            || content == "Apple_partition_scheme")
+        {
+            return None;
+        }
+        if entry_name.to_ascii_lowercase().contains("disk image") {
+            return None;
+        }
+        Some(bsd_name.to_owned())
+    }
+
+    fn is_whole_disk_bsd_name(value: &str) -> bool {
+        value.strip_prefix("disk").is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+        })
     }
 
     fn run_diskutil(args: &[&str]) -> Option<String> {
@@ -2264,6 +2358,59 @@ mod platform {
             assert_eq!(
                 parse_whole_disk_identifiers(plist),
                 vec!["disk0".to_owned(), "disk1".to_owned()]
+            );
+        }
+
+        #[test]
+        fn accepts_native_physical_whole_disk_identifiers() {
+            assert_eq!(
+                accept_iomedia_disk_identifier(
+                    "APPLE SSD AP0512Z Media",
+                    Some("disk0"),
+                    Some("GUID_partition_scheme"),
+                    true,
+                ),
+                Some("disk0".to_owned())
+            );
+            assert_eq!(
+                accept_iomedia_disk_identifier(
+                    "External USB SSD Media",
+                    Some("disk12"),
+                    Some("FDisk_partition_scheme"),
+                    true,
+                ),
+                Some("disk12".to_owned())
+            );
+        }
+
+        #[test]
+        fn rejects_native_non_physical_disk_identifiers() {
+            assert_eq!(
+                accept_iomedia_disk_identifier(
+                    "APPLE SSD AP0512Z Media",
+                    Some("disk0s1"),
+                    Some("GUID_partition_scheme"),
+                    false,
+                ),
+                None
+            );
+            assert_eq!(
+                accept_iomedia_disk_identifier(
+                    "AppleAPFSMedia",
+                    Some("disk1"),
+                    Some("EF57347C-0000-11AA-AA11-00306543ECAC"),
+                    true,
+                ),
+                None
+            );
+            assert_eq!(
+                accept_iomedia_disk_identifier(
+                    "Apple Disk Image Media",
+                    Some("disk6"),
+                    Some("GUID_partition_scheme"),
+                    true,
+                ),
+                None
             );
         }
 
