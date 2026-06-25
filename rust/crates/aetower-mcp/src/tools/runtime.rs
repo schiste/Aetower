@@ -12,7 +12,7 @@ impl AetowerMcpServer {
             duration_seconds: u64,
             #[serde(default = "default_self_watch_interval_millis")]
             interval_millis: u64,
-            #[serde(default = "default_include_true")]
+            #[serde(default = "default_include_false")]
             include_memory_breakdown: bool,
             #[serde(default = "default_top_regions")]
             top_regions: usize,

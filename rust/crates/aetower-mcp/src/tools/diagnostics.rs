@@ -60,7 +60,8 @@ impl AetowerMcpServer {
         let limit = args.limit.unwrap_or(DEFAULT_DIAGNOSTICS_SUMMARY_LIMIT);
         let query_limit = args
             .query_limit
-            .unwrap_or(DEFAULT_DIAGNOSTICS_SUMMARY_QUERY_LIMIT);
+            .unwrap_or(DEFAULT_DIAGNOSTICS_SUMMARY_QUERY_LIMIT)
+            .clamp(1, MAX_DIAGNOSTICS_QUERY_LIMIT);
         let include_persisted = args.include_persisted.unwrap_or(true);
         let query = DiagnosticsQuery {
             limit: query_limit,
@@ -93,7 +94,8 @@ impl AetowerMcpServer {
     }
 
     pub(crate) fn tool_query_diagnostics(&self, arguments: Value) -> Result<Value, Value> {
-        let query: DiagnosticsQuery = parse_args(arguments)?;
+        let mut query: DiagnosticsQuery = parse_args(arguments)?;
+        query.limit = query.limit.clamp(1, MAX_DIAGNOSTICS_QUERY_LIMIT);
         tool_json(
             self.data_source
                 .query_diagnostics(query)

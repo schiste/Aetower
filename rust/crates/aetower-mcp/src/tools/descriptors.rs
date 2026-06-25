@@ -166,7 +166,7 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
             vec![
                 uint("duration_seconds", Some(1), Some(MAX_SELF_WATCH_DURATION_SECONDS), Some(DEFAULT_SELF_WATCH_DURATION_SECONDS)),
                 uint("interval_millis", Some(MIN_SELF_WATCH_INTERVAL_MILLIS), Some(MAX_SELF_WATCH_INTERVAL_MILLIS), Some(DEFAULT_SELF_WATCH_INTERVAL_MILLIS)),
-                boolean("include_memory_breakdown", Some(true)),
+                boolean("include_memory_breakdown", Some(false)),
                 uint("top_regions", Some(1), Some(50), None),
             ],
             AetowerMcpServer::tool_watch_self,
@@ -432,9 +432,19 @@ fn diagnostics_properties(include_summary_limit: bool) -> Vec<ToolProperty> {
     let mut properties = Vec::new();
     if include_summary_limit {
         properties.push(uint("limit", Some(1), Some(100), None));
-        properties.push(uint("query_limit", Some(1), Some(5000), None));
+        properties.push(uint(
+            "query_limit",
+            Some(1),
+            Some(MAX_DIAGNOSTICS_QUERY_LIMIT as u64),
+            Some(DEFAULT_DIAGNOSTICS_SUMMARY_QUERY_LIMIT as u64),
+        ));
     } else {
-        properties.push(uint("limit", Some(1), Some(5000), None));
+        properties.push(uint(
+            "limit",
+            Some(1),
+            Some(MAX_DIAGNOSTICS_QUERY_LIMIT as u64),
+            None,
+        ));
     }
     properties.push(string_enum(
         "minimum_level",
