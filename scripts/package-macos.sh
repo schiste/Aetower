@@ -125,6 +125,7 @@ sh "$ROOT/scripts/build-rust.sh"
 if [ "$INCLUDE_PRIVILEGED_HELPER" = "1" ]; then
     "$CARGO_BIN" build --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper --release
 fi
+remove_tree "$CLANG_MODULE_CACHE_PATH"
 mkdir -p "$CLANG_MODULE_CACHE_PATH"
 remove_tree "$SWIFT_BUILD_DIR"
 /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -c release
