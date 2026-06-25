@@ -11,6 +11,7 @@ private enum DiagnosticsLevelFilter: String, CaseIterable, Identifiable {
 
 private enum DiagnosticsSection: String, CaseIterable, Identifiable {
     case health
+    case crashReboot
     case mcp
     case uiPayloads
     case memory
@@ -21,6 +22,7 @@ private enum DiagnosticsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .health: return "Health"
+        case .crashReboot: return "Crash / Reboot"
         case .mcp: return "MCP"
         case .uiPayloads: return "UI Payloads"
         case .memory: return "Memory"
@@ -31,6 +33,7 @@ private enum DiagnosticsSection: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .health: return "heart.text.square"
+        case .crashReboot: return "bolt.trianglebadge.exclamationmark"
         case .mcp: return "point.3.connected.trianglepath.dotted"
         case .uiPayloads: return "rectangle.stack"
         case .memory: return "memorychip"
@@ -41,6 +44,7 @@ private enum DiagnosticsSection: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .health: return "Runtime health and operator recommendations."
+        case .crashReboot: return "Boot session, panic/reset evidence, and pre-reboot pressure clues."
         case .mcp: return "Local server, helpers, clients, and transport pressure."
         case .uiPayloads: return "History and Timeline decode/filter cost."
         case .memory: return "Aetower self-memory and vmmap attribution."
@@ -145,13 +149,15 @@ public struct DiagnosticsView: View {
         }
         .task(id: "\(isVisible)-\(selectedSection.rawValue)-\(isLive)-\(includePersisted)-\(debouncedSearchText)-\(levelFilter.rawValue)-\(subsystemFilter.map(subsystemLabel) ?? "all")") {
             guard isVisible else { return }
-            guard selectedSection == .eventStream else { return }
-            state.loadDiagnosticsQuery(currentQuery, force: true)
+            guard selectedSection == .eventStream || selectedSection == .crashReboot else { return }
+            state.loadDiagnosticsQuery(activeDiagnosticsQuery, force: true)
             guard isLive else { return }
-            while !Task.isCancelled && isVisible && isLive && selectedSection == .eventStream {
+            while !Task.isCancelled && isVisible && isLive
+                && (selectedSection == .eventStream || selectedSection == .crashReboot) {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                guard !Task.isCancelled && isVisible && isLive && selectedSection == .eventStream else { break }
-                state.loadDiagnosticsQuery(currentQuery)
+                guard !Task.isCancelled && isVisible && isLive
+                    && (selectedSection == .eventStream || selectedSection == .crashReboot) else { break }
+                state.loadDiagnosticsQuery(activeDiagnosticsQuery)
             }
         }
         .alert("Clear diagnostics?", isPresented: $showClearDiagnosticsConfirmation) {
@@ -254,6 +260,8 @@ public struct DiagnosticsView: View {
             sessionHealth
             recommendations
             overview
+        case .crashReboot:
+            crashRebootInvestigation
         case .mcp:
             localMcpServerState
             mcpLifecycle
@@ -804,6 +812,86 @@ public struct DiagnosticsView: View {
         }
     }
 
+    private var crashRebootInvestigation: some View {
+        let events = crashRebootEvents
+        let diagnosticReportEvents = events.filter {
+            $0.eventType == "system-reset-counter-report"
+                || $0.eventType == "system-panic-manifest"
+                || $0.eventType == "system-panic-file-observed"
+        }
+        let incidentEvents = events.filter { $0.eventType == "host-incident-snapshot" }
+        let overBudgetEvents = events.filter {
+            $0.eventType == "tick-over-budget"
+                || $0.eventType == "history-maintenance-over-budget"
+                || $0.eventType == "long-state-lock-wait"
+        }
+        let bootEvent = events.first { $0.eventType == "boot-session-observed" }
+        let shutdownEvent = events.first { $0.eventType == "system-previous-shutdown-cause" }
+
+        return GroupBox("Crash / reboot investigator") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                LazyVGrid(columns: overviewColumns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    diagnosticsMetric(
+                        title: "Current boot",
+                        value: bootEvent.flatMap { bootTimeLabel($0) } ?? "Unknown",
+                        subtitle: bootEvent.map { eventMetadataLine(DiagnosticsEventCluster(representative: $0, events: [$0])) } ?? "No boot-session diagnostic loaded yet",
+                        valueColor: bootEvent == nil ? AetowerDesign.Status.warning : AetowerDesign.Status.success
+                    )
+                    diagnosticsMetric(
+                        title: "Shutdown marker",
+                        value: shutdownEvent.flatMap { fieldValue("previous_shutdown_code", in: $0) ?? fieldValue("detail", in: $0) } ?? "Unavailable",
+                        subtitle: shutdownEvent?.message ?? "No previous shutdown marker in loaded diagnostics",
+                        valueColor: shutdownEvent == nil ? AetowerDesign.Status.warning : nil
+                    )
+                    diagnosticsMetric(
+                        title: "Crash artifacts",
+                        value: "\(diagnosticReportEvents.count)",
+                        subtitle: "ResetCounter, panic manifest, or panic files observed",
+                        valueColor: diagnosticReportEvents.isEmpty ? AetowerDesign.Status.warning : AetowerDesign.Status.error
+                    )
+                    diagnosticsMetric(
+                        title: "Pressure clues",
+                        value: "\(incidentEvents.count)",
+                        subtitle: "memory, wakeup, or thermal incident breadcrumbs",
+                        valueColor: incidentEvents.isEmpty ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+                    )
+                    diagnosticsMetric(
+                        title: "Runtime stalls",
+                        value: "\(overBudgetEvents.count)",
+                        subtitle: "engine tick, lock wait, or history maintenance over budget",
+                        valueColor: overBudgetEvents.isEmpty ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+                    )
+                }
+
+                Text(crashRebootGuidance(events: events, diagnosticReportEvents: diagnosticReportEvents))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if events.isEmpty {
+                    ContentUnavailableView(
+                        "No crash or reboot diagnostics loaded",
+                        systemImage: "bolt.trianglebadge.exclamationmark",
+                        description: Text("Aetower will load persisted diagnostics here. If the Mac rebooted before Aetower started, missing kernel panic files may still need Full Disk Access or a manual support bundle.")
+                    )
+                    .frame(maxWidth: .infinity)
+                } else {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                        Text("Evidence timeline")
+                            .font(.subheadline.weight(.semibold))
+                        ForEach(events.prefix(10), id: \.id) { event in
+                            crashRebootEvidenceRow(event)
+                            if event.id != events.prefix(10).last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.top, AetowerDesign.Spacing.xs)
+        }
+    }
+
     private func eventStream(_ eventClusters: [DiagnosticsEventCluster]) -> some View {
         GroupBox("Event stream") {
             if eventClusters.isEmpty {
@@ -915,6 +1003,9 @@ public struct DiagnosticsView: View {
         switch section {
         case .health:
             return "\(diagnosticsHealthTitle) · \(aetowerOverheadTitle)"
+        case .crashReboot:
+            let count = crashRebootEvents.count
+            return count == 0 ? "no evidence loaded" : "\(count) evidence events"
         case .mcp:
             return "\(state.runtimeLagMetrics.mcpActiveClientCount) clients · \(state.runtimeLagMetrics.mcpHelperCount) helpers"
         case .uiPayloads:
@@ -930,6 +1021,10 @@ public struct DiagnosticsView: View {
         switch section {
         case .health:
             return healthColor(diagnosticsHealthTitle) ?? .secondary
+        case .crashReboot:
+            return crashRebootEvents.contains(where: { $0.level == .error || $0.eventType.contains("panic") || $0.eventType.contains("reset") })
+                ? AetowerDesign.Status.error
+                : .secondary
         case .mcp:
             return mcpLifecycleColor ?? .secondary
         case .uiPayloads:
@@ -950,6 +1045,21 @@ public struct DiagnosticsView: View {
             sinceMillis: nil,
             includePersisted: includePersisted
         )
+    }
+
+    private var crashRebootQuery: DiagnosticsQuery {
+        DiagnosticsQuery(
+            limit: 750,
+            minimumLevel: nil,
+            subsystem: nil,
+            search: nil,
+            sinceMillis: nil,
+            includePersisted: true
+        )
+    }
+
+    private var activeDiagnosticsQuery: DiagnosticsQuery {
+        selectedSection == .crashReboot ? crashRebootQuery : currentQuery
     }
 
     private var minimumLevel: DiagnosticsLevel? {
@@ -974,6 +1084,30 @@ public struct DiagnosticsView: View {
             ]
         }
         return Array(seen).sorted { subsystemLabel($0) < subsystemLabel($1) }
+    }
+
+    private var crashRebootEvents: [DiagnosticsEvent] {
+        state.diagnosticsEvents.filter { event in
+            switch event.eventType {
+            case "boot-session-observed",
+                 "system-previous-shutdown-cause",
+                 "system-panic-marker",
+                 "system-sleep-marker",
+                 "system-wake-marker",
+                 "system-thermal-marker",
+                 "system-power-marker",
+                 "system-reset-counter-report",
+                 "system-panic-manifest",
+                 "system-panic-file-observed",
+                 "host-incident-snapshot",
+                 "tick-over-budget",
+                 "history-maintenance-over-budget",
+                 "long-state-lock-wait":
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     private var lastHistoryLoadFailure: String? {
@@ -1271,6 +1405,63 @@ public struct DiagnosticsView: View {
             return "\(deltaSeconds / 60)m"
         }
         return "\(deltaSeconds / 3600)h"
+    }
+
+    private func crashRebootEvidenceRow(_ event: DiagnosticsEvent) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                Circle()
+                    .fill(levelColor(event.level))
+                    .frame(width: 8, height: 8)
+                Text(event.message)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(event.eventType)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            Text(formattedTimestamp(event.timestampMillis))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let detail = fieldValue("detail", in: event)
+                ?? fieldValue("summary", in: event)
+                ?? fieldValue("boot_faults", in: event)
+                ?? fieldValue("top_entity_names", in: event) {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func crashRebootGuidance(
+        events: [DiagnosticsEvent],
+        diagnosticReportEvents: [DiagnosticsEvent]
+    ) -> String {
+        if diagnosticReportEvents.contains(where: { $0.eventType == "system-reset-counter-report" }) {
+            return "A ResetCounter artifact means macOS recorded a reboot-level fault. Correlate the timestamp with pressure clues and any panic manifest before assigning blame to a process."
+        }
+        if diagnosticReportEvents.contains(where: { $0.eventType.contains("panic") }) {
+            return "A panic artifact was found. If the referenced panic file is missing, collect a support bundle quickly because macOS may rotate DiagnosticReports."
+        }
+        if events.contains(where: { $0.eventType == "host-incident-snapshot" }) {
+            return "Aetower has pre-reboot pressure breadcrumbs. Use the timeline below to identify whether memory pressure, wakeups, thermal pressure, or Aetower maintenance overlapped the reboot window."
+        }
+        return "No direct panic/reset artifact is loaded yet. Missing evidence usually means the file was outside the scan window, rotated by macOS, or inaccessible without broader DiagnosticReports access."
+    }
+
+    private func bootTimeLabel(_ event: DiagnosticsEvent) -> String? {
+        guard let bootTime = fieldValue("boot_time_millis", in: event).flatMap(UInt64.init) else {
+            return nil
+        }
+        return relativeTimeLabel(from: bootTime)
+    }
+
+    private func fieldValue(_ key: String, in event: DiagnosticsEvent) -> String? {
+        event.fields.first { $0.key == key }?.value
     }
 }
 

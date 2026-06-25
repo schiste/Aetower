@@ -4,6 +4,7 @@ mod attribution;
 mod bench;
 mod chau7;
 mod collector;
+mod crash_reports;
 mod engine;
 mod friction;
 mod history;

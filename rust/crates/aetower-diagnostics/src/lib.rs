@@ -788,6 +788,9 @@ fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)>
     let window_millis = match event.event_type.as_str() {
         "host-incident-snapshot" => 60 * 60 * 1000,
         "system-previous-shutdown-cause" => 12 * 60 * 60 * 1000,
+        "system-panic-file-observed" | "system-panic-manifest" | "system-reset-counter-report" => {
+            12 * 60 * 60 * 1000
+        }
         "adapter-refresh-failed" => 15 * 60 * 1000,
         "history-store-busy"
         | "history-write-backpressure"

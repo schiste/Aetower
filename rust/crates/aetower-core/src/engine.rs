@@ -82,6 +82,7 @@ const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
 const MCP_HELPER_REAP_RETRY_MILLIS: u64 = 60 * 1000;
 const MCP_HELPER_LIFECYCLE_AGE_BUCKET_MILLIS: u64 = 15 * 60 * 1000;
 const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 90 * 60 * 1000;
+const DIAGNOSTIC_REPORT_MARKER_LOOKBACK_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
 const SYSTEM_MARKER_MIN_LOG_SHOW_LOOKBACK_MILLIS: u64 = 60 * 1000;
 const SYSTEM_MARKER_PREDICATE: &str = "(eventMessage CONTAINS[c] \"Previous shutdown cause\") OR (eventMessage CONTAINS[c] \"Entering Sleep state\") OR (eventMessage CONTAINS[c] \"Wake reason\") OR (eventMessage CONTAINS[c] \"panic(cpu\") OR (eventMessage CONTAINS[c] \"userspace watchdog timeout\") OR (eventMessage CONTAINS[c] \"thermal pressure\") OR (eventMessage CONTAINS[c] \"low power mode\")";
 const HOST_INCIDENT_PERSIST_INTERVAL_MILLIS: u64 = 60 * 60 * 1000;
@@ -2457,6 +2458,31 @@ fn ingest_recent_system_markers(
         .field("detail", marker.detail);
         if let Some(marker_key) = marker.marker_key {
             event = event.field("marker_key", marker_key);
+        }
+        diagnostics.emit(event.build());
+    }
+
+    if !system_marker_worker_is_current(running, generation, expected_generation) {
+        return;
+    }
+    let crash_report_markers = crate::crash_reports::load_recent_crash_report_markers(
+        aet_time::now_millis(),
+        DIAGNOSTIC_REPORT_MARKER_LOOKBACK_MILLIS,
+    );
+    for marker in crash_report_markers {
+        if !system_marker_worker_is_current(running, generation, expected_generation) {
+            break;
+        }
+        let mut event = DiagnosticsEvent::builder(
+            marker.level,
+            DiagnosticsSubsystem::Engine,
+            marker.event_type,
+            marker.message,
+        )
+        .timestamp_millis(marker.timestamp_millis)
+        .field("category", "diagnostic-report");
+        for (key, value) in marker.fields {
+            event = event.field(key, value);
         }
         diagnostics.emit(event.build());
     }
