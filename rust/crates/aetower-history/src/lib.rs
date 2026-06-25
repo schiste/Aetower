@@ -233,10 +233,6 @@ impl History {
         for entity in entities.iter_mut() {
             entity.recent_change_summary = None;
         }
-        let active_entity_id_set: HashSet<String> = entities
-            .iter()
-            .map(|entity| entity.entity_id.clone())
-            .collect();
         self.host_history.push(host);
         self.update_host_observability(captured_at_millis, host, entities);
         self.update_sensor_alerts(captured_at_millis, host);
@@ -397,8 +393,14 @@ impl History {
             self.previous_remote_hosts
                 .insert(entity.entity_id.clone(), current);
         }
-        self.previous_remote_hosts
-            .retain(|id, _| active_entity_id_set.contains(id));
+        {
+            let active_entity_id_set: HashSet<&str> = entities
+                .iter()
+                .map(|entity| entity.entity_id.as_str())
+                .collect();
+            self.previous_remote_hosts
+                .retain(|id, _| active_entity_id_set.contains(id.as_str()));
+        }
 
         // Feature 6: Co-occurrence tracking with compact u16 indices.
         //
@@ -458,14 +460,20 @@ impl History {
             self.compact_cooccurrence_window();
         }
 
-        self.metric_history
-            .retain(|entity_id, _| active_entity_id_set.contains(entity_id));
-        self.previous_scores
-            .retain(|entity_id, _| active_entity_id_set.contains(entity_id));
-        self.previous_anomaly
-            .retain(|entity_id, _| active_entity_id_set.contains(entity_id));
-        self.previous_entity_behaviors
-            .retain(|entity_id, _| active_entity_id_set.contains(entity_id));
+        {
+            let active_entity_id_set: HashSet<&str> = entities
+                .iter()
+                .map(|entity| entity.entity_id.as_str())
+                .collect();
+            self.metric_history
+                .retain(|entity_id, _| active_entity_id_set.contains(entity_id.as_str()));
+            self.previous_scores
+                .retain(|entity_id, _| active_entity_id_set.contains(entity_id.as_str()));
+            self.previous_anomaly
+                .retain(|entity_id, _| active_entity_id_set.contains(entity_id.as_str()));
+            self.previous_entity_behaviors
+                .retain(|entity_id, _| active_entity_id_set.contains(entity_id.as_str()));
+        }
 
         for entity in entities.iter().take(5) {
             let previous = self
@@ -509,12 +517,6 @@ impl History {
         // AI agent entity, and emit a summary event when the entity
         // disappears (session ended).
         let tick_seconds = 2.0f64; // matches collector TICK_SECONDS
-        let active_ai_ids: HashSet<String> = entities
-            .iter()
-            .filter(|e| matches!(e.entity_kind, aetower_model::EntityKind::AiAgent))
-            .map(|e| e.entity_id.clone())
-            .collect();
-
         // Accumulate energy for active AI agents and write back to
         // entity.agent_cost.session_energy_nj so the UI can display it.
         for entity in entities
@@ -532,6 +534,12 @@ impl History {
             cost.session_energy_nj = *cumulative;
         }
 
+        let active_ai_ids: HashSet<&str> = entities
+            .iter()
+            .filter(|e| matches!(e.entity_kind, aetower_model::EntityKind::AiAgent))
+            .map(|e| e.entity_id.as_str())
+            .collect();
+
         // Detect AI agents that were present recently but have been absent
         // for several consecutive ticks (session truly ended, not a brief
         // collector hiccup). Without debounce, a single-tick gap would
@@ -542,7 +550,7 @@ impl History {
         // is not in this tick's active set.
         let tracked_ids: Vec<String> = self.ai_session_energy_nj.keys().cloned().collect();
         for id in &tracked_ids {
-            if active_ai_ids.contains(id) {
+            if active_ai_ids.contains(id.as_str()) {
                 // Agent is active — reset debounce counter.
                 self.ai_session_absent_ticks.remove(id);
             } else {
