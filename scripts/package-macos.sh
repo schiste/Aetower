@@ -194,6 +194,17 @@ install_name_tool -change "$ROOT/rust/target/release/deps/libaetower_ffi.dylib" 
 install_name_tool -change "$ROOT/rust/target/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
 install_name_tool -change "$SWIFTPM_PLUGIN_DIR/debug/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
 install_name_tool -change "$SWIFTPM_PLUGIN_DIR/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
+install_name_tool -delete_rpath "$SWIFTPM_PLUGIN_DIR/debug" "$BIN_DIR/Aetower" || true
+install_name_tool -delete_rpath "$SWIFTPM_PLUGIN_DIR/release" "$BIN_DIR/Aetower" || true
+
+if otool -l "$BIN_DIR/Aetower" | grep -F "$ROOT/macos/.build" >/dev/null; then
+    echo "packaged app still references local SwiftPM build paths" >&2
+    exit 1
+fi
+if otool -L "$BIN_DIR/Aetower" | grep -F "$ROOT/rust/target" >/dev/null; then
+    echo "packaged app still links against local Rust target artifacts" >&2
+    exit 1
+fi
 
 sign_target "$FRAMEWORK_DIR/libaetower_ffi.dylib" plain
 sign_target "$HELPER_DIR/aetower-mcp" runtime
