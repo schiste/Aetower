@@ -791,6 +791,7 @@ fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)>
         "system-panic-file-observed" | "system-panic-manifest" | "system-reset-counter-report" => {
             12 * 60 * 60 * 1000
         }
+        "adapter-refresh-started" | "adapter-refresh-succeeded" => 5 * 60 * 1000,
         "adapter-refresh-failed" => 15 * 60 * 1000,
         "history-store-busy"
         | "history-write-backpressure"
@@ -801,21 +802,17 @@ fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)>
         | "history-maintenance-over-budget"
         | "history-maintenance-failed" => 15 * 60 * 1000,
         "operator-safe-cadence-active" => 5 * 60 * 1000,
+        "collector-expensive-sampling-deferred" => 5 * 60 * 1000,
         "tick-over-budget" => 5 * 60 * 1000,
         "mcp-helper-lifecycle" => 60 * 1000,
         "mcp-helper-reaped" => 5 * 60 * 1000,
+        "runtime-heartbeat" => 30 * 60 * 1000,
+        "system-sleep-marker" | "system-wake-marker" | "system-power-marker" => 60 * 60 * 1000,
         "tick-started" | "tick-completed" | "snapshot-published" | "gpu-sample-read" => 60 * 1000,
         _ => return None,
     };
 
-    let identity_fields = [
-        "incident_key",
-        "marker_key",
-        "error",
-        "path",
-        "capability",
-        "adapter",
-    ];
+    let identity_fields = diagnostics_coalescing_identity_fields(event.event_type.as_str());
     let mut parts = vec![
         format!("{:?}", event.level),
         format!("{:?}", event.subsystem),
@@ -837,6 +834,24 @@ fn diagnostics_coalescing_key(event: &DiagnosticsEvent) -> Option<(String, u64)>
     }
 
     Some((parts.join("|"), window_millis))
+}
+
+fn diagnostics_coalescing_identity_fields(event_type: &str) -> &'static [&'static str] {
+    match event_type {
+        // Normal sleep/wake/power markers can appear many times in a large
+        // unified-log ingestion window. Coalesce them by category, not by the
+        // per-entry marker key, so diagnostics stay useful without becoming a
+        // log mirror.
+        "system-sleep-marker" | "system-wake-marker" | "system-power-marker" => &[],
+        _ => &[
+            "incident_key",
+            "marker_key",
+            "error",
+            "path",
+            "capability",
+            "adapter",
+        ],
+    }
 }
 
 fn should_persist_event(event: &DiagnosticsEvent) -> bool {
@@ -873,9 +888,6 @@ fn should_persist_event(event: &DiagnosticsEvent) -> bool {
                 | "mcp-helper-lifecycle"
                 | "boot-session-observed"
                 | "system-previous-shutdown-cause"
-                | "system-sleep-marker"
-                | "system-wake-marker"
-                | "system-power-marker"
         ),
         DiagnosticsLevel::Trace | DiagnosticsLevel::Debug => false,
     }
@@ -966,7 +978,10 @@ mod tests {
             std::env::temp_dir().join(format!("aetower-diag-policy-{}.ndjson", std::process::id()));
         let _ = std::fs::remove_file(&path);
 
-        let store = DiagnosticsStore::with_persistence(8, &path, 16).expect("store");
+        let store = match DiagnosticsStore::with_persistence(8, &path, 16) {
+            Ok(store) => store,
+            Err(error) => panic!("store: {error}"),
+        };
         store.emit(
             DiagnosticsEvent::builder(
                 DiagnosticsLevel::Debug,
@@ -985,7 +1000,9 @@ mod tests {
             )
             .build(),
         );
-        store.flush_persistence().expect("flush");
+        if let Err(error) = store.flush_persistence() {
+            panic!("flush: {error}");
+        }
 
         let persisted = match std::fs::read_to_string(&path) {
             Ok(persisted) => persisted,
@@ -1185,7 +1202,10 @@ mod tests {
         )
         .expect("seed persisted file");
 
-        let store = DiagnosticsStore::with_persistence(8, &path, 16).expect("store");
+        let store = match DiagnosticsStore::with_persistence(8, &path, 16) {
+            Ok(store) => store,
+            Err(error) => panic!("store: {error}"),
+        };
         let events = store.recent(10);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "history-load-failed");
@@ -1216,7 +1236,9 @@ mod tests {
             )
             .build(),
         );
-        store.flush_persistence().expect("flush");
+        if let Err(error) = store.flush_persistence() {
+            panic!("flush: {error}");
+        }
         assert_eq!(store.recent(10).len(), 1);
         assert!(store.overview().persisted_events >= 1);
 
@@ -1360,6 +1382,65 @@ mod tests {
 
         let persisted = std::fs::read_to_string(&path).expect("persisted file");
         assert!(persisted.contains("runtime-heartbeat"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn noisy_runtime_heartbeats_are_coalesced() {
+        let store = DiagnosticsStore::new(16);
+        for timestamp_millis in [1_000, 60_000, 120_000] {
+            store.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Info,
+                    DiagnosticsSubsystem::Engine,
+                    "runtime-heartbeat",
+                    "heartbeat",
+                )
+                .timestamp_millis(timestamp_millis)
+                .build(),
+            );
+        }
+
+        let events = store.recent(10);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].timestamp_millis, 1_000);
+    }
+
+    #[test]
+    fn ordinary_system_wake_markers_are_ring_only_and_coalesced() {
+        let path = std::env::temp_dir().join(format!(
+            "aetower-diag-wake-marker-{}.ndjson",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let store = match DiagnosticsStore::with_persistence(8, &path, 16) {
+            Ok(store) => store,
+            Err(error) => panic!("store: {error}"),
+        };
+        for timestamp_millis in [1_000, 2_000] {
+            store.emit(
+                DiagnosticsEvent::builder(
+                    DiagnosticsLevel::Info,
+                    DiagnosticsSubsystem::Engine,
+                    "system-wake-marker",
+                    "Observed a wake marker in the recent system log.",
+                )
+                .timestamp_millis(timestamp_millis)
+                .field("marker_key", format!("wake-{timestamp_millis}"))
+                .build(),
+            );
+        }
+        if let Err(error) = store.flush_persistence() {
+            panic!("flush: {error}");
+        }
+
+        let events = store.recent(10);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "system-wake-marker");
+        let persisted = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(!persisted.contains("system-wake-marker"));
 
         let _ = std::fs::remove_file(&path);
     }
