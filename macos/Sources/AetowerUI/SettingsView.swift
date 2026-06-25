@@ -14,6 +14,7 @@ public struct SettingsView: View {
     @State private var showAdvancedCollectionControls = false
     @State private var showResetLocalDataConfirmation = false
     @State private var editingAutomationRules: [AutomationRule] = []
+    @State private var hasLoadedVirusTotalKeyDraft = false
     /// In-memory draft of the VirusTotal API key. Loaded from / written to the
     /// Keychain — never persisted to UserDefaults.
     @State private var virusTotalKeyDraft: String = ""
@@ -125,8 +126,9 @@ public struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .onAppear {
+            loadVirusTotalKeyDraftIfNeeded()
             if appliedIntegrationSnapshot == nil {
-                appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
+                appliedIntegrationSnapshot = currentIntegrationSnapshot
             }
         }
         .onDisappear {
@@ -256,7 +258,11 @@ public struct SettingsView: View {
         guard let appliedIntegrationSnapshot else {
             return false
         }
-        return appliedIntegrationSnapshot != SettingsIntegrationSnapshot(settings)
+        return appliedIntegrationSnapshot != currentIntegrationSnapshot
+    }
+
+    private var currentIntegrationSnapshot: SettingsIntegrationSnapshot {
+        SettingsIntegrationSnapshot(settings, virusTotalKeyDraft: virusTotalKeyDraft)
     }
 
     private var setupChecklistProgress: (completed: Int, total: Int) {
@@ -818,10 +824,7 @@ public struct SettingsView: View {
             }
         }
         .onAppear {
-            if virusTotalKeyDraft.isEmpty {
-                virusTotalKeyDraft =
-                    KeychainHelper.retrieve(account: KeychainHelper.binaryReputationAccount) ?? ""
-            }
+            loadVirusTotalKeyDraftIfNeeded()
         }
     }
 
@@ -1195,7 +1198,7 @@ public struct SettingsView: View {
                             Button(capabilityActionLabel(capability)) {
                                 state.performCapabilityAction(capability, settings: settings)
                                 if isAdapterCapability(capability.kind) {
-                                    appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
+                                    appliedIntegrationSnapshot = currentIntegrationSnapshot
                                 }
                             }
                             .buttonStyle(.borderedProminent)
@@ -1214,11 +1217,13 @@ public struct SettingsView: View {
                     .foregroundStyle(.secondary)
                 Button("Reset to defaults", role: .destructive) {
                     settings.resetToDefaults()
+                    virusTotalKeyDraft = ""
+                    hasLoadedVirusTotalKeyDraft = true
                     state.applyNotificationSettings(settings)
                     state.applyRuntimeCollectionSettings(settings)
                     state.applyIntegrationSettings(settings)
                     state.applyLocalMcpClientRegistrationSettings(settings)
-                    appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
+                    appliedIntegrationSnapshot = currentIntegrationSnapshot
                     applyConfirmation = "All settings reset and applied."
                     clearApplyConfirmationLater()
                 }
@@ -1279,24 +1284,33 @@ public struct SettingsView: View {
     private func applyIntegrationAndTelemetrySettings(_ settings: SettingsStore) {
         // Persist the VirusTotal key to the Keychain before applying — an empty
         // draft clears it. applyIntegrationSettings reads it back from there.
+        virusTotalKeyDraft = virusTotalKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         KeychainHelper.store(virusTotalKeyDraft, account: KeychainHelper.binaryReputationAccount)
         state.applyIntegrationSettings(settings)
-        appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
+        appliedIntegrationSnapshot = currentIntegrationSnapshot
         applyConfirmation = "Integration and telemetry settings applied."
         clearApplyConfirmationLater()
     }
 
     private func resetLocalAetowerData() {
         settings.resetToDefaults()
+        virusTotalKeyDraft = ""
+        hasLoadedVirusTotalKeyDraft = true
         state.clearHistory()
         state.clearDiagnostics()
         state.applyNotificationSettings(settings)
         state.applyRuntimeCollectionSettings(settings)
         state.applyIntegrationSettings(settings)
         state.applyLocalMcpClientRegistrationSettings(settings)
-        appliedIntegrationSnapshot = SettingsIntegrationSnapshot(settings)
+        appliedIntegrationSnapshot = currentIntegrationSnapshot
         applyConfirmation = "Local Aetower data cleared and defaults restored."
         clearApplyConfirmationLater()
+    }
+
+    private func loadVirusTotalKeyDraftIfNeeded() {
+        guard !hasLoadedVirusTotalKeyDraft else { return }
+        virusTotalKeyDraft = KeychainHelper.retrieve(account: KeychainHelper.binaryReputationAccount) ?? ""
+        hasLoadedVirusTotalKeyDraft = true
     }
 
     private func isAdapterCapability(_ kind: CapabilityKind) -> Bool {
@@ -1435,9 +1449,11 @@ private struct SettingsIntegrationSnapshot: Equatable {
     let telemetryEnabled: Bool
     let telemetryEndpoint: String
     let telemetryExportIntervalSeconds: UInt32
+    let binaryReputationEnabled: Bool
+    let virusTotalKeySignature: String
 
     @MainActor
-    init(_ settings: SettingsStore) {
+    init(_ settings: SettingsStore, virusTotalKeyDraft: String? = nil) {
         chromiumEndpoint = settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         dockerSocketPath = SettingsStore.normalizedDockerSocketPath(settings.dockerSocketPath)
         privilegedHelperEnabled = settings.privilegedHelperEnabled
@@ -1448,6 +1464,19 @@ private struct SettingsIntegrationSnapshot: Equatable {
         telemetryExportIntervalSeconds = SettingsStore.normalizedTelemetryExportIntervalSeconds(
             settings.telemetryExportIntervalSeconds
         )
+        binaryReputationEnabled = settings.binaryReputationEnabled
+        let key = virusTotalKeyDraft
+            ?? KeychainHelper.retrieve(account: KeychainHelper.binaryReputationAccount)
+            ?? ""
+        virusTotalKeySignature = Self.redactedKeySignature(key)
+    }
+
+    private static func redactedKeySignature(_ value: String) -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return "empty" }
+        var hasher = Hasher()
+        hasher.combine(normalized)
+        return "\(normalized.count):\(hasher.finalize())"
     }
 }
 
