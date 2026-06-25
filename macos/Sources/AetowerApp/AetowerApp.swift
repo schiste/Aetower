@@ -1275,6 +1275,27 @@ private struct SystemWorkspaceView: View {
     }
 }
 
+private struct NotificationSettingsSignature: Equatable {
+    let enabled: Bool
+    let threshold: Double
+    let thermal: Bool
+    let regression: Bool
+    let restartLoop: Bool
+    let network: Bool
+    let agentBudget: Bool
+
+    @MainActor
+    init(_ settings: SettingsStore) {
+        enabled = settings.notificationsEnabled
+        threshold = settings.frictionNotificationThreshold
+        thermal = settings.notifyThermal
+        regression = settings.notifyRegression
+        restartLoop = settings.notifyRestartLoop
+        network = settings.notifyNetwork
+        agentBudget = settings.notifyAgentBudget
+    }
+}
+
 @main
 struct AetowerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -1292,6 +1313,10 @@ struct AetowerApp: App {
         case "dark": return .dark
         default: return nil
         }
+    }
+
+    private var notificationSettingsSignature: NotificationSettingsSignature {
+        NotificationSettingsSignature(settings)
     }
 
     private var computedMenuBarTitle: String {
@@ -1373,10 +1398,7 @@ struct AetowerApp: App {
                 }
                 refreshMenuBarTitle(force: true)
             }
-            .onChange(of: settings.notificationsEnabled) { _, _ in
-                state.applyNotificationSettings(settings)
-            }
-            .onChange(of: settings.frictionNotificationThreshold) { _, _ in
+            .onChange(of: notificationSettingsSignature) { _, _ in
                 state.applyNotificationSettings(settings)
             }
             .onChange(of: settings.collectionProfile) { _, _ in
