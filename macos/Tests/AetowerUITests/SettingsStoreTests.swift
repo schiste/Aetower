@@ -65,6 +65,18 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(reloaded.autoRegisterLocalMcpClientsEnabled)
     }
 
+    func testMetricRingFixedScalingPreferencePersists() {
+        let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = SettingsStore(defaults: defaults)
+        store.metricRingsFixedScaling = true
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertTrue(reloaded.metricRingsFixedScaling)
+    }
+
     private func makeStore() -> SettingsStore {
         let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

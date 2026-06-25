@@ -446,8 +446,8 @@ public struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Toggle("Fixed 0–100 ring scaling", isOn: $settings.metricRingsFixedScaling)
-                    Text("Draw every ring on an absolute axis (0–100, or 0 to the danger threshold for disk, network, and wakeups) instead of auto-scaling to each ring's recent range.")
+                    Toggle("Fixed absolute ring scaling", isOn: $settings.metricRingsFixedScaling)
+                    Text("Draw percent-style rings on 0–100 and throughput/wakeup rings on their danger-threshold axis instead of auto-scaling to each ring's recent range.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

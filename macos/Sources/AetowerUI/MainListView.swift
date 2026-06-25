@@ -2243,21 +2243,47 @@ public struct MainListView: View {
         minHeight: CGFloat,
         allowsPinning: Bool = false
     ) -> some View {
-        TrendMetricCard(
+        let fixedScaling = settings.metricRingsFixedScaling
+        let fixedCeiling = fixedScaling && card.fixedCeiling > 0 ? card.fixedCeiling : nil
+        return TrendMetricCard(
             title: card.title,
             value: card.value,
-            subtitle: card.subtitle,
+            subtitle: monitorMetricSubtitle(card, fixedScaling: fixedScaling),
             samples: card.samples,
             style: card.style,
             valueAppearance: card.valueAppearance,
             sampleValueFormatter: card.sampleValueFormatter,
             minHeight: minHeight,
-            fixedCeiling: settings.metricRingsFixedScaling ? card.fixedCeiling : nil
+            fixedCeiling: fixedCeiling
         )
+        .id("\(card.id.rawValue)-scale-\(fixedCeiling ?? -1)")
         .overlay(alignment: .topTrailing) {
             if allowsPinning {
                 monitorMetricPinButton(card)
             }
+        }
+    }
+
+    private func monitorMetricSubtitle(
+        _ card: MonitorMetricCardDescriptor,
+        fixedScaling: Bool
+    ) -> String {
+        guard fixedScaling, card.fixedCeiling > 0 else { return card.subtitle }
+        return "\(card.subtitle) · \(monitorMetricScaleLabel(card))"
+    }
+
+    private func monitorMetricScaleLabel(_ card: MonitorMetricCardDescriptor) -> String {
+        switch card.id {
+        case .friction, .cpu, .memory, .gpu:
+            return "fixed 0–100"
+        case .disk:
+            return "fixed 0–\(formatRate(UInt64(card.fixedCeiling)))"
+        case .network:
+            return "fixed 0–\(formatRate(UInt64(card.fixedCeiling)))"
+        case .wakeups:
+            return "fixed 0–\(formatWakeups(Float(card.fixedCeiling)))"
+        case .all:
+            return "fixed scale"
         }
     }
 
