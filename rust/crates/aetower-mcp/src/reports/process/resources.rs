@@ -27,19 +27,16 @@ pub(crate) fn build_process_open_resources(
     ])?;
     let mut resources = parse_lsof_resources(&output);
     let lsof_resource_count = resources.len();
-    let resource_count = native_fd_count
-        .map(|count| count.max(lsof_resource_count))
-        .unwrap_or(lsof_resource_count);
     let socket_count = resources
         .iter()
         .filter(|resource| resource.is_socket)
         .count();
-    let file_count = resource_count.saturating_sub(socket_count);
+    let file_count = lsof_resource_count.saturating_sub(socket_count);
     resources.truncate(limit.max(1));
     Ok(ProcessOpenResourcesReport {
         captured_at_millis: current_unix_millis().unwrap_or_default(),
         pid,
-        resource_count,
+        resource_count: lsof_resource_count,
         native_fd_count,
         returned: resources.len(),
         file_count,
@@ -139,10 +136,16 @@ fn run_lsof(args: &[String]) -> Result<String, String> {
     };
     let started = Instant::now();
     let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("wait for lsof: {error}"))?
-        {
+        let wait_result = match child.try_wait() {
+            Ok(wait_result) => wait_result,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = fs::remove_file(&output_path);
+                return Err(format!("wait for lsof: {error}"));
+            }
+        };
+        if let Some(status) = wait_result {
             break status;
         }
         if started.elapsed() >= LSOF_TIMEOUT {
