@@ -178,6 +178,23 @@ pub(crate) fn validate_pid(pid: u32) -> Result<(), String> {
 }
 
 pub(crate) fn process_exists(pid: u32) -> bool {
+    process_exists_native(pid)
+}
+
+#[cfg(unix)]
+fn process_exists_native(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    let result = unsafe { libc::kill(pid, 0) };
+    if result == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn process_exists_native(pid: u32) -> bool {
     Command::new("/bin/ps")
         .arg("-p")
         .arg(pid.to_string())
@@ -186,6 +203,30 @@ pub(crate) fn process_exists(pid: u32) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+pub(crate) fn process_nice_value(pid: u32) -> Option<i32> {
+    process_nice_value_native(pid)
+}
+
+#[cfg(target_os = "macos")]
+fn process_nice_value_native(pid: u32) -> Option<i32> {
+    let pid = pid as libc::id_t;
+    unsafe {
+        *libc::__error() = 0;
+        let value = libc::getpriority(libc::PRIO_PROCESS, pid);
+        let errno = *libc::__error();
+        if value == -1 && errno != 0 {
+            None
+        } else {
+            Some(value)
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn process_nice_value_native(_pid: u32) -> Option<i32> {
+    None
 }
 
 pub(crate) fn run_os_command(program: &str, args: &[String]) -> Result<String, String> {

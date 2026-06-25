@@ -88,7 +88,7 @@ pub(crate) fn build_process_action_with_context(
             .collect::<Vec<_>>();
         if !missing_pids.is_empty() {
             return Err(format!(
-                "Target process(es) are not visible to ps right now: {missing_pids:?}."
+                "Target process(es) are not visible to macOS right now: {missing_pids:?}."
             ));
         }
     }
@@ -421,9 +421,10 @@ fn collect_process_action_target_states(
 
 fn process_action_target_state(pid: u32) -> ProcessActionTargetState {
     let ps = process_ps_summary(pid).ok();
-    let visible = ps.is_some() || process_exists(pid);
+    let visible = process_exists(pid) || ps.is_some();
     let status = ps.as_ref().and_then(|summary| summary.status.clone());
-    let nice = ps.as_ref().and_then(|summary| summary.nice_value);
+    let nice =
+        process_nice_value(pid).or_else(|| ps.as_ref().and_then(|summary| summary.nice_value));
     ProcessActionTargetState {
         visible,
         status,
@@ -741,7 +742,10 @@ fn target_action_verification(
             } else if after.nice.is_some_and(|nice| nice >= 10) {
                 (
                     "priority-lowered".to_owned(),
-                    format!("ps reports nice value {}.", after.nice.unwrap_or_default()),
+                    format!(
+                        "macOS reports nice value {}.",
+                        after.nice.unwrap_or_default()
+                    ),
                 )
             } else {
                 (
@@ -759,7 +763,10 @@ fn target_action_verification(
             } else if after.nice.is_some_and(|nice| nice <= 0) {
                 (
                     "priority-normal".to_owned(),
-                    format!("ps reports nice value {}.", after.nice.unwrap_or_default()),
+                    format!(
+                        "macOS reports nice value {}.",
+                        after.nice.unwrap_or_default()
+                    ),
                 )
             } else {
                 (

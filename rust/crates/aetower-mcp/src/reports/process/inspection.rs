@@ -44,12 +44,12 @@ pub(crate) fn build_process_inspection(
     }
     if context.is_none() {
         safety_notes.push(
-            "This PID is not currently attributed to an Aetower entity; live ps data may still exist."
+            "This PID is not currently attributed to an Aetower entity; live macOS process data may still exist."
                 .to_owned(),
         );
     }
     if !alive {
-        safety_notes.push("The process is not visible to ps right now.".to_owned());
+        safety_notes.push("The process is not visible to macOS right now.".to_owned());
     }
 
     let executable_path = context
