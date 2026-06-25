@@ -1296,6 +1296,27 @@ private struct NotificationSettingsSignature: Equatable {
     }
 }
 
+private struct CollectionSettingsSignature: Equatable {
+    let profile: CollectionProfile
+    let adaptiveCadence: Bool
+    let engineActiveInterval: Double
+    let engineIdleInterval: Double
+    let engineLowPowerInterval: Double
+    let gpuSampleInterval: Double
+    let gpuSampleLowPowerInterval: Double
+
+    @MainActor
+    init(_ settings: SettingsStore) {
+        profile = settings.collectionProfile
+        adaptiveCadence = settings.adaptiveCadenceEnabled
+        engineActiveInterval = settings.engineActiveIntervalSeconds
+        engineIdleInterval = settings.engineIdleIntervalSeconds
+        engineLowPowerInterval = settings.engineLowPowerIntervalSeconds
+        gpuSampleInterval = settings.gpuSampleIntervalSeconds
+        gpuSampleLowPowerInterval = settings.gpuSampleLowPowerIntervalSeconds
+    }
+}
+
 @main
 struct AetowerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -1317,6 +1338,10 @@ struct AetowerApp: App {
 
     private var notificationSettingsSignature: NotificationSettingsSignature {
         NotificationSettingsSignature(settings)
+    }
+
+    private var collectionSettingsSignature: CollectionSettingsSignature {
+        CollectionSettingsSignature(settings)
     }
 
     private var computedMenuBarTitle: String {
@@ -1401,25 +1426,7 @@ struct AetowerApp: App {
             .onChange(of: notificationSettingsSignature) { _, _ in
                 state.applyNotificationSettings(settings)
             }
-            .onChange(of: settings.collectionProfile) { _, _ in
-                state.applyRuntimeCollectionSettings(settings)
-            }
-            .onChange(of: settings.adaptiveCadenceEnabled) { _, _ in
-                state.applyRuntimeCollectionSettings(settings)
-            }
-            .onChange(of: settings.engineActiveIntervalSeconds) { _, _ in
-                state.applyRuntimeCollectionSettings(settings)
-            }
-            .onChange(of: settings.engineIdleIntervalSeconds) { _, _ in
-                state.applyRuntimeCollectionSettings(settings)
-            }
-            .onChange(of: settings.engineLowPowerIntervalSeconds) { _, _ in
-                state.applyRuntimeCollectionSettings(settings)
-            }
-            .onChange(of: settings.gpuSampleIntervalSeconds) { _, _ in
-                state.applyRuntimeCollectionSettings(settings)
-            }
-            .onChange(of: settings.gpuSampleLowPowerIntervalSeconds) { _, _ in
+            .onChange(of: collectionSettingsSignature) { _, _ in
                 state.applyRuntimeCollectionSettings(settings)
             }
             .onChange(of: settings.autoRegisterLocalMcpClientsEnabled) { _, _ in
