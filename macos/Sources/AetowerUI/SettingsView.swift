@@ -430,40 +430,6 @@ public struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                SettingDivider()
-
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                    Text("Monitor metric rings")
-                        .font(.headline)
-                    Picker("Metric ring placement", selection: $settings.monitorMetricCardPlacement) {
-                        ForEach(MonitorMetricCardPlacement.allCases) { placement in
-                            Text(placement.title).tag(placement)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    Picker("Focused ring", selection: $settings.monitorMetricCardFocus) {
-                        ForEach(MonitorMetricCardFocus.allCases) { focus in
-                            Text(focus.title).tag(focus)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .disabled(!settings.monitorMetricCardPlacement.supportsFocusedMetric)
-
-                    Text(settings.monitorMetricCardPlacement.supportsFocusedMetric
-                        ? "Top and bottom placements can show one full-width ring, or switch back to all rings."
-                        : "Left and right placements use a compact vertical rail and always show all rings.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Toggle("Fixed absolute ring scaling", isOn: $settings.metricRingsFixedScaling)
-                    Text("Draw percent-style rings on 0–100 and throughput/wakeup rings on their danger-threshold axis instead of auto-scaling to each ring's recent range.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                SettingDivider()
-
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                     Text("UI refresh interval")
                         .font(.headline)
@@ -542,96 +508,138 @@ public struct SettingsView: View {
     @ViewBuilder
     private var collectionSection: some View {
         @Bindable var settings = settings
-        SettingsCard(
-            title: "Runtime collection",
-            subtitle: "Choose an intent first. Detailed cadence tuning is available when needed.",
-            status: status(for: .collection)
-        ) {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-                Text("Collection presets")
-                    .font(.headline)
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 238), spacing: AetowerDesign.Spacing.md)],
-                    alignment: .leading,
-                    spacing: AetowerDesign.Spacing.md
-                ) {
-                    ForEach(SettingsCollectionPreset.allCases) { preset in
-                        Button {
-                            preset.apply(to: settings)
-                        } label: {
-                            SettingsPresetCard(preset: preset)
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            SettingsCard(
+                title: "Runtime collection",
+                subtitle: "Choose an intent first. Detailed cadence tuning is available when needed.",
+                status: status(for: .collection)
+            ) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    Text("Collection presets")
+                        .font(.headline)
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 238), spacing: AetowerDesign.Spacing.md)],
+                        alignment: .leading,
+                        spacing: AetowerDesign.Spacing.md
+                    ) {
+                        ForEach(SettingsCollectionPreset.allCases) { preset in
+                            Button {
+                                preset.apply(to: settings)
+                            } label: {
+                                SettingsPresetCard(preset: preset)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
+                    Text("Presets update the running engine through the existing live collection settings path.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Text("Presets update the running engine through the existing live collection settings path.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+
+                SettingDivider()
+
+                DisclosureGroup("Advanced cadence controls", isExpanded: $showAdvancedCollectionControls) {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                            Text("Collection mode")
+                                .font(.headline)
+                            Picker("Collection mode", selection: $settings.collectionProfile) {
+                                Text("Balanced").tag(CollectionProfile.balanced)
+                                Text("Full detail").tag(CollectionProfile.full)
+                            }
+                            .pickerStyle(.segmented)
+                            Text("Balanced lowers CPU and battery cost by sampling expensive per-process signals less often. Full detail is intended for short diagnostic sessions.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Toggle("Adaptive engine cadence", isOn: $settings.adaptiveCadenceEnabled)
+                        Text("When enabled, Aetower stays active during hotspots and slows down when the machine is quiet or on battery.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        intervalSlider(
+                            title: "Engine active interval",
+                            value: $settings.engineActiveIntervalSeconds,
+                            range: 1...5,
+                            step: 0.5,
+                            format: "%.1fs"
+                        )
+                        intervalSlider(
+                            title: "Engine idle interval",
+                            value: $settings.engineIdleIntervalSeconds,
+                            range: 2...30,
+                            step: 1,
+                            format: "%.0fs",
+                            note: "Used when adaptive cadence is on and the machine is quiet."
+                        )
+                        intervalSlider(
+                            title: "Engine low-power interval",
+                            value: $settings.engineLowPowerIntervalSeconds,
+                            range: 3...45,
+                            step: 1,
+                            format: "%.0fs",
+                            note: "Used on battery or Low Power Mode."
+                        )
+                        intervalSlider(
+                            title: "GPU sample interval",
+                            value: $settings.gpuSampleIntervalSeconds,
+                            range: 5...120,
+                            step: 5,
+                            format: "%.0fs"
+                        )
+                        intervalSlider(
+                            title: "GPU sample interval on battery",
+                            value: $settings.gpuSampleLowPowerIntervalSeconds,
+                            range: 10...180,
+                            step: 5,
+                            format: "%.0fs",
+                            note: "Longer GPU intervals reduce system-service activity and save power."
+                        )
+                    }
+                    .padding(.top, AetowerDesign.Spacing.md)
+                }
             }
+
+            SettingsCard(
+                title: "Monitor rings",
+                subtitle: "Placement, focus, and graph scale for the seven metric cards."
+            ) {
+                monitorMetricRingsControls
+            }
+        }
+    }
+
+    private var monitorMetricRingsControls: some View {
+        @Bindable var settings = settings
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            Picker("Ring placement", selection: $settings.monitorMetricCardPlacement) {
+                ForEach(MonitorMetricCardPlacement.allCases) { placement in
+                    Text(placement.title).tag(placement)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Picker("Focused ring", selection: $settings.monitorMetricCardFocus) {
+                ForEach(MonitorMetricCardFocus.allCases) { focus in
+                    Text(focus.title).tag(focus)
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled(!settings.monitorMetricCardPlacement.supportsFocusedMetric)
+
+            Text(settings.monitorMetricCardPlacement.supportsFocusedMetric
+                ? "Top and bottom placements can pin one full-width ring, or switch back to all rings."
+                : "Left and right placements use a compact vertical rail and always show all rings.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             SettingDivider()
 
-            DisclosureGroup("Advanced cadence controls", isExpanded: $showAdvancedCollectionControls) {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                        Text("Collection mode")
-                            .font(.headline)
-                        Picker("Collection mode", selection: $settings.collectionProfile) {
-                            Text("Balanced").tag(CollectionProfile.balanced)
-                            Text("Full detail").tag(CollectionProfile.full)
-                        }
-                        .pickerStyle(.segmented)
-                        Text("Balanced lowers CPU and battery cost by sampling expensive per-process signals less often. Full detail is intended for short diagnostic sessions.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Toggle("Adaptive engine cadence", isOn: $settings.adaptiveCadenceEnabled)
-                    Text("When enabled, Aetower stays active during hotspots and slows down when the machine is quiet or on battery.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    intervalSlider(
-                        title: "Engine active interval",
-                        value: $settings.engineActiveIntervalSeconds,
-                        range: 1...5,
-                        step: 0.5,
-                        format: "%.1fs"
-                    )
-                    intervalSlider(
-                        title: "Engine idle interval",
-                        value: $settings.engineIdleIntervalSeconds,
-                        range: 2...30,
-                        step: 1,
-                        format: "%.0fs",
-                        note: "Used when adaptive cadence is on and the machine is quiet."
-                    )
-                    intervalSlider(
-                        title: "Engine low-power interval",
-                        value: $settings.engineLowPowerIntervalSeconds,
-                        range: 3...45,
-                        step: 1,
-                        format: "%.0fs",
-                        note: "Used on battery or Low Power Mode."
-                    )
-                    intervalSlider(
-                        title: "GPU sample interval",
-                        value: $settings.gpuSampleIntervalSeconds,
-                        range: 5...120,
-                        step: 5,
-                        format: "%.0fs"
-                    )
-                    intervalSlider(
-                        title: "GPU sample interval on battery",
-                        value: $settings.gpuSampleLowPowerIntervalSeconds,
-                        range: 10...180,
-                        step: 5,
-                        format: "%.0fs",
-                        note: "Longer GPU intervals reduce system-service activity and save power."
-                    )
-                }
-                .padding(.top, AetowerDesign.Spacing.md)
-            }
+            Toggle("Use fixed 0-100 ring scale (%)", isOn: $settings.metricRingsFixedScaling)
+            Text("CPU, memory, GPU, and friction draw against 0-100. Disk, network, and wakeups use fixed danger-threshold axes. Turn this off to auto-scale each ring to its recent range.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
