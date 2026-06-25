@@ -81,8 +81,9 @@ const HISTORY_HARD_MAX_QUARANTINE_ROWS: u64 = 128;
 const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
 const MCP_HELPER_REAP_RETRY_MILLIS: u64 = 60 * 1000;
 const MCP_HELPER_LIFECYCLE_AGE_BUCKET_MILLIS: u64 = 15 * 60 * 1000;
-const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 12 * 60 * 60 * 1000;
-const SYSTEM_MARKER_PREDICATE: &str = "(eventMessage CONTAINS[c] \"Previous shutdown cause\") OR (eventMessage CONTAINS[c] \"Entering Sleep state\") OR (eventMessage CONTAINS[c] \"Wake reason\") OR (eventMessage CONTAINS[c] \"Wake from\") OR (eventMessage CONTAINS[c] \"panic(cpu\") OR (eventMessage CONTAINS[c] \"userspace watchdog timeout\") OR (eventMessage CONTAINS[c] \"thermal pressure\") OR (eventMessage CONTAINS[c] \"low power mode\")";
+const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 90 * 60 * 1000;
+const SYSTEM_MARKER_MIN_LOG_SHOW_LOOKBACK_MILLIS: u64 = 60 * 1000;
+const SYSTEM_MARKER_PREDICATE: &str = "(eventMessage CONTAINS[c] \"Previous shutdown cause\") OR (eventMessage CONTAINS[c] \"Entering Sleep state\") OR (eventMessage CONTAINS[c] \"Wake reason\") OR (eventMessage CONTAINS[c] \"panic(cpu\") OR (eventMessage CONTAINS[c] \"userspace watchdog timeout\") OR (eventMessage CONTAINS[c] \"thermal pressure\") OR (eventMessage CONTAINS[c] \"low power mode\")";
 const HOST_INCIDENT_PERSIST_INTERVAL_MILLIS: u64 = 60 * 60 * 1000;
 const UNIFIED_LOG_TIMESTAMP_FORMAT: &[::time::format_description::FormatItem<'static>] = format_description!(
     "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond][offset_hour sign:mandatory][offset_minute]"
@@ -2470,13 +2471,14 @@ fn system_marker_worker_is_current(
 }
 
 fn load_recent_system_markers(since_millis: u64) -> Vec<SystemMarker> {
+    let last_arg = unified_log_last_arg(since_millis);
     let output = match std::process::Command::new("/usr/bin/log")
         .args([
             "show",
             "--style",
             "json",
             "--last",
-            "12h",
+            last_arg.as_str(),
             "--predicate",
             SYSTEM_MARKER_PREDICATE,
         ])
@@ -2593,8 +2595,27 @@ fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
 fn is_system_marker_noise(normalized_detail: &str) -> bool {
     normalized_detail.contains("polling for the states of screen")
         || normalized_detail.contains("reachability status")
+        || normalized_detail.contains("no wake from sleep")
+        || normalized_detail.contains("log run noninteractively")
+        || normalized_detail.contains("/usr/bin/log")
+        || normalized_detail.contains("current thermal state:")
+        || normalized_detail.contains("isnaturalplatform:")
         || normalized_detail.contains("current thermal pressure level=0")
         || normalized_detail.contains("current thermal pressure level = 0")
+}
+
+fn unified_log_last_arg(since_millis: u64) -> String {
+    let elapsed = aet_time::now_millis().saturating_sub(since_millis);
+    unified_log_last_arg_for_elapsed(elapsed)
+}
+
+fn unified_log_last_arg_for_elapsed(elapsed_millis: u64) -> String {
+    let capped = elapsed_millis.clamp(
+        SYSTEM_MARKER_MIN_LOG_SHOW_LOOKBACK_MILLIS,
+        SYSTEM_MARKER_LOOKBACK_MILLIS,
+    );
+    let minutes = capped.div_ceil(60 * 1000).max(1);
+    format!("{minutes}m")
 }
 
 fn thermal_marker_level(normalized_detail: &str) -> DiagnosticsLevel {
@@ -2824,6 +2845,43 @@ mod tests {
             })
             .is_none()
         );
+    }
+
+    #[test]
+    fn ignores_unified_log_self_scan_and_network_wake_noise() {
+        assert!(classify_system_marker(UnifiedLogEntry {
+            timestamp: Some("2026-04-13 19:03:09.753950+0200".to_owned()),
+            event_message: Some(
+                "log run noninteractively, parent: 80637 (Aetower), args: '/usr/bin/log' 'show' '--style' 'json' '--last' '12h' '--predicate' '(eventMessage CONTAINS[c] \"Entering Sleep state\")'"
+                    .to_owned()
+            ),
+        })
+        .is_none());
+
+        assert!(classify_system_marker(UnifiedLogEntry {
+            timestamp: Some("2026-04-13 19:03:09.753950+0200".to_owned()),
+            event_message: Some(
+                "[C11831 A45AB72D Hostname#00765b4e:443 tcp, fast-open, no wake from sleep] start"
+                    .to_owned()
+            ),
+        })
+        .is_none());
+
+        assert!(classify_system_marker(UnifiedLogEntry {
+            timestamp: Some("2026-04-13 19:03:09.753950+0200".to_owned()),
+            event_message: Some(
+                "isNaturalPlatform: true, isNeuralPlatform: true, thermal level: <private>, low power mode: false"
+                    .to_owned()
+            ),
+        })
+        .is_none());
+    }
+
+    #[test]
+    fn caps_unified_log_lookback_for_system_marker_scan() {
+        assert_eq!(unified_log_last_arg_for_elapsed(1), "1m");
+        assert_eq!(unified_log_last_arg_for_elapsed(10 * 60 * 1000), "10m");
+        assert_eq!(unified_log_last_arg_for_elapsed(12 * 60 * 60 * 1000), "90m");
     }
 
     #[test]
