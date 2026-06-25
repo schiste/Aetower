@@ -50,6 +50,13 @@ const HISTORY_MAINTENANCE_COMMIT_BUSY_MILLIS: f32 = 100.0;
 const HISTORY_MAINTENANCE_INPUT_BUSY_MILLIS: f32 = 200.0;
 const HISTORY_MAINTENANCE_HISTORY_QUEUE_BUSY_DEPTH: u32 = 8;
 const HISTORY_MAINTENANCE_DIAGNOSTICS_QUEUE_BUSY_DEPTH: u32 = 512;
+const COLLECTOR_DEFER_ENGINE_TICK_RATIO: f32 = 0.60;
+const COLLECTOR_DEFER_MIN_ENGINE_TICK_MILLIS: f32 = 500.0;
+const COLLECTOR_DEFER_COLLECT_MILLIS: f32 = 1_000.0;
+const COLLECTOR_DEFER_PROCESS_SAMPLING_MILLIS: f32 = 500.0;
+const COLLECTOR_DEFER_SELF_CPU_PERCENT: f32 = 20.0;
+const COLLECTOR_DEFER_SELF_WAKEUPS_PER_SECOND: f32 = 300.0;
+const COLLECTOR_DEFER_MCP_REQUESTS_PER_SECOND: f32 = 8.0;
 // Regression detection runs off-tick over persisted history: a short delay
 // after launch, then every few hours. The window is bounded to ~7 days and
 // downsampled to keep the load_range read cheap.
@@ -127,9 +134,10 @@ impl Default for RuntimeCollectionConfig {
 }
 
 impl RuntimeCollectionConfig {
-    fn collector_config(&self) -> CollectorConfig {
+    fn collector_config(&self, defer_expensive_sampling: bool) -> CollectorConfig {
         CollectorConfig {
             full_collection: self.full_collection,
+            defer_expensive_sampling,
         }
     }
 
@@ -391,11 +399,54 @@ impl Engine {
             while running.load(Ordering::SeqCst) {
                 let tick_started = Instant::now();
                 let captured_at_millis = aet_time::now_millis();
-                let runtime_config = {
+                let (runtime_config, previous_runtime_metrics, previous_host) = {
                     let guard = state.lock();
-                    guard.runtime_config.clone()
+                    (
+                        guard.runtime_config.clone(),
+                        guard.runtime_lag_metrics.clone(),
+                        guard.latest_snapshot.host.clone(),
+                    )
                 };
-                collector.configure(runtime_config.collector_config());
+                let collector_defer_reason = runtime_config
+                    .adaptive_cadence
+                    .then(|| {
+                        collector_expensive_sampling_defer_reason(
+                            &previous_runtime_metrics,
+                            &previous_host,
+                        )
+                    })
+                    .flatten();
+                collector
+                    .configure(runtime_config.collector_config(collector_defer_reason.is_some()));
+                if let Some(reason) = collector_defer_reason {
+                    diagnostics.emit(
+                        DiagnosticsEvent::builder(
+                            DiagnosticsLevel::Info,
+                            DiagnosticsSubsystem::Collector,
+                            "collector-expensive-sampling-deferred",
+                            "Deferred expensive process sampling for this tick under runtime pressure.",
+                        )
+                        .timestamp_millis(captured_at_millis)
+                        .field("reason", reason)
+                        .field(
+                            "previous_engine_tick_millis",
+                            format!("{:.3}", previous_runtime_metrics.engine_tick_millis),
+                        )
+                        .field(
+                            "previous_collect_millis",
+                            format!("{:.3}", previous_runtime_metrics.collect_millis),
+                        )
+                        .field(
+                            "previous_self_cpu_percent",
+                            format!("{:.3}", previous_runtime_metrics.self_cpu_percent),
+                        )
+                        .field(
+                            "previous_self_wakeups_per_second",
+                            format!("{:.3}", previous_runtime_metrics.self_wakeups_per_second),
+                        )
+                        .build(),
+                    );
+                }
                 diagnostics.emit(
                     DiagnosticsEvent::builder(
                         DiagnosticsLevel::Debug,
@@ -789,6 +840,10 @@ impl Engine {
                     .field("collect_discovery_scan", raw.timings.discovery_scan)
                     .field("collect_sampled_rusage", raw.timings.sampled_rusage)
                     .field(
+                        "collect_deferred_expensive_sampling",
+                        raw.timings.deferred_expensive_sampling,
+                    )
+                    .field(
                         "collect_process_refresh_pid_count",
                         raw.timings.process_refresh_pid_count,
                     )
@@ -887,6 +942,10 @@ impl Engine {
                         )
                         .field("collect_discovery_scan", raw.timings.discovery_scan)
                         .field("collect_sampled_rusage", raw.timings.sampled_rusage)
+                        .field(
+                            "collect_deferred_expensive_sampling",
+                            raw.timings.deferred_expensive_sampling,
+                        )
                         // The two fields below decompose collect_process_refresh_millis
                         // into its real drivers. PID count × per-PID cost dominates
                         // the wall time; `refreshed_memory` tells us whether the
@@ -1002,6 +1061,10 @@ impl Engine {
                     )
                     .field("collect_discovery_scan", raw.timings.discovery_scan)
                     .field("collect_sampled_rusage", raw.timings.sampled_rusage)
+                    .field(
+                        "collect_deferred_expensive_sampling",
+                        raw.timings.deferred_expensive_sampling,
+                    )
                     .field(
                         "collect_process_refresh_pid_count",
                         raw.timings.process_refresh_pid_count,
@@ -1907,6 +1970,37 @@ fn history_maintenance_busy_reason(state: &Arc<Mutex<EngineState>>) -> Option<&'
     }
     if metrics.diagnostics_queue_depth >= HISTORY_MAINTENANCE_DIAGNOSTICS_QUEUE_BUSY_DEPTH {
         return Some("diagnostics-queue");
+    }
+    None
+}
+
+fn collector_expensive_sampling_defer_reason(
+    metrics: &RuntimeLagMetrics,
+    host: &HostSnapshot,
+) -> Option<&'static str> {
+    if let Some(reason) = host_pressure_safe_mode_reason(host) {
+        return Some(reason);
+    }
+    if metrics.target_tick_millis > 0.0
+        && metrics.engine_tick_millis
+            >= (metrics.target_tick_millis * COLLECTOR_DEFER_ENGINE_TICK_RATIO)
+                .max(COLLECTOR_DEFER_MIN_ENGINE_TICK_MILLIS)
+    {
+        return Some("engine-tick-pressure");
+    }
+    if metrics.collect_millis >= COLLECTOR_DEFER_COLLECT_MILLIS {
+        return Some("collector-pressure");
+    }
+    if metrics.collect_millis >= COLLECTOR_DEFER_PROCESS_SAMPLING_MILLIS
+        && metrics.self_cpu_percent >= COLLECTOR_DEFER_SELF_CPU_PERCENT
+    {
+        return Some("self-cpu-sampling-pressure");
+    }
+    if metrics.self_wakeups_per_second >= COLLECTOR_DEFER_SELF_WAKEUPS_PER_SECOND {
+        return Some("self-wakeup-pressure");
+    }
+    if metrics.mcp_requests_per_second >= COLLECTOR_DEFER_MCP_REQUESTS_PER_SECOND {
+        return Some("mcp-diagnostics-burst");
     }
     None
 }

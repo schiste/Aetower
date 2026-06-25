@@ -10,6 +10,10 @@ use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKin
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CollectorConfig {
     pub full_collection: bool,
+    /// Skip expensive per-process extras for the current tick when Aetower is
+    /// already under host/runtime pressure. The base process table still
+    /// refreshes, but rusage, cwd, memory, storage, and discovery work defer.
+    pub defer_expensive_sampling: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +123,10 @@ pub struct CollectorTimings {
     /// not at our cadence choices.
     #[serde(default)]
     pub process_refresh_refreshed_memory: bool,
+    /// True when the engine asked the collector to skip expensive sampling for
+    /// this tick because recent runtime or host-pressure metrics were elevated.
+    #[serde(default)]
+    pub deferred_expensive_sampling: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -293,16 +301,19 @@ impl Collector {
         // Separate process discovery from memory refresh. Enumerating the full
         // process table is the expensive step, so do it on a much slower
         // cadence while still refreshing memory on known PIDs regularly.
-        let discovery_scan = self.config.full_collection
+        let full_collection = self.config.full_collection && !self.config.defer_expensive_sampling;
+        let discovery_scan = full_collection
             || self.known_pids.is_empty()
-            || self
-                .process_metadata_tick
-                .is_multiple_of(PROCESS_DISCOVERY_INTERVAL_TICKS);
-        let refresh_memory = self.config.full_collection
-            || discovery_scan
-            || self
-                .process_metadata_tick
-                .is_multiple_of(PROCESS_MEMORY_REFRESH_INTERVAL_TICKS);
+            || (!self.config.defer_expensive_sampling
+                && self
+                    .process_metadata_tick
+                    .is_multiple_of(PROCESS_DISCOVERY_INTERVAL_TICKS));
+        let refresh_memory = full_collection
+            || (!self.config.defer_expensive_sampling
+                && (discovery_scan
+                    || self
+                        .process_metadata_tick
+                        .is_multiple_of(PROCESS_MEMORY_REFRESH_INTERVAL_TICKS)));
         let process_refresh_started = std::time::Instant::now();
         // `process_refresh_pid_count` records how many PIDs `sysinfo` walked
         // this tick — captured before the discovery branch refreshes
@@ -340,7 +351,7 @@ impl Collector {
         // Per-interface metadata is currently not surfaced in the hot UI path,
         // so keep it on the low-frequency host-environment cadence instead of
         // rebuilding MAC/IP-derived rows every collection tick.
-        if self.config.full_collection || refresh_host_environment {
+        if full_collection || refresh_host_environment {
             self.cached_network_interfaces = collect_network_interface_metadata(&self.networks);
         }
         let environment_refresh_millis =
@@ -350,9 +361,8 @@ impl Collector {
         // to `diskutil` is the main cost, and the values change over hours
         // not seconds. Tick 0 seeds the cache; subsequent ticks rotate the
         // counter and refresh only when it lands back on 0.
-        let refresh_disks = self.cached_disks.is_empty()
-            || self.config.full_collection
-            || self.disk_refresh_tick == 0;
+        let refresh_disks = !self.config.defer_expensive_sampling
+            && (self.cached_disks.is_empty() || full_collection || self.disk_refresh_tick == 0);
         if refresh_disks {
             self.cached_disks = platform::sample_disks();
         }
@@ -362,9 +372,10 @@ impl Collector {
         // that "just connected" devices show up within half a minute, slow
         // enough that we're not invoking `ioreg` every tick.
         let storage_refresh_started = std::time::Instant::now();
-        let refresh_bluetooth = self.cached_bluetooth_devices.is_empty()
-            || self.config.full_collection
-            || self.bluetooth_refresh_tick == 0;
+        let refresh_bluetooth = !self.config.defer_expensive_sampling
+            && (self.cached_bluetooth_devices.is_empty()
+                || full_collection
+                || self.bluetooth_refresh_tick == 0);
         if refresh_bluetooth {
             self.cached_bluetooth_devices = platform::sample_bluetooth_devices();
         }
@@ -380,14 +391,15 @@ impl Collector {
         let network_first_tick = self.first_network_tick;
         self.first_network_tick = false;
 
-        let metadata_refresh =
-            self.config.full_collection || self.process_metadata_tick == 1 || discovery_scan;
-        let sample_wakeups = self.config.full_collection
-            || self
-                .wakeups_sample_tick
-                .is_multiple_of(WAKEUPS_SAMPLE_INTERVAL_TICKS);
+        let metadata_refresh = full_collection || self.process_metadata_tick == 1 || discovery_scan;
+        let sample_wakeups = full_collection
+            || (!self.config.defer_expensive_sampling
+                && self
+                    .wakeups_sample_tick
+                    .is_multiple_of(WAKEUPS_SAMPLE_INTERVAL_TICKS));
         self.wakeups_sample_tick = self.wakeups_sample_tick.wrapping_add(1);
-        let mut user_directory_refreshed = self.should_refresh_user_directory(discovery_scan);
+        let mut user_directory_refreshed = !self.config.defer_expensive_sampling
+            && self.should_refresh_user_directory(discovery_scan);
         if user_directory_refreshed {
             self.users.refresh();
         }
@@ -410,7 +422,9 @@ impl Collector {
                 // (every `WAKEUPS_SAMPLE_INTERVAL_TICKS` ticks, ~10 s) to avoid
                 // a per-process syscall on every tick, but always read the
                 // counters for new PIDs so they show data immediately.
-                let sample_rusage = sample_wakeups || refresh_memory || previous.is_none();
+                let sample_rusage = sample_wakeups
+                    || refresh_memory
+                    || (previous.is_none() && !self.config.defer_expensive_sampling);
                 let (wakeups, energy_nj, physical_footprint_bytes) = if sample_rusage {
                     platform::process_counters(pid)
                         .map(|counters| {
@@ -543,8 +557,8 @@ impl Collector {
                     disk_write_bytes: disk_write_delta,
                     wakeups_per_second,
                     energy_nj_per_s,
-                    cwd: if self.config.full_collection
-                        || self.process_metadata_tick.is_multiple_of(2)
+                    cwd: if !self.config.defer_expensive_sampling
+                        && (full_collection || self.process_metadata_tick.is_multiple_of(2))
                     {
                         // Only probe new PIDs; return cached cwd for known ones.
                         let is_new = self
@@ -568,7 +582,9 @@ impl Collector {
         self.previous_process_counters = next_process_counters;
 
         // Update CWD cache: insert fresh values, prune dead PIDs.
-        if self.config.full_collection || self.process_metadata_tick.is_multiple_of(2) {
+        if !self.config.defer_expensive_sampling
+            && (full_collection || self.process_metadata_tick.is_multiple_of(2))
+        {
             let alive: std::collections::HashSet<u32> =
                 all_processes.iter().map(|p| p.pid).collect();
             self.cwd_cache.retain(|pid, _| alive.contains(pid));
@@ -661,6 +677,7 @@ impl Collector {
                 sampled_rusage: sample_wakeups || refresh_memory,
                 process_refresh_pid_count,
                 process_refresh_refreshed_memory,
+                deferred_expensive_sampling: self.config.defer_expensive_sampling,
             },
         }
     }
@@ -740,7 +757,7 @@ impl Default for Collector {
 
 impl Collector {
     fn should_refresh_user_directory(&self, full_scan: bool) -> bool {
-        if self.config.full_collection {
+        if self.config.full_collection && !self.config.defer_expensive_sampling {
             return full_scan;
         }
         if !full_scan {
