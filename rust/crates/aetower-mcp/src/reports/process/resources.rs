@@ -1,18 +1,35 @@
-use std::process::Command;
+use std::{
+    fs::{self, File},
+    process::{Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
+};
 
 use super::*;
+
+const LSOF_TIMEOUT: Duration = Duration::from_secs(2);
+static LSOF_RUN_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn build_process_open_resources(
     pid: u32,
     limit: usize,
 ) -> Result<ProcessOpenResourcesReport, String> {
     validate_pid(pid)?;
-    let output = run_os_command(
-        "/usr/sbin/lsof",
-        &["-nP".to_owned(), "-p".to_owned(), pid.to_string()],
-    )?;
+    if !process_exists(pid) {
+        return Err(format!("process {pid} is not visible to macOS right now"));
+    }
+    let native_fd_count = native_process_fd_count(pid);
+    let output = run_lsof(&[
+        "-nP".to_owned(),
+        "-w".to_owned(),
+        "-p".to_owned(),
+        pid.to_string(),
+    ])?;
     let mut resources = parse_lsof_resources(&output);
-    let resource_count = resources.len();
+    let lsof_resource_count = resources.len();
+    let resource_count = native_fd_count
+        .map(|count| count.max(lsof_resource_count))
+        .unwrap_or(lsof_resource_count);
     let socket_count = resources
         .iter()
         .filter(|resource| resource.is_socket)
@@ -23,6 +40,7 @@ pub(crate) fn build_process_open_resources(
         captured_at_millis: current_unix_millis().unwrap_or_default(),
         pid,
         resource_count,
+        native_fd_count,
         returned: resources.len(),
         file_count,
         socket_count,
@@ -55,7 +73,7 @@ pub(crate) fn build_resource_holders_by_port(port: u16) -> Result<ResourceHolder
     if port == 0 {
         return Err("port must be between 1 and 65535".to_owned());
     }
-    let output = run_lsof(&["-nP".to_owned(), format!("-i:{port}")])?;
+    let output = run_lsof(&["-nP".to_owned(), "-w".to_owned(), format!("-i:{port}")])?;
     Ok(holders_report(format!(":{port}"), "port", &output))
 }
 
@@ -70,7 +88,12 @@ pub(crate) fn build_resource_holders_by_file(path: &str) -> Result<ResourceHolde
     if trimmed.len() > 4096 || trimmed.chars().any(char::is_control) {
         return Err("file path is invalid".to_owned());
     }
-    let output = run_lsof(&["-nP".to_owned(), "--".to_owned(), trimmed.to_owned()])?;
+    let output = run_lsof(&[
+        "-nP".to_owned(),
+        "-w".to_owned(),
+        "--".to_owned(),
+        trimmed.to_owned(),
+    ])?;
     Ok(holders_report(trimmed.to_owned(), "file", &output))
 }
 
@@ -94,11 +117,123 @@ fn holders_report(query: String, kind: &str, output: &str) -> ResourceHoldersRep
 /// (`run_os_command` treats any non-zero exit as failure, so it can't be reused
 /// here — lsof exits 1 for the common "no open files found" case.)
 fn run_lsof(args: &[String]) -> Result<String, String> {
-    let output = Command::new("/usr/sbin/lsof")
+    let sequence = LSOF_RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let output_path = std::env::temp_dir().join(format!(
+        "aetower-lsof-{}-{}-{sequence}.out",
+        std::process::id(),
+        current_unix_millis().unwrap_or_default()
+    ));
+    let output_file =
+        File::create(&output_path).map_err(|error| format!("create lsof output file: {error}"))?;
+    let mut child = match Command::new("/usr/sbin/lsof")
         .args(args)
-        .output()
-        .map_err(|error| format!("run lsof: {error}"))?;
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        .stdout(Stdio::from(output_file))
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = fs::remove_file(&output_path);
+            return Err(format!("run lsof: {error}"));
+        }
+    };
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("wait for lsof: {error}"))?
+        {
+            break status;
+        }
+        if started.elapsed() >= LSOF_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = fs::remove_file(&output_path);
+            return Err(format!(
+                "lsof timed out after {}ms",
+                LSOF_TIMEOUT.as_millis()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+
+    let output = match fs::read_to_string(&output_path) {
+        Ok(output) => output,
+        Err(error) => {
+            let _ = fs::remove_file(&output_path);
+            return Err(format!("read lsof output file: {error}"));
+        }
+    };
+    let _ = fs::remove_file(&output_path);
+    if !status.success() && output.trim().is_empty() {
+        return Ok(String::new());
+    }
+    Ok(output)
+}
+
+#[cfg(target_os = "macos")]
+fn native_process_fd_count(pid: u32) -> Option<usize> {
+    const PROC_PIDLISTFDS: i32 = 1;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct ProcFdInfo {
+        proc_fd: i32,
+        proc_fdtype: u32,
+    }
+
+    let Ok(pid) = i32::try_from(pid) else {
+        return None;
+    };
+    let record_size = std::mem::size_of::<ProcFdInfo>();
+    let required_bytes = unsafe { proc_pidinfo(pid, PROC_PIDLISTFDS, 0, std::ptr::null_mut(), 0) };
+    if required_bytes <= 0 {
+        return None;
+    }
+    let capacity = usize::try_from(required_bytes)
+        .ok()?
+        .checked_div(record_size)?;
+    if capacity == 0 || capacity > 200_000 {
+        return None;
+    }
+    let mut fds = vec![
+        ProcFdInfo {
+            proc_fd: 0,
+            proc_fdtype: 0,
+        };
+        capacity
+    ];
+    let returned_bytes = unsafe {
+        proc_pidinfo(
+            pid,
+            PROC_PIDLISTFDS,
+            0,
+            fds.as_mut_ptr().cast(),
+            i32::try_from(fds.len().checked_mul(record_size)?).ok()?,
+        )
+    };
+    if returned_bytes <= 0 {
+        return None;
+    }
+    usize::try_from(returned_bytes)
+        .ok()?
+        .checked_div(record_size)
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn proc_pidinfo(
+        pid: i32,
+        flavor: i32,
+        arg: u64,
+        buffer: *mut std::ffi::c_void,
+        buffersize: i32,
+    ) -> i32;
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native_process_fd_count(_pid: u32) -> Option<usize> {
+    None
 }
 
 pub(crate) fn parse_lsof_holders(output: &str) -> Vec<ResourceHolder> {

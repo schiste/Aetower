@@ -917,6 +917,8 @@ struct ProcessOpenResourcesReport {
     captured_at_millis: u64,
     pid: u32,
     resource_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_fd_count: Option<usize>,
     returned: usize,
     file_count: usize,
     socket_count: usize,
