@@ -576,21 +576,83 @@ public final class SettingsStore {
     }
 
     public nonisolated static func normalizedTelemetryExportIntervalSeconds(_ value: Double) -> UInt32 {
-        UInt32(max(Int(minimumTelemetryExportIntervalSeconds), Int(value.rounded())))
+        let seconds = finiteOrDefault(
+            value,
+            fallback: minimumTelemetryExportIntervalSeconds,
+            minimum: minimumTelemetryExportIntervalSeconds
+        )
+        let bounded = min(Double(UInt32.max), seconds.rounded())
+        return UInt32(bounded)
     }
 
     public nonisolated static func milliseconds(from seconds: Double, minimumSeconds: Double) -> UInt64 {
-        UInt64(max(Int((minimumSeconds * 1000).rounded()), Int((seconds * 1000).rounded())))
+        let safeMinimumSeconds = finiteOrDefault(
+            minimumSeconds,
+            fallback: minimumEngineTickSeconds,
+            minimum: 0
+        )
+        let minimumMillis = max(0, (safeMinimumSeconds * 1000).rounded())
+        let safeSeconds = finiteOrDefault(seconds, fallback: safeMinimumSeconds, minimum: safeMinimumSeconds)
+        let millis = (safeSeconds * 1000).rounded()
+        let boundedMillis = min(9_000_000_000_000_000_000, max(minimumMillis, millis))
+        return UInt64(boundedMillis)
+    }
+
+    private nonisolated static func finiteOrDefault(
+        _ value: Double,
+        fallback: Double,
+        minimum: Double
+    ) -> Double {
+        let safeFallback = fallback.isFinite ? fallback : minimum
+        guard value.isFinite else {
+            return max(minimum, safeFallback)
+        }
+        return max(minimum, value)
     }
 
     private func normalizeLoadedValues() {
-        refreshIntervalSeconds = max(1.0, refreshIntervalSeconds)
-        telemetryExportIntervalSeconds = max(Self.minimumTelemetryExportIntervalSeconds, telemetryExportIntervalSeconds)
-        engineActiveIntervalSeconds = max(Self.minimumEngineTickSeconds, engineActiveIntervalSeconds)
-        engineIdleIntervalSeconds = max(Self.minimumEngineTickSeconds, engineIdleIntervalSeconds)
-        engineLowPowerIntervalSeconds = max(Self.minimumEngineTickSeconds, engineLowPowerIntervalSeconds)
-        gpuSampleIntervalSeconds = max(Self.minimumGPUSampleIntervalSeconds, gpuSampleIntervalSeconds)
-        gpuSampleLowPowerIntervalSeconds = max(Self.minimumGPUSampleIntervalSeconds, gpuSampleLowPowerIntervalSeconds)
+        refreshIntervalSeconds = Self.finiteOrDefault(refreshIntervalSeconds, fallback: 2.0, minimum: 1.0)
+        telemetryExportIntervalSeconds = Self.finiteOrDefault(
+            telemetryExportIntervalSeconds,
+            fallback: 30.0,
+            minimum: Self.minimumTelemetryExportIntervalSeconds
+        )
+        engineActiveIntervalSeconds = Self.finiteOrDefault(
+            engineActiveIntervalSeconds,
+            fallback: 2.0,
+            minimum: Self.minimumEngineTickSeconds
+        )
+        engineIdleIntervalSeconds = Self.finiteOrDefault(
+            engineIdleIntervalSeconds,
+            fallback: 5.0,
+            minimum: Self.minimumEngineTickSeconds
+        )
+        engineLowPowerIntervalSeconds = Self.finiteOrDefault(
+            engineLowPowerIntervalSeconds,
+            fallback: 8.0,
+            minimum: Self.minimumEngineTickSeconds
+        )
+        gpuSampleIntervalSeconds = Self.finiteOrDefault(
+            gpuSampleIntervalSeconds,
+            fallback: 30.0,
+            minimum: Self.minimumGPUSampleIntervalSeconds
+        )
+        gpuSampleLowPowerIntervalSeconds = Self.finiteOrDefault(
+            gpuSampleLowPowerIntervalSeconds,
+            fallback: 60.0,
+            minimum: Self.minimumGPUSampleIntervalSeconds
+        )
+        frictionNotificationThreshold = Self.finiteOrDefault(
+            frictionNotificationThreshold,
+            fallback: 60.0,
+            minimum: 0
+        )
+        electricityPricePerKwh = Self.finiteOrDefault(electricityPricePerKwh, fallback: 0.15, minimum: 0)
+        gridCarbonIntensityGramsPerKwh = Self.finiteOrDefault(
+            gridCarbonIntensityGramsPerKwh,
+            fallback: 480.0,
+            minimum: 0
+        )
         enforceRuntimeIntervalRelationships()
     }
 
