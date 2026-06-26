@@ -21,6 +21,7 @@ pub(crate) struct StorageHygieneReport {
     scan_duration_millis: u64,
     summary: StorageHygieneSummary,
     cleanup_tiers: Vec<StorageCleanupTierSummary>,
+    cleanup_recipes: Vec<StorageCleanupRecipe>,
     repo_footprints: Vec<StorageRepoFootprint>,
     items: Vec<StorageHygieneItem>,
     roots: Vec<String>,
@@ -81,6 +82,21 @@ struct StorageCleanupTierSummary {
     description: String,
     item_count: usize,
     bytes: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageCleanupRecipe {
+    id: String,
+    title: String,
+    category: String,
+    safety: String,
+    affected_path: String,
+    command: String,
+    estimated_reclaimable_bytes: u64,
+    reason: String,
+    prerequisites: Vec<String>,
+    destructive: bool,
+    requires_review: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -231,12 +247,14 @@ fn build_storage_hygiene_report_with_options(
 
     let summary = summarize_storage_items(&items, scanned_directory_count);
     let cleanup_tiers = summarize_cleanup_tiers(&items);
+    let cleanup_recipes = build_cleanup_recipes(&items);
     let repo_footprints = summarize_repo_footprints(&items);
     StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
         summary,
         cleanup_tiers,
+        cleanup_recipes,
         repo_footprints,
         items,
         roots: scanned_roots,
@@ -681,6 +699,194 @@ fn summarize_repo_footprints(items: &[StorageHygieneItem]) -> Vec<StorageRepoFoo
     footprints
 }
 
+fn build_cleanup_recipes(items: &[StorageHygieneItem]) -> Vec<StorageCleanupRecipe> {
+    let mut recipes = BTreeMap::<String, StorageCleanupRecipe>::new();
+    for item in items {
+        for recipe in cleanup_recipes_for_item(item) {
+            recipes
+                .entry(recipe.id.clone())
+                .and_modify(|existing| {
+                    existing.estimated_reclaimable_bytes = existing
+                        .estimated_reclaimable_bytes
+                        .saturating_add(recipe.estimated_reclaimable_bytes);
+                })
+                .or_insert(recipe);
+        }
+    }
+
+    let mut recipes: Vec<_> = recipes.into_values().collect();
+    recipes.sort_by(|left, right| {
+        right
+            .estimated_reclaimable_bytes
+            .cmp(&left.estimated_reclaimable_bytes)
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    recipes.truncate(16);
+    recipes
+}
+
+fn cleanup_recipes_for_item(item: &StorageHygieneItem) -> Vec<StorageCleanupRecipe> {
+    match item.kind.as_str() {
+        "rust-build" => rust_cleanup_recipe(item).into_iter().collect(),
+        "swift-build" => swiftpm_cleanup_recipe(item).into_iter().collect(),
+        "xcode-derived-data" => vec![derived_data_cleanup_recipe(item)],
+        "log-file" | "logs" => vec![log_cleanup_recipe(item)],
+        "build-output" | "next-build" => stale_release_artifact_recipe(item).into_iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn rust_cleanup_recipe(item: &StorageHygieneItem) -> Option<StorageCleanupRecipe> {
+    let path = Path::new(&item.path);
+    let manifest_dir = nearest_parent_with_file(path, "Cargo.toml")?;
+    let manifest_path = manifest_dir.join("Cargo.toml");
+    let manifest = fs::read_to_string(&manifest_path).unwrap_or_default();
+    let package = if manifest.contains("aetower-ffi") {
+        Some("aetower-ffi")
+    } else {
+        None
+    };
+    let command = if let Some(package) = package {
+        format!(
+            "cd {} && cargo clean -p {package}",
+            shell_quote(&manifest_dir.display().to_string())
+        )
+    } else {
+        format!(
+            "cd {} && cargo clean",
+            shell_quote(&manifest_dir.display().to_string())
+        )
+    };
+    Some(StorageCleanupRecipe {
+        id: format!("rust-clean|{}", manifest_dir.display()),
+        title: package
+            .map(|package| format!("Clean Rust package {package}"))
+            .unwrap_or_else(|| "Clean Rust build artifacts".to_owned()),
+        category: "rust".to_owned(),
+        safety: "rebuildable".to_owned(),
+        affected_path: item.path.clone(),
+        command,
+        estimated_reclaimable_bytes: item.size_bytes,
+        reason: "Cargo build output is rebuildable and can usually be reclaimed with cargo clean once builds/tests are idle.".to_owned(),
+        prerequisites: vec![
+            "Stop active cargo builds/tests first.".to_owned(),
+            "Expect the next Rust build to recompile dependencies.".to_owned(),
+        ],
+        destructive: true,
+        requires_review: false,
+    })
+}
+
+fn swiftpm_cleanup_recipe(item: &StorageHygieneItem) -> Option<StorageCleanupRecipe> {
+    let package_root = Path::new(&item.path).parent()?;
+    Some(StorageCleanupRecipe {
+        id: format!("swiftpm-clean|{}", package_root.display()),
+        title: "Clear SwiftPM .build".to_owned(),
+        category: "swiftpm".to_owned(),
+        safety: "rebuildable".to_owned(),
+        affected_path: item.path.clone(),
+        command: format!(
+            "cd {} && swift package clean",
+            shell_quote(&package_root.display().to_string())
+        ),
+        estimated_reclaimable_bytes: item.size_bytes,
+        reason: "SwiftPM .build output is rebuildable; swift package clean removes package build products without touching sources.".to_owned(),
+        prerequisites: vec![
+            "Stop active Swift builds/tests first.".to_owned(),
+            "Expect the next Swift build to fetch or rebuild dependencies if needed.".to_owned(),
+        ],
+        destructive: true,
+        requires_review: false,
+    })
+}
+
+fn derived_data_cleanup_recipe(item: &StorageHygieneItem) -> StorageCleanupRecipe {
+    StorageCleanupRecipe {
+        id: format!("xcode-derived-data|{}", item.path),
+        title: "Prune old Xcode DerivedData".to_owned(),
+        category: "xcode".to_owned(),
+        safety: "rebuildable".to_owned(),
+        affected_path: item.path.clone(),
+        command: format!(
+            "find {} -mindepth 1 -maxdepth 1 -mtime +14 -exec rm -rf {{}} +",
+            shell_quote(&item.path)
+        ),
+        estimated_reclaimable_bytes: item.size_bytes,
+        reason: "Old DerivedData entries for inactive projects are rebuildable but can consume significant disk.".to_owned(),
+        prerequisites: vec![
+            "Close Xcode or stop active xcodebuild jobs first.".to_owned(),
+            "Review the matching folders with the same find command using -print before running deletion.".to_owned(),
+        ],
+        destructive: true,
+        requires_review: true,
+    }
+}
+
+fn log_cleanup_recipe(item: &StorageHygieneItem) -> StorageCleanupRecipe {
+    let path = Path::new(&item.path);
+    let command = if path.is_file() {
+        format!(": > {}", shell_quote(&item.path))
+    } else {
+        format!(
+            "find {} -type f -name '*.log' -size +50M -exec sh -c ': > \"$1\"' sh {{}} \\;",
+            shell_quote(&item.path)
+        )
+    };
+    StorageCleanupRecipe {
+        id: format!("logs-truncate|{}", item.path),
+        title: "Truncate oversized local logs".to_owned(),
+        category: "logs".to_owned(),
+        safety: "safe".to_owned(),
+        affected_path: item.path.clone(),
+        command,
+        estimated_reclaimable_bytes: item.size_bytes,
+        reason: "Large local logs are usually safe to truncate after the relevant debugging session is over.".to_owned(),
+        prerequisites: vec![
+            "Keep a copy first if the log is needed for a bug report.".to_owned(),
+            "Avoid truncating logs that are actively being collected for support.".to_owned(),
+        ],
+        destructive: true,
+        requires_review: item.safety != "safe",
+    }
+}
+
+fn stale_release_artifact_recipe(item: &StorageHygieneItem) -> Option<StorageCleanupRecipe> {
+    if !item.stale {
+        return None;
+    }
+    Some(StorageCleanupRecipe {
+        id: format!("release-artifacts|{}", item.path),
+        title: "Remove stale release artifacts".to_owned(),
+        category: "release".to_owned(),
+        safety: "risky".to_owned(),
+        affected_path: item.path.clone(),
+        command: format!(
+            "find {} -type f \\( -name '*.zip' -o -name '*.pkg' -o -name '*.dmg' -o -name '*.tar.gz' \\) -mtime +14 -delete",
+            shell_quote(&item.path)
+        ),
+        estimated_reclaimable_bytes: item.size_bytes,
+        reason: "Stale release folders can contain packages superseded by newer versions, but Aetower cannot prove supersession without release metadata.".to_owned(),
+        prerequisites: vec![
+            "Confirm newer signed/notarized artifacts exist before deleting old packages.".to_owned(),
+            "Run the same find expression with -print instead of -delete first.".to_owned(),
+        ],
+        destructive: true,
+        requires_review: true,
+    })
+}
+
+fn nearest_parent_with_file(path: &Path, file_name: &str) -> Option<PathBuf> {
+    let mut current = path.parent()?.to_path_buf();
+    loop {
+        if current.join(file_name).is_file() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
 fn repo_footprint_for_items(
     repo_root: String,
     items: Vec<&StorageHygieneItem>,
@@ -992,6 +1198,12 @@ mod tests {
             panic!("create target dir: {error}");
         }
         if let Err(error) = fs::write(
+            project.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/aetower-ffi\"]\n",
+        ) {
+            panic!("write cargo manifest: {error}");
+        }
+        if let Err(error) = fs::write(
             project.join(".git").join("HEAD"),
             "ref: refs/heads/master\n",
         ) {
@@ -1022,6 +1234,9 @@ mod tests {
         assert!(json.contains("\"last_branch_touched\":\"master\""));
         assert!(json.contains("\"estimated_rebuild_cost\":\"Low\""));
         assert!(json.contains("\"last_writer_process\":null"));
+        assert!(json.contains("\"cleanup_recipes\""));
+        assert!(json.contains("\"title\":\"Clean Rust package aetower-ffi\""));
+        assert!(json.contains("cargo clean -p aetower-ffi"));
 
         let _ = fs::remove_dir_all(root);
     }
