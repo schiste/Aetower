@@ -160,6 +160,7 @@ public final class AppState {
     private(set) var persistenceChangedItemIds: Set<String> = []
     private(set) var storageHygieneReport: StorageHygieneReportModel?
     private(set) var previousStorageHygieneReport: StorageHygieneReportModel?
+    private(set) var persistedStorageHygieneBaseline: StorageHygieneBaselineModel? = StorageHygieneBaselineStore.load()
     private(set) var storageHygieneIsLoading = false
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
@@ -1792,6 +1793,7 @@ public final class AppState {
                 ) {
                     self.previousStorageHygieneReport = self.storageHygieneReport
                     self.storageHygieneReport = report
+                    StorageHygieneBaselineStore.save(StorageHygieneBaselineModel(report: report))
                     self.storageHygieneCompletedAt = Date()
                     self.storageHygieneError = nil
                     self.recordLocalDiagnosticsEvent(
@@ -1817,6 +1819,10 @@ public final class AppState {
                             DiagnosticsField(
                                 key: "repo_footprint_count",
                                 value: String(report.repoFootprints.count)
+                            ),
+                            DiagnosticsField(
+                                key: "persisted_baseline_available",
+                                value: self.persistedStorageHygieneBaseline == nil ? "false" : "true"
                             ),
                             DiagnosticsField(
                                 key: "budget_violation_count",

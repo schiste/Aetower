@@ -1068,15 +1068,15 @@ public struct StorageView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if state.previousStorageHygieneReport == nil {
-                Label("Run a second scan to establish a growth timeline. The first scan becomes the baseline.", systemImage: "timeline.selection")
+            if state.previousStorageHygieneReport == nil, state.persistedStorageHygieneBaseline == nil {
+                Label("Run a second scan to establish a growth timeline. Aetower will persist a compact baseline for future launches.", systemImage: "timeline.selection")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(AetowerDesign.Spacing.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else if events.isEmpty {
-                Label("No meaningful storage jumps were detected since the previous scan.", systemImage: "checkmark.circle")
+                Label("No meaningful storage jumps were detected since the last baseline.", systemImage: "checkmark.circle")
                     .font(.caption)
                     .foregroundStyle(AetowerDesign.Status.ready)
                     .padding(AetowerDesign.Spacing.md)
@@ -1625,15 +1625,21 @@ public struct StorageView: View {
     private func storageGrowthEvents(
         from report: StorageHygieneReportModel
     ) -> [StorageGrowthTimelineEvent] {
-        guard let previousReport = state.previousStorageHygieneReport else {
+        let previousItemsByID: [String: UInt64]
+        if let previousReport = state.previousStorageHygieneReport {
+            previousItemsByID = previousReport.items.reduce(into: [String: UInt64]()) {
+                $0[$1.id] = $1.sizeBytes
+            }
+        } else if let baseline = state.persistedStorageHygieneBaseline {
+            previousItemsByID = baseline.items.reduce(into: [String: UInt64]()) {
+                $0[$1.id] = $1.sizeBytes
+            }
+        } else {
             return []
-        }
-        let previousItemsByID = previousReport.items.reduce(into: [String: StorageHygieneItemModel]()) {
-            $0[$1.id] = $1
         }
         let minimumDeltaBytes: Int64 = 8 * 1_024 * 1_024
         return report.items.compactMap { item in
-            let previousBytes = previousItemsByID[item.id]?.sizeBytes ?? 0
+            let previousBytes = previousItemsByID[item.id] ?? 0
             let delta = Int64(clamping: item.sizeBytes) - Int64(clamping: previousBytes)
             guard delta >= minimumDeltaBytes else {
                 return nil
@@ -1699,12 +1705,17 @@ public struct StorageView: View {
         if let backendGrowth = footprint.growthBytes {
             return backendGrowth
         }
-        guard let previous = state.previousStorageHygieneReport?.repoFootprints.first(where: {
+        if let previous = state.previousStorageHygieneReport?.repoFootprints.first(where: {
             $0.repoRoot == footprint.repoRoot
-        }) else {
-            return nil
+        }) {
+            return Int64(clamping: footprint.currentSizeBytes) - Int64(clamping: previous.currentSizeBytes)
         }
-        return Int64(clamping: footprint.currentSizeBytes) - Int64(clamping: previous.currentSizeBytes)
+        if let baseline = state.persistedStorageHygieneBaseline?.repoFootprints.first(where: {
+            $0.repoRoot == footprint.repoRoot
+        }) {
+            return Int64(clamping: footprint.currentSizeBytes) - Int64(clamping: baseline.currentSizeBytes)
+        }
+        return nil
     }
 
     private func storageGrowthLabel(for footprint: StorageRepoFootprintModel) -> String {
@@ -1730,7 +1741,10 @@ public struct StorageView: View {
     }
 
     private func storageGrowthWindow(for footprint: StorageRepoFootprintModel) -> String {
-        storageGrowthDelta(for: footprint) == nil ? footprint.growthWindow : "since previous scan"
+        guard storageGrowthDelta(for: footprint) != nil else {
+            return footprint.growthWindow
+        }
+        return state.previousStorageHygieneReport == nil ? "since saved baseline" : "since previous scan"
     }
 
     private func storageGrowthTone(for footprint: StorageRepoFootprintModel) -> Color {

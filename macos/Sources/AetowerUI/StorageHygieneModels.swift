@@ -17,6 +17,64 @@ struct StorageHygieneReportModel: Decodable {
     let caveats: [String]
 }
 
+struct StorageHygieneBaselineModel: Codable {
+    let capturedAtMillis: UInt64
+    let repoFootprints: [StorageRepoFootprintBaselineModel]
+    let items: [StorageHygieneItemBaselineModel]
+
+    init(report: StorageHygieneReportModel) {
+        capturedAtMillis = report.capturedAtMillis
+        repoFootprints = report.repoFootprints.map(StorageRepoFootprintBaselineModel.init)
+        items = report.items.map(StorageHygieneItemBaselineModel.init)
+    }
+}
+
+struct StorageRepoFootprintBaselineModel: Codable, Identifiable {
+    let repoRoot: String
+    let repoName: String
+    let currentSizeBytes: UInt64
+
+    var id: String { repoRoot }
+
+    init(footprint: StorageRepoFootprintModel) {
+        repoRoot = footprint.repoRoot
+        repoName = footprint.repoName
+        currentSizeBytes = footprint.currentSizeBytes
+    }
+}
+
+struct StorageHygieneItemBaselineModel: Codable, Identifiable {
+    let id: String
+    let path: String
+    let sizeBytes: UInt64
+    let modifiedMillis: UInt64?
+
+    init(item: StorageHygieneItemModel) {
+        id = item.id
+        path = item.path
+        sizeBytes = item.sizeBytes
+        modifiedMillis = item.modifiedMillis
+    }
+}
+
+enum StorageHygieneBaselineStore {
+    private static let key = "aetower.storageHygiene.baseline.v1"
+
+    static func load() -> StorageHygieneBaselineModel? {
+        guard let data = UserDefaults.standard.data(forKey: key) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(StorageHygieneBaselineModel.self, from: data)
+    }
+
+    static func save(_ baseline: StorageHygieneBaselineModel) {
+        guard let data = try? JSONEncoder().encode(baseline) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
 struct StorageHygieneSummaryModel: Decodable {
     let itemCount: Int
     let totalReclaimableBytes: UInt64
