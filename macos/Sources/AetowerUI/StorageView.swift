@@ -1,14 +1,6 @@
 import AppKit
 import SwiftUI
 
-private struct StorageRepoAttributionSummary: Identifiable {
-    let id: String
-    let title: String
-    let detail: String
-    let bytes: UInt64
-    let itemCount: Int
-}
-
 public struct StorageView: View {
     let state: AppState
     @State private var selectedFilter: StorageFilter = .attention
@@ -34,7 +26,7 @@ public struct StorageView: View {
                 if let report = state.storageHygieneReport {
                     summaryGrid(report)
                     cleanupPreviewSection(report)
-                    artifactAttributionSection(report)
+                    repoFootprintDashboard(report)
                     if report.truncated {
                         warningBanner("The scan hit a cap or time budget. Results are partial; narrow the root or refresh when the machine is idle.")
                     }
@@ -210,18 +202,17 @@ public struct StorageView: View {
         }
     }
 
-    private func artifactAttributionSection(_ report: StorageHygieneReportModel) -> some View {
-        let summaries = repoAttributionSummaries(from: report)
+    private func repoFootprintDashboard(_ report: StorageHygieneReportModel) -> some View {
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                Text("Artifact attribution")
+                Text("Repo footprint dashboard")
                     .font(.headline)
-                Text("Artifacts are grouped by the nearest Git repository and branch. Command, process-tree, and AI-session attribution are shown only when the report has direct evidence.")
+                Text("Per repository artifact footprint, top growth sources, branch context, last writer evidence, and estimated rebuild cost.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            if summaries.isEmpty {
+            if report.repoFootprints.isEmpty {
                 Label("No artifacts could be tied to an enclosing Git repository.", systemImage: "questionmark.folder")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -230,34 +221,110 @@ public struct StorageView: View {
                     .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
                 LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                    ForEach(summaries) { summary in
-                        HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
-                            Image(systemName: "point.3.connected.trianglepath.dotted")
-                                .foregroundStyle(AetowerDesign.Status.ready)
-                                .frame(width: 20)
-                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                                Text(summary.title)
-                                    .font(.subheadline.weight(.semibold))
-                                Text(summary.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                            Spacer()
-                            VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
-                                Text(formatBytes(summary.bytes))
-                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
-                                Text("\(summary.itemCount) item\(summary.itemCount == 1 ? "" : "s")")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(AetowerDesign.Spacing.md)
-                        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    ForEach(report.repoFootprints) { footprint in
+                        repoFootprintCard(footprint)
                     }
                 }
             }
         }
+    }
+
+    private func repoFootprintCard(_ footprint: StorageRepoFootprintModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "folder.badge.gearshape")
+                    .foregroundStyle(AetowerDesign.Tone.disk)
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Text(footprint.repoName)
+                            .font(.subheadline.weight(.semibold))
+                        if let branch = footprint.lastBranchTouched {
+                            Text(branch)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(AetowerDesign.Status.ready)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(AetowerDesign.Status.ready.opacity(0.12), in: Capsule())
+                        }
+                    }
+                    Text(footprint.repoRoot)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.md)
+
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(formatBytes(footprint.currentSizeBytes))
+                        .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    Text(storageGrowthLabel(for: footprint))
+                        .font(.caption2)
+                        .foregroundStyle(storageGrowthTone(for: footprint))
+                }
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 150), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                footprintMetric(
+                    "Artifacts",
+                    value: "\(footprint.itemCount)",
+                    detail: formatBytes(footprint.artifactBytes)
+                )
+                footprintMetric(
+                    "Rebuild cost",
+                    value: footprint.estimatedRebuildCost,
+                    detail: rebuildTimeLabel(footprint.estimatedRebuildSeconds)
+                )
+                footprintMetric(
+                    "Last writer",
+                    value: footprint.lastWriterProcess ?? "Unknown",
+                    detail: footprint.lastWriterPid.map { "pid \($0)" } ?? "needs file-event journal"
+                )
+                footprintMetric(
+                    "Growth",
+                    value: storageGrowthCompactValue(for: footprint),
+                    detail: storageGrowthWindow(for: footprint)
+                )
+            }
+
+            if !footprint.topArtifactFolders.isEmpty {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Top artifact folders")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(footprint.topArtifactFolders.prefix(3)) { folder in
+                        HStack(spacing: AetowerDesign.Spacing.sm) {
+                            Image(systemName: cleanupTierIcon(folder.cleanupTier))
+                                .foregroundStyle(tone(forCleanupTier: folder.cleanupTier))
+                                .frame(width: 16)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(folder.displayName)
+                                    .font(.caption.weight(.semibold))
+                                Text(folder.path)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer()
+                            Text(formatBytes(folder.sizeBytes))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func itemSection(_ report: StorageHygieneReportModel) -> some View {
@@ -472,6 +539,30 @@ public struct StorageView: View {
         .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    private func footprintMetric(
+        _ title: String,
+        value: String,
+        detail: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+            Text(value)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
     private func cleanupTierBadge(_ item: StorageHygieneItemModel) -> some View {
         Text(cleanupTierLabel(item.cleanupTier))
             .font(.caption2.weight(.semibold))
@@ -538,34 +629,6 @@ public struct StorageView: View {
         )
     }
 
-    private func repoAttributionSummaries(
-        from report: StorageHygieneReportModel
-    ) -> [StorageRepoAttributionSummary] {
-        var grouped: [String: StorageRepoAttributionSummary] = [:]
-        for item in report.items {
-            guard let repoRoot = item.attribution.repoRoot else {
-                continue
-            }
-            let branch = item.attribution.gitBranch ?? item.attribution.gitHead ?? "unknown ref"
-            let key = "\(repoRoot)|\(branch)"
-            let existing = grouped[key]
-            let previousBytes = existing?.bytes ?? 0
-            let nextBytes = UInt64.max - previousBytes < item.sizeBytes
-                ? UInt64.max
-                : previousBytes + item.sizeBytes
-            grouped[key] = StorageRepoAttributionSummary(
-                id: key,
-                title: "\(item.attribution.repoName ?? lastPathComponent(repoRoot)) / \(branch)",
-                detail: repoRoot,
-                bytes: nextBytes,
-                itemCount: (existing?.itemCount ?? 0) + 1
-            )
-        }
-        return grouped.values.sorted {
-            $0.bytes == $1.bytes ? $0.title < $1.title : $0.bytes > $1.bytes
-        }
-    }
-
     private func attributionSummary(for item: StorageHygieneItemModel) -> String {
         var parts: [String] = []
         if let repoName = item.attribution.repoName {
@@ -589,6 +652,70 @@ public struct StorageView: View {
             parts.append("runtime link unavailable")
         }
         return parts.joined(separator: " · ")
+    }
+
+    private func storageGrowthDelta(for footprint: StorageRepoFootprintModel) -> Int64? {
+        if let backendGrowth = footprint.growthBytes {
+            return backendGrowth
+        }
+        guard let previous = state.previousStorageHygieneReport?.repoFootprints.first(where: {
+            $0.repoRoot == footprint.repoRoot
+        }) else {
+            return nil
+        }
+        return Int64(clamping: footprint.currentSizeBytes) - Int64(clamping: previous.currentSizeBytes)
+    }
+
+    private func storageGrowthLabel(for footprint: StorageRepoFootprintModel) -> String {
+        guard let delta = storageGrowthDelta(for: footprint) else {
+            return "baseline pending"
+        }
+        if delta == 0 {
+            return "no growth since last scan"
+        }
+        let absolute = formatBytes(UInt64(abs(delta)))
+        return delta > 0 ? "+\(absolute) since last scan" : "-\(absolute) since last scan"
+    }
+
+    private func storageGrowthCompactValue(for footprint: StorageRepoFootprintModel) -> String {
+        guard let delta = storageGrowthDelta(for: footprint) else {
+            return "Pending"
+        }
+        if delta == 0 {
+            return "Flat"
+        }
+        let absolute = formatBytes(UInt64(abs(delta)))
+        return delta > 0 ? "+\(absolute)" : "-\(absolute)"
+    }
+
+    private func storageGrowthWindow(for footprint: StorageRepoFootprintModel) -> String {
+        storageGrowthDelta(for: footprint) == nil ? footprint.growthWindow : "since previous scan"
+    }
+
+    private func storageGrowthTone(for footprint: StorageRepoFootprintModel) -> Color {
+        guard let delta = storageGrowthDelta(for: footprint) else {
+            return .secondary
+        }
+        if delta > 0 {
+            return AetowerDesign.Status.warning
+        }
+        if delta < 0 {
+            return AetowerDesign.Status.ready
+        }
+        return .secondary
+    }
+
+    private func rebuildTimeLabel(_ seconds: UInt64?) -> String {
+        guard let seconds else {
+            return "manual review"
+        }
+        if seconds == 0 {
+            return "no rebuild expected"
+        }
+        if seconds < 60 {
+            return "~\(seconds)s"
+        }
+        return "~\(seconds / 60)m"
     }
 
     private func tone(for item: StorageHygieneItemModel) -> Color {

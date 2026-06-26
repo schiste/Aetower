@@ -159,6 +159,7 @@ public final class AppState {
     private(set) var persistenceScanCompletedAt: Date?
     private(set) var persistenceChangedItemIds: Set<String> = []
     private(set) var storageHygieneReport: StorageHygieneReportModel?
+    private(set) var previousStorageHygieneReport: StorageHygieneReportModel?
     private(set) var storageHygieneIsLoading = false
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
@@ -1789,6 +1790,7 @@ public final class AppState {
                     result,
                     as: StorageHygieneReportModel.self
                 ) {
+                    self.previousStorageHygieneReport = self.storageHygieneReport
                     self.storageHygieneReport = report
                     self.storageHygieneCompletedAt = Date()
                     self.storageHygieneError = nil
@@ -1811,6 +1813,10 @@ public final class AppState {
                             DiagnosticsField(
                                 key: "reclaimable_bytes",
                                 value: String(report.summary.totalReclaimableBytes)
+                            ),
+                            DiagnosticsField(
+                                key: "repo_footprint_count",
+                                value: String(report.repoFootprints.count)
                             ),
                             DiagnosticsField(
                                 key: "truncated",

@@ -5,6 +5,7 @@ struct StorageHygieneReportModel: Decodable {
     let scanDurationMillis: UInt64
     let summary: StorageHygieneSummaryModel
     let cleanupTiers: [StorageCleanupTierModel]
+    let repoFootprints: [StorageRepoFootprintModel]
     let items: [StorageHygieneItemModel]
     let roots: [String]
     let skippedRoots: [StorageSkippedRootModel]
@@ -32,6 +33,34 @@ struct StorageCleanupTierModel: Decodable, Identifiable {
     let bytes: UInt64
 
     var id: String { tier }
+}
+
+struct StorageRepoFootprintModel: Decodable, Identifiable {
+    let id: String
+    let repoRoot: String
+    let repoName: String
+    let currentSizeBytes: UInt64
+    let artifactBytes: UInt64
+    let itemCount: Int
+    let topArtifactFolders: [StorageRepoArtifactFolderModel]
+    let lastWriterProcess: String?
+    let lastWriterPid: UInt32?
+    let lastBranchTouched: String?
+    let growthBytes: Int64?
+    let growthWindow: String
+    let estimatedRebuildCost: String
+    let estimatedRebuildSeconds: UInt64?
+    let caveats: [String]
+}
+
+struct StorageRepoArtifactFolderModel: Decodable, Identifiable {
+    let path: String
+    let displayName: String
+    let kind: String
+    let cleanupTier: String
+    let sizeBytes: UInt64
+
+    var id: String { path }
 }
 
 struct StorageHygieneItemModel: Decodable, Identifiable {
