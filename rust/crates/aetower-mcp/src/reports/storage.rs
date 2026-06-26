@@ -25,6 +25,7 @@ pub(crate) struct StorageHygieneReport {
     summary: StorageHygieneSummary,
     cleanup_tiers: Vec<StorageCleanupTierSummary>,
     cleanup_recipes: Vec<StorageCleanupRecipe>,
+    cleanup_bundles: Vec<StorageCleanupBundle>,
     budget_guardrails: StorageBudgetGuardrails,
     agent_hygiene: StorageAgentHygieneSummary,
     repo_footprints: Vec<StorageRepoFootprint>,
@@ -102,6 +103,38 @@ struct StorageCleanupRecipe {
     prerequisites: Vec<String>,
     destructive: bool,
     requires_review: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageCleanupBundle {
+    id: String,
+    title: String,
+    subtitle: String,
+    safety: String,
+    confidence_score: u8,
+    estimated_reclaimable_bytes: u64,
+    item_count: usize,
+    dry_run_only: bool,
+    manifest: Vec<StorageCleanupBundleItem>,
+    dry_run_commands: Vec<String>,
+    rollback_notes: Vec<String>,
+    prerequisites: Vec<String>,
+    caveats: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageCleanupBundleItem {
+    path: String,
+    display_name: String,
+    kind: String,
+    cleanup_tier: String,
+    safety: String,
+    size_bytes: u64,
+    confidence_score: u8,
+    dry_run_command: String,
+    cleanup_command: Option<String>,
+    rollback_note: String,
+    reason: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -329,6 +362,7 @@ fn build_storage_hygiene_report_with_options(
     let summary = summarize_storage_items(&items, scanned_directory_count);
     let cleanup_tiers = summarize_cleanup_tiers(&items);
     let cleanup_recipes = build_cleanup_recipes(&items);
+    let cleanup_bundles = build_cleanup_bundles(&items);
     let repo_footprints = summarize_repo_footprints(&items);
     let budget_guardrails = evaluate_budget_guardrails(&summary, &repo_footprints);
     let agent_hygiene = summarize_agent_hygiene(&items);
@@ -338,6 +372,7 @@ fn build_storage_hygiene_report_with_options(
         summary,
         cleanup_tiers,
         cleanup_recipes,
+        cleanup_bundles,
         budget_guardrails,
         agent_hygiene,
         repo_footprints,
@@ -827,6 +862,204 @@ fn cleanup_recipes_for_item(item: &StorageHygieneItem) -> Vec<StorageCleanupReci
         "build-output" | "next-build" => stale_release_artifact_recipe(item).into_iter().collect(),
         _ => Vec::new(),
     }
+}
+
+fn build_cleanup_bundles(items: &[StorageHygieneItem]) -> Vec<StorageCleanupBundle> {
+    let mut bundles = Vec::new();
+    let safe_candidates: Vec<_> = items
+        .iter()
+        .filter(|item| {
+            item.safety == "safe"
+                && matches!(item.cleanup_tier.as_str(), "safe" | "rebuildable")
+                && !item.size_truncated
+        })
+        .collect();
+    if let Some(bundle) = cleanup_bundle_for_items(
+        "safe-reclaim",
+        "Reclaim safely",
+        "High-confidence local artifacts. This is still a dry run: review the manifest before running any cleanup command.",
+        "safe",
+        safe_candidates,
+    ) {
+        bundles.push(bundle);
+    }
+
+    let review_candidates: Vec<_> = items
+        .iter()
+        .filter(|item| {
+            !item.size_truncated
+                && item.cleanup_tier != "risky"
+                && !(item.safety == "safe"
+                    && matches!(item.cleanup_tier.as_str(), "safe" | "rebuildable"))
+        })
+        .collect();
+    if let Some(bundle) = cleanup_bundle_for_items(
+        "review-reclaim",
+        "Review reclaim plan",
+        "Operator-reviewed candidates such as dependency trees or local environments. Treat as planning data, not an automatic cleanup.",
+        "review",
+        review_candidates,
+    ) {
+        bundles.push(bundle);
+    }
+
+    bundles.sort_by(|left, right| {
+        right
+            .estimated_reclaimable_bytes
+            .cmp(&left.estimated_reclaimable_bytes)
+            .then_with(|| right.confidence_score.cmp(&left.confidence_score))
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    bundles.truncate(3);
+    bundles
+}
+
+fn cleanup_bundle_for_items(
+    id: &str,
+    title: &str,
+    subtitle: &str,
+    safety: &str,
+    items: Vec<&StorageHygieneItem>,
+) -> Option<StorageCleanupBundle> {
+    if items.is_empty() {
+        return None;
+    }
+    let mut manifest: Vec<_> = items.into_iter().map(cleanup_bundle_item).collect();
+    manifest.sort_by(|left, right| {
+        right
+            .size_bytes
+            .cmp(&left.size_bytes)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+
+    let estimated_reclaimable_bytes = manifest
+        .iter()
+        .fold(0u64, |total, item| total.saturating_add(item.size_bytes));
+    let confidence_score = average_confidence(&manifest);
+    let dry_run_commands = manifest
+        .iter()
+        .take(16)
+        .map(|item| item.dry_run_command.clone())
+        .collect();
+    let rollback_notes = unique_limited(
+        manifest
+            .iter()
+            .map(|item| item.rollback_note.clone())
+            .collect(),
+        6,
+    );
+
+    Some(StorageCleanupBundle {
+        id: id.to_owned(),
+        title: format!("{title}: {}", human_bytes(estimated_reclaimable_bytes)),
+        subtitle: subtitle.to_owned(),
+        safety: safety.to_owned(),
+        confidence_score,
+        estimated_reclaimable_bytes,
+        item_count: manifest.len(),
+        dry_run_only: true,
+        manifest,
+        dry_run_commands,
+        rollback_notes,
+        prerequisites: cleanup_bundle_prerequisites(safety),
+        caveats: vec![
+            "Aetower does not delete files from dry-run bundles.".to_owned(),
+            "Verify active builds, tests, terminals, and agents are idle before running copied cleanup commands.".to_owned(),
+        ],
+    })
+}
+
+fn cleanup_bundle_item(item: &StorageHygieneItem) -> StorageCleanupBundleItem {
+    let cleanup_command = cleanup_recipes_for_item(item)
+        .into_iter()
+        .next()
+        .map(|recipe| recipe.command);
+    StorageCleanupBundleItem {
+        path: item.path.clone(),
+        display_name: item.display_name.clone(),
+        kind: item.kind.clone(),
+        cleanup_tier: item.cleanup_tier.clone(),
+        safety: item.safety.clone(),
+        size_bytes: item.size_bytes,
+        confidence_score: cleanup_item_confidence(item),
+        dry_run_command: item.command_hint.clone(),
+        cleanup_command,
+        rollback_note: cleanup_item_rollback_note(item),
+        reason: item.reason.clone(),
+    }
+}
+
+fn cleanup_bundle_prerequisites(safety: &str) -> Vec<String> {
+    let mut prerequisites = vec![
+        "Run the dry-run commands first and confirm the manifest matches your intent.".to_owned(),
+        "Stop active builds, tests, package managers, and AI agents that may be writing these paths."
+            .to_owned(),
+    ];
+    if safety != "safe" {
+        prerequisites.push(
+            "Review every candidate manually; this bundle intentionally includes non-safe items."
+                .to_owned(),
+        );
+    }
+    prerequisites
+}
+
+fn cleanup_item_confidence(item: &StorageHygieneItem) -> u8 {
+    let base: u8 = match item.cleanup_tier.as_str() {
+        "rebuildable" if item.safety == "safe" => 94,
+        "safe" if item.safety == "safe" => 88,
+        "expensive" => 62,
+        "risky" => 35,
+        _ => 70,
+    };
+    let stale_bonus: u8 = if item.stale { 3 } else { 0 };
+    let truncation_penalty: u8 = if item.size_truncated { 20 } else { 0 };
+    (base + stale_bonus)
+        .saturating_sub(truncation_penalty)
+        .clamp(1, 99)
+}
+
+fn cleanup_item_rollback_note(item: &StorageHygieneItem) -> String {
+    match item.cleanup_tier.as_str() {
+        "rebuildable" => {
+            "Rollback: rebuild or rerun the owning package manager/tool; source files are not expected to be affected.".to_owned()
+        }
+        "safe" if item.kind == "log-file" || item.kind == "logs" => {
+            "Rollback: log truncation is not reversible unless you copy the log first; keep evidence needed for support.".to_owned()
+        }
+        "safe" => {
+            "Rollback: usually not needed, but keep a copy first if this artifact is required for debugging.".to_owned()
+        }
+        "expensive" => {
+            "Rollback: reinstall dependencies or recreate the environment from manifests; expect network and rebuild cost.".to_owned()
+        }
+        "risky" => {
+            "Rollback: restore from source control, release archives, or backups; do not automate without manual confirmation.".to_owned()
+        }
+        _ => "Rollback depends on the owning tool; review before cleanup.".to_owned(),
+    }
+}
+
+fn average_confidence(items: &[StorageCleanupBundleItem]) -> u8 {
+    if items.is_empty() {
+        return 0;
+    }
+    let total: u64 = items.iter().map(|item| item.confidence_score as u64).sum();
+    (total / items.len() as u64) as u8
+}
+
+fn unique_limited(values: Vec<String>, limit: usize) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut unique = Vec::new();
+    for value in values {
+        if seen.insert(value.clone()) {
+            unique.push(value);
+        }
+        if unique.len() >= limit {
+            break;
+        }
+    }
+    unique
 }
 
 fn evaluate_budget_guardrails(
@@ -1810,6 +2043,11 @@ mod tests {
         assert!(json.contains("\"cleanup_recipes\""));
         assert!(json.contains("\"title\":\"Clean Rust package aetower-ffi\""));
         assert!(json.contains("cargo clean -p aetower-ffi"));
+        assert!(json.contains("\"cleanup_bundles\""));
+        assert!(json.contains("\"id\":\"safe-reclaim\""));
+        assert!(json.contains("\"dry_run_only\":true"));
+        assert!(json.contains("\"confidence_score\":94"));
+        assert!(json.contains("\"rollback_notes\""));
         assert!(json.contains("\"budget_guardrails\""));
         assert!(json.contains("\"repo_growth_budget_bytes_per_day\":2147483648"));
         assert!(json.contains("\"total_artifact_budget_bytes\":32212254720"));
