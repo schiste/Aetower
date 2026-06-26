@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -21,6 +21,7 @@ pub(crate) struct StorageHygieneReport {
     scan_duration_millis: u64,
     summary: StorageHygieneSummary,
     cleanup_tiers: Vec<StorageCleanupTierSummary>,
+    repo_footprints: Vec<StorageRepoFootprint>,
     items: Vec<StorageHygieneItem>,
     roots: Vec<String>,
     skipped_roots: Vec<StorageSkippedRoot>,
@@ -80,6 +81,34 @@ struct StorageCleanupTierSummary {
     description: String,
     item_count: usize,
     bytes: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageRepoFootprint {
+    id: String,
+    repo_root: String,
+    repo_name: String,
+    current_size_bytes: u64,
+    artifact_bytes: u64,
+    item_count: usize,
+    top_artifact_folders: Vec<StorageRepoArtifactFolder>,
+    last_writer_process: Option<String>,
+    last_writer_pid: Option<u32>,
+    last_branch_touched: Option<String>,
+    growth_bytes: Option<i64>,
+    growth_window: String,
+    estimated_rebuild_cost: String,
+    estimated_rebuild_seconds: Option<u64>,
+    caveats: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageRepoArtifactFolder {
+    path: String,
+    display_name: String,
+    kind: String,
+    cleanup_tier: String,
+    size_bytes: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -202,11 +231,13 @@ fn build_storage_hygiene_report_with_options(
 
     let summary = summarize_storage_items(&items, scanned_directory_count);
     let cleanup_tiers = summarize_cleanup_tiers(&items);
+    let repo_footprints = summarize_repo_footprints(&items);
     StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
         summary,
         cleanup_tiers,
+        repo_footprints,
         items,
         roots: scanned_roots,
         skipped_roots,
@@ -629,6 +660,135 @@ fn artifact_attribution(path: &Path) -> StorageArtifactAttribution {
     }
 }
 
+fn summarize_repo_footprints(items: &[StorageHygieneItem]) -> Vec<StorageRepoFootprint> {
+    let mut grouped = BTreeMap::<String, Vec<&StorageHygieneItem>>::new();
+    for item in items {
+        if let Some(repo_root) = item.attribution.repo_root.as_deref() {
+            grouped.entry(repo_root.to_owned()).or_default().push(item);
+        }
+    }
+
+    let mut footprints: Vec<_> = grouped
+        .into_iter()
+        .map(|(repo_root, items)| repo_footprint_for_items(repo_root, items))
+        .collect();
+    footprints.sort_by(|left, right| {
+        right
+            .current_size_bytes
+            .cmp(&left.current_size_bytes)
+            .then_with(|| left.repo_name.cmp(&right.repo_name))
+    });
+    footprints
+}
+
+fn repo_footprint_for_items(
+    repo_root: String,
+    items: Vec<&StorageHygieneItem>,
+) -> StorageRepoFootprint {
+    let repo_name = items
+        .iter()
+        .find_map(|item| item.attribution.repo_name.clone())
+        .or_else(|| {
+            Path::new(&repo_root)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "repository".to_owned());
+    let artifact_bytes = items
+        .iter()
+        .fold(0u64, |total, item| total.saturating_add(item.size_bytes));
+    let mut top_artifact_folders: Vec<_> = items
+        .iter()
+        .map(|item| StorageRepoArtifactFolder {
+            path: item.path.clone(),
+            display_name: item.display_name.clone(),
+            kind: item.kind.clone(),
+            cleanup_tier: item.cleanup_tier.clone(),
+            size_bytes: item.size_bytes,
+        })
+        .collect();
+    top_artifact_folders.sort_by(|left, right| {
+        right
+            .size_bytes
+            .cmp(&left.size_bytes)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    top_artifact_folders.truncate(5);
+
+    let last_branch_touched = latest_branch_for_items(&items);
+    let (estimated_rebuild_cost, estimated_rebuild_seconds) = estimate_rebuild_cost(&items);
+
+    StorageRepoFootprint {
+        id: repo_root.clone(),
+        repo_root,
+        repo_name,
+        current_size_bytes: artifact_bytes,
+        artifact_bytes,
+        item_count: items.len(),
+        top_artifact_folders,
+        last_writer_process: None,
+        last_writer_pid: None,
+        last_branch_touched,
+        growth_bytes: None,
+        growth_window: "No prior scan baseline in this process.".to_owned(),
+        estimated_rebuild_cost,
+        estimated_rebuild_seconds,
+        caveats: vec![
+            "Current size is the bounded attributed artifact footprint, not a full source checkout size."
+                .to_owned(),
+            "Last writer process and exact growth require a file-event journal or scan baseline."
+                .to_owned(),
+        ],
+    }
+}
+
+fn latest_branch_for_items(items: &[&StorageHygieneItem]) -> Option<String> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let reference = item
+                .attribution
+                .git_branch
+                .as_ref()
+                .or(item.attribution.git_head.as_ref())?;
+            let modified_millis = item.modified_millis.unwrap_or_default();
+            Some((modified_millis, reference.clone()))
+        })
+        .max_by(|left, right| left.0.cmp(&right.0))
+        .map(|(_, reference)| reference)
+}
+
+fn estimate_rebuild_cost(items: &[&StorageHygieneItem]) -> (String, Option<u64>) {
+    let expensive_bytes = tier_bytes(items, "expensive");
+    let risky_bytes = tier_bytes(items, "risky");
+    let rebuildable_bytes = tier_bytes(items, "rebuildable");
+    let total_bytes = items
+        .iter()
+        .fold(0u64, |total, item| total.saturating_add(item.size_bytes));
+
+    if risky_bytes > 0 {
+        return ("Review first".to_owned(), None);
+    }
+    if expensive_bytes >= 1_024 * 1_024 * 1_024 {
+        return ("High".to_owned(), Some(1_800));
+    }
+    if expensive_bytes > 0 || rebuildable_bytes >= 512 * 1_024 * 1_024 {
+        return ("Medium".to_owned(), Some(600));
+    }
+    if total_bytes > 0 {
+        return ("Low".to_owned(), Some(120));
+    }
+    ("None".to_owned(), Some(0))
+}
+
+fn tier_bytes(items: &[&StorageHygieneItem], tier: &str) -> u64 {
+    items
+        .iter()
+        .filter(|item| item.cleanup_tier == tier)
+        .fold(0u64, |total, item| total.saturating_add(item.size_bytes))
+}
+
 fn find_git_root(path: &Path) -> Option<PathBuf> {
     let mut current = if path.is_dir() {
         path.to_path_buf()
@@ -856,6 +1016,12 @@ mod tests {
         assert!(json.contains("\"git_branch\":\"master\""));
         assert!(json.contains("\"git_head\":\"1234567890ab\""));
         assert!(json.contains("\"attributed_repo_count\":1"));
+        assert!(json.contains("\"repo_footprints\""));
+        assert!(json.contains("\"current_size_bytes\":1048704"));
+        assert!(json.contains("\"top_artifact_folders\""));
+        assert!(json.contains("\"last_branch_touched\":\"master\""));
+        assert!(json.contains("\"estimated_rebuild_cost\":\"Low\""));
+        assert!(json.contains("\"last_writer_process\":null"));
 
         let _ = fs::remove_dir_all(root);
     }
