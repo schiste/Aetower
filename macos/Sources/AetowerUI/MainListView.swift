@@ -713,6 +713,7 @@ private struct MonitorEntitySections {
     let flatVisibleEntityIDs: [String]
     let burdenLeaderProcessCount: Int
     let flatVisibleProcessCount: Int
+    let rowBuildDurationMillis: Double
 
     static let empty = MonitorEntitySections(
         filteredEntities: [],
@@ -721,8 +722,16 @@ private struct MonitorEntitySections {
         allProcessRows: [],
         flatVisibleEntityIDs: [],
         burdenLeaderProcessCount: 0,
-        flatVisibleProcessCount: 0
+        flatVisibleProcessCount: 0,
+        rowBuildDurationMillis: 0
     )
+}
+
+private struct MonitorGroupRowSection {
+    let rows: [MonitorGroupRowModel]
+    let rowBuildDurationMillis: Double
+
+    static let empty = MonitorGroupRowSection(rows: [], rowBuildDurationMillis: 0)
 }
 
 @MainActor
@@ -740,6 +749,7 @@ private final class MonitorEntitySectionCacheStore: ObservableObject {
             return sections
         }
 
+        let buildStartedAt = CFAbsoluteTimeGetCurrent()
         let advancedFilteredEntities: [EntitySnapshot]
         if let advancedFilterEntityIds {
             advancedFilteredEntities = snapshot.entities.filter {
@@ -799,7 +809,8 @@ private final class MonitorEntitySectionCacheStore: ObservableObject {
             flatVisibleEntityIDs: burdenLeaderEntities.map(\.entityId)
                 + allProcessEntities.map(\.entityId),
             burdenLeaderProcessCount: burdenLeaderProcessCount,
-            flatVisibleProcessCount: flatVisibleProcessCount
+            flatVisibleProcessCount: flatVisibleProcessCount,
+            rowBuildDurationMillis: (CFAbsoluteTimeGetCurrent() - buildStartedAt) * 1000.0
         )
         self.key = key
         sections = refreshed
@@ -810,26 +821,30 @@ private final class MonitorEntitySectionCacheStore: ObservableObject {
 @MainActor
 private final class MonitorGroupRowCacheStore: ObservableObject {
     private var key: MonitorGroupRowCacheKey?
-    private var rows: [MonitorGroupRowModel] = []
+    private var section = MonitorGroupRowSection.empty
 
-    func rows(
+    func section(
         for key: MonitorGroupRowCacheKey,
         groups: [EntityGroup],
         originCache: ProcessOriginSnapshotCache,
         excludedEntityIDs: Set<String>
-    ) -> [MonitorGroupRowModel] {
+    ) -> MonitorGroupRowSection {
         if self.key == key {
-            return rows
+            return section
         }
 
+        let buildStartedAt = CFAbsoluteTimeGetCurrent()
         let refreshed = groups
             .filter { !excludedEntityIDs.contains($0.root.entityId) }
             .map {
                 MonitorGroupRowModel(group: $0, origin: originCache.summary(for: $0.members))
             }
         self.key = key
-        rows = refreshed
-        return refreshed
+        section = MonitorGroupRowSection(
+            rows: refreshed,
+            rowBuildDurationMillis: (CFAbsoluteTimeGetCurrent() - buildStartedAt) * 1000.0
+        )
+        return section
     }
 }
 
@@ -1546,6 +1561,12 @@ public struct MainListView: View {
         }
         .task {
             applyPendingMonitorFocusIfNeeded()
+        }
+        .task(id: monitorUiPerformanceBudgetToken) {
+            state.recordMonitorRowBuildDiagnostics(
+                rowBuildMillis: monitorVisibleRowBuildMillis,
+                visibleRowCount: monitorVisibleRowCount
+            )
         }
         .onDisappear {
             groupingTask?.cancel()
@@ -2811,7 +2832,11 @@ public struct MainListView: View {
     }
 
     private var allProcessGroupRows: [MonitorGroupRowModel] {
-        guard let groupingKey = currentGroupingCacheKey else { return [] }
+        allProcessGroupSection.rows
+    }
+
+    private var allProcessGroupSection: MonitorGroupRowSection {
+        guard let groupingKey = currentGroupingCacheKey else { return .empty }
         let groups = groupedEntities
         let excludedIDs = burdenLeaderEntityIDs
         let key = MonitorGroupRowCacheKey(
@@ -2819,12 +2844,38 @@ public struct MainListView: View {
             excludedEntityIDs: excludedIDs.sorted(),
             groupEntityIDs: groups.map(\.id)
         )
-        return monitorGroupRowCacheStore.rows(
+        return monitorGroupRowCacheStore.section(
             for: key,
             groups: groups,
             originCache: processOriginCache,
             excludedEntityIDs: excludedIDs
         )
+    }
+
+    private var monitorVisibleRowCount: Int {
+        if isGroupedMode {
+            return burdenLeaderRows.count + allProcessGroupRows.count
+        }
+        return burdenLeaderRows.count + allProcessRows.count
+    }
+
+    private var monitorVisibleRowBuildMillis: Double {
+        monitorSections.rowBuildDurationMillis
+            + (isGroupedMode ? allProcessGroupSection.rowBuildDurationMillis : 0)
+    }
+
+    private var monitorUiPerformanceBudgetToken: String {
+        let durationBucket = Int((monitorVisibleRowBuildMillis * 10).rounded())
+        return [
+            "\(state.snapshot.sequence)",
+            listMode.rawValue,
+            "\(monitorVisibleRowCount)",
+            "\(durationBucket)",
+            normalizedSearchQuery,
+            originFilter.rawValue,
+            sortKey.rawValue,
+            advancedFilterSignature,
+        ].joined(separator: "|")
     }
 
     private func applySort(for column: MonitorSortColumn) {

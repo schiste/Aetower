@@ -8,6 +8,7 @@ struct ExportSupportBundleContext {
     let diagnosticsRecentWarningCount: Int
     let diagnosticsRecentErrorCount: Int
     let runtimeLagMetrics: RuntimeLagMetrics
+    let uiPerformanceBudgetDiagnostics: UiPerformanceBudgetDiagnosticsSummary
     let notificationAuthorizationStatus: String
     let lastDiagnosticsQueryDate: Date?
     let lastSessionLogAnalysisCompletedDate: Date?
@@ -179,6 +180,7 @@ final class ExportController {
             "settings": settingsSummary(settings, telemetryVerificationStatus: context.telemetryVerificationStatus),
             "diagnosticsOverview": diagnosticsOverviewSummary(context),
             "runtimeLagMetrics": runtimeLagSummary(context.runtimeLagMetrics),
+            "uiPerformanceBudget": uiPerformanceBudgetSummary(context.uiPerformanceBudgetDiagnostics),
             "sessionHealth": sessionHealthSummary(context),
             "historySummary": historySummary(context),
             "snapshot": try parseJsonObject(snapshotJson),
@@ -299,6 +301,23 @@ final class ExportController {
             "inputAvgLatencyMillis": runtime.inputAvgLatencyMillis,
             "inputMaxLatencyMillis": runtime.inputMaxLatencyMillis,
             "inputSampleCount": runtime.inputSampleCount,
+        ]
+    }
+
+    private func uiPerformanceBudgetSummary(
+        _ budget: UiPerformanceBudgetDiagnosticsSummary
+    ) -> [String: Any] {
+        [
+            "updatedAtMillis": jsonOptional(budget.updatedAt.map { UInt64($0.timeIntervalSince1970 * 1000) }),
+            "status": budget.status,
+            "ffiFetchMillis": budget.ffiFetchMillis,
+            "decodeMillis": budget.decodeMillis,
+            "rowBuildMillis": budget.rowBuildMillis,
+            "renderPublishMillis": budget.renderPublishMillis,
+            "totalMeasuredMillis": budget.totalMeasuredMillis,
+            "visibleRowCount": budget.visibleRowCount,
+            "snapshotBytes": budget.snapshotBytes,
+            "compactPayloadKind": budget.compactPayloadKind,
         ]
     }
 

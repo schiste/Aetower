@@ -53,3 +53,42 @@ public struct TimelinePayloadDiagnosticsSummary: Sendable {
         safeModeEnabled: false
     )
 }
+
+public struct UiPerformanceBudgetDiagnosticsSummary: Sendable {
+    let updatedAt: Date?
+    let ffiFetchMillis: Double
+    let decodeMillis: Double
+    let rowBuildMillis: Double
+    let renderPublishMillis: Double
+    let visibleRowCount: Int
+    let snapshotBytes: UInt64
+    let compactPayloadKind: String
+
+    var totalMeasuredMillis: Double {
+        ffiFetchMillis + decodeMillis + rowBuildMillis + renderPublishMillis
+    }
+
+    var status: String {
+        if snapshotBytes >= 5 * 1_024 * 1_024 || totalMeasuredMillis >= 100 || visibleRowCount >= 800 {
+            return "Danger"
+        }
+        if snapshotBytes >= 1 * 1_024 * 1_024 || totalMeasuredMillis >= 50 || visibleRowCount >= 300 {
+            return "Warning"
+        }
+        if updatedAt == nil {
+            return "Pending"
+        }
+        return "OK"
+    }
+
+    static let empty = UiPerformanceBudgetDiagnosticsSummary(
+        updatedAt: nil,
+        ffiFetchMillis: 0,
+        decodeMillis: 0,
+        rowBuildMillis: 0,
+        renderPublishMillis: 0,
+        visibleRowCount: 0,
+        snapshotBytes: 0,
+        compactPayloadKind: "none"
+    )
+}

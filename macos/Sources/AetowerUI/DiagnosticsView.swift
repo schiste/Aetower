@@ -776,9 +776,41 @@ public struct DiagnosticsView: View {
     }
 
     private var uiPayloadDiagnostics: some View {
-        GroupBox("Heavy-tab payloads") {
+        let budget = state.uiPerformanceBudgetDiagnostics
+        return GroupBox("Heavy-tab payloads") {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 LazyVGrid(columns: overviewColumns, alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    diagnosticsMetric(
+                        title: "Monitor budget",
+                        value: budget.status,
+                        subtitle: "\(byteCount(budget.snapshotBytes)) \(budget.compactPayloadKind) · \(String(format: "%.1f ms", budget.totalMeasuredMillis)) measured",
+                        valueColor: uiPerformanceBudgetStatusColor
+                    )
+                    diagnosticsMetric(
+                        title: "FFI fetch",
+                        value: String(format: "%.1f ms", budget.ffiFetchMillis),
+                        subtitle: "compact payload fetch + bridge boundary"
+                    )
+                    diagnosticsMetric(
+                        title: "Decode/apply",
+                        value: String(format: "%.1f ms", budget.decodeMillis),
+                        subtitle: "Swift merge into Monitor view model"
+                    )
+                    diagnosticsMetric(
+                        title: "Row build",
+                        value: String(format: "%.1f ms", budget.rowBuildMillis),
+                        subtitle: "\(budget.visibleRowCount) visible Monitor rows"
+                    )
+                    diagnosticsMetric(
+                        title: "Render publish",
+                        value: String(format: "%.1f ms", budget.renderPublishMillis),
+                        subtitle: "refresh start to published observable state"
+                    )
+                    diagnosticsMetric(
+                        title: "Snapshot bytes",
+                        value: byteCount(budget.snapshotBytes),
+                        subtitle: budget.updatedAt.map(relativeTimeLabel(from:)) ?? "waiting for Monitor payload"
+                    )
                     diagnosticsMetric(
                         title: "History decode",
                         value: String(format: "%.1f ms", state.historyUiDiagnostics.pageDecodeDurationMillis),
@@ -1009,7 +1041,7 @@ public struct DiagnosticsView: View {
         case .mcp:
             return "\(state.runtimeLagMetrics.mcpActiveClientCount) clients · \(state.runtimeLagMetrics.mcpHelperCount) helpers"
         case .uiPayloads:
-            return "\(state.timelinePayloadDiagnostics.filteredEventCount)/\(state.timelinePayloadDiagnostics.totalEventCount) timeline events"
+            return "\(state.uiPerformanceBudgetDiagnostics.status) · \(byteCount(state.uiPerformanceBudgetDiagnostics.snapshotBytes)) monitor payload"
         case .memory:
             return byteCount(state.selfMemoryAttribution?.currentResidentBytes ?? state.runtimeLagMetrics.selfMemoryBytes)
         case .eventStream:
@@ -1028,7 +1060,7 @@ public struct DiagnosticsView: View {
         case .mcp:
             return mcpLifecycleColor ?? .secondary
         case .uiPayloads:
-            return state.timelinePayloadDiagnostics.safeModeEnabled ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+            return uiPerformanceBudgetStatusColor
         case .memory:
             return AetowerDesign.Tone.memory
         case .eventStream:
@@ -1352,10 +1384,26 @@ public struct DiagnosticsView: View {
     }
 
     private var uiPayloadGuidance: String {
+        if state.uiPerformanceBudgetDiagnostics.status == "Danger" {
+            return "Monitor payloads are over budget. Reduce visible rows, keep compact deltas active, and avoid expanding large detail lists while investigating."
+        }
         if state.timelinePayloadDiagnostics.safeModeEnabled {
             return "Operator-safe mode is on. Heavy tabs start with bounded visible windows and collapsed large lists so Diagnostics can show payload cost without forcing the UI to render the full payload immediately."
         }
         return "Use operator-safe mode when these timings start climbing; it keeps History and Timeline summary-first while still letting operators expand deeper lists on demand."
+    }
+
+    private var uiPerformanceBudgetStatusColor: Color {
+        switch state.uiPerformanceBudgetDiagnostics.status {
+        case "Danger":
+            return AetowerDesign.Status.error
+        case "Warning":
+            return AetowerDesign.Status.warning
+        case "OK":
+            return AetowerDesign.Status.success
+        default:
+            return .secondary
+        }
     }
 
     private var diagnosticsLoadStatus: String {

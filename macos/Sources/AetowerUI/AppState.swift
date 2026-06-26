@@ -151,6 +151,7 @@ public final class AppState {
     public private(set) var selfMemoryAttributionIsLoading = false
     public private(set) var selfMemoryAttributionUpdatedAt: Date?
     public private(set) var timelinePayloadDiagnostics = TimelinePayloadDiagnosticsSummary.empty
+    public private(set) var uiPerformanceBudgetDiagnostics = UiPerformanceBudgetDiagnosticsSummary.empty
     private(set) var processInspections: [UInt32: ProcessInspectionReportModel] = [:]
     private(set) var persistenceScanReport: PersistenceScanReportModel?
     private(set) var persistenceScanIsLoading = false
@@ -1040,6 +1041,7 @@ public final class AppState {
         diagnosticsOverview = bridge.diagnosticsOverview()
         diagnosticsLoadError = nil
         sessionLogAnalysisError = nil
+        uiPerformanceBudgetDiagnostics = .empty
     }
 
     public func clearHistory() {
@@ -1064,6 +1066,7 @@ public final class AppState {
         historyDiffTask?.cancel()
         historyDiffTask = nil
         timelinePayloadDiagnostics = .empty
+        uiPerformanceBudgetDiagnostics = .empty
         loadDiagnostics(force: true)
     }
 
@@ -1091,6 +1094,7 @@ public final class AppState {
             diagnosticsRecentWarningCount: diagnosticsRecentWarningCount,
             diagnosticsRecentErrorCount: diagnosticsRecentErrorCount,
             runtimeLagMetrics: runtimeLagMetrics,
+            uiPerformanceBudgetDiagnostics: uiPerformanceBudgetDiagnostics,
             notificationAuthorizationStatus: notificationAuthorizationStatus,
             lastDiagnosticsQueryDate: lastDiagnosticsQueryDate,
             lastSessionLogAnalysisCompletedDate: lastSessionLogAnalysisCompletedDate,
@@ -1342,9 +1346,13 @@ public final class AppState {
             completeSnapshotRefresh()
             return
         case let .updated(payload):
+            let decodeStartedAt = CFAbsoluteTimeGetCurrent()
+            var monitorFetchDiagnostics: MonitorUiPayloadFetchDiagnostics?
             if let monitorPayload = payload.monitorPayload {
-                applyMonitorUiPayload(monitorPayload)
+                monitorFetchDiagnostics = applyMonitorUiPayload(monitorPayload)
             }
+            let monitorDecodeMillis = (CFAbsoluteTimeGetCurrent() - decodeStartedAt) * 1000.0
+            let publishStartedAt = CFAbsoluteTimeGetCurrent()
             snapshot = payload.snapshot
             lastObservedSequence = payload.snapshot.sequence
             applyLocalFrontmostState(
@@ -1371,6 +1379,14 @@ public final class AppState {
                     refreshStartedAt: refreshStartedAt
                 )
             }
+            if let monitorFetchDiagnostics {
+                let renderPublishMillis = (CFAbsoluteTimeGetCurrent() - publishStartedAt) * 1000.0
+                recordUiPerformancePayloadDiagnostics(
+                    fetchDiagnostics: monitorFetchDiagnostics,
+                    decodeMillis: monitorDecodeMillis,
+                    renderPublishMillis: renderPublishMillis
+                )
+            }
             diffAnomalyStates()
             flushSuppressedAnomalySummaryIfNeeded()
             lastError = nil
@@ -1378,12 +1394,14 @@ public final class AppState {
         }
     }
 
-    private func applyMonitorUiPayload(_ payload: MonitorUiRefreshPayload) {
+    private func applyMonitorUiPayload(_ payload: MonitorUiRefreshPayload) -> MonitorUiPayloadFetchDiagnostics {
         switch payload {
-        case let .snapshot(snapshot):
+        case let .snapshot(snapshot, diagnostics):
             monitorViewModel = MonitorViewModel(snapshot: snapshot)
-        case let .delta(delta):
+            return diagnostics
+        case let .delta(delta, diagnostics):
             monitorViewModel.apply(delta: delta)
+            return diagnostics
         }
     }
 
@@ -1660,6 +1678,42 @@ public final class AppState {
                 DiagnosticsField(key: "visible_event_count", value: String(visibleEventCount)),
                 DiagnosticsField(key: "safe_mode_enabled", value: safeModeEnabled ? "true" : "false"),
             ]
+        )
+    }
+
+    func recordMonitorRowBuildDiagnostics(
+        rowBuildMillis: Double,
+        visibleRowCount: Int
+    ) {
+        uiPerformanceBudgetDiagnostics = UiPerformanceBudgetDiagnosticsSummary(
+            updatedAt: Date(),
+            ffiFetchMillis: uiPerformanceBudgetDiagnostics.ffiFetchMillis,
+            decodeMillis: uiPerformanceBudgetDiagnostics.decodeMillis,
+            rowBuildMillis: rowBuildMillis,
+            renderPublishMillis: uiPerformanceBudgetDiagnostics.renderPublishMillis,
+            visibleRowCount: visibleRowCount,
+            snapshotBytes: uiPerformanceBudgetDiagnostics.snapshotBytes,
+            compactPayloadKind: uiPerformanceBudgetDiagnostics.compactPayloadKind
+        )
+    }
+
+    private func recordUiPerformancePayloadDiagnostics(
+        fetchDiagnostics: MonitorUiPayloadFetchDiagnostics,
+        decodeMillis: Double,
+        renderPublishMillis: Double
+    ) {
+        let visibleRowCount = uiPerformanceBudgetDiagnostics.visibleRowCount == 0
+            ? fetchDiagnostics.returnedRowCount
+            : uiPerformanceBudgetDiagnostics.visibleRowCount
+        uiPerformanceBudgetDiagnostics = UiPerformanceBudgetDiagnosticsSummary(
+            updatedAt: Date(),
+            ffiFetchMillis: fetchDiagnostics.ffiFetchMillis,
+            decodeMillis: decodeMillis,
+            rowBuildMillis: uiPerformanceBudgetDiagnostics.rowBuildMillis,
+            renderPublishMillis: renderPublishMillis,
+            visibleRowCount: visibleRowCount,
+            snapshotBytes: fetchDiagnostics.snapshotBytes,
+            compactPayloadKind: fetchDiagnostics.compactPayloadKind
         )
     }
 
