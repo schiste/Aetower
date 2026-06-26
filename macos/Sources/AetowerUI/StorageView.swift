@@ -36,6 +36,7 @@ public struct StorageView: View {
     @State private var customRoot = ""
     @State private var maxDepth = 5.0
     @State private var copiedCleanupBundleID: String?
+    @State private var copiedCleanupRecipeID: String?
     @State private var candidateCommandPreviewBundle: StorageCleanupBundleModel?
     @State private var selectedMode: StorageMode = .overview
     @State private var showCleanupRecipes = false
@@ -178,6 +179,7 @@ public struct StorageView: View {
     private func storageOverview(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             storageActionPanel(report)
+            reclaimSpaceSection(report)
             topOffenderCallout(report)
             budgetGuardrailsSection(report)
             if shouldShowAgentHygieneOverview(report) {
@@ -301,6 +303,161 @@ public struct StorageView: View {
         }
         .padding(AetowerDesign.Spacing.lg)
         .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func reclaimSpaceSection(_ report: StorageHygieneReportModel) -> some View {
+        let recipes = overviewReclaimRecipes(report)
+        let visibleBytes = recipes.reduce(UInt64(0)) { total, recipe in
+            let sum = total.addingReportingOverflow(recipe.estimatedReclaimableBytes)
+            return sum.overflow ? UInt64.max : sum.partialValue
+        }
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "bolt.horizontal.circle")
+                    .foregroundStyle(AetowerDesign.Tone.disk)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Reclaim space")
+                        .font(.headline)
+                    Text("Concrete cleanup actions for the largest high-confidence local artifacts. Aetower copies commands and reveals targets; it does not run deletion commands.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(formatBytes(visibleBytes))
+                        .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    Text("\(recipes.count) visible action\(recipes.count == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if recipes.isEmpty {
+                HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                    Label("No direct reclaim actions were generated for this scan.", systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Inspect details") {
+                        selectedMode = .advanced
+                    }
+                }
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 250), spacing: AetowerDesign.Spacing.sm)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.sm
+                ) {
+                    ForEach(recipes) { recipe in
+                        reclaimActionCard(recipe)
+                    }
+                }
+
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Button {
+                        copy(recipes.map(\.command).joined(separator: "\n"))
+                        copiedCleanupRecipeID = "overview-visible"
+                    } label: {
+                        Label("Copy visible commands", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Show all actions") {
+                        selectedMode = .advanced
+                        showCleanupRecipes = true
+                    }
+
+                    Spacer()
+
+                    Text(copiedCleanupRecipeID == "overview-visible" ? "Copied" : "Review before running")
+                        .font(.caption2)
+                        .foregroundStyle(copiedCleanupRecipeID == "overview-visible" ? AetowerDesign.Status.ready : .secondary)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func reclaimActionCard(_ recipe: StorageCleanupRecipeModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: cleanupRecipeIcon(recipe))
+                    .foregroundStyle(cleanupRecipeTone(recipe))
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        Text(recipe.title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        Text(recipe.requiresReview ? "Review" : "Ready")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(cleanupRecipeTone(recipe))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(cleanupRecipeTone(recipe).opacity(0.12), in: Capsule())
+                    }
+                    Text(recipe.reason)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                Text(formatBytes(recipe.estimatedReclaimableBytes))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(recipe.command)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button("Copy command") {
+                    copy(recipe.command)
+                    copiedCleanupRecipeID = recipe.id
+                }
+                Button("Reveal") {
+                    reveal(path: recipe.affectedPath)
+                }
+                Spacer()
+                Text(copiedCleanupRecipeID == recipe.id ? "Copied" : "No files changed")
+                    .font(.caption2)
+                    .foregroundStyle(copiedCleanupRecipeID == recipe.id ? AetowerDesign.Status.ready : .secondary)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .frame(maxWidth: .infinity, minHeight: 154, alignment: .topLeading)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func overviewReclaimRecipes(_ report: StorageHygieneReportModel) -> [StorageCleanupRecipeModel] {
+        Array(
+            report.cleanupRecipes
+                .filter { !$0.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .sorted { left, right in
+                    let leftRank = left.requiresReview ? 1 : 0
+                    let rightRank = right.requiresReview ? 1 : 0
+                    if leftRank != rightRank {
+                        return leftRank < rightRank
+                    }
+                    if left.estimatedReclaimableBytes != right.estimatedReclaimableBytes {
+                        return left.estimatedReclaimableBytes > right.estimatedReclaimableBytes
+                    }
+                    return left.title < right.title
+                }
+                .prefix(4)
+        )
     }
 
     private func shouldShowAgentHygieneOverview(_ report: StorageHygieneReportModel) -> Bool {
@@ -1972,6 +2129,18 @@ public struct StorageView: View {
             return "swift"
         case "xcode":
             return "hammer"
+        case "python":
+            return "curlybraces"
+        case "node":
+            return "shippingbox.fill"
+        case "frontend":
+            return "sparkles.rectangle.stack"
+        case "tools":
+            return "wrench.and.screwdriver"
+        case "tests":
+            return "checklist"
+        case "temporary":
+            return "timer"
         case "logs":
             return "doc.text"
         case "release":
