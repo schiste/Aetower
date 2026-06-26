@@ -1,6 +1,14 @@
 import AppKit
 import SwiftUI
 
+private struct StorageRepoAttributionSummary: Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+    let bytes: UInt64
+    let itemCount: Int
+}
+
 public struct StorageView: View {
     let state: AppState
     @State private var selectedFilter: StorageFilter = .attention
@@ -25,6 +33,8 @@ public struct StorageView: View {
 
                 if let report = state.storageHygieneReport {
                     summaryGrid(report)
+                    cleanupPreviewSection(report)
+                    artifactAttributionSection(report)
                     if report.truncated {
                         warningBanner("The scan hit a cap or time budget. Results are partial; narrow the root or refresh when the machine is idle.")
                     }
@@ -91,7 +101,7 @@ public struct StorageView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 520)
+                .frame(maxWidth: 680)
 
                 TextField("Search paths or kinds", text: $searchText)
                     .aetowerUtilityTextInput()
@@ -168,6 +178,85 @@ public struct StorageView: View {
                 systemImage: "arrow.up.left.and.arrow.down.right",
                 tone: AetowerDesign.Tone.energy
             )
+            summaryCard(
+                "Attributed",
+                value: "\(report.summary.attributedRepoCount)",
+                detail: "repo/branch-linked artifacts",
+                systemImage: "point.3.connected.trianglepath.dotted",
+                tone: report.summary.attributedRepoCount > 0 ? AetowerDesign.Status.ready : .secondary
+            )
+        }
+    }
+
+    private func cleanupPreviewSection(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                Text("Safe cleanup preview")
+                    .font(.headline)
+                Text("Aetower classifies candidates by cleanup risk. This view never deletes files; it only explains what should be safe, rebuildable, expensive, or risky.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 210), spacing: AetowerDesign.Spacing.md)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.md
+            ) {
+                ForEach(report.cleanupTiers) { tier in
+                    cleanupTierCard(tier)
+                }
+            }
+        }
+    }
+
+    private func artifactAttributionSection(_ report: StorageHygieneReportModel) -> some View {
+        let summaries = repoAttributionSummaries(from: report)
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                Text("Artifact attribution")
+                    .font(.headline)
+                Text("Artifacts are grouped by the nearest Git repository and branch. Command, process-tree, and AI-session attribution are shown only when the report has direct evidence.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if summaries.isEmpty {
+                Label("No artifacts could be tied to an enclosing Git repository.", systemImage: "questionmark.folder")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(AetowerDesign.Spacing.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(summaries) { summary in
+                        HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                            Image(systemName: "point.3.connected.trianglepath.dotted")
+                                .foregroundStyle(AetowerDesign.Status.ready)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                                Text(summary.title)
+                                    .font(.subheadline.weight(.semibold))
+                                Text(summary.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                                Text(formatBytes(summary.bytes))
+                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                Text("\(summary.itemCount) item\(summary.itemCount == 1 ? "" : "s")")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(AetowerDesign.Spacing.md)
+                        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                }
+            }
         }
     }
 
@@ -211,6 +300,7 @@ public struct StorageView: View {
                     HStack(spacing: AetowerDesign.Spacing.sm) {
                         Text(item.displayName)
                             .font(.subheadline.weight(.semibold))
+                        cleanupTierBadge(item)
                         safetyBadge(item)
                         if item.stale {
                             Text("Stale")
@@ -243,6 +333,10 @@ public struct StorageView: View {
                     Text(item.recommendation)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
+                    Label(attributionSummary(for: item), systemImage: "point.3.connected.trianglepath.dotted")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
                 }
 
                 Spacer(minLength: AetowerDesign.Spacing.md)
@@ -349,6 +443,44 @@ public struct StorageView: View {
         .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    private func cleanupTierCard(_ tier: StorageCleanupTierModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Image(systemName: cleanupTierIcon(tier.tier))
+                    .foregroundStyle(tone(forCleanupTier: tier.tier))
+                Text(tier.label.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            HStack(alignment: .firstTextBaseline) {
+                Text(formatBytes(tier.bytes))
+                    .font(.system(size: 21, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Spacer()
+                Text("\(tier.itemCount)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(tone(forCleanupTier: tier.tier))
+            }
+            Text(tier.description)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(3)
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .frame(maxWidth: .infinity, minHeight: 126, alignment: .topLeading)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func cleanupTierBadge(_ item: StorageHygieneItemModel) -> some View {
+        Text(cleanupTierLabel(item.cleanupTier))
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(tone(forCleanupTier: item.cleanupTier))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(tone(forCleanupTier: item.cleanupTier).opacity(0.12), in: Capsule())
+    }
+
     private func safetyBadge(_ item: StorageHygieneItemModel) -> some View {
         Text(item.safety == "safe" ? "Expected artifact" : "Review")
             .font(.caption2.weight(.semibold))
@@ -390,6 +522,9 @@ public struct StorageView: View {
                         || item.path.lowercased().contains(query)
                         || item.kind.lowercased().contains(query)
                         || item.reason.lowercased().contains(query)
+                        || item.cleanupTier.lowercased().contains(query)
+                        || (item.attribution.repoName?.lowercased().contains(query) ?? false)
+                        || (item.attribution.gitBranch?.lowercased().contains(query) ?? false)
                 )
         }
     }
@@ -403,8 +538,106 @@ public struct StorageView: View {
         )
     }
 
+    private func repoAttributionSummaries(
+        from report: StorageHygieneReportModel
+    ) -> [StorageRepoAttributionSummary] {
+        var grouped: [String: StorageRepoAttributionSummary] = [:]
+        for item in report.items {
+            guard let repoRoot = item.attribution.repoRoot else {
+                continue
+            }
+            let branch = item.attribution.gitBranch ?? item.attribution.gitHead ?? "unknown ref"
+            let key = "\(repoRoot)|\(branch)"
+            let existing = grouped[key]
+            let previousBytes = existing?.bytes ?? 0
+            let nextBytes = UInt64.max - previousBytes < item.sizeBytes
+                ? UInt64.max
+                : previousBytes + item.sizeBytes
+            grouped[key] = StorageRepoAttributionSummary(
+                id: key,
+                title: "\(item.attribution.repoName ?? lastPathComponent(repoRoot)) / \(branch)",
+                detail: repoRoot,
+                bytes: nextBytes,
+                itemCount: (existing?.itemCount ?? 0) + 1
+            )
+        }
+        return grouped.values.sorted {
+            $0.bytes == $1.bytes ? $0.title < $1.title : $0.bytes > $1.bytes
+        }
+    }
+
+    private func attributionSummary(for item: StorageHygieneItemModel) -> String {
+        var parts: [String] = []
+        if let repoName = item.attribution.repoName {
+            parts.append("repo \(repoName)")
+        }
+        if let branch = item.attribution.gitBranch {
+            parts.append("branch \(branch)")
+        } else if let head = item.attribution.gitHead {
+            parts.append("head \(head)")
+        }
+        if let command = item.attribution.command {
+            parts.append("command \(command)")
+        }
+        if let session = item.attribution.aiAgentSession {
+            parts.append("session \(session)")
+        }
+        if parts.isEmpty {
+            return "No repo/session attribution available"
+        }
+        if item.attribution.command == nil && item.attribution.aiAgentSession == nil {
+            parts.append("runtime link unavailable")
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private func tone(for item: StorageHygieneItemModel) -> Color {
-        item.safety == "safe" ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+        item.safety == "safe" ? tone(forCleanupTier: item.cleanupTier) : AetowerDesign.Status.warning
+    }
+
+    private func tone(forCleanupTier tier: String) -> Color {
+        switch tier {
+        case "safe":
+            return AetowerDesign.Status.ready
+        case "rebuildable":
+            return AetowerDesign.Tone.disk
+        case "expensive":
+            return AetowerDesign.Status.warning
+        case "risky":
+            return AetowerDesign.Status.error
+        default:
+            return .secondary
+        }
+    }
+
+    private func cleanupTierLabel(_ tier: String) -> String {
+        switch tier {
+        case "safe":
+            return "Safe"
+        case "rebuildable":
+            return "Rebuildable"
+        case "expensive":
+            return "Expensive"
+        case "risky":
+            return "Risky"
+        default:
+            return tier.capitalized
+        }
+    }
+
+    private func cleanupTierIcon(_ tier: String) -> String {
+        switch tier {
+        case "safe":
+            return "checkmark.shield"
+        case "rebuildable":
+            return "hammer"
+        case "expensive":
+            return "clock.badge.exclamationmark"
+        case "risky":
+            return "exclamationmark.triangle"
+        default:
+            return "folder"
+        }
     }
 
     private func icon(for item: StorageHygieneItemModel) -> String {
@@ -449,8 +682,9 @@ public struct StorageView: View {
 private enum StorageFilter: String, CaseIterable, Identifiable {
     case attention
     case safe
-    case review
-    case stale
+    case rebuildable
+    case expensive
+    case risky
     case all
 
     var id: String { rawValue }
@@ -458,9 +692,10 @@ private enum StorageFilter: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .attention: return "Attention"
-        case .safe: return "Expected"
-        case .review: return "Review"
-        case .stale: return "Stale"
+        case .safe: return "Safe"
+        case .rebuildable: return "Rebuildable"
+        case .expensive: return "Expensive"
+        case .risky: return "Risky"
         case .all: return "All"
         }
     }
@@ -468,13 +703,19 @@ private enum StorageFilter: String, CaseIterable, Identifiable {
     func matches(_ item: StorageHygieneItemModel) -> Bool {
         switch self {
         case .attention:
-            item.stale || item.safety != "safe" || item.sizeTruncated || item.sizeBytes >= 100 * 1024 * 1024
+            item.cleanupTier == "risky"
+                || item.cleanupTier == "expensive"
+                || item.safety != "safe"
+                || item.sizeTruncated
+                || item.sizeBytes >= 100 * 1024 * 1024
         case .safe:
-            item.safety == "safe"
-        case .review:
-            item.safety != "safe"
-        case .stale:
-            item.stale
+            item.cleanupTier == "safe"
+        case .rebuildable:
+            item.cleanupTier == "rebuildable"
+        case .expensive:
+            item.cleanupTier == "expensive"
+        case .risky:
+            item.cleanupTier == "risky"
         case .all:
             true
         }
