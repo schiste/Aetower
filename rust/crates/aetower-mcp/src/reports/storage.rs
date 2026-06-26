@@ -858,8 +858,103 @@ fn cleanup_recipes_for_item(item: &StorageHygieneItem) -> Vec<StorageCleanupReci
         "rust-build" => rust_cleanup_recipe(item).into_iter().collect(),
         "swift-build" => swiftpm_cleanup_recipe(item).into_iter().collect(),
         "xcode-derived-data" => vec![derived_data_cleanup_recipe(item)],
+        "xcode-module-cache" => vec![direct_reclaim_recipe(
+            item,
+            "xcode",
+            "Clear Xcode module cache",
+            "Xcode module cache is rebuildable once active Xcode builds are idle.",
+            vec![
+                "Close Xcode or stop active xcodebuild jobs first.".to_owned(),
+                "Expect the next Xcode build to rebuild modules.".to_owned(),
+            ],
+            false,
+        )],
+        "xcode-source-packages" => vec![direct_reclaim_recipe(
+            item,
+            "xcode",
+            "Remove Xcode source package cache",
+            "Xcode can restore resolved package checkouts, but package resolution may take time and network access.",
+            vec![
+                "Close Xcode or stop active xcodebuild jobs first.".to_owned(),
+                "Confirm package manifests are committed before deleting package caches.".to_owned(),
+            ],
+            true,
+        )],
+        "python-cache" => vec![direct_reclaim_recipe(
+            item,
+            "python",
+            "Clear Python cache",
+            "Python test, lint, and import caches are rebuildable.",
+            vec!["Stop active Python test/lint runs first.".to_owned()],
+            false,
+        )],
+        "python-environment" => vec![direct_reclaim_recipe(
+            item,
+            "python",
+            "Remove Python virtual environment",
+            "Virtual environments are rebuildable from dependency manifests but may be expensive to recreate.",
+            vec![
+                "Confirm requirements, lock files, or project metadata can recreate this environment.".to_owned(),
+                "Stop terminals and agents using this virtual environment first.".to_owned(),
+            ],
+            true,
+        )],
+        "frontend-cache" | "next-cache" => vec![direct_reclaim_recipe(
+            item,
+            "frontend",
+            "Clear frontend cache",
+            "Frontend tool caches are rebuildable when dev servers and builds are idle.",
+            vec!["Stop active frontend dev servers and builds first.".to_owned()],
+            false,
+        )],
+        "next-build" => vec![direct_reclaim_recipe(
+            item,
+            "frontend",
+            "Remove Next.js build output",
+            "Next.js build output is rebuildable, but can include generated app artifacts that deserve review.",
+            vec![
+                "Stop active frontend dev servers and builds first.".to_owned(),
+                "Confirm this is local build output, not a release artifact you still need.".to_owned(),
+            ],
+            true,
+        )],
+        "node-dependencies" => vec![direct_reclaim_recipe(
+            item,
+            "node",
+            "Remove Node dependency tree",
+            "node_modules can be reclaimed but reinstalling may be slow and requires package-manager access.",
+            vec![
+                "Confirm package-lock, pnpm-lock, yarn.lock, or bun.lockb is present before deleting.".to_owned(),
+                "Stop dev servers, test runners, and agents using this dependency tree first.".to_owned(),
+            ],
+            true,
+        )],
+        "tool-cache" => vec![direct_reclaim_recipe(
+            item,
+            "tools",
+            "Clear developer tool cache",
+            "Tool caches are rebuildable when the owning toolchain is idle.",
+            vec!["Stop active builds, package managers, and agents using this cache first.".to_owned()],
+            false,
+        )],
+        "coverage-output" => vec![direct_reclaim_recipe(
+            item,
+            "tests",
+            "Remove coverage output",
+            "Coverage reports are usually safe to remove after you no longer need local inspection artifacts.",
+            vec!["Keep a copy first if this coverage report is needed for review or support.".to_owned()],
+            false,
+        )],
+        "temporary-output" => vec![direct_reclaim_recipe(
+            item,
+            "temporary",
+            "Remove temporary output",
+            "Temporary folders can be reclaimed, but may contain active run output.",
+            vec!["Review the folder contents and stop active jobs before deleting.".to_owned()],
+            true,
+        )],
         "log-file" | "logs" => vec![log_cleanup_recipe(item)],
-        "build-output" | "next-build" => stale_release_artifact_recipe(item).into_iter().collect(),
+        "build-output" => stale_release_artifact_recipe(item).into_iter().collect(),
         _ => Vec::new(),
     }
 }
@@ -1522,6 +1617,36 @@ fn confidence_rank(confidence: &str) -> u8 {
     }
 }
 
+fn direct_reclaim_recipe(
+    item: &StorageHygieneItem,
+    category: &str,
+    title: &str,
+    reason: &str,
+    mut prerequisites: Vec<String>,
+    requires_review: bool,
+) -> StorageCleanupRecipe {
+    prerequisites
+        .push("Reveal and inspect the target before running the copied command.".to_owned());
+    let command = if Path::new(&item.path).is_file() {
+        format!("rm -f {}", shell_quote(&item.path))
+    } else {
+        format!("rm -rf {}", shell_quote(&item.path))
+    };
+    StorageCleanupRecipe {
+        id: format!("{category}-reclaim|{}", item.path),
+        title: title.to_owned(),
+        category: category.to_owned(),
+        safety: item.cleanup_tier.clone(),
+        affected_path: item.path.clone(),
+        command,
+        estimated_reclaimable_bytes: item.size_bytes,
+        reason: reason.to_owned(),
+        prerequisites,
+        destructive: true,
+        requires_review: requires_review || item.safety != "safe",
+    }
+}
+
 fn rust_cleanup_recipe(item: &StorageHygieneItem) -> Option<StorageCleanupRecipe> {
     let path = Path::new(&item.path);
     let manifest_dir = nearest_parent_with_file(path, "Cargo.toml")?;
@@ -2080,6 +2205,52 @@ mod tests {
         assert!(json.contains("\"week_agent_artifact_bytes\":1048704"));
         assert!(json.contains("\"week_rebuildable_agent_bytes\":1048704"));
         assert!(json.contains("\"attribution_sources\":[\"known_agent_directory\"]"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_generates_reclaim_actions_for_common_dev_artifacts() {
+        let root = test_root("reclaim-actions");
+        let project = root.join("project");
+        let node_modules = project.join("node_modules").join("left-pad");
+        let venv = project.join(".venv").join("lib");
+        let frontend_cache = project.join(".turbo");
+        let python_cache = project.join(".pytest_cache");
+        let coverage = project.join("coverage");
+
+        for directory in [
+            &node_modules,
+            &venv,
+            &frontend_cache,
+            &python_cache,
+            &coverage,
+        ] {
+            if let Err(error) = fs::create_dir_all(directory) {
+                panic!("create test artifact directory: {error}");
+            }
+            if let Err(error) = fs::write(
+                directory.join("blob"),
+                vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+            ) {
+                panic!("write test artifact: {error}");
+            }
+        }
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+
+        assert!(json.contains("\"kind\":\"node-dependencies\""));
+        assert!(json.contains("\"title\":\"Remove Node dependency tree\""));
+        assert!(json.contains("\"category\":\"node\""));
+        assert!(json.contains("\"kind\":\"python-environment\""));
+        assert!(json.contains("\"title\":\"Remove Python virtual environment\""));
+        assert!(json.contains("\"kind\":\"frontend-cache\""));
+        assert!(json.contains("\"title\":\"Clear frontend cache\""));
+        assert!(json.contains("\"kind\":\"python-cache\""));
+        assert!(json.contains("\"title\":\"Clear Python cache\""));
+        assert!(json.contains("\"kind\":\"coverage-output\""));
+        assert!(json.contains("\"title\":\"Remove coverage output\""));
+        assert!(json.contains("rm -rf"));
 
         let _ = fs::remove_dir_all(root);
     }
