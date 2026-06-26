@@ -299,24 +299,104 @@ private struct RowFrictionHighlights {
     static let none = Self(title: false, cpu: false, memory: false, disk: false, network: false, wakeups: false)
 }
 
-private struct EntityRow: View {
-    let entity: EntitySnapshot
-    let origin: ProcessOriginSummary
-    let isSelected: Bool
-    @State private var isHovered = false
+private enum MonitorRowLayout {
+    static let height: CGFloat = 30
+}
 
-    /// A process group is "new" when its most recently started process began
-    /// within the last 30 seconds — surfaces freshly launched apps at a glance.
-    private var isNewlyLaunched: Bool {
-        let start = entity.newestProcessStartMillis
-        guard start > 0 else { return false }
-        let now = UInt64(Date().timeIntervalSince1970 * 1000)
-        return now >= start && now - start <= 30_000
+private enum MonitorRowTrendDirection: Equatable {
+    case up
+    case down
+    case flat
+
+    var symbol: String {
+        switch self {
+        case .up: return "arrow.up"
+        case .down: return "arrow.down"
+        case .flat: return "minus"
+        }
     }
 
-    /// Distinct remote hosts this entity is connected to (host without port,
-    /// excluding listening wildcards) — powers the "talking to" indicator.
-    private var distinctRemoteHosts: [String] {
+    var color: Color {
+        switch self {
+        case .up: return .red
+        case .down: return .green
+        case .flat: return .secondary
+        }
+    }
+}
+
+private enum MonitorRowReputationTone: Equatable {
+    case error
+    case warning
+    case success
+
+    var color: Color {
+        switch self {
+        case .error: return AetowerDesign.Status.error
+        case .warning: return AetowerDesign.Status.warning
+        case .success: return AetowerDesign.Status.success
+        }
+    }
+}
+
+private struct MonitorEntityRowModel: Identifiable, Equatable {
+    let id: String
+    let entity: EntitySnapshot
+    let origin: ProcessOriginSummary
+    let iconName: String
+    let displayName: String
+    let cpuText: String
+    let memoryText: String
+    let wakeupsText: String
+    let processCountText: String
+    let frictionText: String
+    let frictionScore: Float
+    let trendDirection: MonitorRowTrendDirection
+    let isNewlyLaunched: Bool
+    let isForeground: Bool
+    let anomalyDetected: Bool
+    let remoteHostCount: Int
+    let remoteHostsHelp: String?
+    let reputationLabel: String?
+    let reputationTone: MonitorRowReputationTone?
+    let helpText: String
+
+    init(entity: EntitySnapshot, origin: ProcessOriginSummary, nowMillis: UInt64) {
+        self.id = entity.entityId
+        self.entity = entity
+        self.origin = origin
+        self.iconName = Self.iconName(for: entity.entityKind)
+        self.displayName = entity.displayName
+        self.cpuText = String(format: "%.1f%%", entity.metrics.cpuPercent)
+        self.memoryText = formatBytes(entityEffectiveMemoryBytes(entity))
+        self.wakeupsText = formatWakeups(entity.metrics.wakeupsPerSecond)
+        self.processCountText = "\(visibleProcessComponentCount(entity))"
+        self.frictionText = String(format: "%.1f", entity.friction.totalScore)
+        self.frictionScore = entity.friction.totalScore
+        self.trendDirection = Self.trendDirection(for: entity.trend.friction)
+        self.isNewlyLaunched = Self.isNewlyLaunched(entity: entity, nowMillis: nowMillis)
+        self.isForeground = entity.metrics.isForeground
+        self.anomalyDetected = entity.anomalyDetected
+
+        let remoteHosts = Self.distinctRemoteHosts(for: entity)
+        self.remoteHostCount = remoteHosts.count
+        self.remoteHostsHelp = remoteHosts.isEmpty
+            ? nil
+            : "Talking to \(remoteHosts.prefix(5).joined(separator: ", "))"
+
+        let reputation = Self.reputationChip(for: entity)
+        self.reputationLabel = reputation?.label
+        self.reputationTone = reputation?.tone
+        self.helpText = Self.helpText(for: entity, origin: origin)
+    }
+
+    private static func isNewlyLaunched(entity: EntitySnapshot, nowMillis: UInt64) -> Bool {
+        let start = entity.newestProcessStartMillis
+        guard start > 0 else { return false }
+        return nowMillis >= start && nowMillis - start <= 30_000
+    }
+
+    private static func distinctRemoteHosts(for entity: EntitySnapshot) -> [String] {
         var seen = Set<String>()
         var hosts: [String] = []
         for connection in entity.networkConnections {
@@ -328,19 +408,18 @@ private struct EntityRow: View {
         return hosts
     }
 
-    /// Compact VirusTotal chip for the row: detections/total colored by verdict.
-    /// Hidden for the `unknown` verdict (binary not in VirusTotal's corpus) to
-    /// avoid cluttering the row with non-signal.
-    private var reputationChip: (label: String, color: Color)? {
+    private static func reputationChip(
+        for entity: EntitySnapshot
+    ) -> (label: String, tone: MonitorRowReputationTone)? {
         guard let reputation = entity.binaryReputation else { return nil }
         let detections = reputation.malicious + reputation.suspicious
         switch reputation.verdict {
         case .malicious:
-            return ("VT \(detections)/\(reputation.totalEngines)", AetowerDesign.Status.error)
+            return ("VT \(detections)/\(reputation.totalEngines)", .error)
         case .suspicious:
-            return ("VT \(detections)/\(reputation.totalEngines)", AetowerDesign.Status.warning)
+            return ("VT \(detections)/\(reputation.totalEngines)", .warning)
         case .clean:
-            return ("VT clean", AetowerDesign.Status.success)
+            return ("VT clean", .success)
         case .unknown:
             return nil
         @unknown default:
@@ -348,23 +427,120 @@ private struct EntityRow: View {
         }
     }
 
+    private static func helpText(for entity: EntitySnapshot, origin: ProcessOriginSummary) -> String {
+        let entityUser = entity.components
+            .lazy
+            .compactMap(\.user)
+            .first(where: { !$0.isEmpty }) ?? ""
+        let entityParent = entity.components.first?.parentSummary ?? ""
+
+        return [
+            entityUser.isEmpty ? nil : "User: \(entityUser)",
+            entityParent.isEmpty ? nil : "Parent: \(entityParent)",
+            "Processes: \(visibleProcessComponentCount(entity))",
+            "Wakeups: \(formatWakeups(entity.metrics.wakeupsPerSecond))",
+            entity.recentChangeSummary,
+            origin.subtitle,
+            entity.launcherSummary.map { "Launch lineage: \($0)" },
+            entity.attributionNotes.first,
+        ]
+        .compactMap { $0 }
+        .joined(separator: "\n")
+    }
+
+    private static func trendDirection(for samples: [Float]) -> MonitorRowTrendDirection {
+        guard samples.count >= 3 else { return .flat }
+        let recent = samples.suffix(3)
+        let delta = (recent.last ?? 0) - (recent.first ?? 0)
+        if delta > 2 { return .up }
+        if delta < -2 { return .down }
+        return .flat
+    }
+
+    static func iconName(for kind: EntityKind) -> String {
+        switch kind {
+        case .app: return "app.fill"
+        case .browser: return "globe"
+        case .daemon: return "gearshape.2.fill"
+        case .terminalSession: return "terminal.fill"
+        case .aiAgent: return "cpu.fill"
+        case .service: return "server.rack"
+        case .unknown: return "questionmark.circle"
+        }
+    }
+}
+
+private struct MonitorGroupRowModel: Identifiable, Equatable {
+    let id: String
+    let group: EntityGroup
+    let origin: ProcessOriginSummary
+    let iconName: String
+    let displayName: String
+    let memberOverflowText: String?
+    let cpuText: String
+    let memoryText: String
+    let wakeupsText: String
+    let processCountText: String
+    let frictionText: String
+    let frictionScore: Float
+    let helpText: String
+
+    init(group: EntityGroup, origin: ProcessOriginSummary) {
+        self.id = group.id
+        self.group = group
+        self.origin = origin
+        self.iconName = MonitorEntityRowModel.iconName(for: group.root.entityKind)
+        self.displayName = group.root.displayName
+        self.memberOverflowText = group.members.count > 1 ? "+\(group.members.count - 1)" : nil
+        self.cpuText = String(format: "%.1f%%", group.cpuPercent)
+        self.memoryText = formatBytes(group.memoryBytes)
+        self.wakeupsText = formatWakeups(group.wakeupsPerSecond)
+        self.processCountText = "\(group.processCount)"
+        self.frictionText = String(format: "%.1f", group.frictionScore)
+        self.frictionScore = group.frictionScore
+        self.helpText = Self.helpText(for: group, origin: origin)
+    }
+
+    private static func helpText(for group: EntityGroup, origin: ProcessOriginSummary) -> String {
+        let names = group.members.prefix(6).map(\.displayName).joined(separator: ", ")
+        let user = group.userSummary.isEmpty ? "" : " · user \(group.userSummary)"
+        let metrics = "\(formatWakeups(group.wakeupsPerSecond)) · \(formatRate(group.diskBps)) disk · \(formatRate(group.networkBps)) network · \(origin.subtitle)\(user)"
+        if group.members.count > 6 {
+            return "Collapsed entities: \(names), +\(group.members.count - 6) more · \(group.processCount) grouped processes · \(metrics)"
+        }
+        if group.members.count > 1 {
+            return "Collapsed entities: \(names) · \(group.processCount) grouped processes · \(metrics)"
+        }
+        return "Entity footprint: \(group.processCount) grouped processes · \(metrics)"
+    }
+}
+
+private struct EntityRow: View, Equatable {
+    let row: MonitorEntityRowModel
+    let isSelected: Bool
+    @State private var isHovered = false
+
+    nonisolated static func == (lhs: EntityRow, rhs: EntityRow) -> Bool {
+        lhs.row == rhs.row && lhs.isSelected == rhs.isSelected
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             // Entity type icon
-            Image(systemName: entityIcon)
+            Image(systemName: row.iconName)
                 .font(.system(size: 11))
-                .foregroundStyle(AetowerDesign.frictionColor(entity.friction.totalScore).opacity(0.8))
+                .foregroundStyle(AetowerDesign.frictionColor(row.frictionScore).opacity(0.8))
                 .frame(width: 16)
 
             // Entity name (compact)
-            Text(entity.displayName)
+            Text(row.displayName)
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            ProcessOriginChip(summary: origin)
+            ProcessOriginChip(summary: row.origin)
 
-            if isNewlyLaunched {
+            if row.isNewlyLaunched {
                 Text("NEW")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(AetowerDesign.Status.success)
@@ -373,59 +549,59 @@ private struct EntityRow: View {
                     .background(AetowerDesign.Status.success.opacity(0.15), in: Capsule())
             }
 
-            if entity.metrics.isForeground {
+            if row.isForeground {
                 Circle().fill(.blue).frame(width: 5, height: 5)
             }
 
-            if entity.anomalyDetected {
+            if row.anomalyDetected {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 9))
                     .foregroundStyle(.orange)
                     .symbolEffect(.pulse.wholeSymbol, isActive: true)
             }
 
-            if !distinctRemoteHosts.isEmpty {
+            if row.remoteHostCount > 0 {
                 HStack(spacing: 2) {
                     Image(systemName: "network")
                         .font(.system(size: 8))
-                    Text("\(distinctRemoteHosts.count)")
+                    Text("\(row.remoteHostCount)")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
                 }
                 .foregroundStyle(AetowerDesign.Tone.network)
-                .help("Talking to \(distinctRemoteHosts.prefix(5).joined(separator: ", "))")
+                .help(row.remoteHostsHelp ?? "")
             }
 
-            if let chip = reputationChip {
-                Text(chip.label)
+            if let reputationLabel = row.reputationLabel, let reputationTone = row.reputationTone {
+                Text(reputationLabel)
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(chip.color)
+                    .foregroundStyle(reputationTone.color)
                     .lineLimit(1)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
-                    .background(chip.color.opacity(0.15), in: Capsule())
+                    .background(reputationTone.color.opacity(0.15), in: Capsule())
                     .help("VirusTotal reputation for this binary.")
             }
 
             // Metrics — centered, fixed width columns
-            Text(String(format: "%.1f%%", entity.metrics.cpuPercent))
+            Text(row.cpuText)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(width: 64, alignment: .center)
 
-            Text(formatBytes(entityEffectiveMemoryBytes(entity)))
+            Text(row.memoryText)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(width: 84, alignment: .center)
 
-            Text(formatWakeups(entity.metrics.wakeupsPerSecond))
+            Text(row.wakeupsText)
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(width: 72, alignment: .center)
 
-            Label("\(entityProcessCount)", systemImage: "number")
+            Label(row.processCountText, systemImage: "number")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.tertiary)
                 .labelStyle(.titleAndIcon)
@@ -434,13 +610,12 @@ private struct EntityRow: View {
 
             // Friction score — bold, colored
             HStack(spacing: 2) {
-                let trend = AetowerDesign.trendArrow(entity.trend.friction)
-                Image(systemName: trend.symbol)
+                Image(systemName: row.trendDirection.symbol)
                     .font(.system(size: 8))
-                    .foregroundStyle(trend.color)
-                Text(String(format: "%.1f", entity.friction.totalScore))
+                    .foregroundStyle(row.trendDirection.color)
+                Text(row.frictionText)
                     .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(AetowerDesign.frictionColor(entity.friction.totalScore))
+                    .foregroundStyle(AetowerDesign.frictionColor(row.frictionScore))
                     .contentTransition(.numericText())
             }
             .frame(width: 68, alignment: .center)
@@ -453,8 +628,9 @@ private struct EntityRow: View {
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, AetowerDesign.Spacing.xs)
         .frame(maxWidth: .infinity)
+        .frame(height: MonitorRowLayout.height)
         .background(
-            AetowerDesign.frictionColor(entity.friction.totalScore)
+            AetowerDesign.frictionColor(row.frictionScore)
                 .opacity(frictionBackgroundOpacity),
             in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm, style: .continuous)
         )
@@ -466,54 +642,12 @@ private struct EntityRow: View {
                 )
         )
         .onHover { isHovered = $0 }
-        .help(rowHelpText)
+        .help(row.helpText)
         .animation(AetowerDesign.Motion.quick, value: isHovered)
     }
 
-    private var entityUser: String {
-        entity.components
-            .lazy
-            .compactMap(\.user)
-            .first(where: { !$0.isEmpty }) ?? ""
-    }
-
-    private var rowHelpText: String {
-        [
-            entityUser.isEmpty ? nil : "User: \(entityUser)",
-            entityParent.isEmpty ? nil : "Parent: \(entityParent)",
-            "Processes: \(entityProcessCount)",
-            "Wakeups: \(formatWakeups(entity.metrics.wakeupsPerSecond))",
-            entity.recentChangeSummary,
-            origin.subtitle,
-            entity.launcherSummary.map { "Launch lineage: \($0)" },
-            entity.attributionNotes.first,
-        ]
-        .compactMap { $0 }
-        .joined(separator: "\n")
-    }
-
-    private var entityParent: String {
-        entity.components.first?.parentSummary ?? ""
-    }
-
-    private var entityProcessCount: Int {
-        entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
-    }
-
-    private var entityIcon: String {
-        switch entity.entityKind {
-        case .app: return "app.fill"
-        case .browser: return "globe"
-        case .daemon: return "gearshape.2.fill"
-        case .terminalSession: return "terminal.fill"
-        case .aiAgent: return "cpu.fill"
-        case .service: return "server.rack"
-        case .unknown: return "questionmark.circle"
-        }
-    }
-
     private var frictionBackgroundOpacity: Double {
-        let base = min(Double(entity.friction.totalScore) / 100.0, 1.0)
+        let base = min(Double(row.frictionScore) / 100.0, 1.0)
         if isSelected { return base * 0.12 + 0.04 }
         if isHovered { return base * 0.08 + 0.02 }
         return base * 0.05
@@ -531,7 +665,7 @@ private struct EntityRow: View {
     }
 }
 
-private struct EntityGroup {
+private struct EntityGroup: Equatable {
     let root: EntitySnapshot
     let members: [EntitySnapshot]
     let cpuPercent: Float
@@ -565,20 +699,26 @@ private struct MonitorSectionCacheKey: Hashable {
     let filterSignature: String
 }
 
+private struct MonitorGroupRowCacheKey: Hashable {
+    let groupingKey: GroupingCacheKey
+    let excludedEntityIDs: [String]
+    let groupEntityIDs: [String]
+}
+
 private struct MonitorEntitySections {
     let filteredEntities: [EntitySnapshot]
-    let burdenLeaderEntities: [EntitySnapshot]
+    let burdenLeaderRows: [MonitorEntityRowModel]
     let burdenLeaderEntityIDs: Set<String>
-    let allProcessEntities: [EntitySnapshot]
+    let allProcessRows: [MonitorEntityRowModel]
     let flatVisibleEntityIDs: [String]
     let burdenLeaderProcessCount: Int
     let flatVisibleProcessCount: Int
 
     static let empty = MonitorEntitySections(
         filteredEntities: [],
-        burdenLeaderEntities: [],
+        burdenLeaderRows: [],
         burdenLeaderEntityIDs: [],
-        allProcessEntities: [],
+        allProcessRows: [],
         flatVisibleEntityIDs: [],
         burdenLeaderProcessCount: 0,
         flatVisibleProcessCount: 0
@@ -643,12 +783,19 @@ private final class MonitorEntitySectionCacheStore: ObservableObject {
         let flatVisibleProcessCount = burdenLeaderProcessCount + allProcessEntities.reduce(0) { total, entity in
             total + visibleProcessComponentCount(entity)
         }
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        let burdenLeaderRows = burdenLeaderEntities.map {
+            MonitorEntityRowModel(entity: $0, origin: originCache.summary(for: $0), nowMillis: nowMillis)
+        }
+        let allProcessRows = allProcessEntities.map {
+            MonitorEntityRowModel(entity: $0, origin: originCache.summary(for: $0), nowMillis: nowMillis)
+        }
 
         let refreshed = MonitorEntitySections(
             filteredEntities: filteredEntities,
-            burdenLeaderEntities: burdenLeaderEntities,
+            burdenLeaderRows: burdenLeaderRows,
             burdenLeaderEntityIDs: burdenLeaderEntityIDs,
-            allProcessEntities: allProcessEntities,
+            allProcessRows: allProcessRows,
             flatVisibleEntityIDs: burdenLeaderEntities.map(\.entityId)
                 + allProcessEntities.map(\.entityId),
             burdenLeaderProcessCount: burdenLeaderProcessCount,
@@ -656,6 +803,32 @@ private final class MonitorEntitySectionCacheStore: ObservableObject {
         )
         self.key = key
         sections = refreshed
+        return refreshed
+    }
+}
+
+@MainActor
+private final class MonitorGroupRowCacheStore: ObservableObject {
+    private var key: MonitorGroupRowCacheKey?
+    private var rows: [MonitorGroupRowModel] = []
+
+    func rows(
+        for key: MonitorGroupRowCacheKey,
+        groups: [EntityGroup],
+        originCache: ProcessOriginSnapshotCache,
+        excludedEntityIDs: Set<String>
+    ) -> [MonitorGroupRowModel] {
+        if self.key == key {
+            return rows
+        }
+
+        let refreshed = groups
+            .filter { !excludedEntityIDs.contains($0.root.entityId) }
+            .map {
+                MonitorGroupRowModel(group: $0, origin: originCache.summary(for: $0.members))
+            }
+        self.key = key
+        rows = refreshed
         return refreshed
     }
 }
@@ -692,28 +865,31 @@ private enum MonitorRingCeiling {
     static let percent: Double = 100
 }
 
-private struct GroupedEntityRow: View {
-    let group: EntityGroup
-    let origin: ProcessOriginSummary
+private struct GroupedEntityRow: View, Equatable {
+    let row: MonitorGroupRowModel
     let isSelected: Bool
     @State private var isHovered = false
 
+    nonisolated static func == (lhs: GroupedEntityRow, rhs: GroupedEntityRow) -> Bool {
+        lhs.row == rhs.row && lhs.isSelected == rhs.isSelected
+    }
+
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: entityIcon)
+            Image(systemName: row.iconName)
                 .font(.system(size: 11))
-                .foregroundStyle(AetowerDesign.frictionColor(group.frictionScore).opacity(0.8))
+                .foregroundStyle(AetowerDesign.frictionColor(row.frictionScore).opacity(0.8))
                 .frame(width: 16)
 
-            Text(group.root.displayName)
+            Text(row.displayName)
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            ProcessOriginChip(summary: origin)
+            ProcessOriginChip(summary: row.origin)
 
-            if group.members.count > 1 {
-                Text("+\(group.members.count - 1)")
+            if let memberOverflowText = row.memberOverflowText {
+                Text(memberOverflowText)
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 5)
@@ -721,25 +897,25 @@ private struct GroupedEntityRow: View {
                     .background(Color.secondary.opacity(0.12), in: Capsule())
             }
 
-            Text(String(format: "%.1f%%", group.cpuPercent))
+            Text(row.cpuText)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(width: 64, alignment: .center)
 
-            Text(formatBytes(group.memoryBytes))
+            Text(row.memoryText)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(width: 84, alignment: .center)
 
-            Text(formatWakeups(group.wakeupsPerSecond))
+            Text(row.wakeupsText)
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(width: 72, alignment: .center)
 
-            Label("\(group.processCount)", systemImage: "number")
+            Label(row.processCountText, systemImage: "number")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.tertiary)
                 .labelStyle(.titleAndIcon)
@@ -750,9 +926,9 @@ private struct GroupedEntityRow: View {
                 Image(systemName: "arrow.triangle.branch")
                     .font(.system(size: 8))
                     .foregroundStyle(.secondary)
-                Text(String(format: "%.1f", group.frictionScore))
+                Text(row.frictionText)
                     .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(AetowerDesign.frictionColor(group.frictionScore))
+                    .foregroundStyle(AetowerDesign.frictionColor(row.frictionScore))
                     .contentTransition(.numericText())
             }
             .frame(width: 68, alignment: .center)
@@ -765,8 +941,9 @@ private struct GroupedEntityRow: View {
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, AetowerDesign.Spacing.xs)
         .frame(maxWidth: .infinity)
+        .frame(height: MonitorRowLayout.height)
         .background(
-            AetowerDesign.frictionColor(group.frictionScore)
+            AetowerDesign.frictionColor(row.frictionScore)
                 .opacity(frictionBackgroundOpacity),
             in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm, style: .continuous)
         )
@@ -778,37 +955,12 @@ private struct GroupedEntityRow: View {
                 )
         )
         .onHover { isHovered = $0 }
-        .help(helpText)
+        .help(row.helpText)
         .animation(AetowerDesign.Motion.quick, value: isHovered)
     }
 
-    private var entityIcon: String {
-        switch group.root.entityKind {
-        case .app: return "app.fill"
-        case .browser: return "globe"
-        case .daemon: return "gearshape.2.fill"
-        case .terminalSession: return "terminal.fill"
-        case .aiAgent: return "cpu.fill"
-        case .service: return "server.rack"
-        case .unknown: return "questionmark.circle"
-        }
-    }
-
-    private var helpText: String {
-        let names = group.members.prefix(6).map(\.displayName).joined(separator: ", ")
-        let user = group.userSummary.isEmpty ? "" : " · user \(group.userSummary)"
-        let metrics = "\(formatWakeups(group.wakeupsPerSecond)) · \(formatRate(group.diskBps)) disk · \(formatRate(group.networkBps)) network · \(origin.subtitle)\(user)"
-        if group.members.count > 6 {
-            return "Collapsed entities: \(names), +\(group.members.count - 6) more · \(group.processCount) grouped processes · \(metrics)"
-        }
-        if group.members.count > 1 {
-            return "Collapsed entities: \(names) · \(group.processCount) grouped processes · \(metrics)"
-        }
-        return "Entity footprint: \(group.processCount) grouped processes · \(metrics)"
-    }
-
     private var frictionBackgroundOpacity: Double {
-        let base = min(Double(group.frictionScore) / 100.0, 1.0)
+        let base = min(Double(row.frictionScore) / 100.0, 1.0)
         if isSelected { return base * 0.12 + 0.04 }
         if isHovered { return base * 0.08 + 0.02 }
         return base * 0.05
@@ -1350,6 +1502,7 @@ public struct MainListView: View {
     @State private var showAdvancedFilter = false
     @StateObject private var processOriginCacheStore = ProcessOriginSnapshotCacheStore()
     @StateObject private var monitorSectionCacheStore = MonitorEntitySectionCacheStore()
+    @StateObject private var monitorGroupRowCacheStore = MonitorGroupRowCacheStore()
     @FocusState private var searchFieldFocused: Bool
 
     public init(state: AppState, settings: SettingsStore) {
@@ -1943,65 +2096,65 @@ public struct MainListView: View {
                 )
             } else {
                 LazyVStack(spacing: 2) {
-                    if !burdenLeaderEntities.isEmpty {
+                    if !burdenLeaderRows.isEmpty {
                         listSectionHeader("Burden leaders")
-                        ForEach(burdenLeaderEntities, id: \.entityId) { entity in
+                        ForEach(burdenLeaderRows) { row in
                             Button {
                                 searchFieldFocused = false
                                 withAnimation(AetowerDesign.Motion.standard) {
-                                    selectedEntityID = entity.entityId
+                                    selectedEntityID = row.id
                                 }
                             } label: {
                                 EntityRow(
-                                    entity: entity,
-                                    origin: processOriginCache.summary(for: entity),
-                                    isSelected: selectedEntityID == entity.entityId
+                                    row: row,
+                                    isSelected: selectedEntityID == row.id
                                 )
+                                .equatable()
                             }
                             .buttonStyle(.plain)
                             .contextMenu {
-                                monitorContextMenu(for: entity, members: [entity])
+                                monitorContextMenu(for: row.entity, members: [row.entity])
                             }
                         }
                     }
 
                     listSectionHeader("All processes")
                     if isGroupedMode {
-                        ForEach(allProcessGroups, id: \.id) { group in
+                        ForEach(allProcessGroupRows) { row in
                             Button {
                                 searchFieldFocused = false
                                 withAnimation(AetowerDesign.Motion.standard) {
-                                    selectedEntityID = group.root.entityId
+                                    selectedEntityID = row.id
                                 }
                             } label: {
                                 GroupedEntityRow(
-                                    group: group,
-                                    origin: processOriginCache.summary(for: group.members),
-                                    isSelected: selectedEntityID == group.root.entityId
+                                    row: row,
+                                    isSelected: selectedEntityID == row.id
                                 )
+                                .equatable()
                             }
                             .buttonStyle(.plain)
                             .contextMenu {
-                                monitorContextMenu(for: group.root, members: group.members)
+                                monitorContextMenu(for: row.group.root, members: row.group.members)
                             }
                         }
                     } else {
-                        ForEach(allProcessEntities, id: \.entityId) { entity in
+                        ForEach(allProcessRows) { row in
                             Button {
                                 searchFieldFocused = false
                                 withAnimation(AetowerDesign.Motion.standard) {
-                                    selectedEntityID = entity.entityId
+                                    selectedEntityID = row.id
                                 }
                             } label: {
                                 EntityRow(
-                                    entity: entity,
-                                    origin: processOriginCache.summary(for: entity),
-                                    isSelected: selectedEntityID == entity.entityId
+                                    row: row,
+                                    isSelected: selectedEntityID == row.id
                                 )
+                                .equatable()
                             }
                             .buttonStyle(.plain)
                             .contextMenu {
-                                monitorContextMenu(for: entity, members: [entity])
+                                monitorContextMenu(for: row.entity, members: [row.entity])
                             }
                         }
                     }
@@ -2678,20 +2831,33 @@ public struct MainListView: View {
         monitorSections.filteredEntities
     }
 
-    private var burdenLeaderEntities: [EntitySnapshot] {
-        monitorSections.burdenLeaderEntities
+    private var burdenLeaderRows: [MonitorEntityRowModel] {
+        monitorSections.burdenLeaderRows
     }
 
     private var burdenLeaderEntityIDs: Set<String> {
         monitorSections.burdenLeaderEntityIDs
     }
 
-    private var allProcessEntities: [EntitySnapshot] {
-        monitorSections.allProcessEntities
+    private var allProcessRows: [MonitorEntityRowModel] {
+        monitorSections.allProcessRows
     }
 
-    private var allProcessGroups: [EntityGroup] {
-        groupedEntities.filter { !burdenLeaderEntityIDs.contains($0.root.entityId) }
+    private var allProcessGroupRows: [MonitorGroupRowModel] {
+        guard let groupingKey = currentGroupingCacheKey else { return [] }
+        let groups = groupedEntities
+        let excludedIDs = burdenLeaderEntityIDs
+        let key = MonitorGroupRowCacheKey(
+            groupingKey: groupingKey,
+            excludedEntityIDs: excludedIDs.sorted(),
+            groupEntityIDs: groups.map(\.id)
+        )
+        return monitorGroupRowCacheStore.rows(
+            for: key,
+            groups: groups,
+            originCache: processOriginCache,
+            excludedEntityIDs: excludedIDs
+        )
     }
 
     private func applySort(for column: MonitorSortColumn) {
@@ -2754,7 +2920,7 @@ public struct MainListView: View {
     private var visibleEntityIDs: [String] {
         let sections = monitorSections
         if isGroupedMode {
-            return sections.burdenLeaderEntities.map(\.entityId) + allProcessGroups.map(\.root.entityId)
+            return sections.burdenLeaderRows.map(\.id) + allProcessGroupRows.map(\.id)
         }
         return sections.flatVisibleEntityIDs
     }
@@ -2762,7 +2928,9 @@ public struct MainListView: View {
     private var visibleProcessCount: Int {
         let sections = monitorSections
         if isGroupedMode {
-            return sections.burdenLeaderProcessCount + allProcessGroups.reduce(0) { $0 + $1.processCount }
+            return sections.burdenLeaderProcessCount + allProcessGroupRows.reduce(0) {
+                $0 + $1.group.processCount
+            }
         }
         return sections.flatVisibleProcessCount
     }
