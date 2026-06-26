@@ -7,6 +7,7 @@ struct StorageHygieneReportModel: Decodable {
     let cleanupTiers: [StorageCleanupTierModel]
     let cleanupRecipes: [StorageCleanupRecipeModel]
     let budgetGuardrails: StorageBudgetGuardrailsModel
+    let agentHygiene: StorageAgentHygieneSummaryModel
     let repoFootprints: [StorageRepoFootprintModel]
     let items: [StorageHygieneItemModel]
     let roots: [String]
@@ -70,6 +71,59 @@ struct StorageBudgetViolationModel: Decodable, Identifiable {
     let observedBytes: UInt64
     let limitBytes: UInt64
     let recommendation: String
+}
+
+struct StorageAgentHygieneSummaryModel: Decodable {
+    let totalAgentArtifactBytes: UInt64
+    let weekAgentArtifactBytes: UInt64
+    let rebuildableAgentBytes: UInt64
+    let rebuildableAgentPercent: Double
+    let weekRebuildableAgentBytes: UInt64
+    let weekRebuildableAgentPercent: Double
+    let attributedItemCount: Int
+    let agentCount: Int
+    let agents: [StorageAgentArtifactSummaryModel]
+    let caveats: [String]
+}
+
+struct StorageAgentArtifactSummaryModel: Decodable, Identifiable {
+    let id: String
+    let provider: String
+    let displayName: String
+    let sessionId: String?
+    let artifactBytes: UInt64
+    let weekArtifactBytes: UInt64
+    let rebuildableBytes: UInt64
+    let rebuildablePercent: Double
+    let weekRebuildableBytes: UInt64
+    let weekRebuildablePercent: Double
+    let itemCount: Int
+    let repoCount: Int
+    let topRepositories: [StorageAgentRepoSummaryModel]
+    let topItems: [StorageAgentItemSummaryModel]
+    let confidence: String
+    let attributionSources: [String]
+    let recommendation: String
+}
+
+struct StorageAgentRepoSummaryModel: Decodable, Identifiable {
+    let repoRoot: String
+    let repoName: String
+    let artifactBytes: UInt64
+    let itemCount: Int
+
+    var id: String { repoRoot }
+}
+
+struct StorageAgentItemSummaryModel: Decodable, Identifiable {
+    let path: String
+    let displayName: String
+    let kind: String
+    let cleanupTier: String
+    let sizeBytes: UInt64
+    let modifiedMillis: UInt64?
+
+    var id: String { path }
 }
 
 struct StorageRepoFootprintModel: Decodable, Identifiable {

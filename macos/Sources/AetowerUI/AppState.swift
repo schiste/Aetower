@@ -1823,6 +1823,14 @@ public final class AppState {
                                 value: String(report.budgetGuardrails.violations.count)
                             ),
                             DiagnosticsField(
+                                key: "agent_hygiene_count",
+                                value: String(report.agentHygiene.agentCount)
+                            ),
+                            DiagnosticsField(
+                                key: "agent_hygiene_bytes",
+                                value: String(report.agentHygiene.totalAgentArtifactBytes)
+                            ),
+                            DiagnosticsField(
                                 key: "truncated",
                                 value: report.truncated ? "true" : "false"
                             ),

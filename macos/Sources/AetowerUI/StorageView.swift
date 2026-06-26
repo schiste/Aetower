@@ -43,6 +43,7 @@ public struct StorageView: View {
                 if let report = state.storageHygieneReport {
                     summaryGrid(report)
                     budgetGuardrailsSection(report)
+                    agentHygieneSection(report)
                     cleanupPreviewSection(report)
                     cleanupRecipesSection(report)
                     repoFootprintDashboard(report)
@@ -291,6 +292,197 @@ public struct StorageView: View {
         }
         .padding(AetowerDesign.Spacing.sm)
         .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func agentHygieneSection(_ report: StorageHygieneReportModel) -> some View {
+        let hygiene = report.agentHygiene
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "sparkles.rectangle.stack")
+                    .foregroundStyle(AetowerDesign.Tone.energy)
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Agent-aware hygiene")
+                        .font(.headline)
+                    Text("Per-agent storage cost for artifacts Aetower can directly tie to AI sessions, commands, process trees, or known local agent directories.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 180), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                footprintMetric(
+                    "This week",
+                    value: formatBytes(hygiene.weekAgentArtifactBytes),
+                    detail: "\(formatPercent(hygiene.weekRebuildableAgentPercent)) rebuildable"
+                )
+                footprintMetric(
+                    "All agent artifacts",
+                    value: formatBytes(hygiene.totalAgentArtifactBytes),
+                    detail: "\(formatPercent(hygiene.rebuildableAgentPercent)) rebuildable"
+                )
+                footprintMetric(
+                    "Attributed",
+                    value: "\(hygiene.agentCount)",
+                    detail: "\(hygiene.attributedItemCount) item\(hygiene.attributedItemCount == 1 ? "" : "s")"
+                )
+            }
+
+            if hygiene.agents.isEmpty {
+                Label("No agent-attributed storage artifacts were found in this scan.", systemImage: "person.crop.circle.badge.questionmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(AetowerDesign.Spacing.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(hygiene.agents) { agent in
+                        agentHygieneCard(agent)
+                    }
+                }
+            }
+
+            ForEach(hygiene.caveats.prefix(2), id: \.self) { caveat in
+                Label(caveat, systemImage: "info.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func agentHygieneCard(_ agent: StorageAgentArtifactSummaryModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "person.crop.circle.badge.gearshape")
+                    .foregroundStyle(AetowerDesign.agentColor(agent.provider))
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Text(agent.displayName)
+                            .font(.subheadline.weight(.semibold))
+                        Text(agent.confidence.capitalized)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(agentConfidenceTone(agent.confidence))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(agentConfidenceTone(agent.confidence).opacity(0.12), in: Capsule())
+                    }
+                    Text(agentSourceSummary(agent))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    if let sessionId = agent.sessionId {
+                        Text(sessionId)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.md)
+
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(formatBytes(agent.weekArtifactBytes))
+                        .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    Text("this week")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 145), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                footprintMetric(
+                    "Total",
+                    value: formatBytes(agent.artifactBytes),
+                    detail: "\(agent.itemCount) item\(agent.itemCount == 1 ? "" : "s")"
+                )
+                footprintMetric(
+                    "Rebuildable",
+                    value: formatBytes(agent.rebuildableBytes),
+                    detail: "\(formatPercent(agent.rebuildablePercent)) of total"
+                )
+                footprintMetric(
+                    "Week rebuildable",
+                    value: formatBytes(agent.weekRebuildableBytes),
+                    detail: "\(formatPercent(agent.weekRebuildablePercent)) this week"
+                )
+                footprintMetric(
+                    "Repos",
+                    value: "\(agent.repoCount)",
+                    detail: agent.topRepositories.first?.repoName ?? "no repo link"
+                )
+            }
+
+            if !agent.topRepositories.isEmpty {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Top repositories")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(Array(agent.topRepositories.prefix(3))) { repo in
+                        HStack(spacing: AetowerDesign.Spacing.sm) {
+                            Text(repo.repoName)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                            Spacer()
+                            Text("\(formatBytes(repo.artifactBytes)) · \(repo.itemCount) item\(repo.itemCount == 1 ? "" : "s")")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            if !agent.topItems.isEmpty {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Top artifacts")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(Array(agent.topItems.prefix(3))) { item in
+                        HStack(spacing: AetowerDesign.Spacing.sm) {
+                            Image(systemName: cleanupTierIcon(item.cleanupTier))
+                                .foregroundStyle(tone(forCleanupTier: item.cleanupTier))
+                                .frame(width: 16)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.displayName)
+                                    .font(.caption.weight(.semibold))
+                                Text(item.path)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer()
+                            Text(formatBytes(item.sizeBytes))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            Text(agent.recommendation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func cleanupPreviewSection(_ report: StorageHygieneReportModel) -> some View {
@@ -1213,6 +1405,42 @@ public struct StorageView: View {
         }
     }
 
+    private func agentSourceSummary(_ agent: StorageAgentArtifactSummaryModel) -> String {
+        let sources = agent.attributionSources
+            .map(agentAttributionSourceLabel)
+            .joined(separator: ", ")
+        if sources.isEmpty {
+            return "No attribution source reported"
+        }
+        return "Source: \(sources)"
+    }
+
+    private func agentAttributionSourceLabel(_ source: String) -> String {
+        switch source {
+        case "ai_agent_session":
+            return "AI session"
+        case "command":
+            return "command"
+        case "process_tree":
+            return "process tree"
+        case "known_agent_directory":
+            return "local agent directory"
+        default:
+            return source.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
+    private func agentConfidenceTone(_ confidence: String) -> Color {
+        switch confidence {
+        case "high":
+            return AetowerDesign.Status.ready
+        case "medium":
+            return AetowerDesign.Status.warning
+        default:
+            return .secondary
+        }
+    }
+
     private func icon(for item: StorageHygieneItemModel) -> String {
         switch item.kind {
         case "log-file", "logs": return "doc.text"
@@ -1235,6 +1463,13 @@ public struct StorageView: View {
 
     private func formatBytes(_ bytes: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+
+    private func formatPercent(_ value: Double) -> String {
+        if value.rounded() == value {
+            return "\(Int(value))%"
+        }
+        return String(format: "%.1f%%", value)
     }
 
     private func lastPathComponent(_ path: String) -> String {
