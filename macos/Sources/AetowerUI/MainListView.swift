@@ -2178,6 +2178,11 @@ public struct MainListView: View {
     }
 
     private var monitorOverviewSummary: some View {
+        let compactCards = monitorMetricCardDescriptors(from: state.monitorViewModel)
+        if !compactCards.isEmpty {
+            return monitorMetricCardsLayout(compactCards)
+        }
+
         let snapshot = state.snapshot
         let hostTrend = snapshot.hostTrend
         let host = snapshot.host
@@ -2335,6 +2340,161 @@ public struct MainListView: View {
         ]
 
         return monitorMetricCardsLayout(cards)
+    }
+
+    private func monitorMetricCardDescriptors(
+        from viewModel: MonitorViewModel
+    ) -> [MonitorMetricCardDescriptor] {
+        let order: [MonitorMetricCardFocus] = [.friction, .cpu, .memory, .disk, .network, .wakeups, .gpu]
+        let orderIndex = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) })
+        return viewModel.metricCards
+            .compactMap(monitorMetricCardDescriptor(from:))
+            .sorted {
+                (orderIndex[$0.id] ?? Int.max) < (orderIndex[$1.id] ?? Int.max)
+            }
+    }
+
+    private func monitorMetricCardDescriptor(
+        from card: UiMetricCard
+    ) -> MonitorMetricCardDescriptor? {
+        guard let focus = MonitorMetricCardFocus(rawValue: card.id), focus != .all else {
+            return nil
+        }
+
+        let samples = card.samples.isEmpty ? [card.value] : card.samples
+        return MonitorMetricCardDescriptor(
+            id: focus,
+            title: card.title,
+            value: card.displayValue,
+            fixedScaleValue: monitorMetricFixedScaleValue(for: card, focus: focus),
+            subtitle: "\(card.detail) · \(trendWindowLabel(sampleCount: samples.count))",
+            samples: samples,
+            style: monitorMetricStyle(for: focus),
+            valueAppearance: monitorMetricValueAppearance(for: card.severity),
+            sampleValueFormatter: monitorMetricSampleFormatter(for: card, focus: focus),
+            fixedScaleSampleValueFormatter: monitorMetricFixedScaleSampleFormatter(for: card, focus: focus),
+            fixedCeiling: monitorMetricFixedCeiling(for: card, focus: focus)
+        )
+    }
+
+    private func monitorMetricStyle(for focus: MonitorMetricCardFocus) -> TrendMetricStyle {
+        switch focus {
+        case .friction:
+            return .friction
+        case .cpu:
+            return .cpu
+        case .memory:
+            return .memory
+        case .disk:
+            return .disk
+        case .network:
+            return .network
+        case .wakeups:
+            return .friction
+        case .gpu:
+            return .energy
+        case .all:
+            return .friction
+        }
+    }
+
+    private func monitorMetricValueAppearance(for severity: UiMetricSeverity) -> TrendMetricValueAppearance {
+        switch severity {
+        case .normal:
+            return .ok
+        case .warning:
+            return .warning
+        case .critical:
+            return .danger
+        }
+    }
+
+    private func monitorMetricFixedScaleValue(
+        for card: UiMetricCard,
+        focus: MonitorMetricCardFocus
+    ) -> String? {
+        switch card.unit {
+        case "percent":
+            return String(format: "%.0f%%", card.value)
+        case "score":
+            return String(format: "%.0f%%", card.value)
+        case "bytes":
+            guard focus == .memory, let ceiling = card.fixedCeiling, ceiling > 0 else { return nil }
+            return String(format: "%.0f%%", monitorMetricPercent(card.value, ceiling: ceiling))
+        default:
+            return nil
+        }
+    }
+
+    private func monitorMetricSampleFormatter(
+        for card: UiMetricCard,
+        focus: MonitorMetricCardFocus
+    ) -> (Double) -> String {
+        switch card.unit {
+        case "percent":
+            return { String(format: "%.0f%%", $0) }
+        case "score":
+            return { String(format: "%.0f", $0) }
+        case "bytes":
+            return { formatBytes(UInt64(max($0, 0))) }
+        case "bytes_per_second":
+            return { formatRate(UInt64(max($0, 0))) }
+        case "wakeups_per_second":
+            return { formatWakeups(Float($0)) }
+        default:
+            switch focus {
+            case .disk, .network:
+                return { formatRate(UInt64(max($0, 0))) }
+            case .wakeups:
+                return { formatWakeups(Float($0)) }
+            default:
+                return { String(format: "%.0f", $0) }
+            }
+        }
+    }
+
+    private func monitorMetricFixedScaleSampleFormatter(
+        for card: UiMetricCard,
+        focus: MonitorMetricCardFocus
+    ) -> ((Double) -> String)? {
+        switch card.unit {
+        case "percent":
+            return { String(format: "%.0f%%", $0) }
+        case "score":
+            return { String(format: "%.0f%%", $0) }
+        case "bytes":
+            guard focus == .memory, let ceiling = card.fixedCeiling, ceiling > 0 else { return nil }
+            return { String(format: "%.0f%%", monitorMetricPercent($0, ceiling: ceiling)) }
+        default:
+            return nil
+        }
+    }
+
+    private func monitorMetricFixedCeiling(
+        for card: UiMetricCard,
+        focus: MonitorMetricCardFocus
+    ) -> Double {
+        if let fixedCeiling = card.fixedCeiling, fixedCeiling > 0 {
+            return fixedCeiling
+        }
+
+        switch focus {
+        case .friction, .cpu, .memory, .gpu:
+            return MonitorRingCeiling.percent
+        case .disk:
+            return MonitorRingCeiling.diskBps
+        case .network:
+            return MonitorRingCeiling.networkBps
+        case .wakeups:
+            return MonitorRingCeiling.wakeupsPerSecond
+        case .all:
+            return 0
+        }
+    }
+
+    private func monitorMetricPercent(_ value: Double, ceiling: Double) -> Double {
+        guard ceiling > 0 else { return 0 }
+        return min(100, max(0, (value / ceiling) * 100))
     }
 
     @ViewBuilder

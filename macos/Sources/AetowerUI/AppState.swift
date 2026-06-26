@@ -28,6 +28,7 @@ private enum NotificationCategory: String {
 @Observable
 public final class AppState {
     public private(set) var snapshot: SystemSnapshot
+    private(set) var monitorViewModel = MonitorViewModel.empty
     public private(set) var historySnapshots: [SystemSnapshot] = []
     public private(set) var historyLoadError: String?
     public private(set) var historyRangeSummary: HistoryRangeSummary?
@@ -1341,6 +1342,9 @@ public final class AppState {
             completeSnapshotRefresh()
             return
         case let .updated(payload):
+            if let monitorPayload = payload.monitorPayload {
+                applyMonitorUiPayload(monitorPayload)
+            }
             snapshot = payload.snapshot
             lastObservedSequence = payload.snapshot.sequence
             applyLocalFrontmostState(
@@ -1371,6 +1375,15 @@ public final class AppState {
             flushSuppressedAnomalySummaryIfNeeded()
             lastError = nil
             completeSnapshotRefresh()
+        }
+    }
+
+    private func applyMonitorUiPayload(_ payload: MonitorUiRefreshPayload) {
+        switch payload {
+        case let .snapshot(snapshot):
+            monitorViewModel = MonitorViewModel(snapshot: snapshot)
+        case let .delta(delta):
+            monitorViewModel.apply(delta: delta)
         }
     }
 
