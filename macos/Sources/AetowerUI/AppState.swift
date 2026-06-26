@@ -1819,6 +1819,10 @@ public final class AppState {
                                 value: String(report.repoFootprints.count)
                             ),
                             DiagnosticsField(
+                                key: "budget_violation_count",
+                                value: String(report.budgetGuardrails.violations.count)
+                            ),
+                            DiagnosticsField(
                                 key: "truncated",
                                 value: report.truncated ? "true" : "false"
                             ),

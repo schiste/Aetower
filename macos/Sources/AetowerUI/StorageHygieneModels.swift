@@ -6,6 +6,7 @@ struct StorageHygieneReportModel: Decodable {
     let summary: StorageHygieneSummaryModel
     let cleanupTiers: [StorageCleanupTierModel]
     let cleanupRecipes: [StorageCleanupRecipeModel]
+    let budgetGuardrails: StorageBudgetGuardrailsModel
     let repoFootprints: [StorageRepoFootprintModel]
     let items: [StorageHygieneItemModel]
     let roots: [String]
@@ -48,6 +49,27 @@ struct StorageCleanupRecipeModel: Decodable, Identifiable {
     let prerequisites: [String]
     let destructive: Bool
     let requiresReview: Bool
+}
+
+struct StorageBudgetGuardrailsModel: Decodable {
+    let repoGrowthBudgetBytesPerDay: UInt64
+    let repoArtifactBudgetBytes: UInt64
+    let totalArtifactBudgetBytes: UInt64
+    let status: String
+    let violations: [StorageBudgetViolationModel]
+}
+
+struct StorageBudgetViolationModel: Decodable, Identifiable {
+    let id: String
+    let scope: String
+    let severity: String
+    let title: String
+    let detail: String
+    let repoRoot: String?
+    let repoName: String?
+    let observedBytes: UInt64
+    let limitBytes: UInt64
+    let recommendation: String
 }
 
 struct StorageRepoFootprintModel: Decodable, Identifiable {

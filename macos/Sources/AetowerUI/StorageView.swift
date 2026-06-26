@@ -42,6 +42,7 @@ public struct StorageView: View {
 
                 if let report = state.storageHygieneReport {
                     summaryGrid(report)
+                    budgetGuardrailsSection(report)
                     cleanupPreviewSection(report)
                     cleanupRecipesSection(report)
                     repoFootprintDashboard(report)
@@ -197,6 +198,99 @@ public struct StorageView: View {
                 tone: report.summary.attributedRepoCount > 0 ? AetowerDesign.Status.ready : .secondary
             )
         }
+    }
+
+    private func budgetGuardrailsSection(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: budgetGuardrailIcon(report.budgetGuardrails.status))
+                    .foregroundStyle(budgetGuardrailTone(report.budgetGuardrails.status))
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Budget guardrails")
+                        .font(.headline)
+                    Text(budgetGuardrailSummary(report.budgetGuardrails))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Text(report.budgetGuardrails.status.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(budgetGuardrailTone(report.budgetGuardrails.status))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(budgetGuardrailTone(report.budgetGuardrails.status).opacity(0.12), in: Capsule())
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 190), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                footprintMetric(
+                    "Total artifacts",
+                    value: formatBytes(report.summary.totalReclaimableBytes),
+                    detail: "budget \(formatBytes(report.budgetGuardrails.totalArtifactBudgetBytes))"
+                )
+                footprintMetric(
+                    "Per repo",
+                    value: formatBytes(report.budgetGuardrails.repoArtifactBudgetBytes),
+                    detail: "artifact footprint limit"
+                )
+                footprintMetric(
+                    "Growth",
+                    value: formatBytes(report.budgetGuardrails.repoGrowthBudgetBytesPerDay),
+                    detail: "per repo per day"
+                )
+            }
+
+            if report.budgetGuardrails.violations.isEmpty {
+                Label("All storage budgets are currently within limits.", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(AetowerDesign.Status.ready)
+            } else {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(report.budgetGuardrails.violations) { violation in
+                        budgetViolationRow(violation)
+                    }
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func budgetViolationRow(_ violation: StorageBudgetViolationModel) -> some View {
+        HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+            Image(systemName: budgetGuardrailIcon(violation.severity))
+                .foregroundStyle(budgetGuardrailTone(violation.severity))
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                Text(violation.title)
+                    .font(.subheadline.weight(.semibold))
+                Text(violation.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(violation.recommendation)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                Text(formatBytes(violation.observedBytes))
+                    .font(.caption.weight(.semibold))
+                Text("limit \(formatBytes(violation.limitBytes))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(AetowerDesign.Spacing.sm)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func cleanupPreviewSection(_ report: StorageHygieneReportModel) -> some View {
@@ -1084,6 +1178,39 @@ public struct StorageView: View {
             return AetowerDesign.Status.warning
         }
         return tone(forCleanupTier: recipe.safety)
+    }
+
+    private func budgetGuardrailSummary(_ guardrails: StorageBudgetGuardrailsModel) -> String {
+        if guardrails.violations.isEmpty {
+            return "Warn when a repo exceeds \(formatBytes(guardrails.repoArtifactBudgetBytes)), grows more than \(formatBytes(guardrails.repoGrowthBudgetBytesPerDay)) per day, or total local dev artifacts exceed \(formatBytes(guardrails.totalArtifactBudgetBytes))."
+        }
+        return "\(guardrails.violations.count) budget warning\(guardrails.violations.count == 1 ? "" : "s") need review before the machine slows down."
+    }
+
+    private func budgetGuardrailTone(_ status: String) -> Color {
+        switch status {
+        case "critical", "error":
+            return AetowerDesign.Status.error
+        case "warning", "warn":
+            return AetowerDesign.Status.warning
+        case "ok":
+            return AetowerDesign.Status.ready
+        default:
+            return .secondary
+        }
+    }
+
+    private func budgetGuardrailIcon(_ status: String) -> String {
+        switch status {
+        case "critical", "error":
+            return "exclamationmark.octagon"
+        case "warning", "warn":
+            return "exclamationmark.triangle"
+        case "ok":
+            return "checkmark.shield"
+        default:
+            return "gauge.with.dots.needle.67percent"
+        }
     }
 
     private func icon(for item: StorageHygieneItemModel) -> String {
