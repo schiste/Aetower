@@ -194,9 +194,17 @@ public final class AppState {
     private let localMcpController: LocalMcpController
     private let exportController: ExportController
     @ObservationIgnored
+    private let snapshotRefreshWorker: SnapshotRefreshWorker
+    @ObservationIgnored
     private let lagMonitor = LagMonitor()
     @ObservationIgnored
     private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var refreshFetchTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var refreshInFlight = false
+    @ObservationIgnored
+    private var pendingForcedRefresh = false
     @ObservationIgnored
     private var workspaceActivationTask: Task<Void, Never>?
     @ObservationIgnored
@@ -345,7 +353,22 @@ public final class AppState {
         bridge: EngineBridge = EngineBridge(),
         permissionCoordinator: PermissionCoordinator = PermissionCoordinator()
     ) {
-        let initialSnapshot = (try? bridge.latestSnapshot()) ?? SystemSnapshot(
+        let initialSnapshot = Self.emptySnapshot()
+        self.bridge = bridge
+        self.permissionCoordinator = permissionCoordinator
+        self.processActionController = ProcessActionController(bridge: bridge)
+        self.localMcpController = LocalMcpController(bridge: bridge)
+        self.exportController = ExportController(bridge: bridge)
+        self.snapshotRefreshWorker = SnapshotRefreshWorker(
+            bridge: bridge,
+            initialSequence: initialSnapshot.sequence
+        )
+        self.snapshot = initialSnapshot
+        self.lastObservedSequence = initialSnapshot.sequence
+    }
+
+    private static func emptySnapshot() -> SystemSnapshot {
+        SystemSnapshot(
             sequence: 0,
             capturedAtMillis: 0,
             host: HostSnapshot(
@@ -402,13 +425,6 @@ public final class AppState {
             chau7Sessions: [],
             thermalForecast: nil
         )
-        self.bridge = bridge
-        self.permissionCoordinator = permissionCoordinator
-        self.processActionController = ProcessActionController(bridge: bridge)
-        self.localMcpController = LocalMcpController(bridge: bridge)
-        self.exportController = ExportController(bridge: bridge)
-        self.snapshot = initialSnapshot
-        self.lastObservedSequence = initialSnapshot.sequence
     }
 
     public func start() {
@@ -470,6 +486,10 @@ public final class AppState {
     public func stop() {
         refreshTask?.cancel()
         refreshTask = nil
+        refreshFetchTask?.cancel()
+        refreshFetchTask = nil
+        refreshInFlight = false
+        pendingForcedRefresh = false
         workspaceActivationTask?.cancel()
         workspaceActivationTask = nil
         appBecameActiveTask?.cancel()
@@ -1254,48 +1274,46 @@ public final class AppState {
     public func refresh(force: Bool = false) {
         ensureLocalMcpServer()
         let refreshStartedAt = CFAbsoluteTimeGetCurrent()
-        let fetchStartedAt = CFAbsoluteTimeGetCurrent()
-        do {
-            var bridgeFetchMillis = 0.0
-            var updatedSnapshotValue: SystemSnapshot?
-            if let updatedSnapshot = try bridge.latestSnapshotIfNewer(since: lastObservedSequence) {
-                bridgeFetchMillis = (CFAbsoluteTimeGetCurrent() - fetchStartedAt) * 1000.0
-                snapshot = updatedSnapshot
-                lastObservedSequence = updatedSnapshot.sequence
-                updatedSnapshotValue = updatedSnapshot
-            } else if force {
-                let latestSnapshot = try bridge.latestSnapshot()
-                bridgeFetchMillis = (CFAbsoluteTimeGetCurrent() - fetchStartedAt) * 1000.0
-                snapshot = latestSnapshot
-                lastObservedSequence = latestSnapshot.sequence
-                updatedSnapshotValue = latestSnapshot
-            } else {
-                return
+        if refreshInFlight {
+            if force {
+                pendingForcedRefresh = true
             }
-            applyLocalFrontmostState(
-                appName: lastPublishedFrontmostAppName,
-                windowTitle: lastPublishedWindowTitle
-            )
-            runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
-            refreshOperatorState(force: force)
-            if let updatedSnapshotValue {
-                evaluateAutomationRules(snapshot: updatedSnapshotValue)
-                evaluateAgentBudgetRules(snapshot: updatedSnapshotValue)
-                evaluateTimelineNotifications(snapshot: updatedSnapshotValue)
-            }
-            if let updatedSnapshotValue, lagMonitoringActive {
-                publishUiLagMetrics(
-                    snapshot: updatedSnapshotValue,
-                    bridgeFetchMillis: bridgeFetchMillis,
-                    uiRefreshMillis: (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1000.0,
-                    refreshStartedAt: refreshStartedAt
+            return
+        }
+
+        refreshInFlight = true
+        let includeOperatorState = shouldRefreshOperatorState(force: force)
+        let worker = snapshotRefreshWorker
+        refreshFetchTask = Task(priority: .utility) { [weak self] in
+            do {
+                let result = try await worker.refresh(
+                    force: force,
+                    includeOperatorState: includeOperatorState
                 )
+                let wasCancelled = Task.isCancelled
+                await MainActor.run {
+                    guard let self else { return }
+                    if wasCancelled {
+                        self.completeSnapshotRefresh()
+                    } else {
+                        self.applySnapshotRefreshResult(
+                            result,
+                            refreshStartedAt: refreshStartedAt
+                        )
+                    }
+                }
+            } catch {
+                let wasCancelled = Task.isCancelled
+                await MainActor.run {
+                    guard let self else { return }
+                    if wasCancelled {
+                        self.completeSnapshotRefresh()
+                    } else {
+                        self.lastError = error.localizedDescription
+                        self.completeSnapshotRefresh()
+                    }
+                }
             }
-            diffAnomalyStates()
-            flushSuppressedAnomalySummaryIfNeeded()
-            lastError = nil
-        } catch {
-            lastError = error.localizedDescription
         }
     }
 
@@ -1310,19 +1328,59 @@ public final class AppState {
         }
     }
 
-    private func refreshOperatorState(force: Bool = false) {
-        let now = Date()
-        guard force || now.timeIntervalSince(lastOperatorStateRefreshDate) >= operatorStateRefreshInterval else {
+    private func shouldRefreshOperatorState(force: Bool) -> Bool {
+        force || Date().timeIntervalSince(lastOperatorStateRefreshDate) >= operatorStateRefreshInterval
+    }
+
+    private func applySnapshotRefreshResult(
+        _ result: SnapshotRefreshResult,
+        refreshStartedAt: CFAbsoluteTime
+    ) {
+        switch result {
+        case .noChange:
+            completeSnapshotRefresh()
             return
+        case let .updated(payload):
+            snapshot = payload.snapshot
+            lastObservedSequence = payload.snapshot.sequence
+            applyLocalFrontmostState(
+                appName: lastPublishedFrontmostAppName,
+                windowTitle: lastPublishedWindowTitle
+            )
+            runtimeLagMetrics = payload.runtimeLagMetrics
+            if let operatorState = payload.operatorState {
+                diagnosticsOverview = operatorState.diagnosticsOverview
+                historyStoreSummary = operatorState.historyStoreSummary
+                lastOperatorStateRefreshDate = Date()
+                localMcpController.refreshHealthSnapshot()
+            }
+
+            evaluateAutomationRules(snapshot: payload.snapshot)
+            evaluateAgentBudgetRules(snapshot: payload.snapshot)
+            evaluateTimelineNotifications(snapshot: payload.snapshot)
+
+            if lagMonitoringActive {
+                publishUiLagMetrics(
+                    snapshot: payload.snapshot,
+                    bridgeFetchMillis: payload.bridgeFetchMillis,
+                    uiRefreshMillis: (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1000.0,
+                    refreshStartedAt: refreshStartedAt
+                )
+            }
+            diffAnomalyStates()
+            flushSuppressedAnomalySummaryIfNeeded()
+            lastError = nil
+            completeSnapshotRefresh()
         }
-        lastOperatorStateRefreshDate = now
-        diagnosticsOverview = bridge.diagnosticsOverview()
-        let endMillis = max(
-            snapshot.capturedAtMillis,
-            UInt64(Date().timeIntervalSince1970 * 1000)
-        )
-        historyStoreSummary = bridge.historyRangeSummary(startMillis: 0, endMillis: endMillis)
-        localMcpController.refreshHealthSnapshot()
+    }
+
+    private func completeSnapshotRefresh() {
+        refreshFetchTask = nil
+        refreshInFlight = false
+        if pendingForcedRefresh {
+            pendingForcedRefresh = false
+            refresh(force: true)
+        }
     }
 
     public func setHistoryWindow(seconds: TimeInterval) {
