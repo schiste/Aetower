@@ -9,6 +9,10 @@
 
 # Local profiling and tool caches
 tmp/
+.claude/
+.codex/
+.cursor/
+.aider/
 
 # Editor / IDE scratch
 .chau7/
