@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use aetower_core::{Engine, RuntimeCollectionSettings};
 use aetower_diagnostics as diagnostics;
@@ -815,6 +818,30 @@ pub struct UiSnapshot {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct UiSnapshotDelta {
+    pub updated: bool,
+    pub sequence: u64,
+    pub base_sequence: u64,
+    pub captured_at_millis: u64,
+    pub process_limit: u32,
+    pub trend_points: u32,
+    pub base_available: bool,
+    pub host: Option<UiHostSummary>,
+    pub host_trend: Option<UiHostTrend>,
+    pub changed_metric_cards: Vec<UiMetricCard>,
+    pub changed_process_rows: Vec<UiProcessRow>,
+    pub removed_entity_ids: Vec<String>,
+    pub selected_entity: Option<UiSelectedEntity>,
+    pub selected_entity_changed: bool,
+    pub selected_entity_removed: bool,
+    pub total_entity_count: u32,
+    pub returned_entity_count: u32,
+    pub total_process_count: u32,
+    pub timeline_warning_count: u32,
+    pub timeline_critical_count: u32,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct ThermalForecast {
     pub minutes_to_throttle: Option<f32>,
     pub trend_celsius_per_min: f32,
@@ -966,6 +993,7 @@ pub struct HistoryMaintenanceReport {
 pub struct MonitorEngine {
     inner: Arc<std::sync::Mutex<Engine>>,
     mcp_server: std::sync::Mutex<Option<LocalMcpServerHandle>>,
+    ui_snapshot_cache: std::sync::Mutex<Vec<UiSnapshotCacheEntry>>,
 }
 
 #[uniffi::export]
@@ -977,6 +1005,7 @@ impl MonitorEngine {
         Arc::new(Self {
             inner: Arc::new(std::sync::Mutex::new(engine)),
             mcp_server: std::sync::Mutex::new(None),
+            ui_snapshot_cache: std::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -1011,12 +1040,17 @@ impl MonitorEngine {
             );
         };
         let snapshot = engine.latest_snapshot_arc();
-        ui_snapshot_from(
+        let ui_snapshot = ui_snapshot_from(
             snapshot.as_ref(),
             process_limit,
             trend_points,
             selected_entity_id.as_deref(),
-        )
+        );
+        self.remember_ui_snapshot(
+            ui_snapshot_cache_key(process_limit, trend_points, selected_entity_id.as_deref()),
+            &ui_snapshot,
+        );
+        ui_snapshot
     }
 
     pub fn latest_ui_snapshot_if_newer(
@@ -1030,12 +1064,54 @@ impl MonitorEngine {
             return None;
         };
         let snapshot = engine.latest_snapshot_arc_if_newer(last_sequence)?;
-        Some(ui_snapshot_from(
+        let ui_snapshot = ui_snapshot_from(
             snapshot.as_ref(),
             process_limit,
             trend_points,
             selected_entity_id.as_deref(),
-        ))
+        );
+        self.remember_ui_snapshot(
+            ui_snapshot_cache_key(process_limit, trend_points, selected_entity_id.as_deref()),
+            &ui_snapshot,
+        );
+        Some(ui_snapshot)
+    }
+
+    pub fn latest_ui_snapshot_delta_since(
+        &self,
+        last_sequence: u64,
+        process_limit: u32,
+        trend_points: u32,
+        selected_entity_id: Option<String>,
+    ) -> UiSnapshotDelta {
+        let key = ui_snapshot_cache_key(process_limit, trend_points, selected_entity_id.as_deref());
+        let Ok(engine) = self.inner.lock() else {
+            return ui_snapshot_delta_no_update(
+                &model::SystemSnapshot::default(),
+                last_sequence,
+                &key,
+            );
+        };
+        let snapshot = engine.latest_snapshot_arc();
+        if snapshot.sequence <= last_sequence {
+            return ui_snapshot_delta_no_update(snapshot.as_ref(), last_sequence, &key);
+        }
+
+        let ui_snapshot = ui_snapshot_from(
+            snapshot.as_ref(),
+            key.process_limit,
+            key.trend_points,
+            key.selected_entity_id.as_deref(),
+        );
+        let base_snapshot = self.cached_ui_snapshot(last_sequence, &key);
+        let delta = ui_snapshot_delta_from_current(
+            last_sequence,
+            &key,
+            &ui_snapshot,
+            base_snapshot.as_ref(),
+        );
+        self.remember_ui_snapshot(key, &ui_snapshot);
+        delta
     }
 
     pub fn latest_sequence(&self) -> u64 {
@@ -1639,6 +1715,49 @@ impl MonitorEngine {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct UiSnapshotCacheKey {
+    process_limit: u32,
+    trend_points: u32,
+    selected_entity_id: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct UiSnapshotCacheEntry {
+    key: UiSnapshotCacheKey,
+    snapshot: UiSnapshot,
+}
+
+const UI_SNAPSHOT_CACHE_LIMIT: usize = 12;
+
+impl MonitorEngine {
+    fn remember_ui_snapshot(&self, key: UiSnapshotCacheKey, snapshot: &UiSnapshot) {
+        let Ok(mut cache) = self.ui_snapshot_cache.lock() else {
+            return;
+        };
+        cache.retain(|entry| entry.snapshot.sequence != snapshot.sequence || entry.key != key);
+        cache.push(UiSnapshotCacheEntry {
+            key,
+            snapshot: snapshot.clone(),
+        });
+        let overflow = cache.len().saturating_sub(UI_SNAPSHOT_CACHE_LIMIT);
+        if overflow > 0 {
+            cache.drain(0..overflow);
+        }
+    }
+
+    fn cached_ui_snapshot(&self, sequence: u64, key: &UiSnapshotCacheKey) -> Option<UiSnapshot> {
+        let Ok(cache) = self.ui_snapshot_cache.lock() else {
+            return None;
+        };
+        cache
+            .iter()
+            .rev()
+            .find(|entry| entry.snapshot.sequence == sequence && &entry.key == key)
+            .map(|entry| entry.snapshot.clone())
+    }
+}
+
 impl Drop for MonitorEngine {
     fn drop(&mut self) {
         if let Ok(mut server) = self.mcp_server.lock() {
@@ -1791,6 +1910,31 @@ const SELECTED_ENTITY_COMPONENT_LIMIT: usize = 48;
 const SELECTED_ENTITY_RECOMMENDATION_LIMIT: usize = 8;
 const SELECTED_ENTITY_NETWORK_LIMIT: usize = 16;
 
+fn ui_snapshot_cache_key(
+    process_limit: u32,
+    trend_points: u32,
+    selected_entity_id: Option<&str>,
+) -> UiSnapshotCacheKey {
+    UiSnapshotCacheKey {
+        process_limit: saturating_u32(normalized_ui_limit(
+            process_limit,
+            DEFAULT_UI_PROCESS_LIMIT,
+            1,
+            MAX_UI_PROCESS_LIMIT,
+        )),
+        trend_points: saturating_u32(normalized_ui_limit(
+            trend_points,
+            DEFAULT_UI_TREND_POINTS,
+            8,
+            MAX_UI_TREND_POINTS,
+        )),
+        selected_entity_id: selected_entity_id
+            .map(str::trim)
+            .filter(|entity_id| !entity_id.is_empty())
+            .map(ToOwned::to_owned),
+    }
+}
+
 fn ui_snapshot_from(
     snapshot: &model::SystemSnapshot,
     process_limit: u32,
@@ -1853,6 +1997,202 @@ fn ui_snapshot_from(
         timeline_warning_count: saturating_u32(timeline_warning_count),
         timeline_critical_count: saturating_u32(timeline_critical_count),
     }
+}
+
+fn ui_snapshot_delta_no_update(
+    snapshot: &model::SystemSnapshot,
+    base_sequence: u64,
+    key: &UiSnapshotCacheKey,
+) -> UiSnapshotDelta {
+    UiSnapshotDelta {
+        updated: false,
+        sequence: snapshot.sequence,
+        base_sequence,
+        captured_at_millis: snapshot.captured_at_millis,
+        process_limit: key.process_limit,
+        trend_points: key.trend_points,
+        base_available: true,
+        host: None,
+        host_trend: None,
+        changed_metric_cards: Vec::new(),
+        changed_process_rows: Vec::new(),
+        removed_entity_ids: Vec::new(),
+        selected_entity: None,
+        selected_entity_changed: false,
+        selected_entity_removed: false,
+        total_entity_count: saturating_u32(snapshot.entities.len()),
+        returned_entity_count: 0,
+        total_process_count: snapshot.entities.iter().fold(0u32, |count, entity| {
+            count.saturating_add(entity.metrics.process_count)
+        }),
+        timeline_warning_count: saturating_u32(
+            snapshot
+                .timeline
+                .iter()
+                .filter(|event| event.severity == model::TimelineSeverity::Warning)
+                .count(),
+        ),
+        timeline_critical_count: saturating_u32(
+            snapshot
+                .timeline
+                .iter()
+                .filter(|event| event.severity == model::TimelineSeverity::Critical)
+                .count(),
+        ),
+    }
+}
+
+fn ui_snapshot_delta_from_current(
+    base_sequence: u64,
+    key: &UiSnapshotCacheKey,
+    current: &UiSnapshot,
+    base: Option<&UiSnapshot>,
+) -> UiSnapshotDelta {
+    let base_available = base.is_some();
+    let host = match base {
+        Some(base)
+            if ui_host_summary_signature(&base.host)
+                == ui_host_summary_signature(&current.host) =>
+        {
+            None
+        }
+        _ => Some(current.host.clone()),
+    };
+    let host_trend = match base {
+        Some(base)
+            if ui_host_trend_signature(&base.host_trend)
+                == ui_host_trend_signature(&current.host_trend) =>
+        {
+            None
+        }
+        _ => Some(current.host_trend.clone()),
+    };
+    let changed_metric_cards = changed_metric_cards(current, base);
+    let (changed_process_rows, removed_entity_ids) = changed_process_rows(current, base);
+    let (selected_entity, selected_entity_changed, selected_entity_removed) =
+        changed_selected_entity(current, base);
+
+    UiSnapshotDelta {
+        updated: true,
+        sequence: current.sequence,
+        base_sequence,
+        captured_at_millis: current.captured_at_millis,
+        process_limit: key.process_limit,
+        trend_points: key.trend_points,
+        base_available,
+        host,
+        host_trend,
+        changed_metric_cards,
+        changed_process_rows,
+        removed_entity_ids,
+        selected_entity,
+        selected_entity_changed,
+        selected_entity_removed,
+        total_entity_count: current.total_entity_count,
+        returned_entity_count: current.returned_entity_count,
+        total_process_count: current.total_process_count,
+        timeline_warning_count: current.timeline_warning_count,
+        timeline_critical_count: current.timeline_critical_count,
+    }
+}
+
+fn changed_metric_cards(current: &UiSnapshot, base: Option<&UiSnapshot>) -> Vec<UiMetricCard> {
+    let Some(base) = base else {
+        return current.metric_cards.clone();
+    };
+    let base_by_id: BTreeMap<&str, String> = base
+        .metric_cards
+        .iter()
+        .map(|card| (card.id.as_str(), ui_metric_card_signature(card)))
+        .collect();
+    current
+        .metric_cards
+        .iter()
+        .filter(|card| {
+            base_by_id
+                .get(card.id.as_str())
+                .map(|signature| signature != &ui_metric_card_signature(card))
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect()
+}
+
+fn changed_process_rows(
+    current: &UiSnapshot,
+    base: Option<&UiSnapshot>,
+) -> (Vec<UiProcessRow>, Vec<String>) {
+    let Some(base) = base else {
+        return (current.process_rows.clone(), Vec::new());
+    };
+    let base_by_id: BTreeMap<&str, String> = base
+        .process_rows
+        .iter()
+        .map(|row| (row.entity_id.as_str(), ui_process_row_signature(row)))
+        .collect();
+    let current_ids: BTreeSet<&str> = current
+        .process_rows
+        .iter()
+        .map(|row| row.entity_id.as_str())
+        .collect();
+    let changed_rows = current
+        .process_rows
+        .iter()
+        .filter(|row| {
+            base_by_id
+                .get(row.entity_id.as_str())
+                .map(|signature| signature != &ui_process_row_signature(row))
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect();
+    let removed_ids = base
+        .process_rows
+        .iter()
+        .filter(|row| !current_ids.contains(row.entity_id.as_str()))
+        .map(|row| row.entity_id.clone())
+        .collect();
+    (changed_rows, removed_ids)
+}
+
+fn changed_selected_entity(
+    current: &UiSnapshot,
+    base: Option<&UiSnapshot>,
+) -> (Option<UiSelectedEntity>, bool, bool) {
+    let Some(base) = base else {
+        let changed = current.selected_entity.is_some();
+        return (current.selected_entity.clone(), changed, false);
+    };
+    match (&current.selected_entity, &base.selected_entity) {
+        (None, None) => (None, false, false),
+        (None, Some(_)) => (None, true, true),
+        (Some(current), None) => (Some(current.clone()), true, false),
+        (Some(current), Some(base)) => {
+            let changed =
+                ui_selected_entity_signature(current) != ui_selected_entity_signature(base);
+            (changed.then(|| current.clone()), changed, false)
+        }
+    }
+}
+
+fn ui_host_summary_signature(value: &UiHostSummary) -> String {
+    format!("{value:?}")
+}
+
+fn ui_host_trend_signature(value: &UiHostTrend) -> String {
+    format!("{value:?}")
+}
+
+fn ui_metric_card_signature(value: &UiMetricCard) -> String {
+    format!("{value:?}")
+}
+
+fn ui_process_row_signature(value: &UiProcessRow) -> String {
+    format!("{value:?}")
+}
+
+fn ui_selected_entity_signature(value: &UiSelectedEntity) -> String {
+    format!("{value:?}")
 }
 
 fn normalized_ui_limit(
@@ -2223,6 +2563,19 @@ fn format_bps(value: u64) -> String {
 mod ui_snapshot_tests {
     use super::*;
 
+    fn test_entity(entity_id: &str, cpu_percent: f32) -> model::EntitySnapshot {
+        model::EntitySnapshot {
+            entity_id: entity_id.to_owned(),
+            display_name: entity_id.to_owned(),
+            metrics: model::AggregateMetrics {
+                process_count: 1,
+                cpu_percent,
+                ..model::AggregateMetrics::default()
+            },
+            ..model::EntitySnapshot::default()
+        }
+    }
+
     #[test]
     fn ui_snapshot_caps_process_rows_without_losing_counts() {
         let snapshot = model::SystemSnapshot {
@@ -2303,6 +2656,122 @@ mod ui_snapshot_tests {
         assert_eq!(downsampled.len(), 10);
         assert_eq!(downsampled.first().copied(), Some(0.0));
         assert_eq!(downsampled.last().copied(), Some(99.0));
+    }
+
+    #[test]
+    fn ui_snapshot_delta_no_update_is_tiny() {
+        let snapshot = model::SystemSnapshot {
+            sequence: 9,
+            entities: vec![test_entity("stable", 1.0)],
+            ..model::SystemSnapshot::default()
+        };
+        let key = ui_snapshot_cache_key(2, 16, None);
+
+        let delta = ui_snapshot_delta_no_update(&snapshot, 9, &key);
+
+        assert!(!delta.updated);
+        assert_eq!(delta.sequence, 9);
+        assert!(delta.host.is_none());
+        assert!(delta.host_trend.is_none());
+        assert!(delta.changed_metric_cards.is_empty());
+        assert!(delta.changed_process_rows.is_empty());
+        assert!(delta.removed_entity_ids.is_empty());
+        assert_eq!(delta.total_entity_count, 1);
+        assert_eq!(delta.total_process_count, 1);
+    }
+
+    #[test]
+    fn ui_snapshot_delta_without_cached_base_returns_full_lean_payload() {
+        let snapshot = model::SystemSnapshot {
+            sequence: 2,
+            entities: vec![test_entity("one", 1.0), test_entity("two", 2.0)],
+            ..model::SystemSnapshot::default()
+        };
+        let key = ui_snapshot_cache_key(10, 16, None);
+        let current = ui_snapshot_from(&snapshot, key.process_limit, key.trend_points, None);
+
+        let delta = ui_snapshot_delta_from_current(1, &key, &current, None);
+
+        assert!(delta.updated);
+        assert!(!delta.base_available);
+        assert!(delta.host.is_some());
+        assert!(delta.host_trend.is_some());
+        assert_eq!(delta.changed_metric_cards.len(), current.metric_cards.len());
+        assert_eq!(delta.changed_process_rows.len(), 2);
+        assert!(delta.removed_entity_ids.is_empty());
+    }
+
+    #[test]
+    fn ui_snapshot_delta_reports_changed_and_removed_rows() {
+        let base_snapshot = model::SystemSnapshot {
+            sequence: 1,
+            entities: vec![test_entity("one", 1.0), test_entity("removed", 2.0)],
+            ..model::SystemSnapshot::default()
+        };
+        let current_snapshot = model::SystemSnapshot {
+            sequence: 2,
+            entities: vec![test_entity("one", 9.0), test_entity("added", 3.0)],
+            ..model::SystemSnapshot::default()
+        };
+        let key = ui_snapshot_cache_key(10, 16, None);
+        let base = ui_snapshot_from(&base_snapshot, key.process_limit, key.trend_points, None);
+        let current =
+            ui_snapshot_from(&current_snapshot, key.process_limit, key.trend_points, None);
+
+        let delta = ui_snapshot_delta_from_current(1, &key, &current, Some(&base));
+        let changed_ids: BTreeSet<&str> = delta
+            .changed_process_rows
+            .iter()
+            .map(|row| row.entity_id.as_str())
+            .collect();
+
+        assert!(delta.updated);
+        assert!(delta.base_available);
+        assert_eq!(changed_ids, BTreeSet::from(["added", "one"]));
+        assert_eq!(delta.removed_entity_ids, vec!["removed".to_owned()]);
+    }
+
+    #[test]
+    fn ui_snapshot_delta_reports_selected_entity_changes() {
+        let mut base_entity = test_entity("selected", 1.0);
+        base_entity.components = vec![model::ComponentSnapshot {
+            title: "before".to_owned(),
+            process_id: Some(10),
+            ..model::ComponentSnapshot::default()
+        }];
+        let mut current_entity = test_entity("selected", 1.0);
+        current_entity.components = vec![model::ComponentSnapshot {
+            title: "after".to_owned(),
+            process_id: Some(10),
+            ..model::ComponentSnapshot::default()
+        }];
+        let key = ui_snapshot_cache_key(10, 16, Some("selected"));
+        let base = ui_snapshot_from(
+            &model::SystemSnapshot {
+                sequence: 1,
+                entities: vec![base_entity],
+                ..model::SystemSnapshot::default()
+            },
+            key.process_limit,
+            key.trend_points,
+            key.selected_entity_id.as_deref(),
+        );
+        let current = ui_snapshot_from(
+            &model::SystemSnapshot {
+                sequence: 2,
+                entities: vec![current_entity],
+                ..model::SystemSnapshot::default()
+            },
+            key.process_limit,
+            key.trend_points,
+            key.selected_entity_id.as_deref(),
+        );
+
+        let delta = ui_snapshot_delta_from_current(1, &key, &current, Some(&base));
+
+        assert!(delta.selected_entity_changed);
+        assert!(!delta.selected_entity_removed);
+        assert!(delta.selected_entity.is_some());
     }
 }
 

@@ -42,6 +42,20 @@ public final class EngineBridge: @unchecked Sendable {
         )
     }
 
+    public func latestUiSnapshotDeltaSince(
+        _ sequence: UInt64,
+        processLimit: UInt32 = 160,
+        trendPoints: UInt32 = 120,
+        selectedEntityId: String? = nil
+    ) throws -> UiSnapshotDelta {
+        engine.latestUiSnapshotDeltaSince(
+            lastSequence: sequence,
+            processLimit: processLimit,
+            trendPoints: trendPoints,
+            selectedEntityId: selectedEntityId
+        )
+    }
+
     public func latestSequence() throws -> UInt64 {
         engine.latestSequence()
     }

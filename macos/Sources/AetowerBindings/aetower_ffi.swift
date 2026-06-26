@@ -601,6 +601,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
 
     func latestUiSnapshot(processLimit: UInt32, trendPoints: UInt32, selectedEntityId: String?)  -> UiSnapshot
 
+    func latestUiSnapshotDeltaSince(lastSequence: UInt64, processLimit: UInt32, trendPoints: UInt32, selectedEntityId: String?)  -> UiSnapshotDelta
+
     func latestUiSnapshotIfNewer(lastSequence: UInt64, processLimit: UInt32, trendPoints: UInt32, selectedEntityId: String?)  -> UiSnapshot?
 
     func loadHistoryPage(startMillis: UInt64, endMillis: UInt64, beforeMillisExclusive: UInt64?, limit: UInt32)  -> [SystemSnapshot]
@@ -951,6 +953,17 @@ open func latestSnapshotIfNewer(lastSequence: UInt64) -> SystemSnapshot?  {
 open func latestUiSnapshot(processLimit: UInt32, trendPoints: UInt32, selectedEntityId: String?) -> UiSnapshot  {
     return try!  FfiConverterTypeUiSnapshot_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_ui_snapshot(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(processLimit),
+        FfiConverterUInt32.lower(trendPoints),
+        FfiConverterOptionString.lower(selectedEntityId),$0
+    )
+})
+}
+
+open func latestUiSnapshotDeltaSince(lastSequence: UInt64, processLimit: UInt32, trendPoints: UInt32, selectedEntityId: String?) -> UiSnapshotDelta  {
+    return try!  FfiConverterTypeUiSnapshotDelta_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_latest_ui_snapshot_delta_since(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(lastSequence),
         FfiConverterUInt32.lower(processLimit),
         FfiConverterUInt32.lower(trendPoints),
         FfiConverterOptionString.lower(selectedEntityId),$0
@@ -8090,6 +8103,220 @@ public func FfiConverterTypeUiSnapshot_lower(_ value: UiSnapshot) -> RustBuffer 
     return FfiConverterTypeUiSnapshot.lower(value)
 }
 
+
+public struct UiSnapshotDelta {
+    public var updated: Bool
+    public var sequence: UInt64
+    public var baseSequence: UInt64
+    public var capturedAtMillis: UInt64
+    public var processLimit: UInt32
+    public var trendPoints: UInt32
+    public var baseAvailable: Bool
+    public var host: UiHostSummary?
+    public var hostTrend: UiHostTrend?
+    public var changedMetricCards: [UiMetricCard]
+    public var changedProcessRows: [UiProcessRow]
+    public var removedEntityIds: [String]
+    public var selectedEntity: UiSelectedEntity?
+    public var selectedEntityChanged: Bool
+    public var selectedEntityRemoved: Bool
+    public var totalEntityCount: UInt32
+    public var returnedEntityCount: UInt32
+    public var totalProcessCount: UInt32
+    public var timelineWarningCount: UInt32
+    public var timelineCriticalCount: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(updated: Bool, sequence: UInt64, baseSequence: UInt64, capturedAtMillis: UInt64, processLimit: UInt32, trendPoints: UInt32, baseAvailable: Bool, host: UiHostSummary?, hostTrend: UiHostTrend?, changedMetricCards: [UiMetricCard], changedProcessRows: [UiProcessRow], removedEntityIds: [String], selectedEntity: UiSelectedEntity?, selectedEntityChanged: Bool, selectedEntityRemoved: Bool, totalEntityCount: UInt32, returnedEntityCount: UInt32, totalProcessCount: UInt32, timelineWarningCount: UInt32, timelineCriticalCount: UInt32) {
+        self.updated = updated
+        self.sequence = sequence
+        self.baseSequence = baseSequence
+        self.capturedAtMillis = capturedAtMillis
+        self.processLimit = processLimit
+        self.trendPoints = trendPoints
+        self.baseAvailable = baseAvailable
+        self.host = host
+        self.hostTrend = hostTrend
+        self.changedMetricCards = changedMetricCards
+        self.changedProcessRows = changedProcessRows
+        self.removedEntityIds = removedEntityIds
+        self.selectedEntity = selectedEntity
+        self.selectedEntityChanged = selectedEntityChanged
+        self.selectedEntityRemoved = selectedEntityRemoved
+        self.totalEntityCount = totalEntityCount
+        self.returnedEntityCount = returnedEntityCount
+        self.totalProcessCount = totalProcessCount
+        self.timelineWarningCount = timelineWarningCount
+        self.timelineCriticalCount = timelineCriticalCount
+    }
+}
+
+#if compiler(>=6)
+extension UiSnapshotDelta: Sendable {}
+#endif
+
+
+extension UiSnapshotDelta: Equatable, Hashable {
+    public static func ==(lhs: UiSnapshotDelta, rhs: UiSnapshotDelta) -> Bool {
+        if lhs.updated != rhs.updated {
+            return false
+        }
+        if lhs.sequence != rhs.sequence {
+            return false
+        }
+        if lhs.baseSequence != rhs.baseSequence {
+            return false
+        }
+        if lhs.capturedAtMillis != rhs.capturedAtMillis {
+            return false
+        }
+        if lhs.processLimit != rhs.processLimit {
+            return false
+        }
+        if lhs.trendPoints != rhs.trendPoints {
+            return false
+        }
+        if lhs.baseAvailable != rhs.baseAvailable {
+            return false
+        }
+        if lhs.host != rhs.host {
+            return false
+        }
+        if lhs.hostTrend != rhs.hostTrend {
+            return false
+        }
+        if lhs.changedMetricCards != rhs.changedMetricCards {
+            return false
+        }
+        if lhs.changedProcessRows != rhs.changedProcessRows {
+            return false
+        }
+        if lhs.removedEntityIds != rhs.removedEntityIds {
+            return false
+        }
+        if lhs.selectedEntity != rhs.selectedEntity {
+            return false
+        }
+        if lhs.selectedEntityChanged != rhs.selectedEntityChanged {
+            return false
+        }
+        if lhs.selectedEntityRemoved != rhs.selectedEntityRemoved {
+            return false
+        }
+        if lhs.totalEntityCount != rhs.totalEntityCount {
+            return false
+        }
+        if lhs.returnedEntityCount != rhs.returnedEntityCount {
+            return false
+        }
+        if lhs.totalProcessCount != rhs.totalProcessCount {
+            return false
+        }
+        if lhs.timelineWarningCount != rhs.timelineWarningCount {
+            return false
+        }
+        if lhs.timelineCriticalCount != rhs.timelineCriticalCount {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(updated)
+        hasher.combine(sequence)
+        hasher.combine(baseSequence)
+        hasher.combine(capturedAtMillis)
+        hasher.combine(processLimit)
+        hasher.combine(trendPoints)
+        hasher.combine(baseAvailable)
+        hasher.combine(host)
+        hasher.combine(hostTrend)
+        hasher.combine(changedMetricCards)
+        hasher.combine(changedProcessRows)
+        hasher.combine(removedEntityIds)
+        hasher.combine(selectedEntity)
+        hasher.combine(selectedEntityChanged)
+        hasher.combine(selectedEntityRemoved)
+        hasher.combine(totalEntityCount)
+        hasher.combine(returnedEntityCount)
+        hasher.combine(totalProcessCount)
+        hasher.combine(timelineWarningCount)
+        hasher.combine(timelineCriticalCount)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUiSnapshotDelta: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UiSnapshotDelta {
+        return
+            try UiSnapshotDelta(
+                updated: FfiConverterBool.read(from: &buf),
+                sequence: FfiConverterUInt64.read(from: &buf),
+                baseSequence: FfiConverterUInt64.read(from: &buf),
+                capturedAtMillis: FfiConverterUInt64.read(from: &buf),
+                processLimit: FfiConverterUInt32.read(from: &buf),
+                trendPoints: FfiConverterUInt32.read(from: &buf),
+                baseAvailable: FfiConverterBool.read(from: &buf),
+                host: FfiConverterOptionTypeUiHostSummary.read(from: &buf),
+                hostTrend: FfiConverterOptionTypeUiHostTrend.read(from: &buf),
+                changedMetricCards: FfiConverterSequenceTypeUiMetricCard.read(from: &buf),
+                changedProcessRows: FfiConverterSequenceTypeUiProcessRow.read(from: &buf),
+                removedEntityIds: FfiConverterSequenceString.read(from: &buf),
+                selectedEntity: FfiConverterOptionTypeUiSelectedEntity.read(from: &buf),
+                selectedEntityChanged: FfiConverterBool.read(from: &buf),
+                selectedEntityRemoved: FfiConverterBool.read(from: &buf),
+                totalEntityCount: FfiConverterUInt32.read(from: &buf),
+                returnedEntityCount: FfiConverterUInt32.read(from: &buf),
+                totalProcessCount: FfiConverterUInt32.read(from: &buf),
+                timelineWarningCount: FfiConverterUInt32.read(from: &buf),
+                timelineCriticalCount: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UiSnapshotDelta, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.updated, into: &buf)
+        FfiConverterUInt64.write(value.sequence, into: &buf)
+        FfiConverterUInt64.write(value.baseSequence, into: &buf)
+        FfiConverterUInt64.write(value.capturedAtMillis, into: &buf)
+        FfiConverterUInt32.write(value.processLimit, into: &buf)
+        FfiConverterUInt32.write(value.trendPoints, into: &buf)
+        FfiConverterBool.write(value.baseAvailable, into: &buf)
+        FfiConverterOptionTypeUiHostSummary.write(value.host, into: &buf)
+        FfiConverterOptionTypeUiHostTrend.write(value.hostTrend, into: &buf)
+        FfiConverterSequenceTypeUiMetricCard.write(value.changedMetricCards, into: &buf)
+        FfiConverterSequenceTypeUiProcessRow.write(value.changedProcessRows, into: &buf)
+        FfiConverterSequenceString.write(value.removedEntityIds, into: &buf)
+        FfiConverterOptionTypeUiSelectedEntity.write(value.selectedEntity, into: &buf)
+        FfiConverterBool.write(value.selectedEntityChanged, into: &buf)
+        FfiConverterBool.write(value.selectedEntityRemoved, into: &buf)
+        FfiConverterUInt32.write(value.totalEntityCount, into: &buf)
+        FfiConverterUInt32.write(value.returnedEntityCount, into: &buf)
+        FfiConverterUInt32.write(value.totalProcessCount, into: &buf)
+        FfiConverterUInt32.write(value.timelineWarningCount, into: &buf)
+        FfiConverterUInt32.write(value.timelineCriticalCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiSnapshotDelta_lift(_ buf: RustBuffer) throws -> UiSnapshotDelta {
+    return try FfiConverterTypeUiSnapshotDelta.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiSnapshotDelta_lower(_ value: UiSnapshotDelta) -> RustBuffer {
+    return FfiConverterTypeUiSnapshotDelta.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
@@ -10568,6 +10795,54 @@ fileprivate struct FfiConverterOptionTypeThermalForecast: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeUiHostSummary: FfiConverterRustBuffer {
+    typealias SwiftType = UiHostSummary?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUiHostSummary.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUiHostSummary.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUiHostTrend: FfiConverterRustBuffer {
+    typealias SwiftType = UiHostTrend?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUiHostTrend.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUiHostTrend.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeUiSelectedEntity: FfiConverterRustBuffer {
     typealias SwiftType = UiSelectedEntity?
 
@@ -11424,6 +11699,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_ui_snapshot() != 62054) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_ui_snapshot_delta_since() != 60688) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_ui_snapshot_if_newer() != 57658) {
