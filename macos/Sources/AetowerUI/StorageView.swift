@@ -18,14 +18,29 @@ private struct StorageGrowthTimelineEvent: Identifiable {
     let aiAgentSession: String?
 }
 
+private struct StorageTopOffender: Identifiable {
+    let id: String
+    let title: String
+    let value: String
+    let detail: String
+    let systemImage: String
+    let tone: Color
+}
+
 public struct StorageView: View {
     let state: AppState
     @State private var selectedFilter: StorageFilter = .attention
+    @State private var artifactScope: StorageArtifactScope = .all
+    @State private var artifactSort: StorageArtifactSort = .largest
     @State private var searchText = ""
     @State private var customRoot = ""
     @State private var maxDepth = 5.0
     @State private var copiedCleanupBundleID: String?
     @State private var candidateCommandPreviewBundle: StorageCleanupBundleModel?
+    @State private var showCleanupRecipes = false
+    @State private var showRawArtifacts = false
+    @State private var showScannedRoots = false
+    @State private var showCaveats = false
 
     public init(state: AppState) {
         self.state = state
@@ -44,6 +59,7 @@ public struct StorageView: View {
 
                 if let report = state.storageHygieneReport {
                     summaryGrid(report)
+                    topOffenderCallout(report)
                     budgetGuardrailsSection(report)
                     agentHygieneSection(report)
                     cleanupPreviewSection(report)
@@ -205,6 +221,57 @@ public struct StorageView: View {
                 tone: report.summary.attributedRepoCount > 0 ? AetowerDesign.Status.ready : .secondary
             )
         }
+    }
+
+    private func topOffenderCallout(_ report: StorageHygieneReportModel) -> some View {
+        let offenders = storageTopOffenders(report)
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                Text("Top storage pressure")
+                    .font(.headline)
+                Text("The repo, agent, and folder most likely to explain current growth or cleanup impact.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if offenders.isEmpty {
+                Label("No top offender can be determined from this scan yet.", systemImage: "questionmark.folder")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 210), spacing: AetowerDesign.Spacing.sm)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.sm
+                ) {
+                    ForEach(offenders) { offender in
+                        HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                            Image(systemName: offender.systemImage)
+                                .foregroundStyle(offender.tone)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(offender.title.uppercased())
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                                Text(offender.value)
+                                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.75)
+                                Text(offender.detail)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                            Spacer(minLength: AetowerDesign.Spacing.sm)
+                        }
+                        .padding(AetowerDesign.Spacing.sm)
+                        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func budgetGuardrailsSection(_ report: StorageHygieneReportModel) -> some View {
@@ -763,29 +830,34 @@ public struct StorageView: View {
     }
 
     private func cleanupRecipesSection(_ report: StorageHygieneReportModel) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                Text("Cleanup recipes")
-                    .font(.headline)
+        DisclosureGroup(isExpanded: $showCleanupRecipes) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 Text("Exact commands for common cleanup tasks. Aetower does not run these; copy and execute only after reviewing the prerequisites.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
 
-            if report.cleanupRecipes.isEmpty {
-                Label("No cleanup recipes match the current scan.", systemImage: "wand.and.stars.inverse")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(AetowerDesign.Spacing.md)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            } else {
-                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                    ForEach(report.cleanupRecipes) { recipe in
-                        cleanupRecipeCard(recipe)
+                if report.cleanupRecipes.isEmpty {
+                    Label("No cleanup recipes match the current scan.", systemImage: "wand.and.stars.inverse")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(AetowerDesign.Spacing.md)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                } else {
+                    LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                        ForEach(report.cleanupRecipes) { recipe in
+                            cleanupRecipeCard(recipe)
+                        }
                     }
                 }
             }
+            .padding(.top, AetowerDesign.Spacing.sm)
+        } label: {
+            advancedSectionLabel(
+                title: "Cleanup recipes",
+                detail: "\(report.cleanupRecipes.count) command recipe\(report.cleanupRecipes.count == 1 ? "" : "s")",
+                systemImage: "terminal"
+            )
         }
     }
 
@@ -1082,31 +1154,54 @@ public struct StorageView: View {
     }
 
     private func itemSection(_ report: StorageHygieneReportModel) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-            HStack {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                    Text("Artifacts")
-                        .font(.headline)
-                    Text("\(filteredItems(from: report).count) visible of \(report.items.count) reported candidate(s).")
+        let visibleItems = filteredItems(from: report)
+        return DisclosureGroup(isExpanded: $showRawArtifacts) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Picker("Artifact scope", selection: $artifactScope) {
+                        ForEach(StorageArtifactScope.allCases) { scope in
+                            Text(scope.label).tag(scope)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 180)
+
+                    Picker("Sort artifacts", selection: $artifactSort) {
+                        ForEach(StorageArtifactSort.allCases) { sort in
+                            Text(sort.label).tag(sort)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 180)
+
+                    Spacer()
+
+                    Text("\(visibleItems.count) visible of \(report.items.count)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
-            }
 
-            if filteredItems(from: report).isEmpty {
-                ContentUnavailableView(
-                    "No matching artifacts",
-                    systemImage: "line.3.horizontal.decrease.circle",
-                    description: Text("Change the filter, search text, root, or depth and scan again.")
-                )
-            } else {
-                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                    ForEach(filteredItems(from: report)) { item in
-                        artifactRow(item)
+                if visibleItems.isEmpty {
+                    ContentUnavailableView(
+                        "No matching artifacts",
+                        systemImage: "line.3.horizontal.decrease.circle",
+                        description: Text("Change the filter, search text, root, or depth and scan again.")
+                    )
+                } else {
+                    LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                        ForEach(visibleItems) { item in
+                            artifactRow(item)
+                        }
                     }
                 }
             }
+            .padding(.top, AetowerDesign.Spacing.sm)
+        } label: {
+            advancedSectionLabel(
+                title: "Raw artifacts",
+                detail: "\(visibleItems.count) visible of \(report.items.count) candidate\(report.items.count == 1 ? "" : "s")",
+                systemImage: "list.bullet.rectangle"
+            )
         }
     }
 
@@ -1188,7 +1283,7 @@ public struct StorageView: View {
     }
 
     private func rootsSection(_ report: StorageHygieneReportModel) -> some View {
-        DisclosureGroup("Scanned and skipped roots") {
+        DisclosureGroup(isExpanded: $showScannedRoots) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                 ForEach(report.roots, id: \.self) { root in
                     rootLine(root, detail: "scanned", systemImage: "checkmark.circle")
@@ -1198,19 +1293,32 @@ public struct StorageView: View {
                 }
             }
             .padding(.top, AetowerDesign.Spacing.sm)
+        } label: {
+            advancedSectionLabel(
+                title: "Scanned and skipped roots",
+                detail: "\(report.roots.count) scanned · \(report.skippedRoots.count) skipped",
+                systemImage: "folder.badge.questionmark"
+            )
         }
         .font(.caption)
     }
 
     private func caveatsSection(_ report: StorageHygieneReportModel) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-            Text("Caveats")
-                .font(.headline)
-            ForEach(report.caveats, id: \.self) { caveat in
-                Label(caveat, systemImage: "info.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        DisclosureGroup(isExpanded: $showCaveats) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                ForEach(report.caveats, id: \.self) { caveat in
+                    Label(caveat, systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .padding(.top, AetowerDesign.Spacing.sm)
+        } label: {
+            advancedSectionLabel(
+                title: "Caveats",
+                detail: "\(report.caveats.count) scan note\(report.caveats.count == 1 ? "" : "s")",
+                systemImage: "info.circle"
+            )
         }
         .padding(AetowerDesign.Spacing.md)
         .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -1358,6 +1466,23 @@ public struct StorageView: View {
         }
     }
 
+    private func advancedSectionLabel(title: String, detail: String, systemImage: String) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: systemImage)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
+    }
+
     private func warningBanner(_ text: String) -> some View {
         Label(text, systemImage: "exclamationmark.triangle")
             .font(.caption)
@@ -1371,16 +1496,22 @@ public struct StorageView: View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return report.items.filter { item in
             selectedFilter.matches(item)
+                && artifactScope.matches(item)
                 && (
                     query.isEmpty
+                        || item.displayName.lowercased().contains(query)
                         || item.path.lowercased().contains(query)
                         || item.kind.lowercased().contains(query)
                         || item.reason.lowercased().contains(query)
                         || item.cleanupTier.lowercased().contains(query)
                         || (item.attribution.repoName?.lowercased().contains(query) ?? false)
                         || (item.attribution.gitBranch?.lowercased().contains(query) ?? false)
+                        || (item.attribution.command?.lowercased().contains(query) ?? false)
+                        || (item.attribution.processTree?.lowercased().contains(query) ?? false)
+                        || (item.attribution.aiAgentSession?.lowercased().contains(query) ?? false)
                 )
         }
+        .sorted(by: artifactSort.areInIncreasingOrder)
     }
 
     private func runScan() {
@@ -1415,6 +1546,80 @@ public struct StorageView: View {
             parts.append("runtime link unavailable")
         }
         return parts.joined(separator: " · ")
+    }
+
+    private func storageTopOffenders(_ report: StorageHygieneReportModel) -> [StorageTopOffender] {
+        var offenders: [StorageTopOffender] = []
+
+        if let repo = report.repoFootprints.max(by: {
+            storageGrowthRank(for: $0) < storageGrowthRank(for: $1)
+        }) {
+            let delta = storageGrowthDelta(for: repo)
+            offenders.append(
+                StorageTopOffender(
+                    id: "repo",
+                    title: "Repo",
+                    value: delta.map(storageSignedBytes) ?? formatBytes(repo.currentSizeBytes),
+                    detail: delta == nil
+                        ? "\(repo.repoName) · baseline pending"
+                        : "\(repo.repoName) · \(storageGrowthWindow(for: repo))",
+                    systemImage: "folder.badge.gearshape",
+                    tone: (delta ?? 0) > 0 ? AetowerDesign.Status.warning : AetowerDesign.Tone.disk
+                )
+            )
+        }
+
+        if let agent = report.agentHygiene.agents.first {
+            let bytes = agent.weekArtifactBytes > 0 ? agent.weekArtifactBytes : agent.artifactBytes
+            offenders.append(
+                StorageTopOffender(
+                    id: "agent",
+                    title: "Agent",
+                    value: formatBytes(bytes),
+                    detail: "\(agent.displayName) · \(formatPercent(agent.weekRebuildablePercent)) rebuildable this week",
+                    systemImage: "sparkles.rectangle.stack",
+                    tone: AetowerDesign.agentColor(agent.provider)
+                )
+            )
+        }
+
+        if let growthEvent = storageGrowthEvents(from: report).first {
+            offenders.append(
+                StorageTopOffender(
+                    id: "folder",
+                    title: "Folder",
+                    value: "+\(formatBytes(UInt64(growthEvent.deltaBytes)))",
+                    detail: "\(growthEvent.displayName) · \(growthEvent.repoName ?? "unattributed")",
+                    systemImage: cleanupTierIcon(growthEvent.cleanupTier),
+                    tone: tone(forCleanupTier: growthEvent.cleanupTier)
+                )
+            )
+        } else if let item = report.items.max(by: { $0.sizeBytes < $1.sizeBytes }) {
+            offenders.append(
+                StorageTopOffender(
+                    id: "folder",
+                    title: "Folder",
+                    value: formatBytes(item.sizeBytes),
+                    detail: "\(item.displayName) · baseline pending",
+                    systemImage: cleanupTierIcon(item.cleanupTier),
+                    tone: tone(forCleanupTier: item.cleanupTier)
+                )
+            )
+        }
+
+        return offenders
+    }
+
+    private func storageGrowthRank(for footprint: StorageRepoFootprintModel) -> Int64 {
+        storageGrowthDelta(for: footprint) ?? Int64(clamping: footprint.currentSizeBytes)
+    }
+
+    private func storageSignedBytes(_ bytes: Int64) -> String {
+        if bytes == 0 {
+            return "Flat"
+        }
+        let absolute = formatBytes(UInt64(abs(bytes)))
+        return bytes > 0 ? "+\(absolute)" : "-\(absolute)"
     }
 
     private func storageGrowthEvents(
@@ -1815,6 +2020,97 @@ public struct StorageView: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+}
+
+private enum StorageArtifactScope: String, CaseIterable, Identifiable {
+    case all
+    case large
+    case stale
+    case repoLinked
+    case agentLinked
+    case partial
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All scopes"
+        case .large: return "Large"
+        case .stale: return "Stale"
+        case .repoLinked: return "Repo-linked"
+        case .agentLinked: return "Agent-linked"
+        case .partial: return "Partial sizes"
+        }
+    }
+
+    func matches(_ item: StorageHygieneItemModel) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .large:
+            return item.sizeBytes >= 100 * 1024 * 1024
+        case .stale:
+            return item.stale
+        case .repoLinked:
+            return item.attribution.repoRoot != nil
+        case .agentLinked:
+            return item.attribution.aiAgentSession != nil
+        case .partial:
+            return item.sizeTruncated
+        }
+    }
+}
+
+private enum StorageArtifactSort: String, CaseIterable, Identifiable {
+    case largest
+    case smallest
+    case newest
+    case oldest
+    case path
+    case tier
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .largest: return "Largest first"
+        case .smallest: return "Smallest first"
+        case .newest: return "Newest first"
+        case .oldest: return "Oldest first"
+        case .path: return "Path"
+        case .tier: return "Cleanup tier"
+        }
+    }
+
+    func areInIncreasingOrder(
+        _ left: StorageHygieneItemModel,
+        _ right: StorageHygieneItemModel
+    ) -> Bool {
+        switch self {
+        case .largest:
+            return left.sizeBytes == right.sizeBytes
+                ? left.path < right.path
+                : left.sizeBytes > right.sizeBytes
+        case .smallest:
+            return left.sizeBytes == right.sizeBytes
+                ? left.path < right.path
+                : left.sizeBytes < right.sizeBytes
+        case .newest:
+            return (left.modifiedMillis ?? 0) == (right.modifiedMillis ?? 0)
+                ? left.path < right.path
+                : (left.modifiedMillis ?? 0) > (right.modifiedMillis ?? 0)
+        case .oldest:
+            return (left.modifiedMillis ?? UInt64.max) == (right.modifiedMillis ?? UInt64.max)
+                ? left.path < right.path
+                : (left.modifiedMillis ?? UInt64.max) < (right.modifiedMillis ?? UInt64.max)
+        case .path:
+            return left.path.localizedStandardCompare(right.path) == .orderedAscending
+        case .tier:
+            let leftKey = "\(left.cleanupTier)|\(left.safety)|\(left.path)"
+            let rightKey = "\(right.cleanupTier)|\(right.safety)|\(right.path)"
+            return leftKey < rightKey
+        }
     }
 }
 
