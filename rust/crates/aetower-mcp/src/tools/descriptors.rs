@@ -300,6 +300,16 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
             AetowerMcpServer::tool_history_data_quality,
         ),
         ToolDescriptor::with_args(
+            "aetower_storage_hygiene",
+            "Scan bounded local developer storage roots for build artifacts, logs, caches, and dependency trees. Read-only: reports size, age, safety tier, caveats, and review guidance without deleting anything.",
+            vec![
+                string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths. Defaults to common developer and Xcode cache locations."),
+                uint("max_depth", Some(1), Some(12), Some(5)),
+                uint("limit", Some(1), Some(200), Some(80)),
+            ],
+            AetowerMcpServer::tool_storage_hygiene,
+        ),
+        ToolDescriptor::with_args(
             "aetower_memory_breakdown",
             "Ask the running Aetower app to collect a vmmap-style memory region breakdown for one entity.",
             vec![string("entity_id").required(), uint("top_regions", Some(1), Some(50), None)],

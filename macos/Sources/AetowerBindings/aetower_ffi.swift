@@ -691,6 +691,13 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
      */
     func stopLocalMcpServer()
 
+    /**
+     * Read-only developer storage hygiene scan. Bounded and on-demand; reports
+     * local build artifacts, logs, caches, and dependency trees without
+     * deleting anything.
+     */
+    func storageHygieneJson(roots: [String], maxDepth: UInt32, limit: UInt32)  -> JsonQueryResult
+
     func updateFrontmostAppState(state: FrontmostAppState)
 
     func updateUiLagMetrics(metrics: UiLagMetrics)
@@ -1231,6 +1238,21 @@ open func stopLocalMcpServer()  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_stop_local_mcp_server(self.uniffiClonePointer(),$0
     )
 }
+}
+
+    /**
+     * Read-only developer storage hygiene scan. Bounded and on-demand; reports
+     * local build artifacts, logs, caches, and dependency trees without
+     * deleting anything.
+     */
+open func storageHygieneJson(roots: [String], maxDepth: UInt32, limit: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_hygiene_json(self.uniffiClonePointer(),
+        FfiConverterSequenceString.lower(roots),
+        FfiConverterUInt32.lower(maxDepth),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
 }
 
 open func updateFrontmostAppState(state: FrontmostAppState)  {try! rustCall() {
@@ -11780,6 +11802,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_stop_local_mcp_server() != 53847) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_hygiene_json() != 26381) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_update_frontmost_app_state() != 57149) {

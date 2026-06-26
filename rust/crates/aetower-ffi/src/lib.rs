@@ -12,7 +12,7 @@ use aetower_mcp::{
     persistence_scan_json, process_action_history_json, process_action_json, process_inspect_json,
     process_open_resources_json, process_sample_json, profile_entity_json,
     resource_holders_by_file_json, resource_holders_by_port_json, self_memory_attribution_json,
-    start_local_socket_server, wakeup_attribution_json,
+    start_local_socket_server, storage_hygiene_json, wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1643,6 +1643,22 @@ impl MonitorEngine {
     /// because it may fork one codesign check per unique executable.
     pub fn persistence_deep_scan_json(&self) -> JsonQueryResult {
         json_query_result(persistence_deep_scan_json())
+    }
+
+    /// Read-only developer storage hygiene scan. Bounded and on-demand; reports
+    /// local build artifacts, logs, caches, and dependency trees without
+    /// deleting anything.
+    pub fn storage_hygiene_json(
+        &self,
+        roots: Vec<String>,
+        max_depth: u32,
+        limit: u32,
+    ) -> JsonQueryResult {
+        json_query_result(storage_hygiene_json(
+            roots,
+            max_depth as usize,
+            limit as usize,
+        ))
     }
 
     /// Evaluate a sandboxed Rhai filter expression against the latest snapshot,

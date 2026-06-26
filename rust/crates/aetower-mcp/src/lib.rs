@@ -58,6 +58,7 @@ use reports::process::{
     build_process_tree_report, entity_process_ids, format_metric_value,
     process_dynamic_tool_request, vmmap_regions_for_processes,
 };
+pub use reports::storage::storage_hygiene_json;
 
 use reports::diagnostics::{
     build_anomaly_explanations, build_diagnostics_summary_report, build_recommendations,
@@ -3513,6 +3514,7 @@ mod tests {
             "aetower_capability_status",
             "aetower_history_store_health",
             "aetower_history_data_quality",
+            "aetower_storage_hygiene",
             "aetower_memory_breakdown",
             "aetower_profile_entity",
             "aetower_wakeup_attribution",
