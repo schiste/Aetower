@@ -1,6 +1,12 @@
 import Foundation
 import AetowerBridge
 
+private enum MonitorUiPayloadSizing {
+    /// Fixed graph budget for compact Monitor payloads. Rust resamples each
+    /// non-empty series to exactly this count, so Swift draw cost stays stable.
+    static let graphPointCount: UInt32 = 60
+}
+
 actor SnapshotRefreshWorker {
     private let bridge: EngineBridge
     private var lastObservedSequence: UInt64
@@ -17,7 +23,7 @@ actor SnapshotRefreshWorker {
         includeOperatorState: Bool,
         monitorSelectedEntityId: String? = nil,
         monitorProcessLimit: UInt32 = 160,
-        monitorTrendPoints: UInt32 = 120
+        monitorTrendPoints: UInt32 = MonitorUiPayloadSizing.graphPointCount
     ) throws -> SnapshotRefreshResult {
         let fetchStartedAt = CFAbsoluteTimeGetCurrent()
         let refreshedSnapshot: SystemSnapshot

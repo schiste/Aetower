@@ -1920,8 +1920,8 @@ fn json_query_result(result: Result<String, String>) -> JsonQueryResult {
 
 const DEFAULT_UI_PROCESS_LIMIT: usize = 160;
 const MAX_UI_PROCESS_LIMIT: usize = 500;
-const DEFAULT_UI_TREND_POINTS: usize = 120;
-const MAX_UI_TREND_POINTS: usize = 300;
+const DEFAULT_UI_TREND_POINTS: usize = 60;
+const MAX_UI_TREND_POINTS: usize = 120;
 const SELECTED_ENTITY_COMPONENT_LIMIT: usize = 48;
 const SELECTED_ENTITY_RECOMMENDATION_LIMIT: usize = 8;
 const SELECTED_ENTITY_NETWORK_LIMIT: usize = 16;
@@ -2276,16 +2276,16 @@ fn ui_host_summary_from_snapshot(
 
 fn ui_host_trend_from_host_trend(value: &model::HostTrend, max_points: usize) -> UiHostTrend {
     UiHostTrend {
-        machine_friction: downsample_f32_to_f64(&value.machine_friction, max_points),
-        cpu_percent: downsample_f32_to_f64(&value.cpu_percent, max_points),
-        memory_used_bytes: downsample_u64_to_f64(&value.memory_used_bytes, max_points),
-        memory_pressure_score: downsample_f32_to_f64(&value.memory_pressure_score, max_points),
-        disk_activity_bps: downsample_u64_to_f64(&value.disk_activity_bps, max_points),
-        network_activity_bps: downsample_u64_to_f64(&value.network_activity_bps, max_points),
-        wakeups_per_second: downsample_f32_to_f64(&value.wakeups_per_second, max_points),
-        gpu_percent: downsample_f32_to_f64(&value.gpu_percent, max_points),
-        gpu_memory_bytes: downsample_u64_to_f64(&value.gpu_memory_bytes, max_points),
-        max_cpu_temperature: downsample_f32_to_f64(&value.max_cpu_temperature, max_points),
+        machine_friction: resample_f32_to_f64(&value.machine_friction, max_points),
+        cpu_percent: resample_f32_to_f64(&value.cpu_percent, max_points),
+        memory_used_bytes: resample_u64_to_f64(&value.memory_used_bytes, max_points),
+        memory_pressure_score: resample_f32_to_f64(&value.memory_pressure_score, max_points),
+        disk_activity_bps: resample_u64_to_f64(&value.disk_activity_bps, max_points),
+        network_activity_bps: resample_u64_to_f64(&value.network_activity_bps, max_points),
+        wakeups_per_second: resample_f32_to_f64(&value.wakeups_per_second, max_points),
+        gpu_percent: resample_f32_to_f64(&value.gpu_percent, max_points),
+        gpu_memory_bytes: resample_u64_to_f64(&value.gpu_memory_bytes, max_points),
+        max_cpu_temperature: resample_f32_to_f64(&value.max_cpu_temperature, max_points),
     }
 }
 
@@ -2316,7 +2316,7 @@ fn ui_metric_cards_from_snapshot(
             display_value: format!("{machine_friction:.0}"),
             detail: "Host pressure and top process burden".to_owned(),
             severity: severity_for_percent(f64::from(machine_friction), 45.0, 70.0),
-            samples: downsample_f32_to_f64(&snapshot.host_trend.machine_friction, trend_points),
+            samples: resample_f32_to_f64(&snapshot.host_trend.machine_friction, trend_points),
             fixed_ceiling: Some(100.0),
         },
         UiMetricCard {
@@ -2327,7 +2327,7 @@ fn ui_metric_cards_from_snapshot(
             display_value: format!("{:.0}%", snapshot.host.cpu_percent),
             detail: "Total host CPU load".to_owned(),
             severity: severity_for_percent(f64::from(snapshot.host.cpu_percent), 70.0, 90.0),
-            samples: downsample_f32_to_f64(&snapshot.host_trend.cpu_percent, trend_points),
+            samples: resample_f32_to_f64(&snapshot.host_trend.cpu_percent, trend_points),
             fixed_ceiling: Some(100.0),
         },
         UiMetricCard {
@@ -2342,7 +2342,7 @@ fn ui_metric_cards_from_snapshot(
                 format_bytes(snapshot.host.memory_total_bytes)
             ),
             severity: severity_for_percent(memory_ratio * 100.0, 75.0, 90.0),
-            samples: downsample_u64_to_f64(&snapshot.host_trend.memory_used_bytes, trend_points),
+            samples: resample_u64_to_f64(&snapshot.host_trend.memory_used_bytes, trend_points),
             fixed_ceiling: (snapshot.host.memory_total_bytes > 0)
                 .then_some(snapshot.host.memory_total_bytes as f64),
         },
@@ -2354,7 +2354,7 @@ fn ui_metric_cards_from_snapshot(
             display_value: format_bps(disk_bps),
             detail: "Read and write throughput".to_owned(),
             severity: severity_for_bps(disk_bps, 100 * 1024 * 1024, 500 * 1024 * 1024),
-            samples: downsample_u64_to_f64(&snapshot.host_trend.disk_activity_bps, trend_points),
+            samples: resample_u64_to_f64(&snapshot.host_trend.disk_activity_bps, trend_points),
             fixed_ceiling: None,
         },
         UiMetricCard {
@@ -2365,7 +2365,7 @@ fn ui_metric_cards_from_snapshot(
             display_value: format_bps(network_bps),
             detail: "Receive and send throughput".to_owned(),
             severity: severity_for_bps(network_bps, 25 * 1024 * 1024, 100 * 1024 * 1024),
-            samples: downsample_u64_to_f64(&snapshot.host_trend.network_activity_bps, trend_points),
+            samples: resample_u64_to_f64(&snapshot.host_trend.network_activity_bps, trend_points),
             fixed_ceiling: None,
         },
         UiMetricCard {
@@ -2380,7 +2380,7 @@ fn ui_metric_cards_from_snapshot(
                 1_000.0,
                 5_000.0,
             ),
-            samples: downsample_f32_to_f64(&snapshot.host_trend.wakeups_per_second, trend_points),
+            samples: resample_f32_to_f64(&snapshot.host_trend.wakeups_per_second, trend_points),
             fixed_ceiling: None,
         },
         UiMetricCard {
@@ -2394,7 +2394,7 @@ fn ui_metric_cards_from_snapshot(
                 format_bytes(snapshot.host.gpu_memory_bytes)
             ),
             severity: severity_for_percent(f64::from(snapshot.host.gpu_percent), 70.0, 90.0),
-            samples: downsample_f32_to_f64(&snapshot.host_trend.gpu_percent, trend_points),
+            samples: resample_f32_to_f64(&snapshot.host_trend.gpu_percent, trend_points),
             fixed_ceiling: Some(100.0),
         },
     ]
@@ -2489,12 +2489,12 @@ fn ui_process_component_from_component(component: &model::ComponentSnapshot) -> 
 
 fn ui_metric_trend_from_metric_trend(value: &model::MetricTrend, max_points: usize) -> MetricTrend {
     MetricTrend {
-        friction: downsample_f32_to_f32(&value.friction, max_points),
-        cpu_percent: downsample_f32_to_f32(&value.cpu_percent, max_points),
-        memory_resident_bytes: downsample_u64_to_u64(&value.memory_resident_bytes, max_points),
-        disk_activity_bps: downsample_u64_to_u64(&value.disk_activity_bps, max_points),
-        network_activity_bps: downsample_u64_to_u64(&value.network_activity_bps, max_points),
-        wakeups_per_second: downsample_f32_to_f32(&value.wakeups_per_second, max_points),
+        friction: resample_f32_to_f32(&value.friction, max_points),
+        cpu_percent: resample_f32_to_f32(&value.cpu_percent, max_points),
+        memory_resident_bytes: resample_u64_to_u64(&value.memory_resident_bytes, max_points),
+        disk_activity_bps: resample_u64_to_u64(&value.disk_activity_bps, max_points),
+        network_activity_bps: resample_u64_to_u64(&value.network_activity_bps, max_points),
+        wakeups_per_second: resample_f32_to_f32(&value.wakeups_per_second, max_points),
     }
 }
 
@@ -2518,37 +2518,37 @@ fn severity_for_bps(value: u64, warning: u64, critical: u64) -> UiMetricSeverity
     }
 }
 
-fn downsample_f32_to_f64(values: &[f32], max_points: usize) -> Vec<f64> {
-    downsample_by_index(values, max_points, |value| f64::from(*value))
+fn resample_f32_to_f64(values: &[f32], point_count: usize) -> Vec<f64> {
+    resample_by_index(values, point_count, |value| f64::from(*value))
 }
 
-fn downsample_u64_to_f64(values: &[u64], max_points: usize) -> Vec<f64> {
-    downsample_by_index(values, max_points, |value| *value as f64)
+fn resample_u64_to_f64(values: &[u64], point_count: usize) -> Vec<f64> {
+    resample_by_index(values, point_count, |value| *value as f64)
 }
 
-fn downsample_f32_to_f32(values: &[f32], max_points: usize) -> Vec<f32> {
-    downsample_by_index(values, max_points, |value| *value)
+fn resample_f32_to_f32(values: &[f32], point_count: usize) -> Vec<f32> {
+    resample_by_index(values, point_count, |value| *value)
 }
 
-fn downsample_u64_to_u64(values: &[u64], max_points: usize) -> Vec<u64> {
-    downsample_by_index(values, max_points, |value| *value)
+fn resample_u64_to_u64(values: &[u64], point_count: usize) -> Vec<u64> {
+    resample_by_index(values, point_count, |value| *value)
 }
 
-fn downsample_by_index<T, U, F>(values: &[T], max_points: usize, map: F) -> Vec<U>
+fn resample_by_index<T, U, F>(values: &[T], point_count: usize, map: F) -> Vec<U>
 where
     F: Fn(&T) -> U,
 {
-    if max_points == 0 || values.is_empty() {
+    if point_count == 0 || values.is_empty() {
         return Vec::new();
     }
-    if values.len() <= max_points {
-        return values.iter().map(map).collect();
+    if point_count == 1 {
+        return vec![map(&values[values.len() - 1])];
     }
     let last_index = values.len() - 1;
-    let denominator = max_points - 1;
-    (0..max_points)
+    let denominator = point_count - 1;
+    (0..point_count)
         .map(|index| {
-            let source_index = index * last_index / denominator;
+            let source_index = (index * last_index + denominator / 2) / denominator;
             map(&values[source_index])
         })
         .collect()
@@ -2664,14 +2664,33 @@ mod ui_snapshot_tests {
     }
 
     #[test]
-    fn downsample_keeps_first_and_last_points() {
+    fn resample_keeps_first_and_last_points() {
         let values: Vec<f32> = (0..100).map(|value| value as f32).collect();
 
-        let downsampled = downsample_f32_to_f64(&values, 10);
+        let downsampled = resample_f32_to_f64(&values, 10);
 
         assert_eq!(downsampled.len(), 10);
         assert_eq!(downsampled.first().copied(), Some(0.0));
         assert_eq!(downsampled.last().copied(), Some(99.0));
+    }
+
+    #[test]
+    fn resample_pads_short_non_empty_series_to_fixed_point_count() {
+        let values = vec![10_u64, 20, 30];
+
+        let resampled = resample_u64_to_f64(&values, 8);
+
+        assert_eq!(resampled.len(), 8);
+        assert_eq!(resampled.first().copied(), Some(10.0));
+        assert_eq!(resampled.last().copied(), Some(30.0));
+        assert!(resampled.contains(&20.0));
+    }
+
+    #[test]
+    fn ui_snapshot_trend_points_are_clamped_to_public_graph_limit() {
+        let key = ui_snapshot_cache_key(20, 10_000, None);
+
+        assert_eq!(key.trend_points, MAX_UI_TREND_POINTS as u32);
     }
 
     #[test]

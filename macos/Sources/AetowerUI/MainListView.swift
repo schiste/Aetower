@@ -2337,49 +2337,16 @@ public struct MainListView: View {
         }
 
         let snapshot = state.snapshot
-        let hostTrend = snapshot.hostTrend
         let host = snapshot.host
         let frictionScore = machineFrictionScore(for: host)
-        let frictionSamples = monitorTrendSamples(
-            hostTrend.machineFriction.map { Double($0) },
-            history: monitorHostHistorySamples { machineFrictionScore(for: $0) },
-            fallback: frictionScore
-        )
-        let cpuSamples = monitorTrendSamples(
-            hostTrend.cpuPercent.map { Double($0) },
-            history: monitorHostHistorySamples { Double($0.cpuPercent) },
-            fallback: Double(host.cpuPercent)
-        )
-        let memorySamples = monitorTrendSamples(
-            hostTrend.memoryPressureScore.map { Double($0) },
-            history: monitorHostHistorySamples { hostMemoryPressureScore($0) },
-            fallback: hostMemoryPressureScore(host)
-        )
-        let diskSamples = monitorTrendSamples(
-            hostTrend.diskActivityBps.map { Double($0) },
-            history: monitorHostHistorySamples { Double($0.diskReadBps + $0.diskWriteBps) },
-            fallback: Double(host.diskReadBps + host.diskWriteBps)
-        )
-        let networkSamples = monitorTrendSamples(
-            hostTrend.networkActivityBps.map { Double($0) },
-            history: monitorHostHistorySamples { Double($0.networkReceiveBps + $0.networkSendBps) },
-            fallback: Double(host.networkReceiveBps + host.networkSendBps)
-        )
-        let wakeupSamples = monitorTrendSamples(
-            hostTrend.wakeupsPerSecond.map { Double($0) },
-            history: monitorHostHistorySamples { Double($0.wakeupsPerSecond) },
-            fallback: Double(host.wakeupsPerSecond)
-        )
-        let gpuPercentSamples = monitorTrendSamples(
-            hostTrend.gpuPercent.map { Double($0) },
-            history: monitorHostHistorySamples { Double($0.gpuPercent) },
-            fallback: Double(host.gpuPercent)
-        )
-        let gpuMemorySamples = monitorTrendSamples(
-            hostTrend.gpuMemoryBytes.map { Double($0) },
-            history: monitorHostHistorySamples { Double($0.gpuMemoryBytes) },
-            fallback: Double(host.gpuMemoryBytes)
-        )
+        let frictionSamples = monitorFallbackTrendSamples(frictionScore)
+        let cpuSamples = monitorFallbackTrendSamples(Double(host.cpuPercent))
+        let memorySamples = monitorFallbackTrendSamples(hostMemoryPressureScore(host))
+        let diskSamples = monitorFallbackTrendSamples(Double(host.diskReadBps + host.diskWriteBps))
+        let networkSamples = monitorFallbackTrendSamples(Double(host.networkReceiveBps + host.networkSendBps))
+        let wakeupSamples = monitorFallbackTrendSamples(Double(host.wakeupsPerSecond))
+        let gpuPercentSamples = monitorFallbackTrendSamples(Double(host.gpuPercent))
+        let gpuMemorySamples = monitorFallbackTrendSamples(Double(host.gpuMemoryBytes))
 
         let usingGpuPercent = host.gpuPercent > 0 || host.gpuMemoryBytes == 0
         let gpuSamples = usingGpuPercent ? gpuPercentSamples : gpuMemorySamples
@@ -3010,46 +2977,12 @@ public struct MainListView: View {
         .padding(.bottom, 4)
     }
 
-    private var monitorTrendSampleLimit: Int {
-        150
-    }
-
     private var monitorSummaryGridColumns: [GridItem] {
         [GridItem(.adaptive(minimum: 180, maximum: 420), spacing: AetowerDesign.Spacing.md, alignment: .top)]
     }
 
-    private func monitorHostHistorySamples(_ extractor: (HostSnapshot) -> Double) -> [Double] {
-        let samples = state.historySnapshots.suffix(monitorTrendSampleLimit).map { extractor($0.host) }
-        return samples.isEmpty ? [extractor(state.snapshot.host)] : samples
-    }
-
-    private func monitorTrendSamples(_ live: [Double], history: [Double], fallback: Double) -> [Double] {
-        let trimmedLive = Array(live.suffix(monitorTrendSampleLimit))
-        if monitorHasUsefulVariation(trimmedLive) {
-            return trimmedLive
-        }
-        let trimmedHistory = Array(history.suffix(monitorTrendSampleLimit))
-        if monitorHasUsefulVariation(trimmedHistory) {
-            return trimmedHistory
-        }
-        if trimmedLive.count >= 2 {
-            return trimmedLive
-        }
-        if let sample = trimmedLive.first {
-            return [sample, sample]
-        }
-        if let sample = trimmedHistory.first {
-            return [sample, sample]
-        }
-        return [fallback, fallback]
-    }
-
-    private func monitorHasUsefulVariation(_ samples: [Double]) -> Bool {
-        guard samples.count >= 2, let minimum = samples.min(), let maximum = samples.max() else {
-            return false
-        }
-        let baseline = max(abs(samples.last ?? 0), 1.0)
-        return (maximum - minimum) / baseline > 0.01
+    private func monitorFallbackTrendSamples(_ value: Double) -> [Double] {
+        [value, value]
     }
 
     private func monitorFrictionAppearance(_ score: Double) -> TrendMetricValueAppearance {
