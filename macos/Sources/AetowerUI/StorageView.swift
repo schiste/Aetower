@@ -25,6 +25,7 @@ public struct StorageView: View {
     @State private var customRoot = ""
     @State private var maxDepth = 5.0
     @State private var copiedCleanupBundleID: String?
+    @State private var candidateCommandPreviewBundle: StorageCleanupBundleModel?
 
     public init(state: AppState) {
         self.state = state
@@ -67,6 +68,9 @@ public struct StorageView: View {
         }
         .task {
             state.ensureStorageHygieneScan()
+        }
+        .sheet(item: $candidateCommandPreviewBundle) { bundle in
+            cleanupCommandPreviewSheet(bundle)
         }
     }
 
@@ -646,7 +650,7 @@ public struct StorageView: View {
                     copy(cleanupBundleManifest(bundle))
                     copiedCleanupBundleID = bundle.id
                 } label: {
-                    Label("Dry-run reclaim \(formatBytes(bundle.estimatedReclaimableBytes))", systemImage: "doc.on.doc")
+                    Label("Copy cleanup plan", systemImage: "doc.on.doc")
                 }
                 Button("Copy verify commands") {
                     copy(bundle.dryRunCommands.joined(separator: "\n"))
@@ -655,8 +659,7 @@ public struct StorageView: View {
                 .disabled(bundle.dryRunCommands.isEmpty)
                 if bundle.manifest.contains(where: { $0.cleanupCommand != nil }) {
                     Button("Copy candidate commands") {
-                        copy(cleanupBundleCleanupCommands(bundle))
-                        copiedCleanupBundleID = bundle.id
+                        candidateCommandPreviewBundle = bundle
                     }
                 }
                 Spacer()
@@ -669,6 +672,94 @@ public struct StorageView: View {
         }
         .padding(AetowerDesign.Spacing.md)
         .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func cleanupCommandPreviewSheet(_ bundle: StorageCleanupBundleModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(AetowerDesign.Status.warning)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Review candidate cleanup commands")
+                        .font(.title3.weight(.semibold))
+                    Text("Aetower will only copy these commands. Files are not changed unless you paste and run them in a shell.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    footprintMetric(
+                        "Planned reclaim",
+                        value: formatBytes(bundle.estimatedReclaimableBytes),
+                        detail: "\(bundle.confidenceScore)% confidence · \(bundle.itemCount) item\(bundle.itemCount == 1 ? "" : "s")"
+                    )
+
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        Text("Commands to copy")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(cleanupBundleCleanupCommands(bundle))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .padding(AetowerDesign.Spacing.sm)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        Text("Manifest preview")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(Array(bundle.manifest.prefix(8))) { item in
+                            HStack(spacing: AetowerDesign.Spacing.sm) {
+                                Image(systemName: cleanupTierIcon(item.cleanupTier))
+                                    .foregroundStyle(tone(forCleanupTier: item.cleanupTier))
+                                    .frame(width: 16)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.path)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Text(item.rollbackNote)
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(2)
+                                }
+                                Spacer()
+                                Text(formatBytes(item.sizeBytes))
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+                }
+                .padding(.trailing, AetowerDesign.Spacing.sm)
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button("Cancel") {
+                    candidateCommandPreviewBundle = nil
+                }
+                Spacer()
+                Button("Copy candidate commands") {
+                    copy(cleanupBundleCleanupCommands(bundle))
+                    copiedCleanupBundleID = bundle.id
+                    candidateCommandPreviewBundle = nil
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(cleanupBundleCleanupCommandList(bundle).isEmpty)
+            }
+        }
+        .padding(AetowerDesign.Spacing.xl)
+        .frame(width: 720, height: 560, alignment: .topLeading)
     }
 
     private func cleanupRecipesSection(_ report: StorageHygieneReportModel) -> some View {
