@@ -37,6 +37,7 @@ public struct StorageView: View {
     @State private var maxDepth = 5.0
     @State private var copiedCleanupBundleID: String?
     @State private var candidateCommandPreviewBundle: StorageCleanupBundleModel?
+    @State private var selectedMode: StorageMode = .overview
     @State private var showCleanupRecipes = false
     @State private var showRawArtifacts = false
     @State private var showScannedRoots = false
@@ -58,21 +59,11 @@ public struct StorageView: View {
                 }
 
                 if let report = state.storageHygieneReport {
-                    summaryGrid(report)
-                    topOffenderCallout(report)
-                    budgetGuardrailsSection(report)
-                    agentHygieneSection(report)
-                    cleanupPreviewSection(report)
-                    cleanupBundlesSection(report)
-                    cleanupRecipesSection(report)
-                    repoFootprintDashboard(report)
-                    storageGrowthTimeline(report)
-                    if report.truncated {
-                        warningBanner("The scan hit a cap or time budget. Results are partial; narrow the root or refresh when the machine is idle.")
+                    if selectedMode == .overview {
+                        storageOverview(report)
+                    } else {
+                        storageAdvanced(report)
                     }
-                    itemSection(report)
-                    rootsSection(report)
-                    caveatsSection(report)
                 } else if state.storageHygieneIsLoading {
                     loadingSection
                 } else {
@@ -130,19 +121,38 @@ public struct StorageView: View {
             }
 
             HStack(spacing: AetowerDesign.Spacing.sm) {
-                Picker("Filter", selection: $selectedFilter) {
-                    ForEach(StorageFilter.allCases) { filter in
-                        Text(filter.label).tag(filter)
+                Picker("View", selection: $selectedMode) {
+                    ForEach(StorageMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 680)
+                .frame(width: 260)
 
-                TextField("Search paths or kinds", text: $searchText)
-                    .aetowerUtilityTextInput()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 260)
+                if selectedMode == .advanced {
+                    Picker("Filter", selection: $selectedFilter) {
+                        ForEach(StorageFilter.allCases) { filter in
+                            Text(filter.label).tag(filter)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 680)
+
+                    TextField("Search paths or kinds", text: $searchText)
+                        .aetowerUtilityTextInput()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 260)
+                } else {
+                    Spacer()
+                    Label("Read-only scan", systemImage: "shield.checkered")
+                        .font(.caption)
+                        .foregroundStyle(AetowerDesign.Status.ready)
+                }
             }
+
+            Text(selectedMode.helperText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(AetowerDesign.Spacing.md)
         .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -163,6 +173,138 @@ public struct StorageView: View {
         }
         .padding(AetowerDesign.Spacing.md)
         .background(AetowerDesign.Status.ready.opacity(0.10))
+    }
+
+    private func storageOverview(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            storageActionPanel(report)
+            topOffenderCallout(report)
+            budgetGuardrailsSection(report)
+            if shouldShowAgentHygieneOverview(report) {
+                agentHygieneSection(report)
+            }
+            if report.truncated {
+                warningBanner("The scan hit a cap or time budget. Results are partial; use Advanced to inspect raw artifacts or narrow the root.")
+            }
+        }
+    }
+
+    private func storageAdvanced(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            summaryGrid(report)
+            cleanupPreviewSection(report)
+            cleanupBundlesSection(report)
+            cleanupRecipesSection(report)
+            repoFootprintDashboard(report)
+            storageGrowthTimeline(report)
+            if report.truncated {
+                warningBanner("The scan hit a cap or time budget. Results are partial; narrow the root or refresh when the machine is idle.")
+            }
+            itemSection(report)
+            rootsSection(report)
+            caveatsSection(report)
+        }
+    }
+
+    private func storageActionPanel(_ report: StorageHygieneReportModel) -> some View {
+        let primaryBundle = report.cleanupBundles.first
+        let hasCandidateCommands = primaryBundle?.manifest.contains(where: { $0.cleanupCommand != nil }) ?? false
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: primaryBundle.map { cleanupBundleIcon($0) } ?? "externaldrive")
+                    .foregroundStyle(primaryBundle.map { cleanupBundleTone($0) } ?? AetowerDesign.Tone.disk)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text(primaryBundle?.title ?? "No cleanup plan yet")
+                        .font(.title3.weight(.semibold))
+                    Text(primaryBundle?.subtitle ?? "Run or narrow a scan to build a read-only cleanup plan. Aetower copies instructions only; it does not delete files.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.md)
+
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(primaryBundle.map { formatBytes($0.estimatedReclaimableBytes) } ?? formatBytes(report.summary.totalReclaimableBytes))
+                        .font(.system(size: 26, weight: .semibold, design: .rounded))
+                    Text(primaryBundle.map { "\($0.confidenceScore)% confidence" } ?? "estimated reclaimable")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 160), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                footprintMetric(
+                    "Reclaimable",
+                    value: formatBytes(report.summary.totalReclaimableBytes),
+                    detail: "\(report.summary.itemCount) candidate\(report.summary.itemCount == 1 ? "" : "s")"
+                )
+                footprintMetric(
+                    "Safe items",
+                    value: "\(report.summary.safeCandidateCount)",
+                    detail: "expected artifacts"
+                )
+                footprintMetric(
+                    "Needs review",
+                    value: "\(report.summary.reviewCandidateCount)",
+                    detail: "operator decision"
+                )
+                footprintMetric(
+                    "Scan",
+                    value: "\(report.scanDurationMillis) ms",
+                    detail: "\(report.summary.scannedDirectoryCount) folders"
+                )
+            }
+
+            if let primaryBundle {
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Button {
+                        copy(cleanupBundleManifest(primaryBundle))
+                        copiedCleanupBundleID = primaryBundle.id
+                    } label: {
+                        Label("Copy cleanup plan", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Copy verify commands") {
+                        copy(primaryBundle.dryRunCommands.joined(separator: "\n"))
+                        copiedCleanupBundleID = primaryBundle.id
+                    }
+                    .disabled(primaryBundle.dryRunCommands.isEmpty)
+
+                    if hasCandidateCommands {
+                        Button("Review candidate commands") {
+                            candidateCommandPreviewBundle = primaryBundle
+                        }
+                    }
+
+                    Spacer()
+
+                    Text(copiedCleanupBundleID == primaryBundle.id ? "Copied" : "No files changed")
+                        .font(.caption2)
+                        .foregroundStyle(copiedCleanupBundleID == primaryBundle.id ? AetowerDesign.Status.ready : .secondary)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else {
+                Label("No copyable cleanup bundle is available for this scan.", systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(AetowerDesign.Spacing.lg)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func shouldShowAgentHygieneOverview(_ report: StorageHygieneReportModel) -> Bool {
+        report.agentHygiene.agentCount > 0 || report.agentHygiene.totalAgentArtifactBytes > 0
     }
 
     private func summaryGrid(_ report: StorageHygieneReportModel) -> some View {
@@ -2034,6 +2176,29 @@ public struct StorageView: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+}
+
+private enum StorageMode: String, CaseIterable, Identifiable {
+    case overview
+    case advanced
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .overview: return "Overview"
+        case .advanced: return "Advanced"
+        }
+    }
+
+    var helperText: String {
+        switch self {
+        case .overview:
+            return "Overview keeps the recommended cleanup action, current pressure, and guardrails visible."
+        case .advanced:
+            return "Advanced shows detailed tiers, cleanup bundles, recipes, repo growth, raw artifacts, roots, and caveats."
+        }
     }
 }
 
