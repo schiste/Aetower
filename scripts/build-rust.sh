@@ -62,3 +62,17 @@ done
   --modulemap-filename module.modulemap \
   "$DEBUG_DYLIB" \
   "$ROOT/macos/Sources/aetower_ffiFFI"
+
+/usr/bin/python3 - "$ROOT/macos/Sources/AetowerBindings" "$ROOT/macos/Sources/aetower_ffiFFI" <<'PY'
+import pathlib
+import sys
+
+for root in sys.argv[1:]:
+    for path in pathlib.Path(root).rglob("*"):
+        if not path.is_file():
+            continue
+        text = path.read_text()
+        cleaned = "\n".join(line.rstrip(" \t") for line in text.split("\n"))
+        if cleaned != text:
+            path.write_text(cleaned)
+PY
