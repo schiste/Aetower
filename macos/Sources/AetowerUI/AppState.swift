@@ -156,6 +156,10 @@ public final class AppState {
     private(set) var persistenceScanError: String?
     private(set) var persistenceScanCompletedAt: Date?
     private(set) var persistenceChangedItemIds: Set<String> = []
+    private(set) var storageHygieneReport: StorageHygieneReportModel?
+    private(set) var storageHygieneIsLoading = false
+    private(set) var storageHygieneError: String?
+    private(set) var storageHygieneCompletedAt: Date?
     private(set) var processOpenResources: [UInt32: ProcessOpenResourcesReportModel] = [:]
     /// Result of the most recent reverse resource-holder lookup (which process
     /// holds a given file/port). Not pid-keyed — it's a system-wide query.
@@ -224,6 +228,8 @@ public final class AppState {
     private var diagnosticsLoadTask: Task<Void, Never>?
     @ObservationIgnored
     private var persistenceScanTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var storageHygieneTask: Task<Void, Never>?
     @ObservationIgnored
     private var lastObservedSequence: UInt64
     @ObservationIgnored
@@ -1621,6 +1627,81 @@ public final class AppState {
                 } else {
                     self.persistenceScanError =
                         result.errorMessage ?? "Persistence scan could not be collected."
+                }
+            }
+        }
+    }
+
+    /// Load the developer storage hygiene report once. The backend scan is
+    /// bounded and read-only; explicit refreshes call `runStorageHygieneScan`.
+    func ensureStorageHygieneScan() {
+        guard storageHygieneReport == nil, !storageHygieneIsLoading else { return }
+        runStorageHygieneScan()
+    }
+
+    /// On-demand read-only storage hygiene scan for build artifacts, logs,
+    /// caches, and dependency trees. This never deletes files.
+    func runStorageHygieneScan(
+        roots: [String] = [],
+        maxDepth: UInt32 = 5,
+        limit: UInt32 = 80
+    ) {
+        let bridge = self.bridge
+        storageHygieneTask?.cancel()
+        storageHygieneIsLoading = true
+        storageHygieneError = nil
+        storageHygieneTask = Task(priority: .utility) { [weak self] in
+            let result = bridge.storageHygieneJSON(
+                roots: roots,
+                maxDepth: maxDepth,
+                limit: limit
+            )
+            await MainActor.run {
+                guard let self else { return }
+                guard !Task.isCancelled else { return }
+                self.storageHygieneIsLoading = false
+                if let report = self.decodeJsonQueryResult(
+                    result,
+                    as: StorageHygieneReportModel.self
+                ) {
+                    self.storageHygieneReport = report
+                    self.storageHygieneCompletedAt = Date()
+                    self.storageHygieneError = nil
+                    self.recordLocalDiagnosticsEvent(
+                        level: report.truncated ? .warn : .info,
+                        subsystem: .ui,
+                        eventType: report.truncated
+                            ? "storage-hygiene-scan-truncated"
+                            : "storage-hygiene-scan-completed",
+                        message: "Completed read-only developer storage hygiene scan.",
+                        fields: [
+                            DiagnosticsField(
+                                key: "duration_millis",
+                                value: String(report.scanDurationMillis)
+                            ),
+                            DiagnosticsField(
+                                key: "item_count",
+                                value: String(report.summary.itemCount)
+                            ),
+                            DiagnosticsField(
+                                key: "reclaimable_bytes",
+                                value: String(report.summary.totalReclaimableBytes)
+                            ),
+                            DiagnosticsField(
+                                key: "truncated",
+                                value: report.truncated ? "true" : "false"
+                            ),
+                        ]
+                    )
+                } else {
+                    self.storageHygieneError =
+                        result.errorMessage ?? "Storage hygiene scan could not be collected."
+                    self.recordLocalDiagnosticsEvent(
+                        level: .warn,
+                        subsystem: .ui,
+                        eventType: "storage-hygiene-scan-failed",
+                        message: self.storageHygieneError ?? "Storage hygiene scan failed."
+                    )
                 }
             }
         }

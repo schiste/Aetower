@@ -249,6 +249,14 @@ public final class EngineBridge: @unchecked Sendable {
         engine.persistenceDeepScanJson()
     }
 
+    public func storageHygieneJSON(
+        roots: [String] = [],
+        maxDepth: UInt32 = 5,
+        limit: UInt32 = 80
+    ) -> JsonQueryResult {
+        engine.storageHygieneJson(roots: roots, maxDepth: maxDepth, limit: limit)
+    }
+
     public func filterEntitiesJSON(expression: String) -> JsonQueryResult {
         engine.filterEntitiesJson(expression: expression)
     }
