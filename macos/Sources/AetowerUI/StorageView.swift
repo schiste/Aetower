@@ -43,6 +43,7 @@ public struct StorageView: View {
                 if let report = state.storageHygieneReport {
                     summaryGrid(report)
                     cleanupPreviewSection(report)
+                    cleanupRecipesSection(report)
                     repoFootprintDashboard(report)
                     storageGrowthTimeline(report)
                     if report.truncated {
@@ -218,6 +219,104 @@ public struct StorageView: View {
                 }
             }
         }
+    }
+
+    private func cleanupRecipesSection(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                Text("Cleanup recipes")
+                    .font(.headline)
+                Text("Exact commands for common cleanup tasks. Aetower does not run these; copy and execute only after reviewing the prerequisites.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if report.cleanupRecipes.isEmpty {
+                Label("No cleanup recipes match the current scan.", systemImage: "wand.and.stars.inverse")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(AetowerDesign.Spacing.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(report.cleanupRecipes) { recipe in
+                        cleanupRecipeCard(recipe)
+                    }
+                }
+            }
+        }
+    }
+
+    private func cleanupRecipeCard(_ recipe: StorageCleanupRecipeModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: cleanupRecipeIcon(recipe))
+                    .foregroundStyle(cleanupRecipeTone(recipe))
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Text(recipe.title)
+                            .font(.subheadline.weight(.semibold))
+                        cleanupRecipeBadge(recipe)
+                        if recipe.requiresReview {
+                            Text("Review")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(AetowerDesign.Status.warning)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(AetowerDesign.Status.warning.opacity(0.12), in: Capsule())
+                        }
+                    }
+
+                    Text(recipe.reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(recipe.command)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.md)
+
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(formatBytes(recipe.estimatedReclaimableBytes))
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    Text(recipe.category)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if !recipe.prerequisites.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(recipe.prerequisites, id: \.self) { prerequisite in
+                        Label(prerequisite, systemImage: "checklist")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button("Copy command") { copy(recipe.command) }
+                Button("Reveal target") { reveal(path: recipe.affectedPath) }
+                Spacer()
+                Text(recipe.destructive ? "destructive command" : "read-only command")
+                    .font(.caption2)
+                    .foregroundStyle(recipe.destructive ? AetowerDesign.Status.warning : .secondary)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func repoFootprintDashboard(_ report: StorageHygieneReportModel) -> some View {
@@ -677,6 +776,15 @@ public struct StorageView: View {
         .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
+    private func cleanupRecipeBadge(_ recipe: StorageCleanupRecipeModel) -> some View {
+        Text(cleanupTierLabel(recipe.safety))
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(cleanupRecipeTone(recipe))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(cleanupRecipeTone(recipe).opacity(0.12), in: Capsule())
+    }
+
     private func cleanupTierBadge(_ item: StorageHygieneItemModel) -> some View {
         Text(cleanupTierLabel(item.cleanupTier))
             .font(.caption2.weight(.semibold))
@@ -952,6 +1060,30 @@ public struct StorageView: View {
         default:
             return "folder"
         }
+    }
+
+    private func cleanupRecipeIcon(_ recipe: StorageCleanupRecipeModel) -> String {
+        switch recipe.category {
+        case "rust":
+            return "shippingbox"
+        case "swiftpm":
+            return "swift"
+        case "xcode":
+            return "hammer"
+        case "logs":
+            return "doc.text"
+        case "release":
+            return "archivebox"
+        default:
+            return cleanupTierIcon(recipe.safety)
+        }
+    }
+
+    private func cleanupRecipeTone(_ recipe: StorageCleanupRecipeModel) -> Color {
+        if recipe.requiresReview {
+            return AetowerDesign.Status.warning
+        }
+        return tone(forCleanupTier: recipe.safety)
     }
 
     private func icon(for item: StorageHygieneItemModel) -> String {
