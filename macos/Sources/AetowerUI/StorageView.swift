@@ -24,6 +24,7 @@ public struct StorageView: View {
     @State private var searchText = ""
     @State private var customRoot = ""
     @State private var maxDepth = 5.0
+    @State private var copiedCleanupBundleID: String?
 
     public init(state: AppState) {
         self.state = state
@@ -45,6 +46,7 @@ public struct StorageView: View {
                     budgetGuardrailsSection(report)
                     agentHygieneSection(report)
                     cleanupPreviewSection(report)
+                    cleanupBundlesSection(report)
                     cleanupRecipesSection(report)
                     repoFootprintDashboard(report)
                     storageGrowthTimeline(report)
@@ -505,6 +507,168 @@ public struct StorageView: View {
                 }
             }
         }
+    }
+
+    private func cleanupBundlesSection(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                Text("Dry-run cleanup bundles")
+                    .font(.headline)
+                Text("One-click planning bundles with a full manifest, confidence score, verification commands, and rollback notes. Aetower copies plans only; it does not delete files.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if report.cleanupBundles.isEmpty {
+                Label("No cleanup bundle can be built from the current scan.", systemImage: "shippingbox.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(AetowerDesign.Spacing.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(report.cleanupBundles) { bundle in
+                        cleanupBundleCard(bundle)
+                    }
+                }
+            }
+        }
+    }
+
+    private func cleanupBundleCard(_ bundle: StorageCleanupBundleModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: cleanupBundleIcon(bundle))
+                    .foregroundStyle(cleanupBundleTone(bundle))
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Text(bundle.title)
+                            .font(.subheadline.weight(.semibold))
+                        Text("\(bundle.confidenceScore)% confidence")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(cleanupBundleTone(bundle))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(cleanupBundleTone(bundle).opacity(0.12), in: Capsule())
+                        if bundle.dryRunOnly {
+                            Text("Dry-run")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(AetowerDesign.Surface.badge, in: Capsule())
+                        }
+                    }
+                    Text(bundle.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.md)
+
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(formatBytes(bundle.estimatedReclaimableBytes))
+                        .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    Text("\(bundle.itemCount) item\(bundle.itemCount == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 145), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                footprintMetric(
+                    "Manifest",
+                    value: "\(bundle.manifest.count)",
+                    detail: "full returned list"
+                )
+                footprintMetric(
+                    "Verify",
+                    value: "\(bundle.dryRunCommands.count)",
+                    detail: "dry-run command\(bundle.dryRunCommands.count == 1 ? "" : "s")"
+                )
+                footprintMetric(
+                    "Rollback",
+                    value: "\(bundle.rollbackNotes.count)",
+                    detail: "note\(bundle.rollbackNotes.count == 1 ? "" : "s")"
+                )
+            }
+
+            if !bundle.manifest.isEmpty {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Manifest preview")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(Array(bundle.manifest.prefix(4))) { item in
+                        HStack(spacing: AetowerDesign.Spacing.sm) {
+                            Image(systemName: cleanupTierIcon(item.cleanupTier))
+                                .foregroundStyle(tone(forCleanupTier: item.cleanupTier))
+                                .frame(width: 16)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.displayName)
+                                    .font(.caption.weight(.semibold))
+                                Text(item.path)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer()
+                            Text(formatBytes(item.sizeBytes))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            if !bundle.rollbackNotes.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(bundle.rollbackNotes.prefix(3)), id: \.self) { note in
+                        Label(note, systemImage: "arrow.uturn.backward.circle")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button {
+                    copy(cleanupBundleManifest(bundle))
+                    copiedCleanupBundleID = bundle.id
+                } label: {
+                    Label("Dry-run reclaim \(formatBytes(bundle.estimatedReclaimableBytes))", systemImage: "doc.on.doc")
+                }
+                Button("Copy verify commands") {
+                    copy(bundle.dryRunCommands.joined(separator: "\n"))
+                    copiedCleanupBundleID = bundle.id
+                }
+                .disabled(bundle.dryRunCommands.isEmpty)
+                if bundle.manifest.contains(where: { $0.cleanupCommand != nil }) {
+                    Button("Copy candidate commands") {
+                        copy(cleanupBundleCleanupCommands(bundle))
+                        copiedCleanupBundleID = bundle.id
+                    }
+                }
+                Spacer()
+                Text(copiedCleanupBundleID == bundle.id ? "Copied" : "no files changed")
+                    .font(.caption2)
+                    .foregroundStyle(copiedCleanupBundleID == bundle.id ? AetowerDesign.Status.ready : .secondary)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func cleanupRecipesSection(_ report: StorageHygieneReportModel) -> some View {
@@ -1370,6 +1534,82 @@ public struct StorageView: View {
             return AetowerDesign.Status.warning
         }
         return tone(forCleanupTier: recipe.safety)
+    }
+
+    private func cleanupBundleIcon(_ bundle: StorageCleanupBundleModel) -> String {
+        if bundle.confidenceScore >= 90 {
+            return "checkmark.shield"
+        }
+        if bundle.safety == "review" {
+            return "checklist.checked"
+        }
+        return "shippingbox"
+    }
+
+    private func cleanupBundleTone(_ bundle: StorageCleanupBundleModel) -> Color {
+        if bundle.confidenceScore >= 90 {
+            return AetowerDesign.Status.ready
+        }
+        if bundle.confidenceScore >= 70 {
+            return AetowerDesign.Status.warning
+        }
+        return AetowerDesign.Status.error
+    }
+
+    private func cleanupBundleManifest(_ bundle: StorageCleanupBundleModel) -> String {
+        var lines: [String] = [
+            "# Aetower dry-run cleanup bundle",
+            "",
+            "- Bundle: \(bundle.title)",
+            "- Safety: \(bundle.safety)",
+            "- Confidence: \(bundle.confidenceScore)%",
+            "- Estimated reclaimable: \(formatBytes(bundle.estimatedReclaimableBytes))",
+            "- Items: \(bundle.itemCount)",
+            "- Dry-run only: \(bundle.dryRunOnly ? "yes" : "no")",
+            "",
+            "## Prerequisites",
+        ]
+        lines.append(contentsOf: bundle.prerequisites.map { "- \($0)" })
+        lines.append(contentsOf: ["", "## Dry-run verification commands"])
+        if bundle.dryRunCommands.isEmpty {
+            lines.append("- No verification commands were generated.")
+        } else {
+            lines.append(contentsOf: bundle.dryRunCommands.map { "- `\($0)`" })
+        }
+
+        let cleanupCommands = cleanupBundleCleanupCommandList(bundle)
+        lines.append(contentsOf: ["", "## Candidate cleanup commands"])
+        if cleanupCommands.isEmpty {
+            lines.append("- No cleanup commands were generated for this bundle.")
+        } else {
+            lines.append(contentsOf: cleanupCommands.map { "- `\($0)`" })
+        }
+
+        lines.append(contentsOf: ["", "## Full manifest"])
+        for item in bundle.manifest {
+            lines.append("- \(formatBytes(item.sizeBytes)) | \(item.confidenceScore)% | \(item.cleanupTier) | \(item.path)")
+            lines.append("  - Reason: \(item.reason)")
+            lines.append("  - Rollback: \(item.rollbackNote)")
+        }
+
+        lines.append(contentsOf: ["", "## Rollback notes"])
+        lines.append(contentsOf: bundle.rollbackNotes.map { "- \($0)" })
+        lines.append(contentsOf: ["", "## Caveats"])
+        lines.append(contentsOf: bundle.caveats.map { "- \($0)" })
+        return lines.joined(separator: "\n")
+    }
+
+    private func cleanupBundleCleanupCommands(_ bundle: StorageCleanupBundleModel) -> String {
+        cleanupBundleCleanupCommandList(bundle).joined(separator: "\n")
+    }
+
+    private func cleanupBundleCleanupCommandList(_ bundle: StorageCleanupBundleModel) -> [String] {
+        var seen = Set<String>()
+        var commands: [String] = []
+        for command in bundle.manifest.compactMap(\.cleanupCommand) where seen.insert(command).inserted {
+            commands.append(command)
+        }
+        return commands
     }
 
     private func budgetGuardrailSummary(_ guardrails: StorageBudgetGuardrailsModel) -> String {

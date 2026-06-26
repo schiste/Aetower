@@ -1823,6 +1823,18 @@ public final class AppState {
                                 value: String(report.budgetGuardrails.violations.count)
                             ),
                             DiagnosticsField(
+                                key: "cleanup_bundle_count",
+                                value: String(report.cleanupBundles.count)
+                            ),
+                            DiagnosticsField(
+                                key: "cleanup_bundle_bytes",
+                                value: String(
+                                    report.cleanupBundles.reduce(UInt64(0)) {
+                                        $0 + $1.estimatedReclaimableBytes
+                                    }
+                                )
+                            ),
+                            DiagnosticsField(
                                 key: "agent_hygiene_count",
                                 value: String(report.agentHygiene.agentCount)
                             ),

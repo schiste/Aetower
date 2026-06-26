@@ -6,6 +6,7 @@ struct StorageHygieneReportModel: Decodable {
     let summary: StorageHygieneSummaryModel
     let cleanupTiers: [StorageCleanupTierModel]
     let cleanupRecipes: [StorageCleanupRecipeModel]
+    let cleanupBundles: [StorageCleanupBundleModel]
     let budgetGuardrails: StorageBudgetGuardrailsModel
     let agentHygiene: StorageAgentHygieneSummaryModel
     let repoFootprints: [StorageRepoFootprintModel]
@@ -50,6 +51,38 @@ struct StorageCleanupRecipeModel: Decodable, Identifiable {
     let prerequisites: [String]
     let destructive: Bool
     let requiresReview: Bool
+}
+
+struct StorageCleanupBundleModel: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let safety: String
+    let confidenceScore: UInt8
+    let estimatedReclaimableBytes: UInt64
+    let itemCount: Int
+    let dryRunOnly: Bool
+    let manifest: [StorageCleanupBundleItemModel]
+    let dryRunCommands: [String]
+    let rollbackNotes: [String]
+    let prerequisites: [String]
+    let caveats: [String]
+}
+
+struct StorageCleanupBundleItemModel: Decodable, Identifiable {
+    let path: String
+    let displayName: String
+    let kind: String
+    let cleanupTier: String
+    let safety: String
+    let sizeBytes: UInt64
+    let confidenceScore: UInt8
+    let dryRunCommand: String
+    let cleanupCommand: String?
+    let rollbackNote: String
+    let reason: String
+
+    var id: String { path }
 }
 
 struct StorageBudgetGuardrailsModel: Decodable {
