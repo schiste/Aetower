@@ -14,6 +14,9 @@ const SIZE_WALK_MAX_ENTRIES: u64 = 150_000;
 const MIN_ITEM_BYTES: u64 = 1024 * 1024;
 const SCAN_TIME_BUDGET: Duration = Duration::from_millis(6_500);
 const STALE_AFTER_DAYS: u64 = 7;
+const REPO_ARTIFACT_BUDGET_BYTES: u64 = 30 * 1024 * 1024 * 1024;
+const REPO_GROWTH_BUDGET_BYTES_PER_DAY: u64 = 2 * 1024 * 1024 * 1024;
+const TOTAL_ARTIFACT_BUDGET_BYTES: u64 = 30 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct StorageHygieneReport {
@@ -22,6 +25,7 @@ pub(crate) struct StorageHygieneReport {
     summary: StorageHygieneSummary,
     cleanup_tiers: Vec<StorageCleanupTierSummary>,
     cleanup_recipes: Vec<StorageCleanupRecipe>,
+    budget_guardrails: StorageBudgetGuardrails,
     repo_footprints: Vec<StorageRepoFootprint>,
     items: Vec<StorageHygieneItem>,
     roots: Vec<String>,
@@ -97,6 +101,29 @@ struct StorageCleanupRecipe {
     prerequisites: Vec<String>,
     destructive: bool,
     requires_review: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageBudgetGuardrails {
+    repo_growth_budget_bytes_per_day: u64,
+    repo_artifact_budget_bytes: u64,
+    total_artifact_budget_bytes: u64,
+    status: String,
+    violations: Vec<StorageBudgetViolation>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageBudgetViolation {
+    id: String,
+    scope: String,
+    severity: String,
+    title: String,
+    detail: String,
+    repo_root: Option<String>,
+    repo_name: Option<String>,
+    observed_bytes: u64,
+    limit_bytes: u64,
+    recommendation: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -249,12 +276,14 @@ fn build_storage_hygiene_report_with_options(
     let cleanup_tiers = summarize_cleanup_tiers(&items);
     let cleanup_recipes = build_cleanup_recipes(&items);
     let repo_footprints = summarize_repo_footprints(&items);
+    let budget_guardrails = evaluate_budget_guardrails(&summary, &repo_footprints);
     StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
         summary,
         cleanup_tiers,
         cleanup_recipes,
+        budget_guardrails,
         repo_footprints,
         items,
         roots: scanned_roots,
@@ -736,6 +765,96 @@ fn cleanup_recipes_for_item(item: &StorageHygieneItem) -> Vec<StorageCleanupReci
     }
 }
 
+fn evaluate_budget_guardrails(
+    summary: &StorageHygieneSummary,
+    repo_footprints: &[StorageRepoFootprint],
+) -> StorageBudgetGuardrails {
+    let mut violations = Vec::new();
+
+    if summary.total_reclaimable_bytes > TOTAL_ARTIFACT_BUDGET_BYTES {
+        violations.push(StorageBudgetViolation {
+            id: "total-artifact-budget".to_owned(),
+            scope: "global".to_owned(),
+            severity: "warning".to_owned(),
+            title: "Local dev artifacts exceed budget".to_owned(),
+            detail: format!(
+                "Aetower found {} of local development artifacts; budget is {}.",
+                human_bytes(summary.total_reclaimable_bytes),
+                human_bytes(TOTAL_ARTIFACT_BUDGET_BYTES)
+            ),
+            repo_root: None,
+            repo_name: None,
+            observed_bytes: summary.total_reclaimable_bytes,
+            limit_bytes: TOTAL_ARTIFACT_BUDGET_BYTES,
+            recommendation: "Review cleanup recipes and reclaim rebuildable caches before the machine starts paging or indexing excessively.".to_owned(),
+        });
+    }
+
+    for footprint in repo_footprints {
+        if footprint.current_size_bytes > REPO_ARTIFACT_BUDGET_BYTES {
+            violations.push(StorageBudgetViolation {
+                id: format!("repo-artifact-budget|{}", footprint.repo_root),
+                scope: "repo".to_owned(),
+                severity: "warning".to_owned(),
+                title: format!("{} exceeds repo artifact budget", footprint.repo_name),
+                detail: format!(
+                    "{} has {} of attributed artifacts; budget is {} per repository.",
+                    footprint.repo_name,
+                    human_bytes(footprint.current_size_bytes),
+                    human_bytes(REPO_ARTIFACT_BUDGET_BYTES)
+                ),
+                repo_root: Some(footprint.repo_root.clone()),
+                repo_name: Some(footprint.repo_name.clone()),
+                observed_bytes: footprint.current_size_bytes,
+                limit_bytes: REPO_ARTIFACT_BUDGET_BYTES,
+                recommendation: "Clean rebuildable build outputs or narrow expensive dependency caches for this repository.".to_owned(),
+            });
+        }
+        if let Some(growth_bytes) = footprint.growth_bytes
+            && growth_bytes > REPO_GROWTH_BUDGET_BYTES_PER_DAY as i64
+        {
+            violations.push(StorageBudgetViolation {
+                id: format!("repo-growth-budget|{}", footprint.repo_root),
+                scope: "repo-growth".to_owned(),
+                severity: "warning".to_owned(),
+                title: format!("{} is growing too fast", footprint.repo_name),
+                detail: format!(
+                    "{} grew by {} in {}; budget is {} per day.",
+                    footprint.repo_name,
+                    human_bytes(growth_bytes as u64),
+                    footprint.growth_window,
+                    human_bytes(REPO_GROWTH_BUDGET_BYTES_PER_DAY)
+                ),
+                repo_root: Some(footprint.repo_root.clone()),
+                repo_name: Some(footprint.repo_name.clone()),
+                observed_bytes: growth_bytes as u64,
+                limit_bytes: REPO_GROWTH_BUDGET_BYTES_PER_DAY,
+                recommendation: "Inspect the disk growth timeline and active build/session activity before the repository accumulates more artifacts.".to_owned(),
+            });
+        }
+    }
+
+    let status = if violations.is_empty() {
+        "ok"
+    } else if violations
+        .iter()
+        .any(|violation| violation.severity == "critical")
+    {
+        "critical"
+    } else {
+        "warning"
+    }
+    .to_owned();
+
+    StorageBudgetGuardrails {
+        repo_growth_budget_bytes_per_day: REPO_GROWTH_BUDGET_BYTES_PER_DAY,
+        repo_artifact_budget_bytes: REPO_ARTIFACT_BUDGET_BYTES,
+        total_artifact_budget_bytes: TOTAL_ARTIFACT_BUDGET_BYTES,
+        status,
+        violations,
+    }
+}
+
 fn rust_cleanup_recipe(item: &StorageHygieneItem) -> Option<StorageCleanupRecipe> {
     let path = Path::new(&item.path);
     let manifest_dir = nearest_parent_with_file(path, "Cargo.toml")?;
@@ -1126,6 +1245,22 @@ fn shell_quote(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
 }
 
+fn human_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * KIB;
+    const GIB: f64 = 1024.0 * MIB;
+    let value = bytes as f64;
+    if value >= GIB {
+        format!("{:.1} GB", value / GIB)
+    } else if value >= MIB {
+        format!("{:.1} MB", value / MIB)
+    } else if value >= KIB {
+        format!("{:.1} KB", value / KIB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 fn rule(
     kind: &'static str,
     safety: &'static str,
@@ -1237,6 +1372,10 @@ mod tests {
         assert!(json.contains("\"cleanup_recipes\""));
         assert!(json.contains("\"title\":\"Clean Rust package aetower-ffi\""));
         assert!(json.contains("cargo clean -p aetower-ffi"));
+        assert!(json.contains("\"budget_guardrails\""));
+        assert!(json.contains("\"repo_growth_budget_bytes_per_day\":2147483648"));
+        assert!(json.contains("\"total_artifact_budget_bytes\":32212254720"));
+        assert!(json.contains("\"status\":\"ok\""));
 
         let _ = fs::remove_dir_all(root);
     }
