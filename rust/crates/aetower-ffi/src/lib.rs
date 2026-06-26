@@ -678,6 +678,142 @@ pub struct SystemSnapshot {
     pub thermal_forecast: Option<ThermalForecast>,
 }
 
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum UiMetricSeverity {
+    Normal,
+    Warning,
+    Critical,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct UiMetricCard {
+    pub id: String,
+    pub title: String,
+    pub value: f64,
+    pub unit: String,
+    pub display_value: String,
+    pub detail: String,
+    pub severity: UiMetricSeverity,
+    pub samples: Vec<f64>,
+    pub fixed_ceiling: Option<f64>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct UiHostSummary {
+    pub machine_friction: f32,
+    pub cpu_percent: f32,
+    pub memory_used_bytes: u64,
+    pub memory_total_bytes: u64,
+    pub compressed_memory_bytes: u64,
+    pub swap_used_bytes: u64,
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
+    pub network_receive_bps: u64,
+    pub network_send_bps: u64,
+    pub wakeups_per_second: f32,
+    pub gpu_percent: f32,
+    pub gpu_memory_bytes: u64,
+    pub thermal_state: ThermalState,
+    pub on_battery: bool,
+    pub low_power_mode: bool,
+    pub frontmost_app_name: Option<String>,
+    pub frontmost_window_title: Option<String>,
+    pub ai_agent_count: u32,
+    pub entity_count: u32,
+    pub process_count: u32,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct UiHostTrend {
+    pub machine_friction: Vec<f64>,
+    pub cpu_percent: Vec<f64>,
+    pub memory_used_bytes: Vec<f64>,
+    pub memory_pressure_score: Vec<f64>,
+    pub disk_activity_bps: Vec<f64>,
+    pub network_activity_bps: Vec<f64>,
+    pub wakeups_per_second: Vec<f64>,
+    pub gpu_percent: Vec<f64>,
+    pub gpu_memory_bytes: Vec<f64>,
+    pub max_cpu_temperature: Vec<f64>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct UiProcessRow {
+    pub entity_id: String,
+    pub display_name: String,
+    pub entity_kind: EntityKind,
+    pub bundle_id: Option<String>,
+    pub executable_path: Option<String>,
+    pub primary_pid: Option<u32>,
+    pub process_count: u32,
+    pub thread_count: u32,
+    pub cpu_percent: f32,
+    pub memory_resident_bytes: u64,
+    pub memory_physical_footprint_bytes: u64,
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
+    pub network_receive_bps: u64,
+    pub network_send_bps: u64,
+    pub wakeups_per_second: f32,
+    pub energy_nj_per_s: f64,
+    pub estimated_gpu_percent: f32,
+    pub friction_score: f32,
+    pub is_foreground: bool,
+    pub anomaly_detected: bool,
+    pub active_window_title: Option<String>,
+    pub recent_change_summary: Option<String>,
+    pub signing_classification: String,
+    pub is_adhoc: bool,
+    pub app_version: Option<String>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct UiProcessComponent {
+    pub title: String,
+    pub detail: String,
+    pub process_id: Option<u32>,
+    pub start_time_millis: u64,
+    pub executable_path: Option<String>,
+    pub command_line: Option<String>,
+    pub parent_summary: Option<String>,
+    pub launched_by: Option<String>,
+    pub cpu_percent: f32,
+    pub memory_bytes: u64,
+    pub memory_physical_footprint_bytes: u64,
+    pub cwd: Option<String>,
+    pub user: Option<String>,
+    pub thread_count: u32,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct UiSelectedEntity {
+    pub row: UiProcessRow,
+    pub components: Vec<UiProcessComponent>,
+    pub trend: MetricTrend,
+    pub recommendations: Vec<Recommendation>,
+    pub network_connections: Vec<NetworkConnection>,
+    pub badges: Vec<String>,
+    pub attribution_notes: Vec<String>,
+    pub thermal_contribution: Option<String>,
+    pub grouping_suggestion: Option<String>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct UiSnapshot {
+    pub sequence: u64,
+    pub captured_at_millis: u64,
+    pub host: UiHostSummary,
+    pub host_trend: UiHostTrend,
+    pub metric_cards: Vec<UiMetricCard>,
+    pub process_rows: Vec<UiProcessRow>,
+    pub selected_entity: Option<UiSelectedEntity>,
+    pub total_entity_count: u32,
+    pub returned_entity_count: u32,
+    pub total_process_count: u32,
+    pub timeline_warning_count: u32,
+    pub timeline_critical_count: u32,
+}
+
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct ThermalForecast {
     pub minutes_to_throttle: Option<f32>,
@@ -858,6 +994,48 @@ impl MonitorEngine {
             .expect("engine lock poisoned")
             .latest_snapshot_if_newer(last_sequence)
             .map(Into::into)
+    }
+
+    pub fn latest_ui_snapshot(
+        &self,
+        process_limit: u32,
+        trend_points: u32,
+        selected_entity_id: Option<String>,
+    ) -> UiSnapshot {
+        let Ok(engine) = self.inner.lock() else {
+            return ui_snapshot_from(
+                &model::SystemSnapshot::default(),
+                process_limit,
+                trend_points,
+                selected_entity_id.as_deref(),
+            );
+        };
+        let snapshot = engine.latest_snapshot_arc();
+        ui_snapshot_from(
+            snapshot.as_ref(),
+            process_limit,
+            trend_points,
+            selected_entity_id.as_deref(),
+        )
+    }
+
+    pub fn latest_ui_snapshot_if_newer(
+        &self,
+        last_sequence: u64,
+        process_limit: u32,
+        trend_points: u32,
+        selected_entity_id: Option<String>,
+    ) -> Option<UiSnapshot> {
+        let Ok(engine) = self.inner.lock() else {
+            return None;
+        };
+        let snapshot = engine.latest_snapshot_arc_if_newer(last_sequence)?;
+        Some(ui_snapshot_from(
+            snapshot.as_ref(),
+            process_limit,
+            trend_points,
+            selected_entity_id.as_deref(),
+        ))
     }
 
     pub fn latest_sequence(&self) -> u64 {
@@ -1602,6 +1780,529 @@ fn json_query_result(result: Result<String, String>) -> JsonQueryResult {
             json: None,
             error_message: Some(error),
         },
+    }
+}
+
+const DEFAULT_UI_PROCESS_LIMIT: usize = 160;
+const MAX_UI_PROCESS_LIMIT: usize = 500;
+const DEFAULT_UI_TREND_POINTS: usize = 120;
+const MAX_UI_TREND_POINTS: usize = 300;
+const SELECTED_ENTITY_COMPONENT_LIMIT: usize = 48;
+const SELECTED_ENTITY_RECOMMENDATION_LIMIT: usize = 8;
+const SELECTED_ENTITY_NETWORK_LIMIT: usize = 16;
+
+fn ui_snapshot_from(
+    snapshot: &model::SystemSnapshot,
+    process_limit: u32,
+    trend_points: u32,
+    selected_entity_id: Option<&str>,
+) -> UiSnapshot {
+    let process_limit = normalized_ui_limit(
+        process_limit,
+        DEFAULT_UI_PROCESS_LIMIT,
+        1,
+        MAX_UI_PROCESS_LIMIT,
+    );
+    let trend_points = normalized_ui_limit(
+        trend_points,
+        DEFAULT_UI_TREND_POINTS,
+        8,
+        MAX_UI_TREND_POINTS,
+    );
+    let total_process_count = snapshot.entities.iter().fold(0u32, |count, entity| {
+        count.saturating_add(entity.metrics.process_count)
+    });
+    let machine_friction = ui_machine_friction(snapshot);
+    let process_rows: Vec<UiProcessRow> = snapshot
+        .entities
+        .iter()
+        .take(process_limit)
+        .map(ui_process_row_from_entity)
+        .collect();
+    let selected_entity = selected_entity_id
+        .filter(|entity_id| !entity_id.is_empty())
+        .and_then(|entity_id| {
+            snapshot
+                .entities
+                .iter()
+                .find(|entity| entity.entity_id == entity_id)
+        })
+        .map(|entity| ui_selected_entity_from_entity(entity, trend_points));
+    let timeline_warning_count = snapshot
+        .timeline
+        .iter()
+        .filter(|event| event.severity == model::TimelineSeverity::Warning)
+        .count();
+    let timeline_critical_count = snapshot
+        .timeline
+        .iter()
+        .filter(|event| event.severity == model::TimelineSeverity::Critical)
+        .count();
+
+    UiSnapshot {
+        sequence: snapshot.sequence,
+        captured_at_millis: snapshot.captured_at_millis,
+        host: ui_host_summary_from_snapshot(snapshot, machine_friction, total_process_count),
+        host_trend: ui_host_trend_from_host_trend(&snapshot.host_trend, trend_points),
+        metric_cards: ui_metric_cards_from_snapshot(snapshot, machine_friction, trend_points),
+        returned_entity_count: saturating_u32(process_rows.len()),
+        process_rows,
+        selected_entity,
+        total_entity_count: saturating_u32(snapshot.entities.len()),
+        total_process_count,
+        timeline_warning_count: saturating_u32(timeline_warning_count),
+        timeline_critical_count: saturating_u32(timeline_critical_count),
+    }
+}
+
+fn normalized_ui_limit(
+    value: u32,
+    default_value: usize,
+    min_value: usize,
+    max_value: usize,
+) -> usize {
+    if value == 0 {
+        return default_value;
+    }
+    usize::try_from(value)
+        .map(|limit| limit.clamp(min_value, max_value))
+        .unwrap_or(max_value)
+}
+
+fn saturating_u32(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn ui_machine_friction(snapshot: &model::SystemSnapshot) -> f32 {
+    snapshot
+        .host_trend
+        .machine_friction
+        .last()
+        .copied()
+        .or_else(|| {
+            snapshot
+                .entities
+                .first()
+                .map(|entity| entity.friction.total_score)
+        })
+        .unwrap_or_default()
+}
+
+fn ui_host_summary_from_snapshot(
+    snapshot: &model::SystemSnapshot,
+    machine_friction: f32,
+    total_process_count: u32,
+) -> UiHostSummary {
+    UiHostSummary {
+        machine_friction,
+        cpu_percent: snapshot.host.cpu_percent,
+        memory_used_bytes: snapshot.host.memory_used_bytes,
+        memory_total_bytes: snapshot.host.memory_total_bytes,
+        compressed_memory_bytes: snapshot.host.compressed_memory_bytes,
+        swap_used_bytes: snapshot.host.swap_used_bytes,
+        disk_read_bps: snapshot.host.disk_read_bps,
+        disk_write_bps: snapshot.host.disk_write_bps,
+        network_receive_bps: snapshot.host.network_receive_bps,
+        network_send_bps: snapshot.host.network_send_bps,
+        wakeups_per_second: snapshot.host.wakeups_per_second,
+        gpu_percent: snapshot.host.gpu_percent,
+        gpu_memory_bytes: snapshot.host.gpu_memory_bytes,
+        thermal_state: snapshot.host.thermal_state.into(),
+        on_battery: snapshot.host.on_battery,
+        low_power_mode: snapshot.host.low_power_mode,
+        frontmost_app_name: snapshot.host.frontmost_app_name.clone(),
+        frontmost_window_title: snapshot.host.frontmost_window_title.clone(),
+        ai_agent_count: snapshot.host.ai_agent_count,
+        entity_count: saturating_u32(snapshot.entities.len()),
+        process_count: total_process_count,
+    }
+}
+
+fn ui_host_trend_from_host_trend(value: &model::HostTrend, max_points: usize) -> UiHostTrend {
+    UiHostTrend {
+        machine_friction: downsample_f32_to_f64(&value.machine_friction, max_points),
+        cpu_percent: downsample_f32_to_f64(&value.cpu_percent, max_points),
+        memory_used_bytes: downsample_u64_to_f64(&value.memory_used_bytes, max_points),
+        memory_pressure_score: downsample_f32_to_f64(&value.memory_pressure_score, max_points),
+        disk_activity_bps: downsample_u64_to_f64(&value.disk_activity_bps, max_points),
+        network_activity_bps: downsample_u64_to_f64(&value.network_activity_bps, max_points),
+        wakeups_per_second: downsample_f32_to_f64(&value.wakeups_per_second, max_points),
+        gpu_percent: downsample_f32_to_f64(&value.gpu_percent, max_points),
+        gpu_memory_bytes: downsample_u64_to_f64(&value.gpu_memory_bytes, max_points),
+        max_cpu_temperature: downsample_f32_to_f64(&value.max_cpu_temperature, max_points),
+    }
+}
+
+fn ui_metric_cards_from_snapshot(
+    snapshot: &model::SystemSnapshot,
+    machine_friction: f32,
+    trend_points: usize,
+) -> Vec<UiMetricCard> {
+    let disk_bps = snapshot
+        .host
+        .disk_read_bps
+        .saturating_add(snapshot.host.disk_write_bps);
+    let network_bps = snapshot
+        .host
+        .network_receive_bps
+        .saturating_add(snapshot.host.network_send_bps);
+    let memory_ratio = if snapshot.host.memory_total_bytes == 0 {
+        0.0
+    } else {
+        snapshot.host.memory_used_bytes as f64 / snapshot.host.memory_total_bytes as f64
+    };
+    vec![
+        UiMetricCard {
+            id: "friction".to_owned(),
+            title: "Friction".to_owned(),
+            value: f64::from(machine_friction),
+            unit: "score".to_owned(),
+            display_value: format!("{machine_friction:.0}"),
+            detail: "Host pressure and top process burden".to_owned(),
+            severity: severity_for_percent(f64::from(machine_friction), 45.0, 70.0),
+            samples: downsample_f32_to_f64(&snapshot.host_trend.machine_friction, trend_points),
+            fixed_ceiling: Some(100.0),
+        },
+        UiMetricCard {
+            id: "cpu".to_owned(),
+            title: "CPU".to_owned(),
+            value: f64::from(snapshot.host.cpu_percent),
+            unit: "percent".to_owned(),
+            display_value: format!("{:.0}%", snapshot.host.cpu_percent),
+            detail: "Total host CPU load".to_owned(),
+            severity: severity_for_percent(f64::from(snapshot.host.cpu_percent), 70.0, 90.0),
+            samples: downsample_f32_to_f64(&snapshot.host_trend.cpu_percent, trend_points),
+            fixed_ceiling: Some(100.0),
+        },
+        UiMetricCard {
+            id: "memory".to_owned(),
+            title: "Memory".to_owned(),
+            value: snapshot.host.memory_used_bytes as f64,
+            unit: "bytes".to_owned(),
+            display_value: format_bytes(snapshot.host.memory_used_bytes),
+            detail: format!(
+                "{:.0}% of {}",
+                memory_ratio * 100.0,
+                format_bytes(snapshot.host.memory_total_bytes)
+            ),
+            severity: severity_for_percent(memory_ratio * 100.0, 75.0, 90.0),
+            samples: downsample_u64_to_f64(&snapshot.host_trend.memory_used_bytes, trend_points),
+            fixed_ceiling: (snapshot.host.memory_total_bytes > 0)
+                .then_some(snapshot.host.memory_total_bytes as f64),
+        },
+        UiMetricCard {
+            id: "disk".to_owned(),
+            title: "Disk".to_owned(),
+            value: disk_bps as f64,
+            unit: "bytes_per_second".to_owned(),
+            display_value: format_bps(disk_bps),
+            detail: "Read and write throughput".to_owned(),
+            severity: severity_for_bps(disk_bps, 100 * 1024 * 1024, 500 * 1024 * 1024),
+            samples: downsample_u64_to_f64(&snapshot.host_trend.disk_activity_bps, trend_points),
+            fixed_ceiling: None,
+        },
+        UiMetricCard {
+            id: "network".to_owned(),
+            title: "Network".to_owned(),
+            value: network_bps as f64,
+            unit: "bytes_per_second".to_owned(),
+            display_value: format_bps(network_bps),
+            detail: "Receive and send throughput".to_owned(),
+            severity: severity_for_bps(network_bps, 25 * 1024 * 1024, 100 * 1024 * 1024),
+            samples: downsample_u64_to_f64(&snapshot.host_trend.network_activity_bps, trend_points),
+            fixed_ceiling: None,
+        },
+        UiMetricCard {
+            id: "wakeups".to_owned(),
+            title: "Wakeups".to_owned(),
+            value: f64::from(snapshot.host.wakeups_per_second),
+            unit: "wakeups_per_second".to_owned(),
+            display_value: format!("{:.0}/s", snapshot.host.wakeups_per_second),
+            detail: "Host wakeups per second".to_owned(),
+            severity: severity_for_percent(
+                f64::from(snapshot.host.wakeups_per_second),
+                1_000.0,
+                5_000.0,
+            ),
+            samples: downsample_f32_to_f64(&snapshot.host_trend.wakeups_per_second, trend_points),
+            fixed_ceiling: None,
+        },
+        UiMetricCard {
+            id: "gpu".to_owned(),
+            title: "GPU".to_owned(),
+            value: f64::from(snapshot.host.gpu_percent),
+            unit: "percent".to_owned(),
+            display_value: format!("{:.0}%", snapshot.host.gpu_percent),
+            detail: format!(
+                "{} GPU memory",
+                format_bytes(snapshot.host.gpu_memory_bytes)
+            ),
+            severity: severity_for_percent(f64::from(snapshot.host.gpu_percent), 70.0, 90.0),
+            samples: downsample_f32_to_f64(&snapshot.host_trend.gpu_percent, trend_points),
+            fixed_ceiling: Some(100.0),
+        },
+    ]
+}
+
+fn ui_process_row_from_entity(entity: &model::EntitySnapshot) -> UiProcessRow {
+    UiProcessRow {
+        entity_id: entity.entity_id.clone(),
+        display_name: entity.display_name.clone(),
+        entity_kind: entity.entity_kind.clone().into(),
+        bundle_id: entity.bundle_id.clone(),
+        executable_path: entity.executable_path.clone(),
+        primary_pid: entity
+            .components
+            .iter()
+            .find_map(|component| component.process_id),
+        process_count: entity.metrics.process_count,
+        thread_count: entity.metrics.thread_count,
+        cpu_percent: entity.metrics.cpu_percent,
+        memory_resident_bytes: entity.metrics.memory_resident_bytes,
+        memory_physical_footprint_bytes: entity.metrics.memory_physical_footprint_bytes,
+        disk_read_bps: entity.metrics.disk_read_bps,
+        disk_write_bps: entity.metrics.disk_write_bps,
+        network_receive_bps: entity.metrics.network_receive_bps,
+        network_send_bps: entity.metrics.network_send_bps,
+        wakeups_per_second: entity.metrics.wakeups_per_second,
+        energy_nj_per_s: entity.metrics.energy_nj_per_s,
+        estimated_gpu_percent: entity.metrics.estimated_gpu_percent,
+        friction_score: entity.friction.total_score,
+        is_foreground: entity.metrics.is_foreground,
+        anomaly_detected: entity.anomaly_detected,
+        active_window_title: entity.active_window_title.clone(),
+        recent_change_summary: entity.recent_change_summary.clone(),
+        signing_classification: entity.signing_classification.clone(),
+        is_adhoc: entity.is_adhoc,
+        app_version: entity.app_version.clone(),
+    }
+}
+
+fn ui_selected_entity_from_entity(
+    entity: &model::EntitySnapshot,
+    trend_points: usize,
+) -> UiSelectedEntity {
+    UiSelectedEntity {
+        row: ui_process_row_from_entity(entity),
+        components: entity
+            .components
+            .iter()
+            .take(SELECTED_ENTITY_COMPONENT_LIMIT)
+            .map(ui_process_component_from_component)
+            .collect(),
+        trend: ui_metric_trend_from_metric_trend(&entity.trend, trend_points),
+        recommendations: entity
+            .recommendations
+            .iter()
+            .take(SELECTED_ENTITY_RECOMMENDATION_LIMIT)
+            .cloned()
+            .map(Into::into)
+            .collect(),
+        network_connections: entity
+            .network_connections
+            .iter()
+            .take(SELECTED_ENTITY_NETWORK_LIMIT)
+            .cloned()
+            .map(Into::into)
+            .collect(),
+        badges: entity.badges.clone(),
+        attribution_notes: entity.attribution_notes.clone(),
+        thermal_contribution: entity.thermal_contribution.clone(),
+        grouping_suggestion: entity.grouping_suggestion.clone(),
+    }
+}
+
+fn ui_process_component_from_component(component: &model::ComponentSnapshot) -> UiProcessComponent {
+    UiProcessComponent {
+        title: component.title.clone(),
+        detail: component.detail.clone(),
+        process_id: component.process_id,
+        start_time_millis: component.start_time_millis,
+        executable_path: component.executable_path.clone(),
+        command_line: component.command_line.clone(),
+        parent_summary: component.parent_summary.clone(),
+        launched_by: component.launched_by.clone(),
+        cpu_percent: component.cpu_percent,
+        memory_bytes: component.memory_bytes,
+        memory_physical_footprint_bytes: component.memory_physical_footprint_bytes,
+        cwd: component.cwd.clone(),
+        user: component.user.clone(),
+        thread_count: component.thread_count,
+    }
+}
+
+fn ui_metric_trend_from_metric_trend(value: &model::MetricTrend, max_points: usize) -> MetricTrend {
+    MetricTrend {
+        friction: downsample_f32_to_f32(&value.friction, max_points),
+        cpu_percent: downsample_f32_to_f32(&value.cpu_percent, max_points),
+        memory_resident_bytes: downsample_u64_to_u64(&value.memory_resident_bytes, max_points),
+        disk_activity_bps: downsample_u64_to_u64(&value.disk_activity_bps, max_points),
+        network_activity_bps: downsample_u64_to_u64(&value.network_activity_bps, max_points),
+        wakeups_per_second: downsample_f32_to_f32(&value.wakeups_per_second, max_points),
+    }
+}
+
+fn severity_for_percent(value: f64, warning: f64, critical: f64) -> UiMetricSeverity {
+    if value >= critical {
+        UiMetricSeverity::Critical
+    } else if value >= warning {
+        UiMetricSeverity::Warning
+    } else {
+        UiMetricSeverity::Normal
+    }
+}
+
+fn severity_for_bps(value: u64, warning: u64, critical: u64) -> UiMetricSeverity {
+    if value >= critical {
+        UiMetricSeverity::Critical
+    } else if value >= warning {
+        UiMetricSeverity::Warning
+    } else {
+        UiMetricSeverity::Normal
+    }
+}
+
+fn downsample_f32_to_f64(values: &[f32], max_points: usize) -> Vec<f64> {
+    downsample_by_index(values, max_points, |value| f64::from(*value))
+}
+
+fn downsample_u64_to_f64(values: &[u64], max_points: usize) -> Vec<f64> {
+    downsample_by_index(values, max_points, |value| *value as f64)
+}
+
+fn downsample_f32_to_f32(values: &[f32], max_points: usize) -> Vec<f32> {
+    downsample_by_index(values, max_points, |value| *value)
+}
+
+fn downsample_u64_to_u64(values: &[u64], max_points: usize) -> Vec<u64> {
+    downsample_by_index(values, max_points, |value| *value)
+}
+
+fn downsample_by_index<T, U, F>(values: &[T], max_points: usize, map: F) -> Vec<U>
+where
+    F: Fn(&T) -> U,
+{
+    if max_points == 0 || values.is_empty() {
+        return Vec::new();
+    }
+    if values.len() <= max_points {
+        return values.iter().map(map).collect();
+    }
+    let last_index = values.len() - 1;
+    let denominator = max_points - 1;
+    (0..max_points)
+        .map(|index| {
+            let source_index = index * last_index / denominator;
+            map(&values[source_index])
+        })
+        .collect()
+}
+
+fn format_bytes(value: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut scaled = value as f64;
+    let mut unit_index = 0;
+    while scaled >= 1024.0 && unit_index < UNITS.len() - 1 {
+        scaled /= 1024.0;
+        unit_index += 1;
+    }
+    if unit_index == 0 {
+        format!("{value} {}", UNITS[unit_index])
+    } else if scaled >= 10.0 {
+        format!("{scaled:.0} {}", UNITS[unit_index])
+    } else {
+        format!("{scaled:.1} {}", UNITS[unit_index])
+    }
+}
+
+fn format_bps(value: u64) -> String {
+    format!("{}/s", format_bytes(value))
+}
+
+#[cfg(test)]
+mod ui_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn ui_snapshot_caps_process_rows_without_losing_counts() {
+        let snapshot = model::SystemSnapshot {
+            sequence: 7,
+            entities: (0..3)
+                .map(|index| model::EntitySnapshot {
+                    entity_id: format!("entity-{index}"),
+                    display_name: format!("Entity {index}"),
+                    metrics: model::AggregateMetrics {
+                        process_count: 2,
+                        cpu_percent: index as f32,
+                        ..model::AggregateMetrics::default()
+                    },
+                    ..model::EntitySnapshot::default()
+                })
+                .collect(),
+            ..model::SystemSnapshot::default()
+        };
+
+        let ui_snapshot = ui_snapshot_from(&snapshot, 2, 120, None);
+
+        assert_eq!(ui_snapshot.sequence, 7);
+        assert_eq!(ui_snapshot.process_rows.len(), 2);
+        assert_eq!(ui_snapshot.total_entity_count, 3);
+        assert_eq!(ui_snapshot.returned_entity_count, 2);
+        assert_eq!(ui_snapshot.total_process_count, 6);
+    }
+
+    #[test]
+    fn ui_snapshot_returns_capped_selected_entity_details() {
+        let selected = model::EntitySnapshot {
+            entity_id: "selected".to_owned(),
+            display_name: "Selected".to_owned(),
+            components: (0..80)
+                .map(|index| model::ComponentSnapshot {
+                    title: format!("component-{index}"),
+                    process_id: Some(index),
+                    ..model::ComponentSnapshot::default()
+                })
+                .collect(),
+            network_connections: (0..40)
+                .map(|index| model::NetworkConnection {
+                    protocol: "tcp".to_owned(),
+                    local: format!("127.0.0.1:{index}"),
+                    remote: None,
+                    state: "LISTEN".to_owned(),
+                })
+                .collect(),
+            ..model::EntitySnapshot::default()
+        };
+        let snapshot = model::SystemSnapshot {
+            entities: vec![selected],
+            ..model::SystemSnapshot::default()
+        };
+
+        let ui_snapshot = ui_snapshot_from(&snapshot, 1, 16, Some("selected"));
+        let Some(selected_entity) = ui_snapshot.selected_entity else {
+            panic!("selected entity should be present");
+        };
+
+        assert_eq!(
+            selected_entity.components.len(),
+            SELECTED_ENTITY_COMPONENT_LIMIT
+        );
+        assert_eq!(
+            selected_entity.network_connections.len(),
+            SELECTED_ENTITY_NETWORK_LIMIT
+        );
+        assert_eq!(selected_entity.row.primary_pid, Some(0));
+    }
+
+    #[test]
+    fn downsample_keeps_first_and_last_points() {
+        let values: Vec<f32> = (0..100).map(|value| value as f32).collect();
+
+        let downsampled = downsample_f32_to_f64(&values, 10);
+
+        assert_eq!(downsampled.len(), 10);
+        assert_eq!(downsampled.first().copied(), Some(0.0));
+        assert_eq!(downsampled.last().copied(), Some(99.0));
     }
 }
 

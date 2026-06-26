@@ -16,6 +16,32 @@ public final class EngineBridge: @unchecked Sendable {
         engine.latestSnapshotIfNewer(lastSequence: sequence)
     }
 
+    public func latestUiSnapshot(
+        processLimit: UInt32 = 160,
+        trendPoints: UInt32 = 120,
+        selectedEntityId: String? = nil
+    ) throws -> UiSnapshot {
+        engine.latestUiSnapshot(
+            processLimit: processLimit,
+            trendPoints: trendPoints,
+            selectedEntityId: selectedEntityId
+        )
+    }
+
+    public func latestUiSnapshotIfNewer(
+        since sequence: UInt64,
+        processLimit: UInt32 = 160,
+        trendPoints: UInt32 = 120,
+        selectedEntityId: String? = nil
+    ) throws -> UiSnapshot? {
+        engine.latestUiSnapshotIfNewer(
+            lastSequence: sequence,
+            processLimit: processLimit,
+            trendPoints: trendPoints,
+            selectedEntityId: selectedEntityId
+        )
+    }
+
     public func latestSequence() throws -> UInt64 {
         engine.latestSequence()
     }

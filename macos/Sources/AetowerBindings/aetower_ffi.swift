@@ -546,123 +546,127 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 public protocol MonitorEngineProtocol: AnyObject, Sendable {
-    
+
     func clearDiagnostics()  -> String
-    
-    func clearFrontmostAppState() 
-    
+
+    func clearFrontmostAppState()
+
     func clearHistory()  -> String
-    
-    func configureChau7Endpoint(socketPath: String?) 
-    
-    func configureChromiumEndpoint(endpoint: String?) 
-    
-    func configureDockerSocketPath(socketPath: String) 
-    
-    func configurePrivilegedHelper(helperPath: String?, enabled: Bool) 
-    
-    func configureRuntimeCollection(settings: RuntimeCollectionSettingsInput) 
-    
-    func configureTelemetry(endpoint: String?, enabled: Bool, exportIntervalSecs: UInt32) 
-    
+
+    func configureChau7Endpoint(socketPath: String?)
+
+    func configureChromiumEndpoint(endpoint: String?)
+
+    func configureDockerSocketPath(socketPath: String)
+
+    func configurePrivilegedHelper(helperPath: String?, enabled: Bool)
+
+    func configureRuntimeCollection(settings: RuntimeCollectionSettingsInput)
+
+    func configureTelemetry(endpoint: String?, enabled: Bool, exportIntervalSecs: UInt32)
+
     func diagnosticsOverview()  -> DiagnosticsOverview
-    
+
     func diffSnapshotsJson(beforeMillis: UInt64, afterMillis: UInt64, entityIds: [String], limit: UInt32)  -> JsonQueryResult
-    
+
     func entityProcessTreeJson(entityId: String)  -> JsonQueryResult
-    
+
     func explainAnomaliesJson(entityIds: [String], limit: UInt32, windowMinutes: UInt32)  -> JsonQueryResult
-    
+
     func exportDiagnosticsJson(limit: UInt32)  -> String
-    
+
     func exportDiagnosticsQueryJson(query: DiagnosticsQuery)  -> String
-    
+
     func exportSnapshotJson()  -> String
-    
+
     /**
      * Evaluate a sandboxed Rhai filter expression against the latest snapshot,
      * returning matched entity ids / pids as JSON.
      */
     func filterEntitiesJson(expression: String)  -> JsonQueryResult
-    
+
     func historyRangeSummary(startMillis: UInt64, endMillis: UInt64)  -> HistoryRangeSummary?
-    
+
     func historyRangeSummaryResult(startMillis: UInt64, endMillis: UInt64)  -> HistoryRangeSummaryResult
-    
+
     func latestDiagnostics(limit: UInt32)  -> [DiagnosticsEvent]
-    
+
     func latestRuntimeLagMetrics()  -> RuntimeLagMetrics
-    
+
     func latestSequence()  -> UInt64
-    
+
     func latestSnapshot()  -> SystemSnapshot
-    
+
     func latestSnapshotIfNewer(lastSequence: UInt64)  -> SystemSnapshot?
-    
+
+    func latestUiSnapshot(processLimit: UInt32, trendPoints: UInt32, selectedEntityId: String?)  -> UiSnapshot
+
+    func latestUiSnapshotIfNewer(lastSequence: UInt64, processLimit: UInt32, trendPoints: UInt32, selectedEntityId: String?)  -> UiSnapshot?
+
     func loadHistoryPage(startMillis: UInt64, endMillis: UInt64, beforeMillisExclusive: UInt64?, limit: UInt32)  -> [SystemSnapshot]
-    
+
     func loadHistoryPageResult(startMillis: UInt64, endMillis: UInt64, beforeMillisExclusive: UInt64?, limit: UInt32)  -> HistoryPageLoadResult
-    
+
     func loadHistoryRange(startMillis: UInt64, endMillis: UInt64)  -> [SystemSnapshot]
-    
+
     func maintainHistoryStore(aggressive: Bool)  -> HistoryMaintenanceReport?
-    
+
     func memoryBreakdownJson(entityId: String, topRegions: UInt32)  -> JsonQueryResult
-    
+
     /**
      * Deep startup/persistence audit with code-signing enrichment. Explicit
      * because it may fork one codesign check per unique executable.
      */
     func persistenceDeepScanJson()  -> JsonQueryResult
-    
+
     /**
      * Enumerate the machine's startup/persistence surface (launchd, login
      * items, cron) with cheap file metadata. On-demand; no data source needed.
      */
     func persistenceScanJson()  -> JsonQueryResult
-    
+
     func processActionHistoryJson(windowMinutes: UInt32, limit: UInt32)  -> JsonQueryResult
-    
+
     func processActionJson(pid: UInt32, action: String, dryRun: Bool, reason: String?)  -> JsonQueryResult
-    
+
     func processInspectJson(pid: UInt32)  -> JsonQueryResult
-    
+
     func processOpenResourcesJson(pid: UInt32, limit: UInt32)  -> JsonQueryResult
-    
+
     func processSampleJson(pid: UInt32, durationSeconds: UInt32, topStacks: UInt32)  -> JsonQueryResult
-    
+
     func profileEntityJson(entityId: String, durationSeconds: UInt32, topStacks: UInt32)  -> JsonQueryResult
-    
+
     func queryDiagnostics(query: DiagnosticsQuery)  -> [DiagnosticsEvent]
-    
-    func recordDiagnosticsEvent(event: DiagnosticsEvent) 
-    
+
+    func recordDiagnosticsEvent(event: DiagnosticsEvent)
+
     /**
      * Restore a fan to automatic (OS-controlled) mode.
      */
     func resetFanAuto(fanId: UInt8)  -> String
-    
+
     /**
      * Reverse pivot: list every process holding the given file path.
      */
     func resourceHoldersByFileJson(path: String)  -> JsonQueryResult
-    
+
     /**
      * Reverse pivot: list every process holding the given TCP/UDP port.
      */
     func resourceHoldersByPortJson(port: UInt32)  -> JsonQueryResult
-    
+
     func selfMemoryAttributionJson(topRegions: UInt32)  -> JsonQueryResult
-    
+
     /**
      * Push binary-reputation consent + the VirusTotal API key into the engine.
      * Pass an empty key to clear it. The key is session-only (never persisted
      * by the engine).
      */
-    func setBinaryReputationConfig(enabled: Bool, apiKey: String) 
-    
-    func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?) 
-    
+    func setBinaryReputationConfig(enabled: Bool, apiKey: String)
+
+    func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?)
+
     /**
      * Pin a fan to a manual minimum RPM via the privileged helper.
      *
@@ -671,11 +675,11 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
      * SMC write failed). The UI surfaces the message directly to the user.
      */
     func setFanMinRpm(fanId: UInt8, rpm: Float)  -> String
-    
+
     func startLocalMcpServer(socketPath: String?)  -> String
-    
+
     func stopAgentSession(sessionId: String, force: Bool)  -> String
-    
+
     /**
      * Explicit teardown for the local MCP server. Dropping the handle
      * signals the accept loop, joins client threads, and unlinks the
@@ -683,16 +687,16 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
      * shutdown hook (e.g. applicationWillTerminate) because SwiftUI
      * @State drop is not guaranteed to run under NSApp.terminate().
      */
-    func stopLocalMcpServer() 
-    
-    func updateFrontmostAppState(state: FrontmostAppState) 
-    
-    func updateUiLagMetrics(metrics: UiLagMetrics) 
-    
+    func stopLocalMcpServer()
+
+    func updateFrontmostAppState(state: FrontmostAppState)
+
+    func updateUiLagMetrics(metrics: UiLagMetrics)
+
     func verifyTelemetryExport()  -> String
-    
+
     func wakeupAttributionJson(entityId: String, durationSeconds: UInt32, topStacks: UInt32)  -> JsonQueryResult
-    
+
 }
 open class MonitorEngine: MonitorEngineProtocol, @unchecked Sendable {
     fileprivate let pointer: UnsafeMutableRawPointer!
@@ -750,50 +754,50 @@ public convenience init() {
         try! rustCall { uniffi_aetower_ffi_fn_free_monitorengine(pointer, $0) }
     }
 
-    
 
-    
+
+
 open func clearDiagnostics() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_clear_diagnostics(self.uniffiClonePointer(),$0
     )
 })
 }
-    
+
 open func clearFrontmostAppState()  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_clear_frontmost_app_state(self.uniffiClonePointer(),$0
     )
 }
 }
-    
+
 open func clearHistory() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_clear_history(self.uniffiClonePointer(),$0
     )
 })
 }
-    
+
 open func configureChau7Endpoint(socketPath: String?)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_configure_chau7_endpoint(self.uniffiClonePointer(),
         FfiConverterOptionString.lower(socketPath),$0
     )
 }
 }
-    
+
 open func configureChromiumEndpoint(endpoint: String?)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_configure_chromium_endpoint(self.uniffiClonePointer(),
         FfiConverterOptionString.lower(endpoint),$0
     )
 }
 }
-    
+
 open func configureDockerSocketPath(socketPath: String)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_configure_docker_socket_path(self.uniffiClonePointer(),
         FfiConverterString.lower(socketPath),$0
     )
 }
 }
-    
+
 open func configurePrivilegedHelper(helperPath: String?, enabled: Bool)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_configure_privileged_helper(self.uniffiClonePointer(),
         FfiConverterOptionString.lower(helperPath),
@@ -801,14 +805,14 @@ open func configurePrivilegedHelper(helperPath: String?, enabled: Bool)  {try! r
     )
 }
 }
-    
+
 open func configureRuntimeCollection(settings: RuntimeCollectionSettingsInput)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_configure_runtime_collection(self.uniffiClonePointer(),
         FfiConverterTypeRuntimeCollectionSettingsInput_lower(settings),$0
     )
 }
 }
-    
+
 open func configureTelemetry(endpoint: String?, enabled: Bool, exportIntervalSecs: UInt32)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_configure_telemetry(self.uniffiClonePointer(),
         FfiConverterOptionString.lower(endpoint),
@@ -817,14 +821,14 @@ open func configureTelemetry(endpoint: String?, enabled: Bool, exportIntervalSec
     )
 }
 }
-    
+
 open func diagnosticsOverview() -> DiagnosticsOverview  {
     return try!  FfiConverterTypeDiagnosticsOverview_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_diagnostics_overview(self.uniffiClonePointer(),$0
     )
 })
 }
-    
+
 open func diffSnapshotsJson(beforeMillis: UInt64, afterMillis: UInt64, entityIds: [String], limit: UInt32) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_diff_snapshots_json(self.uniffiClonePointer(),
@@ -835,7 +839,7 @@ open func diffSnapshotsJson(beforeMillis: UInt64, afterMillis: UInt64, entityIds
     )
 })
 }
-    
+
 open func entityProcessTreeJson(entityId: String) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_entity_process_tree_json(self.uniffiClonePointer(),
@@ -843,7 +847,7 @@ open func entityProcessTreeJson(entityId: String) -> JsonQueryResult  {
     )
 })
 }
-    
+
 open func explainAnomaliesJson(entityIds: [String], limit: UInt32, windowMinutes: UInt32) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_explain_anomalies_json(self.uniffiClonePointer(),
@@ -853,7 +857,7 @@ open func explainAnomaliesJson(entityIds: [String], limit: UInt32, windowMinutes
     )
 })
 }
-    
+
 open func exportDiagnosticsJson(limit: UInt32) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_export_diagnostics_json(self.uniffiClonePointer(),
@@ -861,7 +865,7 @@ open func exportDiagnosticsJson(limit: UInt32) -> String  {
     )
 })
 }
-    
+
 open func exportDiagnosticsQueryJson(query: DiagnosticsQuery) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_export_diagnostics_query_json(self.uniffiClonePointer(),
@@ -869,14 +873,14 @@ open func exportDiagnosticsQueryJson(query: DiagnosticsQuery) -> String  {
     )
 })
 }
-    
+
 open func exportSnapshotJson() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_export_snapshot_json(self.uniffiClonePointer(),$0
     )
 })
 }
-    
+
     /**
      * Evaluate a sandboxed Rhai filter expression against the latest snapshot,
      * returning matched entity ids / pids as JSON.
@@ -888,7 +892,7 @@ open func filterEntitiesJson(expression: String) -> JsonQueryResult  {
     )
 })
 }
-    
+
 open func historyRangeSummary(startMillis: UInt64, endMillis: UInt64) -> HistoryRangeSummary?  {
     return try!  FfiConverterOptionTypeHistoryRangeSummary.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_history_range_summary(self.uniffiClonePointer(),
@@ -897,7 +901,7 @@ open func historyRangeSummary(startMillis: UInt64, endMillis: UInt64) -> History
     )
 })
 }
-    
+
 open func historyRangeSummaryResult(startMillis: UInt64, endMillis: UInt64) -> HistoryRangeSummaryResult  {
     return try!  FfiConverterTypeHistoryRangeSummaryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_history_range_summary_result(self.uniffiClonePointer(),
@@ -906,7 +910,7 @@ open func historyRangeSummaryResult(startMillis: UInt64, endMillis: UInt64) -> H
     )
 })
 }
-    
+
 open func latestDiagnostics(limit: UInt32) -> [DiagnosticsEvent]  {
     return try!  FfiConverterSequenceTypeDiagnosticsEvent.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_diagnostics(self.uniffiClonePointer(),
@@ -914,28 +918,28 @@ open func latestDiagnostics(limit: UInt32) -> [DiagnosticsEvent]  {
     )
 })
 }
-    
+
 open func latestRuntimeLagMetrics() -> RuntimeLagMetrics  {
     return try!  FfiConverterTypeRuntimeLagMetrics_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_runtime_lag_metrics(self.uniffiClonePointer(),$0
     )
 })
 }
-    
+
 open func latestSequence() -> UInt64  {
     return try!  FfiConverterUInt64.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_sequence(self.uniffiClonePointer(),$0
     )
 })
 }
-    
+
 open func latestSnapshot() -> SystemSnapshot  {
     return try!  FfiConverterTypeSystemSnapshot_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_snapshot(self.uniffiClonePointer(),$0
     )
 })
 }
-    
+
 open func latestSnapshotIfNewer(lastSequence: UInt64) -> SystemSnapshot?  {
     return try!  FfiConverterOptionTypeSystemSnapshot.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_latest_snapshot_if_newer(self.uniffiClonePointer(),
@@ -943,7 +947,28 @@ open func latestSnapshotIfNewer(lastSequence: UInt64) -> SystemSnapshot?  {
     )
 })
 }
-    
+
+open func latestUiSnapshot(processLimit: UInt32, trendPoints: UInt32, selectedEntityId: String?) -> UiSnapshot  {
+    return try!  FfiConverterTypeUiSnapshot_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_latest_ui_snapshot(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(processLimit),
+        FfiConverterUInt32.lower(trendPoints),
+        FfiConverterOptionString.lower(selectedEntityId),$0
+    )
+})
+}
+
+open func latestUiSnapshotIfNewer(lastSequence: UInt64, processLimit: UInt32, trendPoints: UInt32, selectedEntityId: String?) -> UiSnapshot?  {
+    return try!  FfiConverterOptionTypeUiSnapshot.lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_latest_ui_snapshot_if_newer(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(lastSequence),
+        FfiConverterUInt32.lower(processLimit),
+        FfiConverterUInt32.lower(trendPoints),
+        FfiConverterOptionString.lower(selectedEntityId),$0
+    )
+})
+}
+
 open func loadHistoryPage(startMillis: UInt64, endMillis: UInt64, beforeMillisExclusive: UInt64?, limit: UInt32) -> [SystemSnapshot]  {
     return try!  FfiConverterSequenceTypeSystemSnapshot.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_load_history_page(self.uniffiClonePointer(),
@@ -954,7 +979,7 @@ open func loadHistoryPage(startMillis: UInt64, endMillis: UInt64, beforeMillisEx
     )
 })
 }
-    
+
 open func loadHistoryPageResult(startMillis: UInt64, endMillis: UInt64, beforeMillisExclusive: UInt64?, limit: UInt32) -> HistoryPageLoadResult  {
     return try!  FfiConverterTypeHistoryPageLoadResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_load_history_page_result(self.uniffiClonePointer(),
@@ -965,7 +990,7 @@ open func loadHistoryPageResult(startMillis: UInt64, endMillis: UInt64, beforeMi
     )
 })
 }
-    
+
 open func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSnapshot]  {
     return try!  FfiConverterSequenceTypeSystemSnapshot.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_load_history_range(self.uniffiClonePointer(),
@@ -974,7 +999,7 @@ open func loadHistoryRange(startMillis: UInt64, endMillis: UInt64) -> [SystemSna
     )
 })
 }
-    
+
 open func maintainHistoryStore(aggressive: Bool) -> HistoryMaintenanceReport?  {
     return try!  FfiConverterOptionTypeHistoryMaintenanceReport.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_maintain_history_store(self.uniffiClonePointer(),
@@ -982,7 +1007,7 @@ open func maintainHistoryStore(aggressive: Bool) -> HistoryMaintenanceReport?  {
     )
 })
 }
-    
+
 open func memoryBreakdownJson(entityId: String, topRegions: UInt32) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_memory_breakdown_json(self.uniffiClonePointer(),
@@ -991,7 +1016,7 @@ open func memoryBreakdownJson(entityId: String, topRegions: UInt32) -> JsonQuery
     )
 })
 }
-    
+
     /**
      * Deep startup/persistence audit with code-signing enrichment. Explicit
      * because it may fork one codesign check per unique executable.
@@ -1002,7 +1027,7 @@ open func persistenceDeepScanJson() -> JsonQueryResult  {
     )
 })
 }
-    
+
     /**
      * Enumerate the machine's startup/persistence surface (launchd, login
      * items, cron) with cheap file metadata. On-demand; no data source needed.
@@ -1013,7 +1038,7 @@ open func persistenceScanJson() -> JsonQueryResult  {
     )
 })
 }
-    
+
 open func processActionHistoryJson(windowMinutes: UInt32, limit: UInt32) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_process_action_history_json(self.uniffiClonePointer(),
@@ -1022,7 +1047,7 @@ open func processActionHistoryJson(windowMinutes: UInt32, limit: UInt32) -> Json
     )
 })
 }
-    
+
 open func processActionJson(pid: UInt32, action: String, dryRun: Bool, reason: String?) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_process_action_json(self.uniffiClonePointer(),
@@ -1033,7 +1058,7 @@ open func processActionJson(pid: UInt32, action: String, dryRun: Bool, reason: S
     )
 })
 }
-    
+
 open func processInspectJson(pid: UInt32) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_process_inspect_json(self.uniffiClonePointer(),
@@ -1041,7 +1066,7 @@ open func processInspectJson(pid: UInt32) -> JsonQueryResult  {
     )
 })
 }
-    
+
 open func processOpenResourcesJson(pid: UInt32, limit: UInt32) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_process_open_resources_json(self.uniffiClonePointer(),
@@ -1050,7 +1075,7 @@ open func processOpenResourcesJson(pid: UInt32, limit: UInt32) -> JsonQueryResul
     )
 })
 }
-    
+
 open func processSampleJson(pid: UInt32, durationSeconds: UInt32, topStacks: UInt32) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_process_sample_json(self.uniffiClonePointer(),
@@ -1060,7 +1085,7 @@ open func processSampleJson(pid: UInt32, durationSeconds: UInt32, topStacks: UIn
     )
 })
 }
-    
+
 open func profileEntityJson(entityId: String, durationSeconds: UInt32, topStacks: UInt32) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_profile_entity_json(self.uniffiClonePointer(),
@@ -1070,7 +1095,7 @@ open func profileEntityJson(entityId: String, durationSeconds: UInt32, topStacks
     )
 })
 }
-    
+
 open func queryDiagnostics(query: DiagnosticsQuery) -> [DiagnosticsEvent]  {
     return try!  FfiConverterSequenceTypeDiagnosticsEvent.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_query_diagnostics(self.uniffiClonePointer(),
@@ -1078,14 +1103,14 @@ open func queryDiagnostics(query: DiagnosticsQuery) -> [DiagnosticsEvent]  {
     )
 })
 }
-    
+
 open func recordDiagnosticsEvent(event: DiagnosticsEvent)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_record_diagnostics_event(self.uniffiClonePointer(),
         FfiConverterTypeDiagnosticsEvent_lower(event),$0
     )
 }
 }
-    
+
     /**
      * Restore a fan to automatic (OS-controlled) mode.
      */
@@ -1096,7 +1121,7 @@ open func resetFanAuto(fanId: UInt8) -> String  {
     )
 })
 }
-    
+
     /**
      * Reverse pivot: list every process holding the given file path.
      */
@@ -1107,7 +1132,7 @@ open func resourceHoldersByFileJson(path: String) -> JsonQueryResult  {
     )
 })
 }
-    
+
     /**
      * Reverse pivot: list every process holding the given TCP/UDP port.
      */
@@ -1118,7 +1143,7 @@ open func resourceHoldersByPortJson(port: UInt32) -> JsonQueryResult  {
     )
 })
 }
-    
+
 open func selfMemoryAttributionJson(topRegions: UInt32) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_self_memory_attribution_json(self.uniffiClonePointer(),
@@ -1126,7 +1151,7 @@ open func selfMemoryAttributionJson(topRegions: UInt32) -> JsonQueryResult  {
     )
 })
 }
-    
+
     /**
      * Push binary-reputation consent + the VirusTotal API key into the engine.
      * Pass an empty key to clear it. The key is session-only (never persisted
@@ -1139,7 +1164,7 @@ open func setBinaryReputationConfig(enabled: Bool, apiKey: String)  {try! rustCa
     )
 }
 }
-    
+
 open func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detailOverride: String?)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_set_capability_state(self.uniffiClonePointer(),
         FfiConverterTypeCapabilityKind_lower(kind),
@@ -1148,7 +1173,7 @@ open func setCapabilityState(kind: CapabilityKind, state: CapabilityState, detai
     )
 }
 }
-    
+
     /**
      * Pin a fan to a manual minimum RPM via the privileged helper.
      *
@@ -1164,7 +1189,7 @@ open func setFanMinRpm(fanId: UInt8, rpm: Float) -> String  {
     )
 })
 }
-    
+
 open func startLocalMcpServer(socketPath: String?) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_start_local_mcp_server(self.uniffiClonePointer(),
@@ -1172,7 +1197,7 @@ open func startLocalMcpServer(socketPath: String?) -> String  {
     )
 })
 }
-    
+
 open func stopAgentSession(sessionId: String, force: Bool) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_stop_agent_session(self.uniffiClonePointer(),
@@ -1181,7 +1206,7 @@ open func stopAgentSession(sessionId: String, force: Bool) -> String  {
     )
 })
 }
-    
+
     /**
      * Explicit teardown for the local MCP server. Dropping the handle
      * signals the accept loop, joins client threads, and unlinks the
@@ -1194,28 +1219,28 @@ open func stopLocalMcpServer()  {try! rustCall() {
     )
 }
 }
-    
+
 open func updateFrontmostAppState(state: FrontmostAppState)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_update_frontmost_app_state(self.uniffiClonePointer(),
         FfiConverterTypeFrontmostAppState_lower(state),$0
     )
 }
 }
-    
+
 open func updateUiLagMetrics(metrics: UiLagMetrics)  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_update_ui_lag_metrics(self.uniffiClonePointer(),
         FfiConverterTypeUiLagMetrics_lower(metrics),$0
     )
 }
 }
-    
+
 open func verifyTelemetryExport() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_verify_telemetry_export(self.uniffiClonePointer(),$0
     )
 })
 }
-    
+
 open func wakeupAttributionJson(entityId: String, durationSeconds: UInt32, topStacks: UInt32) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_wakeup_attribution_json(self.uniffiClonePointer(),
@@ -1225,7 +1250,7 @@ open func wakeupAttributionJson(entityId: String, durationSeconds: UInt32, topSt
     )
 })
 }
-    
+
 
 }
 
@@ -1451,28 +1476,28 @@ public struct FfiConverterTypeAdapterContextSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AdapterContextSnapshot {
         return
             try AdapterContextSnapshot(
-                kind: FfiConverterTypeAdapterContextKind.read(from: &buf), 
-                status: FfiConverterOptionString.read(from: &buf), 
-                url: FfiConverterOptionString.read(from: &buf), 
-                workspacePath: FfiConverterOptionString.read(from: &buf), 
-                repoRoot: FfiConverterOptionString.read(from: &buf), 
-                imageName: FfiConverterOptionString.read(from: &buf), 
-                sessionId: FfiConverterOptionString.read(from: &buf), 
-                appVersion: FfiConverterOptionString.read(from: &buf), 
-                buildSha: FfiConverterOptionString.read(from: &buf), 
-                buildTimestamp: FfiConverterOptionString.read(from: &buf), 
-                buildChannel: FfiConverterOptionString.read(from: &buf), 
-                networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
-                networkSendBps: FfiConverterUInt64.read(from: &buf), 
-                diskReadBps: FfiConverterUInt64.read(from: &buf), 
-                diskWriteBps: FfiConverterUInt64.read(from: &buf), 
-                memoryLimitBytes: FfiConverterUInt64.read(from: &buf), 
-                jsHeapTotalBytes: FfiConverterUInt64.read(from: &buf), 
-                domNodes: FfiConverterUInt64.read(from: &buf), 
-                documents: FfiConverterUInt64.read(from: &buf), 
-                frames: FfiConverterUInt64.read(from: &buf), 
-                processCount: FfiConverterOptionUInt32.read(from: &buf), 
-                connectionCount: FfiConverterOptionUInt32.read(from: &buf), 
+                kind: FfiConverterTypeAdapterContextKind.read(from: &buf),
+                status: FfiConverterOptionString.read(from: &buf),
+                url: FfiConverterOptionString.read(from: &buf),
+                workspacePath: FfiConverterOptionString.read(from: &buf),
+                repoRoot: FfiConverterOptionString.read(from: &buf),
+                imageName: FfiConverterOptionString.read(from: &buf),
+                sessionId: FfiConverterOptionString.read(from: &buf),
+                appVersion: FfiConverterOptionString.read(from: &buf),
+                buildSha: FfiConverterOptionString.read(from: &buf),
+                buildTimestamp: FfiConverterOptionString.read(from: &buf),
+                buildChannel: FfiConverterOptionString.read(from: &buf),
+                networkReceiveBps: FfiConverterUInt64.read(from: &buf),
+                networkSendBps: FfiConverterUInt64.read(from: &buf),
+                diskReadBps: FfiConverterUInt64.read(from: &buf),
+                diskWriteBps: FfiConverterUInt64.read(from: &buf),
+                memoryLimitBytes: FfiConverterUInt64.read(from: &buf),
+                jsHeapTotalBytes: FfiConverterUInt64.read(from: &buf),
+                domNodes: FfiConverterUInt64.read(from: &buf),
+                documents: FfiConverterUInt64.read(from: &buf),
+                frames: FfiConverterUInt64.read(from: &buf),
+                processCount: FfiConverterOptionUInt32.read(from: &buf),
+                connectionCount: FfiConverterOptionUInt32.read(from: &buf),
                 ports: FfiConverterSequenceString.read(from: &buf)
         )
     }
@@ -1533,7 +1558,7 @@ public struct AgentCostSummary {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(totalInputTokens: UInt64, totalOutputTokens: UInt64, costUsd: Float, totalRuns: UInt32, 
+    public init(totalInputTokens: UInt64, totalOutputTokens: UInt64, costUsd: Float, totalRuns: UInt32,
         /**
          * Cumulative energy in nanojoules for this AI session. The UI can
          * convert: nJ → Wh (÷ 3.6e12), Wh → mAh at 3.7V (Wh / 3.7 * 1000).
@@ -1589,10 +1614,10 @@ public struct FfiConverterTypeAgentCostSummary: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AgentCostSummary {
         return
             try AgentCostSummary(
-                totalInputTokens: FfiConverterUInt64.read(from: &buf), 
-                totalOutputTokens: FfiConverterUInt64.read(from: &buf), 
-                costUsd: FfiConverterFloat.read(from: &buf), 
-                totalRuns: FfiConverterUInt32.read(from: &buf), 
+                totalInputTokens: FfiConverterUInt64.read(from: &buf),
+                totalOutputTokens: FfiConverterUInt64.read(from: &buf),
+                costUsd: FfiConverterFloat.read(from: &buf),
+                totalRuns: FfiConverterUInt32.read(from: &buf),
                 sessionEnergyNj: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -1649,13 +1674,13 @@ public struct AggregateMetrics {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryResidentBytes: UInt64, memoryPhysicalFootprintBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, 
+    public init(cpuPercent: Float, memoryResidentBytes: UInt64, memoryPhysicalFootprintBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float,
         /**
          * Per-second energy draw in nanojoules (= nanowatts), summed across
          * all processes belonging to this entity. Zero when the kernel does
          * not report energy. The UI can format as milliwatts (`/ 1e6`) or
          * watts (`/ 1e9`) depending on magnitude.
-         */energyNjPerS: Double, 
+         */energyNjPerS: Double,
         /**
          * Heuristic GPU share attributed to this entity (0-100). Only non-zero
          * for AI agent entities; zero for everything else.
@@ -1751,18 +1776,18 @@ public struct FfiConverterTypeAggregateMetrics: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AggregateMetrics {
         return
             try AggregateMetrics(
-                cpuPercent: FfiConverterFloat.read(from: &buf), 
-                memoryResidentBytes: FfiConverterUInt64.read(from: &buf), 
-                memoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf), 
-                diskReadBps: FfiConverterUInt64.read(from: &buf), 
-                diskWriteBps: FfiConverterUInt64.read(from: &buf), 
-                networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
-                networkSendBps: FfiConverterUInt64.read(from: &buf), 
-                wakeupsPerSecond: FfiConverterFloat.read(from: &buf), 
-                energyNjPerS: FfiConverterDouble.read(from: &buf), 
-                estimatedGpuPercent: FfiConverterFloat.read(from: &buf), 
-                processCount: FfiConverterUInt32.read(from: &buf), 
-                threadCount: FfiConverterUInt32.read(from: &buf), 
+                cpuPercent: FfiConverterFloat.read(from: &buf),
+                memoryResidentBytes: FfiConverterUInt64.read(from: &buf),
+                memoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf),
+                diskReadBps: FfiConverterUInt64.read(from: &buf),
+                diskWriteBps: FfiConverterUInt64.read(from: &buf),
+                networkReceiveBps: FfiConverterUInt64.read(from: &buf),
+                networkSendBps: FfiConverterUInt64.read(from: &buf),
+                wakeupsPerSecond: FfiConverterFloat.read(from: &buf),
+                energyNjPerS: FfiConverterDouble.read(from: &buf),
+                estimatedGpuPercent: FfiConverterFloat.read(from: &buf),
+                processCount: FfiConverterUInt32.read(from: &buf),
+                threadCount: FfiConverterUInt32.read(from: &buf),
                 isForeground: FfiConverterBool.read(from: &buf)
         )
     }
@@ -1870,11 +1895,11 @@ public struct FfiConverterTypeAiRepoSummary: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AiRepoSummary {
         return
             try AiRepoSummary(
-                repoPath: FfiConverterString.read(from: &buf), 
-                displayName: FfiConverterString.read(from: &buf), 
-                totalRuns: FfiConverterUInt32.read(from: &buf), 
-                totalTokens: FfiConverterUInt64.read(from: &buf), 
-                totalCostUsd: FfiConverterFloat.read(from: &buf), 
+                repoPath: FfiConverterString.read(from: &buf),
+                displayName: FfiConverterString.read(from: &buf),
+                totalRuns: FfiConverterUInt32.read(from: &buf),
+                totalTokens: FfiConverterUInt64.read(from: &buf),
+                totalCostUsd: FfiConverterFloat.read(from: &buf),
                 providers: FfiConverterSequenceString.read(from: &buf)
         )
     }
@@ -1982,11 +2007,11 @@ public struct FfiConverterTypeBatteryHealthSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BatteryHealthSnapshot {
         return
             try BatteryHealthSnapshot(
-                cycleCount: FfiConverterOptionUInt32.read(from: &buf), 
-                designCapacityMah: FfiConverterOptionUInt32.read(from: &buf), 
-                maxCapacityMah: FfiConverterOptionUInt32.read(from: &buf), 
-                healthPercent: FfiConverterOptionFloat.read(from: &buf), 
-                condition: FfiConverterTypeBatteryCondition.read(from: &buf), 
+                cycleCount: FfiConverterOptionUInt32.read(from: &buf),
+                designCapacityMah: FfiConverterOptionUInt32.read(from: &buf),
+                maxCapacityMah: FfiConverterOptionUInt32.read(from: &buf),
+                healthPercent: FfiConverterOptionFloat.read(from: &buf),
+                condition: FfiConverterTypeBatteryCondition.read(from: &buf),
                 temperatureCelsius: FfiConverterOptionFloat.read(from: &buf)
         )
     }
@@ -2102,14 +2127,14 @@ public struct FfiConverterTypeBinaryReputation: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BinaryReputation {
         return
             try BinaryReputation(
-                sha256: FfiConverterString.read(from: &buf), 
-                malicious: FfiConverterUInt32.read(from: &buf), 
-                suspicious: FfiConverterUInt32.read(from: &buf), 
-                harmless: FfiConverterUInt32.read(from: &buf), 
-                undetected: FfiConverterUInt32.read(from: &buf), 
-                totalEngines: FfiConverterUInt32.read(from: &buf), 
-                verdict: FfiConverterTypeReputationVerdict.read(from: &buf), 
-                permalink: FfiConverterString.read(from: &buf), 
+                sha256: FfiConverterString.read(from: &buf),
+                malicious: FfiConverterUInt32.read(from: &buf),
+                suspicious: FfiConverterUInt32.read(from: &buf),
+                harmless: FfiConverterUInt32.read(from: &buf),
+                undetected: FfiConverterUInt32.read(from: &buf),
+                totalEngines: FfiConverterUInt32.read(from: &buf),
+                verdict: FfiConverterTypeReputationVerdict.read(from: &buf),
+                permalink: FfiConverterString.read(from: &buf),
                 checkedAtMillis: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -2205,9 +2230,9 @@ public struct FfiConverterTypeBluetoothDeviceBattery: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BluetoothDeviceBattery {
         return
             try BluetoothDeviceBattery(
-                name: FfiConverterString.read(from: &buf), 
-                address: FfiConverterString.read(from: &buf), 
-                batteryPercent: FfiConverterOptionUInt8.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf),
+                address: FfiConverterString.read(from: &buf),
+                batteryPercent: FfiConverterOptionUInt8.read(from: &buf),
                 deviceType: FfiConverterTypeBluetoothDeviceType.read(from: &buf)
         )
     }
@@ -2291,9 +2316,9 @@ public struct FfiConverterTypeBootSessionSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BootSessionSnapshot {
         return
             try BootSessionSnapshot(
-                bootId: FfiConverterOptionString.read(from: &buf), 
-                bootTimeMillis: FfiConverterOptionUInt64.read(from: &buf), 
-                hostUptimeMillis: FfiConverterOptionUInt64.read(from: &buf), 
+                bootId: FfiConverterOptionString.read(from: &buf),
+                bootTimeMillis: FfiConverterOptionUInt64.read(from: &buf),
+                hostUptimeMillis: FfiConverterOptionUInt64.read(from: &buf),
                 previousShutdown: FfiConverterOptionTypeRebootCauseSnapshot.read(from: &buf)
         )
     }
@@ -2383,10 +2408,10 @@ public struct FfiConverterTypeCapabilitySnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CapabilitySnapshot {
         return
             try CapabilitySnapshot(
-                kind: FfiConverterTypeCapabilityKind.read(from: &buf), 
-                state: FfiConverterTypeCapabilityState.read(from: &buf), 
-                health: FfiConverterTypeCapabilityHealth.read(from: &buf), 
-                detail: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeCapabilityKind.read(from: &buf),
+                state: FfiConverterTypeCapabilityState.read(from: &buf),
+                health: FfiConverterTypeCapabilityHealth.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
                 lastUpdatedMillis: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -2579,27 +2604,27 @@ public struct FfiConverterTypeChau7SessionSummary: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Chau7SessionSummary {
         return
             try Chau7SessionSummary(
-                id: FfiConverterString.read(from: &buf), 
-                tabId: FfiConverterOptionString.read(from: &buf), 
-                sessionId: FfiConverterOptionString.read(from: &buf), 
-                title: FfiConverterString.read(from: &buf), 
-                provider: FfiConverterString.read(from: &buf), 
-                status: FfiConverterString.read(from: &buf), 
-                workspacePath: FfiConverterOptionString.read(from: &buf), 
-                repoRoot: FfiConverterOptionString.read(from: &buf), 
-                gitBranch: FfiConverterOptionString.read(from: &buf), 
-                activeApp: FfiConverterOptionString.read(from: &buf), 
-                windowId: FfiConverterUInt32.read(from: &buf), 
-                runCount: FfiConverterUInt32.read(from: &buf), 
-                lastActive: FfiConverterString.read(from: &buf), 
-                turnCount: FfiConverterUInt32.read(from: &buf), 
-                childSessionCount: FfiConverterUInt32.read(from: &buf), 
-                pendingApprovalDescription: FfiConverterOptionString.read(from: &buf), 
-                lastExitReason: FfiConverterOptionString.read(from: &buf), 
-                activeRunDurationMillis: FfiConverterUInt64.read(from: &buf), 
-                isAtPrompt: FfiConverterBool.read(from: &buf), 
-                shellLoading: FfiConverterBool.read(from: &buf), 
-                ctoActive: FfiConverterBool.read(from: &buf), 
+                id: FfiConverterString.read(from: &buf),
+                tabId: FfiConverterOptionString.read(from: &buf),
+                sessionId: FfiConverterOptionString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                provider: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                workspacePath: FfiConverterOptionString.read(from: &buf),
+                repoRoot: FfiConverterOptionString.read(from: &buf),
+                gitBranch: FfiConverterOptionString.read(from: &buf),
+                activeApp: FfiConverterOptionString.read(from: &buf),
+                windowId: FfiConverterUInt32.read(from: &buf),
+                runCount: FfiConverterUInt32.read(from: &buf),
+                lastActive: FfiConverterString.read(from: &buf),
+                turnCount: FfiConverterUInt32.read(from: &buf),
+                childSessionCount: FfiConverterUInt32.read(from: &buf),
+                pendingApprovalDescription: FfiConverterOptionString.read(from: &buf),
+                lastExitReason: FfiConverterOptionString.read(from: &buf),
+                activeRunDurationMillis: FfiConverterUInt64.read(from: &buf),
+                isAtPrompt: FfiConverterBool.read(from: &buf),
+                shellLoading: FfiConverterBool.read(from: &buf),
+                ctoActive: FfiConverterBool.read(from: &buf),
                 linkedEntityIds: FfiConverterSequenceString.read(from: &buf)
         )
     }
@@ -2779,22 +2804,22 @@ public struct FfiConverterTypeComponentSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ComponentSnapshot {
         return
             try ComponentSnapshot(
-                kind: FfiConverterTypeComponentKind.read(from: &buf), 
-                title: FfiConverterString.read(from: &buf), 
-                detail: FfiConverterString.read(from: &buf), 
-                adapterContext: FfiConverterOptionTypeAdapterContextSnapshot.read(from: &buf), 
-                provenance: FfiConverterOptionTypeProvenanceSnapshot.read(from: &buf), 
-                processId: FfiConverterOptionUInt32.read(from: &buf), 
-                startTimeMillis: FfiConverterUInt64.read(from: &buf), 
-                executablePath: FfiConverterOptionString.read(from: &buf), 
-                commandLine: FfiConverterOptionString.read(from: &buf), 
-                parentSummary: FfiConverterOptionString.read(from: &buf), 
-                launchedBy: FfiConverterOptionString.read(from: &buf), 
-                cpuPercent: FfiConverterFloat.read(from: &buf), 
-                memoryBytes: FfiConverterUInt64.read(from: &buf), 
-                memoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf), 
-                cwd: FfiConverterOptionString.read(from: &buf), 
-                user: FfiConverterOptionString.read(from: &buf), 
+                kind: FfiConverterTypeComponentKind.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                adapterContext: FfiConverterOptionTypeAdapterContextSnapshot.read(from: &buf),
+                provenance: FfiConverterOptionTypeProvenanceSnapshot.read(from: &buf),
+                processId: FfiConverterOptionUInt32.read(from: &buf),
+                startTimeMillis: FfiConverterUInt64.read(from: &buf),
+                executablePath: FfiConverterOptionString.read(from: &buf),
+                commandLine: FfiConverterOptionString.read(from: &buf),
+                parentSummary: FfiConverterOptionString.read(from: &buf),
+                launchedBy: FfiConverterOptionString.read(from: &buf),
+                cpuPercent: FfiConverterFloat.read(from: &buf),
+                memoryBytes: FfiConverterUInt64.read(from: &buf),
+                memoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf),
+                cwd: FfiConverterOptionString.read(from: &buf),
+                user: FfiConverterOptionString.read(from: &buf),
                 threadCount: FfiConverterUInt32.read(from: &buf)
         )
     }
@@ -2885,8 +2910,8 @@ public struct FfiConverterTypeCoreLoad: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreLoad {
         return
             try CoreLoad(
-                index: FfiConverterUInt32.read(from: &buf), 
-                percent: FfiConverterFloat.read(from: &buf), 
+                index: FfiConverterUInt32.read(from: &buf),
+                percent: FfiConverterFloat.read(from: &buf),
                 kind: FfiConverterTypeCoreKind.read(from: &buf)
         )
     }
@@ -3017,17 +3042,17 @@ public struct FfiConverterTypeDiagnosticsEvent: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsEvent {
         return
             try DiagnosticsEvent(
-                id: FfiConverterString.read(from: &buf), 
-                timestampMillis: FfiConverterUInt64.read(from: &buf), 
-                level: FfiConverterTypeDiagnosticsLevel.read(from: &buf), 
-                subsystem: FfiConverterTypeDiagnosticsSubsystem.read(from: &buf), 
-                eventType: FfiConverterString.read(from: &buf), 
-                sequence: FfiConverterOptionUInt64.read(from: &buf), 
-                entityId: FfiConverterOptionString.read(from: &buf), 
-                adapter: FfiConverterOptionString.read(from: &buf), 
-                capability: FfiConverterOptionString.read(from: &buf), 
-                message: FfiConverterString.read(from: &buf), 
-                fields: FfiConverterSequenceTypeDiagnosticsField.read(from: &buf), 
+                id: FfiConverterString.read(from: &buf),
+                timestampMillis: FfiConverterUInt64.read(from: &buf),
+                level: FfiConverterTypeDiagnosticsLevel.read(from: &buf),
+                subsystem: FfiConverterTypeDiagnosticsSubsystem.read(from: &buf),
+                eventType: FfiConverterString.read(from: &buf),
+                sequence: FfiConverterOptionUInt64.read(from: &buf),
+                entityId: FfiConverterOptionString.read(from: &buf),
+                adapter: FfiConverterOptionString.read(from: &buf),
+                capability: FfiConverterOptionString.read(from: &buf),
+                message: FfiConverterString.read(from: &buf),
+                fields: FfiConverterSequenceTypeDiagnosticsField.read(from: &buf),
                 sensitive: FfiConverterBool.read(from: &buf)
         )
     }
@@ -3107,7 +3132,7 @@ public struct FfiConverterTypeDiagnosticsField: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsField {
         return
             try DiagnosticsField(
-                key: FfiConverterString.read(from: &buf), 
+                key: FfiConverterString.read(from: &buf),
                 value: FfiConverterString.read(from: &buf)
         )
     }
@@ -3237,17 +3262,17 @@ public struct FfiConverterTypeDiagnosticsOverview: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsOverview {
         return
             try DiagnosticsOverview(
-                ringCapacity: FfiConverterUInt32.read(from: &buf), 
-                currentSize: FfiConverterUInt32.read(from: &buf), 
-                droppedEvents: FfiConverterUInt64.read(from: &buf), 
-                errorCount: FfiConverterUInt32.read(from: &buf), 
-                warnCount: FfiConverterUInt32.read(from: &buf), 
-                lastEventMillis: FfiConverterOptionUInt64.read(from: &buf), 
-                lastErrorMillis: FfiConverterOptionUInt64.read(from: &buf), 
-                lastErrorMessage: FfiConverterOptionString.read(from: &buf), 
-                persistedEvents: FfiConverterUInt64.read(from: &buf), 
-                persistedPath: FfiConverterOptionString.read(from: &buf), 
-                persistedBytes: FfiConverterUInt64.read(from: &buf), 
+                ringCapacity: FfiConverterUInt32.read(from: &buf),
+                currentSize: FfiConverterUInt32.read(from: &buf),
+                droppedEvents: FfiConverterUInt64.read(from: &buf),
+                errorCount: FfiConverterUInt32.read(from: &buf),
+                warnCount: FfiConverterUInt32.read(from: &buf),
+                lastEventMillis: FfiConverterOptionUInt64.read(from: &buf),
+                lastErrorMillis: FfiConverterOptionUInt64.read(from: &buf),
+                lastErrorMessage: FfiConverterOptionString.read(from: &buf),
+                persistedEvents: FfiConverterUInt64.read(from: &buf),
+                persistedPath: FfiConverterOptionString.read(from: &buf),
+                persistedBytes: FfiConverterUInt64.read(from: &buf),
                 persistenceError: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -3351,11 +3376,11 @@ public struct FfiConverterTypeDiagnosticsQuery: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsQuery {
         return
             try DiagnosticsQuery(
-                limit: FfiConverterUInt32.read(from: &buf), 
-                minimumLevel: FfiConverterOptionTypeDiagnosticsLevel.read(from: &buf), 
-                subsystem: FfiConverterOptionTypeDiagnosticsSubsystem.read(from: &buf), 
-                search: FfiConverterOptionString.read(from: &buf), 
-                sinceMillis: FfiConverterOptionUInt64.read(from: &buf), 
+                limit: FfiConverterUInt32.read(from: &buf),
+                minimumLevel: FfiConverterOptionTypeDiagnosticsLevel.read(from: &buf),
+                subsystem: FfiConverterOptionTypeDiagnosticsSubsystem.read(from: &buf),
+                search: FfiConverterOptionString.read(from: &buf),
+                sinceMillis: FfiConverterOptionUInt64.read(from: &buf),
                 includePersisted: FfiConverterBool.read(from: &buf)
         )
     }
@@ -3484,15 +3509,15 @@ public struct FfiConverterTypeDiskHealthSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiskHealthSnapshot {
         return
             try DiskHealthSnapshot(
-                deviceIdentifier: FfiConverterString.read(from: &buf), 
-                model: FfiConverterString.read(from: &buf), 
-                totalSizeBytes: FfiConverterUInt64.read(from: &buf), 
-                status: FfiConverterTypeDiskHealthStatus.read(from: &buf), 
-                temperatureCelsius: FfiConverterOptionFloat.read(from: &buf), 
-                percentageUsed: FfiConverterOptionUInt8.read(from: &buf), 
-                availableSparePercent: FfiConverterOptionUInt8.read(from: &buf), 
-                powerOnHours: FfiConverterOptionUInt64.read(from: &buf), 
-                powerCycles: FfiConverterOptionUInt64.read(from: &buf), 
+                deviceIdentifier: FfiConverterString.read(from: &buf),
+                model: FfiConverterString.read(from: &buf),
+                totalSizeBytes: FfiConverterUInt64.read(from: &buf),
+                status: FfiConverterTypeDiskHealthStatus.read(from: &buf),
+                temperatureCelsius: FfiConverterOptionFloat.read(from: &buf),
+                percentageUsed: FfiConverterOptionUInt8.read(from: &buf),
+                availableSparePercent: FfiConverterOptionUInt8.read(from: &buf),
+                powerOnHours: FfiConverterOptionUInt64.read(from: &buf),
+                powerCycles: FfiConverterOptionUInt64.read(from: &buf),
                 mediaErrors: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
@@ -3726,33 +3751,33 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EntitySnapshot {
         return
             try EntitySnapshot(
-                entityId: FfiConverterString.read(from: &buf), 
-                displayName: FfiConverterString.read(from: &buf), 
-                primaryProvenance: FfiConverterOptionTypeProvenanceSnapshot.read(from: &buf), 
-                launcherSummary: FfiConverterOptionString.read(from: &buf), 
-                attributionNotes: FfiConverterSequenceString.read(from: &buf), 
-                bundleId: FfiConverterOptionString.read(from: &buf), 
-                executablePath: FfiConverterOptionString.read(from: &buf), 
-                oldestProcessStartMillis: FfiConverterUInt64.read(from: &buf), 
-                newestProcessStartMillis: FfiConverterUInt64.read(from: &buf), 
-                entityKind: FfiConverterTypeEntityKind.read(from: &buf), 
-                metrics: FfiConverterTypeAggregateMetrics.read(from: &buf), 
-                friction: FfiConverterTypeFrictionBreakdown.read(from: &buf), 
-                components: FfiConverterSequenceTypeComponentSnapshot.read(from: &buf), 
-                trend: FfiConverterTypeMetricTrend.read(from: &buf), 
-                badges: FfiConverterSequenceString.read(from: &buf), 
-                activeWindowTitle: FfiConverterOptionString.read(from: &buf), 
-                recentChangeSummary: FfiConverterOptionString.read(from: &buf), 
-                anomalyDetected: FfiConverterBool.read(from: &buf), 
-                thermalContribution: FfiConverterOptionString.read(from: &buf), 
-                groupingSuggestion: FfiConverterOptionString.read(from: &buf), 
-                agentCost: FfiConverterOptionTypeAgentCostSummary.read(from: &buf), 
-                sessionMarkers: FfiConverterSequenceTypeSessionMarker.read(from: &buf), 
-                recommendations: FfiConverterSequenceTypeRecommendation.read(from: &buf), 
-                networkConnections: FfiConverterSequenceTypeNetworkConnection.read(from: &buf), 
-                signingClassification: FfiConverterString.read(from: &buf), 
-                isAdhoc: FfiConverterBool.read(from: &buf), 
-                binaryReputation: FfiConverterOptionTypeBinaryReputation.read(from: &buf), 
+                entityId: FfiConverterString.read(from: &buf),
+                displayName: FfiConverterString.read(from: &buf),
+                primaryProvenance: FfiConverterOptionTypeProvenanceSnapshot.read(from: &buf),
+                launcherSummary: FfiConverterOptionString.read(from: &buf),
+                attributionNotes: FfiConverterSequenceString.read(from: &buf),
+                bundleId: FfiConverterOptionString.read(from: &buf),
+                executablePath: FfiConverterOptionString.read(from: &buf),
+                oldestProcessStartMillis: FfiConverterUInt64.read(from: &buf),
+                newestProcessStartMillis: FfiConverterUInt64.read(from: &buf),
+                entityKind: FfiConverterTypeEntityKind.read(from: &buf),
+                metrics: FfiConverterTypeAggregateMetrics.read(from: &buf),
+                friction: FfiConverterTypeFrictionBreakdown.read(from: &buf),
+                components: FfiConverterSequenceTypeComponentSnapshot.read(from: &buf),
+                trend: FfiConverterTypeMetricTrend.read(from: &buf),
+                badges: FfiConverterSequenceString.read(from: &buf),
+                activeWindowTitle: FfiConverterOptionString.read(from: &buf),
+                recentChangeSummary: FfiConverterOptionString.read(from: &buf),
+                anomalyDetected: FfiConverterBool.read(from: &buf),
+                thermalContribution: FfiConverterOptionString.read(from: &buf),
+                groupingSuggestion: FfiConverterOptionString.read(from: &buf),
+                agentCost: FfiConverterOptionTypeAgentCostSummary.read(from: &buf),
+                sessionMarkers: FfiConverterSequenceTypeSessionMarker.read(from: &buf),
+                recommendations: FfiConverterSequenceTypeRecommendation.read(from: &buf),
+                networkConnections: FfiConverterSequenceTypeNetworkConnection.read(from: &buf),
+                signingClassification: FfiConverterString.read(from: &buf),
+                isAdhoc: FfiConverterBool.read(from: &buf),
+                binaryReputation: FfiConverterOptionTypeBinaryReputation.read(from: &buf),
                 appVersion: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -3866,10 +3891,10 @@ public struct FfiConverterTypeFanReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FanReading {
         return
             try FanReading(
-                id: FfiConverterUInt8.read(from: &buf), 
-                name: FfiConverterString.read(from: &buf), 
-                currentRpm: FfiConverterFloat.read(from: &buf), 
-                minRpm: FfiConverterFloat.read(from: &buf), 
+                id: FfiConverterUInt8.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                currentRpm: FfiConverterFloat.read(from: &buf),
+                minRpm: FfiConverterFloat.read(from: &buf),
                 maxRpm: FfiConverterFloat.read(from: &buf)
         )
     }
@@ -3996,16 +4021,16 @@ public struct FfiConverterTypeFrictionBreakdown: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FrictionBreakdown {
         return
             try FrictionBreakdown(
-                totalScore: FfiConverterFloat.read(from: &buf), 
-                cpuScore: FfiConverterFloat.read(from: &buf), 
-                memoryScore: FfiConverterFloat.read(from: &buf), 
-                diskScore: FfiConverterFloat.read(from: &buf), 
-                networkScore: FfiConverterFloat.read(from: &buf), 
-                wakeupsScore: FfiConverterFloat.read(from: &buf), 
-                pressureScore: FfiConverterFloat.read(from: &buf), 
-                foregroundBonus: FfiConverterFloat.read(from: &buf), 
-                energyImpactScore: FfiConverterFloat.read(from: &buf), 
-                reasons: FfiConverterSequenceString.read(from: &buf), 
+                totalScore: FfiConverterFloat.read(from: &buf),
+                cpuScore: FfiConverterFloat.read(from: &buf),
+                memoryScore: FfiConverterFloat.read(from: &buf),
+                diskScore: FfiConverterFloat.read(from: &buf),
+                networkScore: FfiConverterFloat.read(from: &buf),
+                wakeupsScore: FfiConverterFloat.read(from: &buf),
+                pressureScore: FfiConverterFloat.read(from: &buf),
+                foregroundBonus: FfiConverterFloat.read(from: &buf),
+                energyImpactScore: FfiConverterFloat.read(from: &buf),
+                reasons: FfiConverterSequenceString.read(from: &buf),
                 contributors: FfiConverterSequenceTypeFrictionContributor.read(from: &buf)
         )
     }
@@ -4096,9 +4121,9 @@ public struct FfiConverterTypeFrictionContributor: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FrictionContributor {
         return
             try FrictionContributor(
-                key: FfiConverterString.read(from: &buf), 
-                label: FfiConverterString.read(from: &buf), 
-                score: FfiConverterFloat.read(from: &buf), 
+                key: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                score: FfiConverterFloat.read(from: &buf),
                 detail: FfiConverterString.read(from: &buf)
         )
     }
@@ -4188,10 +4213,10 @@ public struct FfiConverterTypeFrontmostAppState: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FrontmostAppState {
         return
             try FrontmostAppState(
-                appName: FfiConverterString.read(from: &buf), 
-                bundleId: FfiConverterOptionString.read(from: &buf), 
-                executablePath: FfiConverterOptionString.read(from: &buf), 
-                windowTitle: FfiConverterOptionString.read(from: &buf), 
+                appName: FfiConverterString.read(from: &buf),
+                bundleId: FfiConverterOptionString.read(from: &buf),
+                executablePath: FfiConverterOptionString.read(from: &buf),
+                windowTitle: FfiConverterOptionString.read(from: &buf),
                 capturedAtMillis: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -4312,15 +4337,15 @@ public struct FfiConverterTypeHistoryMaintenanceReport: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistoryMaintenanceReport {
         return
             try HistoryMaintenanceReport(
-                storeBytesBefore: FfiConverterUInt64.read(from: &buf), 
-                walBytesBefore: FfiConverterUInt64.read(from: &buf), 
-                storeBytesAfter: FfiConverterUInt64.read(from: &buf), 
-                walBytesAfter: FfiConverterUInt64.read(from: &buf), 
-                checkpointed: FfiConverterBool.read(from: &buf), 
-                vacuumed: FfiConverterBool.read(from: &buf), 
-                prunedRows: FfiConverterUInt64.read(from: &buf), 
-                aggressiveReason: FfiConverterOptionString.read(from: &buf), 
-                cancelled: FfiConverterBool.read(from: &buf), 
+                storeBytesBefore: FfiConverterUInt64.read(from: &buf),
+                walBytesBefore: FfiConverterUInt64.read(from: &buf),
+                storeBytesAfter: FfiConverterUInt64.read(from: &buf),
+                walBytesAfter: FfiConverterUInt64.read(from: &buf),
+                checkpointed: FfiConverterBool.read(from: &buf),
+                vacuumed: FfiConverterBool.read(from: &buf),
+                prunedRows: FfiConverterUInt64.read(from: &buf),
+                aggressiveReason: FfiConverterOptionString.read(from: &buf),
+                cancelled: FfiConverterBool.read(from: &buf),
                 elapsedMillis: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -4398,7 +4423,7 @@ public struct FfiConverterTypeHistoryPageLoadResult: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistoryPageLoadResult {
         return
             try HistoryPageLoadResult(
-                snapshots: FfiConverterSequenceTypeSystemSnapshot.read(from: &buf), 
+                snapshots: FfiConverterSequenceTypeSystemSnapshot.read(from: &buf),
                 errorMessage: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -4504,13 +4529,13 @@ public struct FfiConverterTypeHistoryRangeSummary: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistoryRangeSummary {
         return
             try HistoryRangeSummary(
-                storeBytes: FfiConverterUInt64.read(from: &buf), 
-                walBytes: FfiConverterUInt64.read(from: &buf), 
-                snapshotCount: FfiConverterUInt64.read(from: &buf), 
-                quarantineCount: FfiConverterUInt64.read(from: &buf), 
-                rangeCount: FfiConverterUInt64.read(from: &buf), 
-                oldestMillis: FfiConverterOptionUInt64.read(from: &buf), 
-                newestMillis: FfiConverterOptionUInt64.read(from: &buf), 
+                storeBytes: FfiConverterUInt64.read(from: &buf),
+                walBytes: FfiConverterUInt64.read(from: &buf),
+                snapshotCount: FfiConverterUInt64.read(from: &buf),
+                quarantineCount: FfiConverterUInt64.read(from: &buf),
+                rangeCount: FfiConverterUInt64.read(from: &buf),
+                oldestMillis: FfiConverterOptionUInt64.read(from: &buf),
+                newestMillis: FfiConverterOptionUInt64.read(from: &buf),
                 pendingWrites: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -4586,7 +4611,7 @@ public struct FfiConverterTypeHistoryRangeSummaryResult: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistoryRangeSummaryResult {
         return
             try HistoryRangeSummaryResult(
-                summary: FfiConverterOptionTypeHistoryRangeSummary.read(from: &buf), 
+                summary: FfiConverterOptionTypeHistoryRangeSummary.read(from: &buf),
                 errorMessage: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -4830,36 +4855,36 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HostSnapshot {
         return
             try HostSnapshot(
-                cpuPercent: FfiConverterFloat.read(from: &buf), 
-                memoryUsedBytes: FfiConverterUInt64.read(from: &buf), 
-                memoryTotalBytes: FfiConverterUInt64.read(from: &buf), 
-                swapUsedBytes: FfiConverterUInt64.read(from: &buf), 
-                compressedMemoryBytes: FfiConverterUInt64.read(from: &buf), 
-                diskReadBps: FfiConverterUInt64.read(from: &buf), 
-                diskWriteBps: FfiConverterUInt64.read(from: &buf), 
-                networkReceiveBps: FfiConverterUInt64.read(from: &buf), 
-                networkSendBps: FfiConverterUInt64.read(from: &buf), 
-                wakeupsPerSecond: FfiConverterFloat.read(from: &buf), 
-                thermalState: FfiConverterTypeThermalState.read(from: &buf), 
-                onBattery: FfiConverterBool.read(from: &buf), 
-                batteryChargePercent: FfiConverterOptionUInt8.read(from: &buf), 
-                lowPowerMode: FfiConverterBool.read(from: &buf), 
-                frontmostAppName: FfiConverterOptionString.read(from: &buf), 
-                frontmostWindowTitle: FfiConverterOptionString.read(from: &buf), 
-                aiAgentFriction: FfiConverterFloat.read(from: &buf), 
-                aiAgentCount: FfiConverterUInt32.read(from: &buf), 
-                gpuPercent: FfiConverterFloat.read(from: &buf), 
-                anePercent: FfiConverterFloat.read(from: &buf), 
-                gpuMemoryBytes: FfiConverterUInt64.read(from: &buf), 
-                gpuTemperatureCelsius: FfiConverterOptionFloat.read(from: &buf), 
-                fans: FfiConverterSequenceTypeFanReading.read(from: &buf), 
-                cpuTemperatures: FfiConverterSequenceTypeTemperatureReading.read(from: &buf), 
-                powerReadings: FfiConverterSequenceTypePowerReading.read(from: &buf), 
-                batteryHealth: FfiConverterOptionTypeBatteryHealthSnapshot.read(from: &buf), 
-                bootSession: FfiConverterOptionTypeBootSessionSnapshot.read(from: &buf), 
-                networkInterfaces: FfiConverterSequenceTypeNetworkInterfaceSnapshot.read(from: &buf), 
-                disks: FfiConverterSequenceTypeDiskHealthSnapshot.read(from: &buf), 
-                bluetoothDevices: FfiConverterSequenceTypeBluetoothDeviceBattery.read(from: &buf), 
+                cpuPercent: FfiConverterFloat.read(from: &buf),
+                memoryUsedBytes: FfiConverterUInt64.read(from: &buf),
+                memoryTotalBytes: FfiConverterUInt64.read(from: &buf),
+                swapUsedBytes: FfiConverterUInt64.read(from: &buf),
+                compressedMemoryBytes: FfiConverterUInt64.read(from: &buf),
+                diskReadBps: FfiConverterUInt64.read(from: &buf),
+                diskWriteBps: FfiConverterUInt64.read(from: &buf),
+                networkReceiveBps: FfiConverterUInt64.read(from: &buf),
+                networkSendBps: FfiConverterUInt64.read(from: &buf),
+                wakeupsPerSecond: FfiConverterFloat.read(from: &buf),
+                thermalState: FfiConverterTypeThermalState.read(from: &buf),
+                onBattery: FfiConverterBool.read(from: &buf),
+                batteryChargePercent: FfiConverterOptionUInt8.read(from: &buf),
+                lowPowerMode: FfiConverterBool.read(from: &buf),
+                frontmostAppName: FfiConverterOptionString.read(from: &buf),
+                frontmostWindowTitle: FfiConverterOptionString.read(from: &buf),
+                aiAgentFriction: FfiConverterFloat.read(from: &buf),
+                aiAgentCount: FfiConverterUInt32.read(from: &buf),
+                gpuPercent: FfiConverterFloat.read(from: &buf),
+                anePercent: FfiConverterFloat.read(from: &buf),
+                gpuMemoryBytes: FfiConverterUInt64.read(from: &buf),
+                gpuTemperatureCelsius: FfiConverterOptionFloat.read(from: &buf),
+                fans: FfiConverterSequenceTypeFanReading.read(from: &buf),
+                cpuTemperatures: FfiConverterSequenceTypeTemperatureReading.read(from: &buf),
+                powerReadings: FfiConverterSequenceTypePowerReading.read(from: &buf),
+                batteryHealth: FfiConverterOptionTypeBatteryHealthSnapshot.read(from: &buf),
+                bootSession: FfiConverterOptionTypeBootSessionSnapshot.read(from: &buf),
+                networkInterfaces: FfiConverterSequenceTypeNetworkInterfaceSnapshot.read(from: &buf),
+                disks: FfiConverterSequenceTypeDiskHealthSnapshot.read(from: &buf),
+                bluetoothDevices: FfiConverterSequenceTypeBluetoothDeviceBattery.read(from: &buf),
                 perCoreCpu: FfiConverterSequenceTypeCoreLoad.read(from: &buf)
         )
     }
@@ -5018,17 +5043,17 @@ public struct FfiConverterTypeHostTrend: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HostTrend {
         return
             try HostTrend(
-                machineFriction: FfiConverterSequenceFloat.read(from: &buf), 
-                cpuPercent: FfiConverterSequenceFloat.read(from: &buf), 
-                memoryUsedBytes: FfiConverterSequenceUInt64.read(from: &buf), 
-                memoryPressureScore: FfiConverterSequenceFloat.read(from: &buf), 
-                diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
-                networkActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
-                wakeupsPerSecond: FfiConverterSequenceFloat.read(from: &buf), 
-                compressedMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf), 
-                aiAgentFriction: FfiConverterSequenceFloat.read(from: &buf), 
-                gpuPercent: FfiConverterSequenceFloat.read(from: &buf), 
-                gpuMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf), 
+                machineFriction: FfiConverterSequenceFloat.read(from: &buf),
+                cpuPercent: FfiConverterSequenceFloat.read(from: &buf),
+                memoryUsedBytes: FfiConverterSequenceUInt64.read(from: &buf),
+                memoryPressureScore: FfiConverterSequenceFloat.read(from: &buf),
+                diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf),
+                networkActivityBps: FfiConverterSequenceUInt64.read(from: &buf),
+                wakeupsPerSecond: FfiConverterSequenceFloat.read(from: &buf),
+                compressedMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf),
+                aiAgentFriction: FfiConverterSequenceFloat.read(from: &buf),
+                gpuPercent: FfiConverterSequenceFloat.read(from: &buf),
+                gpuMemoryBytes: FfiConverterSequenceUInt64.read(from: &buf),
                 maxCpuTemperature: FfiConverterSequenceFloat.read(from: &buf)
         )
     }
@@ -5108,7 +5133,7 @@ public struct FfiConverterTypeJsonQueryResult: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> JsonQueryResult {
         return
             try JsonQueryResult(
-                json: FfiConverterOptionString.read(from: &buf), 
+                json: FfiConverterOptionString.read(from: &buf),
                 errorMessage: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -5202,11 +5227,11 @@ public struct FfiConverterTypeMetricTrend: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MetricTrend {
         return
             try MetricTrend(
-                friction: FfiConverterSequenceFloat.read(from: &buf), 
-                cpuPercent: FfiConverterSequenceFloat.read(from: &buf), 
-                memoryResidentBytes: FfiConverterSequenceUInt64.read(from: &buf), 
-                diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
-                networkActivityBps: FfiConverterSequenceUInt64.read(from: &buf), 
+                friction: FfiConverterSequenceFloat.read(from: &buf),
+                cpuPercent: FfiConverterSequenceFloat.read(from: &buf),
+                memoryResidentBytes: FfiConverterSequenceUInt64.read(from: &buf),
+                diskActivityBps: FfiConverterSequenceUInt64.read(from: &buf),
+                networkActivityBps: FfiConverterSequenceUInt64.read(from: &buf),
                 wakeupsPerSecond: FfiConverterSequenceFloat.read(from: &buf)
         )
     }
@@ -5292,9 +5317,9 @@ public struct FfiConverterTypeNetworkConnection: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NetworkConnection {
         return
             try NetworkConnection(
-                protocol: FfiConverterString.read(from: &buf), 
-                local: FfiConverterString.read(from: &buf), 
-                remote: FfiConverterOptionString.read(from: &buf), 
+                protocol: FfiConverterString.read(from: &buf),
+                local: FfiConverterString.read(from: &buf),
+                remote: FfiConverterOptionString.read(from: &buf),
                 state: FfiConverterString.read(from: &buf)
         )
     }
@@ -5391,10 +5416,10 @@ public struct FfiConverterTypeNetworkInterfaceSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NetworkInterfaceSnapshot {
         return
             try NetworkInterfaceSnapshot(
-                name: FfiConverterString.read(from: &buf), 
-                macAddress: FfiConverterString.read(from: &buf), 
-                receiveBps: FfiConverterUInt64.read(from: &buf), 
-                sendBps: FfiConverterUInt64.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf),
+                macAddress: FfiConverterString.read(from: &buf),
+                receiveBps: FfiConverterUInt64.read(from: &buf),
+                sendBps: FfiConverterUInt64.read(from: &buf),
                 isUp: FfiConverterBool.read(from: &buf)
         )
     }
@@ -5473,8 +5498,8 @@ public struct FfiConverterTypePowerReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PowerReading {
         return
             try PowerReading(
-                label: FfiConverterString.read(from: &buf), 
-                value: FfiConverterFloat.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf),
+                value: FfiConverterFloat.read(from: &buf),
                 unit: FfiConverterTypePowerUnit.read(from: &buf)
         )
     }
@@ -5557,9 +5582,9 @@ public struct FfiConverterTypeProvenanceSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProvenanceSnapshot {
         return
             try ProvenanceSnapshot(
-                kind: FfiConverterTypeProvenanceKind.read(from: &buf), 
-                label: FfiConverterString.read(from: &buf), 
-                rule: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeProvenanceKind.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                rule: FfiConverterString.read(from: &buf),
                 confidence: FfiConverterTypeAttributionConfidence.read(from: &buf)
         )
     }
@@ -5643,9 +5668,9 @@ public struct FfiConverterTypeRebootCauseSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RebootCauseSnapshot {
         return
             try RebootCauseSnapshot(
-                source: FfiConverterString.read(from: &buf), 
-                code: FfiConverterOptionString.read(from: &buf), 
-                detail: FfiConverterString.read(from: &buf), 
+                source: FfiConverterString.read(from: &buf),
+                code: FfiConverterOptionString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
                 observedAtMillis: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
@@ -5741,11 +5766,11 @@ public struct FfiConverterTypeRecommendation: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Recommendation {
         return
             try Recommendation(
-                title: FfiConverterString.read(from: &buf), 
-                detail: FfiConverterString.read(from: &buf), 
-                severity: FfiConverterTypeRecommendationSeverity.read(from: &buf), 
-                suggestedAction: FfiConverterOptionString.read(from: &buf), 
-                targetPid: FfiConverterOptionUInt32.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                severity: FfiConverterTypeRecommendationSeverity.read(from: &buf),
+                suggestedAction: FfiConverterOptionString.read(from: &buf),
+                targetPid: FfiConverterOptionUInt32.read(from: &buf),
                 targetLabel: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -5849,12 +5874,12 @@ public struct FfiConverterTypeRuntimeCollectionSettingsInput: FfiConverterRustBu
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RuntimeCollectionSettingsInput {
         return
             try RuntimeCollectionSettingsInput(
-                fullCollection: FfiConverterBool.read(from: &buf), 
-                adaptiveCadence: FfiConverterBool.read(from: &buf), 
-                activeTickMillis: FfiConverterUInt64.read(from: &buf), 
-                idleTickMillis: FfiConverterUInt64.read(from: &buf), 
-                lowPowerTickMillis: FfiConverterUInt64.read(from: &buf), 
-                gpuSampleIntervalMillis: FfiConverterUInt64.read(from: &buf), 
+                fullCollection: FfiConverterBool.read(from: &buf),
+                adaptiveCadence: FfiConverterBool.read(from: &buf),
+                activeTickMillis: FfiConverterUInt64.read(from: &buf),
+                idleTickMillis: FfiConverterUInt64.read(from: &buf),
+                lowPowerTickMillis: FfiConverterUInt64.read(from: &buf),
+                gpuSampleIntervalMillis: FfiConverterUInt64.read(from: &buf),
                 gpuSampleLowPowerIntervalMillis: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -6139,42 +6164,42 @@ public struct FfiConverterTypeRuntimeLagMetrics: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RuntimeLagMetrics {
         return
             try RuntimeLagMetrics(
-                updatedAtMillis: FfiConverterUInt64.read(from: &buf), 
-                engineTickMillis: FfiConverterFloat.read(from: &buf), 
-                collectMillis: FfiConverterFloat.read(from: &buf), 
-                identityMillis: FfiConverterFloat.read(from: &buf), 
-                attributionMillis: FfiConverterFloat.read(from: &buf), 
-                frictionMillis: FfiConverterFloat.read(from: &buf), 
-                enrichMillis: FfiConverterFloat.read(from: &buf), 
-                historyMillis: FfiConverterFloat.read(from: &buf), 
-                persistMillis: FfiConverterFloat.read(from: &buf), 
-                gpuSampleMillis: FfiConverterFloat.read(from: &buf), 
-                targetTickMillis: FfiConverterFloat.read(from: &buf), 
-                historyQueueDepth: FfiConverterUInt32.read(from: &buf), 
-                diagnosticsQueueDepth: FfiConverterUInt32.read(from: &buf), 
-                mcpHelperCount: FfiConverterUInt32.read(from: &buf), 
-                staleMcpHelperCount: FfiConverterUInt32.read(from: &buf), 
-                oldestMcpHelperAgeMillis: FfiConverterUInt64.read(from: &buf), 
-                selfCpuPercent: FfiConverterFloat.read(from: &buf), 
-                selfMemoryBytes: FfiConverterUInt64.read(from: &buf), 
-                selfMemoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf), 
-                selfWakeupsPerSecond: FfiConverterFloat.read(from: &buf), 
-                selfEnergyNjPerS: FfiConverterDouble.read(from: &buf), 
-                mcpTotalConnections: FfiConverterUInt64.read(from: &buf), 
-                mcpActiveClientCount: FfiConverterUInt32.read(from: &buf), 
-                mcpTotalRequests: FfiConverterUInt64.read(from: &buf), 
-                mcpRequestsPerSecond: FfiConverterFloat.read(from: &buf), 
-                mcpObservedAtMillis: FfiConverterUInt64.read(from: &buf), 
-                bridgeFetchMillis: FfiConverterFloat.read(from: &buf), 
-                uiRefreshMillis: FfiConverterFloat.read(from: &buf), 
-                snapshotToUiMillis: FfiConverterFloat.read(from: &buf), 
-                snapshotToRenderMillis: FfiConverterFloat.read(from: &buf), 
-                renderCommitMillis: FfiConverterFloat.read(from: &buf), 
-                displayFrameIntervalMillis: FfiConverterFloat.read(from: &buf), 
-                displayRefreshHz: FfiConverterFloat.read(from: &buf), 
-                displayDroppedFrames: FfiConverterUInt64.read(from: &buf), 
-                inputAvgLatencyMillis: FfiConverterFloat.read(from: &buf), 
-                inputMaxLatencyMillis: FfiConverterFloat.read(from: &buf), 
+                updatedAtMillis: FfiConverterUInt64.read(from: &buf),
+                engineTickMillis: FfiConverterFloat.read(from: &buf),
+                collectMillis: FfiConverterFloat.read(from: &buf),
+                identityMillis: FfiConverterFloat.read(from: &buf),
+                attributionMillis: FfiConverterFloat.read(from: &buf),
+                frictionMillis: FfiConverterFloat.read(from: &buf),
+                enrichMillis: FfiConverterFloat.read(from: &buf),
+                historyMillis: FfiConverterFloat.read(from: &buf),
+                persistMillis: FfiConverterFloat.read(from: &buf),
+                gpuSampleMillis: FfiConverterFloat.read(from: &buf),
+                targetTickMillis: FfiConverterFloat.read(from: &buf),
+                historyQueueDepth: FfiConverterUInt32.read(from: &buf),
+                diagnosticsQueueDepth: FfiConverterUInt32.read(from: &buf),
+                mcpHelperCount: FfiConverterUInt32.read(from: &buf),
+                staleMcpHelperCount: FfiConverterUInt32.read(from: &buf),
+                oldestMcpHelperAgeMillis: FfiConverterUInt64.read(from: &buf),
+                selfCpuPercent: FfiConverterFloat.read(from: &buf),
+                selfMemoryBytes: FfiConverterUInt64.read(from: &buf),
+                selfMemoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf),
+                selfWakeupsPerSecond: FfiConverterFloat.read(from: &buf),
+                selfEnergyNjPerS: FfiConverterDouble.read(from: &buf),
+                mcpTotalConnections: FfiConverterUInt64.read(from: &buf),
+                mcpActiveClientCount: FfiConverterUInt32.read(from: &buf),
+                mcpTotalRequests: FfiConverterUInt64.read(from: &buf),
+                mcpRequestsPerSecond: FfiConverterFloat.read(from: &buf),
+                mcpObservedAtMillis: FfiConverterUInt64.read(from: &buf),
+                bridgeFetchMillis: FfiConverterFloat.read(from: &buf),
+                uiRefreshMillis: FfiConverterFloat.read(from: &buf),
+                snapshotToUiMillis: FfiConverterFloat.read(from: &buf),
+                snapshotToRenderMillis: FfiConverterFloat.read(from: &buf),
+                renderCommitMillis: FfiConverterFloat.read(from: &buf),
+                displayFrameIntervalMillis: FfiConverterFloat.read(from: &buf),
+                displayRefreshHz: FfiConverterFloat.read(from: &buf),
+                displayDroppedFrames: FfiConverterUInt64.read(from: &buf),
+                inputAvgLatencyMillis: FfiConverterFloat.read(from: &buf),
+                inputMaxLatencyMillis: FfiConverterFloat.read(from: &buf),
                 inputSampleCount: FfiConverterUInt32.read(from: &buf)
         )
     }
@@ -6285,8 +6310,8 @@ public struct FfiConverterTypeSessionMarker: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SessionMarker {
         return
             try SessionMarker(
-                timestampMillis: FfiConverterUInt64.read(from: &buf), 
-                kind: FfiConverterTypeSessionMarkerKind.read(from: &buf), 
+                timestampMillis: FfiConverterUInt64.read(from: &buf),
+                kind: FfiConverterTypeSessionMarkerKind.read(from: &buf),
                 label: FfiConverterString.read(from: &buf)
         )
     }
@@ -6405,15 +6430,15 @@ public struct FfiConverterTypeSystemSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SystemSnapshot {
         return
             try SystemSnapshot(
-                sequence: FfiConverterUInt64.read(from: &buf), 
-                capturedAtMillis: FfiConverterUInt64.read(from: &buf), 
-                host: FfiConverterTypeHostSnapshot.read(from: &buf), 
-                hostTrend: FfiConverterTypeHostTrend.read(from: &buf), 
-                capabilities: FfiConverterSequenceTypeCapabilitySnapshot.read(from: &buf), 
-                entities: FfiConverterSequenceTypeEntitySnapshot.read(from: &buf), 
-                timeline: FfiConverterSequenceTypeTimelineEvent.read(from: &buf), 
-                aiRepoSummaries: FfiConverterSequenceTypeAiRepoSummary.read(from: &buf), 
-                chau7Sessions: FfiConverterSequenceTypeChau7SessionSummary.read(from: &buf), 
+                sequence: FfiConverterUInt64.read(from: &buf),
+                capturedAtMillis: FfiConverterUInt64.read(from: &buf),
+                host: FfiConverterTypeHostSnapshot.read(from: &buf),
+                hostTrend: FfiConverterTypeHostTrend.read(from: &buf),
+                capabilities: FfiConverterSequenceTypeCapabilitySnapshot.read(from: &buf),
+                entities: FfiConverterSequenceTypeEntitySnapshot.read(from: &buf),
+                timeline: FfiConverterSequenceTypeTimelineEvent.read(from: &buf),
+                aiRepoSummaries: FfiConverterSequenceTypeAiRepoSummary.read(from: &buf),
+                chau7Sessions: FfiConverterSequenceTypeChau7SessionSummary.read(from: &buf),
                 thermalForecast: FfiConverterOptionTypeThermalForecast.read(from: &buf)
         )
     }
@@ -6491,7 +6516,7 @@ public struct FfiConverterTypeTemperatureReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TemperatureReading {
         return
             try TemperatureReading(
-                label: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf),
                 celsius: FfiConverterFloat.read(from: &buf)
         )
     }
@@ -6585,11 +6610,11 @@ public struct FfiConverterTypeThermalForecast: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ThermalForecast {
         return
             try ThermalForecast(
-                minutesToThrottle: FfiConverterOptionFloat.read(from: &buf), 
-                trendCelsiusPerMin: FfiConverterFloat.read(from: &buf), 
-                state: FfiConverterTypeThermalState.read(from: &buf), 
-                topContributorEntityId: FfiConverterOptionString.read(from: &buf), 
-                topContributorPid: FfiConverterOptionUInt32.read(from: &buf), 
+                minutesToThrottle: FfiConverterOptionFloat.read(from: &buf),
+                trendCelsiusPerMin: FfiConverterFloat.read(from: &buf),
+                state: FfiConverterTypeThermalState.read(from: &buf),
+                topContributorEntityId: FfiConverterOptionString.read(from: &buf),
+                topContributorPid: FfiConverterOptionUInt32.read(from: &buf),
                 topContributorLabel: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -6693,12 +6718,12 @@ public struct FfiConverterTypeTimelineEvent: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TimelineEvent {
         return
             try TimelineEvent(
-                id: FfiConverterString.read(from: &buf), 
-                timestampMillis: FfiConverterUInt64.read(from: &buf), 
-                category: FfiConverterTypeTimelineCategory.read(from: &buf), 
-                severity: FfiConverterTypeTimelineSeverity.read(from: &buf), 
-                entityId: FfiConverterOptionString.read(from: &buf), 
-                title: FfiConverterString.read(from: &buf), 
+                id: FfiConverterString.read(from: &buf),
+                timestampMillis: FfiConverterUInt64.read(from: &buf),
+                category: FfiConverterTypeTimelineCategory.read(from: &buf),
+                severity: FfiConverterTypeTimelineSeverity.read(from: &buf),
+                entityId: FfiConverterOptionString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
                 detail: FfiConverterString.read(from: &buf)
         )
     }
@@ -6727,6 +6752,362 @@ public func FfiConverterTypeTimelineEvent_lift(_ buf: RustBuffer) throws -> Time
 #endif
 public func FfiConverterTypeTimelineEvent_lower(_ value: TimelineEvent) -> RustBuffer {
     return FfiConverterTypeTimelineEvent.lower(value)
+}
+
+
+public struct UiHostSummary {
+    public var machineFriction: Float
+    public var cpuPercent: Float
+    public var memoryUsedBytes: UInt64
+    public var memoryTotalBytes: UInt64
+    public var compressedMemoryBytes: UInt64
+    public var swapUsedBytes: UInt64
+    public var diskReadBps: UInt64
+    public var diskWriteBps: UInt64
+    public var networkReceiveBps: UInt64
+    public var networkSendBps: UInt64
+    public var wakeupsPerSecond: Float
+    public var gpuPercent: Float
+    public var gpuMemoryBytes: UInt64
+    public var thermalState: ThermalState
+    public var onBattery: Bool
+    public var lowPowerMode: Bool
+    public var frontmostAppName: String?
+    public var frontmostWindowTitle: String?
+    public var aiAgentCount: UInt32
+    public var entityCount: UInt32
+    public var processCount: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(machineFriction: Float, cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, compressedMemoryBytes: UInt64, swapUsedBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, gpuPercent: Float, gpuMemoryBytes: UInt64, thermalState: ThermalState, onBattery: Bool, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentCount: UInt32, entityCount: UInt32, processCount: UInt32) {
+        self.machineFriction = machineFriction
+        self.cpuPercent = cpuPercent
+        self.memoryUsedBytes = memoryUsedBytes
+        self.memoryTotalBytes = memoryTotalBytes
+        self.compressedMemoryBytes = compressedMemoryBytes
+        self.swapUsedBytes = swapUsedBytes
+        self.diskReadBps = diskReadBps
+        self.diskWriteBps = diskWriteBps
+        self.networkReceiveBps = networkReceiveBps
+        self.networkSendBps = networkSendBps
+        self.wakeupsPerSecond = wakeupsPerSecond
+        self.gpuPercent = gpuPercent
+        self.gpuMemoryBytes = gpuMemoryBytes
+        self.thermalState = thermalState
+        self.onBattery = onBattery
+        self.lowPowerMode = lowPowerMode
+        self.frontmostAppName = frontmostAppName
+        self.frontmostWindowTitle = frontmostWindowTitle
+        self.aiAgentCount = aiAgentCount
+        self.entityCount = entityCount
+        self.processCount = processCount
+    }
+}
+
+#if compiler(>=6)
+extension UiHostSummary: Sendable {}
+#endif
+
+
+extension UiHostSummary: Equatable, Hashable {
+    public static func ==(lhs: UiHostSummary, rhs: UiHostSummary) -> Bool {
+        if lhs.machineFriction != rhs.machineFriction {
+            return false
+        }
+        if lhs.cpuPercent != rhs.cpuPercent {
+            return false
+        }
+        if lhs.memoryUsedBytes != rhs.memoryUsedBytes {
+            return false
+        }
+        if lhs.memoryTotalBytes != rhs.memoryTotalBytes {
+            return false
+        }
+        if lhs.compressedMemoryBytes != rhs.compressedMemoryBytes {
+            return false
+        }
+        if lhs.swapUsedBytes != rhs.swapUsedBytes {
+            return false
+        }
+        if lhs.diskReadBps != rhs.diskReadBps {
+            return false
+        }
+        if lhs.diskWriteBps != rhs.diskWriteBps {
+            return false
+        }
+        if lhs.networkReceiveBps != rhs.networkReceiveBps {
+            return false
+        }
+        if lhs.networkSendBps != rhs.networkSendBps {
+            return false
+        }
+        if lhs.wakeupsPerSecond != rhs.wakeupsPerSecond {
+            return false
+        }
+        if lhs.gpuPercent != rhs.gpuPercent {
+            return false
+        }
+        if lhs.gpuMemoryBytes != rhs.gpuMemoryBytes {
+            return false
+        }
+        if lhs.thermalState != rhs.thermalState {
+            return false
+        }
+        if lhs.onBattery != rhs.onBattery {
+            return false
+        }
+        if lhs.lowPowerMode != rhs.lowPowerMode {
+            return false
+        }
+        if lhs.frontmostAppName != rhs.frontmostAppName {
+            return false
+        }
+        if lhs.frontmostWindowTitle != rhs.frontmostWindowTitle {
+            return false
+        }
+        if lhs.aiAgentCount != rhs.aiAgentCount {
+            return false
+        }
+        if lhs.entityCount != rhs.entityCount {
+            return false
+        }
+        if lhs.processCount != rhs.processCount {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(machineFriction)
+        hasher.combine(cpuPercent)
+        hasher.combine(memoryUsedBytes)
+        hasher.combine(memoryTotalBytes)
+        hasher.combine(compressedMemoryBytes)
+        hasher.combine(swapUsedBytes)
+        hasher.combine(diskReadBps)
+        hasher.combine(diskWriteBps)
+        hasher.combine(networkReceiveBps)
+        hasher.combine(networkSendBps)
+        hasher.combine(wakeupsPerSecond)
+        hasher.combine(gpuPercent)
+        hasher.combine(gpuMemoryBytes)
+        hasher.combine(thermalState)
+        hasher.combine(onBattery)
+        hasher.combine(lowPowerMode)
+        hasher.combine(frontmostAppName)
+        hasher.combine(frontmostWindowTitle)
+        hasher.combine(aiAgentCount)
+        hasher.combine(entityCount)
+        hasher.combine(processCount)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUiHostSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UiHostSummary {
+        return
+            try UiHostSummary(
+                machineFriction: FfiConverterFloat.read(from: &buf),
+                cpuPercent: FfiConverterFloat.read(from: &buf),
+                memoryUsedBytes: FfiConverterUInt64.read(from: &buf),
+                memoryTotalBytes: FfiConverterUInt64.read(from: &buf),
+                compressedMemoryBytes: FfiConverterUInt64.read(from: &buf),
+                swapUsedBytes: FfiConverterUInt64.read(from: &buf),
+                diskReadBps: FfiConverterUInt64.read(from: &buf),
+                diskWriteBps: FfiConverterUInt64.read(from: &buf),
+                networkReceiveBps: FfiConverterUInt64.read(from: &buf),
+                networkSendBps: FfiConverterUInt64.read(from: &buf),
+                wakeupsPerSecond: FfiConverterFloat.read(from: &buf),
+                gpuPercent: FfiConverterFloat.read(from: &buf),
+                gpuMemoryBytes: FfiConverterUInt64.read(from: &buf),
+                thermalState: FfiConverterTypeThermalState.read(from: &buf),
+                onBattery: FfiConverterBool.read(from: &buf),
+                lowPowerMode: FfiConverterBool.read(from: &buf),
+                frontmostAppName: FfiConverterOptionString.read(from: &buf),
+                frontmostWindowTitle: FfiConverterOptionString.read(from: &buf),
+                aiAgentCount: FfiConverterUInt32.read(from: &buf),
+                entityCount: FfiConverterUInt32.read(from: &buf),
+                processCount: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UiHostSummary, into buf: inout [UInt8]) {
+        FfiConverterFloat.write(value.machineFriction, into: &buf)
+        FfiConverterFloat.write(value.cpuPercent, into: &buf)
+        FfiConverterUInt64.write(value.memoryUsedBytes, into: &buf)
+        FfiConverterUInt64.write(value.memoryTotalBytes, into: &buf)
+        FfiConverterUInt64.write(value.compressedMemoryBytes, into: &buf)
+        FfiConverterUInt64.write(value.swapUsedBytes, into: &buf)
+        FfiConverterUInt64.write(value.diskReadBps, into: &buf)
+        FfiConverterUInt64.write(value.diskWriteBps, into: &buf)
+        FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)
+        FfiConverterUInt64.write(value.networkSendBps, into: &buf)
+        FfiConverterFloat.write(value.wakeupsPerSecond, into: &buf)
+        FfiConverterFloat.write(value.gpuPercent, into: &buf)
+        FfiConverterUInt64.write(value.gpuMemoryBytes, into: &buf)
+        FfiConverterTypeThermalState.write(value.thermalState, into: &buf)
+        FfiConverterBool.write(value.onBattery, into: &buf)
+        FfiConverterBool.write(value.lowPowerMode, into: &buf)
+        FfiConverterOptionString.write(value.frontmostAppName, into: &buf)
+        FfiConverterOptionString.write(value.frontmostWindowTitle, into: &buf)
+        FfiConverterUInt32.write(value.aiAgentCount, into: &buf)
+        FfiConverterUInt32.write(value.entityCount, into: &buf)
+        FfiConverterUInt32.write(value.processCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiHostSummary_lift(_ buf: RustBuffer) throws -> UiHostSummary {
+    return try FfiConverterTypeUiHostSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiHostSummary_lower(_ value: UiHostSummary) -> RustBuffer {
+    return FfiConverterTypeUiHostSummary.lower(value)
+}
+
+
+public struct UiHostTrend {
+    public var machineFriction: [Double]
+    public var cpuPercent: [Double]
+    public var memoryUsedBytes: [Double]
+    public var memoryPressureScore: [Double]
+    public var diskActivityBps: [Double]
+    public var networkActivityBps: [Double]
+    public var wakeupsPerSecond: [Double]
+    public var gpuPercent: [Double]
+    public var gpuMemoryBytes: [Double]
+    public var maxCpuTemperature: [Double]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(machineFriction: [Double], cpuPercent: [Double], memoryUsedBytes: [Double], memoryPressureScore: [Double], diskActivityBps: [Double], networkActivityBps: [Double], wakeupsPerSecond: [Double], gpuPercent: [Double], gpuMemoryBytes: [Double], maxCpuTemperature: [Double]) {
+        self.machineFriction = machineFriction
+        self.cpuPercent = cpuPercent
+        self.memoryUsedBytes = memoryUsedBytes
+        self.memoryPressureScore = memoryPressureScore
+        self.diskActivityBps = diskActivityBps
+        self.networkActivityBps = networkActivityBps
+        self.wakeupsPerSecond = wakeupsPerSecond
+        self.gpuPercent = gpuPercent
+        self.gpuMemoryBytes = gpuMemoryBytes
+        self.maxCpuTemperature = maxCpuTemperature
+    }
+}
+
+#if compiler(>=6)
+extension UiHostTrend: Sendable {}
+#endif
+
+
+extension UiHostTrend: Equatable, Hashable {
+    public static func ==(lhs: UiHostTrend, rhs: UiHostTrend) -> Bool {
+        if lhs.machineFriction != rhs.machineFriction {
+            return false
+        }
+        if lhs.cpuPercent != rhs.cpuPercent {
+            return false
+        }
+        if lhs.memoryUsedBytes != rhs.memoryUsedBytes {
+            return false
+        }
+        if lhs.memoryPressureScore != rhs.memoryPressureScore {
+            return false
+        }
+        if lhs.diskActivityBps != rhs.diskActivityBps {
+            return false
+        }
+        if lhs.networkActivityBps != rhs.networkActivityBps {
+            return false
+        }
+        if lhs.wakeupsPerSecond != rhs.wakeupsPerSecond {
+            return false
+        }
+        if lhs.gpuPercent != rhs.gpuPercent {
+            return false
+        }
+        if lhs.gpuMemoryBytes != rhs.gpuMemoryBytes {
+            return false
+        }
+        if lhs.maxCpuTemperature != rhs.maxCpuTemperature {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(machineFriction)
+        hasher.combine(cpuPercent)
+        hasher.combine(memoryUsedBytes)
+        hasher.combine(memoryPressureScore)
+        hasher.combine(diskActivityBps)
+        hasher.combine(networkActivityBps)
+        hasher.combine(wakeupsPerSecond)
+        hasher.combine(gpuPercent)
+        hasher.combine(gpuMemoryBytes)
+        hasher.combine(maxCpuTemperature)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUiHostTrend: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UiHostTrend {
+        return
+            try UiHostTrend(
+                machineFriction: FfiConverterSequenceDouble.read(from: &buf),
+                cpuPercent: FfiConverterSequenceDouble.read(from: &buf),
+                memoryUsedBytes: FfiConverterSequenceDouble.read(from: &buf),
+                memoryPressureScore: FfiConverterSequenceDouble.read(from: &buf),
+                diskActivityBps: FfiConverterSequenceDouble.read(from: &buf),
+                networkActivityBps: FfiConverterSequenceDouble.read(from: &buf),
+                wakeupsPerSecond: FfiConverterSequenceDouble.read(from: &buf),
+                gpuPercent: FfiConverterSequenceDouble.read(from: &buf),
+                gpuMemoryBytes: FfiConverterSequenceDouble.read(from: &buf),
+                maxCpuTemperature: FfiConverterSequenceDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UiHostTrend, into buf: inout [UInt8]) {
+        FfiConverterSequenceDouble.write(value.machineFriction, into: &buf)
+        FfiConverterSequenceDouble.write(value.cpuPercent, into: &buf)
+        FfiConverterSequenceDouble.write(value.memoryUsedBytes, into: &buf)
+        FfiConverterSequenceDouble.write(value.memoryPressureScore, into: &buf)
+        FfiConverterSequenceDouble.write(value.diskActivityBps, into: &buf)
+        FfiConverterSequenceDouble.write(value.networkActivityBps, into: &buf)
+        FfiConverterSequenceDouble.write(value.wakeupsPerSecond, into: &buf)
+        FfiConverterSequenceDouble.write(value.gpuPercent, into: &buf)
+        FfiConverterSequenceDouble.write(value.gpuMemoryBytes, into: &buf)
+        FfiConverterSequenceDouble.write(value.maxCpuTemperature, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiHostTrend_lift(_ buf: RustBuffer) throws -> UiHostTrend {
+    return try FfiConverterTypeUiHostTrend.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiHostTrend_lower(_ value: UiHostTrend) -> RustBuffer {
+    return FfiConverterTypeUiHostTrend.lower(value)
 }
 
 
@@ -6833,17 +7214,17 @@ public struct FfiConverterTypeUiLagMetrics: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UiLagMetrics {
         return
             try UiLagMetrics(
-                updatedAtMillis: FfiConverterUInt64.read(from: &buf), 
-                bridgeFetchMillis: FfiConverterFloat.read(from: &buf), 
-                uiRefreshMillis: FfiConverterFloat.read(from: &buf), 
-                snapshotToUiMillis: FfiConverterFloat.read(from: &buf), 
-                snapshotToRenderMillis: FfiConverterFloat.read(from: &buf), 
-                renderCommitMillis: FfiConverterFloat.read(from: &buf), 
-                displayFrameIntervalMillis: FfiConverterFloat.read(from: &buf), 
-                displayRefreshHz: FfiConverterFloat.read(from: &buf), 
-                displayDroppedFrames: FfiConverterUInt64.read(from: &buf), 
-                inputAvgLatencyMillis: FfiConverterFloat.read(from: &buf), 
-                inputMaxLatencyMillis: FfiConverterFloat.read(from: &buf), 
+                updatedAtMillis: FfiConverterUInt64.read(from: &buf),
+                bridgeFetchMillis: FfiConverterFloat.read(from: &buf),
+                uiRefreshMillis: FfiConverterFloat.read(from: &buf),
+                snapshotToUiMillis: FfiConverterFloat.read(from: &buf),
+                snapshotToRenderMillis: FfiConverterFloat.read(from: &buf),
+                renderCommitMillis: FfiConverterFloat.read(from: &buf),
+                displayFrameIntervalMillis: FfiConverterFloat.read(from: &buf),
+                displayRefreshHz: FfiConverterFloat.read(from: &buf),
+                displayDroppedFrames: FfiConverterUInt64.read(from: &buf),
+                inputAvgLatencyMillis: FfiConverterFloat.read(from: &buf),
+                inputMaxLatencyMillis: FfiConverterFloat.read(from: &buf),
                 inputSampleCount: FfiConverterUInt32.read(from: &buf)
         )
     }
@@ -6879,11 +7260,841 @@ public func FfiConverterTypeUiLagMetrics_lower(_ value: UiLagMetrics) -> RustBuf
     return FfiConverterTypeUiLagMetrics.lower(value)
 }
 
+
+public struct UiMetricCard {
+    public var id: String
+    public var title: String
+    public var value: Double
+    public var unit: String
+    public var displayValue: String
+    public var detail: String
+    public var severity: UiMetricSeverity
+    public var samples: [Double]
+    public var fixedCeiling: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, title: String, value: Double, unit: String, displayValue: String, detail: String, severity: UiMetricSeverity, samples: [Double], fixedCeiling: Double?) {
+        self.id = id
+        self.title = title
+        self.value = value
+        self.unit = unit
+        self.displayValue = displayValue
+        self.detail = detail
+        self.severity = severity
+        self.samples = samples
+        self.fixedCeiling = fixedCeiling
+    }
+}
+
+#if compiler(>=6)
+extension UiMetricCard: Sendable {}
+#endif
+
+
+extension UiMetricCard: Equatable, Hashable {
+    public static func ==(lhs: UiMetricCard, rhs: UiMetricCard) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        if lhs.unit != rhs.unit {
+            return false
+        }
+        if lhs.displayValue != rhs.displayValue {
+            return false
+        }
+        if lhs.detail != rhs.detail {
+            return false
+        }
+        if lhs.severity != rhs.severity {
+            return false
+        }
+        if lhs.samples != rhs.samples {
+            return false
+        }
+        if lhs.fixedCeiling != rhs.fixedCeiling {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(title)
+        hasher.combine(value)
+        hasher.combine(unit)
+        hasher.combine(displayValue)
+        hasher.combine(detail)
+        hasher.combine(severity)
+        hasher.combine(samples)
+        hasher.combine(fixedCeiling)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUiMetricCard: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UiMetricCard {
+        return
+            try UiMetricCard(
+                id: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                value: FfiConverterDouble.read(from: &buf),
+                unit: FfiConverterString.read(from: &buf),
+                displayValue: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                severity: FfiConverterTypeUiMetricSeverity.read(from: &buf),
+                samples: FfiConverterSequenceDouble.read(from: &buf),
+                fixedCeiling: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UiMetricCard, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterDouble.write(value.value, into: &buf)
+        FfiConverterString.write(value.unit, into: &buf)
+        FfiConverterString.write(value.displayValue, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterTypeUiMetricSeverity.write(value.severity, into: &buf)
+        FfiConverterSequenceDouble.write(value.samples, into: &buf)
+        FfiConverterOptionDouble.write(value.fixedCeiling, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiMetricCard_lift(_ buf: RustBuffer) throws -> UiMetricCard {
+    return try FfiConverterTypeUiMetricCard.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiMetricCard_lower(_ value: UiMetricCard) -> RustBuffer {
+    return FfiConverterTypeUiMetricCard.lower(value)
+}
+
+
+public struct UiProcessComponent {
+    public var title: String
+    public var detail: String
+    public var processId: UInt32?
+    public var startTimeMillis: UInt64
+    public var executablePath: String?
+    public var commandLine: String?
+    public var parentSummary: String?
+    public var launchedBy: String?
+    public var cpuPercent: Float
+    public var memoryBytes: UInt64
+    public var memoryPhysicalFootprintBytes: UInt64
+    public var cwd: String?
+    public var user: String?
+    public var threadCount: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(title: String, detail: String, processId: UInt32?, startTimeMillis: UInt64, executablePath: String?, commandLine: String?, parentSummary: String?, launchedBy: String?, cpuPercent: Float, memoryBytes: UInt64, memoryPhysicalFootprintBytes: UInt64, cwd: String?, user: String?, threadCount: UInt32) {
+        self.title = title
+        self.detail = detail
+        self.processId = processId
+        self.startTimeMillis = startTimeMillis
+        self.executablePath = executablePath
+        self.commandLine = commandLine
+        self.parentSummary = parentSummary
+        self.launchedBy = launchedBy
+        self.cpuPercent = cpuPercent
+        self.memoryBytes = memoryBytes
+        self.memoryPhysicalFootprintBytes = memoryPhysicalFootprintBytes
+        self.cwd = cwd
+        self.user = user
+        self.threadCount = threadCount
+    }
+}
+
+#if compiler(>=6)
+extension UiProcessComponent: Sendable {}
+#endif
+
+
+extension UiProcessComponent: Equatable, Hashable {
+    public static func ==(lhs: UiProcessComponent, rhs: UiProcessComponent) -> Bool {
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.detail != rhs.detail {
+            return false
+        }
+        if lhs.processId != rhs.processId {
+            return false
+        }
+        if lhs.startTimeMillis != rhs.startTimeMillis {
+            return false
+        }
+        if lhs.executablePath != rhs.executablePath {
+            return false
+        }
+        if lhs.commandLine != rhs.commandLine {
+            return false
+        }
+        if lhs.parentSummary != rhs.parentSummary {
+            return false
+        }
+        if lhs.launchedBy != rhs.launchedBy {
+            return false
+        }
+        if lhs.cpuPercent != rhs.cpuPercent {
+            return false
+        }
+        if lhs.memoryBytes != rhs.memoryBytes {
+            return false
+        }
+        if lhs.memoryPhysicalFootprintBytes != rhs.memoryPhysicalFootprintBytes {
+            return false
+        }
+        if lhs.cwd != rhs.cwd {
+            return false
+        }
+        if lhs.user != rhs.user {
+            return false
+        }
+        if lhs.threadCount != rhs.threadCount {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(title)
+        hasher.combine(detail)
+        hasher.combine(processId)
+        hasher.combine(startTimeMillis)
+        hasher.combine(executablePath)
+        hasher.combine(commandLine)
+        hasher.combine(parentSummary)
+        hasher.combine(launchedBy)
+        hasher.combine(cpuPercent)
+        hasher.combine(memoryBytes)
+        hasher.combine(memoryPhysicalFootprintBytes)
+        hasher.combine(cwd)
+        hasher.combine(user)
+        hasher.combine(threadCount)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUiProcessComponent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UiProcessComponent {
+        return
+            try UiProcessComponent(
+                title: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                processId: FfiConverterOptionUInt32.read(from: &buf),
+                startTimeMillis: FfiConverterUInt64.read(from: &buf),
+                executablePath: FfiConverterOptionString.read(from: &buf),
+                commandLine: FfiConverterOptionString.read(from: &buf),
+                parentSummary: FfiConverterOptionString.read(from: &buf),
+                launchedBy: FfiConverterOptionString.read(from: &buf),
+                cpuPercent: FfiConverterFloat.read(from: &buf),
+                memoryBytes: FfiConverterUInt64.read(from: &buf),
+                memoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf),
+                cwd: FfiConverterOptionString.read(from: &buf),
+                user: FfiConverterOptionString.read(from: &buf),
+                threadCount: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UiProcessComponent, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterOptionUInt32.write(value.processId, into: &buf)
+        FfiConverterUInt64.write(value.startTimeMillis, into: &buf)
+        FfiConverterOptionString.write(value.executablePath, into: &buf)
+        FfiConverterOptionString.write(value.commandLine, into: &buf)
+        FfiConverterOptionString.write(value.parentSummary, into: &buf)
+        FfiConverterOptionString.write(value.launchedBy, into: &buf)
+        FfiConverterFloat.write(value.cpuPercent, into: &buf)
+        FfiConverterUInt64.write(value.memoryBytes, into: &buf)
+        FfiConverterUInt64.write(value.memoryPhysicalFootprintBytes, into: &buf)
+        FfiConverterOptionString.write(value.cwd, into: &buf)
+        FfiConverterOptionString.write(value.user, into: &buf)
+        FfiConverterUInt32.write(value.threadCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiProcessComponent_lift(_ buf: RustBuffer) throws -> UiProcessComponent {
+    return try FfiConverterTypeUiProcessComponent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiProcessComponent_lower(_ value: UiProcessComponent) -> RustBuffer {
+    return FfiConverterTypeUiProcessComponent.lower(value)
+}
+
+
+public struct UiProcessRow {
+    public var entityId: String
+    public var displayName: String
+    public var entityKind: EntityKind
+    public var bundleId: String?
+    public var executablePath: String?
+    public var primaryPid: UInt32?
+    public var processCount: UInt32
+    public var threadCount: UInt32
+    public var cpuPercent: Float
+    public var memoryResidentBytes: UInt64
+    public var memoryPhysicalFootprintBytes: UInt64
+    public var diskReadBps: UInt64
+    public var diskWriteBps: UInt64
+    public var networkReceiveBps: UInt64
+    public var networkSendBps: UInt64
+    public var wakeupsPerSecond: Float
+    public var energyNjPerS: Double
+    public var estimatedGpuPercent: Float
+    public var frictionScore: Float
+    public var isForeground: Bool
+    public var anomalyDetected: Bool
+    public var activeWindowTitle: String?
+    public var recentChangeSummary: String?
+    public var signingClassification: String
+    public var isAdhoc: Bool
+    public var appVersion: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(entityId: String, displayName: String, entityKind: EntityKind, bundleId: String?, executablePath: String?, primaryPid: UInt32?, processCount: UInt32, threadCount: UInt32, cpuPercent: Float, memoryResidentBytes: UInt64, memoryPhysicalFootprintBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, energyNjPerS: Double, estimatedGpuPercent: Float, frictionScore: Float, isForeground: Bool, anomalyDetected: Bool, activeWindowTitle: String?, recentChangeSummary: String?, signingClassification: String, isAdhoc: Bool, appVersion: String?) {
+        self.entityId = entityId
+        self.displayName = displayName
+        self.entityKind = entityKind
+        self.bundleId = bundleId
+        self.executablePath = executablePath
+        self.primaryPid = primaryPid
+        self.processCount = processCount
+        self.threadCount = threadCount
+        self.cpuPercent = cpuPercent
+        self.memoryResidentBytes = memoryResidentBytes
+        self.memoryPhysicalFootprintBytes = memoryPhysicalFootprintBytes
+        self.diskReadBps = diskReadBps
+        self.diskWriteBps = diskWriteBps
+        self.networkReceiveBps = networkReceiveBps
+        self.networkSendBps = networkSendBps
+        self.wakeupsPerSecond = wakeupsPerSecond
+        self.energyNjPerS = energyNjPerS
+        self.estimatedGpuPercent = estimatedGpuPercent
+        self.frictionScore = frictionScore
+        self.isForeground = isForeground
+        self.anomalyDetected = anomalyDetected
+        self.activeWindowTitle = activeWindowTitle
+        self.recentChangeSummary = recentChangeSummary
+        self.signingClassification = signingClassification
+        self.isAdhoc = isAdhoc
+        self.appVersion = appVersion
+    }
+}
+
+#if compiler(>=6)
+extension UiProcessRow: Sendable {}
+#endif
+
+
+extension UiProcessRow: Equatable, Hashable {
+    public static func ==(lhs: UiProcessRow, rhs: UiProcessRow) -> Bool {
+        if lhs.entityId != rhs.entityId {
+            return false
+        }
+        if lhs.displayName != rhs.displayName {
+            return false
+        }
+        if lhs.entityKind != rhs.entityKind {
+            return false
+        }
+        if lhs.bundleId != rhs.bundleId {
+            return false
+        }
+        if lhs.executablePath != rhs.executablePath {
+            return false
+        }
+        if lhs.primaryPid != rhs.primaryPid {
+            return false
+        }
+        if lhs.processCount != rhs.processCount {
+            return false
+        }
+        if lhs.threadCount != rhs.threadCount {
+            return false
+        }
+        if lhs.cpuPercent != rhs.cpuPercent {
+            return false
+        }
+        if lhs.memoryResidentBytes != rhs.memoryResidentBytes {
+            return false
+        }
+        if lhs.memoryPhysicalFootprintBytes != rhs.memoryPhysicalFootprintBytes {
+            return false
+        }
+        if lhs.diskReadBps != rhs.diskReadBps {
+            return false
+        }
+        if lhs.diskWriteBps != rhs.diskWriteBps {
+            return false
+        }
+        if lhs.networkReceiveBps != rhs.networkReceiveBps {
+            return false
+        }
+        if lhs.networkSendBps != rhs.networkSendBps {
+            return false
+        }
+        if lhs.wakeupsPerSecond != rhs.wakeupsPerSecond {
+            return false
+        }
+        if lhs.energyNjPerS != rhs.energyNjPerS {
+            return false
+        }
+        if lhs.estimatedGpuPercent != rhs.estimatedGpuPercent {
+            return false
+        }
+        if lhs.frictionScore != rhs.frictionScore {
+            return false
+        }
+        if lhs.isForeground != rhs.isForeground {
+            return false
+        }
+        if lhs.anomalyDetected != rhs.anomalyDetected {
+            return false
+        }
+        if lhs.activeWindowTitle != rhs.activeWindowTitle {
+            return false
+        }
+        if lhs.recentChangeSummary != rhs.recentChangeSummary {
+            return false
+        }
+        if lhs.signingClassification != rhs.signingClassification {
+            return false
+        }
+        if lhs.isAdhoc != rhs.isAdhoc {
+            return false
+        }
+        if lhs.appVersion != rhs.appVersion {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(entityId)
+        hasher.combine(displayName)
+        hasher.combine(entityKind)
+        hasher.combine(bundleId)
+        hasher.combine(executablePath)
+        hasher.combine(primaryPid)
+        hasher.combine(processCount)
+        hasher.combine(threadCount)
+        hasher.combine(cpuPercent)
+        hasher.combine(memoryResidentBytes)
+        hasher.combine(memoryPhysicalFootprintBytes)
+        hasher.combine(diskReadBps)
+        hasher.combine(diskWriteBps)
+        hasher.combine(networkReceiveBps)
+        hasher.combine(networkSendBps)
+        hasher.combine(wakeupsPerSecond)
+        hasher.combine(energyNjPerS)
+        hasher.combine(estimatedGpuPercent)
+        hasher.combine(frictionScore)
+        hasher.combine(isForeground)
+        hasher.combine(anomalyDetected)
+        hasher.combine(activeWindowTitle)
+        hasher.combine(recentChangeSummary)
+        hasher.combine(signingClassification)
+        hasher.combine(isAdhoc)
+        hasher.combine(appVersion)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUiProcessRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UiProcessRow {
+        return
+            try UiProcessRow(
+                entityId: FfiConverterString.read(from: &buf),
+                displayName: FfiConverterString.read(from: &buf),
+                entityKind: FfiConverterTypeEntityKind.read(from: &buf),
+                bundleId: FfiConverterOptionString.read(from: &buf),
+                executablePath: FfiConverterOptionString.read(from: &buf),
+                primaryPid: FfiConverterOptionUInt32.read(from: &buf),
+                processCount: FfiConverterUInt32.read(from: &buf),
+                threadCount: FfiConverterUInt32.read(from: &buf),
+                cpuPercent: FfiConverterFloat.read(from: &buf),
+                memoryResidentBytes: FfiConverterUInt64.read(from: &buf),
+                memoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf),
+                diskReadBps: FfiConverterUInt64.read(from: &buf),
+                diskWriteBps: FfiConverterUInt64.read(from: &buf),
+                networkReceiveBps: FfiConverterUInt64.read(from: &buf),
+                networkSendBps: FfiConverterUInt64.read(from: &buf),
+                wakeupsPerSecond: FfiConverterFloat.read(from: &buf),
+                energyNjPerS: FfiConverterDouble.read(from: &buf),
+                estimatedGpuPercent: FfiConverterFloat.read(from: &buf),
+                frictionScore: FfiConverterFloat.read(from: &buf),
+                isForeground: FfiConverterBool.read(from: &buf),
+                anomalyDetected: FfiConverterBool.read(from: &buf),
+                activeWindowTitle: FfiConverterOptionString.read(from: &buf),
+                recentChangeSummary: FfiConverterOptionString.read(from: &buf),
+                signingClassification: FfiConverterString.read(from: &buf),
+                isAdhoc: FfiConverterBool.read(from: &buf),
+                appVersion: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UiProcessRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.entityId, into: &buf)
+        FfiConverterString.write(value.displayName, into: &buf)
+        FfiConverterTypeEntityKind.write(value.entityKind, into: &buf)
+        FfiConverterOptionString.write(value.bundleId, into: &buf)
+        FfiConverterOptionString.write(value.executablePath, into: &buf)
+        FfiConverterOptionUInt32.write(value.primaryPid, into: &buf)
+        FfiConverterUInt32.write(value.processCount, into: &buf)
+        FfiConverterUInt32.write(value.threadCount, into: &buf)
+        FfiConverterFloat.write(value.cpuPercent, into: &buf)
+        FfiConverterUInt64.write(value.memoryResidentBytes, into: &buf)
+        FfiConverterUInt64.write(value.memoryPhysicalFootprintBytes, into: &buf)
+        FfiConverterUInt64.write(value.diskReadBps, into: &buf)
+        FfiConverterUInt64.write(value.diskWriteBps, into: &buf)
+        FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)
+        FfiConverterUInt64.write(value.networkSendBps, into: &buf)
+        FfiConverterFloat.write(value.wakeupsPerSecond, into: &buf)
+        FfiConverterDouble.write(value.energyNjPerS, into: &buf)
+        FfiConverterFloat.write(value.estimatedGpuPercent, into: &buf)
+        FfiConverterFloat.write(value.frictionScore, into: &buf)
+        FfiConverterBool.write(value.isForeground, into: &buf)
+        FfiConverterBool.write(value.anomalyDetected, into: &buf)
+        FfiConverterOptionString.write(value.activeWindowTitle, into: &buf)
+        FfiConverterOptionString.write(value.recentChangeSummary, into: &buf)
+        FfiConverterString.write(value.signingClassification, into: &buf)
+        FfiConverterBool.write(value.isAdhoc, into: &buf)
+        FfiConverterOptionString.write(value.appVersion, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiProcessRow_lift(_ buf: RustBuffer) throws -> UiProcessRow {
+    return try FfiConverterTypeUiProcessRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiProcessRow_lower(_ value: UiProcessRow) -> RustBuffer {
+    return FfiConverterTypeUiProcessRow.lower(value)
+}
+
+
+public struct UiSelectedEntity {
+    public var row: UiProcessRow
+    public var components: [UiProcessComponent]
+    public var trend: MetricTrend
+    public var recommendations: [Recommendation]
+    public var networkConnections: [NetworkConnection]
+    public var badges: [String]
+    public var attributionNotes: [String]
+    public var thermalContribution: String?
+    public var groupingSuggestion: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(row: UiProcessRow, components: [UiProcessComponent], trend: MetricTrend, recommendations: [Recommendation], networkConnections: [NetworkConnection], badges: [String], attributionNotes: [String], thermalContribution: String?, groupingSuggestion: String?) {
+        self.row = row
+        self.components = components
+        self.trend = trend
+        self.recommendations = recommendations
+        self.networkConnections = networkConnections
+        self.badges = badges
+        self.attributionNotes = attributionNotes
+        self.thermalContribution = thermalContribution
+        self.groupingSuggestion = groupingSuggestion
+    }
+}
+
+#if compiler(>=6)
+extension UiSelectedEntity: Sendable {}
+#endif
+
+
+extension UiSelectedEntity: Equatable, Hashable {
+    public static func ==(lhs: UiSelectedEntity, rhs: UiSelectedEntity) -> Bool {
+        if lhs.row != rhs.row {
+            return false
+        }
+        if lhs.components != rhs.components {
+            return false
+        }
+        if lhs.trend != rhs.trend {
+            return false
+        }
+        if lhs.recommendations != rhs.recommendations {
+            return false
+        }
+        if lhs.networkConnections != rhs.networkConnections {
+            return false
+        }
+        if lhs.badges != rhs.badges {
+            return false
+        }
+        if lhs.attributionNotes != rhs.attributionNotes {
+            return false
+        }
+        if lhs.thermalContribution != rhs.thermalContribution {
+            return false
+        }
+        if lhs.groupingSuggestion != rhs.groupingSuggestion {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(row)
+        hasher.combine(components)
+        hasher.combine(trend)
+        hasher.combine(recommendations)
+        hasher.combine(networkConnections)
+        hasher.combine(badges)
+        hasher.combine(attributionNotes)
+        hasher.combine(thermalContribution)
+        hasher.combine(groupingSuggestion)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUiSelectedEntity: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UiSelectedEntity {
+        return
+            try UiSelectedEntity(
+                row: FfiConverterTypeUiProcessRow.read(from: &buf),
+                components: FfiConverterSequenceTypeUiProcessComponent.read(from: &buf),
+                trend: FfiConverterTypeMetricTrend.read(from: &buf),
+                recommendations: FfiConverterSequenceTypeRecommendation.read(from: &buf),
+                networkConnections: FfiConverterSequenceTypeNetworkConnection.read(from: &buf),
+                badges: FfiConverterSequenceString.read(from: &buf),
+                attributionNotes: FfiConverterSequenceString.read(from: &buf),
+                thermalContribution: FfiConverterOptionString.read(from: &buf),
+                groupingSuggestion: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UiSelectedEntity, into buf: inout [UInt8]) {
+        FfiConverterTypeUiProcessRow.write(value.row, into: &buf)
+        FfiConverterSequenceTypeUiProcessComponent.write(value.components, into: &buf)
+        FfiConverterTypeMetricTrend.write(value.trend, into: &buf)
+        FfiConverterSequenceTypeRecommendation.write(value.recommendations, into: &buf)
+        FfiConverterSequenceTypeNetworkConnection.write(value.networkConnections, into: &buf)
+        FfiConverterSequenceString.write(value.badges, into: &buf)
+        FfiConverterSequenceString.write(value.attributionNotes, into: &buf)
+        FfiConverterOptionString.write(value.thermalContribution, into: &buf)
+        FfiConverterOptionString.write(value.groupingSuggestion, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiSelectedEntity_lift(_ buf: RustBuffer) throws -> UiSelectedEntity {
+    return try FfiConverterTypeUiSelectedEntity.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiSelectedEntity_lower(_ value: UiSelectedEntity) -> RustBuffer {
+    return FfiConverterTypeUiSelectedEntity.lower(value)
+}
+
+
+public struct UiSnapshot {
+    public var sequence: UInt64
+    public var capturedAtMillis: UInt64
+    public var host: UiHostSummary
+    public var hostTrend: UiHostTrend
+    public var metricCards: [UiMetricCard]
+    public var processRows: [UiProcessRow]
+    public var selectedEntity: UiSelectedEntity?
+    public var totalEntityCount: UInt32
+    public var returnedEntityCount: UInt32
+    public var totalProcessCount: UInt32
+    public var timelineWarningCount: UInt32
+    public var timelineCriticalCount: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sequence: UInt64, capturedAtMillis: UInt64, host: UiHostSummary, hostTrend: UiHostTrend, metricCards: [UiMetricCard], processRows: [UiProcessRow], selectedEntity: UiSelectedEntity?, totalEntityCount: UInt32, returnedEntityCount: UInt32, totalProcessCount: UInt32, timelineWarningCount: UInt32, timelineCriticalCount: UInt32) {
+        self.sequence = sequence
+        self.capturedAtMillis = capturedAtMillis
+        self.host = host
+        self.hostTrend = hostTrend
+        self.metricCards = metricCards
+        self.processRows = processRows
+        self.selectedEntity = selectedEntity
+        self.totalEntityCount = totalEntityCount
+        self.returnedEntityCount = returnedEntityCount
+        self.totalProcessCount = totalProcessCount
+        self.timelineWarningCount = timelineWarningCount
+        self.timelineCriticalCount = timelineCriticalCount
+    }
+}
+
+#if compiler(>=6)
+extension UiSnapshot: Sendable {}
+#endif
+
+
+extension UiSnapshot: Equatable, Hashable {
+    public static func ==(lhs: UiSnapshot, rhs: UiSnapshot) -> Bool {
+        if lhs.sequence != rhs.sequence {
+            return false
+        }
+        if lhs.capturedAtMillis != rhs.capturedAtMillis {
+            return false
+        }
+        if lhs.host != rhs.host {
+            return false
+        }
+        if lhs.hostTrend != rhs.hostTrend {
+            return false
+        }
+        if lhs.metricCards != rhs.metricCards {
+            return false
+        }
+        if lhs.processRows != rhs.processRows {
+            return false
+        }
+        if lhs.selectedEntity != rhs.selectedEntity {
+            return false
+        }
+        if lhs.totalEntityCount != rhs.totalEntityCount {
+            return false
+        }
+        if lhs.returnedEntityCount != rhs.returnedEntityCount {
+            return false
+        }
+        if lhs.totalProcessCount != rhs.totalProcessCount {
+            return false
+        }
+        if lhs.timelineWarningCount != rhs.timelineWarningCount {
+            return false
+        }
+        if lhs.timelineCriticalCount != rhs.timelineCriticalCount {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(sequence)
+        hasher.combine(capturedAtMillis)
+        hasher.combine(host)
+        hasher.combine(hostTrend)
+        hasher.combine(metricCards)
+        hasher.combine(processRows)
+        hasher.combine(selectedEntity)
+        hasher.combine(totalEntityCount)
+        hasher.combine(returnedEntityCount)
+        hasher.combine(totalProcessCount)
+        hasher.combine(timelineWarningCount)
+        hasher.combine(timelineCriticalCount)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUiSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UiSnapshot {
+        return
+            try UiSnapshot(
+                sequence: FfiConverterUInt64.read(from: &buf),
+                capturedAtMillis: FfiConverterUInt64.read(from: &buf),
+                host: FfiConverterTypeUiHostSummary.read(from: &buf),
+                hostTrend: FfiConverterTypeUiHostTrend.read(from: &buf),
+                metricCards: FfiConverterSequenceTypeUiMetricCard.read(from: &buf),
+                processRows: FfiConverterSequenceTypeUiProcessRow.read(from: &buf),
+                selectedEntity: FfiConverterOptionTypeUiSelectedEntity.read(from: &buf),
+                totalEntityCount: FfiConverterUInt32.read(from: &buf),
+                returnedEntityCount: FfiConverterUInt32.read(from: &buf),
+                totalProcessCount: FfiConverterUInt32.read(from: &buf),
+                timelineWarningCount: FfiConverterUInt32.read(from: &buf),
+                timelineCriticalCount: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UiSnapshot, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sequence, into: &buf)
+        FfiConverterUInt64.write(value.capturedAtMillis, into: &buf)
+        FfiConverterTypeUiHostSummary.write(value.host, into: &buf)
+        FfiConverterTypeUiHostTrend.write(value.hostTrend, into: &buf)
+        FfiConverterSequenceTypeUiMetricCard.write(value.metricCards, into: &buf)
+        FfiConverterSequenceTypeUiProcessRow.write(value.processRows, into: &buf)
+        FfiConverterOptionTypeUiSelectedEntity.write(value.selectedEntity, into: &buf)
+        FfiConverterUInt32.write(value.totalEntityCount, into: &buf)
+        FfiConverterUInt32.write(value.returnedEntityCount, into: &buf)
+        FfiConverterUInt32.write(value.totalProcessCount, into: &buf)
+        FfiConverterUInt32.write(value.timelineWarningCount, into: &buf)
+        FfiConverterUInt32.write(value.timelineCriticalCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiSnapshot_lift(_ buf: RustBuffer) throws -> UiSnapshot {
+    return try FfiConverterTypeUiSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiSnapshot_lower(_ value: UiSnapshot) -> RustBuffer {
+    return FfiConverterTypeUiSnapshot.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum AdapterContextKind {
-    
+
     case chromiumTab
     case dockerContainer
     case privilegedSocket
@@ -6907,56 +8118,56 @@ public struct FfiConverterTypeAdapterContextKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AdapterContextKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .chromiumTab
-        
+
         case 2: return .dockerContainer
-        
+
         case 3: return .privilegedSocket
-        
+
         case 4: return .chau7Session
-        
+
         case 5: return .vsCodeWorkspace
-        
+
         case 6: return .vsCodeRuntime
-        
+
         case 7: return .unknown
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: AdapterContextKind, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .chromiumTab:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .dockerContainer:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .privilegedSocket:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .chau7Session:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .vsCodeWorkspace:
             writeInt(&buf, Int32(5))
-        
-        
+
+
         case .vsCodeRuntime:
             writeInt(&buf, Int32(6))
-        
-        
+
+
         case .unknown:
             writeInt(&buf, Int32(7))
-        
+
         }
     }
 }
@@ -6988,7 +8199,7 @@ extension AdapterContextKind: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum AttributionConfidence {
-    
+
     case high
     case medium
     case low
@@ -7008,32 +8219,32 @@ public struct FfiConverterTypeAttributionConfidence: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AttributionConfidence {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .high
-        
+
         case 2: return .medium
-        
+
         case 3: return .low
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: AttributionConfidence, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .high:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .medium:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .low:
             writeInt(&buf, Int32(3))
-        
+
         }
     }
 }
@@ -7070,7 +8281,7 @@ extension AttributionConfidence: Equatable, Hashable {}
  */
 
 public enum BatteryCondition {
-    
+
     case unknown
     case good
     case fair
@@ -7092,44 +8303,44 @@ public struct FfiConverterTypeBatteryCondition: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BatteryCondition {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .unknown
-        
+
         case 2: return .good
-        
+
         case 3: return .fair
-        
+
         case 4: return .poor
-        
+
         case 5: return .serviceBattery
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: BatteryCondition, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .unknown:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .good:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .fair:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .poor:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .serviceBattery:
             writeInt(&buf, Int32(5))
-        
+
         }
     }
 }
@@ -7165,7 +8376,7 @@ extension BatteryCondition: Equatable, Hashable {}
  */
 
 public enum BluetoothDeviceType {
-    
+
     case other
     case keyboard
     case mouse
@@ -7188,50 +8399,50 @@ public struct FfiConverterTypeBluetoothDeviceType: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BluetoothDeviceType {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .other
-        
+
         case 2: return .keyboard
-        
+
         case 3: return .mouse
-        
+
         case 4: return .trackpad
-        
+
         case 5: return .headphones
-        
+
         case 6: return .gameController
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: BluetoothDeviceType, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .other:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .keyboard:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .mouse:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .trackpad:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .headphones:
             writeInt(&buf, Int32(5))
-        
-        
+
+
         case .gameController:
             writeInt(&buf, Int32(6))
-        
+
         }
     }
 }
@@ -7263,7 +8474,7 @@ extension BluetoothDeviceType: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum CapabilityHealth {
-    
+
     case configured
     case live
     case cached
@@ -7284,38 +8495,38 @@ public struct FfiConverterTypeCapabilityHealth: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CapabilityHealth {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .configured
-        
+
         case 2: return .live
-        
+
         case 3: return .cached
-        
+
         case 4: return .degraded
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: CapabilityHealth, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .configured:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .live:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .cached:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .degraded:
             writeInt(&buf, Int32(4))
-        
+
         }
     }
 }
@@ -7347,7 +8558,7 @@ extension CapabilityHealth: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum CapabilityKind {
-    
+
     case accessibility
     case fullDiskAccess
     case appleAutomation
@@ -7372,62 +8583,62 @@ public struct FfiConverterTypeCapabilityKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CapabilityKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .accessibility
-        
+
         case 2: return .fullDiskAccess
-        
+
         case 3: return .appleAutomation
-        
+
         case 4: return .chromiumDebug
-        
+
         case 5: return .dockerSocket
-        
+
         case 6: return .privilegedHelper
-        
+
         case 7: return .chau7
-        
+
         case 8: return .endpointSecurity
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: CapabilityKind, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .accessibility:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .fullDiskAccess:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .appleAutomation:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .chromiumDebug:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .dockerSocket:
             writeInt(&buf, Int32(5))
-        
-        
+
+
         case .privilegedHelper:
             writeInt(&buf, Int32(6))
-        
-        
+
+
         case .chau7:
             writeInt(&buf, Int32(7))
-        
-        
+
+
         case .endpointSecurity:
             writeInt(&buf, Int32(8))
-        
+
         }
     }
 }
@@ -7459,7 +8670,7 @@ extension CapabilityKind: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum CapabilityState {
-    
+
     case unknown
     case granted
     case denied
@@ -7481,44 +8692,44 @@ public struct FfiConverterTypeCapabilityState: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CapabilityState {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .unknown
-        
+
         case 2: return .granted
-        
+
         case 3: return .denied
-        
+
         case 4: return .requested
-        
+
         case 5: return .unavailable
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: CapabilityState, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .unknown:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .granted:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .denied:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .requested:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .unavailable:
             writeInt(&buf, Int32(5))
-        
+
         }
     }
 }
@@ -7550,7 +8761,7 @@ extension CapabilityState: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ComponentKind {
-    
+
     case process
     case command
     case adapterContext
@@ -7570,32 +8781,32 @@ public struct FfiConverterTypeComponentKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ComponentKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .process
-        
+
         case 2: return .command
-        
+
         case 3: return .adapterContext
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: ComponentKind, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .process:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .command:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .adapterContext:
             writeInt(&buf, Int32(3))
-        
+
         }
     }
 }
@@ -7627,7 +8838,7 @@ extension ComponentKind: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum CoreKind {
-    
+
     case unknown
     case performance
     case efficiency
@@ -7647,32 +8858,32 @@ public struct FfiConverterTypeCoreKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .unknown
-        
+
         case 2: return .performance
-        
+
         case 3: return .efficiency
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: CoreKind, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .unknown:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .performance:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .efficiency:
             writeInt(&buf, Int32(3))
-        
+
         }
     }
 }
@@ -7704,7 +8915,7 @@ extension CoreKind: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum DiagnosticsLevel {
-    
+
     case trace
     case debug
     case info
@@ -7726,44 +8937,44 @@ public struct FfiConverterTypeDiagnosticsLevel: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsLevel {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .trace
-        
+
         case 2: return .debug
-        
+
         case 3: return .info
-        
+
         case 4: return .warn
-        
+
         case 5: return .error
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: DiagnosticsLevel, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .trace:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .debug:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .info:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .warn:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .error:
             writeInt(&buf, Int32(5))
-        
+
         }
     }
 }
@@ -7795,7 +9006,7 @@ extension DiagnosticsLevel: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum DiagnosticsSubsystem {
-    
+
     case engine
     case collector
     case identity
@@ -7828,110 +9039,110 @@ public struct FfiConverterTypeDiagnosticsSubsystem: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticsSubsystem {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .engine
-        
+
         case 2: return .collector
-        
+
         case 3: return .identity
-        
+
         case 4: return .attribution
-        
+
         case 5: return .friction
-        
+
         case 6: return .history
-        
+
         case 7: return .persistence
-        
+
         case 8: return .telemetry
-        
+
         case 9: return .gpu
-        
+
         case 10: return .ffi
-        
+
         case 11: return .ui
-        
+
         case 12: return .adapterChromium
-        
+
         case 13: return .adapterDocker
-        
+
         case 14: return .adapterHelper
-        
+
         case 15: return .adapterChau7
-        
+
         case 16: return .adapterVsCode
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: DiagnosticsSubsystem, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .engine:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .collector:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .identity:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .attribution:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .friction:
             writeInt(&buf, Int32(5))
-        
-        
+
+
         case .history:
             writeInt(&buf, Int32(6))
-        
-        
+
+
         case .persistence:
             writeInt(&buf, Int32(7))
-        
-        
+
+
         case .telemetry:
             writeInt(&buf, Int32(8))
-        
-        
+
+
         case .gpu:
             writeInt(&buf, Int32(9))
-        
-        
+
+
         case .ffi:
             writeInt(&buf, Int32(10))
-        
-        
+
+
         case .ui:
             writeInt(&buf, Int32(11))
-        
-        
+
+
         case .adapterChromium:
             writeInt(&buf, Int32(12))
-        
-        
+
+
         case .adapterDocker:
             writeInt(&buf, Int32(13))
-        
-        
+
+
         case .adapterHelper:
             writeInt(&buf, Int32(14))
-        
-        
+
+
         case .adapterChau7:
             writeInt(&buf, Int32(15))
-        
-        
+
+
         case .adapterVsCode:
             writeInt(&buf, Int32(16))
-        
+
         }
     }
 }
@@ -7970,7 +9181,7 @@ extension DiagnosticsSubsystem: Equatable, Hashable {}
  */
 
 public enum DiskHealthStatus {
-    
+
     case unknown
     case healthy
     case warning
@@ -7992,44 +9203,44 @@ public struct FfiConverterTypeDiskHealthStatus: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiskHealthStatus {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .unknown
-        
+
         case 2: return .healthy
-        
+
         case 3: return .warning
-        
+
         case 4: return .failing
-        
+
         case 5: return .notSupported
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: DiskHealthStatus, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .unknown:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .healthy:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .warning:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .failing:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .notSupported:
             writeInt(&buf, Int32(5))
-        
+
         }
     }
 }
@@ -8061,7 +9272,7 @@ extension DiskHealthStatus: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum EntityKind {
-    
+
     case app
     case browser
     case daemon
@@ -8085,56 +9296,56 @@ public struct FfiConverterTypeEntityKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EntityKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .app
-        
+
         case 2: return .browser
-        
+
         case 3: return .daemon
-        
+
         case 4: return .terminalSession
-        
+
         case 5: return .service
-        
+
         case 6: return .aiAgent
-        
+
         case 7: return .unknown
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: EntityKind, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .app:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .browser:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .daemon:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .terminalSession:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .service:
             writeInt(&buf, Int32(5))
-        
-        
+
+
         case .aiAgent:
             writeInt(&buf, Int32(6))
-        
-        
+
+
         case .unknown:
             writeInt(&buf, Int32(7))
-        
+
         }
     }
 }
@@ -8166,7 +9377,7 @@ extension EntityKind: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum PowerUnit {
-    
+
     case watts
     case volts
     case amps
@@ -8186,32 +9397,32 @@ public struct FfiConverterTypePowerUnit: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PowerUnit {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .watts
-        
+
         case 2: return .volts
-        
+
         case 3: return .amps
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: PowerUnit, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .watts:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .volts:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .amps:
             writeInt(&buf, Int32(3))
-        
+
         }
     }
 }
@@ -8243,7 +9454,7 @@ extension PowerUnit: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ProvenanceKind {
-    
+
     case userLaunch
     case appBundle
     case helperTree
@@ -8271,80 +9482,80 @@ public struct FfiConverterTypeProvenanceKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProvenanceKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .userLaunch
-        
+
         case 2: return .appBundle
-        
+
         case 3: return .helperTree
-        
+
         case 4: return .shellSession
-        
+
         case 5: return .loginItem
-        
+
         case 6: return .serviceManager
-        
+
         case 7: return .xpcService
-        
+
         case 8: return .browserContext
-        
+
         case 9: return .containerWorkload
-        
+
         case 10: return .parentProcess
-        
+
         case 11: return .unknown
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: ProvenanceKind, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .userLaunch:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .appBundle:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .helperTree:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .shellSession:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .loginItem:
             writeInt(&buf, Int32(5))
-        
-        
+
+
         case .serviceManager:
             writeInt(&buf, Int32(6))
-        
-        
+
+
         case .xpcService:
             writeInt(&buf, Int32(7))
-        
-        
+
+
         case .browserContext:
             writeInt(&buf, Int32(8))
-        
-        
+
+
         case .containerWorkload:
             writeInt(&buf, Int32(9))
-        
-        
+
+
         case .parentProcess:
             writeInt(&buf, Int32(10))
-        
-        
+
+
         case .unknown:
             writeInt(&buf, Int32(11))
-        
+
         }
     }
 }
@@ -8376,7 +9587,7 @@ extension ProvenanceKind: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum RecommendationSeverity {
-    
+
     case info
     case suggested
     case urgent
@@ -8396,32 +9607,32 @@ public struct FfiConverterTypeRecommendationSeverity: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RecommendationSeverity {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .info
-        
+
         case 2: return .suggested
-        
+
         case 3: return .urgent
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: RecommendationSeverity, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .info:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .suggested:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .urgent:
             writeInt(&buf, Int32(3))
-        
+
         }
     }
 }
@@ -8453,7 +9664,7 @@ extension RecommendationSeverity: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ReputationVerdict {
-    
+
     case clean
     case suspicious
     case malicious
@@ -8474,38 +9685,38 @@ public struct FfiConverterTypeReputationVerdict: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ReputationVerdict {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .clean
-        
+
         case 2: return .suspicious
-        
+
         case 3: return .malicious
-        
+
         case 4: return .unknown
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: ReputationVerdict, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .clean:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .suspicious:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .malicious:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .unknown:
             writeInt(&buf, Int32(4))
-        
+
         }
     }
 }
@@ -8537,7 +9748,7 @@ extension ReputationVerdict: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum SessionMarkerKind {
-    
+
     case runStart
     case runEnd
 }
@@ -8556,26 +9767,26 @@ public struct FfiConverterTypeSessionMarkerKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SessionMarkerKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .runStart
-        
+
         case 2: return .runEnd
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: SessionMarkerKind, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .runStart:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .runEnd:
             writeInt(&buf, Int32(2))
-        
+
         }
     }
 }
@@ -8607,7 +9818,7 @@ extension SessionMarkerKind: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum ThermalState {
-    
+
     case nominal
     case fair
     case serious
@@ -8628,38 +9839,38 @@ public struct FfiConverterTypeThermalState: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ThermalState {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .nominal
-        
+
         case 2: return .fair
-        
+
         case 3: return .serious
-        
+
         case 4: return .critical
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: ThermalState, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .nominal:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .fair:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .serious:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .critical:
             writeInt(&buf, Int32(4))
-        
+
         }
     }
 }
@@ -8691,7 +9902,7 @@ extension ThermalState: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum TimelineCategory {
-    
+
     case lifecycle
     case friction
     case host
@@ -8715,56 +9926,56 @@ public struct FfiConverterTypeTimelineCategory: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TimelineCategory {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .lifecycle
-        
+
         case 2: return .friction
-        
+
         case 3: return .host
-        
+
         case 4: return .thermal
-        
+
         case 5: return .anomaly
-        
+
         case 6: return .network
-        
+
         case 7: return .regression
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: TimelineCategory, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .lifecycle:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .friction:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .host:
             writeInt(&buf, Int32(3))
-        
-        
+
+
         case .thermal:
             writeInt(&buf, Int32(4))
-        
-        
+
+
         case .anomaly:
             writeInt(&buf, Int32(5))
-        
-        
+
+
         case .network:
             writeInt(&buf, Int32(6))
-        
-        
+
+
         case .regression:
             writeInt(&buf, Int32(7))
-        
+
         }
     }
 }
@@ -8796,7 +10007,7 @@ extension TimelineCategory: Equatable, Hashable {}
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum TimelineSeverity {
-    
+
     case info
     case warning
     case critical
@@ -8816,32 +10027,32 @@ public struct FfiConverterTypeTimelineSeverity: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TimelineSeverity {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .info
-        
+
         case 2: return .warning
-        
+
         case 3: return .critical
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: TimelineSeverity, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .info:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .warning:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .critical:
             writeInt(&buf, Int32(3))
-        
+
         }
     }
 }
@@ -8863,6 +10074,83 @@ public func FfiConverterTypeTimelineSeverity_lower(_ value: TimelineSeverity) ->
 
 
 extension TimelineSeverity: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum UiMetricSeverity {
+
+    case normal
+    case warning
+    case critical
+}
+
+
+#if compiler(>=6)
+extension UiMetricSeverity: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUiMetricSeverity: FfiConverterRustBuffer {
+    typealias SwiftType = UiMetricSeverity
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UiMetricSeverity {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .normal
+
+        case 2: return .warning
+
+        case 3: return .critical
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UiMetricSeverity, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .normal:
+            writeInt(&buf, Int32(1))
+
+
+        case .warning:
+            writeInt(&buf, Int32(2))
+
+
+        case .critical:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiMetricSeverity_lift(_ buf: RustBuffer) throws -> UiMetricSeverity {
+    return try FfiConverterTypeUiMetricSeverity.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUiMetricSeverity_lower(_ value: UiMetricSeverity) -> RustBuffer {
+    return FfiConverterTypeUiMetricSeverity.lower(value)
+}
+
+
+extension UiMetricSeverity: Equatable, Hashable {}
 
 
 
@@ -8960,6 +10248,30 @@ fileprivate struct FfiConverterOptionFloat: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterFloat.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
+    typealias SwiftType = Double?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterDouble.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterDouble.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -9256,6 +10568,54 @@ fileprivate struct FfiConverterOptionTypeThermalForecast: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeUiSelectedEntity: FfiConverterRustBuffer {
+    typealias SwiftType = UiSelectedEntity?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUiSelectedEntity.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUiSelectedEntity.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeUiSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = UiSnapshot?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeUiSnapshot.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeUiSnapshot.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeDiagnosticsLevel: FfiConverterRustBuffer {
     typealias SwiftType = DiagnosticsLevel?
 
@@ -9346,6 +10706,31 @@ fileprivate struct FfiConverterSequenceFloat: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterFloat.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceDouble: FfiConverterRustBuffer {
+    typealias SwiftType = [Double]
+
+    public static func write(_ value: [Double], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterDouble.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Double] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Double]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterDouble.read(from: &buf))
         }
         return seq
     }
@@ -9876,6 +11261,81 @@ fileprivate struct FfiConverterSequenceTypeTimelineEvent: FfiConverterRustBuffer
     }
 }
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUiMetricCard: FfiConverterRustBuffer {
+    typealias SwiftType = [UiMetricCard]
+
+    public static func write(_ value: [UiMetricCard], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUiMetricCard.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UiMetricCard] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UiMetricCard]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUiMetricCard.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUiProcessComponent: FfiConverterRustBuffer {
+    typealias SwiftType = [UiProcessComponent]
+
+    public static func write(_ value: [UiProcessComponent], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUiProcessComponent.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UiProcessComponent] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UiProcessComponent]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUiProcessComponent.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUiProcessRow: FfiConverterRustBuffer {
+    typealias SwiftType = [UiProcessRow]
+
+    public static func write(_ value: [UiProcessRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUiProcessRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UiProcessRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UiProcessRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUiProcessRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
 private enum InitializationResult {
     case ok
     case contractVersionMismatch
@@ -9961,6 +11421,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_snapshot_if_newer() != 34622) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_ui_snapshot() != 62054) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_latest_ui_snapshot_if_newer() != 57658) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_load_history_page() != 20951) {

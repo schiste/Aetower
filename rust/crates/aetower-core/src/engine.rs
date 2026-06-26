@@ -1377,10 +1377,19 @@ impl Engine {
         self.state.lock().latest_snapshot.as_ref().clone()
     }
 
+    pub fn latest_snapshot_arc(&self) -> Arc<SystemSnapshot> {
+        Arc::clone(&self.state.lock().latest_snapshot)
+    }
+
     pub fn latest_snapshot_if_newer(&self, last_sequence: u64) -> Option<SystemSnapshot> {
         let guard = self.state.lock();
         (guard.latest_snapshot.sequence > last_sequence)
             .then(|| guard.latest_snapshot.as_ref().clone())
+    }
+
+    pub fn latest_snapshot_arc_if_newer(&self, last_sequence: u64) -> Option<Arc<SystemSnapshot>> {
+        let guard = self.state.lock();
+        (guard.latest_snapshot.sequence > last_sequence).then(|| Arc::clone(&guard.latest_snapshot))
     }
 
     pub fn latest_sequence(&self) -> u64 {
