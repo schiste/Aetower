@@ -1369,6 +1369,11 @@ struct AetowerApp: App {
                         Label("Activity", systemImage: "timeline.selection")
                     }
 
+                StorageView(state: state)
+                    .tabItem {
+                        Label("Storage", systemImage: "externaldrive")
+                    }
+
                 AgentsWorkspaceView(state: state)
                     .tabItem {
                         Label("Agents", systemImage: "cpu")

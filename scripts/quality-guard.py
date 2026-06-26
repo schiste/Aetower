@@ -30,6 +30,7 @@ SWIFT_PUBLIC_VIEW_ALLOWLIST = {
     "ProcessTreeView.swift",
     "SensorDashboardView.swift",
     "SettingsView.swift",
+    "StorageView.swift",
     "TimelineView.swift",
 }
 SUSPICIOUS_NEW_FILE_NAMES = {
