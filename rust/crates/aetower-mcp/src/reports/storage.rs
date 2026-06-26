@@ -20,6 +20,7 @@ pub(crate) struct StorageHygieneReport {
     captured_at_millis: u64,
     scan_duration_millis: u64,
     summary: StorageHygieneSummary,
+    cleanup_tiers: Vec<StorageCleanupTierSummary>,
     items: Vec<StorageHygieneItem>,
     roots: Vec<String>,
     skipped_roots: Vec<StorageSkippedRoot>,
@@ -37,6 +38,7 @@ struct StorageHygieneSummary {
     scanned_directory_count: u64,
     largest_item_path: Option<String>,
     largest_item_bytes: u64,
+    attributed_repo_count: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -46,6 +48,7 @@ struct StorageHygieneItem {
     display_name: String,
     kind: String,
     safety: String,
+    cleanup_tier: String,
     size_bytes: u64,
     size_truncated: bool,
     modified_millis: Option<u64>,
@@ -54,6 +57,29 @@ struct StorageHygieneItem {
     reason: String,
     recommendation: String,
     command_hint: String,
+    attribution: StorageArtifactAttribution,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageArtifactAttribution {
+    repo_root: Option<String>,
+    repo_name: Option<String>,
+    git_branch: Option<String>,
+    git_head: Option<String>,
+    command: Option<String>,
+    process_tree: Option<String>,
+    ai_agent_session: Option<String>,
+    confidence: String,
+    notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct StorageCleanupTierSummary {
+    tier: String,
+    label: String,
+    description: String,
+    item_count: usize,
+    bytes: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -72,6 +98,7 @@ struct StorageHygieneOptions {
 struct ArtifactRule {
     kind: &'static str,
     safety: &'static str,
+    cleanup_tier: &'static str,
     reason: &'static str,
     recommendation: &'static str,
 }
@@ -174,10 +201,12 @@ fn build_storage_hygiene_report_with_options(
     items.truncate(options.limit);
 
     let summary = summarize_storage_items(&items, scanned_directory_count);
+    let cleanup_tiers = summarize_cleanup_tiers(&items);
     StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
         summary,
+        cleanup_tiers,
         items,
         roots: scanned_roots,
         skipped_roots,
@@ -187,6 +216,8 @@ fn build_storage_hygiene_report_with_options(
             "Sizes are bounded estimates and may omit paths that require additional permissions."
                 .to_owned(),
             "Review candidates may be rebuildable but can still contain release artifacts or local environments."
+                .to_owned(),
+            "Command, process-tree, and AI-session attribution require file-event or runtime baselines and are marked unknown when unavailable."
                 .to_owned(),
         ],
     }
@@ -276,6 +307,7 @@ fn storage_item_for_path(
             .to_owned(),
         kind: rule.kind.to_owned(),
         safety: rule.safety.to_owned(),
+        cleanup_tier: rule.cleanup_tier.to_owned(),
         size_bytes: size.bytes,
         size_truncated: size.truncated,
         modified_millis,
@@ -284,6 +316,7 @@ fn storage_item_for_path(
         reason: rule.reason.to_owned(),
         recommendation: rule.recommendation.to_owned(),
         command_hint: format!("du -sh {}", shell_quote(&path_display)),
+        attribution: artifact_attribution(path),
     }
 }
 
@@ -299,6 +332,7 @@ fn classify_artifact(path: &Path, metadata: &fs::Metadata) -> Option<ArtifactRul
         return Some(rule(
             "log-file",
             "safe",
+            "safe",
             "Development log file.",
             "Safe to review and rotate when no current task depends on it.",
         ));
@@ -312,36 +346,42 @@ fn classify_artifact(path: &Path, metadata: &fs::Metadata) -> Option<ArtifactRul
         "target" => Some(rule(
             "rust-build",
             "safe",
+            "rebuildable",
             "Rust Cargo build output.",
             "Usually safe to remove after builds/tests are idle; Cargo will rebuild it.",
         )),
         ".build" => Some(rule(
             "swift-build",
             "safe",
+            "rebuildable",
             "Swift Package Manager build output.",
             "Usually safe to remove after builds/tests are idle; SwiftPM will rebuild it.",
         )),
         "DerivedData" => Some(rule(
             "xcode-derived-data",
             "safe",
+            "rebuildable",
             "Xcode DerivedData cache.",
             "Usually safe to remove when Xcode builds are idle; Xcode will recreate it.",
         )),
         "ModuleCache.noindex" => Some(rule(
             "xcode-module-cache",
             "safe",
+            "rebuildable",
             "Xcode module cache.",
             "Usually safe to remove when Xcode builds are idle.",
         )),
         ".pytest_cache" | ".mypy_cache" | ".ruff_cache" | "__pycache__" => Some(rule(
             "python-cache",
             "safe",
+            "rebuildable",
             "Python test/lint/import cache.",
             "Usually safe to remove; Python tools will recreate it.",
         )),
         ".turbo" | ".vite" | ".parcel-cache" => Some(rule(
             "frontend-cache",
             "safe",
+            "rebuildable",
             "Frontend build cache.",
             "Usually safe to remove when frontend dev servers/builds are idle.",
         )),
@@ -349,6 +389,7 @@ fn classify_artifact(path: &Path, metadata: &fs::Metadata) -> Option<ArtifactRul
             Some(rule(
                 "tool-cache",
                 "safe",
+                "rebuildable",
                 "Developer tool cache.",
                 "Usually safe to remove when the related toolchain is idle; tools will recreate it.",
             ))
@@ -356,17 +397,20 @@ fn classify_artifact(path: &Path, metadata: &fs::Metadata) -> Option<ArtifactRul
         "coverage" => Some(rule(
             "coverage-output",
             "safe",
+            "safe",
             "Test coverage output.",
             "Safe to remove if you do not need the local coverage report.",
         )),
         "tmp" | "temp" => Some(rule(
             "temporary-output",
             "review",
+            "safe",
             "Local temporary output directory.",
             "Review before deleting because temporary folders can contain active run output.",
         )),
         "logs" => Some(rule(
             "logs",
+            "safe",
             "safe",
             "Local logs directory.",
             "Safe to review and rotate once the relevant debugging session is over.",
@@ -374,36 +418,42 @@ fn classify_artifact(path: &Path, metadata: &fs::Metadata) -> Option<ArtifactRul
         "node_modules" => Some(rule(
             "node-dependencies",
             "review",
+            "expensive",
             "Node dependency install tree.",
             "Review before deleting; reinstalling may take time and requires package-manager access.",
         )),
         ".venv" | "venv" => Some(rule(
             "python-environment",
             "review",
+            "expensive",
             "Python virtual environment.",
             "Review before deleting; recreate from dependency manifests if still needed.",
         )),
         "dist" | "build" => Some(rule(
             "build-output",
             "review",
+            "risky",
             "Generic build output directory.",
             "Review before deleting because it may contain release artifacts.",
         )),
         "SourcePackages" => Some(rule(
             "xcode-source-packages",
             "review",
+            "expensive",
             "Xcode resolved package cache.",
             "Review before deleting; Xcode can rebuild it but package resolution may take time.",
         )),
         "cache" if parent_name == ".next" => Some(rule(
             "next-cache",
             "safe",
+            "rebuildable",
             "Next.js build cache.",
             "Usually safe to remove when frontend builds/dev servers are idle.",
         )),
         ".next" => Some(rule(
             "next-build",
             "review",
+            "risky",
             "Next.js build output.",
             "Review before deleting because it may contain generated app artifacts.",
         )),
@@ -480,6 +530,9 @@ fn summarize_storage_items(
         if item.stale {
             summary.stale_candidate_count += 1;
         }
+        if item.attribution.repo_root.is_some() {
+            summary.attributed_repo_count += 1;
+        }
         if item.size_bytes > summary.largest_item_bytes {
             summary.largest_item_bytes = item.size_bytes;
             summary.largest_item_path = Some(item.path.clone());
@@ -487,6 +540,155 @@ fn summarize_storage_items(
     }
 
     summary
+}
+
+fn summarize_cleanup_tiers(items: &[StorageHygieneItem]) -> Vec<StorageCleanupTierSummary> {
+    cleanup_tier_definitions()
+        .into_iter()
+        .map(|(tier, label, description)| {
+            let mut summary = StorageCleanupTierSummary {
+                tier: tier.to_owned(),
+                label: label.to_owned(),
+                description: description.to_owned(),
+                ..StorageCleanupTierSummary::default()
+            };
+            for item in items.iter().filter(|item| item.cleanup_tier == tier) {
+                summary.item_count += 1;
+                summary.bytes = summary.bytes.saturating_add(item.size_bytes);
+            }
+            summary
+        })
+        .collect()
+}
+
+fn cleanup_tier_definitions() -> [(&'static str, &'static str, &'static str); 4] {
+    [
+        (
+            "safe",
+            "Safe",
+            "Old logs, temporary output, stale crash reports, and reports that are normally safe to rotate after review.",
+        ),
+        (
+            "rebuildable",
+            "Rebuildable",
+            "Compiler, package, and framework caches that should be recreated by the owning tool.",
+        ),
+        (
+            "expensive",
+            "Expensive",
+            "Dependency stores and package trees that are removable but costly to restore.",
+        ),
+        (
+            "risky",
+            "Risky",
+            "Generated or source-like output that may contain release artifacts or local work.",
+        ),
+    ]
+}
+
+fn artifact_attribution(path: &Path) -> StorageArtifactAttribution {
+    let repo_root = find_git_root(path);
+    let (git_branch, git_head) = repo_root
+        .as_ref()
+        .map(|root| read_git_head(root))
+        .unwrap_or((None, None));
+    let repo_name = repo_root.as_ref().and_then(|root| {
+        root.file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+    });
+    let mut notes = Vec::new();
+
+    if repo_root.is_some() {
+        notes.push("Attributed by nearest parent Git repository.".to_owned());
+    } else {
+        notes.push("No enclosing Git repository was found for this artifact.".to_owned());
+    }
+    notes.push(
+        "Command, process-tree, and AI-session attribution require a file-event baseline and are unavailable in this read-only scan."
+            .to_owned(),
+    );
+    let confidence = if repo_root.is_some() && git_branch.is_some() {
+        "high"
+    } else if repo_root.is_some() {
+        "medium"
+    } else {
+        "low"
+    };
+
+    StorageArtifactAttribution {
+        repo_root: repo_root.map(|root| root.display().to_string()),
+        repo_name,
+        git_branch,
+        git_head,
+        command: None,
+        process_tree: None,
+        ai_agent_session: None,
+        confidence: confidence.to_owned(),
+        notes,
+    }
+}
+
+fn find_git_root(path: &Path) -> Option<PathBuf> {
+    let mut current = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()?.to_path_buf()
+    };
+
+    loop {
+        if current.join(".git").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+fn read_git_head(repo_root: &Path) -> (Option<String>, Option<String>) {
+    let Some(git_dir) = resolve_git_dir(repo_root) else {
+        return (None, None);
+    };
+    let Ok(head) = fs::read_to_string(git_dir.join("HEAD")) else {
+        return (None, None);
+    };
+    let head = head.trim();
+    if let Some(reference) = head.strip_prefix("ref: ") {
+        let branch = reference
+            .strip_prefix("refs/heads/")
+            .unwrap_or(reference)
+            .to_owned();
+        let head_sha = fs::read_to_string(git_dir.join(reference))
+            .ok()
+            .map(|value| short_hash(value.trim()));
+        return (Some(branch), head_sha);
+    }
+
+    if head.is_empty() {
+        (None, None)
+    } else {
+        (None, Some(short_hash(head)))
+    }
+}
+
+fn resolve_git_dir(repo_root: &Path) -> Option<PathBuf> {
+    let git_marker = repo_root.join(".git");
+    if git_marker.is_dir() {
+        return Some(git_marker);
+    }
+    let marker = fs::read_to_string(&git_marker).ok()?;
+    let git_dir = marker.trim().strip_prefix("gitdir:")?.trim();
+    let path = PathBuf::from(git_dir);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        Some(repo_root.join(path))
+    }
+}
+
+fn short_hash(value: &str) -> String {
+    value.chars().take(12).collect()
 }
 
 fn normalize_roots(roots: Vec<String>) -> Vec<PathBuf> {
@@ -561,12 +763,14 @@ fn shell_quote(path: &str) -> String {
 fn rule(
     kind: &'static str,
     safety: &'static str,
+    cleanup_tier: &'static str,
     reason: &'static str,
     recommendation: &'static str,
 ) -> ArtifactRule {
     ArtifactRule {
         kind,
         safety,
+        cleanup_tier,
         reason,
         recommendation,
     }
@@ -609,6 +813,49 @@ mod tests {
 
         assert!(json.contains("\"kind\":\"rust-build\""));
         assert!(json.contains("\"safety\":\"safe\""));
+        assert!(json.contains("\"cleanup_tier\":\"rebuildable\""));
+        assert!(json.contains("\"cleanup_tiers\""));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_attributes_artifacts_to_git_repo_and_branch() {
+        let root = test_root("attributes-artifacts");
+        let project = root.join("Aetower");
+        let refs = project.join(".git").join("refs").join("heads");
+        let target = project.join("target").join("debug");
+        if let Err(error) = fs::create_dir_all(&refs) {
+            panic!("create git refs: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(&target) {
+            panic!("create target dir: {error}");
+        }
+        if let Err(error) = fs::write(
+            project.join(".git").join("HEAD"),
+            "ref: refs/heads/master\n",
+        ) {
+            panic!("write git head: {error}");
+        }
+        if let Err(error) = fs::write(
+            refs.join("master"),
+            "1234567890abcdef1234567890abcdef12345678\n",
+        ) {
+            panic!("write git ref: {error}");
+        }
+        if let Err(error) = fs::write(
+            target.join("blob"),
+            vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write build artifact: {error}");
+        }
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+
+        assert!(json.contains("\"repo_name\":\"Aetower\""));
+        assert!(json.contains("\"git_branch\":\"master\""));
+        assert!(json.contains("\"git_head\":\"1234567890ab\""));
+        assert!(json.contains("\"attributed_repo_count\":1"));
 
         let _ = fs::remove_dir_all(root);
     }
