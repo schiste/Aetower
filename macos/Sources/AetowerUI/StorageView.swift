@@ -1,6 +1,23 @@
 import AppKit
 import SwiftUI
 
+private struct StorageGrowthTimelineEvent: Identifiable {
+    let id: String
+    let timestampMillis: UInt64?
+    let repoName: String?
+    let repoRoot: String?
+    let branch: String?
+    let displayName: String
+    let path: String
+    let cleanupTier: String
+    let deltaBytes: Int64
+    let previousBytes: UInt64
+    let currentBytes: UInt64
+    let command: String?
+    let processTree: String?
+    let aiAgentSession: String?
+}
+
 public struct StorageView: View {
     let state: AppState
     @State private var selectedFilter: StorageFilter = .attention
@@ -27,6 +44,7 @@ public struct StorageView: View {
                     summaryGrid(report)
                     cleanupPreviewSection(report)
                     repoFootprintDashboard(report)
+                    storageGrowthTimeline(report)
                     if report.truncated {
                         warningBanner("The scan hit a cap or time budget. Results are partial; narrow the root or refresh when the machine is idle.")
                     }
@@ -321,6 +339,102 @@ public struct StorageView: View {
                         }
                     }
                 }
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func storageGrowthTimeline(_ report: StorageHygieneReportModel) -> some View {
+        let events = storageGrowthEvents(from: report)
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                Text("Why did disk usage jump?")
+                    .font(.headline)
+                Text("Positive artifact-size deltas since the previous scan, correlated with repo, branch, command, process tree, and AI session when the scan has direct evidence.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if state.previousStorageHygieneReport == nil {
+                Label("Run a second scan to establish a growth timeline. The first scan becomes the baseline.", systemImage: "timeline.selection")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(AetowerDesign.Spacing.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else if events.isEmpty {
+                Label("No meaningful storage jumps were detected since the previous scan.", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(AetowerDesign.Status.ready)
+                    .padding(AetowerDesign.Spacing.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(events) { event in
+                        storageGrowthTimelineRow(event)
+                    }
+                }
+            }
+        }
+    }
+
+    private func storageGrowthTimelineRow(_ event: StorageGrowthTimelineEvent) -> some View {
+        HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+            VStack(spacing: 4) {
+                Circle()
+                    .fill(tone(forCleanupTier: event.cleanupTier))
+                    .frame(width: 9, height: 9)
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.18))
+                    .frame(width: 1)
+            }
+            .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Text(storageGrowthEventTime(event))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text("+\(formatBytes(UInt64(event.deltaBytes)))")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AetowerDesign.Status.warning)
+                    if let branch = event.branch {
+                        Text(branch)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(AetowerDesign.Status.ready)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(AetowerDesign.Status.ready.opacity(0.12), in: Capsule())
+                    }
+                }
+
+                Text(storageGrowthEventTitle(event))
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(event.path)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Text(storageGrowthCorrelationDetail(event))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: AetowerDesign.Spacing.md)
+
+            VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                Text(formatBytes(event.currentBytes))
+                    .font(.caption.weight(.semibold))
+                Text("was \(formatBytes(event.previousBytes))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(AetowerDesign.Spacing.md)
@@ -652,6 +766,79 @@ public struct StorageView: View {
             parts.append("runtime link unavailable")
         }
         return parts.joined(separator: " · ")
+    }
+
+    private func storageGrowthEvents(
+        from report: StorageHygieneReportModel
+    ) -> [StorageGrowthTimelineEvent] {
+        guard let previousReport = state.previousStorageHygieneReport else {
+            return []
+        }
+        let previousItemsByID = previousReport.items.reduce(into: [String: StorageHygieneItemModel]()) {
+            $0[$1.id] = $1
+        }
+        let minimumDeltaBytes: Int64 = 8 * 1_024 * 1_024
+        return report.items.compactMap { item in
+            let previousBytes = previousItemsByID[item.id]?.sizeBytes ?? 0
+            let delta = Int64(clamping: item.sizeBytes) - Int64(clamping: previousBytes)
+            guard delta >= minimumDeltaBytes else {
+                return nil
+            }
+            return StorageGrowthTimelineEvent(
+                id: item.id,
+                timestampMillis: item.modifiedMillis ?? report.capturedAtMillis,
+                repoName: item.attribution.repoName,
+                repoRoot: item.attribution.repoRoot,
+                branch: item.attribution.gitBranch ?? item.attribution.gitHead,
+                displayName: item.displayName,
+                path: item.path,
+                cleanupTier: item.cleanupTier,
+                deltaBytes: delta,
+                previousBytes: previousBytes,
+                currentBytes: item.sizeBytes,
+                command: item.attribution.command,
+                processTree: item.attribution.processTree,
+                aiAgentSession: item.attribution.aiAgentSession
+            )
+        }
+        .sorted {
+            if ($0.timestampMillis ?? 0) == ($1.timestampMillis ?? 0) {
+                return $0.deltaBytes > $1.deltaBytes
+            }
+            return ($0.timestampMillis ?? 0) > ($1.timestampMillis ?? 0)
+        }
+        .prefix(10)
+        .map { $0 }
+    }
+
+    private func storageGrowthEventTitle(_ event: StorageGrowthTimelineEvent) -> String {
+        let repo = event.repoName ?? event.repoRoot.map(lastPathComponent) ?? "unattributed workspace"
+        return "\(repo) added \(formatBytes(UInt64(event.deltaBytes))) to \(event.displayName)"
+    }
+
+    private func storageGrowthCorrelationDetail(_ event: StorageGrowthTimelineEvent) -> String {
+        var parts: [String] = []
+        if let command = event.command {
+            parts.append("command \(command)")
+        }
+        if let processTree = event.processTree {
+            parts.append("process tree \(processTree)")
+        }
+        if let session = event.aiAgentSession {
+            parts.append("AI session \(session)")
+        }
+        if parts.isEmpty {
+            parts.append("writer unknown: Aetower needs a file-event journal to tie this jump to a command/process/session")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func storageGrowthEventTime(_ event: StorageGrowthTimelineEvent) -> String {
+        guard let timestampMillis = event.timestampMillis else {
+            return "time unknown"
+        }
+        let date = Date(timeIntervalSince1970: Double(timestampMillis) / 1000.0)
+        return date.formatted(date: .omitted, time: .shortened)
     }
 
     private func storageGrowthDelta(for footprint: StorageRepoFootprintModel) -> Int64? {
