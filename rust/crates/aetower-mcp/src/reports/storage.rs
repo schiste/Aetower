@@ -26,6 +26,7 @@ pub(crate) struct StorageHygieneReport {
     cleanup_tiers: Vec<StorageCleanupTierSummary>,
     cleanup_recipes: Vec<StorageCleanupRecipe>,
     budget_guardrails: StorageBudgetGuardrails,
+    agent_hygiene: StorageAgentHygieneSummary,
     repo_footprints: Vec<StorageRepoFootprint>,
     items: Vec<StorageHygieneItem>,
     roots: Vec<String>,
@@ -124,6 +125,59 @@ struct StorageBudgetViolation {
     observed_bytes: u64,
     limit_bytes: u64,
     recommendation: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct StorageAgentHygieneSummary {
+    total_agent_artifact_bytes: u64,
+    week_agent_artifact_bytes: u64,
+    rebuildable_agent_bytes: u64,
+    rebuildable_agent_percent: f32,
+    week_rebuildable_agent_bytes: u64,
+    week_rebuildable_agent_percent: f32,
+    attributed_item_count: usize,
+    agent_count: usize,
+    agents: Vec<StorageAgentArtifactSummary>,
+    caveats: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageAgentArtifactSummary {
+    id: String,
+    provider: String,
+    display_name: String,
+    session_id: Option<String>,
+    artifact_bytes: u64,
+    week_artifact_bytes: u64,
+    rebuildable_bytes: u64,
+    rebuildable_percent: f32,
+    week_rebuildable_bytes: u64,
+    week_rebuildable_percent: f32,
+    item_count: usize,
+    repo_count: usize,
+    top_repositories: Vec<StorageAgentRepoSummary>,
+    top_items: Vec<StorageAgentItemSummary>,
+    confidence: String,
+    attribution_sources: Vec<String>,
+    recommendation: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageAgentRepoSummary {
+    repo_root: String,
+    repo_name: String,
+    artifact_bytes: u64,
+    item_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageAgentItemSummary {
+    path: String,
+    display_name: String,
+    kind: String,
+    cleanup_tier: String,
+    size_bytes: u64,
+    modified_millis: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -277,6 +331,7 @@ fn build_storage_hygiene_report_with_options(
     let cleanup_recipes = build_cleanup_recipes(&items);
     let repo_footprints = summarize_repo_footprints(&items);
     let budget_guardrails = evaluate_budget_guardrails(&summary, &repo_footprints);
+    let agent_hygiene = summarize_agent_hygiene(&items);
     StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
@@ -284,6 +339,7 @@ fn build_storage_hygiene_report_with_options(
         cleanup_tiers,
         cleanup_recipes,
         budget_guardrails,
+        agent_hygiene,
         repo_footprints,
         items,
         roots: scanned_roots,
@@ -295,7 +351,7 @@ fn build_storage_hygiene_report_with_options(
                 .to_owned(),
             "Review candidates may be rebuildable but can still contain release artifacts or local environments."
                 .to_owned(),
-            "Command, process-tree, and AI-session attribution require file-event or runtime baselines and are marked unknown when unavailable."
+            "Command and process-tree attribution require file-event or runtime baselines; known local AI-agent directories are inferred conservatively."
                 .to_owned(),
         ],
     }
@@ -670,6 +726,8 @@ fn artifact_attribution(path: &Path) -> StorageArtifactAttribution {
         .as_ref()
         .map(|root| read_git_head(root))
         .unwrap_or((None, None));
+    let inferred_agent_session =
+        known_agent_path(path).map(|(_, display_name)| format!("{display_name} local artifacts"));
     let repo_name = repo_root.as_ref().and_then(|root| {
         root.file_name()
             .and_then(|name| name.to_str())
@@ -682,13 +740,19 @@ fn artifact_attribution(path: &Path) -> StorageArtifactAttribution {
     } else {
         notes.push("No enclosing Git repository was found for this artifact.".to_owned());
     }
-    notes.push(
-        "Command, process-tree, and AI-session attribution require a file-event baseline and are unavailable in this read-only scan."
-            .to_owned(),
-    );
+    if inferred_agent_session.is_some() {
+        notes.push(
+            "AI agent attribution inferred from a known local agent support directory.".to_owned(),
+        );
+    } else {
+        notes.push(
+            "Command, process-tree, and exact AI-session attribution require a file-event baseline."
+                .to_owned(),
+        );
+    }
     let confidence = if repo_root.is_some() && git_branch.is_some() {
         "high"
-    } else if repo_root.is_some() {
+    } else if repo_root.is_some() || inferred_agent_session.is_some() {
         "medium"
     } else {
         "low"
@@ -701,7 +765,7 @@ fn artifact_attribution(path: &Path) -> StorageArtifactAttribution {
         git_head,
         command: None,
         process_tree: None,
-        ai_agent_session: None,
+        ai_agent_session: inferred_agent_session,
         confidence: confidence.to_owned(),
         notes,
     }
@@ -852,6 +916,376 @@ fn evaluate_budget_guardrails(
         total_artifact_budget_bytes: TOTAL_ARTIFACT_BUDGET_BYTES,
         status,
         violations,
+    }
+}
+
+#[derive(Clone, Debug)]
+struct AgentAttributionEvidence {
+    id: String,
+    provider: String,
+    display_name: String,
+    session_id: Option<String>,
+    confidence: String,
+    source: String,
+}
+
+#[derive(Clone, Debug)]
+struct AgentArtifactAccumulator {
+    id: String,
+    provider: String,
+    display_name: String,
+    session_id: Option<String>,
+    artifact_bytes: u64,
+    week_artifact_bytes: u64,
+    rebuildable_bytes: u64,
+    week_rebuildable_bytes: u64,
+    item_count: usize,
+    repos: BTreeMap<String, AgentRepoAccumulator>,
+    top_items: Vec<StorageAgentItemSummary>,
+    confidence: String,
+    confidence_rank: u8,
+    attribution_sources: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct AgentRepoAccumulator {
+    repo_root: String,
+    repo_name: String,
+    artifact_bytes: u64,
+    item_count: usize,
+}
+
+impl AgentArtifactAccumulator {
+    fn new(evidence: AgentAttributionEvidence) -> Self {
+        let mut attribution_sources = BTreeSet::new();
+        attribution_sources.insert(evidence.source);
+        let confidence_rank = confidence_rank(&evidence.confidence);
+        Self {
+            id: evidence.id,
+            provider: evidence.provider,
+            display_name: evidence.display_name,
+            session_id: evidence.session_id,
+            artifact_bytes: 0,
+            week_artifact_bytes: 0,
+            rebuildable_bytes: 0,
+            week_rebuildable_bytes: 0,
+            item_count: 0,
+            repos: BTreeMap::new(),
+            top_items: Vec::new(),
+            confidence: evidence.confidence,
+            confidence_rank,
+            attribution_sources,
+        }
+    }
+
+    fn merge_evidence(&mut self, evidence: AgentAttributionEvidence) {
+        self.attribution_sources.insert(evidence.source);
+        let rank = confidence_rank(&evidence.confidence);
+        if rank > self.confidence_rank {
+            self.confidence = evidence.confidence;
+            self.confidence_rank = rank;
+        }
+        if self.session_id.is_none() {
+            self.session_id = evidence.session_id;
+        }
+    }
+
+    fn add_item(&mut self, item: &StorageHygieneItem) {
+        self.artifact_bytes = self.artifact_bytes.saturating_add(item.size_bytes);
+        self.item_count += 1;
+        let is_rebuildable = item.cleanup_tier == "rebuildable";
+        if is_rebuildable {
+            self.rebuildable_bytes = self.rebuildable_bytes.saturating_add(item.size_bytes);
+        }
+        if item.age_days.is_some_and(|days| days <= 7) {
+            self.week_artifact_bytes = self.week_artifact_bytes.saturating_add(item.size_bytes);
+            if is_rebuildable {
+                self.week_rebuildable_bytes =
+                    self.week_rebuildable_bytes.saturating_add(item.size_bytes);
+            }
+        }
+
+        if let Some(repo_root) = item.attribution.repo_root.as_deref() {
+            let repo =
+                self.repos
+                    .entry(repo_root.to_owned())
+                    .or_insert_with(|| AgentRepoAccumulator {
+                        repo_root: repo_root.to_owned(),
+                        repo_name: item
+                            .attribution
+                            .repo_name
+                            .clone()
+                            .or_else(|| {
+                                Path::new(repo_root)
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .map(str::to_owned)
+                            })
+                            .unwrap_or_else(|| "repository".to_owned()),
+                        ..Default::default()
+                    });
+            repo.artifact_bytes = repo.artifact_bytes.saturating_add(item.size_bytes);
+            repo.item_count += 1;
+        }
+
+        self.top_items.push(StorageAgentItemSummary {
+            path: item.path.clone(),
+            display_name: item.display_name.clone(),
+            kind: item.kind.clone(),
+            cleanup_tier: item.cleanup_tier.clone(),
+            size_bytes: item.size_bytes,
+            modified_millis: item.modified_millis,
+        });
+    }
+
+    fn into_summary(mut self) -> StorageAgentArtifactSummary {
+        let repo_count = self.repos.len();
+        let mut top_repositories: Vec<_> = self
+            .repos
+            .into_values()
+            .map(|repo| StorageAgentRepoSummary {
+                repo_root: repo.repo_root,
+                repo_name: repo.repo_name,
+                artifact_bytes: repo.artifact_bytes,
+                item_count: repo.item_count,
+            })
+            .collect();
+        top_repositories.sort_by(|left, right| {
+            right
+                .artifact_bytes
+                .cmp(&left.artifact_bytes)
+                .then_with(|| left.repo_name.cmp(&right.repo_name))
+        });
+        top_repositories.truncate(4);
+
+        self.top_items.sort_by(|left, right| {
+            right
+                .size_bytes
+                .cmp(&left.size_bytes)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        self.top_items.truncate(4);
+
+        StorageAgentArtifactSummary {
+            id: self.id,
+            provider: self.provider,
+            display_name: self.display_name,
+            session_id: self.session_id,
+            artifact_bytes: self.artifact_bytes,
+            week_artifact_bytes: self.week_artifact_bytes,
+            rebuildable_bytes: self.rebuildable_bytes,
+            rebuildable_percent: percent(self.rebuildable_bytes, self.artifact_bytes),
+            week_rebuildable_bytes: self.week_rebuildable_bytes,
+            week_rebuildable_percent: percent(
+                self.week_rebuildable_bytes,
+                self.week_artifact_bytes,
+            ),
+            item_count: self.item_count,
+            repo_count,
+            top_repositories,
+            top_items: self.top_items,
+            confidence: self.confidence,
+            attribution_sources: self.attribution_sources.into_iter().collect(),
+            recommendation: agent_cleanup_recommendation(
+                self.artifact_bytes,
+                self.rebuildable_bytes,
+                self.week_artifact_bytes,
+            ),
+        }
+    }
+}
+
+fn summarize_agent_hygiene(items: &[StorageHygieneItem]) -> StorageAgentHygieneSummary {
+    let mut grouped = BTreeMap::<String, AgentArtifactAccumulator>::new();
+
+    for item in items {
+        let Some(evidence) = infer_agent_evidence(item) else {
+            continue;
+        };
+        grouped
+            .entry(evidence.id.clone())
+            .and_modify(|entry| entry.merge_evidence(evidence.clone()))
+            .or_insert_with(|| AgentArtifactAccumulator::new(evidence))
+            .add_item(item);
+    }
+
+    let mut agents: Vec<_> = grouped
+        .into_values()
+        .map(AgentArtifactAccumulator::into_summary)
+        .collect();
+    agents.sort_by(|left, right| {
+        right
+            .week_artifact_bytes
+            .cmp(&left.week_artifact_bytes)
+            .then_with(|| right.artifact_bytes.cmp(&left.artifact_bytes))
+            .then_with(|| left.display_name.cmp(&right.display_name))
+    });
+    agents.truncate(12);
+
+    let total_agent_artifact_bytes = agents.iter().fold(0u64, |total, agent| {
+        total.saturating_add(agent.artifact_bytes)
+    });
+    let week_agent_artifact_bytes = agents.iter().fold(0u64, |total, agent| {
+        total.saturating_add(agent.week_artifact_bytes)
+    });
+    let rebuildable_agent_bytes = agents.iter().fold(0u64, |total, agent| {
+        total.saturating_add(agent.rebuildable_bytes)
+    });
+    let week_rebuildable_agent_bytes = agents.iter().fold(0u64, |total, agent| {
+        total.saturating_add(agent.week_rebuildable_bytes)
+    });
+    let attributed_item_count = agents.iter().fold(0usize, |total, agent| {
+        total.saturating_add(agent.item_count)
+    });
+
+    StorageAgentHygieneSummary {
+        total_agent_artifact_bytes,
+        week_agent_artifact_bytes,
+        rebuildable_agent_bytes,
+        rebuildable_agent_percent: percent(rebuildable_agent_bytes, total_agent_artifact_bytes),
+        week_rebuildable_agent_bytes,
+        week_rebuildable_agent_percent: percent(
+            week_rebuildable_agent_bytes,
+            week_agent_artifact_bytes,
+        ),
+        attributed_item_count,
+        agent_count: agents.len(),
+        agents,
+        caveats: vec![
+            "Agent cost is direct attribution only: explicit AI session metadata, command/process-tree evidence, or known local agent directories."
+                .to_owned(),
+            "Repository build artifacts are not blamed on an agent unless Aetower has writer evidence."
+                .to_owned(),
+        ],
+    }
+}
+
+fn infer_agent_evidence(item: &StorageHygieneItem) -> Option<AgentAttributionEvidence> {
+    if let Some(session) = item.attribution.ai_agent_session.as_deref()
+        && let Some((provider, display_name)) = agent_provider_from_text(session)
+    {
+        let inferred_local_artifacts = session.ends_with(" local artifacts");
+        return Some(AgentAttributionEvidence {
+            id: if inferred_local_artifacts {
+                format!("known-path|{provider}")
+            } else {
+                format!("session|{}|{}", provider, session)
+            },
+            provider,
+            display_name,
+            session_id: Some(session.to_owned()),
+            confidence: if inferred_local_artifacts {
+                "medium".to_owned()
+            } else {
+                "high".to_owned()
+            },
+            source: if inferred_local_artifacts {
+                "known_agent_directory".to_owned()
+            } else {
+                "ai_agent_session".to_owned()
+            },
+        });
+    }
+
+    if let Some(command) = item.attribution.command.as_deref()
+        && let Some((provider, display_name)) = agent_provider_from_text(command)
+    {
+        return Some(AgentAttributionEvidence {
+            id: format!("command|{provider}"),
+            provider,
+            display_name,
+            session_id: None,
+            confidence: "medium".to_owned(),
+            source: "command".to_owned(),
+        });
+    }
+
+    if let Some(process_tree) = item.attribution.process_tree.as_deref()
+        && let Some((provider, display_name)) = agent_provider_from_text(process_tree)
+    {
+        return Some(AgentAttributionEvidence {
+            id: format!("process-tree|{provider}"),
+            provider,
+            display_name,
+            session_id: None,
+            confidence: "medium".to_owned(),
+            source: "process_tree".to_owned(),
+        });
+    }
+
+    let path = Path::new(&item.path);
+    known_agent_path(path).map(|(provider, display_name)| AgentAttributionEvidence {
+        id: format!("known-path|{provider}"),
+        provider,
+        display_name,
+        session_id: None,
+        confidence: "medium".to_owned(),
+        source: "known_agent_directory".to_owned(),
+    })
+}
+
+fn agent_provider_from_text(value: &str) -> Option<(String, String)> {
+    let lowered = value.to_ascii_lowercase();
+    if lowered.contains("claude") {
+        return Some(("claude".to_owned(), "Claude Code".to_owned()));
+    }
+    if lowered.contains("codex") {
+        return Some(("codex".to_owned(), "Codex".to_owned()));
+    }
+    if lowered.contains("cursor-agent") || lowered.contains("cursor") {
+        return Some(("cursor".to_owned(), "Cursor".to_owned()));
+    }
+    if lowered.contains("aider") {
+        return Some(("aider".to_owned(), "Aider".to_owned()));
+    }
+    None
+}
+
+fn known_agent_path(path: &Path) -> Option<(String, String)> {
+    for component in path.components() {
+        let normalized = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        match normalized.as_str() {
+            ".claude" => return Some(("claude".to_owned(), "Claude Code".to_owned())),
+            ".codex" => return Some(("codex".to_owned(), "Codex".to_owned())),
+            ".cursor" => return Some(("cursor".to_owned(), "Cursor".to_owned())),
+            ".aider" => return Some(("aider".to_owned(), "Aider".to_owned())),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn agent_cleanup_recommendation(
+    artifact_bytes: u64,
+    rebuildable_bytes: u64,
+    week_artifact_bytes: u64,
+) -> String {
+    if artifact_bytes == 0 {
+        return "No agent-attributed storage pressure detected.".to_owned();
+    }
+    let rebuildable_percent = percent(rebuildable_bytes, artifact_bytes);
+    if rebuildable_percent >= 75.0 {
+        return "Most attributed bytes are rebuildable; clean them after the agent session and related builds are idle.".to_owned();
+    }
+    if week_artifact_bytes >= REPO_GROWTH_BUDGET_BYTES_PER_DAY {
+        return "This agent added significant storage this week; inspect the top items before starting more build-heavy tasks.".to_owned();
+    }
+    "Review top items and prefer targeted cleanup recipes over broad cache deletion.".to_owned()
+}
+
+fn percent(part: u64, total: u64) -> f32 {
+    if total == 0 {
+        return 0.0;
+    }
+    ((part as f64 / total as f64) * 1000.0).round() as f32 / 10.0
+}
+
+fn confidence_rank(confidence: &str) -> u8 {
+    match confidence {
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
     }
 }
 
@@ -1207,6 +1641,10 @@ fn default_storage_roots() -> Vec<String> {
         "Downloads/Repositories",
         "Developer",
         "Projects",
+        ".claude",
+        ".codex",
+        ".cursor",
+        ".aider",
         "Library/Developer/Xcode/DerivedData",
         "Library/Caches/org.swift.swiftpm",
         "Library/Caches/com.apple.dt.Xcode",
@@ -1376,6 +1814,34 @@ mod tests {
         assert!(json.contains("\"repo_growth_budget_bytes_per_day\":2147483648"));
         assert!(json.contains("\"total_artifact_budget_bytes\":32212254720"));
         assert!(json.contains("\"status\":\"ok\""));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_reports_agent_aware_artifact_cost() {
+        let root = test_root("agent-aware-artifacts");
+        let target = root.join(".codex").join("target").join("debug");
+        if let Err(error) = fs::create_dir_all(&target) {
+            panic!("create codex target dir: {error}");
+        }
+        if let Err(error) = fs::write(
+            target.join("blob"),
+            vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write codex build artifact: {error}");
+        }
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+
+        assert!(json.contains("\"agent_hygiene\""));
+        assert!(json.contains("\"agent_count\":1"));
+        assert!(json.contains("\"provider\":\"codex\""));
+        assert!(json.contains("\"display_name\":\"Codex\""));
+        assert!(json.contains("\"session_id\":\"Codex local artifacts\""));
+        assert!(json.contains("\"week_agent_artifact_bytes\":1048704"));
+        assert!(json.contains("\"week_rebuildable_agent_bytes\":1048704"));
+        assert!(json.contains("\"attribution_sources\":[\"known_agent_directory\"]"));
 
         let _ = fs::remove_dir_all(root);
     }
