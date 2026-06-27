@@ -1283,82 +1283,10 @@ private struct ProcessActionSubmission: Equatable {
     let submittedAt: Date
 }
 
-private struct SectionHeader: View {
-    let title: String
-    let detail: String
-
-    init(_ title: String, detail: String) {
-        self.title = title
-        self.detail = detail
-    }
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-            Spacer()
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
-private struct MetricLabel: View {
-    let title: String
-    let value: String
-
-    init(_ title: String, _ value: String) {
-        self.title = title
-        self.value = value
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.caption)
-                .lineLimit(1)
-        }
-    }
-}
-
-private struct MonospaceBlock: View {
-    let text: String
-
-    init(_ text: String) {
-        self.text = text
-    }
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-private struct StatusLine: View {
-    let icon: String
-    let color: Color
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .foregroundStyle(color)
-            Text(text)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
+private typealias SectionHeader = AetowerDetailHeader
+private typealias MetricLabel = AetowerKeyValue
+private typealias MonospaceBlock = AetowerMonospaceBlock
+private typealias StatusLine = AetowerStatusLine
 
 private struct CompactStackRow: View {
     let stack: SampledStackReportModel

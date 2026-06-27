@@ -209,41 +209,19 @@ public struct DiagnosticsView: View {
         _ section: DiagnosticsSection,
         eventClusters: [DiagnosticsEventCluster]
     ) -> some View {
-        let isSelected = selectedSection == section
-        return Button {
+        AetowerSelectableTile(
+            title: section.title,
+            detail: section.detail,
+            signal: sectionSignal(section, eventClusters: eventClusters),
+            systemImage: section.systemImage,
+            signalTone: sectionSignalColor(section),
+            isSelected: selectedSection == section,
+            minHeight: 96
+        ) {
             withAnimation(AetowerDesign.Motion.quick) {
                 selectedSection = section
             }
-        } label: {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 7) {
-                    Image(systemName: section.systemImage)
-                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                    Text(section.title)
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                }
-                Text(sectionSignal(section, eventClusters: eventClusters))
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(sectionSignalColor(section))
-                    .lineLimit(1)
-                Text(section.detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-            .padding(AetowerDesign.Spacing.sm)
-            .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
-            .background(
-                isSelected ? Color.accentColor.opacity(0.11) : AetowerDesign.Surface.card,
-                in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.32) : Color.clear, lineWidth: 1)
-            }
         }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -1506,27 +1484,21 @@ public struct DiagnosticsView: View {
     }
 }
 
+@MainActor
 private func diagnosticsMetric(
     title: String,
     value: String,
     subtitle: String,
     valueColor: Color? = nil
 ) -> some View {
-    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-        Text(title)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(.secondary)
-        Text(value)
-            .font(.system(size: 18, weight: .semibold, design: .rounded))
-            .foregroundStyle(valueColor ?? .primary)
-        Text(subtitle)
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .lineLimit(2)
-    }
-    .padding(AetowerDesign.Spacing.sm)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
+    AetowerMetricTile(
+        title,
+        value: value,
+        detail: subtitle,
+        tone: valueColor ?? AetowerDesign.Ink.primary,
+        minHeight: 96,
+        valueSize: 18
+    )
 }
 
 private func diagnosticsRecommendationCard(_ recommendation: OperatorRecommendationSummary) -> some View {
@@ -1553,16 +1525,9 @@ private func diagnosticsRecommendationCard(_ recommendation: OperatorRecommendat
     .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous))
 }
 
+@MainActor
 private func labeledPersistenceDetail(_ title: String, _ value: String) -> some View {
-    VStack(alignment: .leading, spacing: 2) {
-        Text(title)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(.secondary)
-        Text(value)
-            .font(.caption.monospaced())
-            .foregroundStyle(.secondary)
-            .textSelection(.enabled)
-    }
+    AetowerKeyValue(title, value)
 }
 
 private func relativeTimeLabel(from timestampMillis: UInt64) -> String {

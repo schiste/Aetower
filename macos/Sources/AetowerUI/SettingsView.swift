@@ -15,6 +15,7 @@ public struct SettingsView: View {
     @State private var showResetLocalDataConfirmation = false
     @State private var editingAutomationRules: [AutomationRule] = []
     @State private var hasLoadedIntegrationDraft = false
+    @State private var searchText = ""
     /// In-memory integration draft. Values are written to SettingsStore/Keychain
     /// only when the user applies them, so endpoint edits are genuinely staged.
     @State private var integrationDraft = SettingsIntegrationDraft()
@@ -96,16 +97,23 @@ public struct SettingsView: View {
 
     public var body: some View {
         @Bindable var settings = settings
-        HStack(spacing: 0) {
-            settingsSidebar
-                .frame(width: 238)
+        VStack(spacing: AetowerDesign.Spacing.none) {
+            settingsTabToolBand
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                    selectedSectionContent
+            HStack(spacing: AetowerDesign.Spacing.none) {
+                settingsSidebar
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+                        if settingsSearchQuery.isEmpty || visibleSettingsSections.contains(selectedSection) {
+                            selectedSectionContent
+                        } else {
+                            settingsSearchEmpty
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(AetowerDesign.Spacing.xxl)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(AetowerDesign.Spacing.xxl)
             }
         }
         .navigationTitle("Settings")
@@ -128,50 +136,137 @@ public struct SettingsView: View {
         }
     }
 
-    private var settingsSidebar: some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-            ForEach(SettingsSection.allCases) { section in
-                Button {
-                    selectedSection = section
-                } label: {
-                    HStack(spacing: AetowerDesign.Spacing.md) {
-                        Image(systemName: section.systemImage)
-                            .frame(width: 18)
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: AetowerDesign.Spacing.xs) {
-                                Text(section.title)
-                                    .font(.callout.weight(.semibold))
-                                Spacer(minLength: AetowerDesign.Spacing.xs)
-                                let status = status(for: section)
-                                SettingsMiniStatusBadge(status.label, color: status.color)
+    private var settingsTabToolBand: some View {
+        AetowerTabToolBand(
+            searchText: $searchText,
+            searchPrompt: "Search settings sections",
+            searchWidth: 280
+        ) {
+            Menu {
+                ForEach(SettingsSection.allCases) { section in
+                    Button {
+                        selectedSection = section
+                    } label: {
+                        HStack {
+                            Label(section.title, systemImage: section.systemImage)
+                            if selectedSection == section {
+                                Spacer()
+                                Image(systemName: "checkmark")
                             }
                         }
                     }
-                    .foregroundStyle(selectedSection == section ? Color.primary : Color.secondary)
-                    .padding(.horizontal, AetowerDesign.Spacing.md)
-                    .padding(.vertical, AetowerDesign.Spacing.sm)
-                    .background(
-                        selectedSection == section
-                            ? AetowerDesign.Surface.rowSelected
-                            : Color.clear,
-                        in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
-                    )
                 }
-                .buttonStyle(.plain)
+            } label: {
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    Image(systemName: selectedSection.systemImage)
+                    Text(selectedSection.title)
+                    Image(systemName: "chevron.down")
+                        .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
+                }
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .padding(.horizontal, AetowerDesign.Spacing.sm)
+                .padding(.vertical, AetowerDesign.Spacing.xs)
+                .aetowerControlChrome()
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        } badges: {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                let progress = setupChecklistProgress
+                AetowerToolBadge(
+                    "Setup",
+                    value: "\(progress.completed)/\(progress.total)",
+                    systemImage: "checklist",
+                    tone: progress.completed == progress.total ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+                )
+                AetowerToolBadge(
+                    "Integrations",
+                    value: hasPendingIntegrationChanges ? "Pending" : "Applied",
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    tone: hasPendingIntegrationChanges ? AetowerDesign.Status.warning : AetowerDesign.Status.success
+                )
+                AetowerToolBadge(
+                    "Safe mode",
+                    value: settings.operatorSafeModeEnabled ? "On" : "Off",
+                    systemImage: "shield.lefthalf.filled",
+                    tone: settings.operatorSafeModeEnabled ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+                )
+            }
+        }
+    }
+
+    private var settingsSidebar: some View {
+        AetowerNavigationRail(width: 238) {
+            ForEach(visibleSettingsSections) { section in
+                let status = status(for: section)
+                AetowerSettingsSidebarButton(
+                    title: section.title,
+                    systemImage: section.systemImage,
+                    status: status.label,
+                    statusTone: status.color,
+                    isSelected: selectedSection == section
+                ) {
+                    selectedSection = section
+                }
             }
 
-            Spacer()
+            if visibleSettingsSections.isEmpty {
+                AetowerEmptyState(
+                    title: "No section",
+                    detail: "Clear search to show all settings.",
+                    systemImage: "magnifyingglass"
+                )
+            }
         }
-        .padding(AetowerDesign.Spacing.xl)
-        .background(
-            LinearGradient(
-                colors: [
-                    AetowerDesign.Surface.card.opacity(0.65),
-                    Color.clear,
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+    }
+
+    private var settingsSearchQuery: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var visibleSettingsSections: [SettingsSection] {
+        let query = settingsSearchQuery
+        guard !query.isEmpty else {
+            return SettingsSection.allCases
+        }
+        return SettingsSection.allCases.filter { section in
+            settingsSectionSearchText(section).localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private func settingsSectionSearchText(_ section: SettingsSection) -> String {
+        let status = status(for: section)
+        switch section {
+        case .setup:
+            return "\(section.title) checklist readiness first run \(status.label)"
+        case .general:
+            return "\(section.title) launch window app behavior appearance menu bar \(status.label)"
+        case .collection:
+            return "\(section.title) sampling refresh cadence sensors metrics profile \(status.label)"
+        case .integrations:
+            return "\(section.title) Chau7 Docker Chromium telemetry browser helper \(status.label)"
+        case .aiClients:
+            return "\(section.title) MCP Claude Codex clients registration \(status.label)"
+        case .notifications:
+            return "\(section.title) alerts warnings friction thermal network \(status.label)"
+        case .automation:
+            return "\(section.title) shortcuts rules budget actions \(status.label)"
+        case .privacy:
+            return "\(section.title) export redaction local data privacy \(status.label)"
+        case .updates:
+            return "\(section.title) Sparkle release update download \(status.label)"
+        case .advanced:
+            return "\(section.title) reset diagnostics capabilities support \(status.label)"
+        }
+    }
+
+    private var settingsSearchEmpty: some View {
+        AetowerEmptyState(
+            title: "No settings section selected",
+            detail: "The current section is hidden by the header search. Pick a visible section or clear search.",
+            systemImage: "magnifyingglass",
+            tone: AetowerDesign.Status.warning
         )
     }
 
@@ -1974,26 +2069,6 @@ private struct SettingsBadge: View {
             .padding(.horizontal, AetowerDesign.Spacing.sm)
             .padding(.vertical, AetowerDesign.Spacing.xs)
             .background(color.opacity(0.12), in: Capsule())
-    }
-}
-
-private struct SettingsMiniStatusBadge: View {
-    let label: String
-    let color: Color
-
-    init(_ label: String, color: Color) {
-        self.label = label
-        self.color = color
-    }
-
-    var body: some View {
-        Text(label)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .padding(.horizontal, AetowerDesign.Spacing.xs)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.10), in: Capsule())
     }
 }
 

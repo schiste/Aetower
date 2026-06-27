@@ -155,6 +155,7 @@ private enum SystemWorkspaceTab: String, CaseIterable, Hashable, Identifiable {
 private struct AgentsWorkspaceView: View {
     let state: AppState
     @State private var selectedTab: AgentsWorkspaceTab = .chau7
+    @State private var searchText = ""
 
     private enum Chau7Status: Hashable {
         case enriched
@@ -212,30 +213,159 @@ private struct AgentsWorkspaceView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch selectedTab {
-        case .chau7:
-            Chau7View(state: state)
-        case .aiAgents:
-            AIAgentsView(state: state)
+        if !agentSearchQuery.isEmpty {
+            agentSearchResults
+        } else {
+            switch selectedTab {
+            case .chau7:
+                Chau7View(state: state)
+            case .aiAgents:
+                AIAgentsView(state: state)
+            }
+        }
+    }
+
+    private var agentSearchQuery: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var matchingChau7Sessions: [Chau7SessionSummary] {
+        let query = agentSearchQuery
+        guard !query.isEmpty else { return [] }
+        return state.snapshot.chau7Sessions.filter { session in
+            [
+                session.title,
+                session.provider,
+                session.status,
+                session.workspacePath ?? "",
+                session.repoRoot ?? "",
+                session.gitBranch ?? "",
+                session.activeApp ?? "",
+            ]
+            .contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    private var matchingAgentEntities: [EntitySnapshot] {
+        let query = agentSearchQuery
+        guard !query.isEmpty else { return [] }
+        return state.snapshot.entities.filter { entity in
+            entity.entityKind == .aiAgent
+                && [
+                    entity.displayName,
+                    entity.executablePath ?? "",
+                    entity.bundleId ?? "",
+                    entity.activeWindowTitle ?? "",
+                    entity.recentChangeSummary ?? "",
+                    entity.badges.joined(separator: " "),
+                ]
+                .contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    private var agentSearchResults: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                if matchingChau7Sessions.isEmpty && matchingAgentEntities.isEmpty {
+                    ContentUnavailableView(
+                        "No agent matches",
+                        systemImage: "magnifyingglass",
+                        description: Text("Search tab titles, providers, repositories, branches, apps, and agent names.")
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 220)
+                } else {
+                    ForEach(matchingChau7Sessions, id: \.id) { session in
+                        agentSearchSessionRow(session)
+                    }
+                    ForEach(matchingAgentEntities, id: \.entityId) { entity in
+                        agentSearchEntityRow(entity)
+                    }
+                }
+            }
+            .padding(AetowerDesign.Spacing.xxl)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func agentSearchSessionRow(_ session: Chau7SessionSummary) -> some View {
+        AetowerSurface {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "terminal")
+                    .foregroundStyle(AetowerDesign.Tone.cpu)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text(session.title)
+                        .font(AetowerDesign.Typography.controlLabel)
+                    Text([session.provider, session.gitBranch, session.repoRoot]
+                        .compactMap { $0 }
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " · "))
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                AetowerBadge(session.status, tone: session.isAtPrompt ? .green : .orange)
+            }
+        }
+    }
+
+    private func agentSearchEntityRow(_ entity: EntitySnapshot) -> some View {
+        AetowerSurface {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "cpu")
+                    .foregroundStyle(AetowerDesign.Tone.energy)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text(entity.displayName)
+                        .font(AetowerDesign.Typography.controlLabel)
+                    Text(entity.executablePath ?? entity.bundleId ?? entity.entityId)
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                AetowerBadge(String(format: "%.0f friction", entity.friction.totalScore), tone: AetowerDesign.frictionColor(entity.friction.totalScore))
+            }
         }
     }
 
     private func mergedTabHeader(selection: Binding<AgentsWorkspaceTab>) -> some View {
-        HStack {
-            Spacer()
-
-            Picker("Agents section", selection: selection) {
+        AetowerTabToolBand(
+            searchText: $searchText,
+            searchPrompt: "Search agents, sessions, repos",
+            searchWidth: 280
+        ) {
+            Picker("", selection: selection) {
                 ForEach(AgentsWorkspaceTab.allCases) { tab in
                     Label(tab.title, systemImage: tab.systemImage)
                         .tag(tab)
                 }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Agents section")
             .frame(width: 260)
+        } badges: {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                AetowerToolBadge(
+                    "Sessions",
+                    value: "\(state.snapshot.chau7Sessions.count)",
+                    systemImage: "terminal",
+                    tone: chau7Status == .enriched ? .green : .orange
+                )
+                AetowerToolBadge(
+                    "Agents",
+                    value: "\(state.snapshot.entities.filter { $0.entityKind == .aiAgent }.count)",
+                    systemImage: "cpu",
+                    tone: AetowerDesign.Tone.cpu
+                )
+                AetowerToolBadge(
+                    "Linked",
+                    value: "\(chau7LinkedEntities.count)",
+                    systemImage: "link",
+                    tone: chau7LinkedEntities.isEmpty ? .secondary : .green
+                )
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.bar)
     }
 
     private func capabilityStateLabel(_ capability: CapabilitySnapshot) -> String {
@@ -282,6 +412,7 @@ private struct ActivityWorkspaceView: View {
     let state: AppState
     let settings: SettingsStore
     @State private var selectedTab: ActivityWorkspaceTab = .overview
+    @State private var searchText = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -297,102 +428,67 @@ private struct ActivityWorkspaceView: View {
     }
 
     private var activityHeader: some View {
-        HStack(alignment: .top, spacing: 18) {
-            Spacer()
-
+        AetowerTabToolBand(
+            searchText: $searchText,
+            searchPrompt: "Search activity, events, history",
+            searchWidth: 280
+        ) {
+            Picker("", selection: $selectedTab) {
+                ForEach(ActivityWorkspaceTab.allCases) { tab in
+                    Label(tab.title, systemImage: tab.systemImage)
+                        .tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Activity section")
+            .frame(width: 360)
+        } badges: {
             HStack(spacing: 8) {
-                activityStatusPill(
-                    title: "Events",
+                AetowerToolBadge(
+                    "Events",
                     value: "\(state.snapshot.timeline.count)",
                     systemImage: "timeline.selection",
-                    tint: timelineTint
+                    tone: timelineTint
                 )
-                activityStatusPill(
-                    title: "Snapshots",
+                AetowerToolBadge(
+                    "Snapshots",
                     value: historySnapshotLabel,
                     systemImage: "clock",
-                    tint: historyTint
+                    tone: historyTint
                 )
-                activityStatusPill(
-                    title: "Store",
+                AetowerToolBadge(
+                    "Store",
                     value: historyStoreLabel,
                     systemImage: "externaldrive",
-                    tint: storageTint
+                    tone: storageTint
                 )
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(.bar)
     }
 
     private var navigationRail: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 7) {
-                Text("ACTIVITY")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 12)
-
-                ForEach(ActivityWorkspaceTab.allCases) { tab in
+        AetowerNavigationRail {
+            AetowerRailGroup("Activity") {
+                ForEach(visibleActivityTabs) { tab in
                     moduleButton(tab)
                 }
-
-                Spacer(minLength: 0)
             }
-            .padding(12)
         }
-        .frame(width: 292)
-        .background(.regularMaterial)
     }
 
     private func moduleButton(_ tab: ActivityWorkspaceTab) -> some View {
-        let isSelected = selectedTab == tab
-        return Button {
+        AetowerRailButton(
+            title: tab.title,
+            role: tab.role,
+            summary: tab.summary,
+            signal: moduleSignal(for: tab),
+            systemImage: tab.systemImage,
+            signalTone: signalTint(for: tab),
+            isSelected: selectedTab == tab
+        ) {
             selectedTab = tab
-        } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: tab.systemImage)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                        .frame(width: 22)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(tab.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        Text(tab.role)
-                            .font(.caption2)
-                            .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                    }
-
-                    Spacer()
-                }
-
-                Text(tab.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text(moduleSignal(for: tab))
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(signalTint(for: tab))
-                    .lineLimit(1)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                isSelected ? Color.accentColor.opacity(0.11) : Color.secondary.opacity(0.055),
-                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.32) : Color.clear, lineWidth: 1)
-            }
         }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -659,25 +755,6 @@ private struct ActivityWorkspaceView: View {
         .background(Color.secondary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private func activityStatusPill(title: String, value: String, systemImage: String, tint: Color) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: systemImage)
-                .foregroundStyle(tint)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title.uppercased())
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                Text(value)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(tint.opacity(0.08), in: Capsule())
-    }
-
     private func activityDetailLine(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title.uppercased())
@@ -730,7 +807,33 @@ private struct ActivityWorkspaceView: View {
     }
 
     private var recentEvents: [TimelineEvent] {
-        Array(state.snapshot.timeline.sorted { $0.timestampMillis > $1.timestampMillis }.prefix(5))
+        let query = activitySearchQuery
+        let events = state.snapshot.timeline
+            .filter { event in
+                guard !query.isEmpty else { return true }
+                return event.title.localizedCaseInsensitiveContains(query)
+                    || event.detail.localizedCaseInsensitiveContains(query)
+                    || timelineCategoryLabel(event.category).localizedCaseInsensitiveContains(query)
+            }
+            .sorted { $0.timestampMillis > $1.timestampMillis }
+        return Array(events.prefix(5))
+    }
+
+    private var activitySearchQuery: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var visibleActivityTabs: [ActivityWorkspaceTab] {
+        let query = activitySearchQuery
+        guard !query.isEmpty else {
+            return ActivityWorkspaceTab.allCases
+        }
+        return ActivityWorkspaceTab.allCases.filter { tab in
+            tab.title.localizedCaseInsensitiveContains(query)
+                || tab.role.localizedCaseInsensitiveContains(query)
+                || tab.summary.localizedCaseInsensitiveContains(query)
+                || moduleSignal(for: tab).localizedCaseInsensitiveContains(query)
+        }
     }
 
     private var warningEventCount: Int {
@@ -862,6 +965,7 @@ private struct SystemWorkspaceView: View {
     let state: AppState
     let settings: SettingsStore
     @State private var selectedTab: SystemWorkspaceTab = .sensors
+    @State private var searchText = ""
 
     private let groupedTabs: [(title: String, tabs: [SystemWorkspaceTab])] = [
         ("Live Machine", [.sensors]),
@@ -884,125 +988,69 @@ private struct SystemWorkspaceView: View {
     }
 
     private var systemHeader: some View {
-        HStack(alignment: .top, spacing: 18) {
-            Spacer()
-
+        AetowerTabToolBand(
+            searchText: $searchText,
+            searchPrompt: "Search system, startup, diagnostics",
+            searchWidth: 280
+        ) {
+            Picker("", selection: $selectedTab) {
+                ForEach(SystemWorkspaceTab.allCases) { tab in
+                    Label(tab.title, systemImage: tab.systemImage)
+                        .tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("System section")
+            .frame(width: 360)
+        } badges: {
             HStack(spacing: 8) {
-                statusPill(
-                    title: "Thermal",
+                AetowerToolBadge(
+                    "Thermal",
                     value: thermalLabel,
                     systemImage: "thermometer.medium",
-                    tint: thermalTint
+                    tone: thermalTint
                 )
-                statusPill(
-                    title: "Sensors",
+                AetowerToolBadge(
+                    "Sensors",
                     value: sensorCoverageLabel,
                     systemImage: "sensor",
-                    tint: sensorCoverageTint
+                    tone: sensorCoverageTint
                 )
-                statusPill(
-                    title: "Diagnostics",
+                AetowerToolBadge(
+                    "Diagnostics",
                     value: diagnosticsLabel,
                     systemImage: "waveform.path.ecg.rectangle",
-                    tint: diagnosticsTint
+                    tone: diagnosticsTint
                 )
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(.bar)
     }
 
     private var navigationRail: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                ForEach(groupedTabs, id: \.title) { group in
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(group.title.uppercased())
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 12)
-
-                        ForEach(group.tabs) { tab in
-                            moduleButton(tab)
-                        }
+        AetowerNavigationRail {
+            ForEach(groupedTabs, id: \.title) { group in
+                AetowerRailGroup(group.title) {
+                    ForEach(group.tabs.filter(systemSearchMatches)) { tab in
+                        moduleButton(tab)
                     }
                 }
-
-                Spacer(minLength: 0)
             }
-            .padding(12)
         }
-        .frame(width: 292)
-        .background(.regularMaterial)
     }
 
     private func moduleButton(_ tab: SystemWorkspaceTab) -> some View {
-        let isSelected = selectedTab == tab
-        return Button {
+        AetowerRailButton(
+            title: tab.detailTitle,
+            role: tab.role,
+            summary: tab.summary,
+            signal: moduleSignal(for: tab),
+            systemImage: tab.systemImage,
+            signalTone: signalTint(for: tab),
+            isSelected: selectedTab == tab
+        ) {
             selectedTab = tab
-        } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: tab.systemImage)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                        .frame(width: 22)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(tab.detailTitle)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        Text(tab.role)
-                            .font(.caption2)
-                            .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                    }
-
-                    Spacer()
-                }
-
-                Text(tab.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text(moduleSignal(for: tab))
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(signalTint(for: tab))
-                    .lineLimit(1)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                isSelected ? Color.accentColor.opacity(0.11) : Color.secondary.opacity(0.055),
-                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.32) : Color.clear, lineWidth: 1)
-            }
         }
-        .buttonStyle(.plain)
-    }
-
-    private func statusPill(title: String, value: String, systemImage: String, tint: Color) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: systemImage)
-                .foregroundStyle(tint)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title.uppercased())
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                Text(value)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(tint.opacity(0.08), in: Capsule())
     }
 
     @ViewBuilder
@@ -1083,6 +1131,21 @@ private struct SystemWorkspaceView: View {
         case .fleet:
             return "Opt-in Bonjour discovery"
         }
+    }
+
+    private var systemSearchQuery: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func systemSearchMatches(_ tab: SystemWorkspaceTab) -> Bool {
+        let query = systemSearchQuery
+        guard !query.isEmpty else { return true }
+        return tab.title.localizedCaseInsensitiveContains(query)
+            || tab.detailTitle.localizedCaseInsensitiveContains(query)
+            || tab.role.localizedCaseInsensitiveContains(query)
+            || tab.summary.localizedCaseInsensitiveContains(query)
+            || tab.groupTitle.localizedCaseInsensitiveContains(query)
+            || moduleSignal(for: tab).localizedCaseInsensitiveContains(query)
     }
 
     private func signalTint(for tab: SystemWorkspaceTab) -> Color {

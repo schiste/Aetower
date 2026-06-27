@@ -1530,12 +1530,14 @@ public struct MainListView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.none) {
+            monitorTabToolBand
+            Divider()
             thermalForecastBanner
             monitorContentLayout
+                .padding(.horizontal, AetowerDesign.Spacing.sm)
+                .padding(.vertical, AetowerDesign.Spacing.sm)
         }
-        .padding(.horizontal, AetowerDesign.Spacing.sm)
-        .padding(.vertical, 6)
         .navigationTitle("Monitor")
         .modifier(KeyboardNavigationModifier(
             focusedIndex: $focusedIndex,
@@ -1645,6 +1647,130 @@ public struct MainListView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(AetowerDesign.Motion.standard, value: selectedEntity?.entityId)
+    }
+
+    private var monitorTabToolBand: some View {
+        AetowerTabToolBand(
+            searchText: $searchText,
+            searchPrompt: "Search processes, origin:cli, cpu>50",
+            searchWidth: 320
+        ) {
+            Picker(selection: $listMode) {
+                ForEach(ListMode.allCases) { mode in
+                    Image(systemName: mode.icon)
+                        .tag(mode)
+                }
+            } label: {
+                EmptyView()
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Layout")
+            .frame(width: 86)
+            .onChange(of: listMode) { _, _ in
+                focusedIndex = 0
+                if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
+                    self.selectedEntityID = nil
+                }
+            }
+        } filterTools: {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                sortMenu
+                originMenu
+                advancedFilterButton
+            }
+        } badges: {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                AetowerToolBadge(
+                    isGroupedMode ? "Groups" : "Entities",
+                    value: "\(visibleEntityIDs.count)",
+                    systemImage: isGroupedMode ? "square.grid.2x2" : "list.bullet",
+                    tone: AetowerDesign.Tone.friction
+                )
+                AetowerToolBadge(
+                    "PIDs",
+                    value: "\(visibleProcessCount)",
+                    systemImage: "number",
+                    tone: AetowerDesign.Tone.cpu
+                )
+                if isGroupedMode && isGrouping {
+                    AetowerToolBadge(
+                        "Grouping",
+                        value: "Running",
+                        systemImage: "arrow.triangle.2.circlepath",
+                        tone: AetowerDesign.Status.warning
+                    )
+                }
+            }
+        }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            ForEach(SortKey.allCases) { key in
+                Button {
+                    sortKey = key
+                } label: {
+                    HStack {
+                        Text(key.title)
+                        if key == sortKey {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Text(sortKey.title)
+                    .font(AetowerDesign.Typography.caption.weight(.medium))
+                Image(systemName: "chevron.down")
+                    .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(AetowerDesign.Ink.secondary)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, AetowerDesign.Spacing.xs)
+            .aetowerControlChrome()
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private var originMenu: some View {
+        Menu {
+            ForEach(ProcessOriginFilter.allCases) { filter in
+                Button {
+                    originFilter = filter
+                    focusedIndex = 0
+                    if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
+                        self.selectedEntityID = nil
+                    }
+                } label: {
+                    HStack {
+                        Text(filter.label)
+                        if filter == originFilter {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(AetowerDesign.Typography.compactData(size: 9, weight: .semibold))
+                Text(originFilter.menuLabel)
+                    .font(AetowerDesign.Typography.caption.weight(.medium))
+                Image(systemName: "chevron.down")
+                    .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(originFilter == .all ? AnyShapeStyle(AetowerDesign.Ink.secondary) : AnyShapeStyle(Color.accentColor))
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, AetowerDesign.Spacing.xs)
+            .aetowerControlChrome()
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
     }
 
     private func detailPanel(for entity: EntitySnapshot) -> some View {
@@ -1944,124 +2070,6 @@ public struct MainListView: View {
 
     private var rankedEntitiesSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            monitorHeader
-
-            HStack(spacing: 6) {
-                Picker(selection: $listMode) {
-                    ForEach(ListMode.allCases) { mode in
-                        Image(systemName: mode.icon)
-                            .tag(mode)
-                    }
-                } label: {
-                    EmptyView()
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 80)
-                .onChange(of: listMode) { _, newMode in
-                    focusedIndex = 0
-                    if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
-                        self.selectedEntityID = nil
-                    }
-                }
-
-                Menu {
-                    ForEach(SortKey.allCases) { key in
-                        Button {
-                            sortKey = key
-                        } label: {
-                            HStack {
-                                Text(key.title)
-                                if key == sortKey {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(sortKey.title)
-                            .font(.caption.weight(.medium))
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, AetowerDesign.Spacing.sm)
-                    .padding(.vertical, AetowerDesign.Spacing.xs)
-                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-
-                Menu {
-                    ForEach(ProcessOriginFilter.allCases) { filter in
-                        Button {
-                            originFilter = filter
-                            focusedIndex = 0
-                            if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
-                                self.selectedEntityID = nil
-                            }
-                        } label: {
-                            HStack {
-                                Text(filter.label)
-                                if filter == originFilter {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "point.3.connected.trianglepath.dotted")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text(originFilter.menuLabel)
-                            .font(.caption.weight(.medium))
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
-                    }
-                    .foregroundStyle(originFilter == .all ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
-                    .padding(.horizontal, AetowerDesign.Spacing.sm)
-                    .padding(.vertical, AetowerDesign.Spacing.xs)
-                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                    TextField("Search…  origin:cli  cpu>50  path:/Applications", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .aetowerUtilityTextInput()
-                        .focused($searchFieldFocused)
-                        .onSubmit { searchFieldFocused = false }
-                        .font(.caption)
-                }
-                .padding(.horizontal, AetowerDesign.Spacing.sm)
-                .padding(.vertical, AetowerDesign.Spacing.xs)
-                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
-                .frame(maxWidth: 190)
-
-                advancedFilterButton
-
-                if isGroupedMode && isGrouping {
-                    HStack(spacing: 5) {
-                        ProgressView()
-                            .controlSize(.mini)
-                        Text("Grouping…")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .transition(.opacity)
-                }
-
-                Spacer()
-            }
-            .padding(.horizontal, AetowerDesign.Spacing.sm)
-            .padding(.bottom, 2)
-
             HStack(spacing: 6) {
                 Text("")
                     .frame(width: 16)
@@ -2325,22 +2333,6 @@ public struct MainListView: View {
             return "\(lead) · top contributor: \(label)"
         }
         return lead
-    }
-
-    private var monitorHeader: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Spacer()
-
-            Text("\(visibleEntityIDs.count) \(isGroupedMode ? "groups" : "entities")")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-
-            Text("\(visibleProcessCount) PIDs")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, AetowerDesign.Spacing.sm)
-        .padding(.top, AetowerDesign.Spacing.xs)
     }
 
     private var monitorOverviewSummary: some View {

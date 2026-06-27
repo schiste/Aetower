@@ -49,29 +49,32 @@ public struct StorageView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                controls
-                safetyBanner
+        VStack(spacing: AetowerDesign.Spacing.none) {
+            storageTabToolBand
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+                    safetyBanner
 
-                if let error = state.storageHygieneError {
-                    warningBanner(error)
-                }
-
-                if let report = state.storageHygieneReport {
-                    if selectedMode == .overview {
-                        storageOverview(report)
-                    } else {
-                        storageAdvanced(report)
+                    if let error = state.storageHygieneError {
+                        warningBanner(error)
                     }
-                } else if state.storageHygieneIsLoading {
-                    loadingSection
-                } else {
-                    emptySection
+
+                    if let report = state.storageHygieneReport {
+                        if selectedMode == .overview {
+                            storageOverview(report)
+                        } else {
+                            storageAdvanced(report)
+                        }
+                    } else if state.storageHygieneIsLoading {
+                        loadingSection
+                    } else {
+                        emptySection
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(AetowerDesign.Spacing.xxl)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(AetowerDesign.Spacing.xxl)
         }
         .task {
             state.ensureStorageHygieneScan()
@@ -81,19 +84,74 @@ public struct StorageView: View {
         }
     }
 
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-            HStack(spacing: AetowerDesign.Spacing.sm) {
+    private var storageTabToolBand: some View {
+        AetowerTabToolBand(
+            searchText: $searchText,
+            searchPrompt: "Search storage artifacts and paths",
+            searchWidth: 300
+        ) {
+            Picker("", selection: $selectedMode) {
+                ForEach(StorageMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Storage view")
+            .frame(width: 220)
+        } filterTools: {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                if selectedMode == .advanced {
+                    Picker("", selection: $selectedFilter) {
+                        ForEach(StorageFilter.allCases) { filter in
+                            Text(filter.label).tag(filter)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .accessibilityLabel("Storage filter")
+                    .frame(width: 430)
+                }
                 TextField("Optional root, for example ~/Repositories", text: $customRoot)
                     .aetowerUtilityTextInput()
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
+                    .font(AetowerDesign.Typography.caption)
+                    .padding(.horizontal, AetowerDesign.Spacing.sm)
+                    .padding(.vertical, AetowerDesign.Spacing.xs)
+                    .frame(width: 230)
+                    .aetowerControlChrome()
                 Stepper(
                     "Depth \(Int(maxDepth))",
                     value: $maxDepth,
                     in: 1...12,
                     step: 1
                 )
-                .frame(width: 130)
+                .font(AetowerDesign.Typography.caption)
+                .frame(width: 118)
+            }
+        } badges: {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                AetowerToolBadge(
+                    "Reclaim",
+                    value: storageReclaimableLabel,
+                    systemImage: "externaldrive.badge.minus",
+                    tone: AetowerDesign.Tone.disk
+                )
+                AetowerToolBadge(
+                    "Items",
+                    value: storageItemCountLabel,
+                    systemImage: "shippingbox",
+                    tone: AetowerDesign.Tone.memory
+                )
+                AetowerToolBadge(
+                    "Scan",
+                    value: storageScanStatusLabel,
+                    systemImage: state.storageHygieneIsLoading ? "arrow.triangle.2.circlepath" : "shield.checkered",
+                    tone: state.storageHygieneError == nil ? AetowerDesign.Status.ready : AetowerDesign.Status.error
+                )
+            }
+        } actions: {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
                 Button {
                     runScan()
                 } label: {
@@ -102,60 +160,44 @@ public struct StorageView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(state.storageHygieneIsLoading)
             }
-
-            HStack(spacing: AetowerDesign.Spacing.sm) {
-                Picker("View", selection: $selectedMode) {
-                    ForEach(StorageMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 260)
-
-                if selectedMode == .advanced {
-                    Picker("Filter", selection: $selectedFilter) {
-                        ForEach(StorageFilter.allCases) { filter in
-                            Text(filter.label).tag(filter)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 680)
-
-                    TextField("Search paths or kinds", text: $searchText)
-                        .aetowerUtilityTextInput()
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 260)
-                } else {
-                    Spacer()
-                    Label("Read-only scan", systemImage: "shield.checkered")
-                        .font(.caption)
-                        .foregroundStyle(AetowerDesign.Status.ready)
-                }
-            }
-
-            Text(selectedMode.helperText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
-        .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var storageReclaimableLabel: String {
+        guard let report = state.storageHygieneReport else {
+            return state.storageHygieneIsLoading ? "Loading" : "No scan"
+        }
+        return formatBytes(report.summary.totalReclaimableBytes)
+    }
+
+    private var storageItemCountLabel: String {
+        guard let report = state.storageHygieneReport else {
+            return "0"
+        }
+        return "\(report.summary.itemCount)"
+    }
+
+    private var storageScanStatusLabel: String {
+        if state.storageHygieneIsLoading {
+            return "Running"
+        }
+        if state.storageHygieneError != nil {
+            return "Error"
+        }
+        guard let report = state.storageHygieneReport else {
+            return "Idle"
+        }
+        return "\(report.scanDurationMillis) ms"
     }
 
     private var safetyBanner: some View {
-        HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
-            Image(systemName: "shield.checkered")
-                .foregroundStyle(AetowerDesign.Status.ready)
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                Text("Read-only inventory")
-                    .font(.headline)
-                Text("Aetower does not delete files from this view. It estimates size, age, and cleanup confidence, then gives reveal/copy actions so operators stay in control.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Status.ready.opacity(0.10))
+        AetowerInfoBanner(
+            "Aetower does not delete files from this view. It estimates size, age, and cleanup confidence, then gives reveal/copy actions so operators stay in control.",
+            title: "Read-only inventory",
+            systemImage: "shield.checkered",
+            tone: AetowerDesign.Status.ready,
+            level: .card
+        )
     }
 
     private func storageOverview(_ report: StorageHygieneReportModel) -> some View {
@@ -1631,26 +1673,15 @@ public struct StorageView: View {
         systemImage: String,
         tone: Color
     ) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-            HStack(spacing: AetowerDesign.Spacing.xs) {
-                Image(systemName: systemImage)
-                    .foregroundStyle(tone)
-                Text(title.uppercased())
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            Text(value)
-                .font(.system(size: 22, weight: .semibold, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-            Text(detail)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .lineLimit(2)
-        }
-        .padding(AetowerDesign.Spacing.md)
-        .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        AetowerMetricTile(
+            title,
+            value: value,
+            detail: detail,
+            systemImage: systemImage,
+            tone: tone,
+            minHeight: 112,
+            valueSize: 22
+        )
     }
 
     private func cleanupTierCard(_ tier: StorageCleanupTierModel) -> some View {
@@ -1687,50 +1718,26 @@ public struct StorageView: View {
         value: String,
         detail: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title.uppercased())
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.tertiary)
-            Text(value)
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-            Text(detail)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        AetowerMetricTile(
+            title,
+            value: value,
+            detail: detail,
+            tone: AetowerDesign.Ink.primary,
+            minHeight: 72,
+            valueSize: 13
+        )
     }
 
     private func cleanupRecipeBadge(_ recipe: StorageCleanupRecipeModel) -> some View {
-        Text(cleanupTierLabel(recipe.safety))
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(cleanupRecipeTone(recipe))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(cleanupRecipeTone(recipe).opacity(0.12), in: Capsule())
+        AetowerBadge(cleanupTierLabel(recipe.safety), tone: cleanupRecipeTone(recipe))
     }
 
     private func cleanupTierBadge(_ item: StorageHygieneItemModel) -> some View {
-        Text(cleanupTierLabel(item.cleanupTier))
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(tone(forCleanupTier: item.cleanupTier))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(tone(forCleanupTier: item.cleanupTier).opacity(0.12), in: Capsule())
+        AetowerBadge(cleanupTierLabel(item.cleanupTier), tone: tone(forCleanupTier: item.cleanupTier))
     }
 
     private func safetyBadge(_ item: StorageHygieneItemModel) -> some View {
-        Text(item.safety == "safe" ? "Expected artifact" : "Review")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(tone(for: item))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(tone(for: item).opacity(0.12), in: Capsule())
+        AetowerBadge(item.safety == "safe" ? "Expected artifact" : "Review", tone: tone(for: item))
     }
 
     private func rootLine(_ path: String, detail: String, systemImage: String) -> some View {
@@ -1765,12 +1772,12 @@ public struct StorageView: View {
     }
 
     private func warningBanner(_ text: String) -> some View {
-        Label(text, systemImage: "exclamationmark.triangle")
-            .font(.caption)
-            .foregroundStyle(AetowerDesign.Status.warning)
-            .padding(AetowerDesign.Spacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AetowerDesign.Status.warning.opacity(0.12))
+        AetowerInfoBanner(
+            text,
+            systemImage: "exclamationmark.triangle",
+            tone: AetowerDesign.Status.warning,
+            level: .warning
+        )
     }
 
     private func filteredItems(from report: StorageHygieneReportModel) -> [StorageHygieneItemModel] {
