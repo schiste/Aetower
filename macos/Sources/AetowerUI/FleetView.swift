@@ -22,13 +22,6 @@ public struct FleetView: View {
 
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-                Text("Fleet Monitoring")
-                    .font(.headline)
-                Text("Discover other Aetower instances on your local network.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
             Spacer()
             Button {
                 if fleet.isEnabled { fleet.stop() } else { fleet.start(state: state) }

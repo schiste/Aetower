@@ -113,17 +113,6 @@ public struct TimelineView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                    Text("What changed recently")
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    Text("The timeline records shifts that help explain why the ranking changed: spikes, new activity, and state transitions that matter to perceived system health.")
-                        .foregroundStyle(.secondary)
-                }
-                // Throttle history reconstruction to ~every 30s of snapshot time.
-                .task(id: state.snapshot.capturedAtMillis / 30_000) {
-                    state.refreshRecentlyFinished()
-                }
-
                 if !state.recentlyFinished.isEmpty {
                     GroupBox("Recently finished") {
                         VStack(alignment: .leading, spacing: 6) {
@@ -272,6 +261,10 @@ public struct TimelineView: View {
                 }
             }
             .padding(AetowerDesign.Spacing.xxl)
+        }
+        // Throttle history reconstruction to ~every 30s of snapshot time.
+        .task(id: state.snapshot.capturedAtMillis / 30_000) {
+            state.refreshRecentlyFinished()
         }
         .task(id: filterCacheToken) {
             await recomputeFilteredEvents()

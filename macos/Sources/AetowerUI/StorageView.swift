@@ -51,7 +51,6 @@ public struct StorageView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                header
                 controls
                 safetyBanner
 
@@ -79,23 +78,6 @@ public struct StorageView: View {
         }
         .sheet(item: $candidateCommandPreviewBundle) { bundle in
             cleanupCommandPreviewSheet(bundle)
-        }
-    }
-
-    private var header: some View {
-        HStack(alignment: .top, spacing: AetowerDesign.Spacing.lg) {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                Text("Storage")
-                    .font(.system(size: 28, weight: .semibold, design: .rounded))
-                Text("Find local build artifacts, logs, caches, and dependency trees that make development machines drift over time.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            if state.storageHygieneIsLoading {
-                ProgressView()
-                    .controlSize(.small)
-            }
         }
     }
 

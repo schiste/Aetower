@@ -28,13 +28,6 @@ public struct SensorDashboardView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                    Text("Sensors")
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    Text("Live hardware telemetry — fans, temperatures, power, storage health, and batteries.")
-                        .foregroundStyle(.secondary)
-                }
-
                 if hasAnySensor {
                     atAGlanceStrip
                 }

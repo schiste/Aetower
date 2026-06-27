@@ -193,12 +193,6 @@ package struct AIAgentsView: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-                Text("AI & Agents")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                    .padding(.horizontal, AetowerDesign.Spacing.lg)
-                    .padding(.top, AetowerDesign.Spacing.md)
-
                 if derived.aiAgents.isEmpty && derived.sortedRepoSummaries.isEmpty {
                     emptyState
                 } else {

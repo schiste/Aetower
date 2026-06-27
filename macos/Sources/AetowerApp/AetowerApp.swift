@@ -165,7 +165,6 @@ private struct AgentsWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            agentsPrompt
             mergedTabHeader(selection: $selectedTab)
             Divider()
             content
@@ -211,141 +210,6 @@ private struct AgentsWorkspaceView: View {
         }
     }
 
-    private var aiAgentCount: Int {
-        state.snapshot.entities.filter { $0.entityKind == .aiAgent }.count
-    }
-
-    private var promptIcon: String {
-        switch chau7Status {
-        case .enriched: return "sparkles"
-        case .running: return "terminal"
-        case .configured: return "powerplug"
-        case .unavailable: return "wand.and.stars"
-        }
-    }
-
-    private var promptTint: Color {
-        switch chau7Status {
-        case .enriched: return .green
-        case .running, .configured: return .orange
-        case .unavailable: return .accentColor
-        }
-    }
-
-    private var promptTitle: String {
-        switch chau7Status {
-        case .enriched:
-            return "Chau7 enrichment is active"
-        case .running:
-            return "Chau7 is running; waiting for session context"
-        case .configured:
-            return "Chau7 integration is configured"
-        case .unavailable:
-            return "Use Chau7 for richer agent context"
-        }
-    }
-
-    private var promptDetail: String {
-        switch chau7Status {
-        case .enriched:
-            let sessionCount = state.snapshot.chau7Sessions.count
-            let linkedCount = chau7LinkedEntities.count
-            return "\(sessionCount) Chau7 session(s) and \(linkedCount) linked process group(s) are available. Inspect tab names, repositories, branches, approvals, and child-process pressure from the enriched view."
-        case .running:
-            return "Aetower sees Chau7, but not its session catalog yet. Open a Chau7 agent tab or enable the Chau7 MCP bridge to attach tabs, repositories, branches, approvals, and child processes."
-        case .configured:
-            return "Start Chau7 to turn process-only agent telemetry into session-aware telemetry with tab names, repository and branch context, approvals, and per-session process attribution."
-        case .unavailable:
-            return "Aetower can monitor agents by process today. Chau7 adds the missing workflow context: terminal tabs, sessions, repositories, branches, approvals, and child-process attribution."
-        }
-    }
-
-    private var capabilityLabel: String {
-        guard let capability = chau7Capability else {
-            return "No adapter signal"
-        }
-        return "\(capabilityStateLabel(capability)) · \(capabilityHealthLabel(capability.health))"
-    }
-
-    private var agentsPrompt: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: promptIcon)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(promptTint)
-                .frame(width: 34, height: 34)
-                .background(promptTint.opacity(0.12), in: Circle())
-
-            VStack(alignment: .leading, spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(promptTitle)
-                        .font(.headline)
-                    Text(promptDetail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                promptMetrics
-            }
-
-            Spacer(minLength: 16)
-
-            VStack(alignment: .trailing, spacing: 8) {
-                Button {
-                    selectedTab = .chau7
-                } label: {
-                    Label("Enriched view", systemImage: "terminal")
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-
-                Button {
-                    selectedTab = .aiAgents
-                } label: {
-                    Label("Process-only view", systemImage: "cpu")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(promptTint.opacity(0.07))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(promptTint.opacity(0.16))
-                .frame(height: 1)
-        }
-    }
-
-    private var promptMetrics: some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 92), spacing: 8, alignment: .leading)],
-            alignment: .leading,
-            spacing: 6
-        ) {
-            promptMetric("Sessions", "\(state.snapshot.chau7Sessions.count)")
-            promptMetric("Linked groups", "\(chau7LinkedEntities.count)")
-            promptMetric("AI agents", "\(aiAgentCount)")
-            promptMetric("Adapter", capabilityLabel)
-        }
-    }
-
-    private func promptMetric(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label.uppercased())
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-            Text(value)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
     @ViewBuilder
     private var content: some View {
         switch selectedTab {
@@ -357,15 +221,7 @@ private struct AgentsWorkspaceView: View {
     }
 
     private func mergedTabHeader(selection: Binding<AgentsWorkspaceTab>) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Agents")
-                    .font(.headline)
-                Text("Use Chau7 when available; fall back to process-only AI agent telemetry.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
+        HStack {
             Spacer()
 
             Picker("Agents section", selection: selection) {
@@ -442,15 +298,6 @@ private struct ActivityWorkspaceView: View {
 
     private var activityHeader: some View {
         HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Activity")
-                    .font(.title3.weight(.semibold))
-                Text("History and timeline in one place: what changed, when it changed, and how much persisted data backs the story.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
             Spacer()
 
             HStack(spacing: 8) {
@@ -565,13 +412,6 @@ private struct ActivityWorkspaceView: View {
     private var overview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Activity overview")
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    Text("Summary-first view of current events, persisted coverage, and the cost of loading time-based data.")
-                        .foregroundStyle(.secondary)
-                }
-
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 170), spacing: 12)],
                     alignment: .leading,
@@ -706,13 +546,6 @@ private struct ActivityWorkspaceView: View {
     private var storage: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Activity storage")
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    Text("Storage health for persisted snapshots, retention coverage, quarantine, and the last maintenance pass.")
-                        .foregroundStyle(.secondary)
-                }
-
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 180), spacing: 12)],
                     alignment: .leading,
@@ -1052,15 +885,6 @@ private struct SystemWorkspaceView: View {
 
     private var systemHeader: some View {
         HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("System")
-                    .font(.title3.weight(.semibold))
-                Text("Hardware health first, with startup review, Aetower diagnostics, and local fleet tools one level deeper.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
             Spacer()
 
             HStack(spacing: 8) {

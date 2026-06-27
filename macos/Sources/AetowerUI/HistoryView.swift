@@ -102,13 +102,6 @@ public struct HistoryView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                    Text("Persisted history")
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    Text("This view comes from the persisted snapshot store, not just the in-memory trend buffer. Use it to see what Aetower has been observing over a wider time range.")
-                        .foregroundStyle(.secondary)
-                }
-
                 HStack {
                     Picker("Range", selection: $range) {
                         ForEach(HistoryRangePreset.allCases) { preset in

@@ -61,21 +61,6 @@ public struct SettingsView: View {
             }
         }
 
-        var subtitle: String {
-            switch self {
-            case .setup: return "First-run readiness"
-            case .general: return "App behavior and launch"
-            case .collection: return "Runtime sampling policy"
-            case .integrations: return "External data sources"
-            case .aiClients: return "MCP registration"
-            case .notifications: return "Operator alerts"
-            case .automation: return "Run Shortcuts on events"
-            case .privacy: return "Export controls"
-            case .updates: return "Direct-download releases"
-            case .advanced: return "Capabilities and reset"
-            }
-        }
-
         var systemImage: String {
             switch self {
             case .setup: return "checklist"
@@ -117,7 +102,6 @@ public struct SettingsView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                    sectionHeader(selectedSection)
                     selectedSectionContent
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -146,10 +130,6 @@ public struct SettingsView: View {
 
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-            Text("Settings")
-                .font(.title2.weight(.semibold))
-                .padding(.bottom, AetowerDesign.Spacing.md)
-
             ForEach(SettingsSection.allCases) { section in
                 Button {
                     selectedSection = section
@@ -165,10 +145,6 @@ public struct SettingsView: View {
                                 let status = status(for: section)
                                 SettingsMiniStatusBadge(status.label, color: status.color)
                             }
-                            Text(section.subtitle)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
                         }
                     }
                     .foregroundStyle(selectedSection == section ? Color.primary : Color.secondary)
@@ -197,21 +173,6 @@ public struct SettingsView: View {
                 endPoint: .bottom
             )
         )
-    }
-
-    private func sectionHeader(_ section: SettingsSection) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-            HStack(spacing: AetowerDesign.Spacing.sm) {
-                Image(systemName: section.systemImage)
-                    .foregroundStyle(.secondary)
-                Text(section.title)
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
-                let status = status(for: section)
-                SettingsBadge(status.label, color: status.color)
-            }
-            Text(section.subtitle)
-                .foregroundStyle(.secondary)
-        }
     }
 
     private func status(for section: SettingsSection) -> SettingsStatus {

@@ -91,7 +91,6 @@ public struct PersistenceScannerView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                header
                 if let report {
                     reportContent(report)
                 } else if state.persistenceScanIsLoading {
@@ -108,15 +107,6 @@ public struct PersistenceScannerView: View {
         }
         .task(id: state.snapshot.sequence) {
             refreshRuntimeIndexIfNeeded(snapshot: state.snapshot)
-        }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-            Text("Startup & persistence")
-                .font(.system(size: 28, weight: .semibold, design: .rounded))
-            Text("What starts on this Mac, where it comes from, whether it is active, and what deserves review.")
-                .foregroundStyle(.secondary)
         }
     }
 

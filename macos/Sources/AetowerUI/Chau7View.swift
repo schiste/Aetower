@@ -373,8 +373,6 @@ public struct Chau7View: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-                headerSection
-
                 if let entity = chau7Entity {
                     runtimeSummarySection(entity, derivedSessions: derivedSessions)
                     sessionMapSection(derivedSessions)
@@ -408,15 +406,6 @@ public struct Chau7View: View {
         }
         .onChange(of: state.snapshot.sequence) { _, _ in
             ensureSelectedSessionValid(derivedSessions.sessionSummaries)
-        }
-    }
-
-    private var headerSection: some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-            Text("Chau7")
-                .font(.system(size: 28, weight: .semibold, design: .rounded))
-            Text("App-focused operational view for Chau7: app core, embedded sessions, memory truth, before/after changes, and freeze forensics.")
-                .foregroundStyle(.secondary)
         }
     }
 

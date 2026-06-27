@@ -114,13 +114,6 @@ public struct DiagnosticsView: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                    Text("Diagnostics")
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    Text("Bounded runtime diagnostics from the engine, adapters, persistence, telemetry, and the bridge. Use this to understand what Aetower is doing, not just what it is observing.")
-                        .foregroundStyle(.secondary)
-                }
-
                 diagnosticsActions
                 sectionSwitcher(eventClusters: eventClusters)
                 selectedSectionContent(eventClusters: eventClusters)

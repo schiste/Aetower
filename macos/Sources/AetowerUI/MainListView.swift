@@ -2329,14 +2329,6 @@ public struct MainListView: View {
 
     private var monitorHeader: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Live control center")
-                    .font(.headline)
-                Text("Monitor host load, then drill straight into burden leaders and live process groups.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Spacer()
 
             Text("\(visibleEntityIDs.count) \(isGroupedMode ? "groups" : "entities")")
