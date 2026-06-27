@@ -50,6 +50,10 @@ SWIFT_COLOR_LITERAL = re.compile(
     r"\bColor\((?!secondary|primary)|\bColor\.(red|green|blue|orange|yellow|purple|pink|teal|mint|cyan|indigo|brown)\b"
 )
 DESIGN_SYSTEM_PREFIX = "macos/Sources/AetowerUI/DesignSystem/"
+DESIGN_SYSTEM_SWIFT_PREFIXES = (
+    "macos/Sources/AetowerApp/",
+    "macos/Sources/AetowerUI/",
+)
 DESIGN_SYSTEM_WARNING_PATTERNS = [
     (
         re.compile(r"\.font\("),
@@ -305,13 +309,32 @@ def check_design_system_warnings(
 ) -> None:
     for path, entries in added_lines.items():
         if (
-            not path.startswith("macos/Sources/AetowerUI/")
+            not path.startswith(DESIGN_SYSTEM_SWIFT_PREFIXES)
             or not path.endswith(".swift")
             or path in GENERATED_FILES
             or is_design_system_owned(path)
         ):
             continue
         for line_number, line in entries:
+            message = design_system_warning_message(line)
+            if message:
+                warnings.append(WarningItem(path, line_number, f"Design-system drift: {message}"))
+
+
+def design_system_source_files() -> list[str]:
+    return [
+        path
+        for path in run_git("ls-files").splitlines()
+        if path.startswith(DESIGN_SYSTEM_SWIFT_PREFIXES)
+        and path.endswith(".swift")
+        and path not in GENERATED_FILES
+        and not is_design_system_owned(path)
+    ]
+
+
+def check_design_system_repo_warnings(warnings: list[WarningItem]) -> None:
+    for path in design_system_source_files():
+        for line_number, line in enumerate(file_text(path).splitlines(), start=1):
             message = design_system_warning_message(line)
             if message:
                 warnings.append(WarningItem(path, line_number, f"Design-system drift: {message}"))
@@ -510,11 +533,40 @@ def print_violations(violations: list[Violation], warnings: list[WarningItem]) -
     return 1
 
 
+def print_design_system_audit(warnings: list[WarningItem]) -> int:
+    if not warnings:
+        print("design-system-audit: no drift found")
+        return 0
+
+    grouped: dict[str, list[WarningItem]] = defaultdict(list)
+    for item in warnings:
+        grouped[item.path].append(item)
+
+    print("design-system-audit: warning-only drift summary")
+    for path, items in sorted(grouped.items(), key=lambda entry: (-len(entry[1]), entry[0])):
+        print(f" - {path}: {len(items)} warning(s)")
+        for item in items[:3]:
+            location = f"{item.path}:{item.line}" if item.line else item.path
+            print(f"   example: {location}: {item.message}")
+        if len(items) > 3:
+            print(f"   ... {len(items) - 3} more")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["pre-commit", "working-tree", "pre-push", "full"], required=True)
+    parser.add_argument(
+        "--mode",
+        choices=["pre-commit", "working-tree", "pre-push", "full", "design-audit"],
+        required=True,
+    )
     parser.add_argument("--diff-base")
     args = parser.parse_args()
+
+    if args.mode == "design-audit":
+        warnings: list[WarningItem] = []
+        check_design_system_repo_warnings(warnings)
+        return print_design_system_audit(warnings)
 
     diff_base = None if args.mode in {"pre-commit", "working-tree"} else (args.diff_base or default_diff_base())
     changed_files = staged_or_changed_files(args.mode, diff_base)
