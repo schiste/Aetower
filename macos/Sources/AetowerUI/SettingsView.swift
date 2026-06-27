@@ -120,7 +120,7 @@ public struct SettingsView: View {
                     sectionHeader(selectedSection)
                     selectedSectionContent
                 }
-                .frame(maxWidth: 860, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(AetowerDesign.Spacing.xxl)
             }
         }

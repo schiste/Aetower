@@ -71,7 +71,7 @@ public struct StorageView: View {
                     emptySection
                 }
             }
-            .frame(maxWidth: 1120, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(AetowerDesign.Spacing.xxl)
         }
         .task {

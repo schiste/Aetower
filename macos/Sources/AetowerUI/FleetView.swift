@@ -112,7 +112,7 @@ public struct FleetView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
-            .frame(maxWidth: 920, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(AetowerDesign.Spacing.xxl)
         }
     }

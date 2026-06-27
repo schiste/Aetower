@@ -57,7 +57,7 @@ public struct SensorDashboardView: View {
                     if !host.bluetoothDevices.isEmpty { bluetoothSection }
                 }
             }
-            .frame(maxWidth: 920, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(AetowerDesign.Spacing.xxl)
         }
     }

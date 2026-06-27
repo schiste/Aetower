@@ -624,7 +624,7 @@ private struct ActivityWorkspaceView: View {
                 recentTimelinePreview
                 historyStatusPanel
             }
-            .frame(maxWidth: 1040, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(24)
         }
     }
@@ -765,7 +765,7 @@ private struct ActivityWorkspaceView: View {
                 historyStatusPanel
                 maintenancePanel
             }
-            .frame(maxWidth: 1040, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(24)
         }
     }
@@ -1390,7 +1390,7 @@ struct AetowerApp: App {
                         Label("Settings", systemImage: "slider.horizontal.3")
                     }
             }
-            .frame(minWidth: 1180, minHeight: 760)
+            .frame(minWidth: 940, minHeight: 680)
             .preferredColorScheme(resolvedColorScheme)
             .task {
                 menuBarExtraInserted = settings.showMenuBarExtra

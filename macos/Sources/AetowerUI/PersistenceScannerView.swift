@@ -100,7 +100,7 @@ public struct PersistenceScannerView: View {
                     emptyState
                 }
             }
-            .frame(maxWidth: 1180, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(AetowerDesign.Spacing.xxl)
         }
         .onAppear {
