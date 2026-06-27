@@ -49,6 +49,49 @@ SUSPICIOUS_NEW_FILE_NAMES = {
 SWIFT_COLOR_LITERAL = re.compile(
     r"\bColor\((?!secondary|primary)|\bColor\.(red|green|blue|orange|yellow|purple|pink|teal|mint|cyan|indigo|brown)\b"
 )
+DESIGN_SYSTEM_PREFIX = "macos/Sources/AetowerUI/DesignSystem/"
+DESIGN_SYSTEM_WARNING_PATTERNS = [
+    (
+        re.compile(r"\.font\("),
+        "Typography should use AetowerDesign.Typography or a DesignSystem component.",
+        True,
+    ),
+    (
+        re.compile(r"\.foregroundStyle\("),
+        "Text/icon color should use AetowerDesign.Ink, AetowerDesign.Status, tones, or a DesignSystem component.",
+        True,
+    ),
+    (
+        re.compile(r"\.background\("),
+        "Surfaces should use AetowerSurface, AetowerBadge, or AetowerDesign.Surface tokens.",
+        True,
+    ),
+    (
+        re.compile(r"\.overlay\("),
+        "Borders and overlays should come from shared DesignSystem surfaces/components.",
+        True,
+    ),
+    (
+        re.compile(r"\.shadow\("),
+        "Elevation should be centralized before adding custom shadows.",
+        True,
+    ),
+    (
+        re.compile(r"\.padding\("),
+        "Spacing should use AetowerDesign.Spacing or a shared DesignSystem layout component.",
+        True,
+    ),
+    (
+        re.compile(r"\b(RoundedRectangle|Capsule|Circle)\("),
+        "Raw shapes outside DesignSystem usually mean a reusable surface/badge primitive is missing.",
+        False,
+    ),
+    (
+        re.compile(r"\b(spacing|cornerRadius|lineWidth|radius):\s*\d"),
+        "Raw layout constants should move to AetowerDesign tokens or shared components.",
+        True,
+    ),
+]
 SECRET_PATTERNS = [
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"-----BEGIN (RSA|EC|OPENSSH|DSA|PGP) PRIVATE KEY-----"),
@@ -78,6 +121,13 @@ CARGO_LOCK_NEUTRAL_TOML_LINE = re.compile(
 
 @dataclass
 class Violation:
+    path: str
+    line: int | None
+    message: str
+
+
+@dataclass
+class WarningItem:
     path: str
     line: int | None
     message: str
@@ -229,6 +279,42 @@ def check_swift_added_lines(
                 and pathlib.Path(path).name not in SWIFT_PUBLIC_VIEW_ALLOWLIST
             ):
                 violations.append(Violation(path, line_number, "Do not export reusable-looking app-level views outside approved surfaces."))
+
+
+def is_design_system_owned(path: str) -> bool:
+    return path.startswith(DESIGN_SYSTEM_PREFIX)
+
+
+def design_system_warning_message(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("//"):
+        return None
+    for pattern, message, allow_tokenized_line in DESIGN_SYSTEM_WARNING_PATTERNS:
+        if not pattern.search(line):
+            continue
+        if allow_tokenized_line and "AetowerDesign." in line:
+            continue
+        if "DesignSystem" in line or "AetowerSurface(" in line or "AetowerBadge(" in line:
+            continue
+        return message
+    return None
+
+
+def check_design_system_warnings(
+    added_lines: dict[str, list[tuple[int, str]]], warnings: list[WarningItem]
+) -> None:
+    for path, entries in added_lines.items():
+        if (
+            not path.startswith("macos/Sources/AetowerUI/")
+            or not path.endswith(".swift")
+            or path in GENERATED_FILES
+            or is_design_system_owned(path)
+        ):
+            continue
+        for line_number, line in entries:
+            message = design_system_warning_message(line)
+            if message:
+                warnings.append(WarningItem(path, line_number, f"Design-system drift: {message}"))
 
 
 def check_textfield_modifier(
@@ -405,9 +491,17 @@ def shell_check(targets: list[str], violations: list[Violation]) -> None:
             violations.append(Violation(path, None, result.stderr.strip() or "Shell syntax check failed."))
 
 
-def print_violations(violations: list[Violation]) -> int:
+def print_violations(violations: list[Violation], warnings: list[WarningItem]) -> int:
+    if warnings:
+        print("quality-guard: warnings found", file=sys.stderr)
+        for item in warnings:
+            location = f"{item.path}:{item.line}" if item.line else item.path
+            print(f" - {location}: {item.message}", file=sys.stderr)
     if not violations:
-        print("quality-guard: no issues found")
+        if not warnings:
+            print("quality-guard: no issues found")
+        else:
+            print("quality-guard: no blocking issues found")
         return 0
     print("quality-guard: issues found", file=sys.stderr)
     for item in violations:
@@ -426,10 +520,12 @@ def main() -> int:
     changed_files = staged_or_changed_files(args.mode, diff_base)
     added_lines = parse_added_lines(args.mode, diff_base)
     violations: list[Violation] = []
+    warnings: list[WarningItem] = []
 
     check_placeholders_and_secrets(added_lines, violations)
     check_new_file_names(args.mode, diff_base, violations)
     check_swift_added_lines(added_lines, violations)
+    check_design_system_warnings(added_lines, warnings)
     check_textfield_modifier(added_lines, violations)
     check_rust_added_lines(added_lines, violations)
     check_dependency_hygiene(changed_files, added_lines, args.mode, diff_base, violations)
@@ -438,7 +534,7 @@ def main() -> int:
     if args.mode in {"pre-push", "full", "working-tree"}:
         check_duplicate_blocks(changed_files, violations)
 
-    return print_violations(violations)
+    return print_violations(violations, warnings)
 
 
 if __name__ == "__main__":
