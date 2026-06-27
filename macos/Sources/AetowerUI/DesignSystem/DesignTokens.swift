@@ -24,6 +24,43 @@ enum AetowerDesign {
         static let pill: CGFloat = 100
     }
 
+    // MARK: - Stroke
+
+    enum Stroke {
+        static let hairline: CGFloat = 1
+        static let strong: CGFloat = 1.5
+    }
+
+    // MARK: - Sizing
+
+    enum Size {
+        static let controlHeight: CGFloat = 28
+        static let minTouchTarget: CGFloat = 32
+        static let iconSlot: CGFloat = 24
+        static let sidebarWidth: CGFloat = 188
+    }
+
+    // MARK: - Typography
+
+    enum Typography {
+        static let sectionTitle: Font = .headline
+        static let controlLabel: Font = .subheadline.weight(.medium)
+        static let body: Font = .callout
+        static let caption: Font = .caption
+        static let metadata: Font = .caption2
+        static let metadataStrong: Font = .caption2.weight(.semibold)
+        static let data: Font = .caption.monospacedDigit()
+        static let dataSmall: Font = .caption2.monospacedDigit()
+
+        static func metricValue(size: CGFloat = 28, weight: Font.Weight = .bold) -> Font {
+            .system(size: size, weight: weight, design: .rounded)
+        }
+
+        static func compactData(size: CGFloat = 10, weight: Font.Weight = .medium) -> Font {
+            .system(size: size, weight: weight, design: .monospaced)
+        }
+    }
+
     // MARK: - Animation
 
     enum Motion {
@@ -74,6 +111,15 @@ enum AetowerDesign {
         static let neutral: Color = .secondary
     }
 
+    // MARK: - Text Colors
+
+    enum Ink {
+        static let primary: Color = .primary
+        static let secondary: Color = .secondary
+        static let tertiary: Color = Color.secondary.opacity(0.68)
+        static let inverse: Color = .white
+    }
+
     // MARK: - Surface Colors
 
     enum Surface {
@@ -83,6 +129,8 @@ enum AetowerDesign {
         static let card = Color.secondary.opacity(0.05)
         static let cardHover = Color.secondary.opacity(0.09)
         static let badge = Color.secondary.opacity(0.08)
+        static let badgeStrong = Color.secondary.opacity(0.14)
+        static let divider = Color.secondary.opacity(0.16)
         static let alertWarning = Color.orange.opacity(0.10)
         static let alertCritical = Color.red.opacity(0.10)
         static let alertInfo = Color.blue.opacity(0.10)
