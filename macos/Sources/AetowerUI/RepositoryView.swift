@@ -1,0 +1,948 @@
+import AppKit
+import SwiftUI
+
+private enum RepositoryMode: String, CaseIterable, Identifiable {
+    case overview
+    case all
+    case attention
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .overview: return "Overview"
+        case .all: return "All repos"
+        case .attention: return "Attention"
+        }
+    }
+}
+
+private enum RepositorySort: String, CaseIterable, Identifiable {
+    case attention
+    case size
+    case growth
+    case artifacts
+    case name
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .attention: return "Attention"
+        case .size: return "Size"
+        case .growth: return "Growth"
+        case .artifacts: return "Artifacts"
+        case .name: return "Name"
+        }
+    }
+}
+
+private struct RepositorySummary: Identifiable {
+    let id: String
+    let root: String
+    let name: String
+    let currentSizeBytes: UInt64
+    let artifactBytes: UInt64
+    let itemCount: Int
+    let growthBytes: Int64?
+    let growthWindow: String
+    let estimatedRebuildCost: String
+    let estimatedRebuildSeconds: UInt64?
+    let lastWriterProcess: String?
+    let lastWriterPid: UInt32?
+    let lastBranchTouched: String?
+    let topArtifactFolders: [StorageRepoArtifactFolderModel]
+    let caveats: [String]
+    let violationCount: Int
+    let reviewItemCount: Int
+    let safeItemCount: Int
+    let staleItemCount: Int
+    let liveSessionCount: Int
+    let liveEntityCount: Int
+    let liveMemoryBytes: UInt64
+    let liveCPUPercent: Float
+    let agentArtifactBytes: UInt64
+    let agentCount: Int
+
+    var attentionScore: Double {
+        let artifactScore = min(Double(artifactBytes) / Double(512 * 1024 * 1024), 18)
+        let growthScore = growthBytes.map { max(0, Double($0) / Double(256 * 1024 * 1024)) } ?? 0
+        let reviewScore = Double(reviewItemCount) * 2.2
+        let staleScore = Double(staleItemCount) * 0.7
+        let violationScore = Double(violationCount) * 8
+        let liveScore = Double(liveSessionCount + liveEntityCount) * 1.4
+        return artifactScore + growthScore + reviewScore + staleScore + violationScore + liveScore
+    }
+
+    var statusLabel: String {
+        if violationCount > 0 { return "Budget" }
+        if (growthBytes ?? 0) > 0 { return "Growing" }
+        if reviewItemCount > 0 { return "Review" }
+        if liveSessionCount > 0 || liveEntityCount > 0 { return "Active" }
+        return "Stable"
+    }
+
+    var statusTone: Color {
+        if violationCount > 0 { return AetowerDesign.Status.error }
+        if (growthBytes ?? 0) > 512 * 1024 * 1024 { return AetowerDesign.Status.warning }
+        if reviewItemCount > 0 { return AetowerDesign.Status.warning }
+        if liveSessionCount > 0 || liveEntityCount > 0 { return AetowerDesign.Status.ready }
+        return AetowerDesign.Status.neutral
+    }
+}
+
+public struct RepositoryView: View {
+    let state: AppState
+    @State private var mode: RepositoryMode = .overview
+    @State private var sort: RepositorySort = .attention
+    @State private var searchText = ""
+    @State private var selectedRepositoryID: String?
+    @State private var copiedRepositoryID: String?
+
+    public init(state: AppState) {
+        self.state = state
+    }
+
+    public var body: some View {
+        VStack(spacing: AetowerDesign.Spacing.none) {
+            repositoryToolBand
+            Divider()
+            content
+        }
+        .task {
+            state.ensureStorageHygieneScan()
+        }
+    }
+
+    private var repositoryToolBand: some View {
+        AetowerTabToolBand(
+            searchText: $searchText,
+            searchPrompt: "Search repositories, branches, writers",
+            searchWidth: 320
+        ) {
+            Picker("", selection: $mode) {
+                ForEach(RepositoryMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Repository view")
+            .frame(width: 300)
+        } filterTools: {
+            Picker("", selection: $sort) {
+                ForEach(RepositorySort.allCases) { sort in
+                    Text(sort.label).tag(sort)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Repository sort")
+            .frame(width: 360)
+        } badges: {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                AetowerToolBadge(
+                    "Repos",
+                    value: repositoryCountLabel,
+                    systemImage: "folder",
+                    tone: repositoryBadgeTone
+                )
+                AetowerToolBadge(
+                    "Artifacts",
+                    value: artifactBytesLabel,
+                    systemImage: "shippingbox",
+                    tone: AetowerDesign.Tone.disk
+                )
+                AetowerToolBadge(
+                    "Attention",
+                    value: attentionCountLabel,
+                    systemImage: "exclamationmark.triangle",
+                    tone: attentionBadgeTone
+                )
+            }
+        } actions: {
+            Button {
+                state.runStorageHygieneScan()
+            } label: {
+                Label("Scan", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(state.storageHygieneIsLoading)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let error = state.storageHygieneError {
+            ScrollView {
+                AetowerInfoBanner(
+                    error,
+                    title: "Repository scan failed",
+                    systemImage: "exclamationmark.triangle",
+                    tone: AetowerDesign.Status.error,
+                    level: .critical
+                )
+                .padding(AetowerDesign.Spacing.xxl)
+            }
+        } else if state.storageHygieneReport == nil, state.storageHygieneIsLoading {
+            loadingState
+        } else if let report = state.storageHygieneReport {
+            repositoryDashboard(report)
+        } else {
+            emptyState
+        }
+    }
+
+    private var loadingState: some View {
+        VStack(spacing: AetowerDesign.Spacing.sm) {
+            ProgressView()
+            Text("Scanning repository footprints")
+                .font(AetowerDesign.Typography.caption)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyState: some View {
+        AetowerEmptyState(
+            title: "No repositories indexed yet",
+            detail: "Run a read-only scan to build the repository inventory from local development artifacts.",
+            systemImage: "folder.badge.gearshape",
+            tone: AetowerDesign.Tone.disk
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func repositoryDashboard(_ report: StorageHygieneReportModel) -> some View {
+        let repositories = filteredRepositories(from: report)
+        let selectedRepository = selectedRepository(from: repositories)
+        let activeRepositoryID = selectedRepository?.id
+
+        return ScrollView {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+                repositoryOverview(report, repositories: repositories)
+                RepositoryFoundationStrip()
+
+                if repositories.isEmpty {
+                    AetowerEmptyState(
+                        title: "No repository matches",
+                        detail: "Clear search or change the mode to see more repositories.",
+                        systemImage: "magnifyingglass",
+                        tone: AetowerDesign.Status.neutral
+                    )
+                } else {
+                    HStack(alignment: .top, spacing: AetowerDesign.Spacing.xl) {
+                        repositoryList(repositories, activeRepositoryID: activeRepositoryID)
+                            .frame(minWidth: 320, idealWidth: 380, maxWidth: 460)
+                        repositoryDetail(selectedRepository, report: report)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(AetowerDesign.Spacing.xxl)
+        }
+    }
+
+    private func repositoryOverview(
+        _ report: StorageHygieneReportModel,
+        repositories: [RepositorySummary]
+    ) -> some View {
+        let allRepositories = repositorySummaries(from: report)
+        let activeCount = allRepositories.filter { $0.liveSessionCount > 0 || $0.liveEntityCount > 0 }.count
+        let growingCount = allRepositories.filter { ($0.growthBytes ?? 0) > 0 }.count
+        let reviewCount = allRepositories.filter { $0.reviewItemCount > 0 || $0.violationCount > 0 }.count
+
+        return LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 180), spacing: AetowerDesign.Spacing.md)],
+            alignment: .leading,
+            spacing: AetowerDesign.Spacing.md
+        ) {
+            AetowerMetricTile(
+                "Indexed",
+                value: "\(allRepositories.count)",
+                detail: "\(repositories.count) visible",
+                systemImage: "folder",
+                tone: AetowerDesign.Tone.cpu
+            )
+            AetowerMetricTile(
+                "Artifact weight",
+                value: formatBytes(totalArtifactBytes(allRepositories)),
+                detail: "build/log/cache footprint",
+                systemImage: "shippingbox",
+                tone: AetowerDesign.Tone.disk
+            )
+            AetowerMetricTile(
+                "Attention",
+                value: "\(reviewCount)",
+                detail: "budget or review signals",
+                systemImage: "exclamationmark.triangle",
+                tone: reviewCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+            )
+            AetowerMetricTile(
+                "Active",
+                value: "\(activeCount)",
+                detail: "live sessions or attributed processes",
+                systemImage: "dot.radiowaves.left.and.right",
+                tone: activeCount > 0 ? AetowerDesign.Status.ready : AetowerDesign.Status.neutral
+            )
+            AetowerMetricTile(
+                "Growing",
+                value: "\(growingCount)",
+                detail: report.summary.attributedRepoCount > 0 ? "baseline-backed deltas" : "waiting for baseline",
+                systemImage: "chart.line.uptrend.xyaxis",
+                tone: growingCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+            )
+        }
+    }
+
+    private func repositoryList(
+        _ repositories: [RepositorySummary],
+        activeRepositoryID: String?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            AetowerSection("Repository queue", subtitle: "Sorted by \(sort.label.lowercased())") {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(repositories) { repository in
+                        repositoryRow(repository, isSelected: activeRepositoryID == repository.id)
+                    }
+                }
+            }
+        }
+    }
+
+    private func repositoryRow(
+        _ repository: RepositorySummary,
+        isSelected: Bool
+    ) -> some View {
+        Button {
+            selectedRepositoryID = repository.id
+        } label: {
+            AetowerSurface(
+                level: isSelected ? .selected : .card,
+                padding: AetowerDesign.Spacing.md
+            ) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                        Text(repository.name)
+                            .font(AetowerDesign.Typography.controlLabel)
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                            .lineLimit(1)
+                        Spacer(minLength: AetowerDesign.Spacing.sm)
+                        AetowerBadge(repository.statusLabel, tone: repository.statusTone)
+                    }
+                    Text(shortPath(repository.root))
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        AetowerBadge(formatBytes(repository.artifactBytes), systemImage: "shippingbox", tone: AetowerDesign.Tone.disk)
+                        AetowerBadge(growthLabel(repository), systemImage: "chart.line.uptrend.xyaxis", tone: growthTone(repository))
+                        if repository.liveSessionCount > 0 {
+                            AetowerBadge("\(repository.liveSessionCount) live", systemImage: "terminal", tone: AetowerDesign.Status.ready)
+                        }
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Reveal in Finder") {
+                reveal(repository.root)
+            }
+            Button("Copy path") {
+                copy(repository.root)
+            }
+            Button("Copy optimization brief") {
+                copy(optimizationBrief(for: repository))
+                copiedRepositoryID = repository.id
+            }
+        }
+    }
+
+    private func repositoryDetail(
+        _ repository: RepositorySummary?,
+        report: StorageHygieneReportModel
+    ) -> some View {
+        Group {
+            if let repository {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                    repositoryHero(repository)
+                    repositorySignals(repository)
+                    repositoryActions(repository)
+                    topArtifacts(repository)
+                    liveContext(repository)
+                    futureOptimizationLanes(repository, report: report)
+                }
+            } else {
+                AetowerEmptyState(
+                    title: "Select a repository",
+                    detail: "Pick a repository to inspect storage pressure, live sessions, and future optimization lanes.",
+                    systemImage: "sidebar.left",
+                    tone: AetowerDesign.Status.neutral
+                )
+            }
+        }
+    }
+
+    private func repositoryHero(_ repository: RepositorySummary) -> some View {
+        AetowerSurface(padding: AetowerDesign.Spacing.lg) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.lg) {
+                Image(systemName: "folder.badge.gearshape")
+                    .font(AetowerDesign.Typography.metricValue(size: 30, weight: .semibold))
+                    .foregroundStyle(repository.statusTone)
+                    .frame(width: AetowerDesign.Size.iconSlot)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                        Text(repository.name)
+                            .font(AetowerDesign.Typography.metricValue(size: 26, weight: .semibold))
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        AetowerBadge(repository.statusLabel, tone: repository.statusTone)
+                    }
+                    Text(repository.root)
+                        .font(AetowerDesign.Typography.compactData(size: 11))
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                    Text(repositorySummarySentence(repository))
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.lg)
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(formatBytes(repository.currentSizeBytes))
+                        .font(AetowerDesign.Typography.metricValue(size: 28, weight: .semibold))
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    Text("current footprint")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+            }
+        }
+    }
+
+    private func repositorySignals(_ repository: RepositorySummary) -> some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 160), spacing: AetowerDesign.Spacing.md)],
+            alignment: .leading,
+            spacing: AetowerDesign.Spacing.md
+        ) {
+            AetowerMetricTile(
+                "Artifacts",
+                value: formatBytes(repository.artifactBytes),
+                detail: "\(repository.itemCount) tracked item\(repository.itemCount == 1 ? "" : "s")",
+                systemImage: "shippingbox",
+                tone: AetowerDesign.Tone.disk
+            )
+            AetowerMetricTile(
+                "Growth",
+                value: growthLabel(repository),
+                detail: repository.growthWindow,
+                systemImage: "chart.line.uptrend.xyaxis",
+                tone: growthTone(repository)
+            )
+            AetowerMetricTile(
+                "Rebuild cost",
+                value: repository.estimatedRebuildCost,
+                detail: rebuildTimeLabel(repository.estimatedRebuildSeconds),
+                systemImage: "hammer",
+                tone: AetowerDesign.Tone.energy
+            )
+            AetowerMetricTile(
+                "Live load",
+                value: String(format: "%.1f%%", repository.liveCPUPercent),
+                detail: "\(formatBytes(repository.liveMemoryBytes)) memory",
+                systemImage: "cpu",
+                tone: repository.liveCPUPercent > 15 ? AetowerDesign.Status.warning : AetowerDesign.Tone.cpu
+            )
+            AetowerMetricTile(
+                "Agent cost",
+                value: formatBytes(repository.agentArtifactBytes),
+                detail: "\(repository.agentCount) agent source\(repository.agentCount == 1 ? "" : "s")",
+                systemImage: "person.crop.circle.badge.gearshape",
+                tone: repository.agentArtifactBytes > 0 ? AetowerDesign.Tone.memory : AetowerDesign.Status.neutral
+            )
+        }
+    }
+
+    private func repositoryActions(_ repository: RepositorySummary) -> some View {
+        AetowerSurface {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Repository actions")
+                        .font(AetowerDesign.Typography.sectionTitle)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    Text("Read-only today. This is where optimization, cleanup, branch hygiene, and build-cache actions will attach later.")
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                Button("Reveal") {
+                    reveal(repository.root)
+                }
+                Button("Copy path") {
+                    copy(repository.root)
+                }
+                Button("Copy brief") {
+                    copy(optimizationBrief(for: repository))
+                    copiedRepositoryID = repository.id
+                }
+                .buttonStyle(.borderedProminent)
+                AetowerBadge(
+                    copiedRepositoryID == repository.id ? "Copied" : "Ready",
+                    tone: copiedRepositoryID == repository.id ? AetowerDesign.Status.ready : AetowerDesign.Status.neutral
+                )
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    private func topArtifacts(_ repository: RepositorySummary) -> some View {
+        AetowerSection("Top artifact folders", subtitle: "Highest-value optimization targets") {
+            if repository.topArtifactFolders.isEmpty {
+                AetowerInfoBanner(
+                    "No top artifact folder is available for this repository yet.",
+                    systemImage: "folder",
+                    tone: AetowerDesign.Status.neutral
+                )
+            } else {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(repository.topArtifactFolders.prefix(5)) { folder in
+                        artifactFolderRow(folder)
+                    }
+                }
+            }
+        }
+    }
+
+    private func artifactFolderRow(_ folder: StorageRepoArtifactFolderModel) -> some View {
+        AetowerSurface(level: .quiet, padding: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: cleanupTierIcon(folder.cleanupTier))
+                    .foregroundStyle(cleanupTierTone(folder.cleanupTier))
+                    .frame(width: AetowerDesign.Size.iconSlot)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text(folder.displayName)
+                        .font(AetowerDesign.Typography.controlLabel)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    Text(shortPath(folder.path))
+                        .font(AetowerDesign.Typography.compactData(size: 10))
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(formatBytes(folder.sizeBytes))
+                        .font(AetowerDesign.Typography.data)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    AetowerBadge(folder.cleanupTier, tone: cleanupTierTone(folder.cleanupTier))
+                }
+            }
+        }
+    }
+
+    private func liveContext(_ repository: RepositorySummary) -> some View {
+        AetowerSection("Live context", subtitle: "Current agents, terminal sessions, and attributed processes") {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 170), spacing: AetowerDesign.Spacing.md)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.md
+            ) {
+                AetowerMetricTile(
+                    "Chau7 sessions",
+                    value: "\(repository.liveSessionCount)",
+                    detail: repository.lastBranchTouched ?? "branch unavailable",
+                    systemImage: "terminal",
+                    tone: repository.liveSessionCount > 0 ? AetowerDesign.Status.ready : AetowerDesign.Status.neutral
+                )
+                AetowerMetricTile(
+                    "Entities",
+                    value: "\(repository.liveEntityCount)",
+                    detail: "adapter-attributed live processes",
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    tone: repository.liveEntityCount > 0 ? AetowerDesign.Tone.cpu : AetowerDesign.Status.neutral
+                )
+                AetowerMetricTile(
+                    "Last writer",
+                    value: repository.lastWriterProcess ?? "Unknown",
+                    detail: repository.lastWriterPid.map { "pid \($0)" } ?? "waiting for file-event journal",
+                    systemImage: "pencil.and.list.clipboard",
+                    tone: repository.lastWriterProcess == nil ? AetowerDesign.Status.neutral : AetowerDesign.Status.ready
+                )
+            }
+        }
+    }
+
+    private func futureOptimizationLanes(
+        _ repository: RepositorySummary,
+        report: StorageHygieneReportModel
+    ) -> some View {
+        AetowerSection("Optimization lanes", subtitle: "Future repository-management surface") {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 220), spacing: AetowerDesign.Spacing.md)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.md
+            ) {
+                laneCard(
+                    title: "Artifact hygiene",
+                    detail: "\(formatBytes(repository.artifactBytes)) can be explained by build/log/cache folders before cleanup actions are enabled.",
+                    icon: "externaldrive.badge.minus",
+                    tone: AetowerDesign.Tone.disk
+                )
+                laneCard(
+                    title: "Growth budget",
+                    detail: "Track repo deltas against \(formatBytes(report.budgetGuardrails.repoGrowthBudgetBytesPerDay)) per day.",
+                    icon: "speedometer",
+                    tone: growthTone(repository)
+                )
+                laneCard(
+                    title: "Agent attribution",
+                    detail: "\(formatBytes(repository.agentArtifactBytes)) attributed to AI-agent sessions for this repo.",
+                    icon: "person.crop.circle.badge.gearshape",
+                    tone: AetowerDesign.Tone.memory
+                )
+                laneCard(
+                    title: "Build cost",
+                    detail: "\(repository.estimatedRebuildCost) rebuild class; defer expensive cleanup until confirmed.",
+                    icon: "hammer",
+                    tone: AetowerDesign.Tone.energy
+                )
+            }
+        }
+    }
+
+    private func laneCard(
+        title: String,
+        detail: String,
+        icon: String,
+        tone: Color
+    ) -> some View {
+        AetowerSurface(level: .card) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: icon)
+                    .foregroundStyle(tone)
+                Text(title)
+                    .font(AetowerDesign.Typography.controlLabel)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                Text(detail)
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var repositoryCountLabel: String {
+        guard let report = state.storageHygieneReport else {
+            return state.storageHygieneIsLoading ? "Loading" : "0"
+        }
+        return "\(report.repoFootprints.count)"
+    }
+
+    private var artifactBytesLabel: String {
+        guard let report = state.storageHygieneReport else { return "0 MB" }
+        return formatBytes(totalArtifactBytes(repositorySummaries(from: report)))
+    }
+
+    private var attentionCountLabel: String {
+        guard let report = state.storageHygieneReport else { return "0" }
+        return "\(repositorySummaries(from: report).filter { $0.attentionScore >= 8 }.count)"
+    }
+
+    private var repositoryBadgeTone: Color {
+        state.storageHygieneReport == nil ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+    }
+
+    private var attentionBadgeTone: Color {
+        guard let report = state.storageHygieneReport else { return AetowerDesign.Status.neutral }
+        return repositorySummaries(from: report).contains { $0.attentionScore >= 8 }
+            ? AetowerDesign.Status.warning
+            : AetowerDesign.Status.ready
+    }
+
+    private func selectedRepository(from repositories: [RepositorySummary]) -> RepositorySummary? {
+        if let selectedRepositoryID,
+           let selected = repositories.first(where: { $0.id == selectedRepositoryID }) {
+            return selected
+        }
+        return repositories.first
+    }
+
+    private func filteredRepositories(from report: StorageHygieneReportModel) -> [RepositorySummary] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        var repositories = repositorySummaries(from: report)
+
+        switch mode {
+        case .overview, .all:
+            break
+        case .attention:
+            repositories = repositories.filter { $0.attentionScore >= 8 || $0.violationCount > 0 || $0.reviewItemCount > 0 }
+        }
+
+        if !query.isEmpty {
+            repositories = repositories.filter { repository in
+                repository.name.localizedCaseInsensitiveContains(query)
+                    || repository.root.localizedCaseInsensitiveContains(query)
+                    || (repository.lastBranchTouched?.localizedCaseInsensitiveContains(query) ?? false)
+                    || (repository.lastWriterProcess?.localizedCaseInsensitiveContains(query) ?? false)
+                    || repository.topArtifactFolders.contains {
+                        $0.displayName.localizedCaseInsensitiveContains(query)
+                            || $0.path.localizedCaseInsensitiveContains(query)
+                            || $0.kind.localizedCaseInsensitiveContains(query)
+                    }
+            }
+        }
+
+        return repositories.sorted(by: repositoryComparator)
+    }
+
+    private func repositoryComparator(_ left: RepositorySummary, _ right: RepositorySummary) -> Bool {
+        switch sort {
+        case .attention:
+            if left.attentionScore != right.attentionScore {
+                return left.attentionScore > right.attentionScore
+            }
+            return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+        case .size:
+            return left.currentSizeBytes == right.currentSizeBytes
+                ? left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+                : left.currentSizeBytes > right.currentSizeBytes
+        case .growth:
+            return (left.growthBytes ?? 0) == (right.growthBytes ?? 0)
+                ? left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+                : (left.growthBytes ?? 0) > (right.growthBytes ?? 0)
+        case .artifacts:
+            return left.artifactBytes == right.artifactBytes
+                ? left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+                : left.artifactBytes > right.artifactBytes
+        case .name:
+            return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+        }
+    }
+
+    private func repositorySummaries(from report: StorageHygieneReportModel) -> [RepositorySummary] {
+        let violationsByRoot = Dictionary(grouping: report.budgetGuardrails.violations.compactMap { violation -> (String, StorageBudgetViolationModel)? in
+            guard let repoRoot = violation.repoRoot else { return nil }
+            return (repoRoot, violation)
+        }, by: \.0)
+        let itemsByRoot = Dictionary(grouping: report.items.compactMap { item -> (String, StorageHygieneItemModel)? in
+            guard let repoRoot = item.attribution.repoRoot else { return nil }
+            return (repoRoot, item)
+        }, by: \.0)
+
+        return report.repoFootprints.map { footprint in
+            let items = itemsByRoot[footprint.repoRoot]?.map(\.1) ?? []
+            let live = liveContext(for: footprint.repoRoot)
+            let agent = agentContext(for: footprint.repoRoot, report: report)
+            return RepositorySummary(
+                id: footprint.id,
+                root: footprint.repoRoot,
+                name: footprint.repoName,
+                currentSizeBytes: footprint.currentSizeBytes,
+                artifactBytes: footprint.artifactBytes,
+                itemCount: footprint.itemCount,
+                growthBytes: storageGrowthDelta(for: footprint),
+                growthWindow: storageGrowthWindow(for: footprint),
+                estimatedRebuildCost: footprint.estimatedRebuildCost,
+                estimatedRebuildSeconds: footprint.estimatedRebuildSeconds,
+                lastWriterProcess: footprint.lastWriterProcess,
+                lastWriterPid: footprint.lastWriterPid,
+                lastBranchTouched: footprint.lastBranchTouched,
+                topArtifactFolders: footprint.topArtifactFolders,
+                caveats: footprint.caveats,
+                violationCount: violationsByRoot[footprint.repoRoot]?.count ?? 0,
+                reviewItemCount: items.filter { $0.safety != "safe" }.count,
+                safeItemCount: items.filter { $0.safety == "safe" }.count,
+                staleItemCount: items.filter(\.stale).count,
+                liveSessionCount: live.sessionCount,
+                liveEntityCount: live.entityCount,
+                liveMemoryBytes: live.memoryBytes,
+                liveCPUPercent: live.cpuPercent,
+                agentArtifactBytes: agent.artifactBytes,
+                agentCount: agent.agentCount
+            )
+        }
+    }
+
+    private func liveContext(for repoRoot: String) -> (sessionCount: Int, entityCount: Int, memoryBytes: UInt64, cpuPercent: Float) {
+        let sessions = state.snapshot.chau7Sessions.filter { session in
+            session.repoRoot == repoRoot || session.workspacePath == repoRoot
+        }
+        let entities = state.snapshot.entities.filter { entity in
+            entity.components.contains { component in
+                component.adapterContext?.repoRoot == repoRoot || component.cwd == repoRoot
+            }
+        }
+        let memory = entities.reduce(UInt64(0)) { total, entity in
+            total.addingReportingOverflow(entityEffectiveMemoryBytes(entity)).partialValue
+        }
+        let cpu = entities.reduce(Float(0)) { $0 + $1.metrics.cpuPercent }
+        return (sessions.count, entities.count, memory, cpu)
+    }
+
+    private func agentContext(
+        for repoRoot: String,
+        report: StorageHygieneReportModel
+    ) -> (artifactBytes: UInt64, agentCount: Int) {
+        let agents = report.agentHygiene.agents.filter { agent in
+            agent.topRepositories.contains { $0.repoRoot == repoRoot }
+        }
+        let artifactBytes = agents.reduce(UInt64(0)) { total, agent in
+            let repoBytes = agent.topRepositories
+                .filter { $0.repoRoot == repoRoot }
+                .reduce(UInt64(0)) { subtotal, repo in
+                    subtotal.addingReportingOverflow(repo.artifactBytes).partialValue
+                }
+            return total.addingReportingOverflow(repoBytes).partialValue
+        }
+        return (artifactBytes, agents.count)
+    }
+
+    private func totalArtifactBytes(_ repositories: [RepositorySummary]) -> UInt64 {
+        repositories.reduce(UInt64(0)) { total, repository in
+            total.addingReportingOverflow(repository.artifactBytes).partialValue
+        }
+    }
+
+    private func storageGrowthDelta(for footprint: StorageRepoFootprintModel) -> Int64? {
+        if let growth = footprint.growthBytes {
+            return growth
+        }
+        if let previous = state.previousStorageHygieneReport?.repoFootprints.first(where: {
+            $0.repoRoot == footprint.repoRoot
+        }) {
+            return Int64(footprint.currentSizeBytes) - Int64(previous.currentSizeBytes)
+        }
+        if let baseline = state.persistedStorageHygieneBaseline?.repoFootprints.first(where: {
+            $0.repoRoot == footprint.repoRoot
+        }) {
+            return Int64(footprint.currentSizeBytes) - Int64(baseline.currentSizeBytes)
+        }
+        return nil
+    }
+
+    private func storageGrowthWindow(for footprint: StorageRepoFootprintModel) -> String {
+        if !footprint.growthWindow.isEmpty {
+            return footprint.growthWindow
+        }
+        return state.persistedStorageHygieneBaseline == nil ? "no baseline yet" : "since saved baseline"
+    }
+
+    private func growthLabel(_ repository: RepositorySummary) -> String {
+        guard let growth = repository.growthBytes else { return "No baseline" }
+        if growth == 0 { return "Flat" }
+        let absolute = formatBytes(UInt64(abs(growth)))
+        return growth > 0 ? "+\(absolute)" : "-\(absolute)"
+    }
+
+    private func growthTone(_ repository: RepositorySummary) -> Color {
+        guard let growth = repository.growthBytes else { return AetowerDesign.Status.neutral }
+        if growth > 512 * 1024 * 1024 { return AetowerDesign.Status.warning }
+        if growth > 0 { return AetowerDesign.Tone.energy }
+        return AetowerDesign.Status.ready
+    }
+
+    private func repositorySummarySentence(_ repository: RepositorySummary) -> String {
+        var parts = [
+            "\(formatBytes(repository.artifactBytes)) in rebuildable or reviewable artifacts",
+            "\(repository.itemCount) tracked item\(repository.itemCount == 1 ? "" : "s")",
+        ]
+        if repository.liveSessionCount > 0 {
+            parts.append("\(repository.liveSessionCount) live Chau7 session\(repository.liveSessionCount == 1 ? "" : "s")")
+        }
+        if repository.violationCount > 0 {
+            parts.append("\(repository.violationCount) budget signal\(repository.violationCount == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func optimizationBrief(for repository: RepositorySummary) -> String {
+        [
+            "# Repository optimization brief",
+            "",
+            "- Repository: \(repository.name)",
+            "- Root: \(repository.root)",
+            "- Current footprint: \(formatBytes(repository.currentSizeBytes))",
+            "- Artifact footprint: \(formatBytes(repository.artifactBytes)) across \(repository.itemCount) item(s)",
+            "- Growth: \(growthLabel(repository)) (\(repository.growthWindow))",
+            "- Rebuild cost: \(repository.estimatedRebuildCost) (\(rebuildTimeLabel(repository.estimatedRebuildSeconds)))",
+            "- Review items: \(repository.reviewItemCount)",
+            "- Stale items: \(repository.staleItemCount)",
+            "- Live sessions: \(repository.liveSessionCount)",
+            "- Live attributed entities: \(repository.liveEntityCount)",
+            "- Agent-attributed artifacts: \(formatBytes(repository.agentArtifactBytes))",
+            "",
+            "Top artifact folders:",
+            repository.topArtifactFolders.prefix(5).map {
+                "- \(formatBytes($0.sizeBytes)) | \($0.cleanupTier) | \($0.path)"
+            }.joined(separator: "\n"),
+            "",
+            "Recommended next step: inspect large rebuildable folders first, then decide whether cleanup cost is acceptable for the current branch/session."
+        ]
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
+    }
+
+    private func rebuildTimeLabel(_ seconds: UInt64?) -> String {
+        guard let seconds else { return "duration unknown" }
+        if seconds < 60 { return "\(seconds)s estimated" }
+        if seconds < 3_600 { return "\(seconds / 60)m estimated" }
+        return "\(seconds / 3_600)h estimated"
+    }
+
+    private func cleanupTierIcon(_ tier: String) -> String {
+        switch tier.lowercased() {
+        case "safe": return "checkmark.shield"
+        case "rebuildable": return "hammer"
+        case "expensive": return "clock.badge.exclamationmark"
+        case "risky": return "exclamationmark.triangle"
+        default: return "shippingbox"
+        }
+    }
+
+    private func cleanupTierTone(_ tier: String) -> Color {
+        switch tier.lowercased() {
+        case "safe": return AetowerDesign.Status.ready
+        case "rebuildable": return AetowerDesign.Tone.cpu
+        case "expensive": return AetowerDesign.Status.warning
+        case "risky": return AetowerDesign.Status.error
+        default: return AetowerDesign.Status.neutral
+        }
+    }
+
+    private func shortPath(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path == home { return "~" }
+        if path.hasPrefix(home + "/") {
+            return "~" + path.dropFirst(home.count)
+        }
+        return path
+    }
+
+    private func reveal(_ path: String) {
+        let url = URL(fileURLWithPath: path)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+private struct RepositoryFoundationStrip: View {
+    var body: some View {
+        AetowerInfoBanner(
+            "This view is intentionally read-only for now. It turns storage attribution into repository-level inventory, attention ranking, live session context, and copyable optimization briefs. Cleanup and branch/build actions can attach here once their policy is deterministic.",
+            title: "Repository cockpit foundation",
+            systemImage: "point.3.connected.trianglepath.dotted",
+            tone: AetowerDesign.Tone.cpu,
+            level: .card
+        )
+    }
+}
