@@ -41,6 +41,10 @@ private struct RepositorySummary: Identifiable {
     let id: String
     let root: String
     let name: String
+    let gitBranch: String?
+    let gitHead: String?
+    let discoveredRoot: String?
+    let hasStorageFootprint: Bool
     let currentSizeBytes: UInt64
     let artifactBytes: UInt64
     let itemCount: Int
@@ -79,6 +83,7 @@ private struct RepositorySummary: Identifiable {
         if (growthBytes ?? 0) > 0 { return "Growing" }
         if reviewItemCount > 0 { return "Review" }
         if liveSessionCount > 0 || liveEntityCount > 0 { return "Active" }
+        if !hasStorageFootprint { return "Indexed" }
         return "Stable"
     }
 
@@ -196,7 +201,7 @@ public struct RepositoryView: View {
     private var loadingState: some View {
         VStack(spacing: AetowerDesign.Spacing.sm) {
             ProgressView()
-            Text("Scanning repository footprints")
+            Text("Scanning repositories and storage footprints")
                 .font(AetowerDesign.Typography.caption)
                 .foregroundStyle(AetowerDesign.Ink.secondary)
         }
@@ -206,7 +211,7 @@ public struct RepositoryView: View {
     private var emptyState: some View {
         AetowerEmptyState(
             title: "No repositories indexed yet",
-            detail: "Run a read-only scan to build the repository inventory from local development artifacts.",
+            detail: "Run a read-only scan to build the repository inventory from local Git roots.",
             systemImage: "folder.badge.gearshape",
             tone: AetowerDesign.Tone.disk
         )
@@ -261,7 +266,7 @@ public struct RepositoryView: View {
             AetowerMetricTile(
                 "Indexed",
                 value: "\(allRepositories.count)",
-                detail: "\(repositories.count) visible",
+                detail: "\(repositories.count) visible · \(report.repoFootprints.count) with artifacts",
                 systemImage: "folder",
                 tone: AetowerDesign.Tone.cpu
             )
@@ -336,8 +341,15 @@ public struct RepositoryView: View {
                         .foregroundStyle(AetowerDesign.Ink.secondary)
                         .lineLimit(1)
                     HStack(spacing: AetowerDesign.Spacing.sm) {
-                        AetowerBadge(formatBytes(repository.artifactBytes), systemImage: "shippingbox", tone: AetowerDesign.Tone.disk)
+                        AetowerBadge(
+                            repository.hasStorageFootprint ? formatBytes(repository.artifactBytes) : "clean",
+                            systemImage: "shippingbox",
+                            tone: repository.hasStorageFootprint ? AetowerDesign.Tone.disk : AetowerDesign.Status.neutral
+                        )
                         AetowerBadge(growthLabel(repository), systemImage: "chart.line.uptrend.xyaxis", tone: growthTone(repository))
+                        if let branch = repository.gitBranch {
+                            AetowerBadge(branch, systemImage: "arrow.triangle.branch", tone: AetowerDesign.Tone.cpu)
+                        }
                         if repository.liveSessionCount > 0 {
                             AetowerBadge("\(repository.liveSessionCount) live", systemImage: "terminal", tone: AetowerDesign.Status.ready)
                         }
@@ -416,7 +428,7 @@ public struct RepositoryView: View {
                     Text(formatBytes(repository.currentSizeBytes))
                         .font(AetowerDesign.Typography.metricValue(size: 28, weight: .semibold))
                         .foregroundStyle(AetowerDesign.Ink.primary)
-                    Text("current footprint")
+                    Text(repository.hasStorageFootprint ? "current footprint" : "no tracked artifacts")
                         .font(AetowerDesign.Typography.metadata)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
                 }
@@ -505,7 +517,9 @@ public struct RepositoryView: View {
         AetowerSection("Top artifact folders", subtitle: "Highest-value optimization targets") {
             if repository.topArtifactFolders.isEmpty {
                 AetowerInfoBanner(
-                    "No top artifact folder is available for this repository yet.",
+                    repository.hasStorageFootprint
+                        ? "No top artifact folder is available for this repository yet."
+                        : "This Git repository is indexed, but no tracked build, log, cache, dependency, or release artifact exceeded the storage scan threshold.",
                     systemImage: "folder",
                     tone: AetowerDesign.Status.neutral
                 )
@@ -641,7 +655,7 @@ public struct RepositoryView: View {
         guard let report = state.storageHygieneReport else {
             return state.storageHygieneIsLoading ? "Loading" : "0"
         }
-        return "\(report.repoFootprints.count)"
+        return "\(repositorySummaries(from: report).count)"
     }
 
     private var artifactBytesLabel: String {
@@ -734,39 +748,93 @@ public struct RepositoryView: View {
             guard let repoRoot = item.attribution.repoRoot else { return nil }
             return (repoRoot, item)
         }, by: \.0)
+        let footprintsByRoot = Dictionary(uniqueKeysWithValues: report.repoFootprints.map { ($0.repoRoot, $0) })
 
-        return report.repoFootprints.map { footprint in
-            let items = itemsByRoot[footprint.repoRoot]?.map(\.1) ?? []
-            let live = liveContext(for: footprint.repoRoot)
-            let agent = agentContext(for: footprint.repoRoot, report: report)
-            return RepositorySummary(
-                id: footprint.id,
-                root: footprint.repoRoot,
-                name: footprint.repoName,
-                currentSizeBytes: footprint.currentSizeBytes,
-                artifactBytes: footprint.artifactBytes,
-                itemCount: footprint.itemCount,
-                growthBytes: storageGrowthDelta(for: footprint),
-                growthWindow: storageGrowthWindow(for: footprint),
-                estimatedRebuildCost: footprint.estimatedRebuildCost,
-                estimatedRebuildSeconds: footprint.estimatedRebuildSeconds,
-                lastWriterProcess: footprint.lastWriterProcess,
-                lastWriterPid: footprint.lastWriterPid,
-                lastBranchTouched: footprint.lastBranchTouched,
-                topArtifactFolders: footprint.topArtifactFolders,
-                caveats: footprint.caveats,
-                violationCount: violationsByRoot[footprint.repoRoot]?.count ?? 0,
-                reviewItemCount: items.filter { $0.safety != "safe" }.count,
-                safeItemCount: items.filter { $0.safety == "safe" }.count,
-                staleItemCount: items.filter(\.stale).count,
-                liveSessionCount: live.sessionCount,
-                liveEntityCount: live.entityCount,
-                liveMemoryBytes: live.memoryBytes,
-                liveCPUPercent: live.cpuPercent,
-                agentArtifactBytes: agent.artifactBytes,
-                agentCount: agent.agentCount
+        var seenRoots = Set<String>()
+        var summaries = report.repositoryInventory.map { inventory in
+            seenRoots.insert(inventory.repoRoot)
+            let footprint = footprintsByRoot[inventory.repoRoot]
+            return repositorySummary(
+                root: inventory.repoRoot,
+                id: inventory.id,
+                name: inventory.repoName,
+                gitBranch: inventory.gitBranch,
+                gitHead: inventory.gitHead,
+                discoveredRoot: inventory.discoveredRoot,
+                footprint: footprint,
+                items: itemsByRoot[inventory.repoRoot]?.map(\.1) ?? [],
+                violations: violationsByRoot[inventory.repoRoot]?.count ?? 0,
+                report: report
             )
         }
+
+        for footprint in report.repoFootprints where !seenRoots.contains(footprint.repoRoot) {
+            summaries.append(
+                repositorySummary(
+                    root: footprint.repoRoot,
+                    id: footprint.id,
+                    name: footprint.repoName,
+                    gitBranch: footprint.lastBranchTouched,
+                    gitHead: nil,
+                    discoveredRoot: nil,
+                    footprint: footprint,
+                    items: itemsByRoot[footprint.repoRoot]?.map(\.1) ?? [],
+                    violations: violationsByRoot[footprint.repoRoot]?.count ?? 0,
+                    report: report
+                )
+            )
+        }
+
+        return summaries
+    }
+
+    private func repositorySummary(
+        root: String,
+        id: String,
+        name: String,
+        gitBranch: String?,
+        gitHead: String?,
+        discoveredRoot: String?,
+        footprint: StorageRepoFootprintModel?,
+        items: [StorageHygieneItemModel],
+        violations: Int,
+        report: StorageHygieneReportModel
+    ) -> RepositorySummary {
+        let live = liveContext(for: root)
+        let agent = agentContext(for: root, report: report)
+        return RepositorySummary(
+            id: id,
+            root: root,
+            name: name,
+            gitBranch: gitBranch,
+            gitHead: gitHead,
+            discoveredRoot: discoveredRoot,
+            hasStorageFootprint: footprint != nil,
+            currentSizeBytes: footprint?.currentSizeBytes ?? 0,
+            artifactBytes: footprint?.artifactBytes ?? 0,
+            itemCount: footprint?.itemCount ?? 0,
+            growthBytes: footprint.flatMap { storageGrowthDelta(for: $0) },
+            growthWindow: footprint.map { storageGrowthWindow(for: $0) } ?? "no storage footprint baseline",
+            estimatedRebuildCost: footprint?.estimatedRebuildCost ?? "None",
+            estimatedRebuildSeconds: footprint?.estimatedRebuildSeconds ?? 0,
+            lastWriterProcess: footprint?.lastWriterProcess,
+            lastWriterPid: footprint?.lastWriterPid,
+            lastBranchTouched: footprint?.lastBranchTouched ?? gitBranch ?? gitHead,
+            topArtifactFolders: footprint?.topArtifactFolders ?? [],
+            caveats: footprint?.caveats ?? [
+                "Indexed from Git repository discovery. No tracked storage artifacts were found in the bounded hygiene scan."
+            ],
+            violationCount: violations,
+            reviewItemCount: items.filter { $0.safety != "safe" }.count,
+            safeItemCount: items.filter { $0.safety == "safe" }.count,
+            staleItemCount: items.filter(\.stale).count,
+            liveSessionCount: live.sessionCount,
+            liveEntityCount: live.entityCount,
+            liveMemoryBytes: live.memoryBytes,
+            liveCPUPercent: live.cpuPercent,
+            agentArtifactBytes: agent.artifactBytes,
+            agentCount: agent.agentCount
+        )
     }
 
     private func liveContext(for repoRoot: String) -> (sessionCount: Int, entityCount: Int, memoryBytes: UInt64, cpuPercent: Float) {
@@ -848,6 +916,17 @@ public struct RepositoryView: View {
     }
 
     private func repositorySummarySentence(_ repository: RepositorySummary) -> String {
+        if !repository.hasStorageFootprint {
+            var parts = [
+                "Git repository indexed",
+                "no tracked storage artifacts above threshold",
+            ]
+            if repository.liveSessionCount > 0 {
+                parts.append("\(repository.liveSessionCount) live Chau7 session\(repository.liveSessionCount == 1 ? "" : "s")")
+            }
+            return parts.joined(separator: " · ")
+        }
+
         var parts = [
             "\(formatBytes(repository.artifactBytes)) in rebuildable or reviewable artifacts",
             "\(repository.itemCount) tracked item\(repository.itemCount == 1 ? "" : "s")",
@@ -938,7 +1017,7 @@ public struct RepositoryView: View {
 private struct RepositoryFoundationStrip: View {
     var body: some View {
         AetowerInfoBanner(
-            "This view is intentionally read-only for now. It turns storage attribution into repository-level inventory, attention ranking, live session context, and copyable optimization briefs. Cleanup and branch/build actions can attach here once their policy is deterministic.",
+            "This view is intentionally read-only for now. It indexes local Git roots first, overlays storage attribution, then adds attention ranking, live session context, and copyable optimization briefs. Cleanup and branch/build actions can attach here once their policy is deterministic.",
             title: "Repository cockpit foundation",
             systemImage: "point.3.connected.trianglepath.dotted",
             tone: AetowerDesign.Tone.cpu,

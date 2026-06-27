@@ -1817,7 +1817,11 @@ public final class AppState {
                                 value: String(report.summary.totalReclaimableBytes)
                             ),
                             DiagnosticsField(
-                                key: "repo_footprint_count",
+                                key: "repository_inventory_count",
+                                value: String(report.repositoryInventory.count)
+                            ),
+                            DiagnosticsField(
+                                key: "repo_storage_footprint_count",
                                 value: String(report.repoFootprints.count)
                             ),
                             DiagnosticsField(

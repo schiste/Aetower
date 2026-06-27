@@ -9,12 +9,51 @@ struct StorageHygieneReportModel: Decodable {
     let cleanupBundles: [StorageCleanupBundleModel]
     let budgetGuardrails: StorageBudgetGuardrailsModel
     let agentHygiene: StorageAgentHygieneSummaryModel
+    let repositoryInventory: [StorageRepositoryInventoryModel]
     let repoFootprints: [StorageRepoFootprintModel]
     let items: [StorageHygieneItemModel]
     let roots: [String]
     let skippedRoots: [StorageSkippedRootModel]
     let truncated: Bool
     let caveats: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case capturedAtMillis
+        case scanDurationMillis
+        case summary
+        case cleanupTiers
+        case cleanupRecipes
+        case cleanupBundles
+        case budgetGuardrails
+        case agentHygiene
+        case repositoryInventory
+        case repoFootprints
+        case items
+        case roots
+        case skippedRoots
+        case truncated
+        case caveats
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        capturedAtMillis = try container.decode(UInt64.self, forKey: .capturedAtMillis)
+        scanDurationMillis = try container.decode(UInt64.self, forKey: .scanDurationMillis)
+        summary = try container.decode(StorageHygieneSummaryModel.self, forKey: .summary)
+        cleanupTiers = try container.decode([StorageCleanupTierModel].self, forKey: .cleanupTiers)
+        cleanupRecipes = try container.decode([StorageCleanupRecipeModel].self, forKey: .cleanupRecipes)
+        cleanupBundles = try container.decode([StorageCleanupBundleModel].self, forKey: .cleanupBundles)
+        budgetGuardrails = try container.decode(StorageBudgetGuardrailsModel.self, forKey: .budgetGuardrails)
+        agentHygiene = try container.decode(StorageAgentHygieneSummaryModel.self, forKey: .agentHygiene)
+        repositoryInventory =
+            try container.decodeIfPresent([StorageRepositoryInventoryModel].self, forKey: .repositoryInventory) ?? []
+        repoFootprints = try container.decode([StorageRepoFootprintModel].self, forKey: .repoFootprints)
+        items = try container.decode([StorageHygieneItemModel].self, forKey: .items)
+        roots = try container.decode([String].self, forKey: .roots)
+        skippedRoots = try container.decode([StorageSkippedRootModel].self, forKey: .skippedRoots)
+        truncated = try container.decode(Bool.self, forKey: .truncated)
+        caveats = try container.decode([String].self, forKey: .caveats)
+    }
 }
 
 struct StorageHygieneBaselineModel: Codable {
@@ -215,6 +254,15 @@ struct StorageAgentItemSummaryModel: Decodable, Identifiable {
     let modifiedMillis: UInt64?
 
     var id: String { path }
+}
+
+struct StorageRepositoryInventoryModel: Decodable, Identifiable {
+    let id: String
+    let repoRoot: String
+    let repoName: String
+    let gitBranch: String?
+    let gitHead: String?
+    let discoveredRoot: String
 }
 
 struct StorageRepoFootprintModel: Decodable, Identifiable {

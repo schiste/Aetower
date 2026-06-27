@@ -28,6 +28,7 @@ pub(crate) struct StorageHygieneReport {
     cleanup_bundles: Vec<StorageCleanupBundle>,
     budget_guardrails: StorageBudgetGuardrails,
     agent_hygiene: StorageAgentHygieneSummary,
+    repository_inventory: Vec<StorageRepositoryInventoryItem>,
     repo_footprints: Vec<StorageRepoFootprint>,
     items: Vec<StorageHygieneItem>,
     roots: Vec<String>,
@@ -233,6 +234,16 @@ struct StorageRepoFootprint {
 }
 
 #[derive(Clone, Debug, Serialize)]
+struct StorageRepositoryInventoryItem {
+    id: String,
+    repo_root: String,
+    repo_name: String,
+    git_branch: Option<String>,
+    git_head: Option<String>,
+    discovered_root: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
 struct StorageRepoArtifactFolder {
     path: String,
     display_name: String,
@@ -300,6 +311,7 @@ fn build_storage_hygiene_report_with_options(
     let now_millis = crate::current_unix_millis().unwrap_or_default();
     let roots = normalize_roots(roots);
     let mut items = Vec::new();
+    let mut repository_roots = BTreeMap::<String, String>::new();
     let mut scanned_roots = Vec::new();
     let mut skipped_roots = Vec::new();
     let mut scanned_directory_count = 0;
@@ -339,15 +351,15 @@ fn build_storage_hygiene_report_with_options(
         }
 
         scanned_roots.push(root.display().to_string());
-        let (mut root_items, root_dirs, root_truncated) =
+        let (mut root_items, root_repositories, root_dirs, root_truncated) =
             scan_root(&root, &options, started, now_millis);
         scanned_directory_count += root_dirs;
         truncated |= root_truncated;
         items.append(&mut root_items);
-
-        if items.len() >= options.limit {
-            truncated = true;
-            break;
+        for repo_root in root_repositories {
+            repository_roots
+                .entry(repo_root.display().to_string())
+                .or_insert_with(|| root.display().to_string());
         }
     }
 
@@ -364,6 +376,7 @@ fn build_storage_hygiene_report_with_options(
     let cleanup_recipes = build_cleanup_recipes(&items);
     let cleanup_bundles = build_cleanup_bundles(&items);
     let repo_footprints = summarize_repo_footprints(&items);
+    let repository_inventory = summarize_repository_inventory(repository_roots);
     let budget_guardrails = evaluate_budget_guardrails(&summary, &repo_footprints);
     let agent_hygiene = summarize_agent_hygiene(&items);
     StorageHygieneReport {
@@ -375,6 +388,7 @@ fn build_storage_hygiene_report_with_options(
         cleanup_bundles,
         budget_guardrails,
         agent_hygiene,
+        repository_inventory,
         repo_footprints,
         items,
         roots: scanned_roots,
@@ -388,6 +402,8 @@ fn build_storage_hygiene_report_with_options(
                 .to_owned(),
             "Command and process-tree attribution require file-event or runtime baselines; known local AI-agent directories are inferred conservatively."
                 .to_owned(),
+            "Repository inventory is Git-root based; storage footprints are a bounded artifact subset overlaid on top."
+                .to_owned(),
         ],
     }
 }
@@ -397,17 +413,15 @@ fn scan_root(
     options: &StorageHygieneOptions,
     started: Instant,
     now_millis: u64,
-) -> (Vec<StorageHygieneItem>, u64, bool) {
+) -> (Vec<StorageHygieneItem>, BTreeSet<PathBuf>, u64, bool) {
     let mut stack = vec![(root.to_path_buf(), 0usize)];
     let mut items = Vec::new();
+    let mut repositories = BTreeSet::new();
     let mut scanned_dirs = 0;
     let mut truncated = false;
 
     while let Some((path, depth)) = stack.pop() {
-        if started.elapsed() >= SCAN_TIME_BUDGET
-            || scanned_dirs >= MAX_DIRECTORIES
-            || items.len() >= options.limit
-        {
+        if started.elapsed() >= SCAN_TIME_BUDGET || scanned_dirs >= MAX_DIRECTORIES {
             truncated = true;
             break;
         }
@@ -419,16 +433,24 @@ fn scan_root(
             continue;
         }
 
+        if metadata.is_dir() && is_git_repository_root(&path) {
+            repositories.insert(path.clone());
+        }
+
         if let Some(rule) = classify_artifact(&path, &metadata) {
-            let size = size_of_path(&path, started);
-            if size.bytes >= MIN_ITEM_BYTES {
-                items.push(storage_item_for_path(
-                    &path,
-                    metadata.modified().ok(),
-                    rule,
-                    size,
-                    now_millis,
-                ));
+            if items.len() < options.limit {
+                let size = size_of_path(&path, started);
+                if size.bytes >= MIN_ITEM_BYTES {
+                    items.push(storage_item_for_path(
+                        &path,
+                        metadata.modified().ok(),
+                        rule,
+                        size,
+                        now_millis,
+                    ));
+                }
+            } else {
+                truncated = true;
             }
             if metadata.is_dir() {
                 continue;
@@ -448,7 +470,7 @@ fn scan_root(
         }
     }
 
-    (items, scanned_dirs, truncated)
+    (items, repositories, scanned_dirs, truncated)
 }
 
 fn storage_item_for_path(
@@ -825,6 +847,39 @@ fn summarize_repo_footprints(items: &[StorageHygieneItem]) -> Vec<StorageRepoFoo
             .then_with(|| left.repo_name.cmp(&right.repo_name))
     });
     footprints
+}
+
+fn summarize_repository_inventory(
+    repositories_by_root: BTreeMap<String, String>,
+) -> Vec<StorageRepositoryInventoryItem> {
+    let mut repositories: Vec<_> = repositories_by_root
+        .into_iter()
+        .map(|(repo_root, discovered_root)| {
+            let repo_path = Path::new(&repo_root);
+            let (git_branch, git_head) = read_git_head(repo_path);
+            let repo_name = repo_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("repository")
+                .to_owned();
+
+            StorageRepositoryInventoryItem {
+                id: repo_root.clone(),
+                repo_root,
+                repo_name,
+                git_branch,
+                git_head,
+                discovered_root,
+            }
+        })
+        .collect();
+    repositories.sort_by(|left, right| {
+        left.repo_name
+            .to_lowercase()
+            .cmp(&right.repo_name.to_lowercase())
+            .then_with(|| left.repo_root.cmp(&right.repo_root))
+    });
+    repositories
 }
 
 fn build_cleanup_recipes(items: &[StorageHygieneItem]) -> Vec<StorageCleanupRecipe> {
@@ -1964,6 +2019,10 @@ fn resolve_git_dir(repo_root: &Path) -> Option<PathBuf> {
     }
 }
 
+fn is_git_repository_root(path: &Path) -> bool {
+    resolve_git_dir(path).is_some()
+}
+
 fn short_hash(value: &str) -> String {
     value.chars().take(12).collect()
 }
@@ -2120,11 +2179,8 @@ mod tests {
     fn storage_hygiene_attributes_artifacts_to_git_repo_and_branch() {
         let root = test_root("attributes-artifacts");
         let project = root.join("Aetower");
-        let refs = project.join(".git").join("refs").join("heads");
         let target = project.join("target").join("debug");
-        if let Err(error) = fs::create_dir_all(&refs) {
-            panic!("create git refs: {error}");
-        }
+        create_git_repo(&project, "master");
         if let Err(error) = fs::create_dir_all(&target) {
             panic!("create target dir: {error}");
         }
@@ -2133,18 +2189,6 @@ mod tests {
             "[workspace]\nmembers = [\"crates/aetower-ffi\"]\n",
         ) {
             panic!("write cargo manifest: {error}");
-        }
-        if let Err(error) = fs::write(
-            project.join(".git").join("HEAD"),
-            "ref: refs/heads/master\n",
-        ) {
-            panic!("write git head: {error}");
-        }
-        if let Err(error) = fs::write(
-            refs.join("master"),
-            "1234567890abcdef1234567890abcdef12345678\n",
-        ) {
-            panic!("write git ref: {error}");
         }
         if let Err(error) = fs::write(
             target.join("blob"),
@@ -2160,6 +2204,7 @@ mod tests {
         assert!(json.contains("\"git_head\":\"1234567890ab\""));
         assert!(json.contains("\"attributed_repo_count\":1"));
         assert!(json.contains("\"repo_footprints\""));
+        assert!(json.contains("\"repository_inventory\""));
         assert!(json.contains("\"current_size_bytes\":1048704"));
         assert!(json.contains("\"top_artifact_folders\""));
         assert!(json.contains("\"last_branch_touched\":\"master\""));
@@ -2177,6 +2222,79 @@ mod tests {
         assert!(json.contains("\"repo_growth_budget_bytes_per_day\":2147483648"));
         assert!(json.contains("\"total_artifact_budget_bytes\":32212254720"));
         assert!(json.contains("\"status\":\"ok\""));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_indexes_git_repositories_without_artifacts() {
+        let root = test_root("indexes-clean-repositories");
+        let repo_a = root.join("CleanOne");
+        let repo_b = root.join("Nested").join("CleanTwo");
+        create_git_repo(&repo_a, "main");
+        create_git_repo(&repo_b, "feature/clean");
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let value: serde_json::Value = match serde_json::from_str(&json) {
+            Ok(value) => value,
+            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+        };
+        let inventory = match value["repository_inventory"].as_array() {
+            Some(inventory) => inventory,
+            None => panic!("repository inventory is an array"),
+        };
+        let footprints = match value["repo_footprints"].as_array() {
+            Some(footprints) => footprints,
+            None => panic!("repo footprints is an array"),
+        };
+
+        assert_eq!(inventory.len(), 2);
+        assert!(inventory.iter().any(|repo| repo["repo_name"] == "CleanOne"));
+        assert!(inventory.iter().any(|repo| repo["repo_name"] == "CleanTwo"));
+        assert!(
+            inventory
+                .iter()
+                .any(|repo| repo["git_branch"] == "feature/clean")
+        );
+        assert!(footprints.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_repository_inventory_continues_after_artifact_limit() {
+        let root = test_root("inventory-ignores-artifact-limit");
+        for index in 0..3 {
+            let project = root.join(format!("Repo{index}"));
+            let target = project.join("target").join("debug");
+            create_git_repo(&project, "main");
+            if let Err(error) = fs::create_dir_all(&target) {
+                panic!("create target dir: {error}");
+            }
+            if let Err(error) = fs::write(
+                target.join("blob"),
+                vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+            ) {
+                panic!("write build artifact: {error}");
+            }
+        }
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 1);
+        let value: serde_json::Value = match serde_json::from_str(&json) {
+            Ok(value) => value,
+            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+        };
+        let inventory = match value["repository_inventory"].as_array() {
+            Some(inventory) => inventory,
+            None => panic!("repository inventory is an array"),
+        };
+        let items = match value["items"].as_array() {
+            Some(items) => items,
+            None => panic!("items is an array"),
+        };
+
+        assert_eq!(inventory.len(), 3);
+        assert_eq!(items.len(), 1);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2270,5 +2388,23 @@ mod tests {
             "aetower-storage-{name}-{}-{millis}",
             std::process::id()
         ))
+    }
+
+    fn create_git_repo(repo: &Path, branch: &str) {
+        let ref_path = repo.join(".git").join("refs").join("heads").join(branch);
+        if let Some(parent) = ref_path.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            panic!("create git refs: {error}");
+        }
+        if let Err(error) = fs::write(
+            repo.join(".git").join("HEAD"),
+            format!("ref: refs/heads/{branch}\n"),
+        ) {
+            panic!("write git head: {error}");
+        }
+        if let Err(error) = fs::write(ref_path, "1234567890abcdef1234567890abcdef12345678\n") {
+            panic!("write git ref: {error}");
+        }
     }
 }
