@@ -782,7 +782,7 @@ public struct RepositoryView: View {
                     if let launchState {
                         Image(systemName: launchState.icon)
                             .font(AetowerDesign.Typography.metadata)
-                            .foregroundStyle(launchState.tone)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
                             .help(launchState.detail)
                     }
                 }
@@ -929,7 +929,7 @@ public struct RepositoryView: View {
                 if let launchState {
                     HStack(spacing: AetowerDesign.Spacing.xs) {
                         Image(systemName: launchState.icon)
-                            .foregroundStyle(launchState.tone)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
                         AetowerBadge(launchState.label, tone: launchState.tone)
                         Text(launchState.detail)
                             .font(AetowerDesign.Typography.metadata)
