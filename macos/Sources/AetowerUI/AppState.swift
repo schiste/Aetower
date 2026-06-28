@@ -1763,6 +1763,34 @@ public final class AppState {
     /// bounded and read-only; explicit refreshes call `runStorageHygieneScan`.
     func ensureStorageHygieneScan() {
         guard storageHygieneReport == nil, !storageHygieneIsLoading else { return }
+        switch StorageHygieneReportCacheStore.loadIfValid() {
+        case let .hit(cache):
+            storageHygieneReport = cache.report
+            storageHygieneCompletedAt = Date(timeIntervalSince1970: Double(cache.savedAtMillis) / 1000.0)
+            storageHygieneError = nil
+            recordLocalDiagnosticsEvent(
+                level: .info,
+                subsystem: .ui,
+                eventType: "storage-hygiene-cache-hit",
+                message: "Loaded cached repository/storage hygiene report.",
+                fields: [
+                    DiagnosticsField(key: "repository_count", value: String(cache.repositoryCount)),
+                    DiagnosticsField(key: "saved_at_millis", value: String(cache.savedAtMillis)),
+                    DiagnosticsField(key: "captured_at_millis", value: String(cache.report.capturedAtMillis)),
+                ]
+            )
+            return
+        case let .stale(reason):
+            recordLocalDiagnosticsEvent(
+                level: .info,
+                subsystem: .ui,
+                eventType: "storage-hygiene-cache-stale",
+                message: "Cached repository/storage hygiene report needs refresh.",
+                fields: [DiagnosticsField(key: "reason", value: reason)]
+            )
+        case .miss:
+            break
+        }
         runStorageHygieneScan()
     }
 
@@ -1793,7 +1821,12 @@ public final class AppState {
                 ) {
                     self.previousStorageHygieneReport = self.storageHygieneReport
                     self.storageHygieneReport = report
-                    StorageHygieneBaselineStore.save(StorageHygieneBaselineModel(report: report))
+                    if let rawJSON = result.json {
+                        StorageHygieneReportCacheStore.save(report: report, rawJSON: rawJSON)
+                    }
+                    let baseline = StorageHygieneBaselineModel(report: report)
+                    StorageHygieneBaselineStore.save(baseline)
+                    self.persistedStorageHygieneBaseline = baseline
                     self.storageHygieneCompletedAt = Date()
                     self.storageHygieneError = nil
                     self.recordLocalDiagnosticsEvent(
