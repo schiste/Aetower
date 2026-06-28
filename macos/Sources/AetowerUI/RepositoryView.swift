@@ -965,7 +965,8 @@ public struct RepositoryView: View {
             do {
                 let result = try await Chau7AgentLauncher.launch(request)
                 let promptStatus = result.promptStatus ?? "unknown"
-                let detail = "\(result.summary) Prompt: \(promptStatus)."
+                let submitDetail = result.submitConfirmation.map { " Submit: \($0)." } ?? ""
+                let detail = "\(result.summary) Prompt: \(promptStatus).\(submitDetail)"
                 nextState = .launched(detail, warning: promptStatus != "sent")
             } catch {
                 nextState = .failed(error.localizedDescription)

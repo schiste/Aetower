@@ -12,6 +12,7 @@ struct Chau7AgentLaunchResult: Sendable, Equatable {
     let launchedCount: Int
     let tabIDs: [String]
     let promptStatus: String?
+    let submitConfirmation: String?
     let summary: String
 }
 
@@ -57,21 +58,37 @@ enum Chau7AgentLauncher {
         )
         try client.notify(method: "notifications/initialized", params: [:])
 
-        let result = try client.call(
-            method: "tools/call",
-            params: [
-                "name": "agent_launch",
-                "arguments": [
-                    "directory": request.repositoryRoot,
-                    "agent_command": agentCommand,
-                    "prompt": request.prompt,
-                    "count": 1,
-                    "ready_timeout_ms": 30_000,
-                ],
+        let result = try callTool(
+            client,
+            name: "agent_launch",
+            arguments: [
+                "directory": request.repositoryRoot,
+                "agent_command": agentCommand,
+                "prompt": request.prompt,
+                "count": 1,
+                "ready_timeout_ms": 30_000,
             ],
             timeoutSeconds: 45
         )
-        return try parseLaunchResult(result)
+        var launchResult = try parseLaunchResult(result)
+        launchResult = try confirmPromptSubmissionIfNeeded(launchResult, client: client)
+        return launchResult
+    }
+
+    private static func callTool(
+        _ client: Chau7JSONRPCClient,
+        name: String,
+        arguments: [String: Any],
+        timeoutSeconds: TimeInterval
+    ) throws -> [String: Any] {
+        try client.call(
+            method: "tools/call",
+            params: [
+                "name": name,
+                "arguments": arguments,
+            ],
+            timeoutSeconds: timeoutSeconds
+        )
     }
 
     private static func parseLaunchResult(_ result: [String: Any]) throws -> Chau7AgentLaunchResult {
@@ -105,7 +122,49 @@ enum Chau7AgentLauncher {
             launchedCount: launchedCount,
             tabIDs: tabIDs,
             promptStatus: promptStatus,
+            submitConfirmation: nil,
             summary: summary
+        )
+    }
+
+    private static func confirmPromptSubmissionIfNeeded(
+        _ result: Chau7AgentLaunchResult,
+        client: Chau7JSONRPCClient
+    ) throws -> Chau7AgentLaunchResult {
+        guard result.promptStatus == "sent", !result.tabIDs.isEmpty else {
+            return result
+        }
+
+        // Chau7's agent_launch currently enqueues prompt typing and Enter separately.
+        // If the Enter races ahead of prompt persistence, users see the prompt typed
+        // but not submitted. A delayed submit is idempotent for the stuck-visible
+        // prompt case and keeps Aetower's action deterministic.
+        Thread.sleep(forTimeInterval: 0.8)
+
+        let confirmations = try result.tabIDs.map { tabID in
+            let submitResult = try callTool(
+                client,
+                name: "tab_submit_prompt",
+                arguments: ["tab_id": tabID],
+                timeoutSeconds: 8
+            )
+            let payload = extractStructuredContent(submitResult) ?? parseToolTextPayload(submitResult) ?? [:]
+            if let isError = submitResult["isError"] as? Bool, isError {
+                throw Chau7AgentLaunchError.toolError(extractToolText(submitResult) ?? "submit failed for \(tabID)")
+            }
+            if let error = payload["error"] as? String {
+                throw Chau7AgentLaunchError.toolError(error)
+            }
+            let enterCount = payload["enter_count"] as? Int
+            return enterCount.map { "\(tabID): enter#\($0)" } ?? "\(tabID): submitted"
+        }
+
+        return Chau7AgentLaunchResult(
+            launchedCount: result.launchedCount,
+            tabIDs: result.tabIDs,
+            promptStatus: result.promptStatus,
+            submitConfirmation: confirmations.joined(separator: ", "),
+            summary: result.summary
         )
     }
 
