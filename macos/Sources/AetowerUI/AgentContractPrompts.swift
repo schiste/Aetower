@@ -23,7 +23,7 @@ enum AgentContractPrompts {
         issues: [StorageAgentGuidanceIssueModel]
     ) -> String {
         """
-        You are generating or updating one Aetower-compatible agent contract file.
+        You are generating or updating one portable agent operating contract file.
 
         Repository:
         - Name: \(repository.name)
@@ -35,8 +35,12 @@ enum AgentContractPrompts {
         - File: \(contract.path)
         - Contract: \(contract.label)
         - Current status: \(status(repository: repository, contract: contract))
-        - Prompt guide: \(guide(for: contract))
-        - Schema: \(schemaPath(for: contract))
+
+        This prompt is self-contained:
+        - Do not assume this repository contains Aetower docs, Aetower schemas, or any prior `.agents/` files.
+        - Do not spend time searching for Aetower prompt guides or schemas in this repository.
+        - If the target file is under `.agents/`, create the `.agents/` directory if needed.
+        - Use only local repository evidence plus the embedded contract spec below.
 
         Scope:
         - Edit only \(contract.path).
@@ -50,6 +54,9 @@ enum AgentContractPrompts {
 
         File requirements:
         \(checklist(for: contract))
+
+        Embedded contract spec:
+        \(embeddedSpec(for: contract))
 
         Current Aetower findings for this file:
         \(issueSummary(issues, contract: contract))
@@ -65,7 +72,7 @@ enum AgentContractPrompts {
         issues: [StorageAgentGuidanceIssueModel]
     ) -> String {
         """
-        You are reconciling one Aetower-compatible agent contract file against the local repository.
+        You are reconciling one portable agent operating contract file against the local repository.
 
         Repository root:
         \(repository.root)
@@ -79,10 +86,16 @@ enum AgentContractPrompts {
         Current Aetower findings for this file:
         \(issueSummary(issues, contract: contract))
 
+        Embedded contract spec:
+        \(embeddedSpec(for: contract))
+
         Instructions:
         - Run `git status --short` first.
         - Edit only \(contract.path).
+        - Do not assume this repository contains Aetower docs, Aetower schemas, or any prior `.agents/` files.
+        - Do not spend time searching for Aetower prompt guides or schemas in this repository.
         - Preserve unrelated user changes.
+        - Use only local repository evidence plus the embedded contract spec below.
         - Compare the file against real local evidence. Do not invent paths, commands, risks, boundaries, references, or owners.
         - Remove stale claims that no longer match the repository.
         - Keep review-only fields unset unless a human actually reviewed the contract.
@@ -199,7 +212,7 @@ enum AgentContractPrompts {
             ])
         case "manifest":
             return bulletList([
-                "Inspect `.agents/schema-v1/`, `.agents/*.yaml`, package manifests, hooks, scripts, and docs mentioning agent contracts.",
+                "Inspect existing `.agents/*.yaml` files if present, plus package manifests, hooks, scripts, README/CONTRIBUTING, CI, and docs that describe agent workflow.",
                 "Reference only command IDs that exist in `.agents/commands.yaml`.",
                 "Declare cross-file integrity checks that a real checker can enforce.",
             ])
@@ -332,10 +345,154 @@ enum AgentContractPrompts {
             ])
         }
         return bulletList([
-            "Validate YAML against \(schemaPath(for: contract)) when available.",
+            "Check YAML parses and uses the embedded shape above.",
+            "If this repo already has a local contract checker command, run it. Otherwise report that schema validation was unavailable.",
             "Check referenced local paths and command IDs exist when the target file references them.",
             "Report changed files, validation performed, and residual risk.",
         ])
+    }
+
+    private static func embeddedSpec(for contract: StorageAgentContractCoverageModel) -> String {
+        switch contract.id {
+        case "agents_md":
+            return bulletList([
+                "Create a concise root AGENTS.md operating contract for coding agents.",
+                "Use these sections in order: Scope And Precedence, Repository Map, Standard Workflow, Commands, Approval Required, Validation Matrix, Architecture Boundaries, Code Rules, Security Rules, Completion Checklist, References.",
+                "Keep it short enough to read every session. Prefer links to deeper docs over copying long explanations.",
+                "State exact git behavior: check `git status --short`, preserve unrelated user changes, use targeted staging, do not switch branches, do not commit or push unless explicitly asked.",
+                "List exact validation commands that actually exist, or mark unknown validation as pending review.",
+                "Do not include broad git examples such as `git add .`, `git add -A`, or `git commit -a`.",
+            ])
+        case "manifest":
+            return yamlSpec(
+                purpose: "Root index for the agent operating contract files, schema/version metadata, freshness policy, and cross-file integrity expectations.",
+                requiredTopLevel: ["schema_version", "contracts", "integrity"],
+                fields: [
+                    "`schema_version: 1`.",
+                    "`contracts`: list entries for AGENTS.md, .agents/manifest.yaml, .agents/tasks.yaml, .agents/repo-map.yaml, .agents/contracts.yaml, .agents/commands.yaml, .agents/validation.yaml, .agents/boundaries.yaml, .agents/risks.yaml, and .agents/references.yaml.",
+                    "Each contract entry should include `id`, `path`, `schema`, `required`, and `generated`; add `review_required`, `source_files`, `owner`, or `description` only when supported by evidence.",
+                    "`integrity`: include booleans or lists for unique IDs, command references, source-file existence, local reference existence, generated freshness, schema validation, and stale-reference policy.",
+                    "`freshness`: optional; include only if this repo has real freshness/checking behavior.",
+                    "Command IDs such as `generate_command_id`, `check_command_id`, and `explain_command_id` must be omitted unless those command IDs already exist in `.agents/commands.yaml`.",
+                    "Use `notes` for pending human review, missing generators, or intentionally absent commands.",
+                ]
+            )
+        case "tasks":
+            return yamlSpec(
+                purpose: "Task classification and routing contract for agents.",
+                requiredTopLevel: ["schema_version", "reviewed_by", "reviewed_at", "source_files", "tasks"],
+                fields: [
+                    "`tasks`: list task objects with stable `id`, `description`, `signals`, `strategy`, and `validation_rule_ids`.",
+                    "Signals should be structured around phrases, path globs, command IDs, risk IDs, contract IDs, or domain IDs.",
+                    "Strategies should be compact values such as classify_first, reproduce_first, smallest_correct_patch, prefer_existing_patterns, add_regression_test, avoid_broad_refactor, ask_before_architecture_change, or manual_review_required.",
+                    "Add `required_reads`, `likely_paths`, `required_contract_ids`, `risk_surface_ids`, `boundary_rule_ids`, and `required_command_ids` only when real local evidence supports them.",
+                    "Add a classification policy that prefers highest-risk matches and requires uncertainty reporting when task type is unclear.",
+                    "If no human review happened, use `reviewed_by: pending-human-review`, a current ISO-8601 `reviewed_at`, and a note explaining review is pending.",
+                ]
+            )
+        case "repo_map":
+            return yamlSpec(
+                purpose: "Machine-readable repository topology for agents.",
+                requiredTopLevel: ["schema_version", "source_files", "roots"],
+                fields: [
+                    "Describe major roots, workspaces, packages, services, entrypoints, generated roots, ignored roots, hooks, CI, assets, migrations, fixtures, and agent-critical files.",
+                    "Each root should have a stable ID or path, kind, description, paths/globs, ownership if known, constraints, source-of-truth notes, local AGENTS.md if present, validation rule IDs, and boundary layer ID when known.",
+                    "Use only paths that exist, or explicitly label intentionally generated/ignored paths.",
+                    "Do not require cache/build output directories as source roots.",
+                ]
+            )
+        case "contracts":
+            return yamlSpec(
+                purpose: "Repository invariants agents must preserve.",
+                requiredTopLevel: ["schema_version", "reviewed_by", "reviewed_at", "source_files", "contracts"],
+                fields: [
+                    "`contracts`: list invariant objects with `id`, `category`, `rule`, `paths`, and `severity`.",
+                    "Use categories such as api, auth, authorization, database, data-integrity, data-privacy, error-shape, observability, performance, process-control, release, security, storage, tenant-isolation, ui, or other.",
+                    "Add source of truth, owner, forbidden operations, required tests, validation rule IDs, field shape, safe alternatives, and good/bad examples only when backed by local evidence.",
+                    "Focus on invariants that would cause real regressions if broken.",
+                    "If no human review happened, use `reviewed_by: pending-human-review`, a current ISO-8601 `reviewed_at`, and a note explaining review is pending.",
+                ]
+            )
+        case "commands":
+            return yamlSpec(
+                purpose: "Canonical command registry for agents.",
+                requiredTopLevel: ["schema_version", "source_files", "commands"],
+                fields: [
+                    "`commands`: list commands with stable `id`, `purpose`, `cwd`, `cost`, `mutates_files`, `needs_approval`, `scope`, and `timeout_seconds`.",
+                    "Prefer `argv` arrays. Use `shell_command` only when shell semantics are required, and set `uses_shell` accordingly.",
+                    "Encode `interactive`, `requires_network`, `requires_secrets`, `writes_outside_repo`, `external_effects`, `allowed_in_hooks`, and `approval_reason` when relevant.",
+                    "Only list commands that actually exist in package manifests, Makefiles, justfiles, scripts, hooks, CI, or documented local workflows.",
+                    "Do not invent validation commands to make another contract look complete.",
+                ]
+            )
+        case "validation":
+            return yamlSpec(
+                purpose: "Map touched paths, task types, and risks to required checks.",
+                requiredTopLevel: ["schema_version", "reviewed_by", "reviewed_at", "source_files", "rules"],
+                fields: [
+                    "`rules`: list validation rules with stable `id`, description, path globs or task/risk triggers, command IDs, and skip/reporting requirements.",
+                    "Use `exclude_paths`, changed-files mode, max cost without approval, risk IDs, boundary IDs, and manual-review-only flags when applicable.",
+                    "`full_suite_triggers` should include both trigger globs and the command IDs to run.",
+                    "Reference only command IDs that exist in `.agents/commands.yaml`; if commands are missing, create manual-review-only rules and note the gap.",
+                    "If no human review happened, use `reviewed_by: pending-human-review`, a current ISO-8601 `reviewed_at`, and a note explaining review is pending.",
+                ]
+            )
+        case "boundaries":
+            return yamlSpec(
+                purpose: "Architecture and ownership boundaries agents must not violate.",
+                requiredTopLevel: ["schema_version", "reviewed_by", "reviewed_at", "source_files", "layers", "rules"],
+                fields: [
+                    "Define layers/domains with IDs, path globs, default policy, and descriptions.",
+                    "Rules should cover forbidden imports/dependencies, generated-code ownership, layer direction, subtree ownership, and non-import boundaries proven by local evidence.",
+                    "Each rule should include rationale, severity, path globs or layers, safe alternatives, enforcing command IDs when available, and good/bad examples where useful.",
+                    "Do not invent architecture policy. Mark uncertain boundaries as review notes.",
+                    "If no human review happened, use `reviewed_by: pending-human-review`, a current ISO-8601 `reviewed_at`, and a note explaining review is pending.",
+                ]
+            )
+        case "risks":
+            return yamlSpec(
+                purpose: "High-risk surfaces and failure modes agents must slow down for.",
+                requiredTopLevel: ["schema_version", "reviewed_by", "reviewed_at", "source_files", "risks"],
+                fields: [
+                    "`risks`: list risk surfaces with stable `id`, category, severity, signals, affected paths, approval type, forbidden operations, safe read-only commands, validation command IDs, and manual-review requirements when applicable.",
+                    "Use categories such as auth, authorization, tenant-isolation, pii, data-export, ai-llm, dependencies, ci, hooks, infra, observability, generated-code, migration, deploy, billing, webhooks, or other.",
+                    "Do not overstate risk without evidence; explain common failure modes only when visible in this repo.",
+                    "Validation commands are optional when no reliable local command exists; require manual review instead.",
+                    "If no human review happened, use `reviewed_by: pending-human-review`, a current ISO-8601 `reviewed_at`, and a note explaining review is pending.",
+                ]
+            )
+        case "references":
+            return yamlSpec(
+                purpose: "Pointers to deeper context that agents should load only when relevant.",
+                requiredTopLevel: ["schema_version", "source_files", "references"],
+                fields: [
+                    "`references`: list docs/specs/runbooks with stable `id`, kind, title, summary, path or URI, load triggers, applicable paths, task triggers, freshness, canonical status, and supersedes metadata where useful.",
+                    "Use kinds such as agent, workflow, architecture, security, privacy, api, runbook, adr, configuration, schema, contract, onboarding, product, or external.",
+                    "Mark URI references that require network.",
+                    "Prefer canonical docs and omit stale duplicates.",
+                    "Do not duplicate AGENTS.md; reference it as the operating contract.",
+                ]
+            )
+        default:
+            return bulletList([
+                "Use local evidence only.",
+                "Keep the file compact, machine-checkable where possible, and explicit about uncertainty.",
+            ])
+        }
+    }
+
+    private static func yamlSpec(
+        purpose: String,
+        requiredTopLevel: [String],
+        fields: [String]
+    ) -> String {
+        bulletList([
+            "YAML file purpose: \(purpose)",
+            "Required top-level keys: \(requiredTopLevel.joined(separator: ", ")).",
+            "Use `schema_version: 1` when this is a `.agents/*.yaml` contract.",
+            "Allow repo-specific extension keys only when prefixed with `x_`.",
+            "Use relative repo paths. Do not use absolute paths, `~`, or parent traversal.",
+        ] + fields)
     }
 
     private static func bulletList(_ items: [String]) -> String {

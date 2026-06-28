@@ -873,22 +873,19 @@ public struct RepositoryView: View {
                     Text("Focused prompts")
                         .font(AetowerDesign.Typography.controlLabel)
                         .foregroundStyle(AetowerDesign.Ink.primary)
-                    AetowerBadge("Prompt guide", tone: AetowerDesign.Status.neutral)
-                    AetowerBadge(
-                        AgentContractPrompts.schemaPath(for: contract) == "Not required" ? "No schema" : "Schema",
-                        tone: AetowerDesign.Status.neutral
-                    )
+                    AetowerBadge("Self-contained", tone: AetowerDesign.Status.ready)
+                    AetowerBadge("Portable", tone: AetowerDesign.Status.neutral)
                     Spacer(minLength: AetowerDesign.Spacing.sm)
                     AetowerBadge(
                         copied ? "Copied" : "Ready",
                         tone: copied ? AetowerDesign.Status.ready : AetowerDesign.Status.neutral
                     )
                 }
-                Text("Copy a one-file prompt when you want an agent to generate or repair this contract without touching unrelated files.")
+                Text("Copy or launch a one-file prompt with the contract spec embedded. The target repo does not need Aetower docs or schemas.")
                     .font(AetowerDesign.Typography.caption)
                     .foregroundStyle(AetowerDesign.Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Guide: \(AgentContractPrompts.guide(for: contract)) · Schema: \(AgentContractPrompts.schemaPath(for: contract))")
+                Text("The agent should use local repo evidence only, create parent `.agents/` folders if needed, and report unavailable validation explicitly.")
                     .font(AetowerDesign.Typography.metadata)
                     .foregroundStyle(AetowerDesign.Ink.tertiary)
                     .lineLimit(1)
