@@ -2,6 +2,8 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
+    thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -13,8 +15,12 @@ const MAX_DIRECTORIES: u64 = 25_000;
 const SIZE_WALK_MAX_ENTRIES: u64 = 150_000;
 const MIN_ITEM_BYTES: u64 = 1024 * 1024;
 const SCAN_TIME_BUDGET: Duration = Duration::from_millis(6_500);
+const GIT_STATUS_TIME_BUDGET: Duration = Duration::from_millis(650);
+const GIT_STATUS_MAX_LINES: usize = 80;
 const STALE_AFTER_DAYS: u64 = 7;
 const CLAUDE_MD_DELEGATION_MAX_BYTES: u64 = 1024;
+const AGENTS_MD_MAX_LINES: usize = 250;
+const AGENT_READINESS_MAX_SCORE: u64 = 100;
 const REPO_ARTIFACT_BUDGET_BYTES: u64 = 30 * 1024 * 1024 * 1024;
 const REPO_GROWTH_BUDGET_BYTES_PER_DAY: u64 = 2 * 1024 * 1024 * 1024;
 const TOTAL_ARTIFACT_BUDGET_BYTES: u64 = 30 * 1024 * 1024 * 1024;
@@ -241,12 +247,59 @@ struct StorageRepositoryInventoryItem {
     repo_name: String,
     git_branch: Option<String>,
     git_head: Option<String>,
+    git_ref: Option<String>,
+    git_detached_head: bool,
+    git_remote_origin_url: Option<String>,
+    git_remote_key: Option<String>,
+    git_remote_host: Option<String>,
+    git_remote_owner: Option<String>,
+    git_remote_name: Option<String>,
+    git_dirty_status: String,
+    git_dirty_file_count: Option<u64>,
+    git_dirty_truncated: bool,
+    clone_group_count: u64,
+    clone_group_roots: Vec<String>,
     discovered_root: String,
     has_agents_md: bool,
     has_claude_md: bool,
     claude_md_bytes: Option<u64>,
     claude_md_delegation_max_bytes: u64,
     claude_md_delegates_to_agents_md: bool,
+    agent_readiness_score: u8,
+    agent_readiness_status: String,
+    agent_contract_missing_count: u64,
+    agent_contract_coverage: Vec<StorageAgentContractCoverage>,
+    agent_guidance_status: String,
+    agent_guidance_issue_count: u64,
+    agent_guidance_issues: Vec<StorageAgentGuidanceIssue>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageAgentContractCoverage {
+    id: String,
+    label: String,
+    path: String,
+    kind: String,
+    status: String,
+    severity: String,
+    detail: String,
+    weight: u64,
+    earned_weight: u64,
+    coverage_percent: u8,
+    present: bool,
+    tracked: bool,
+    schema_version: Option<String>,
+    generated: bool,
+    reviewed: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageAgentGuidanceIssue {
+    id: String,
+    severity: String,
+    title: String,
+    detail: String,
+    path: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -785,10 +838,10 @@ fn cleanup_tier_definitions() -> [(&'static str, &'static str, &'static str); 4]
 
 fn artifact_attribution(path: &Path) -> StorageArtifactAttribution {
     let repo_root = find_git_root(path);
-    let (git_branch, git_head) = repo_root
+    let git_head = repo_root
         .as_ref()
         .map(|root| read_git_head(root))
-        .unwrap_or((None, None));
+        .unwrap_or_default();
     let inferred_agent_session =
         known_agent_path(path).map(|(_, display_name)| format!("{display_name} local artifacts"));
     let repo_name = repo_root.as_ref().and_then(|root| {
@@ -813,7 +866,7 @@ fn artifact_attribution(path: &Path) -> StorageArtifactAttribution {
                 .to_owned(),
         );
     }
-    let confidence = if repo_root.is_some() && git_branch.is_some() {
+    let confidence = if repo_root.is_some() && git_head.branch.is_some() {
         "high"
     } else if repo_root.is_some() || inferred_agent_session.is_some() {
         "medium"
@@ -824,8 +877,8 @@ fn artifact_attribution(path: &Path) -> StorageArtifactAttribution {
     StorageArtifactAttribution {
         repo_root: repo_root.map(|root| root.display().to_string()),
         repo_name,
-        git_branch,
-        git_head,
+        git_branch: git_head.branch,
+        git_head: git_head.short_head,
         command: None,
         process_tree: None,
         ai_agent_session: inferred_agent_session,
@@ -862,8 +915,12 @@ fn summarize_repository_inventory(
         .into_iter()
         .map(|(repo_root, discovered_root)| {
             let repo_path = Path::new(&repo_root);
-            let (git_branch, git_head) = read_git_head(repo_path);
+            let git = repository_git_intelligence(repo_path);
             let quality = repository_quality(repo_path);
+            let mut guidance = agent_guidance_audit(repo_path, &quality);
+            let contract_coverage = agent_contract_coverage_audit(repo_path, &quality, &guidance);
+            guidance.issues.extend(contract_coverage.issues.clone());
+            guidance.status = guidance_status(&guidance.issues);
             let repo_name = repo_path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -874,17 +931,37 @@ fn summarize_repository_inventory(
                 id: repo_root.clone(),
                 repo_root,
                 repo_name,
-                git_branch,
-                git_head,
+                git_branch: git.branch,
+                git_head: git.head,
+                git_ref: git.reference,
+                git_detached_head: git.detached_head,
+                git_remote_origin_url: git.remote_origin_url,
+                git_remote_key: git.remote_key,
+                git_remote_host: git.remote_host,
+                git_remote_owner: git.remote_owner,
+                git_remote_name: git.remote_name,
+                git_dirty_status: git.dirty_status,
+                git_dirty_file_count: git.dirty_file_count,
+                git_dirty_truncated: git.dirty_truncated,
+                clone_group_count: 1,
+                clone_group_roots: Vec::new(),
                 discovered_root,
                 has_agents_md: quality.has_agents_md,
                 has_claude_md: quality.has_claude_md,
                 claude_md_bytes: quality.claude_md_bytes,
                 claude_md_delegation_max_bytes: CLAUDE_MD_DELEGATION_MAX_BYTES,
                 claude_md_delegates_to_agents_md: quality.claude_md_delegates_to_agents_md,
+                agent_readiness_score: contract_coverage.score,
+                agent_readiness_status: contract_coverage.status,
+                agent_contract_missing_count: contract_coverage.missing_count,
+                agent_contract_coverage: contract_coverage.coverage,
+                agent_guidance_status: guidance.status,
+                agent_guidance_issue_count: guidance.issues.len() as u64,
+                agent_guidance_issues: guidance.issues,
             }
         })
         .collect();
+    attach_clone_groups(&mut repositories);
     repositories.sort_by(|left, right| {
         left.repo_name
             .to_lowercase()
@@ -894,12 +971,106 @@ fn summarize_repository_inventory(
     repositories
 }
 
+#[derive(Clone, Debug, Default)]
+struct RepositoryGitIntelligence {
+    branch: Option<String>,
+    head: Option<String>,
+    reference: Option<String>,
+    detached_head: bool,
+    remote_origin_url: Option<String>,
+    remote_key: Option<String>,
+    remote_host: Option<String>,
+    remote_owner: Option<String>,
+    remote_name: Option<String>,
+    dirty_status: String,
+    dirty_file_count: Option<u64>,
+    dirty_truncated: bool,
+}
+
+fn repository_git_intelligence(repo_path: &Path) -> RepositoryGitIntelligence {
+    let head = read_git_head(repo_path);
+    let remote_origin_url = read_git_config_value(repo_path, "remote \"origin\"", "url");
+    let remote_key = remote_origin_url
+        .as_deref()
+        .and_then(normalize_git_remote_key);
+    let remote_parts = remote_key.as_deref().map(split_git_remote_key);
+    let dirty = read_git_dirty_status(repo_path);
+
+    RepositoryGitIntelligence {
+        branch: head.branch,
+        head: head.short_head,
+        reference: head.reference,
+        detached_head: head.detached,
+        remote_origin_url,
+        remote_key,
+        remote_host: remote_parts.as_ref().and_then(|parts| parts.host.clone()),
+        remote_owner: remote_parts.as_ref().and_then(|parts| parts.owner.clone()),
+        remote_name: remote_parts.and_then(|parts| parts.name),
+        dirty_status: dirty.status,
+        dirty_file_count: dirty.file_count,
+        dirty_truncated: dirty.truncated,
+    }
+}
+
+fn attach_clone_groups(repositories: &mut [StorageRepositoryInventoryItem]) {
+    let mut roots_by_remote = BTreeMap::<String, Vec<String>>::new();
+    for repository in repositories.iter() {
+        if let Some(remote_key) = repository.git_remote_key.as_deref() {
+            roots_by_remote
+                .entry(remote_key.to_owned())
+                .or_default()
+                .push(repository.repo_root.clone());
+        }
+    }
+
+    for repository in repositories.iter_mut() {
+        let Some(remote_key) = repository.git_remote_key.as_deref() else {
+            continue;
+        };
+        let Some(group_roots) = roots_by_remote.get(remote_key) else {
+            continue;
+        };
+        repository.clone_group_count = group_roots.len() as u64;
+        if group_roots.len() > 1 {
+            repository.clone_group_roots = group_roots.clone();
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct RepositoryQuality {
     has_agents_md: bool,
     has_claude_md: bool,
     claude_md_bytes: Option<u64>,
     claude_md_delegates_to_agents_md: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct AgentGuidanceAudit {
+    status: String,
+    issues: Vec<StorageAgentGuidanceIssue>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AgentContractDefinition {
+    id: &'static str,
+    label: &'static str,
+    path: &'static str,
+    kind: &'static str,
+    weight: u64,
+    missing_severity: &'static str,
+    requires_schema: bool,
+    requires_review: bool,
+    detail: &'static str,
+}
+
+#[derive(Clone, Debug, Default)]
+struct AgentContractCoverageAudit {
+    score: u8,
+    status: String,
+    missing_count: u64,
+    coverage: Vec<StorageAgentContractCoverage>,
+    issues: Vec<StorageAgentGuidanceIssue>,
 }
 
 fn repository_quality(repo_root: &Path) -> RepositoryQuality {
@@ -929,6 +1100,734 @@ fn repository_quality(repo_root: &Path) -> RepositoryQuality {
         claude_md_bytes,
         claude_md_delegates_to_agents_md,
     }
+}
+
+fn agent_guidance_audit(repo_root: &Path, quality: &RepositoryQuality) -> AgentGuidanceAudit {
+    let mut issues = Vec::new();
+    let agents_path = repo_root.join("AGENTS.md");
+
+    if !quality.has_agents_md {
+        push_guidance_issue(
+            &mut issues,
+            "agents.root.missing",
+            "error",
+            "Missing root AGENTS.md",
+            "Every repository should have a tracked root AGENTS.md as the canonical agent contract.",
+            "AGENTS.md",
+        );
+    } else {
+        if !git_path_is_tracked(repo_root, "AGENTS.md") {
+            push_guidance_issue(
+                &mut issues,
+                "agents.root.untracked",
+                "error",
+                "Root AGENTS.md is not tracked",
+                "A referenced agent contract must be committed, not only present in the local worktree.",
+                "AGENTS.md",
+            );
+        }
+        if let Ok(content) = fs::read_to_string(&agents_path) {
+            audit_agents_markdown(&mut issues, repo_root, "AGENTS.md", &content);
+        }
+    }
+
+    if quality.has_claude_md && !quality.claude_md_delegates_to_agents_md {
+        let detail = if quality
+            .claude_md_bytes
+            .is_some_and(|bytes| bytes > CLAUDE_MD_DELEGATION_MAX_BYTES)
+        {
+            "CLAUDE.md is too large to be treated as a delegating adapter."
+        } else {
+            "CLAUDE.md should delegate to AGENTS.md with @AGENTS.md as its first non-empty line."
+        };
+        push_guidance_issue(
+            &mut issues,
+            "agents.adapter.claude_not_delegated",
+            "warning",
+            "CLAUDE.md does not delegate cleanly",
+            detail,
+            "CLAUDE.md",
+        );
+    }
+
+    audit_canonical_agent_links(&mut issues, repo_root, "README.md");
+    audit_canonical_agent_links(&mut issues, repo_root, "CONTRIBUTING.md");
+
+    let status = guidance_status(&issues);
+    AgentGuidanceAudit { status, issues }
+}
+
+fn agent_contract_definitions() -> &'static [AgentContractDefinition] {
+    &[
+        AgentContractDefinition {
+            id: "agents_md",
+            label: "AGENTS.md",
+            path: "AGENTS.md",
+            kind: "human-contract",
+            weight: 30,
+            missing_severity: "error",
+            requires_schema: false,
+            requires_review: false,
+            detail: "Human-readable operating contract: precedence, workflow, git discipline, approvals, and completion rules.",
+        },
+        AgentContractDefinition {
+            id: "manifest",
+            label: "Manifest",
+            path: ".agents/manifest.yaml",
+            kind: "machine-contract",
+            weight: 10,
+            missing_severity: "warning",
+            requires_schema: true,
+            requires_review: false,
+            detail: "Root machine contract: expected files, schema ids, generator/check commands, cross-file integrity, and freshness policy.",
+        },
+        AgentContractDefinition {
+            id: "repo_map",
+            label: "Repo map",
+            path: ".agents/repo-map.yaml",
+            kind: "machine-contract",
+            weight: 10,
+            missing_severity: "warning",
+            requires_schema: true,
+            requires_review: false,
+            detail: "Machine-readable topology: roots, packages, services, entrypoints, generated folders, and ignored roots.",
+        },
+        AgentContractDefinition {
+            id: "commands",
+            label: "Commands",
+            path: ".agents/commands.yaml",
+            kind: "machine-contract",
+            weight: 12,
+            missing_severity: "warning",
+            requires_schema: true,
+            requires_review: false,
+            detail: "Exact command registry with cwd, cost, mutation, approval, breadth, and expected runtime metadata.",
+        },
+        AgentContractDefinition {
+            id: "validation",
+            label: "Validation",
+            path: ".agents/validation.yaml",
+            kind: "reviewed-contract",
+            weight: 14,
+            missing_severity: "warning",
+            requires_schema: true,
+            requires_review: true,
+            detail: "Touched-path to validation mapping so agents know which checks prove a change safe.",
+        },
+        AgentContractDefinition {
+            id: "boundaries",
+            label: "Boundaries",
+            path: ".agents/boundaries.yaml",
+            kind: "reviewed-contract",
+            weight: 10,
+            missing_severity: "warning",
+            requires_schema: true,
+            requires_review: true,
+            detail: "Architecture rules agents and tools can check: layers, forbidden imports, generated-code ownership.",
+        },
+        AgentContractDefinition {
+            id: "risks",
+            label: "Risks",
+            path: ".agents/risks.yaml",
+            kind: "reviewed-contract",
+            weight: 10,
+            missing_severity: "warning",
+            requires_schema: true,
+            requires_review: true,
+            detail: "High-risk surfaces: auth, billing, permissions, migrations, secrets, deploy, tenants, webhooks.",
+        },
+        AgentContractDefinition {
+            id: "references",
+            label: "References",
+            path: ".agents/references.yaml",
+            kind: "machine-contract",
+            weight: 4,
+            missing_severity: "warning",
+            requires_schema: true,
+            requires_review: false,
+            detail: "Pointers to deeper context without loading it by default: architecture, runbooks, standards, API docs.",
+        },
+    ]
+}
+
+fn agent_contract_coverage_audit(
+    repo_root: &Path,
+    quality: &RepositoryQuality,
+    guidance: &AgentGuidanceAudit,
+) -> AgentContractCoverageAudit {
+    let mut audit = AgentContractCoverageAudit::default();
+    let mut earned_score = 0_u64;
+
+    for definition in agent_contract_definitions() {
+        let evaluated = evaluate_agent_contract(repo_root, quality, guidance, definition);
+        earned_score = earned_score.saturating_add(evaluated.earned_weight);
+        if !evaluated.present {
+            audit.missing_count = audit.missing_count.saturating_add(1);
+        }
+        if let Some(issue) = agent_contract_issue(definition, &evaluated) {
+            audit.issues.push(issue);
+        }
+        audit.coverage.push(evaluated);
+    }
+
+    audit.score = earned_score.min(AGENT_READINESS_MAX_SCORE) as u8;
+    audit.status = agent_readiness_status(audit.score, guidance, &audit.coverage);
+    audit
+}
+
+fn evaluate_agent_contract(
+    repo_root: &Path,
+    quality: &RepositoryQuality,
+    guidance: &AgentGuidanceAudit,
+    definition: &AgentContractDefinition,
+) -> StorageAgentContractCoverage {
+    let path = repo_root.join(definition.path);
+    let present = path.is_file();
+    let tracked = present && git_path_is_tracked(repo_root, definition.path);
+    let mut status = "missing".to_owned();
+    let mut severity = definition.missing_severity.to_owned();
+    let mut detail = format!("Missing {}. {}", definition.path, definition.detail);
+    let mut earned_weight = 0_u64;
+    let mut schema_version = None;
+    let mut generated = false;
+    let mut reviewed = false;
+
+    if present {
+        let content = fs::read_to_string(&path).unwrap_or_default();
+        schema_version =
+            yaml_scalar(&content, "schema_version").or_else(|| yaml_scalar(&content, "version"));
+        generated = yaml_boolish(&content, "generated")
+            || yaml_scalar(&content, "generated_by").is_some()
+            || content.contains("source_files:");
+        reviewed = yaml_boolish(&content, "reviewed")
+            || yaml_scalar(&content, "reviewed_by").is_some()
+            || yaml_scalar(&content, "reviewed_at").is_some()
+            || yaml_scalar(&content, "last_reviewed").is_some();
+
+        if !tracked {
+            status = "untracked".to_owned();
+            severity = if definition.path == "AGENTS.md" {
+                "error".to_owned()
+            } else {
+                "warning".to_owned()
+            };
+            detail = format!(
+                "{} exists but is not tracked by git. Agent contracts must be committed to be reliable.",
+                definition.path
+            );
+            earned_weight = definition.weight / 3;
+        } else if definition.path == "AGENTS.md" {
+            let has_errors = guidance
+                .issues
+                .iter()
+                .any(|issue| issue.severity == "error" && issue.path == "AGENTS.md");
+            let has_warnings = guidance
+                .issues
+                .iter()
+                .any(|issue| issue.severity == "warning" && issue.path == "AGENTS.md");
+            if !quality.has_agents_md || has_errors {
+                status = "error".to_owned();
+                severity = "error".to_owned();
+                detail = "AGENTS.md exists but has blocking contract issues.".to_owned();
+                earned_weight = definition.weight / 3;
+            } else if has_warnings {
+                status = "partial".to_owned();
+                severity = "warning".to_owned();
+                detail = "AGENTS.md is tracked but has shape, reference, or workflow warnings."
+                    .to_owned();
+                earned_weight = definition.weight.saturating_mul(3) / 4;
+            } else {
+                status = "ok".to_owned();
+                severity = "ok".to_owned();
+                detail =
+                    "AGENTS.md is present, tracked, and passes current portable checks.".to_owned();
+                earned_weight = definition.weight;
+            }
+        } else {
+            let schema_missing = definition.requires_schema && schema_version.is_none();
+            let review_missing = definition.requires_review && !reviewed;
+            if schema_missing || review_missing {
+                status = "partial".to_owned();
+                severity = "warning".to_owned();
+                let mut gaps = Vec::new();
+                if schema_missing {
+                    gaps.push("schema_version/version");
+                }
+                if review_missing {
+                    gaps.push("reviewed_by/reviewed_at");
+                }
+                detail = format!(
+                    "{} is present and tracked but missing {} metadata.",
+                    definition.path,
+                    gaps.join(" and ")
+                );
+                earned_weight = definition.weight.saturating_mul(2) / 3;
+            } else {
+                status = "ok".to_owned();
+                severity = "ok".to_owned();
+                detail = format!(
+                    "{} is present, tracked, and machine-checkable.",
+                    definition.path
+                );
+                earned_weight = definition.weight;
+            }
+        }
+    }
+
+    let coverage_percent = if definition.weight == 0 {
+        0
+    } else {
+        (earned_weight.saturating_mul(100) / definition.weight).min(100) as u8
+    };
+
+    StorageAgentContractCoverage {
+        id: definition.id.to_owned(),
+        label: definition.label.to_owned(),
+        path: definition.path.to_owned(),
+        kind: definition.kind.to_owned(),
+        status,
+        severity,
+        detail,
+        weight: definition.weight,
+        earned_weight,
+        coverage_percent,
+        present,
+        tracked,
+        schema_version,
+        generated,
+        reviewed,
+    }
+}
+
+fn agent_contract_issue(
+    definition: &AgentContractDefinition,
+    coverage: &StorageAgentContractCoverage,
+) -> Option<StorageAgentGuidanceIssue> {
+    if coverage.status == "ok" || definition.path == "AGENTS.md" {
+        return None;
+    }
+
+    let id = format!("agents.contract.{}.{}", coverage.status, definition.id);
+    Some(StorageAgentGuidanceIssue {
+        id,
+        severity: coverage.severity.clone(),
+        title: match coverage.status.as_str() {
+            "missing" => format!("Missing {}", definition.label),
+            "untracked" => format!("{} is not tracked", definition.label),
+            "partial" => format!("{} coverage is partial", definition.label),
+            _ => format!("{} needs review", definition.label),
+        },
+        detail: coverage.detail.clone(),
+        path: definition.path.to_owned(),
+    })
+}
+
+fn agent_readiness_status(
+    score: u8,
+    guidance: &AgentGuidanceAudit,
+    coverage: &[StorageAgentContractCoverage],
+) -> String {
+    if guidance
+        .issues
+        .iter()
+        .any(|issue| issue.severity == "error")
+        || coverage
+            .iter()
+            .any(|item| item.path == "AGENTS.md" && item.severity == "error")
+    {
+        return "blocked".to_owned();
+    }
+    if score >= 90 {
+        "ready".to_owned()
+    } else if score >= 60 {
+        "partial".to_owned()
+    } else {
+        "weak".to_owned()
+    }
+}
+
+fn yaml_scalar(content: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}:");
+    content.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let value = trimmed.strip_prefix(&prefix)?.trim();
+        if value.is_empty() || value == "|" || value == ">" {
+            return None;
+        }
+        Some(value.trim_matches('"').trim_matches('\'').to_owned())
+    })
+}
+
+fn yaml_boolish(content: &str, key: &str) -> bool {
+    yaml_scalar(content, key)
+        .map(|value| {
+            let normalized = value.to_lowercase();
+            matches!(normalized.as_str(), "true" | "yes" | "1")
+        })
+        .unwrap_or(false)
+}
+
+fn audit_agents_markdown(
+    issues: &mut Vec<StorageAgentGuidanceIssue>,
+    repo_root: &Path,
+    relative_path: &str,
+    content: &str,
+) {
+    let line_count = content.lines().count();
+    if line_count > AGENTS_MD_MAX_LINES {
+        push_guidance_issue(
+            issues,
+            "agents.root.too_large",
+            "warning",
+            "AGENTS.md is too large",
+            &format!(
+                "Root AGENTS.md has {line_count} lines; keep it under {AGENTS_MD_MAX_LINES} lines or move generated/detail content behind references."
+            ),
+            relative_path,
+        );
+    }
+
+    audit_required_sections(issues, relative_path, content);
+    audit_duplicate_headings(issues, relative_path, content);
+    audit_banned_agent_phrases(issues, relative_path, content);
+    audit_broad_git_examples(issues, relative_path, content);
+    audit_reference_paths(issues, repo_root, relative_path, content);
+}
+
+fn audit_required_sections(
+    issues: &mut Vec<StorageAgentGuidanceIssue>,
+    relative_path: &str,
+    content: &str,
+) {
+    const REQUIRED_SECTIONS: &[&str] = &[
+        "Scope And Precedence",
+        "Repository Map",
+        "Standard Workflow",
+        "Commands",
+        "Approval Required",
+        "Validation Matrix",
+        "Architecture Boundaries",
+        "Code Rules",
+        "Security Rules",
+        "Completion Checklist",
+        "References",
+    ];
+
+    let headings: Vec<_> = markdown_headings(content)
+        .into_iter()
+        .filter(|heading| heading.level == 2)
+        .collect();
+    let mut previous_index = None;
+    for required in REQUIRED_SECTIONS {
+        let matches: Vec<_> = headings
+            .iter()
+            .enumerate()
+            .filter(|(_, heading)| heading.title == *required)
+            .collect();
+        if matches.is_empty() {
+            push_guidance_issue(
+                issues,
+                "agents.sections.missing",
+                "warning",
+                "Required AGENTS.md section is missing",
+                &format!("Missing section: {required}."),
+                relative_path,
+            );
+            continue;
+        }
+        if matches.len() > 1 {
+            push_guidance_issue(
+                issues,
+                "agents.sections.duplicate_required",
+                "warning",
+                "Required AGENTS.md section is duplicated",
+                &format!("Section appears more than once: {required}."),
+                relative_path,
+            );
+        }
+        let index = matches[0].0;
+        if let Some(previous_index) = previous_index
+            && index < previous_index
+        {
+            push_guidance_issue(
+                issues,
+                "agents.sections.order",
+                "warning",
+                "AGENTS.md section order drifted",
+                &format!("Section {required} appears before an earlier required section."),
+                relative_path,
+            );
+            break;
+        }
+        previous_index = Some(index);
+    }
+}
+
+fn audit_duplicate_headings(
+    issues: &mut Vec<StorageAgentGuidanceIssue>,
+    relative_path: &str,
+    content: &str,
+) {
+    let mut counts = BTreeMap::<String, u64>::new();
+    for heading in markdown_headings(content) {
+        *counts.entry(heading.title).or_default() += 1;
+    }
+    for (heading, count) in counts {
+        if count > 1 {
+            push_guidance_issue(
+                issues,
+                "agents.sections.duplicate_heading",
+                "warning",
+                "Duplicate AGENTS.md heading",
+                &format!("Heading appears {count} times: {heading}."),
+                relative_path,
+            );
+        }
+    }
+}
+
+fn audit_banned_agent_phrases(
+    issues: &mut Vec<StorageAgentGuidanceIssue>,
+    relative_path: &str,
+    content: &str,
+) {
+    const BANNED_PHRASES: &[&str] = &[
+        "agents.md",
+        "Agent Playbook",
+        "AI/human collaboration playbook",
+        "AI Quickstart",
+        "ALWAYS RUN FIRST",
+        "BEFORE YOU CODE",
+    ];
+    for phrase in BANNED_PHRASES {
+        if content.contains(phrase) {
+            push_guidance_issue(
+                issues,
+                "agents.drift.banned_phrase",
+                "warning",
+                "Stale agent-guidance phrase",
+                &format!("Remove or modernize stale phrase: {phrase}."),
+                relative_path,
+            );
+        }
+    }
+}
+
+fn audit_broad_git_examples(
+    issues: &mut Vec<StorageAgentGuidanceIssue>,
+    relative_path: &str,
+    content: &str,
+) {
+    const BANNED_GIT_EXAMPLES: &[&str] = &["git add .", "git add -A", "git commit -a"];
+    for line in content.lines() {
+        for command in BANNED_GIT_EXAMPLES {
+            if line.contains(command) && !line_explicitly_prohibits_command(line) {
+                push_guidance_issue(
+                    issues,
+                    "agents.git.broad_command_example",
+                    "error",
+                    "Broad git command example",
+                    &format!("Use targeted staging examples instead of `{command}`."),
+                    relative_path,
+                );
+            }
+        }
+    }
+}
+
+fn line_explicitly_prohibits_command(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    lower.contains("never use")
+        || lower.contains("do not use")
+        || lower.contains("don't use")
+        || lower.contains("avoid ")
+        || lower.contains("forbid")
+        || lower.contains("prohibit")
+}
+
+fn audit_reference_paths(
+    issues: &mut Vec<StorageAgentGuidanceIssue>,
+    repo_root: &Path,
+    relative_path: &str,
+    content: &str,
+) {
+    let Some(references) = markdown_section(content, "References") else {
+        return;
+    };
+    for candidate in local_markdown_paths(&references) {
+        if !repo_root.join(&candidate).exists() {
+            push_guidance_issue(
+                issues,
+                "agents.references.missing_path",
+                "warning",
+                "Referenced local path is missing",
+                &format!("References points at `{candidate}`, but the path does not exist."),
+                relative_path,
+            );
+        }
+    }
+}
+
+fn audit_canonical_agent_links(
+    issues: &mut Vec<StorageAgentGuidanceIssue>,
+    repo_root: &Path,
+    relative_path: &str,
+) {
+    let path = repo_root.join(relative_path);
+    let Ok(content) = fs::read_to_string(path) else {
+        return;
+    };
+    if content.contains("agents.md") {
+        push_guidance_issue(
+            issues,
+            "agents.links.casing",
+            "warning",
+            "Non-canonical AGENTS.md casing",
+            &format!("{relative_path} should reference AGENTS.md with canonical uppercase casing."),
+            relative_path,
+        );
+    }
+}
+
+#[derive(Clone, Debug)]
+struct MarkdownHeading {
+    level: usize,
+    title: String,
+}
+
+fn markdown_headings(content: &str) -> Vec<MarkdownHeading> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if !trimmed.starts_with('#') {
+                return None;
+            }
+            let level = trimmed
+                .chars()
+                .take_while(|character| *character == '#')
+                .count();
+            if level == 0
+                || level > 6
+                || !trimmed.chars().nth(level).is_some_and(char::is_whitespace)
+            {
+                return None;
+            }
+            Some(MarkdownHeading {
+                level,
+                title: normalize_markdown_heading_title(
+                    trimmed[level..].trim().trim_matches('#').trim(),
+                ),
+            })
+        })
+        .collect()
+}
+
+fn normalize_markdown_heading_title(title: &str) -> String {
+    let title = title.trim();
+    let mut saw_digit = false;
+    for (index, character) in title.char_indices() {
+        if character.is_ascii_digit() {
+            saw_digit = true;
+            continue;
+        }
+        if saw_digit && matches!(character, '.' | ')') {
+            let rest = title[index + character.len_utf8()..].trim_start();
+            if !rest.is_empty() {
+                return rest.to_owned();
+            }
+        }
+        break;
+    }
+    title.to_owned()
+}
+
+fn markdown_section(content: &str, title: &str) -> Option<String> {
+    let mut in_section = false;
+    let mut lines = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## ") {
+            let heading = trimmed
+                .trim_start_matches('#')
+                .trim()
+                .trim_matches('#')
+                .trim();
+            if in_section {
+                break;
+            }
+            in_section = heading == title;
+            continue;
+        }
+        if in_section {
+            lines.push(line);
+        }
+    }
+    if in_section {
+        Some(lines.join("\n"))
+    } else {
+        None
+    }
+}
+
+fn local_markdown_paths(content: &str) -> Vec<String> {
+    let mut paths = BTreeSet::<String>::new();
+    for token in content
+        .split(|character: char| {
+            character.is_whitespace()
+                || matches!(character, '(' | ')' | '[' | ']' | ',' | '`' | '"' | '\'')
+        })
+        .map(|token| token.trim_matches(|character: char| matches!(character, '.' | ':' | ';')))
+    {
+        if token.is_empty()
+            || token.starts_with("http://")
+            || token.starts_with("https://")
+            || token.starts_with('#')
+            || token.starts_with('/')
+        {
+            continue;
+        }
+        if token.contains("..") {
+            continue;
+        }
+        let lower = token.to_lowercase();
+        if lower.ends_with(".md")
+            || lower.ends_with(".yaml")
+            || lower.ends_with(".yml")
+            || lower.ends_with(".json")
+            || token.contains('/')
+        {
+            paths.insert(token.trim_start_matches("./").to_owned());
+        }
+    }
+    paths.into_iter().collect()
+}
+
+fn guidance_status(issues: &[StorageAgentGuidanceIssue]) -> String {
+    if issues.iter().any(|issue| issue.severity == "error") {
+        "error".to_owned()
+    } else if !issues.is_empty() {
+        "warning".to_owned()
+    } else {
+        "ok".to_owned()
+    }
+}
+
+fn push_guidance_issue(
+    issues: &mut Vec<StorageAgentGuidanceIssue>,
+    id: &str,
+    severity: &str,
+    title: &str,
+    detail: &str,
+    path: &str,
+) {
+    issues.push(StorageAgentGuidanceIssue {
+        id: id.to_owned(),
+        severity: severity.to_owned(),
+        title: title.to_owned(),
+        detail: detail.to_owned(),
+        path: path.to_owned(),
+    });
 }
 
 fn build_cleanup_recipes(items: &[StorageHygieneItem]) -> Vec<StorageCleanupRecipe> {
@@ -2027,12 +2926,34 @@ fn find_git_root(path: &Path) -> Option<PathBuf> {
     }
 }
 
-fn read_git_head(repo_root: &Path) -> (Option<String>, Option<String>) {
+#[derive(Clone, Debug, Default)]
+struct GitHead {
+    branch: Option<String>,
+    short_head: Option<String>,
+    reference: Option<String>,
+    detached: bool,
+}
+
+#[derive(Clone, Debug)]
+struct GitRemoteParts {
+    host: Option<String>,
+    owner: Option<String>,
+    name: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct GitDirtyStatus {
+    status: String,
+    file_count: Option<u64>,
+    truncated: bool,
+}
+
+fn read_git_head(repo_root: &Path) -> GitHead {
     let Some(git_dir) = resolve_git_dir(repo_root) else {
-        return (None, None);
+        return GitHead::default();
     };
     let Ok(head) = fs::read_to_string(git_dir.join("HEAD")) else {
-        return (None, None);
+        return GitHead::default();
     };
     let head = head.trim();
     if let Some(reference) = head.strip_prefix("ref: ") {
@@ -2043,13 +2964,210 @@ fn read_git_head(repo_root: &Path) -> (Option<String>, Option<String>) {
         let head_sha = fs::read_to_string(git_dir.join(reference))
             .ok()
             .map(|value| short_hash(value.trim()));
-        return (Some(branch), head_sha);
+        return GitHead {
+            branch: Some(branch),
+            short_head: head_sha,
+            reference: Some(reference.to_owned()),
+            detached: false,
+        };
     }
 
     if head.is_empty() {
-        (None, None)
+        GitHead::default()
     } else {
-        (None, Some(short_hash(head)))
+        GitHead {
+            branch: None,
+            short_head: Some(short_hash(head)),
+            reference: Some(head.to_owned()),
+            detached: true,
+        }
+    }
+}
+
+fn read_git_config_value(repo_root: &Path, target_section: &str, key: &str) -> Option<String> {
+    let git_dir = resolve_git_dir(repo_root)?;
+    let config = fs::read_to_string(git_dir.join("config")).ok()?;
+    let mut active_section: Option<String> = None;
+    for line in config.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+            continue;
+        }
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            active_section = Some(trimmed[1..trimmed.len().saturating_sub(1)].to_owned());
+            continue;
+        }
+        if active_section.as_deref() != Some(target_section) {
+            continue;
+        }
+        let Some((candidate_key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if candidate_key.trim() == key {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_owned());
+            }
+        }
+    }
+    None
+}
+
+fn normalize_git_remote_key(remote_url: &str) -> Option<String> {
+    let mut value = remote_url.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Some((user_host, path)) = value.split_once(':')
+        && user_host.contains('@')
+        && !user_host.contains('/')
+        && !path.is_empty()
+    {
+        value = path;
+        let host = user_host.rsplit('@').next().unwrap_or_default();
+        return Some(clean_remote_key(&format!("{host}/{value}")));
+    }
+    if let Some(stripped) = value.strip_prefix("https://") {
+        value = stripped;
+    } else if let Some(stripped) = value.strip_prefix("http://") {
+        value = stripped;
+    } else if let Some(stripped) = value.strip_prefix("ssh://") {
+        value = stripped;
+        if let Some(stripped_user) = value.strip_prefix("git@") {
+            value = stripped_user;
+        }
+    } else if let Some(stripped) = value.strip_prefix("git@") {
+        value = stripped;
+    }
+    Some(clean_remote_key(value))
+}
+
+fn clean_remote_key(value: &str) -> String {
+    let mut cleaned = value
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(value)
+        .trim_matches('/')
+        .trim()
+        .to_lowercase();
+    if let Some(stripped) = cleaned.strip_suffix(".git") {
+        cleaned = stripped.to_owned();
+    }
+    cleaned
+}
+
+fn split_git_remote_key(remote_key: &str) -> GitRemoteParts {
+    let parts: Vec<_> = remote_key
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    let name = parts.last().map(|part| (*part).to_owned());
+    let owner = if parts.len() >= 3 {
+        parts
+            .get(parts.len().saturating_sub(2))
+            .map(|part| (*part).to_owned())
+    } else {
+        None
+    };
+    let host = parts.first().map(|part| (*part).to_owned());
+    GitRemoteParts { host, owner, name }
+}
+
+fn read_git_dirty_status(repo_root: &Path) -> GitDirtyStatus {
+    let Ok(mut child) = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .arg("status")
+        .arg("--porcelain=v1")
+        .arg("--untracked-files=normal")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return GitDirtyStatus {
+            status: "unavailable".to_owned(),
+            file_count: None,
+            truncated: false,
+        };
+    };
+
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let output = child.wait_with_output().ok();
+                if !status.success() {
+                    return GitDirtyStatus {
+                        status: "unavailable".to_owned(),
+                        file_count: None,
+                        truncated: false,
+                    };
+                }
+                let stdout = output
+                    .as_ref()
+                    .map(|output| String::from_utf8_lossy(&output.stdout))
+                    .unwrap_or_default();
+                let count = stdout.lines().take(GIT_STATUS_MAX_LINES + 1).count();
+                let truncated = count > GIT_STATUS_MAX_LINES;
+                return GitDirtyStatus {
+                    status: if count == 0 { "clean" } else { "dirty" }.to_owned(),
+                    file_count: Some(count.min(GIT_STATUS_MAX_LINES) as u64),
+                    truncated,
+                };
+            }
+            Ok(None) if started.elapsed() < GIT_STATUS_TIME_BUDGET => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return GitDirtyStatus {
+                    status: "timeout".to_owned(),
+                    file_count: None,
+                    truncated: false,
+                };
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return GitDirtyStatus {
+                    status: "unavailable".to_owned(),
+                    file_count: None,
+                    truncated: false,
+                };
+            }
+        }
+    }
+}
+
+fn git_path_is_tracked(repo_root: &Path, relative_path: &str) -> bool {
+    let Ok(mut child) = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .arg("ls-files")
+        .arg("--error-unmatch")
+        .arg("--")
+        .arg(relative_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if started.elapsed() < GIT_STATUS_TIME_BUDGET => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
     }
 }
 
@@ -2389,6 +3507,184 @@ mod tests {
     }
 
     #[test]
+    fn storage_hygiene_reports_agent_guidance_policy_issues() {
+        let root = test_root("agent-guidance-policy");
+        let missing_repo = root.join("MissingAgents");
+        let untracked_repo = root.join("UntrackedAgents");
+        create_git_repo(&missing_repo, "main");
+        create_git_repo(&untracked_repo, "main");
+        if let Err(error) = fs::write(
+            untracked_repo.join("AGENTS.md"),
+            "## Scope And Precedence\n\nUse targeted staging.\n",
+        ) {
+            panic!("write AGENTS.md: {error}");
+        }
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let value: serde_json::Value = match serde_json::from_str(&json) {
+            Ok(value) => value,
+            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+        };
+        let inventory = match value["repository_inventory"].as_array() {
+            Some(inventory) => inventory,
+            None => panic!("repository inventory is an array"),
+        };
+        let missing = match inventory
+            .iter()
+            .find(|repo| repo["repo_name"] == "MissingAgents")
+        {
+            Some(repo) => repo,
+            None => panic!("missing repo is indexed"),
+        };
+        let untracked = match inventory
+            .iter()
+            .find(|repo| repo["repo_name"] == "UntrackedAgents")
+        {
+            Some(repo) => repo,
+            None => panic!("untracked repo is indexed"),
+        };
+
+        assert_eq!(missing["agent_guidance_status"], "error");
+        assert!(guidance_issue_ids(missing).contains(&"agents.root.missing".to_owned()));
+        assert_eq!(untracked["agent_guidance_status"], "error");
+        assert!(guidance_issue_ids(untracked).contains(&"agents.root.untracked".to_owned()));
+        assert!(guidance_issue_ids(untracked).contains(&"agents.sections.missing".to_owned()));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_reports_agent_contract_coverage() {
+        let root = test_root("agent-contract-coverage");
+        let ready_repo = root.join("ReadyRepo");
+        let partial_repo = root.join("PartialRepo");
+        create_indexed_git_repo(&ready_repo);
+        create_indexed_git_repo(&partial_repo);
+        write_complete_agent_contracts(&ready_repo);
+        write_minimal_agents_contract(&partial_repo);
+        git_add_all(&ready_repo);
+        git_add_all(&partial_repo);
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let value: serde_json::Value = match serde_json::from_str(&json) {
+            Ok(value) => value,
+            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+        };
+        let inventory = match value["repository_inventory"].as_array() {
+            Some(inventory) => inventory,
+            None => panic!("repository inventory is an array"),
+        };
+        let ready = match inventory
+            .iter()
+            .find(|repo| repo["repo_name"] == "ReadyRepo")
+        {
+            Some(repo) => repo,
+            None => panic!("ready repo is indexed"),
+        };
+        let partial = match inventory
+            .iter()
+            .find(|repo| repo["repo_name"] == "PartialRepo")
+        {
+            Some(repo) => repo,
+            None => panic!("partial repo is indexed"),
+        };
+
+        assert_eq!(ready["agent_readiness_status"], "ready");
+        assert_eq!(ready["agent_readiness_score"].as_u64(), Some(100));
+        assert_eq!(ready["agent_contract_missing_count"].as_u64(), Some(0));
+        assert_eq!(
+            ready["agent_contract_coverage"].as_array().map(Vec::len),
+            Some(8)
+        );
+        assert_eq!(partial["agent_readiness_status"], "weak");
+        assert_eq!(partial["agent_contract_missing_count"].as_u64(), Some(7));
+        assert!(
+            guidance_issue_ids(partial).contains(&"agents.contract.missing.repo_map".to_owned())
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn agent_guidance_parser_normalizes_numbered_sections_and_prohibitions() {
+        let content = [
+            "## 1. Scope And Precedence",
+            "",
+            "Never use `git add .`, `git add -A`, or `git commit -a`.",
+            "",
+            "## 2. Repository Map",
+        ]
+        .join("\n");
+        let headings = markdown_headings(&content)
+            .into_iter()
+            .map(|heading| heading.title)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            headings,
+            vec![
+                "Scope And Precedence".to_owned(),
+                "Repository Map".to_owned()
+            ]
+        );
+        assert!(line_explicitly_prohibits_command(
+            "Never use `git add .`, `git add -A`, or `git commit -a`."
+        ));
+        assert!(!line_explicitly_prohibits_command(
+            "Run `git add .` before committing."
+        ));
+    }
+
+    #[test]
+    fn storage_hygiene_groups_duplicate_git_remotes() {
+        let root = test_root("duplicate-remotes");
+        let repo_a = root.join("Mockup");
+        let repo_b = root.join("Mockup-Frontend");
+        let repo_c = root.join("Aetower");
+        create_git_repo(&repo_a, "main");
+        create_git_repo(&repo_b, "feature/companion");
+        create_git_repo(&repo_c, "main");
+        write_git_origin_config(&repo_a, "https://github.com/Aeptus/mockup.git");
+        write_git_origin_config(&repo_b, "git@github.com:Aeptus/mockup.git");
+        write_git_origin_config(&repo_c, "https://github.com/schiste/Aetower.git");
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let value: serde_json::Value = match serde_json::from_str(&json) {
+            Ok(value) => value,
+            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+        };
+        let inventory = match value["repository_inventory"].as_array() {
+            Some(inventory) => inventory,
+            None => panic!("repository inventory is an array"),
+        };
+        let duplicate = match inventory.iter().find(|repo| repo["repo_name"] == "Mockup") {
+            Some(repo) => repo,
+            None => panic!("duplicate repo is indexed"),
+        };
+        let unique = match inventory.iter().find(|repo| repo["repo_name"] == "Aetower") {
+            Some(repo) => repo,
+            None => panic!("unique repo is indexed"),
+        };
+
+        assert_eq!(duplicate["git_remote_key"], "github.com/aeptus/mockup");
+        assert_eq!(duplicate["git_remote_host"], "github.com");
+        assert_eq!(duplicate["git_remote_owner"], "aeptus");
+        assert_eq!(duplicate["git_remote_name"], "mockup");
+        assert_eq!(duplicate["clone_group_count"], 2);
+        assert_eq!(
+            duplicate["clone_group_roots"].as_array().map(Vec::len),
+            Some(2)
+        );
+        assert_eq!(unique["clone_group_count"], 1);
+        assert_eq!(
+            unique["clone_group_roots"].as_array().map(Vec::len),
+            Some(0)
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn storage_hygiene_repository_inventory_continues_after_artifact_limit() {
         let root = test_root("inventory-ignores-artifact-limit");
         for index in 0..3 {
@@ -2533,5 +3829,123 @@ mod tests {
         if let Err(error) = fs::write(ref_path, "1234567890abcdef1234567890abcdef12345678\n") {
             panic!("write git ref: {error}");
         }
+    }
+
+    fn create_indexed_git_repo(repo: &Path) {
+        if let Err(error) = fs::create_dir_all(repo) {
+            panic!("create indexed git repo dir: {error}");
+        }
+        run_git(repo, &["init"]);
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .arg("checkout")
+            .arg("-b")
+            .arg("main")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    fn write_complete_agent_contracts(repo: &Path) {
+        write_minimal_agents_contract(repo);
+        let agents_dir = repo.join(".agents");
+        if let Err(error) = fs::create_dir_all(&agents_dir) {
+            panic!("create .agents dir: {error}");
+        }
+        for file in ["manifest", "repo-map", "commands", "references"] {
+            if let Err(error) = fs::write(
+                agents_dir.join(format!("{file}.yaml")),
+                "schema_version: 1\ngenerated_by: test\nsource_files:\n  - AGENTS.md\n",
+            ) {
+                panic!("write generated agent contract {file}: {error}");
+            }
+        }
+        for file in ["validation", "boundaries", "risks"] {
+            if let Err(error) = fs::write(
+                agents_dir.join(format!("{file}.yaml")),
+                "schema_version: 1\nreviewed_by: test\nreviewed_at: 2026-06-28\n",
+            ) {
+                panic!("write reviewed agent contract {file}: {error}");
+            }
+        }
+    }
+
+    fn write_minimal_agents_contract(repo: &Path) {
+        if let Err(error) = fs::write(repo.join("README.md"), "See AGENTS.md.\n") {
+            panic!("write README.md: {error}");
+        }
+        if let Err(error) = fs::write(
+            repo.join("AGENTS.md"),
+            [
+                "## Scope And Precedence",
+                "Repository-local instructions override generic defaults.",
+                "## Repository Map",
+                "Use .agents/manifest.yaml for contract integrity and .agents/repo-map.yaml for machine-readable topology.",
+                "## Standard Workflow",
+                "Run git status --short before editing and preserve unrelated changes.",
+                "## Commands",
+                "Use .agents/commands.yaml for exact command metadata.",
+                "## Approval Required",
+                "Ask before destructive, network, deploy, migration, or setup actions.",
+                "## Validation Matrix",
+                "Use .agents/validation.yaml for touched-path validation mapping.",
+                "## Architecture Boundaries",
+                "Use .agents/boundaries.yaml for import and layer rules.",
+                "## Code Rules",
+                "Keep changes targeted and readable.",
+                "## Security Rules",
+                "Never commit secrets, credentials, production data, or local env files.",
+                "## Completion Checklist",
+                "Report changed files, validation, and residual risk.",
+                "## References",
+                "README.md",
+            ]
+            .join("\n\n"),
+        ) {
+            panic!("write AGENTS.md: {error}");
+        }
+    }
+
+    fn git_add_all(repo: &Path) {
+        run_git(repo, &["add", "README.md", "AGENTS.md"]);
+        if repo.join(".agents").exists() {
+            run_git(repo, &["add", ".agents"]);
+        }
+    }
+
+    fn run_git(repo: &Path, args: &[&str]) {
+        let status = match Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+        {
+            Ok(status) => status,
+            Err(error) => panic!("run git {:?}: {error}", args),
+        };
+        if !status.success() {
+            panic!("git {:?} failed with status {status}", args);
+        }
+    }
+
+    fn write_git_origin_config(repo: &Path, origin_url: &str) {
+        if let Err(error) = fs::write(
+            repo.join(".git").join("config"),
+            format!("[remote \"origin\"]\n\turl = {origin_url}\n"),
+        ) {
+            panic!("write git config: {error}");
+        }
+    }
+
+    fn guidance_issue_ids(repo: &serde_json::Value) -> Vec<String> {
+        repo["agent_guidance_issues"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|issue| issue["id"].as_str().map(str::to_owned))
+            .collect()
     }
 }
