@@ -31,7 +31,7 @@
     "relativePath": {
       "type": "string",
       "minLength": 1,
-      "not": { "pattern": "^(~|/|.*\\.\\.).*$" }
+      "not": { "pattern": "^(~|/)|(^|/)\\.\\.(/|$)" }
     },
     "glob": {
       "type": "string",
