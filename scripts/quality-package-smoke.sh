@@ -58,6 +58,8 @@ package_cache_key() {
         printf 'env:AETOWER_INCLUDE_PRIVILEGED_HELPER=%s\n' "${AETOWER_INCLUDE_PRIVILEGED_HELPER:-0}"
         printf 'env:AETOWER_APPCAST_URL=%s\n' "${AETOWER_APPCAST_URL:-}"
         printf 'env:AETOWER_SPARKLE_PUBLIC_ED_KEY=%s\n' "${AETOWER_SPARKLE_PUBLIC_ED_KEY:-}"
+        printf 'env:AETOWER_RELEASE_ENV_FILE=%s\n' "${AETOWER_RELEASE_ENV_FILE:-$ROOT/.env.release.local}"
+        hash_optional_file "${AETOWER_RELEASE_ENV_FILE:-$ROOT/.env.release.local}"
         hash_optional_file "${AETOWER_ENTITLEMENTS_PATH:-}"
         hash_optional_file "${AETOWER_HELPER_ENTITLEMENTS_PATH:-}"
         git ls-files -z -- \

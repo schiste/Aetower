@@ -14,6 +14,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="${AETOWER_DIST_DIR:-$ROOT/dist}"
 ARCHIVES_DIR="${AETOWER_APPCAST_DIR:-$DIST_DIR/appcast}"
 
+export AETOWER_NOTARIZE="${AETOWER_NOTARIZE:-1}"
+export AETOWER_STAPLE="${AETOWER_STAPLE:-1}"
+
 printf '\n=== 1/5 release preflight ===\n'
 sh "$ROOT/scripts/release-preflight.sh"
 
