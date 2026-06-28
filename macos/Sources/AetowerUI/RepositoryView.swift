@@ -690,8 +690,7 @@ public struct RepositoryView: View {
             padding: AetowerDesign.Spacing.sm
         ) {
             HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
-                Image(systemName: agentContractIcon(contract))
-                    .foregroundStyle(agentContractTone(contract))
+                agentContractIconImage(contract)
                     .frame(width: AetowerDesign.Size.iconSlot)
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                     Text(contract.label)
@@ -722,8 +721,7 @@ public struct RepositoryView: View {
         let issues = agentContractIssues(repository, contract: contract)
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
-                Image(systemName: agentContractIcon(contract))
-                    .foregroundStyle(agentContractTone(contract))
+                agentContractIconImage(contract)
                 Text(contract.label)
                     .font(AetowerDesign.Typography.sectionTitle)
                     .foregroundStyle(AetowerDesign.Ink.primary)
@@ -1606,6 +1604,29 @@ public struct RepositoryView: View {
             return "Error"
         default:
             return contract.status.capitalized
+        }
+    }
+
+    @ViewBuilder
+    private func agentContractIconImage(_ contract: StorageAgentContractCoverageModel) -> some View {
+        if contract.status == "missing" {
+            Image(systemName: agentContractIcon(contract))
+                .foregroundStyle(AetowerDesign.Status.error)
+        } else {
+            switch contract.severity {
+            case "error":
+                Image(systemName: agentContractIcon(contract))
+                    .foregroundStyle(AetowerDesign.Status.error)
+            case "warning":
+                Image(systemName: agentContractIcon(contract))
+                    .foregroundStyle(AetowerDesign.Status.warning)
+            case "ok":
+                Image(systemName: agentContractIcon(contract))
+                    .foregroundStyle(AetowerDesign.Status.ready)
+            default:
+                Image(systemName: agentContractIcon(contract))
+                    .foregroundStyle(AetowerDesign.Status.neutral)
+            }
         }
     }
 
