@@ -2,6 +2,48 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ENV_FILE="${AETOWER_RELEASE_ENV_FILE:-$ROOT/.env.release.local}"
+PACKAGE_ENV_KEYS="
+AETOWER_APP_ICON_BUILD_DIR
+AETOWER_APP_ICON_PATH
+AETOWER_APPCAST_URL
+AETOWER_BUILD_NUMBER
+AETOWER_BUNDLE_ID
+AETOWER_DIST_DIR
+AETOWER_ENTITLEMENTS_PATH
+AETOWER_HELPER_ENTITLEMENTS_PATH
+AETOWER_INCLUDE_PRIVILEGED_HELPER
+AETOWER_NOTARIZE
+AETOWER_NOTARY_PROFILE
+AETOWER_SIGN_IDENTITY
+AETOWER_SPARKLE_PUBLIC_ED_KEY
+AETOWER_STAPLE
+AETOWER_VERSION
+"
+
+if [ -f "$ENV_FILE" ]; then
+    for KEY in $PACKAGE_ENV_KEYS; do
+        eval "if [ \${$KEY+x} ]; then AETOWER_ENV_OVERRIDE_$KEY=\"\${$KEY}\"; fi"
+    done
+    set -a
+    # shellcheck disable=SC1090
+    . "$ENV_FILE"
+    set +a
+    for KEY in $PACKAGE_ENV_KEYS; do
+        eval "if [ \${AETOWER_ENV_OVERRIDE_$KEY+x} ]; then $KEY=\"\${AETOWER_ENV_OVERRIDE_$KEY}\"; export $KEY; fi"
+    done
+    if [ -z "${AETOWER_ENV_OVERRIDE_AETOWER_NOTARIZE+x}" ] \
+        && [ "${AETOWER_PACKAGE_LOAD_NOTARIZATION:-0}" != "1" ]; then
+        AETOWER_NOTARIZE=0
+        export AETOWER_NOTARIZE
+    fi
+    if [ -z "${AETOWER_ENV_OVERRIDE_AETOWER_STAPLE+x}" ] \
+        && [ "${AETOWER_PACKAGE_LOAD_NOTARIZATION:-0}" != "1" ]; then
+        AETOWER_STAPLE=0
+        export AETOWER_STAPLE
+    fi
+fi
+
 CARGO_BIN="${CARGO_BIN:-$(command -v cargo || printf '%s' cargo)}"
 if [ -n "${HOME:-}" ] \
     && [ -x "$HOME/.cargo/bin/cargo" ] \
