@@ -394,15 +394,11 @@ public struct RepositoryView: View {
     }
 
     private func repositoryMiniStat(_ label: String, value: String, tone: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
             Text(label.uppercased())
                 .font(AetowerDesign.Typography.metadata)
                 .foregroundStyle(AetowerDesign.Ink.tertiary)
-            Text(value)
-                .font(AetowerDesign.Typography.data)
-                .foregroundStyle(tone)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            AetowerBadge(value, tone: tone)
         }
     }
 
