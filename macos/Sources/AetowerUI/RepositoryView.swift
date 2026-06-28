@@ -155,18 +155,73 @@ private struct RepositorySummary: Identifiable {
     }
 }
 
+private enum Chau7ContractLaunchState: Equatable {
+    case launching
+    case launched(String, warning: Bool)
+    case failed(String)
+
+    var label: String {
+        switch self {
+        case .launching:
+            return "Launching"
+        case let .launched(_, warning):
+            return warning ? "Prompt pending" : "Launched"
+        case .failed:
+            return "Failed"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .launching:
+            return "arrow.triangle.2.circlepath"
+        case let .launched(_, warning):
+            return warning ? "exclamationmark.triangle" : "terminal"
+        case .failed:
+            return "xmark.octagon"
+        }
+    }
+
+    var tone: Color {
+        switch self {
+        case .launching:
+            return AetowerDesign.Status.neutral
+        case let .launched(_, warning):
+            return warning ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+        case .failed:
+            return AetowerDesign.Status.error
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .launching:
+            return "Opening Chau7 and sending the focused prompt."
+        case let .launched(detail, _), let .failed(detail):
+            return detail
+        }
+    }
+
+    var isLaunching: Bool {
+        self == .launching
+    }
+}
+
 public struct RepositoryView: View {
     let state: AppState
+    let settings: SettingsStore
     @State private var mode: RepositoryMode = .overview
     @State private var sort: RepositorySort = .attention
     @State private var searchText = ""
     @State private var repositoryPath: [String] = []
     @State private var copiedRepositoryID: String?
     @State private var copiedAgentPromptKey: String?
+    @State private var chau7LaunchStatusByKey: [String: Chau7ContractLaunchState] = [:]
     @State private var selectedAgentContractByRepository: [String: String] = [:]
 
-    public init(state: AppState) {
+    public init(state: AppState, settings: SettingsStore) {
         self.state = state
+        self.settings = settings
     }
 
     public var body: some View {
@@ -644,15 +699,15 @@ public struct RepositoryView: View {
                     } else {
                         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                             ForEach(repository.agentContractCoverage) { contract in
-                                Button {
+                                agentContractListRow(
+                                    repository,
+                                    contract: contract,
+                                    selected: selectedAgentContract(repository)?.id == contract.id
+                                )
+                                .contentShape(Rectangle())
+                                .onTapGesture {
                                     selectedAgentContractByRepository[repository.id] = contract.id
-                                } label: {
-                                    agentContractListRow(
-                                        contract,
-                                        selected: selectedAgentContract(repository)?.id == contract.id
-                                    )
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
                     }
@@ -683,10 +738,13 @@ public struct RepositoryView: View {
     }
 
     private func agentContractListRow(
-        _ contract: StorageAgentContractCoverageModel,
+        _ repository: RepositorySummary,
+        contract: StorageAgentContractCoverageModel,
         selected: Bool
     ) -> some View {
-        AetowerSurface(
+        let key = AgentContractPrompts.key(repositoryID: repository.id, contract: contract, kind: "chau7")
+        let launchState = chau7LaunchStatusByKey[key]
+        return AetowerSurface(
             level: selected ? .selected : contractSurfaceLevel(contract),
             padding: AetowerDesign.Spacing.sm
         ) {
@@ -710,6 +768,23 @@ public struct RepositoryView: View {
                     Text("\(contract.coveragePercent)%")
                         .font(AetowerDesign.Typography.metadata)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
+                    Button("Chau7 it") {
+                        launchAgentContractPromptInChau7(
+                            repository,
+                            contract: contract,
+                            issues: agentContractIssues(repository, contract: contract),
+                            key: key
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .disabled(launchState?.isLaunching == true)
+                    if let launchState {
+                        Image(systemName: launchState.icon)
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(launchState.tone)
+                            .help(launchState.detail)
+                    }
                 }
             }
         }
@@ -787,7 +862,9 @@ public struct RepositoryView: View {
         let issues = agentContractIssues(repository, contract: contract)
         let generationKey = AgentContractPrompts.key(repositoryID: repository.id, contract: contract, kind: "generate")
         let reconcileKey = AgentContractPrompts.key(repositoryID: repository.id, contract: contract, kind: "reconcile")
+        let chau7Key = AgentContractPrompts.key(repositoryID: repository.id, contract: contract, kind: "chau7")
         let copied = copiedAgentPromptKey == generationKey || copiedAgentPromptKey == reconcileKey
+        let launchState = chau7LaunchStatusByKey[chau7Key]
         return AetowerSurface(level: .quiet, padding: AetowerDesign.Spacing.sm) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                 HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
@@ -833,10 +910,68 @@ public struct RepositoryView: View {
                         ))
                         copiedAgentPromptKey = reconcileKey
                     }
+                    Button {
+                        launchAgentContractPromptInChau7(
+                            repository,
+                            contract: contract,
+                            issues: issues,
+                            key: chau7Key
+                        )
+                    } label: {
+                        Label("Chau7 it", systemImage: "terminal")
+                    }
+                    .disabled(launchState?.isLaunching == true)
                     Spacer(minLength: AetowerDesign.Spacing.sm)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+
+                if let launchState {
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        Image(systemName: launchState.icon)
+                            .foregroundStyle(launchState.tone)
+                        AetowerBadge(launchState.label, tone: launchState.tone)
+                        Text(launchState.detail)
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                            .lineLimit(2)
+                    }
+                }
+            }
+        }
+    }
+
+    private func launchAgentContractPromptInChau7(
+        _ repository: RepositorySummary,
+        contract: StorageAgentContractCoverageModel,
+        issues: [StorageAgentGuidanceIssueModel],
+        key: String
+    ) {
+        let prompt = AgentContractPrompts.generationPrompt(
+            repository: agentContractPromptContext(repository),
+            contract: contract,
+            issues: issues
+        )
+        let request = Chau7AgentLaunchRequest(
+            socketPath: settings.chau7Endpoint,
+            repositoryRoot: repository.root,
+            agentCommand: settings.chau7AgentCommand,
+            prompt: prompt
+        )
+        chau7LaunchStatusByKey[key] = .launching
+
+        Task {
+            let nextState: Chau7ContractLaunchState
+            do {
+                let result = try await Chau7AgentLauncher.launch(request)
+                let promptStatus = result.promptStatus ?? "unknown"
+                let detail = "\(result.summary) Prompt: \(promptStatus)."
+                nextState = .launched(detail, warning: promptStatus != "sent")
+            } catch {
+                nextState = .failed(error.localizedDescription)
+            }
+            await MainActor.run {
+                chau7LaunchStatusByKey[key] = nextState
             }
         }
     }

@@ -1261,7 +1261,7 @@ struct AetowerApp: App {
                         Label("Storage", systemImage: "externaldrive")
                     }
 
-                RepositoryView(state: state)
+                RepositoryView(state: state, settings: settings)
                     .tabItem {
                         Label("Repos", systemImage: "folder.badge.gearshape")
                     }
