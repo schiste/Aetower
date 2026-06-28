@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
+private let defaultClaudeMdDelegationMaxBytes: UInt64 = 1_024
+
 private enum RepositoryMode: String, CaseIterable, Identifiable {
     case overview
-    case all
     case attention
 
     var id: String { rawValue }
@@ -11,7 +12,6 @@ private enum RepositoryMode: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .overview: return "Overview"
-        case .all: return "All repos"
         case .attention: return "Attention"
         }
     }
@@ -44,6 +44,11 @@ private struct RepositorySummary: Identifiable {
     let gitBranch: String?
     let gitHead: String?
     let discoveredRoot: String?
+    let hasAgentsMd: Bool
+    let hasClaudeMd: Bool
+    let claudeMdBytes: UInt64?
+    let claudeMdDelegationMaxBytes: UInt64
+    let claudeMdDelegatesToAgentsMd: Bool
     let hasStorageFootprint: Bool
     let currentSizeBytes: UInt64
     let artifactBytes: UInt64
@@ -75,7 +80,24 @@ private struct RepositorySummary: Identifiable {
         let staleScore = Double(staleItemCount) * 0.7
         let violationScore = Double(violationCount) * 8
         let liveScore = Double(liveSessionCount + liveEntityCount) * 1.4
-        return artifactScore + growthScore + reviewScore + staleScore + violationScore + liveScore
+        let qualityScore = Double(qualityIssueCount) * 2.5
+        return artifactScore + growthScore + reviewScore + staleScore + violationScore + liveScore + qualityScore
+    }
+
+    var qualityIssueCount: Int {
+        [
+            !hasAgentsMd,
+            !hasClaudeMd,
+            hasClaudeMd && !claudeMdDelegatesToAgentsMd,
+        ].filter { $0 }.count
+    }
+
+    var qualityStatusLabel: String {
+        qualityIssueCount == 0 ? "Guidance ok" : "\(qualityIssueCount) guidance gap\(qualityIssueCount == 1 ? "" : "s")"
+    }
+
+    var qualityStatusTone: Color {
+        qualityIssueCount == 0 ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
     }
 
     var statusLabel: String {
@@ -101,7 +123,7 @@ public struct RepositoryView: View {
     @State private var mode: RepositoryMode = .overview
     @State private var sort: RepositorySort = .attention
     @State private var searchText = ""
-    @State private var selectedRepositoryID: String?
+    @State private var repositoryPath: [String] = []
     @State private var copiedRepositoryID: String?
 
     public init(state: AppState) {
@@ -109,10 +131,15 @@ public struct RepositoryView: View {
     }
 
     public var body: some View {
-        VStack(spacing: AetowerDesign.Spacing.none) {
-            repositoryToolBand
-            Divider()
-            content
+        NavigationStack(path: $repositoryPath) {
+            VStack(spacing: AetowerDesign.Spacing.none) {
+                repositoryToolBand
+                Divider()
+                content
+            }
+            .navigationDestination(for: String.self) { repositoryID in
+                repositoryDestination(repositoryID)
+            }
         }
         .task {
             state.ensureStorageHygieneScan()
@@ -220,13 +247,10 @@ public struct RepositoryView: View {
 
     private func repositoryDashboard(_ report: StorageHygieneReportModel) -> some View {
         let repositories = filteredRepositories(from: report)
-        let selectedRepository = selectedRepository(from: repositories)
-        let activeRepositoryID = selectedRepository?.id
 
         return ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
                 repositoryOverview(report, repositories: repositories)
-                RepositoryFoundationStrip()
 
                 if repositories.isEmpty {
                     AetowerEmptyState(
@@ -236,12 +260,7 @@ public struct RepositoryView: View {
                         tone: AetowerDesign.Status.neutral
                     )
                 } else {
-                    HStack(alignment: .top, spacing: AetowerDesign.Spacing.xl) {
-                        repositoryList(repositories, activeRepositoryID: activeRepositoryID)
-                            .frame(minWidth: 320, idealWidth: 380, maxWidth: 460)
-                        repositoryDetail(selectedRepository, report: report)
-                            .frame(maxWidth: .infinity)
-                    }
+                    repositoryOverviewGrid(repositories)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -256,7 +275,9 @@ public struct RepositoryView: View {
         let allRepositories = repositorySummaries(from: report)
         let activeCount = allRepositories.filter { $0.liveSessionCount > 0 || $0.liveEntityCount > 0 }.count
         let growingCount = allRepositories.filter { ($0.growthBytes ?? 0) > 0 }.count
-        let reviewCount = allRepositories.filter { $0.reviewItemCount > 0 || $0.violationCount > 0 }.count
+        let reviewCount = allRepositories.filter {
+            $0.reviewItemCount > 0 || $0.violationCount > 0 || $0.qualityIssueCount > 0
+        }.count
 
         return LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 180), spacing: AetowerDesign.Spacing.md)],
@@ -301,32 +322,21 @@ public struct RepositoryView: View {
         }
     }
 
-    private func repositoryList(
-        _ repositories: [RepositorySummary],
-        activeRepositoryID: String?
-    ) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-            AetowerSection("Repository queue", subtitle: "Sorted by \(sort.label.lowercased())") {
-                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                    ForEach(repositories) { repository in
-                        repositoryRow(repository, isSelected: activeRepositoryID == repository.id)
-                    }
-                }
+    private func repositoryOverviewGrid(_ repositories: [RepositorySummary]) -> some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 280), spacing: AetowerDesign.Spacing.md)],
+            alignment: .leading,
+            spacing: AetowerDesign.Spacing.md
+        ) {
+            ForEach(repositories) { repository in
+                repositoryOverviewCard(repository)
             }
         }
     }
 
-    private func repositoryRow(
-        _ repository: RepositorySummary,
-        isSelected: Bool
-    ) -> some View {
-        Button {
-            selectedRepositoryID = repository.id
-        } label: {
-            AetowerSurface(
-                level: isSelected ? .selected : .card,
-                padding: AetowerDesign.Spacing.md
-            ) {
+    private func repositoryOverviewCard(_ repository: RepositorySummary) -> some View {
+        NavigationLink(value: repository.id) {
+            AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md) {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                     HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
                         Text(repository.name)
@@ -340,21 +350,9 @@ public struct RepositoryView: View {
                         .font(AetowerDesign.Typography.metadata)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
                         .lineLimit(1)
-                    HStack(spacing: AetowerDesign.Spacing.sm) {
-                        AetowerBadge(
-                            repository.hasStorageFootprint ? formatBytes(repository.artifactBytes) : "clean",
-                            systemImage: "shippingbox",
-                            tone: repository.hasStorageFootprint ? AetowerDesign.Tone.disk : AetowerDesign.Status.neutral
-                        )
-                        AetowerBadge(growthLabel(repository), systemImage: "chart.line.uptrend.xyaxis", tone: growthTone(repository))
-                        if let branch = repository.gitBranch {
-                            AetowerBadge(branch, systemImage: "arrow.triangle.branch", tone: AetowerDesign.Tone.cpu)
-                        }
-                        if repository.liveSessionCount > 0 {
-                            AetowerBadge("\(repository.liveSessionCount) live", systemImage: "terminal", tone: AetowerDesign.Status.ready)
-                        }
-                    }
+                    repositoryOverviewStats(repository)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .buttonStyle(.plain)
@@ -372,29 +370,76 @@ public struct RepositoryView: View {
         }
     }
 
-    private func repositoryDetail(
-        _ repository: RepositorySummary?,
+    private func repositoryOverviewStats(_ repository: RepositorySummary) -> some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 96), spacing: AetowerDesign.Spacing.xs)],
+            alignment: .leading,
+            spacing: AetowerDesign.Spacing.xs
+        ) {
+            repositoryMiniStat(
+                "Artifacts",
+                value: repository.hasStorageFootprint ? formatBytes(repository.artifactBytes) : "Clean",
+                tone: repository.hasStorageFootprint ? AetowerDesign.Tone.disk : AetowerDesign.Status.neutral
+            )
+            repositoryMiniStat("Growth", value: growthLabel(repository), tone: growthTone(repository))
+            repositoryMiniStat(
+                "Live",
+                value: "\(repository.liveSessionCount + repository.liveEntityCount)",
+                tone: repository.liveSessionCount + repository.liveEntityCount > 0
+                    ? AetowerDesign.Status.ready
+                    : AetowerDesign.Status.neutral
+            )
+            repositoryMiniStat("Quality", value: qualityOverviewLabel(repository), tone: repository.qualityStatusTone)
+        }
+    }
+
+    private func repositoryMiniStat(_ label: String, value: String, tone: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label.uppercased())
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
+            Text(value)
+                .font(AetowerDesign.Typography.data)
+                .foregroundStyle(tone)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+    }
+
+    @ViewBuilder
+    private func repositoryDestination(_ repositoryID: String) -> some View {
+        if let report = state.storageHygieneReport,
+           let repository = repositorySummaries(from: report).first(where: { $0.id == repositoryID }) {
+            repositoryDetailPage(repository, report: report)
+        } else {
+            AetowerEmptyState(
+                title: "Repository no longer available",
+                detail: "Run a fresh scan to rebuild the repository inventory.",
+                systemImage: "folder.badge.questionmark",
+                tone: AetowerDesign.Status.neutral
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle("Repository")
+        }
+    }
+
+    private func repositoryDetailPage(
+        _ repository: RepositorySummary,
         report: StorageHygieneReportModel
     ) -> some View {
-        Group {
-            if let repository {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-                    repositoryHero(repository)
-                    repositorySignals(repository)
-                    repositoryActions(repository)
-                    topArtifacts(repository)
-                    liveContext(repository)
-                    futureOptimizationLanes(repository, report: report)
-                }
-            } else {
-                AetowerEmptyState(
-                    title: "Select a repository",
-                    detail: "Pick a repository to inspect storage pressure, live sessions, and future optimization lanes.",
-                    systemImage: "sidebar.left",
-                    tone: AetowerDesign.Status.neutral
-                )
+        ScrollView {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                repositoryHero(repository)
+                repositorySignals(repository)
+                repositoryActions(repository)
+                topArtifacts(repository)
+                liveContext(repository)
+                futureOptimizationLanes(repository, report: report)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(AetowerDesign.Spacing.xxl)
         }
+        .navigationTitle(repository.name)
     }
 
     private func repositoryHero(_ repository: RepositorySummary) -> some View {
@@ -476,6 +521,13 @@ public struct RepositoryView: View {
                 detail: "\(repository.agentCount) agent source\(repository.agentCount == 1 ? "" : "s")",
                 systemImage: "person.crop.circle.badge.gearshape",
                 tone: repository.agentArtifactBytes > 0 ? AetowerDesign.Tone.memory : AetowerDesign.Status.neutral
+            )
+            AetowerMetricTile(
+                "Quality",
+                value: repository.qualityStatusLabel,
+                detail: qualityDetail(repository),
+                systemImage: "checklist.checked",
+                tone: repository.qualityStatusTone
             )
         }
     }
@@ -679,23 +731,20 @@ public struct RepositoryView: View {
             : AetowerDesign.Status.ready
     }
 
-    private func selectedRepository(from repositories: [RepositorySummary]) -> RepositorySummary? {
-        if let selectedRepositoryID,
-           let selected = repositories.first(where: { $0.id == selectedRepositoryID }) {
-            return selected
-        }
-        return repositories.first
-    }
-
     private func filteredRepositories(from report: StorageHygieneReportModel) -> [RepositorySummary] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         var repositories = repositorySummaries(from: report)
 
         switch mode {
-        case .overview, .all:
+        case .overview:
             break
         case .attention:
-            repositories = repositories.filter { $0.attentionScore >= 8 || $0.violationCount > 0 || $0.reviewItemCount > 0 }
+            repositories = repositories.filter {
+                $0.attentionScore >= 8
+                    || $0.violationCount > 0
+                    || $0.reviewItemCount > 0
+                    || $0.qualityIssueCount > 0
+            }
         }
 
         if !query.isEmpty {
@@ -761,6 +810,11 @@ public struct RepositoryView: View {
                 gitBranch: inventory.gitBranch,
                 gitHead: inventory.gitHead,
                 discoveredRoot: inventory.discoveredRoot,
+                hasAgentsMd: inventory.hasAgentsMd,
+                hasClaudeMd: inventory.hasClaudeMd,
+                claudeMdBytes: inventory.claudeMdBytes,
+                claudeMdDelegationMaxBytes: inventory.claudeMdDelegationMaxBytes,
+                claudeMdDelegatesToAgentsMd: inventory.claudeMdDelegatesToAgentsMd,
                 footprint: footprint,
                 items: itemsByRoot[inventory.repoRoot]?.map(\.1) ?? [],
                 violations: violationsByRoot[inventory.repoRoot]?.count ?? 0,
@@ -777,6 +831,11 @@ public struct RepositoryView: View {
                     gitBranch: footprint.lastBranchTouched,
                     gitHead: nil,
                     discoveredRoot: nil,
+                    hasAgentsMd: false,
+                    hasClaudeMd: false,
+                    claudeMdBytes: nil,
+                    claudeMdDelegationMaxBytes: defaultClaudeMdDelegationMaxBytes,
+                    claudeMdDelegatesToAgentsMd: false,
                     footprint: footprint,
                     items: itemsByRoot[footprint.repoRoot]?.map(\.1) ?? [],
                     violations: violationsByRoot[footprint.repoRoot]?.count ?? 0,
@@ -795,6 +854,11 @@ public struct RepositoryView: View {
         gitBranch: String?,
         gitHead: String?,
         discoveredRoot: String?,
+        hasAgentsMd: Bool,
+        hasClaudeMd: Bool,
+        claudeMdBytes: UInt64?,
+        claudeMdDelegationMaxBytes: UInt64,
+        claudeMdDelegatesToAgentsMd: Bool,
         footprint: StorageRepoFootprintModel?,
         items: [StorageHygieneItemModel],
         violations: Int,
@@ -809,6 +873,11 @@ public struct RepositoryView: View {
             gitBranch: gitBranch,
             gitHead: gitHead,
             discoveredRoot: discoveredRoot,
+            hasAgentsMd: hasAgentsMd,
+            hasClaudeMd: hasClaudeMd,
+            claudeMdBytes: claudeMdBytes,
+            claudeMdDelegationMaxBytes: claudeMdDelegationMaxBytes,
+            claudeMdDelegatesToAgentsMd: claudeMdDelegatesToAgentsMd,
             hasStorageFootprint: footprint != nil,
             currentSizeBytes: footprint?.currentSizeBytes ?? 0,
             artifactBytes: footprint?.artifactBytes ?? 0,
@@ -937,7 +1006,48 @@ public struct RepositoryView: View {
         if repository.violationCount > 0 {
             parts.append("\(repository.violationCount) budget signal\(repository.violationCount == 1 ? "" : "s")")
         }
+        if repository.qualityIssueCount > 0 {
+            parts.append(repository.qualityStatusLabel)
+        }
         return parts.joined(separator: " · ")
+    }
+
+    private func claudeMdOversized(_ repository: RepositorySummary) -> Bool {
+        guard let bytes = repository.claudeMdBytes else { return false }
+        return bytes > repository.claudeMdDelegationMaxBytes
+    }
+
+    private func claudeDelegationLabel(_ repository: RepositorySummary) -> String {
+        if repository.claudeMdDelegatesToAgentsMd { return "Claude -> Agents" }
+        if claudeMdOversized(repository) { return "Claude too large" }
+        return "Claude not delegated"
+    }
+
+    private func qualityOverviewLabel(_ repository: RepositorySummary) -> String {
+        if repository.qualityIssueCount == 0 { return "Ok" }
+        if !repository.hasAgentsMd { return "No AGENTS" }
+        if !repository.hasClaudeMd { return "No CLAUDE" }
+        return claudeDelegationLabel(repository)
+    }
+
+    private func qualityDetail(_ repository: RepositorySummary) -> String {
+        let claudeDetail: String
+        if !repository.hasClaudeMd {
+            claudeDetail = "CLAUDE.md missing"
+        } else if repository.claudeMdDelegatesToAgentsMd {
+            claudeDetail = "CLAUDE.md delegates"
+        } else if claudeMdOversized(repository), let bytes = repository.claudeMdBytes {
+            claudeDetail =
+                "CLAUDE.md too large (\(formatBytes(bytes)) > \(formatBytes(repository.claudeMdDelegationMaxBytes)))"
+        } else {
+            claudeDetail = "CLAUDE.md first non-empty line must be @AGENTS.md"
+        }
+
+        return [
+            repository.hasAgentsMd ? "AGENTS.md present" : "AGENTS.md missing",
+            repository.hasClaudeMd ? "CLAUDE.md present" : "CLAUDE.md missing",
+            claudeDetail,
+        ].joined(separator: " · ")
     }
 
     private func optimizationBrief(for repository: RepositorySummary) -> String {
@@ -955,6 +1065,7 @@ public struct RepositoryView: View {
             "- Live sessions: \(repository.liveSessionCount)",
             "- Live attributed entities: \(repository.liveEntityCount)",
             "- Agent-attributed artifacts: \(formatBytes(repository.agentArtifactBytes))",
+            "- Quality: \(qualityDetail(repository))",
             "",
             "Top artifact folders:",
             repository.topArtifactFolders.prefix(5).map {
@@ -1011,17 +1122,5 @@ public struct RepositoryView: View {
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-    }
-}
-
-private struct RepositoryFoundationStrip: View {
-    var body: some View {
-        AetowerInfoBanner(
-            "This view is intentionally read-only for now. It indexes local Git roots first, overlays storage attribution, then adds attention ranking, live session context, and copyable optimization briefs. Cleanup and branch/build actions can attach here once their policy is deterministic.",
-            title: "Repository cockpit foundation",
-            systemImage: "point.3.connected.trianglepath.dotted",
-            tone: AetowerDesign.Tone.cpu,
-            level: .card
-        )
     }
 }
