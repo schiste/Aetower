@@ -1171,7 +1171,7 @@ fn agent_contract_definitions() -> &'static [AgentContractDefinition] {
             label: "AGENTS.md",
             path: "AGENTS.md",
             kind: "human-contract",
-            weight: 30,
+            weight: 22,
             missing_severity: "error",
             requires_schema: false,
             requires_review: false,
@@ -1182,29 +1182,51 @@ fn agent_contract_definitions() -> &'static [AgentContractDefinition] {
             label: "Manifest",
             path: ".agents/manifest.yaml",
             kind: "machine-contract",
-            weight: 10,
+            weight: 6,
             missing_severity: "warning",
             requires_schema: true,
             requires_review: false,
             detail: "Root machine contract: expected files, schema ids, generator/check commands, cross-file integrity, and freshness policy.",
         },
         AgentContractDefinition {
+            id: "tasks",
+            label: "Tasks",
+            path: ".agents/tasks.yaml",
+            kind: "reviewed-contract",
+            weight: 12,
+            missing_severity: "warning",
+            requires_schema: true,
+            requires_review: true,
+            detail: "Decision layer: task classification, required reads, likely paths, strategy, validation routing, and completion reporting.",
+        },
+        AgentContractDefinition {
             id: "repo_map",
             label: "Repo map",
             path: ".agents/repo-map.yaml",
             kind: "machine-contract",
-            weight: 10,
+            weight: 9,
             missing_severity: "warning",
             requires_schema: true,
             requires_review: false,
             detail: "Machine-readable topology: roots, packages, services, entrypoints, generated folders, and ignored roots.",
         },
         AgentContractDefinition {
+            id: "contracts",
+            label: "Contracts",
+            path: ".agents/contracts.yaml",
+            kind: "reviewed-contract",
+            weight: 14,
+            missing_severity: "warning",
+            requires_schema: true,
+            requires_review: true,
+            detail: "Invariant layer: API, auth, data, release, storage, process-control, performance, UI, and security contracts agents must not break.",
+        },
+        AgentContractDefinition {
             id: "commands",
             label: "Commands",
             path: ".agents/commands.yaml",
             kind: "machine-contract",
-            weight: 12,
+            weight: 10,
             missing_severity: "warning",
             requires_schema: true,
             requires_review: false,
@@ -1215,7 +1237,7 @@ fn agent_contract_definitions() -> &'static [AgentContractDefinition] {
             label: "Validation",
             path: ".agents/validation.yaml",
             kind: "reviewed-contract",
-            weight: 14,
+            weight: 12,
             missing_severity: "warning",
             requires_schema: true,
             requires_review: true,
@@ -1226,7 +1248,7 @@ fn agent_contract_definitions() -> &'static [AgentContractDefinition] {
             label: "Boundaries",
             path: ".agents/boundaries.yaml",
             kind: "reviewed-contract",
-            weight: 10,
+            weight: 7,
             missing_severity: "warning",
             requires_schema: true,
             requires_review: true,
@@ -1237,7 +1259,7 @@ fn agent_contract_definitions() -> &'static [AgentContractDefinition] {
             label: "Risks",
             path: ".agents/risks.yaml",
             kind: "reviewed-contract",
-            weight: 10,
+            weight: 6,
             missing_severity: "warning",
             requires_schema: true,
             requires_review: true,
@@ -1248,7 +1270,7 @@ fn agent_contract_definitions() -> &'static [AgentContractDefinition] {
             label: "References",
             path: ".agents/references.yaml",
             kind: "machine-contract",
-            weight: 4,
+            weight: 2,
             missing_severity: "warning",
             requires_schema: true,
             requires_review: false,
@@ -3652,15 +3674,24 @@ mod tests {
         assert_eq!(ready["agent_contract_missing_count"].as_u64(), Some(0));
         assert_eq!(
             ready["agent_contract_coverage"].as_array().map(Vec::len),
-            Some(8)
+            Some(10)
         );
         assert_eq!(partial["agent_readiness_status"], "weak");
-        assert_eq!(partial["agent_contract_missing_count"].as_u64(), Some(7));
+        assert_eq!(partial["agent_contract_missing_count"].as_u64(), Some(9));
         assert!(
             guidance_issue_ids(partial).contains(&"agents.contract.missing.repo_map".to_owned())
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn agent_contract_weights_sum_to_readiness_max() {
+        let total: u64 = agent_contract_definitions()
+            .iter()
+            .map(|definition| definition.weight)
+            .sum();
+        assert_eq!(total, AGENT_READINESS_MAX_SCORE);
     }
 
     #[test]
@@ -3972,10 +4003,10 @@ mod tests {
                 panic!("write generated agent contract {file}: {error}");
             }
         }
-        for file in ["validation", "boundaries", "risks"] {
+        for file in ["tasks", "contracts", "validation", "boundaries", "risks"] {
             if let Err(error) = fs::write(
                 agents_dir.join(format!("{file}.yaml")),
-                "schema_version: 1\nreviewed_by: test\nreviewed_at: 2026-06-28\n",
+                "schema_version: 1\nreviewed_by: test\nreviewed_at: 2026-06-28\nsource_files:\n  - AGENTS.md\n",
             ) {
                 panic!("write reviewed agent contract {file}: {error}");
             }
@@ -3992,7 +4023,7 @@ mod tests {
                 "## Scope And Precedence",
                 "Repository-local instructions override generic defaults.",
                 "## Repository Map",
-                "Use .agents/manifest.yaml for contract integrity and .agents/repo-map.yaml for machine-readable topology.",
+                "Use .agents/manifest.yaml for contract integrity, .agents/tasks.yaml for task routing, .agents/repo-map.yaml for topology, and .agents/contracts.yaml for invariants.",
                 "## Standard Workflow",
                 "Run git status --short before editing and preserve unrelated changes.",
                 "## Commands",
