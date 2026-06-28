@@ -917,8 +917,11 @@ fn summarize_repository_inventory(
             let repo_path = Path::new(&repo_root);
             let git = repository_git_intelligence(repo_path);
             let quality = repository_quality(repo_path);
-            let mut guidance = agent_guidance_audit(repo_path, &quality);
-            let contract_coverage = agent_contract_coverage_audit(repo_path, &quality, &guidance);
+            let tracked_agent_paths =
+                git_tracked_paths(repo_path, &agent_contract_candidate_paths());
+            let mut guidance = agent_guidance_audit(repo_path, &quality, &tracked_agent_paths);
+            let contract_coverage =
+                agent_contract_coverage_audit(repo_path, &quality, &guidance, &tracked_agent_paths);
             guidance.issues.extend(contract_coverage.issues.clone());
             guidance.status = guidance_status(&guidance.issues);
             let repo_name = repo_path
@@ -1102,7 +1105,11 @@ fn repository_quality(repo_root: &Path) -> RepositoryQuality {
     }
 }
 
-fn agent_guidance_audit(repo_root: &Path, quality: &RepositoryQuality) -> AgentGuidanceAudit {
+fn agent_guidance_audit(
+    repo_root: &Path,
+    quality: &RepositoryQuality,
+    tracked_agent_paths: &BTreeSet<String>,
+) -> AgentGuidanceAudit {
     let mut issues = Vec::new();
     let agents_path = repo_root.join("AGENTS.md");
 
@@ -1116,7 +1123,7 @@ fn agent_guidance_audit(repo_root: &Path, quality: &RepositoryQuality) -> AgentG
             "AGENTS.md",
         );
     } else {
-        if !git_path_is_tracked(repo_root, "AGENTS.md") {
+        if !tracked_agent_paths.contains("AGENTS.md") {
             push_guidance_issue(
                 &mut issues,
                 "agents.root.untracked",
@@ -1250,16 +1257,31 @@ fn agent_contract_definitions() -> &'static [AgentContractDefinition] {
     ]
 }
 
+fn agent_contract_candidate_paths() -> Vec<&'static str> {
+    let mut paths = Vec::with_capacity(agent_contract_definitions().len());
+    for definition in agent_contract_definitions() {
+        paths.push(definition.path);
+    }
+    paths
+}
+
 fn agent_contract_coverage_audit(
     repo_root: &Path,
     quality: &RepositoryQuality,
     guidance: &AgentGuidanceAudit,
+    tracked_agent_paths: &BTreeSet<String>,
 ) -> AgentContractCoverageAudit {
     let mut audit = AgentContractCoverageAudit::default();
     let mut earned_score = 0_u64;
 
     for definition in agent_contract_definitions() {
-        let evaluated = evaluate_agent_contract(repo_root, quality, guidance, definition);
+        let evaluated = evaluate_agent_contract(
+            repo_root,
+            quality,
+            guidance,
+            definition,
+            tracked_agent_paths,
+        );
         earned_score = earned_score.saturating_add(evaluated.earned_weight);
         if !evaluated.present {
             audit.missing_count = audit.missing_count.saturating_add(1);
@@ -1280,10 +1302,11 @@ fn evaluate_agent_contract(
     quality: &RepositoryQuality,
     guidance: &AgentGuidanceAudit,
     definition: &AgentContractDefinition,
+    tracked_agent_paths: &BTreeSet<String>,
 ) -> StorageAgentContractCoverage {
     let path = repo_root.join(definition.path);
     let present = path.is_file();
-    let tracked = present && git_path_is_tracked(repo_root, definition.path);
+    let tracked = present && tracked_agent_paths.contains(definition.path);
     let mut status = "missing".to_owned();
     let mut severity = definition.missing_severity.to_owned();
     let mut detail = format!("Missing {}. {}", definition.path, definition.detail);
@@ -1777,7 +1800,7 @@ fn local_markdown_paths(content: &str) -> Vec<String> {
             character.is_whitespace()
                 || matches!(character, '(' | ')' | '[' | ']' | ',' | '`' | '"' | '\'')
         })
-        .map(|token| token.trim_matches(|character: char| matches!(character, '.' | ':' | ';')))
+        .map(|token| token.trim_end_matches(['.', ':', ';']))
     {
         if token.is_empty()
             || token.starts_with("http://")
@@ -1791,12 +1814,11 @@ fn local_markdown_paths(content: &str) -> Vec<String> {
             continue;
         }
         let lower = token.to_lowercase();
-        if lower.ends_with(".md")
+        let has_known_reference_extension = lower.ends_with(".md")
             || lower.ends_with(".yaml")
             || lower.ends_with(".yml")
-            || lower.ends_with(".json")
-            || token.contains('/')
-        {
+            || lower.ends_with(".json");
+        if has_known_reference_extension || token.starts_with("./") {
             paths.insert(token.trim_start_matches("./").to_owned());
         }
     }
@@ -2963,7 +2985,8 @@ fn read_git_head(repo_root: &Path) -> GitHead {
             .to_owned();
         let head_sha = fs::read_to_string(git_dir.join(reference))
             .ok()
-            .map(|value| short_hash(value.trim()));
+            .map(|value| short_hash(value.trim()))
+            .or_else(|| read_packed_ref(&git_dir, reference).map(|value| short_hash(&value)));
         return GitHead {
             branch: Some(branch),
             short_head: head_sha,
@@ -3140,32 +3163,67 @@ fn read_git_dirty_status(repo_root: &Path) -> GitDirtyStatus {
     }
 }
 
-fn git_path_is_tracked(repo_root: &Path, relative_path: &str) -> bool {
+fn read_packed_ref(git_dir: &Path, reference: &str) -> Option<String> {
+    let content = fs::read_to_string(git_dir.join("packed-refs")).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('^') {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let hash = parts.next()?;
+        let candidate = parts.next()?;
+        if candidate == reference {
+            return Some(hash.to_owned());
+        }
+    }
+    None
+}
+
+fn git_tracked_paths(repo_root: &Path, relative_paths: &[&str]) -> BTreeSet<String> {
+    if relative_paths.is_empty() {
+        return BTreeSet::new();
+    }
     let Ok(mut child) = Command::new("git")
         .arg("-C")
         .arg(repo_root)
         .arg("ls-files")
-        .arg("--error-unmatch")
         .arg("--")
-        .arg(relative_path)
-        .stdout(Stdio::null())
+        .args(relative_paths)
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
     else {
-        return false;
+        return BTreeSet::new();
     };
 
     let started = Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
+            Ok(Some(status)) => {
+                let output = child.wait_with_output().ok();
+                if !status.success() {
+                    return BTreeSet::new();
+                }
+                return output
+                    .as_ref()
+                    .map(|output| {
+                        String::from_utf8_lossy(&output.stdout)
+                            .lines()
+                            .map(str::trim)
+                            .filter(|path| !path.is_empty())
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
             Ok(None) if started.elapsed() < GIT_STATUS_TIME_BUDGET => {
                 thread::sleep(Duration::from_millis(20));
             }
             Ok(None) | Err(_) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return false;
+                return BTreeSet::new();
             }
         }
     }
@@ -3682,6 +3740,59 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_reads_packed_git_branch_head() {
+        let root = test_root("packed-head");
+        let repo = root.join("PackedRepo");
+        create_git_repo(&repo, "main");
+        if let Err(error) =
+            fs::remove_file(repo.join(".git").join("refs").join("heads").join("main"))
+        {
+            panic!("remove loose git ref: {error}");
+        }
+        if let Err(error) = fs::write(
+            repo.join(".git").join("packed-refs"),
+            "# pack-refs with: peeled fully-peeled sorted\n1234567890abcdef1234567890abcdef12345678 refs/heads/main\n",
+        ) {
+            panic!("write packed refs: {error}");
+        }
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let value: serde_json::Value = match serde_json::from_str(&json) {
+            Ok(value) => value,
+            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+        };
+        let inventory = match value["repository_inventory"].as_array() {
+            Some(inventory) => inventory,
+            None => panic!("repository inventory is an array"),
+        };
+        let packed = match inventory
+            .iter()
+            .find(|repo| repo["repo_name"] == "PackedRepo")
+        {
+            Some(repo) => repo,
+            None => panic!("packed repo is indexed"),
+        };
+
+        assert_eq!(packed["git_branch"], "main");
+        assert_eq!(packed["git_head"], "1234567890ab");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn local_markdown_paths_ignores_slash_separated_prose() {
+        let paths = local_markdown_paths(
+            "README.md client/server AI/human ./docs/contracts [Schema](.agents/schema-v1/manifest.schema.json)",
+        );
+
+        assert!(paths.contains(&"README.md".to_owned()));
+        assert!(paths.contains(&"docs/contracts".to_owned()));
+        assert!(paths.contains(&".agents/schema-v1/manifest.schema.json".to_owned()));
+        assert!(!paths.contains(&"client/server".to_owned()));
+        assert!(!paths.contains(&"AI/human".to_owned()));
     }
 
     #[test]
