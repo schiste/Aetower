@@ -162,6 +162,7 @@ public struct RepositoryView: View {
     @State private var searchText = ""
     @State private var repositoryPath: [String] = []
     @State private var copiedRepositoryID: String?
+    @State private var copiedAgentPromptKey: String?
     @State private var selectedAgentContractByRepository: [String: String] = [:]
 
     public init(state: AppState) {
@@ -591,7 +592,7 @@ public struct RepositoryView: View {
                 tone: repository.agentArtifactBytes > 0 ? AetowerDesign.Tone.memory : AetowerDesign.Status.neutral
             )
             AetowerMetricTile(
-                "Agent readiness",
+                "Contract readiness",
                 value: agentReadinessLabel(repository),
                 detail: agentReadinessDetail(repository),
                 systemImage: "checkmark.seal",
@@ -615,7 +616,7 @@ public struct RepositoryView: View {
     }
 
     private func repositoryAgentGuidance(_ repository: RepositorySummary) -> some View {
-        AetowerSection("Agent readiness", subtitle: "Operating contracts for safe autonomous work") {
+        AetowerSection("Operating contracts", subtitle: "Boot, routing, invariants, execution, and safety") {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                 AetowerInfoBanner(
                     agentGuidanceSummary(repository),
@@ -740,6 +741,8 @@ public struct RepositoryView: View {
                 .foregroundStyle(AetowerDesign.Ink.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            agentContractPromptTools(repository, contract: contract)
+
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: 150), spacing: AetowerDesign.Spacing.sm)],
                 alignment: .leading,
@@ -776,6 +779,68 @@ public struct RepositoryView: View {
         }
     }
 
+    private func agentContractPromptTools(
+        _ repository: RepositorySummary,
+        contract: StorageAgentContractCoverageModel
+    ) -> some View {
+        let promptContext = agentContractPromptContext(repository)
+        let issues = agentContractIssues(repository, contract: contract)
+        let generationKey = AgentContractPrompts.key(repositoryID: repository.id, contract: contract, kind: "generate")
+        let reconcileKey = AgentContractPrompts.key(repositoryID: repository.id, contract: contract, kind: "reconcile")
+        let copied = copiedAgentPromptKey == generationKey || copiedAgentPromptKey == reconcileKey
+        return AetowerSurface(level: .quiet, padding: AetowerDesign.Spacing.sm) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                    Image(systemName: "text.badge.plus")
+                        .foregroundStyle(AetowerDesign.Status.neutral)
+                    Text("Focused prompts")
+                        .font(AetowerDesign.Typography.controlLabel)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    AetowerBadge("Prompt guide", tone: AetowerDesign.Status.neutral)
+                    AetowerBadge(
+                        AgentContractPrompts.schemaPath(for: contract) == "Not required" ? "No schema" : "Schema",
+                        tone: AetowerDesign.Status.neutral
+                    )
+                    Spacer(minLength: AetowerDesign.Spacing.sm)
+                    AetowerBadge(
+                        copied ? "Copied" : "Ready",
+                        tone: copied ? AetowerDesign.Status.ready : AetowerDesign.Status.neutral
+                    )
+                }
+                Text("Copy a one-file prompt when you want an agent to generate or repair this contract without touching unrelated files.")
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Guide: \(AgentContractPrompts.guide(for: contract)) · Schema: \(AgentContractPrompts.schemaPath(for: contract))")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Button("Copy generation prompt") {
+                        copy(AgentContractPrompts.generationPrompt(
+                            repository: promptContext,
+                            contract: contract,
+                            issues: issues
+                        ))
+                        copiedAgentPromptKey = generationKey
+                    }
+                    Button("Copy reconcile prompt") {
+                        copy(AgentContractPrompts.reconcilePrompt(
+                            repository: promptContext,
+                            contract: contract,
+                            issues: issues
+                        ))
+                        copiedAgentPromptKey = reconcileKey
+                    }
+                    Spacer(minLength: AetowerDesign.Spacing.sm)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+    }
+
     private func contractFact(_ label: String, _ value: String) -> some View {
         AetowerSurface(level: .quiet, padding: AetowerDesign.Spacing.sm) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
@@ -800,6 +865,16 @@ public struct RepositoryView: View {
         return repository.agentContractCoverage.first(where: { $0.severity == "error" })
             ?? repository.agentContractCoverage.first(where: { $0.severity == "warning" })
             ?? repository.agentContractCoverage.first
+    }
+
+    private func agentContractPromptContext(_ repository: RepositorySummary) -> AgentContractPromptContext {
+        AgentContractPromptContext(
+            name: repository.name,
+            root: repository.root,
+            branch: repository.gitBranch ?? detachedLabel(repository),
+            head: repository.gitHead ?? "unknown",
+            dirtyDetail: repository.gitDirtyStatus == "dirty" ? dirtyDetail(repository) : nil
+        )
     }
 
     private func agentContractIssues(
@@ -1502,7 +1577,7 @@ public struct RepositoryView: View {
                 parts.append("\(repository.liveSessionCount) live Chau7 session\(repository.liveSessionCount == 1 ? "" : "s")")
             }
             if repository.agentReadinessStatus != "ready" && repository.agentReadinessStatus != "unknown" {
-                parts.append("agent readiness \(repository.agentReadinessScore)%")
+                parts.append("operating contract \(repository.agentReadinessScore)%")
             }
             return parts.joined(separator: " · ")
         }
@@ -1518,7 +1593,7 @@ public struct RepositoryView: View {
             parts.append("\(repository.violationCount) budget signal\(repository.violationCount == 1 ? "" : "s")")
         }
         if repository.agentReadinessStatus != "ready" && repository.agentReadinessStatus != "unknown" {
-            parts.append("agent readiness \(repository.agentReadinessScore)%")
+            parts.append("operating contract \(repository.agentReadinessScore)%")
         }
         if repository.qualityIssueCount > 0 {
             parts.append(repository.qualityStatusLabel)
@@ -1676,32 +1751,32 @@ public struct RepositoryView: View {
     private func agentGuidanceTitle(_ repository: RepositorySummary) -> String {
         switch repository.agentReadinessStatus {
         case "ready":
-            return "Repository is agent-ready"
+            return "Operating contract is ready"
         case "partial":
-            return "Agent readiness is partial"
+            return "Operating contract is partial"
         case "weak":
-            return "Agent readiness is weak"
+            return "Operating contract is weak"
         case "blocked":
-            return "Agent readiness is blocked"
+            return "Operating contract is blocked"
         default:
             break
         }
         switch repository.agentGuidanceStatus {
         case "error":
-            return "Agent guidance needs fixes"
+            return "Operating contract needs fixes"
         case "warning":
-            return "Agent guidance has warnings"
+            return "Operating contract has warnings"
         case "ok":
-            return "Agent guidance is clean"
+            return "Operating contract is clean"
         default:
-            return "Agent guidance unavailable"
+            return "Operating contract unavailable"
         }
     }
 
     private func agentGuidanceSummary(_ repository: RepositorySummary) -> String {
         let readiness = agentReadinessDetail(repository)
         if repository.agentGuidanceIssues.isEmpty {
-            return "Agent readiness score is \(repository.agentReadinessScore)%. \(readiness)."
+            return "Operating contract score is \(repository.agentReadinessScore)%. \(readiness)."
         }
         let errorCount = repository.agentGuidanceIssues.filter { $0.severity == "error" }.count
         let warningCount = repository.agentGuidanceIssues.filter { $0.severity == "warning" }.count
@@ -1710,7 +1785,7 @@ public struct RepositoryView: View {
             readiness,
             "\(errorCount) error\(errorCount == 1 ? "" : "s")",
             "\(warningCount) warning\(warningCount == 1 ? "" : "s")",
-            "Rules cover AGENTS.md plus .agents manifest, repo-map, commands, validation, boundaries, risks, and references contracts.",
+            "Rules cover AGENTS.md plus manifest, tasks, repo-map, contracts, commands, validation, boundaries, risks, and references.",
         ]
         if let firstIssue = sortedAgentGuidanceIssues(repository).first {
             parts.append("First issue: \(firstIssue.title) in \(firstIssue.path).")
@@ -1823,9 +1898,9 @@ public struct RepositoryView: View {
             "- Live sessions: \(repository.liveSessionCount)",
             "- Live attributed entities: \(repository.liveEntityCount)",
             "- Agent-attributed artifacts: \(formatBytes(repository.agentArtifactBytes))",
-            "- Agent readiness: \(agentReadinessLabel(repository))",
+            "- Operating contract readiness: \(agentReadinessLabel(repository))",
             "- Agent contracts missing: \(repository.agentContractMissingCount)",
-            "- Agent guidance: \(agentGuidanceTitle(repository))",
+            "- Operating contract guidance: \(agentGuidanceTitle(repository))",
             "- Quality: \(qualityDetail(repository))",
             "",
             "Agent contract coverage:",
@@ -1833,7 +1908,7 @@ public struct RepositoryView: View {
                 "- \($0.label): \($0.coveragePercent)% \($0.status) | \($0.path) | \($0.detail)"
             }.joined(separator: "\n"),
             "",
-            "Agent guidance issues:",
+            "Operating contract issues:",
             repository.agentGuidanceIssues.prefix(8).map {
                 "- \($0.severity.uppercased()) | \($0.path) | \($0.title): \($0.detail)"
             }.joined(separator: "\n"),
