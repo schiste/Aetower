@@ -814,8 +814,8 @@ public struct SettingsView: View {
                     .aetowerUtilityTextInput()
                     .focused($focusedField, equals: .chau7AgentCommand)
                     Text("Used by Repository contract actions when Aetower asks Chau7 to open a shell and launch an agent.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
                 }
 
                 SettingsSetupCard(
