@@ -294,6 +294,7 @@ public enum NotificationSnoozeStore {
 public final class SettingsStore {
     public nonisolated static let defaultDockerSocketPath = "/var/run/docker.sock"
     public nonisolated static let defaultTelemetryEndpoint = "http://localhost:4318/v1/metrics"
+    public nonisolated static let defaultChau7AgentCommand = "claude"
     public nonisolated static let minimumTelemetryExportIntervalSeconds = 5.0
     public nonisolated static let minimumEngineTickSeconds = 0.5
     public nonisolated static let minimumGPUSampleIntervalSeconds = 5.0
@@ -317,6 +318,9 @@ public final class SettingsStore {
         didSet { persist() }
     }
     public var chau7Endpoint: String {
+        didSet { persist() }
+    }
+    public var chau7AgentCommand: String {
         didSet { persist() }
     }
     public var telemetryEnabled: Bool {
@@ -446,6 +450,8 @@ public final class SettingsStore {
             ?? Self.defaultPrivilegedHelperPath()
         self.privilegedHelperEnabled = defaults.object(forKey: Self.privilegedHelperEnabledKey) as? Bool ?? false
         self.chau7Endpoint = defaults.string(forKey: Self.chau7EndpointKey) ?? ""
+        self.chau7AgentCommand = defaults.string(forKey: Self.chau7AgentCommandKey)
+            ?? Self.defaultChau7AgentCommand
         self.telemetryEnabled = defaults.object(forKey: Self.telemetryEnabledKey) as? Bool ?? false
         self.telemetryEndpoint = defaults.string(forKey: Self.telemetryEndpointKey) ?? Self.defaultTelemetryEndpoint
         self.telemetryExportIntervalSeconds = defaults.object(forKey: Self.telemetryExportIntervalKey) as? Double ?? 30.0
@@ -522,6 +528,7 @@ public final class SettingsStore {
     private static let privilegedHelperPathKey = "settings.privilegedHelperPath"
     private static let privilegedHelperEnabledKey = "settings.privilegedHelperEnabled"
     private static let chau7EndpointKey = "settings.chau7Endpoint"
+    private static let chau7AgentCommandKey = "settings.chau7AgentCommand"
     private static let telemetryEnabledKey = "settings.telemetryEnabled"
     private static let telemetryEndpointKey = "settings.telemetryEndpoint"
     private static let telemetryExportIntervalKey = "settings.telemetryExportIntervalSeconds"
@@ -573,6 +580,11 @@ public final class SettingsStore {
     public nonisolated static func normalizedTelemetryEndpoint(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? defaultTelemetryEndpoint : trimmed
+    }
+
+    public nonisolated static func normalizedChau7AgentCommand(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? defaultChau7AgentCommand : trimmed
     }
 
     public nonisolated static func normalizedTelemetryExportIntervalSeconds(_ value: Double) -> UInt32 {
@@ -642,6 +654,7 @@ public final class SettingsStore {
             fallback: 60.0,
             minimum: Self.minimumGPUSampleIntervalSeconds
         )
+        chau7AgentCommand = Self.normalizedChau7AgentCommand(chau7AgentCommand)
         frictionNotificationThreshold = Self.finiteOrDefault(
             frictionNotificationThreshold,
             fallback: 60.0,
@@ -681,6 +694,7 @@ extension SettingsStore {
         privilegedHelperPath = Self.defaultPrivilegedHelperPath()
         privilegedHelperEnabled = false
         chau7Endpoint = ""
+        chau7AgentCommand = Self.defaultChau7AgentCommand
         telemetryEnabled = false
         telemetryEndpoint = Self.defaultTelemetryEndpoint
         telemetryExportIntervalSeconds = 30.0
@@ -725,6 +739,7 @@ extension SettingsStore {
         defaults.set(privilegedHelperPath, forKey: Self.privilegedHelperPathKey)
         defaults.set(privilegedHelperEnabled, forKey: Self.privilegedHelperEnabledKey)
         defaults.set(chau7Endpoint, forKey: Self.chau7EndpointKey)
+        defaults.set(chau7AgentCommand, forKey: Self.chau7AgentCommandKey)
         defaults.set(telemetryEnabled, forKey: Self.telemetryEnabledKey)
         defaults.set(telemetryEndpoint, forKey: Self.telemetryEndpointKey)
         defaults.set(telemetryExportIntervalSeconds, forKey: Self.telemetryExportIntervalKey)

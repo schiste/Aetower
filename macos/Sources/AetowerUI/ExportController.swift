@@ -222,6 +222,11 @@ final class ExportController {
             "privilegedHelperEnabled": settings.privilegedHelperEnabled,
             "privilegedHelperPathConfigured": !settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "chau7EndpointConfigured": !settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "chau7AgentCommand": exportControlledValue(
+                settings.chau7AgentCommand,
+                privacyTier: privacyTier,
+                key: "chau7AgentCommand"
+            ),
             "telemetryEnabled": settings.telemetryEnabled,
             "telemetryEndpoint": exportControlledValue(
                 settings.telemetryEndpoint,

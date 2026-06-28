@@ -30,6 +30,7 @@ public struct SettingsView: View {
         case dockerSocketPath
         case privilegedHelperPath
         case chau7Endpoint
+        case chau7AgentCommand
         case telemetryEndpoint
     }
 
@@ -803,6 +804,18 @@ public struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     SettingsValidationList(issues: validation.issues(for: .chau7Endpoint))
+
+                    TextField(
+                        "Default Chau7 agent command",
+                        text: $integrationDraft.chau7AgentCommand,
+                        prompt: Text(SettingsStore.defaultChau7AgentCommand)
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .aetowerUtilityTextInput()
+                    .focused($focusedField, equals: .chau7AgentCommand)
+                    Text("Used by Repository contract actions when Aetower asks Chau7 to open a shell and launch an agent.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 SettingsSetupCard(
@@ -1524,6 +1537,7 @@ private struct SettingsIntegrationDraft: Equatable {
     var privilegedHelperEnabled = false
     var privilegedHelperPath = ""
     var chau7Endpoint = ""
+    var chau7AgentCommand = SettingsStore.defaultChau7AgentCommand
     var telemetryEnabled = false
     var telemetryEndpoint = SettingsStore.defaultTelemetryEndpoint
     var telemetryExportIntervalSeconds = 30.0
@@ -1537,6 +1551,7 @@ private struct SettingsIntegrationDraft: Equatable {
         privilegedHelperEnabled = settings.privilegedHelperEnabled
         privilegedHelperPath = settings.privilegedHelperPath
         chau7Endpoint = settings.chau7Endpoint
+        chau7AgentCommand = settings.chau7AgentCommand
         telemetryEnabled = settings.telemetryEnabled
         telemetryEndpoint = settings.telemetryEndpoint
         telemetryExportIntervalSeconds = settings.telemetryExportIntervalSeconds
@@ -1552,6 +1567,7 @@ private struct SettingsIntegrationDraft: Equatable {
         dockerSocketPath = dockerSocketPath.trimmingCharacters(in: .whitespacesAndNewlines)
         privilegedHelperPath = privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
         chau7Endpoint = chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        chau7AgentCommand = SettingsStore.normalizedChau7AgentCommand(chau7AgentCommand)
         telemetryEndpoint = telemetryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         telemetryExportIntervalSeconds = max(
             SettingsStore.minimumTelemetryExportIntervalSeconds,
@@ -1567,6 +1583,7 @@ private struct SettingsIntegrationDraft: Equatable {
         settings.privilegedHelperEnabled = privilegedHelperEnabled
         settings.privilegedHelperPath = privilegedHelperPath
         settings.chau7Endpoint = chau7Endpoint
+        settings.chau7AgentCommand = chau7AgentCommand
         settings.telemetryEnabled = telemetryEnabled
         settings.telemetryEndpoint = telemetryEndpoint
         settings.telemetryExportIntervalSeconds = telemetryExportIntervalSeconds
@@ -1580,6 +1597,7 @@ private struct SettingsIntegrationSnapshot: Equatable {
     let privilegedHelperEnabled: Bool
     let privilegedHelperPath: String
     let chau7Endpoint: String
+    let chau7AgentCommand: String
     let telemetryEnabled: Bool
     let telemetryEndpoint: String
     let telemetryExportIntervalSeconds: UInt32
@@ -1593,6 +1611,7 @@ private struct SettingsIntegrationSnapshot: Equatable {
         privilegedHelperEnabled = settings.privilegedHelperEnabled
         privilegedHelperPath = settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
         chau7Endpoint = settings.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        chau7AgentCommand = SettingsStore.normalizedChau7AgentCommand(settings.chau7AgentCommand)
         telemetryEnabled = settings.telemetryEnabled
         telemetryEndpoint = SettingsStore.normalizedTelemetryEndpoint(settings.telemetryEndpoint)
         telemetryExportIntervalSeconds = SettingsStore.normalizedTelemetryExportIntervalSeconds(
@@ -1611,6 +1630,7 @@ private struct SettingsIntegrationSnapshot: Equatable {
         privilegedHelperEnabled = draft.privilegedHelperEnabled
         privilegedHelperPath = draft.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
         chau7Endpoint = draft.chau7Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        chau7AgentCommand = SettingsStore.normalizedChau7AgentCommand(draft.chau7AgentCommand)
         telemetryEnabled = draft.telemetryEnabled
         telemetryEndpoint = SettingsStore.normalizedTelemetryEndpoint(draft.telemetryEndpoint)
         telemetryExportIntervalSeconds = SettingsStore.normalizedTelemetryExportIntervalSeconds(

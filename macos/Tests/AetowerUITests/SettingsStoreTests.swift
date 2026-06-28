@@ -12,6 +12,10 @@ final class SettingsStoreTests: XCTestCase {
             SettingsStore.normalizedTelemetryEndpoint("\n\t"),
             SettingsStore.defaultTelemetryEndpoint
         )
+        XCTAssertEqual(
+            SettingsStore.normalizedChau7AgentCommand("  "),
+            SettingsStore.defaultChau7AgentCommand
+        )
     }
 
     func testRuntimeIntervalRelationshipsStayVisibleInSettings() {
@@ -38,6 +42,7 @@ final class SettingsStoreTests: XCTestCase {
 
         XCTAssertFalse(store.autoRegisterLocalMcpClientsEnabled)
         XCTAssertEqual(store.telemetryEndpoint, SettingsStore.defaultTelemetryEndpoint)
+        XCTAssertEqual(store.chau7AgentCommand, SettingsStore.defaultChau7AgentCommand)
         XCTAssertEqual(store.collectionProfile, .balanced)
         XCTAssertFalse(store.telemetryEnabled)
     }
@@ -75,6 +80,22 @@ final class SettingsStoreTests: XCTestCase {
 
         let reloaded = SettingsStore(defaults: defaults)
         XCTAssertTrue(reloaded.metricRingsFixedScaling)
+    }
+
+    func testChau7AgentCommandPreferencePersistsAndNormalizesBlankValues() {
+        let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = SettingsStore(defaults: defaults)
+        store.chau7AgentCommand = "codex --ask-for-approval never"
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertEqual(reloaded.chau7AgentCommand, "codex --ask-for-approval never")
+
+        reloaded.chau7AgentCommand = " \n "
+        let normalized = SettingsStore(defaults: defaults)
+        XCTAssertEqual(normalized.chau7AgentCommand, SettingsStore.defaultChau7AgentCommand)
     }
 
     func testNumericRuntimeNormalizersRejectNonFiniteValues() {
