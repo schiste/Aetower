@@ -1,6 +1,11 @@
 # Aetower distribution
 
-`scripts/package-macos.sh` produces a local app bundle by default with ad-hoc signing.
+`scripts/package-macos.sh` produces a local app bundle. When
+`.env.release.local` exists, it is loaded automatically so local rebuilds use
+the same stable Developer ID identity as release builds. Explicit environment
+variables still win over values from `.env.release.local`. Bare local packages
+do not automatically notarize or staple from `.env.release.local`; use the
+release wrapper or set notarization variables explicitly for that.
 
 ## Local package
 
@@ -15,9 +20,22 @@ That builds:
 - the Swift release app
 - `dist/Aetower.app`
 
+If you need a purely local ad-hoc build, override signing explicitly:
+
+```sh
+AETOWER_SIGN_IDENTITY=- sh scripts/package-macos.sh
+```
+
+If you intentionally want a direct local package to also honor notarization
+flags from `.env.release.local`, opt in explicitly:
+
+```sh
+AETOWER_PACKAGE_LOAD_NOTARIZATION=1 sh scripts/package-macos.sh
+```
+
 ## Release signing
 
-To sign with a real Developer ID identity, set:
+To sign with a real Developer ID identity without `.env.release.local`, set:
 
 ```sh
 export AETOWER_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
@@ -65,6 +83,10 @@ sh scripts/package-macos.sh
 The script will zip the `.app`, submit it with `xcrun notarytool`, and optionally staple the notarization ticket back onto the bundle.
 
 ## Release wrapper
+
+`scripts/release.sh` and `scripts/release-macos.sh` opt into notarization and
+stapling by default. Override `AETOWER_NOTARIZE=0 AETOWER_STAPLE=0` only for
+diagnostic release dry runs.
 
 To force the stricter release path:
 

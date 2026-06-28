@@ -93,6 +93,12 @@ Package a local app:
 sh scripts/package-macos.sh
 ```
 
+When `.env.release.local` exists, local packaging loads it automatically so
+rebuilds use the stable Developer ID signature. Use
+`AETOWER_SIGN_IDENTITY=- sh scripts/package-macos.sh` only for explicit ad-hoc
+testing. Direct local packaging does not automatically notarize; release
+wrappers opt into notarization and stapling.
+
 Cut a signed Developer Preview release:
 
 ```sh
