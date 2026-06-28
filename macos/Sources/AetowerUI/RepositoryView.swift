@@ -43,12 +43,31 @@ private struct RepositorySummary: Identifiable {
     let name: String
     let gitBranch: String?
     let gitHead: String?
+    let gitRef: String?
+    let gitDetachedHead: Bool
+    let gitRemoteOriginUrl: String?
+    let gitRemoteKey: String?
+    let gitRemoteHost: String?
+    let gitRemoteOwner: String?
+    let gitRemoteName: String?
+    let gitDirtyStatus: String
+    let gitDirtyFileCount: UInt64?
+    let gitDirtyTruncated: Bool
+    let cloneGroupCount: UInt64
+    let cloneGroupRoots: [String]
     let discoveredRoot: String?
     let hasAgentsMd: Bool
     let hasClaudeMd: Bool
     let claudeMdBytes: UInt64?
     let claudeMdDelegationMaxBytes: UInt64
     let claudeMdDelegatesToAgentsMd: Bool
+    let agentReadinessScore: UInt8
+    let agentReadinessStatus: String
+    let agentContractMissingCount: UInt64
+    let agentContractCoverage: [StorageAgentContractCoverageModel]
+    let agentGuidanceStatus: String
+    let agentGuidanceIssueCount: UInt64
+    let agentGuidanceIssues: [StorageAgentGuidanceIssueModel]
     let hasStorageFootprint: Bool
     let currentSizeBytes: UInt64
     let artifactBytes: UInt64
@@ -80,8 +99,13 @@ private struct RepositorySummary: Identifiable {
         let staleScore = Double(staleItemCount) * 0.7
         let violationScore = Double(violationCount) * 8
         let liveScore = Double(liveSessionCount + liveEntityCount) * 1.4
-        let qualityScore = Double(qualityIssueCount) * 2.5
-        return artifactScore + growthScore + reviewScore + staleScore + violationScore + liveScore + qualityScore
+        let readinessPenalty = Double(100 - Int(agentReadinessScore)) / 8.0
+        let qualityScore = Double(qualityIssueCount + Int(agentGuidanceIssueCount)) * 2.5 + readinessPenalty
+        let duplicateScore = cloneGroupCount > 1 ? Double(cloneGroupCount) * 3 : 0
+        let dirtyScore = gitDirtyStatus == "dirty" ? 2.0 : 0.0
+        let storageScore = artifactScore + growthScore + reviewScore + staleScore
+        let runtimeScore = violationScore + liveScore + qualityScore
+        return storageScore + runtimeScore + duplicateScore + dirtyScore
     }
 
     var qualityIssueCount: Int {
@@ -93,16 +117,24 @@ private struct RepositorySummary: Identifiable {
     }
 
     var qualityStatusLabel: String {
-        qualityIssueCount == 0 ? "Guidance ok" : "\(qualityIssueCount) guidance gap\(qualityIssueCount == 1 ? "" : "s")"
+        let count = max(UInt64(qualityIssueCount), agentGuidanceIssueCount)
+        return count == 0 ? "Guidance ok" : "\(count) guidance gap\(count == 1 ? "" : "s")"
     }
 
     var qualityStatusTone: Color {
-        qualityIssueCount == 0 ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+        if agentGuidanceStatus == "error" { return AetowerDesign.Status.error }
+        if agentGuidanceStatus == "warning" || qualityIssueCount > 0 { return AetowerDesign.Status.warning }
+        return AetowerDesign.Status.ready
     }
 
     var statusLabel: String {
         if violationCount > 0 { return "Budget" }
+        if agentReadinessStatus == "blocked" { return "Agent blocked" }
+        if agentReadinessStatus == "weak" { return "Agent weak" }
+        if agentGuidanceStatus == "error" { return "Guidance" }
+        if cloneGroupCount > 1 { return "Cloned" }
         if (growthBytes ?? 0) > 0 { return "Growing" }
+        if gitDirtyStatus == "dirty" { return "Dirty" }
         if reviewItemCount > 0 { return "Review" }
         if liveSessionCount > 0 || liveEntityCount > 0 { return "Active" }
         if !hasStorageFootprint { return "Indexed" }
@@ -111,7 +143,12 @@ private struct RepositorySummary: Identifiable {
 
     var statusTone: Color {
         if violationCount > 0 { return AetowerDesign.Status.error }
+        if agentReadinessStatus == "blocked" { return AetowerDesign.Status.error }
+        if agentReadinessStatus == "weak" { return AetowerDesign.Status.warning }
+        if agentGuidanceStatus == "error" { return AetowerDesign.Status.error }
+        if cloneGroupCount > 1 { return AetowerDesign.Status.warning }
         if (growthBytes ?? 0) > 512 * 1024 * 1024 { return AetowerDesign.Status.warning }
+        if gitDirtyStatus == "dirty" { return AetowerDesign.Tone.energy }
         if reviewItemCount > 0 { return AetowerDesign.Status.warning }
         if liveSessionCount > 0 || liveEntityCount > 0 { return AetowerDesign.Status.ready }
         return AetowerDesign.Status.neutral
@@ -125,6 +162,7 @@ public struct RepositoryView: View {
     @State private var searchText = ""
     @State private var repositoryPath: [String] = []
     @State private var copiedRepositoryID: String?
+    @State private var selectedAgentContractByRepository: [String: String] = [:]
 
     public init(state: AppState) {
         self.state = state
@@ -275,8 +313,18 @@ public struct RepositoryView: View {
         let allRepositories = repositorySummaries(from: report)
         let activeCount = allRepositories.filter { $0.liveSessionCount > 0 || $0.liveEntityCount > 0 }.count
         let growingCount = allRepositories.filter { ($0.growthBytes ?? 0) > 0 }.count
+        let duplicateCloneCount = allRepositories.filter { $0.cloneGroupCount > 1 }.count
+        let dirtyCount = allRepositories.filter { $0.gitDirtyStatus == "dirty" }.count
+        let agentReadyCount = allRepositories.filter { $0.agentReadinessStatus == "ready" }.count
         let reviewCount = allRepositories.filter {
-            $0.reviewItemCount > 0 || $0.violationCount > 0 || $0.qualityIssueCount > 0
+            $0.reviewItemCount > 0
+                || $0.violationCount > 0
+                || $0.qualityIssueCount > 0
+                || $0.agentGuidanceIssueCount > 0
+                || $0.agentReadinessStatus == "blocked"
+                || $0.agentReadinessStatus == "weak"
+                || $0.cloneGroupCount > 1
+                || $0.gitDirtyStatus == "dirty"
         }.count
 
         return LazyVGrid(
@@ -301,9 +349,16 @@ public struct RepositoryView: View {
             AetowerMetricTile(
                 "Attention",
                 value: "\(reviewCount)",
-                detail: "budget or review signals",
+                detail: "budget, readiness, or review signals",
                 systemImage: "exclamationmark.triangle",
                 tone: reviewCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+            )
+            AetowerMetricTile(
+                "Agent-ready",
+                value: "\(agentReadyCount)",
+                detail: "repos with >=90% contract coverage",
+                systemImage: "checkmark.seal",
+                tone: agentReadyCount == allRepositories.count ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
             )
             AetowerMetricTile(
                 "Active",
@@ -318,6 +373,20 @@ public struct RepositoryView: View {
                 detail: report.summary.attributedRepoCount > 0 ? "baseline-backed deltas" : "waiting for baseline",
                 systemImage: "chart.line.uptrend.xyaxis",
                 tone: growingCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+            )
+            AetowerMetricTile(
+                "Clone groups",
+                value: "\(duplicateCloneCount)",
+                detail: "repos sharing a remote",
+                systemImage: "square.stack.3d.up",
+                tone: duplicateCloneCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+            )
+            AetowerMetricTile(
+                "Dirty trees",
+                value: "\(dirtyCount)",
+                detail: "uncommitted work detected",
+                systemImage: "pencil.and.scribble",
+                tone: dirtyCount > 0 ? AetowerDesign.Tone.energy : AetowerDesign.Status.ready
             )
         }
     }
@@ -382,6 +451,7 @@ public struct RepositoryView: View {
                 tone: repository.hasStorageFootprint ? AetowerDesign.Tone.disk : AetowerDesign.Status.neutral
             )
             repositoryMiniStat("Growth", value: growthLabel(repository), tone: growthTone(repository))
+            repositoryMiniStat("Git", value: gitOverviewLabel(repository), tone: gitOverviewTone(repository))
             repositoryMiniStat(
                 "Live",
                 value: "\(repository.liveSessionCount + repository.liveEntityCount)",
@@ -389,7 +459,7 @@ public struct RepositoryView: View {
                     ? AetowerDesign.Status.ready
                     : AetowerDesign.Status.neutral
             )
-            repositoryMiniStat("Quality", value: qualityOverviewLabel(repository), tone: repository.qualityStatusTone)
+            repositoryMiniStat("Agents", value: agentReadinessLabel(repository), tone: agentReadinessTone(repository))
         }
     }
 
@@ -427,6 +497,8 @@ public struct RepositoryView: View {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
                 repositoryHero(repository)
                 repositorySignals(repository)
+                repositoryAgentGuidance(repository)
+                repositoryGitIntelligence(repository)
                 repositoryActions(repository)
                 topArtifacts(repository)
                 liveContext(repository)
@@ -519,12 +591,363 @@ public struct RepositoryView: View {
                 tone: repository.agentArtifactBytes > 0 ? AetowerDesign.Tone.memory : AetowerDesign.Status.neutral
             )
             AetowerMetricTile(
-                "Quality",
-                value: repository.qualityStatusLabel,
-                detail: qualityDetail(repository),
-                systemImage: "checklist.checked",
-                tone: repository.qualityStatusTone
+                "Agent readiness",
+                value: agentReadinessLabel(repository),
+                detail: agentReadinessDetail(repository),
+                systemImage: "checkmark.seal",
+                tone: agentReadinessTone(repository)
             )
+            AetowerMetricTile(
+                "Git state",
+                value: gitOverviewLabel(repository),
+                detail: gitDetail(repository),
+                systemImage: "arrow.triangle.branch",
+                tone: gitOverviewTone(repository)
+            )
+            AetowerMetricTile(
+                "Clone group",
+                value: cloneGroupLabel(repository),
+                detail: repository.gitRemoteKey ?? "remote unavailable",
+                systemImage: "square.stack.3d.up",
+                tone: repository.cloneGroupCount > 1 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+            )
+        }
+    }
+
+    private func repositoryAgentGuidance(_ repository: RepositorySummary) -> some View {
+        AetowerSection("Agent readiness", subtitle: "Operating contracts for safe autonomous work") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                AetowerInfoBanner(
+                    agentGuidanceSummary(repository),
+                    title: agentGuidanceTitle(repository),
+                    systemImage: "checklist.checked",
+                    tone: agentReadinessTone(repository),
+                    level: repository.agentReadinessStatus == "blocked" ? .critical : .card
+                )
+                agentContractReadinessPanel(repository)
+            }
+        }
+    }
+
+    private func agentContractReadinessPanel(_ repository: RepositorySummary) -> some View {
+        AetowerSurface(level: .card, padding: AetowerDesign.Spacing.none) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.none) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    Text("EXPECTED FILES")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    if repository.agentContractCoverage.isEmpty {
+                        Text("No contract coverage was reported.")
+                            .font(AetowerDesign.Typography.caption)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                            ForEach(repository.agentContractCoverage) { contract in
+                                Button {
+                                    selectedAgentContractByRepository[repository.id] = contract.id
+                                } label: {
+                                    agentContractListRow(
+                                        contract,
+                                        selected: selectedAgentContract(repository)?.id == contract.id
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                .frame(width: 280, alignment: .topLeading)
+                .padding(AetowerDesign.Spacing.md)
+
+                Rectangle()
+                    .fill(AetowerDesign.Surface.divider)
+                    .frame(width: AetowerDesign.Stroke.hairline)
+
+                Group {
+                    if let selected = selectedAgentContract(repository) {
+                        agentContractDetailPane(repository, contract: selected)
+                    } else {
+                        AetowerEmptyState(
+                            title: "No contract selected",
+                            detail: "Aetower did not receive contract coverage for this repository.",
+                            systemImage: "doc.badge.questionmark",
+                            tone: AetowerDesign.Status.neutral
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(AetowerDesign.Spacing.md)
+            }
+        }
+    }
+
+    private func agentContractListRow(
+        _ contract: StorageAgentContractCoverageModel,
+        selected: Bool
+    ) -> some View {
+        AetowerSurface(
+            level: selected ? .selected : contractSurfaceLevel(contract),
+            padding: AetowerDesign.Spacing.sm
+        ) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: agentContractIcon(contract))
+                    .foregroundStyle(agentContractTone(contract))
+                    .frame(width: AetowerDesign.Size.iconSlot)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    Text(contract.label)
+                        .font(AetowerDesign.Typography.controlLabel)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(1)
+                    Text(contract.path)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.xs)
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xxs) {
+                    AetowerBadge(agentContractStatusLabel(contract), tone: agentContractTone(contract))
+                    Text("\(contract.coveragePercent)%")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+            }
+        }
+    }
+
+    private func agentContractDetailPane(
+        _ repository: RepositorySummary,
+        contract: StorageAgentContractCoverageModel
+    ) -> some View {
+        let issues = agentContractIssues(repository, contract: contract)
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: agentContractIcon(contract))
+                    .foregroundStyle(agentContractTone(contract))
+                Text(contract.label)
+                    .font(AetowerDesign.Typography.sectionTitle)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                AetowerBadge(agentContractStatusLabel(contract), tone: agentContractTone(contract))
+                AetowerBadge("\(contract.coveragePercent)%", tone: agentContractTone(contract))
+                Spacer(minLength: AetowerDesign.Spacing.md)
+            }
+
+            Text(contract.path)
+                .font(AetowerDesign.Typography.compactData(size: 11))
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .textSelection(.enabled)
+
+            Text(contract.detail)
+                .font(AetowerDesign.Typography.caption)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 150), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                contractFact("Kind", contract.kind)
+                contractFact("Weight", "\(contract.earnedWeight)/\(contract.weight)")
+                contractFact("Present", contract.present ? "Yes" : "No")
+                contractFact("Tracked", contract.tracked ? "Yes" : "No")
+                contractFact("Schema", contract.schemaVersion ?? "Missing")
+                contractFact("Generated", contract.generated ? "Yes" : "No")
+                contractFact("Reviewed", contract.reviewed ? "Yes" : "No")
+            }
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                Text("ISSUES FOR THIS FILE")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                if issues.isEmpty {
+                    AetowerInfoBanner(
+                        "No issue is currently attached to \(contract.path).",
+                        systemImage: "checkmark.circle",
+                        tone: AetowerDesign.Status.ready,
+                        level: .quiet
+                    )
+                } else {
+                    LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        ForEach(issues) { issue in
+                            agentGuidanceIssueRow(issue)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func contractFact(_ label: String, _ value: String) -> some View {
+        AetowerSurface(level: .quiet, padding: AetowerDesign.Spacing.sm) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                Text(label.uppercased())
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                Text(value)
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func selectedAgentContract(_ repository: RepositorySummary) -> StorageAgentContractCoverageModel? {
+        if let selectedID = selectedAgentContractByRepository[repository.id],
+           let selected = repository.agentContractCoverage.first(where: { $0.id == selectedID }) {
+            return selected
+        }
+        return repository.agentContractCoverage.first(where: { $0.severity == "error" })
+            ?? repository.agentContractCoverage.first(where: { $0.severity == "warning" })
+            ?? repository.agentContractCoverage.first
+    }
+
+    private func agentContractIssues(
+        _ repository: RepositorySummary,
+        contract: StorageAgentContractCoverageModel
+    ) -> [StorageAgentGuidanceIssueModel] {
+        sortedAgentGuidanceIssues(repository).filter { issue in
+            issue.path == contract.path
+        }
+    }
+
+    private func agentContractIcon(_ contract: StorageAgentContractCoverageModel) -> String {
+        switch contract.status {
+        case "ok":
+            return "checkmark.seal"
+        case "partial":
+            return "circle.lefthalf.filled"
+        case "missing":
+            return "doc.badge.plus"
+        case "untracked":
+            return "doc.badge.exclamationmark"
+        case "error":
+            return "xmark.octagon"
+        default:
+            return contract.present ? "doc.text" : "doc.badge.questionmark"
+        }
+    }
+
+    private func agentGuidanceIssueRow(_ issue: StorageAgentGuidanceIssueModel) -> some View {
+        AetowerSurface(level: agentIssueIsCritical(issue) ? .critical : .warning, padding: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: agentIssueIsCritical(issue) ? "xmark.octagon" : "exclamationmark.triangle")
+                    .foregroundStyle(agentIssueIsCritical(issue) ? AetowerDesign.Status.error : AetowerDesign.Status.warning)
+                    .frame(width: AetowerDesign.Size.iconSlot)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        AetowerBadge(
+                            agentIssueIsCritical(issue) ? "ERROR" : issue.severity.uppercased(),
+                            tone: agentIssueIsCritical(issue) ? AetowerDesign.Status.error : AetowerDesign.Status.warning
+                        )
+                        Text(issue.path)
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.tertiary)
+                        Text(issue.id)
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.tertiary)
+                            .lineLimit(1)
+                    }
+                    Text(issue.title)
+                        .font(AetowerDesign.Typography.controlLabel)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    Text(issue.detail)
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func agentIssueIsCritical(_ issue: StorageAgentGuidanceIssueModel) -> Bool {
+        issue.severity == "error" || issue.id.contains(".missing")
+    }
+
+    private func sortedAgentGuidanceIssues(
+        _ repository: RepositorySummary
+    ) -> [StorageAgentGuidanceIssueModel] {
+        repository.agentGuidanceIssues.sorted { left, right in
+            let leftRank = left.severity == "error" ? 0 : 1
+            let rightRank = right.severity == "error" ? 0 : 1
+            if leftRank != rightRank { return leftRank < rightRank }
+            if left.path != right.path { return left.path < right.path }
+            return left.title < right.title
+        }
+    }
+
+    private func repositoryGitIntelligence(_ repository: RepositorySummary) -> some View {
+        AetowerSection("Git intelligence", subtitle: "Remote identity, working tree state, and duplicate clone detection") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 220), spacing: AetowerDesign.Spacing.md)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.md
+                ) {
+                    gitFact("Remote", value: repository.gitRemoteKey ?? "No remote", icon: "network")
+                    gitFact("Branch", value: repository.gitBranch ?? detachedLabel(repository), icon: "arrow.triangle.branch")
+                    gitFact("HEAD", value: repository.gitHead ?? "Unknown", icon: "number")
+                    gitFact("Worktree", value: dirtyDetail(repository), icon: "pencil.and.scribble")
+                }
+
+                if repository.cloneGroupCount > 1 {
+                    AetowerInfoBanner(
+                        cloneGroupDetail(repository),
+                        title: "Duplicate clone group",
+                        systemImage: "square.stack.3d.up",
+                        tone: AetowerDesign.Status.warning,
+                        level: .warning
+                    )
+                    LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        ForEach(repository.cloneGroupRoots, id: \.self) { root in
+                            cloneRootRow(root, isCurrent: root == repository.root)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func gitFact(_ label: String, value: String, icon: String) -> some View {
+        AetowerSurface(level: .quiet, padding: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: icon)
+                    .foregroundStyle(AetowerDesign.Tone.cpu)
+                    .frame(width: AetowerDesign.Size.iconSlot)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    Text(label.uppercased())
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    Text(value)
+                        .font(AetowerDesign.Typography.compactData(size: 11))
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private func cloneRootRow(_ root: String, isCurrent: Bool) -> some View {
+        AetowerSurface(level: .quiet, padding: AetowerDesign.Spacing.sm) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                AetowerBadge(isCurrent ? "Current" : "Clone", tone: isCurrent ? AetowerDesign.Status.ready : AetowerDesign.Status.warning)
+                Text(shortPath(root))
+                    .font(AetowerDesign.Typography.compactData(size: 10))
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                Button("Reveal") {
+                    reveal(root)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         }
     }
 
@@ -738,8 +1161,13 @@ public struct RepositoryView: View {
             repositories = repositories.filter {
                 $0.attentionScore >= 8
                     || $0.violationCount > 0
-                    || $0.reviewItemCount > 0
-                    || $0.qualityIssueCount > 0
+                || $0.reviewItemCount > 0
+                || $0.qualityIssueCount > 0
+                || $0.agentGuidanceIssueCount > 0
+                || $0.agentReadinessStatus == "blocked"
+                || $0.agentReadinessStatus == "weak"
+                || $0.cloneGroupCount > 1
+                || $0.gitDirtyStatus == "dirty"
             }
         }
 
@@ -747,6 +1175,16 @@ public struct RepositoryView: View {
             repositories = repositories.filter { repository in
                 repository.name.localizedCaseInsensitiveContains(query)
                     || repository.root.localizedCaseInsensitiveContains(query)
+                    || (repository.gitRemoteKey?.localizedCaseInsensitiveContains(query) ?? false)
+                    || (repository.gitRemoteOriginUrl?.localizedCaseInsensitiveContains(query) ?? false)
+                    || (repository.gitBranch?.localizedCaseInsensitiveContains(query) ?? false)
+                    || (repository.gitHead?.localizedCaseInsensitiveContains(query) ?? false)
+                    || repository.agentReadinessStatus.localizedCaseInsensitiveContains(query)
+                    || repository.agentContractCoverage.contains {
+                        $0.label.localizedCaseInsensitiveContains(query)
+                            || $0.path.localizedCaseInsensitiveContains(query)
+                            || $0.status.localizedCaseInsensitiveContains(query)
+                    }
                     || (repository.lastBranchTouched?.localizedCaseInsensitiveContains(query) ?? false)
                     || (repository.lastWriterProcess?.localizedCaseInsensitiveContains(query) ?? false)
                     || repository.topArtifactFolders.contains {
@@ -805,12 +1243,31 @@ public struct RepositoryView: View {
                 name: inventory.repoName,
                 gitBranch: inventory.gitBranch,
                 gitHead: inventory.gitHead,
+                gitRef: inventory.gitRef,
+                gitDetachedHead: inventory.gitDetachedHead,
+                gitRemoteOriginUrl: inventory.gitRemoteOriginUrl,
+                gitRemoteKey: inventory.gitRemoteKey,
+                gitRemoteHost: inventory.gitRemoteHost,
+                gitRemoteOwner: inventory.gitRemoteOwner,
+                gitRemoteName: inventory.gitRemoteName,
+                gitDirtyStatus: inventory.gitDirtyStatus,
+                gitDirtyFileCount: inventory.gitDirtyFileCount,
+                gitDirtyTruncated: inventory.gitDirtyTruncated,
+                cloneGroupCount: inventory.cloneGroupCount,
+                cloneGroupRoots: inventory.cloneGroupRoots,
                 discoveredRoot: inventory.discoveredRoot,
                 hasAgentsMd: inventory.hasAgentsMd,
                 hasClaudeMd: inventory.hasClaudeMd,
                 claudeMdBytes: inventory.claudeMdBytes,
                 claudeMdDelegationMaxBytes: inventory.claudeMdDelegationMaxBytes,
                 claudeMdDelegatesToAgentsMd: inventory.claudeMdDelegatesToAgentsMd,
+                agentReadinessScore: inventory.agentReadinessScore,
+                agentReadinessStatus: inventory.agentReadinessStatus,
+                agentContractMissingCount: inventory.agentContractMissingCount,
+                agentContractCoverage: inventory.agentContractCoverage,
+                agentGuidanceStatus: inventory.agentGuidanceStatus,
+                agentGuidanceIssueCount: inventory.agentGuidanceIssueCount,
+                agentGuidanceIssues: inventory.agentGuidanceIssues,
                 footprint: footprint,
                 items: itemsByRoot[inventory.repoRoot]?.map(\.1) ?? [],
                 violations: violationsByRoot[inventory.repoRoot]?.count ?? 0,
@@ -826,12 +1283,31 @@ public struct RepositoryView: View {
                     name: footprint.repoName,
                     gitBranch: footprint.lastBranchTouched,
                     gitHead: nil,
+                    gitRef: nil,
+                    gitDetachedHead: false,
+                    gitRemoteOriginUrl: nil,
+                    gitRemoteKey: nil,
+                    gitRemoteHost: nil,
+                    gitRemoteOwner: nil,
+                    gitRemoteName: nil,
+                    gitDirtyStatus: "unknown",
+                    gitDirtyFileCount: nil,
+                    gitDirtyTruncated: false,
+                    cloneGroupCount: 1,
+                    cloneGroupRoots: [],
                     discoveredRoot: nil,
                     hasAgentsMd: false,
                     hasClaudeMd: false,
                     claudeMdBytes: nil,
                     claudeMdDelegationMaxBytes: defaultClaudeMdDelegationMaxBytes,
                     claudeMdDelegatesToAgentsMd: false,
+                    agentReadinessScore: 0,
+                    agentReadinessStatus: "unknown",
+                    agentContractMissingCount: 0,
+                    agentContractCoverage: [],
+                    agentGuidanceStatus: "unknown",
+                    agentGuidanceIssueCount: 0,
+                    agentGuidanceIssues: [],
                     footprint: footprint,
                     items: itemsByRoot[footprint.repoRoot]?.map(\.1) ?? [],
                     violations: violationsByRoot[footprint.repoRoot]?.count ?? 0,
@@ -849,12 +1325,31 @@ public struct RepositoryView: View {
         name: String,
         gitBranch: String?,
         gitHead: String?,
+        gitRef: String?,
+        gitDetachedHead: Bool,
+        gitRemoteOriginUrl: String?,
+        gitRemoteKey: String?,
+        gitRemoteHost: String?,
+        gitRemoteOwner: String?,
+        gitRemoteName: String?,
+        gitDirtyStatus: String,
+        gitDirtyFileCount: UInt64?,
+        gitDirtyTruncated: Bool,
+        cloneGroupCount: UInt64,
+        cloneGroupRoots: [String],
         discoveredRoot: String?,
         hasAgentsMd: Bool,
         hasClaudeMd: Bool,
         claudeMdBytes: UInt64?,
         claudeMdDelegationMaxBytes: UInt64,
         claudeMdDelegatesToAgentsMd: Bool,
+        agentReadinessScore: UInt8,
+        agentReadinessStatus: String,
+        agentContractMissingCount: UInt64,
+        agentContractCoverage: [StorageAgentContractCoverageModel],
+        agentGuidanceStatus: String,
+        agentGuidanceIssueCount: UInt64,
+        agentGuidanceIssues: [StorageAgentGuidanceIssueModel],
         footprint: StorageRepoFootprintModel?,
         items: [StorageHygieneItemModel],
         violations: Int,
@@ -868,12 +1363,31 @@ public struct RepositoryView: View {
             name: name,
             gitBranch: gitBranch,
             gitHead: gitHead,
+            gitRef: gitRef,
+            gitDetachedHead: gitDetachedHead,
+            gitRemoteOriginUrl: gitRemoteOriginUrl,
+            gitRemoteKey: gitRemoteKey,
+            gitRemoteHost: gitRemoteHost,
+            gitRemoteOwner: gitRemoteOwner,
+            gitRemoteName: gitRemoteName,
+            gitDirtyStatus: gitDirtyStatus,
+            gitDirtyFileCount: gitDirtyFileCount,
+            gitDirtyTruncated: gitDirtyTruncated,
+            cloneGroupCount: cloneGroupCount,
+            cloneGroupRoots: cloneGroupRoots,
             discoveredRoot: discoveredRoot,
             hasAgentsMd: hasAgentsMd,
             hasClaudeMd: hasClaudeMd,
             claudeMdBytes: claudeMdBytes,
             claudeMdDelegationMaxBytes: claudeMdDelegationMaxBytes,
             claudeMdDelegatesToAgentsMd: claudeMdDelegatesToAgentsMd,
+            agentReadinessScore: agentReadinessScore,
+            agentReadinessStatus: agentReadinessStatus,
+            agentContractMissingCount: agentContractMissingCount,
+            agentContractCoverage: agentContractCoverage,
+            agentGuidanceStatus: agentGuidanceStatus,
+            agentGuidanceIssueCount: agentGuidanceIssueCount,
+            agentGuidanceIssues: agentGuidanceIssues,
             hasStorageFootprint: footprint != nil,
             currentSizeBytes: footprint?.currentSizeBytes ?? 0,
             artifactBytes: footprint?.artifactBytes ?? 0,
@@ -989,6 +1503,9 @@ public struct RepositoryView: View {
             if repository.liveSessionCount > 0 {
                 parts.append("\(repository.liveSessionCount) live Chau7 session\(repository.liveSessionCount == 1 ? "" : "s")")
             }
+            if repository.agentReadinessStatus != "ready" && repository.agentReadinessStatus != "unknown" {
+                parts.append("agent readiness \(repository.agentReadinessScore)%")
+            }
             return parts.joined(separator: " · ")
         }
 
@@ -1001,6 +1518,9 @@ public struct RepositoryView: View {
         }
         if repository.violationCount > 0 {
             parts.append("\(repository.violationCount) budget signal\(repository.violationCount == 1 ? "" : "s")")
+        }
+        if repository.agentReadinessStatus != "ready" && repository.agentReadinessStatus != "unknown" {
+            parts.append("agent readiness \(repository.agentReadinessScore)%")
         }
         if repository.qualityIssueCount > 0 {
             parts.append(repository.qualityStatusLabel)
@@ -1020,13 +1540,229 @@ public struct RepositoryView: View {
     }
 
     private func qualityOverviewLabel(_ repository: RepositorySummary) -> String {
+        if repository.agentGuidanceIssueCount > 0 {
+            return agentGuidanceShortLabel(repository)
+        }
         if repository.qualityIssueCount == 0 { return "Ok" }
         if !repository.hasAgentsMd { return "No AGENTS" }
         if !repository.hasClaudeMd { return "No CLAUDE" }
         return claudeDelegationLabel(repository)
     }
 
+    private func agentReadinessLabel(_ repository: RepositorySummary) -> String {
+        switch repository.agentReadinessStatus {
+        case "ready":
+            return "\(repository.agentReadinessScore)% ready"
+        case "partial":
+            return "\(repository.agentReadinessScore)% partial"
+        case "weak":
+            return "\(repository.agentReadinessScore)% weak"
+        case "blocked":
+            return "\(repository.agentReadinessScore)% blocked"
+        default:
+            return repository.agentContractCoverage.isEmpty ? "Unknown" : "\(repository.agentReadinessScore)%"
+        }
+    }
+
+    private func agentReadinessTone(_ repository: RepositorySummary) -> Color {
+        switch repository.agentReadinessStatus {
+        case "ready":
+            return AetowerDesign.Status.ready
+        case "partial":
+            return AetowerDesign.Tone.cpu
+        case "weak":
+            return AetowerDesign.Status.warning
+        case "blocked":
+            return AetowerDesign.Status.error
+        default:
+            return AetowerDesign.Status.neutral
+        }
+    }
+
+    private func agentReadinessDetail(_ repository: RepositorySummary) -> String {
+        let coverageCount = repository.agentContractCoverage.count
+        let missing = repository.agentContractMissingCount
+        if coverageCount == 0 {
+            return "No agent contract coverage was reported for this repository."
+        }
+        return [
+            "\(coverageCount) operating contract\(coverageCount == 1 ? "" : "s") checked",
+            "\(missing) missing",
+            "\(repository.agentGuidanceIssueCount) issue\(repository.agentGuidanceIssueCount == 1 ? "" : "s")",
+        ].joined(separator: " · ")
+    }
+
+    private func agentContractStatusLabel(_ contract: StorageAgentContractCoverageModel) -> String {
+        switch contract.status {
+        case "ok":
+            return "Ok"
+        case "partial":
+            return "Partial"
+        case "missing":
+            return "Missing"
+        case "untracked":
+            return "Untracked"
+        case "error":
+            return "Error"
+        default:
+            return contract.status.capitalized
+        }
+    }
+
+    private func agentContractTone(_ contract: StorageAgentContractCoverageModel) -> Color {
+        if contract.status == "missing" {
+            return AetowerDesign.Status.error
+        }
+        switch contract.severity {
+        case "error":
+            return AetowerDesign.Status.error
+        case "warning":
+            return AetowerDesign.Status.warning
+        case "ok":
+            return AetowerDesign.Status.ready
+        default:
+            return AetowerDesign.Status.neutral
+        }
+    }
+
+    private func contractSurfaceLevel(_ contract: StorageAgentContractCoverageModel) -> AetowerSurfaceLevel {
+        if contract.status == "missing" {
+            return .critical
+        }
+        switch contract.severity {
+        case "error":
+            return .critical
+        case "warning":
+            return .warning
+        default:
+            return .quiet
+        }
+    }
+
+    private func agentGuidanceShortLabel(_ repository: RepositorySummary) -> String {
+        switch repository.agentGuidanceStatus {
+        case "error":
+            return "\(repository.agentGuidanceIssueCount) error\(repository.agentGuidanceIssueCount == 1 ? "" : "s")"
+        case "warning":
+            return "\(repository.agentGuidanceIssueCount) warning\(repository.agentGuidanceIssueCount == 1 ? "" : "s")"
+        case "ok":
+            return "Ok"
+        default:
+            return "Unknown"
+        }
+    }
+
+    private func agentGuidanceTitle(_ repository: RepositorySummary) -> String {
+        switch repository.agentReadinessStatus {
+        case "ready":
+            return "Repository is agent-ready"
+        case "partial":
+            return "Agent readiness is partial"
+        case "weak":
+            return "Agent readiness is weak"
+        case "blocked":
+            return "Agent readiness is blocked"
+        default:
+            break
+        }
+        switch repository.agentGuidanceStatus {
+        case "error":
+            return "Agent guidance needs fixes"
+        case "warning":
+            return "Agent guidance has warnings"
+        case "ok":
+            return "Agent guidance is clean"
+        default:
+            return "Agent guidance unavailable"
+        }
+    }
+
+    private func agentGuidanceSummary(_ repository: RepositorySummary) -> String {
+        let readiness = agentReadinessDetail(repository)
+        if repository.agentGuidanceIssues.isEmpty {
+            return "Agent readiness score is \(repository.agentReadinessScore)%. \(readiness)."
+        }
+        let errorCount = repository.agentGuidanceIssues.filter { $0.severity == "error" }.count
+        let warningCount = repository.agentGuidanceIssues.filter { $0.severity == "warning" }.count
+        var parts = [
+            "Readiness \(repository.agentReadinessScore)%",
+            readiness,
+            "\(errorCount) error\(errorCount == 1 ? "" : "s")",
+            "\(warningCount) warning\(warningCount == 1 ? "" : "s")",
+            "Rules cover AGENTS.md plus .agents manifest, repo-map, commands, validation, boundaries, risks, and references contracts.",
+        ]
+        if let firstIssue = sortedAgentGuidanceIssues(repository).first {
+            parts.append("First issue: \(firstIssue.title) in \(firstIssue.path).")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func gitOverviewLabel(_ repository: RepositorySummary) -> String {
+        if repository.cloneGroupCount > 1 { return "\(repository.cloneGroupCount)x clone" }
+        if repository.gitDirtyStatus == "dirty" { return dirtyOverviewLabel(repository) }
+        if repository.gitDirtyStatus == "timeout" { return "Slow status" }
+        if repository.gitDetachedHead { return "Detached" }
+        return repository.gitBranch ?? "No branch"
+    }
+
+    private func gitOverviewTone(_ repository: RepositorySummary) -> Color {
+        if repository.cloneGroupCount > 1 { return AetowerDesign.Status.warning }
+        if repository.gitDirtyStatus == "dirty" { return AetowerDesign.Tone.energy }
+        if repository.gitDirtyStatus == "timeout" { return AetowerDesign.Status.warning }
+        if repository.gitDetachedHead { return AetowerDesign.Status.warning }
+        return AetowerDesign.Status.ready
+    }
+
+    private func gitDetail(_ repository: RepositorySummary) -> String {
+        [
+            repository.gitRemoteKey ?? "remote unavailable",
+            repository.gitBranch ?? detachedLabel(repository),
+            dirtyDetail(repository),
+        ].joined(separator: " · ")
+    }
+
+    private func dirtyOverviewLabel(_ repository: RepositorySummary) -> String {
+        guard let count = repository.gitDirtyFileCount else { return "Dirty" }
+        let suffix = repository.gitDirtyTruncated ? "+" : ""
+        return "\(count)\(suffix) dirty"
+    }
+
+    private func dirtyDetail(_ repository: RepositorySummary) -> String {
+        switch repository.gitDirtyStatus {
+        case "clean":
+            return "Clean"
+        case "dirty":
+            return dirtyOverviewLabel(repository)
+        case "timeout":
+            return "Status timed out"
+        case "unavailable":
+            return "Status unavailable"
+        default:
+            return "Status unknown"
+        }
+    }
+
+    private func detachedLabel(_ repository: RepositorySummary) -> String {
+        repository.gitDetachedHead ? "Detached HEAD" : "Branch unavailable"
+    }
+
+    private func cloneGroupLabel(_ repository: RepositorySummary) -> String {
+        repository.cloneGroupCount > 1 ? "\(repository.cloneGroupCount) clones" : "Unique"
+    }
+
+    private func cloneGroupDetail(_ repository: RepositorySummary) -> String {
+        let remote = repository.gitRemoteKey ?? "this remote"
+        return [
+            "\(repository.cloneGroupCount) local folders point at \(remote).",
+            "Keep separate only for active branches or isolated experiments.",
+            "Otherwise one canonical clone avoids duplicate build artifacts.",
+        ].joined(separator: " ")
+    }
+
     private func qualityDetail(_ repository: RepositorySummary) -> String {
+        if repository.agentGuidanceIssueCount > 0 {
+            return agentGuidanceSummary(repository)
+        }
         let claudeDetail: String
         if !repository.hasClaudeMd {
             claudeDetail = "CLAUDE.md missing"
@@ -1052,6 +1788,11 @@ public struct RepositoryView: View {
             "",
             "- Repository: \(repository.name)",
             "- Root: \(repository.root)",
+            "- Remote: \(repository.gitRemoteKey ?? "unavailable")",
+            "- Branch: \(repository.gitBranch ?? detachedLabel(repository))",
+            "- HEAD: \(repository.gitHead ?? "unknown")",
+            "- Worktree: \(dirtyDetail(repository))",
+            "- Clone group: \(cloneGroupLabel(repository))",
             "- Current footprint: \(formatBytes(repository.currentSizeBytes))",
             "- Artifact footprint: \(formatBytes(repository.artifactBytes)) across \(repository.itemCount) item(s)",
             "- Growth: \(growthLabel(repository)) (\(repository.growthWindow))",
@@ -1061,7 +1802,20 @@ public struct RepositoryView: View {
             "- Live sessions: \(repository.liveSessionCount)",
             "- Live attributed entities: \(repository.liveEntityCount)",
             "- Agent-attributed artifacts: \(formatBytes(repository.agentArtifactBytes))",
+            "- Agent readiness: \(agentReadinessLabel(repository))",
+            "- Agent contracts missing: \(repository.agentContractMissingCount)",
+            "- Agent guidance: \(agentGuidanceTitle(repository))",
             "- Quality: \(qualityDetail(repository))",
+            "",
+            "Agent contract coverage:",
+            repository.agentContractCoverage.map {
+                "- \($0.label): \($0.coveragePercent)% \($0.status) | \($0.path) | \($0.detail)"
+            }.joined(separator: "\n"),
+            "",
+            "Agent guidance issues:",
+            repository.agentGuidanceIssues.prefix(8).map {
+                "- \($0.severity.uppercased()) | \($0.path) | \($0.title): \($0.detail)"
+            }.joined(separator: "\n"),
             "",
             "Top artifact folders:",
             repository.topArtifactFolders.prefix(5).map {
