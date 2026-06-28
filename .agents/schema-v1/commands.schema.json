@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetower.dev/agents/schema-v1/commands.schema.json",
+  "title": "Agent Command Registry Contract",
+  "description": "Exact command registry with cost, mutation, approval, shell, network, and runtime metadata.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x_[A-Za-z0-9_]+$": true
+  },
+  "required": ["schema_version", "generated_by", "source_files", "commands"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "reviewed_by": { "type": "string", "minLength": 1 },
+    "reviewed_at": { "type": "string", "format": "date-time" },
+    "source_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/relativePath" },
+      "uniqueItems": true
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "properties": {
+        "shell": { "type": "string", "minLength": 1 },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "cwd": { "$ref": "#/$defs/relativePath" }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/command" }
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(~|/|.*\\.\\.).*$" }
+    },
+    "commandId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "secretRef": {
+      "type": "string",
+      "pattern": "^[A-Z_][A-Z0-9_]*$"
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["name", "kind"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_-]*$" },
+        "kind": { "enum": ["path", "glob", "command_id", "branch", "version", "string", "number", "boolean"] },
+        "required": { "type": "boolean" },
+        "description": { "type": "string", "minLength": 1 },
+        "allowed_values": {
+          "type": "array",
+          "items": { "type": ["string", "number", "boolean"] },
+          "uniqueItems": true
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": [
+        "id",
+        "cwd",
+        "purpose",
+        "cost",
+        "mutates_files",
+        "needs_approval",
+        "scope",
+        "timeout_seconds"
+      ],
+      "anyOf": [
+        { "required": ["argv"] },
+        { "required": ["shell_command"] },
+        { "required": ["command"] }
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/commandId" },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "shell_command": { "type": "string", "minLength": 1 },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "deprecated": true,
+          "description": "Legacy free-form command string. Prefer argv or shell_command plus uses_shell."
+        },
+        "uses_shell": { "type": "boolean" },
+        "interactive": { "type": "boolean" },
+        "requires_network": { "type": "boolean" },
+        "requires_secrets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/secretRef" },
+          "uniqueItems": true
+        },
+        "writes_outside_repo": { "type": "boolean" },
+        "external_effects": {
+          "enum": ["none", "local_services", "network_read", "remote_mutation", "deploy"]
+        },
+        "allowed_in_hooks": { "type": "boolean" },
+        "approval_reason": { "type": "string", "minLength": 1 },
+        "parameters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/parameter" },
+          "uniqueItems": true
+        },
+        "cwd": { "$ref": "#/$defs/relativePath" },
+        "purpose": { "type": "string", "minLength": 1 },
+        "cost": { "enum": ["instant", "low", "medium", "high", "very_high"] },
+        "mutates_files": { "type": "boolean" },
+        "needs_approval": { "type": "boolean" },
+        "scope": { "enum": ["narrow", "affected", "broad", "repo", "external"] },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "expected_runtime_seconds": { "type": "integer", "minimum": 0 },
+        "environment": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" },
+          "uniqueItems": true
+        },
+        "inputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relativePath" },
+          "uniqueItems": true
+        },
+        "outputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relativePath" },
+          "uniqueItems": true
+        },
+        "rerun": { "type": "string", "minLength": 1 },
+        "failure_notes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

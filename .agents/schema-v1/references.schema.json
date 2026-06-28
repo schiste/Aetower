@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetower.dev/agents/schema-v1/references.schema.json",
+  "title": "Agent References Contract",
+  "description": "Pointers to deeper context that agents should load only when needed.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x_[A-Za-z0-9_]+$": true
+  },
+  "required": ["schema_version", "generated_by", "source_files", "references"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "reviewed_by": { "type": "string", "minLength": 1 },
+    "reviewed_at": { "type": "string", "format": "date-time" },
+    "source_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/relativePath" },
+      "uniqueItems": true
+    },
+    "references": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/reference" }
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(~|/|.*\\.\\.).*$" }
+    },
+    "glob": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(~|/).*$" }
+    },
+    "referenceId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["id", "title", "path", "kind", "load_when"],
+      "properties": {
+        "id": { "$ref": "#/$defs/referenceId" },
+        "title": { "type": "string", "minLength": 1 },
+        "path": {
+          "anyOf": [
+            { "$ref": "#/$defs/relativePath" },
+            { "type": "string", "format": "uri" }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "adr",
+            "agent",
+            "api",
+            "architecture",
+            "configuration",
+            "contract",
+            "onboarding",
+            "ops",
+            "product",
+            "release",
+            "runbook",
+            "schema",
+            "security",
+            "style",
+            "testing",
+            "workflow",
+            "other"
+          ]
+        },
+        "load_when": { "type": "string", "minLength": 1 },
+        "applies_to_paths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/glob" },
+          "uniqueItems": true
+        },
+        "task_triggers": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "stale_after_days": { "type": "integer", "minimum": 1 },
+        "canonical": { "type": "boolean" },
+        "supersedes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/referenceId" },
+          "uniqueItems": true
+        },
+        "requires_network": { "type": "boolean" },
+        "summary": { "type": "string", "minLength": 1 },
+        "priority": { "enum": ["low", "normal", "high"] },
+        "owner": { "type": "string", "minLength": 1 },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

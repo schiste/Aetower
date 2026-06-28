@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetower.dev/agents/schema-v1/manifest.schema.json",
+  "title": "Agent Contract Manifest",
+  "description": "Root manifest for agent contract files, schema versions, generation commands, and cross-file integrity policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x_[A-Za-z0-9_]+$": true
+  },
+  "required": ["schema_version", "contracts", "integrity"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "reviewed_by": { "type": "string", "minLength": 1 },
+    "reviewed_at": { "type": "string", "format": "date-time" },
+    "source_files": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/relativePath" },
+      "uniqueItems": true
+    },
+    "command_id_namespace": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "generate_command_id": { "$ref": "#/$defs/commandId" },
+    "check_command_id": { "$ref": "#/$defs/commandId" },
+    "explain_command_id": { "$ref": "#/$defs/commandId" },
+    "contracts": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/contract" }
+    },
+    "integrity": { "$ref": "#/$defs/integrity" },
+    "freshness": { "$ref": "#/$defs/freshness" },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(~|/|.*\\.\\.).*$" }
+    },
+    "commandId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "contractId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["id", "path", "schema", "required", "generated"],
+      "properties": {
+        "id": { "$ref": "#/$defs/contractId" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "schema": {
+          "anyOf": [
+            { "$ref": "#/$defs/relativePath" },
+            { "type": "string", "format": "uri" }
+          ]
+        },
+        "required": { "type": "boolean" },
+        "generated": { "type": "boolean" },
+        "review_required": { "type": "boolean" },
+        "source_files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relativePath" },
+          "uniqueItems": true
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+:[A-Fa-f0-9]+$"
+        },
+        "owner": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "properties": {
+        "unique_id_namespaces": {
+          "type": "array",
+          "items": {
+            "enum": ["commands", "validation_rules", "boundary_rules", "risk_surfaces", "references", "contracts"]
+          },
+          "uniqueItems": true
+        },
+        "command_reference_files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relativePath" },
+          "uniqueItems": true
+        },
+        "source_files_exist": { "type": "boolean" },
+        "local_references_exist": { "type": "boolean" },
+        "generated_files_fresh": { "type": "boolean" },
+        "schema_validation_required": { "type": "boolean" },
+        "stale_references_forbidden": { "type": "boolean" }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "properties": {
+        "max_age_days": { "type": "integer", "minimum": 1 },
+        "hash_generated_files": { "type": "boolean" },
+        "fail_when_untracked": { "type": "boolean" },
+        "fail_when_dirty": { "type": "boolean" }
+      }
+    }
+  }
+}
