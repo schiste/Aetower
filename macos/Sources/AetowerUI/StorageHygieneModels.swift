@@ -263,6 +263,11 @@ struct StorageRepositoryInventoryModel: Decodable, Identifiable {
     let gitBranch: String?
     let gitHead: String?
     let discoveredRoot: String
+    let hasAgentsMd: Bool
+    let hasClaudeMd: Bool
+    let claudeMdBytes: UInt64?
+    let claudeMdDelegationMaxBytes: UInt64
+    let claudeMdDelegatesToAgentsMd: Bool
 }
 
 struct StorageRepoFootprintModel: Decodable, Identifiable {

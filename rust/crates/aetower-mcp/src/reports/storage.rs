@@ -14,6 +14,7 @@ const SIZE_WALK_MAX_ENTRIES: u64 = 150_000;
 const MIN_ITEM_BYTES: u64 = 1024 * 1024;
 const SCAN_TIME_BUDGET: Duration = Duration::from_millis(6_500);
 const STALE_AFTER_DAYS: u64 = 7;
+const CLAUDE_MD_DELEGATION_MAX_BYTES: u64 = 1024;
 const REPO_ARTIFACT_BUDGET_BYTES: u64 = 30 * 1024 * 1024 * 1024;
 const REPO_GROWTH_BUDGET_BYTES_PER_DAY: u64 = 2 * 1024 * 1024 * 1024;
 const TOTAL_ARTIFACT_BUDGET_BYTES: u64 = 30 * 1024 * 1024 * 1024;
@@ -241,6 +242,11 @@ struct StorageRepositoryInventoryItem {
     git_branch: Option<String>,
     git_head: Option<String>,
     discovered_root: String,
+    has_agents_md: bool,
+    has_claude_md: bool,
+    claude_md_bytes: Option<u64>,
+    claude_md_delegation_max_bytes: u64,
+    claude_md_delegates_to_agents_md: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -857,6 +863,7 @@ fn summarize_repository_inventory(
         .map(|(repo_root, discovered_root)| {
             let repo_path = Path::new(&repo_root);
             let (git_branch, git_head) = read_git_head(repo_path);
+            let quality = repository_quality(repo_path);
             let repo_name = repo_path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -870,6 +877,11 @@ fn summarize_repository_inventory(
                 git_branch,
                 git_head,
                 discovered_root,
+                has_agents_md: quality.has_agents_md,
+                has_claude_md: quality.has_claude_md,
+                claude_md_bytes: quality.claude_md_bytes,
+                claude_md_delegation_max_bytes: CLAUDE_MD_DELEGATION_MAX_BYTES,
+                claude_md_delegates_to_agents_md: quality.claude_md_delegates_to_agents_md,
             }
         })
         .collect();
@@ -880,6 +892,43 @@ fn summarize_repository_inventory(
             .then_with(|| left.repo_root.cmp(&right.repo_root))
     });
     repositories
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct RepositoryQuality {
+    has_agents_md: bool,
+    has_claude_md: bool,
+    claude_md_bytes: Option<u64>,
+    claude_md_delegates_to_agents_md: bool,
+}
+
+fn repository_quality(repo_root: &Path) -> RepositoryQuality {
+    let has_agents_md = repo_root.join("AGENTS.md").is_file();
+    let claude_md = repo_root.join("CLAUDE.md");
+    let has_claude_md = claude_md.is_file();
+    let claude_md_bytes = fs::metadata(&claude_md).ok().map(|metadata| metadata.len());
+    let claude_md_delegates_to_agents_md = if has_claude_md
+        && claude_md_bytes.is_some_and(|bytes| bytes <= CLAUDE_MD_DELEGATION_MAX_BYTES)
+    {
+        fs::read_to_string(&claude_md)
+            .map(|content| {
+                content
+                    .lines()
+                    .find(|line| !line.trim().is_empty())
+                    .map(|line| line.trim() == "@AGENTS.md")
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    RepositoryQuality {
+        has_agents_md,
+        has_claude_md,
+        claude_md_bytes,
+        claude_md_delegates_to_agents_md,
+    }
 }
 
 fn build_cleanup_recipes(items: &[StorageHygieneItem]) -> Vec<StorageCleanupRecipe> {
@@ -2257,6 +2306,84 @@ mod tests {
                 .any(|repo| repo["git_branch"] == "feature/clean")
         );
         assert!(footprints.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_reports_repository_agent_guidance_quality() {
+        let root = test_root("repository-quality");
+        let valid_repo = root.join("ValidGuidance");
+        let invalid_repo = root.join("InvalidGuidance");
+        let oversized_repo = root.join("OversizedGuidance");
+        create_git_repo(&valid_repo, "main");
+        create_git_repo(&invalid_repo, "main");
+        create_git_repo(&oversized_repo, "main");
+        if let Err(error) = fs::write(valid_repo.join("AGENTS.md"), "# Agent guidance\n") {
+            panic!("write AGENTS.md: {error}");
+        }
+        if let Err(error) = fs::write(
+            valid_repo.join("CLAUDE.md"),
+            "@AGENTS.md\n\n## Claude Code\n\nSupplemental Claude-specific notes.\n",
+        ) {
+            panic!("write CLAUDE.md: {error}");
+        }
+        if let Err(error) = fs::write(invalid_repo.join("CLAUDE.md"), "# Claude guidance\n") {
+            panic!("write invalid CLAUDE.md: {error}");
+        }
+        if let Err(error) = fs::write(
+            oversized_repo.join("CLAUDE.md"),
+            format!(
+                "@AGENTS.md\n{}",
+                "x".repeat(CLAUDE_MD_DELEGATION_MAX_BYTES as usize)
+            ),
+        ) {
+            panic!("write oversized CLAUDE.md: {error}");
+        }
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let value: serde_json::Value = match serde_json::from_str(&json) {
+            Ok(value) => value,
+            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+        };
+        let inventory = match value["repository_inventory"].as_array() {
+            Some(inventory) => inventory,
+            None => panic!("repository inventory is an array"),
+        };
+        let valid = match inventory
+            .iter()
+            .find(|repo| repo["repo_name"] == "ValidGuidance")
+        {
+            Some(repo) => repo,
+            None => panic!("valid repo is indexed"),
+        };
+        let invalid = match inventory
+            .iter()
+            .find(|repo| repo["repo_name"] == "InvalidGuidance")
+        {
+            Some(repo) => repo,
+            None => panic!("invalid repo is indexed"),
+        };
+        let oversized = match inventory
+            .iter()
+            .find(|repo| repo["repo_name"] == "OversizedGuidance")
+        {
+            Some(repo) => repo,
+            None => panic!("oversized repo is indexed"),
+        };
+
+        assert_eq!(valid["has_agents_md"], true);
+        assert_eq!(valid["has_claude_md"], true);
+        assert_eq!(valid["claude_md_delegates_to_agents_md"], true);
+        assert_eq!(
+            valid["claude_md_delegation_max_bytes"].as_u64(),
+            Some(CLAUDE_MD_DELEGATION_MAX_BYTES)
+        );
+        assert_eq!(invalid["has_agents_md"], false);
+        assert_eq!(invalid["has_claude_md"], true);
+        assert_eq!(invalid["claude_md_delegates_to_agents_md"], false);
+        assert_eq!(oversized["has_claude_md"], true);
+        assert_eq!(oversized["claude_md_delegates_to_agents_md"], false);
 
         let _ = fs::remove_dir_all(root);
     }
