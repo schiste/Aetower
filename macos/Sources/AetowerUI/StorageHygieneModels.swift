@@ -130,6 +130,10 @@ private struct StorageHygieneReportCacheRecord: Codable {
     let schemaVersion: UInt8
     let savedAtMillis: UInt64
     let reportCapturedAtMillis: UInt64
+    let requestedRoots: [String]
+    let scannedRoots: [String]
+    let maxDepth: UInt32
+    let limit: UInt32
     let reportJson: String
     let repositories: [StorageHygieneRepositoryCacheFingerprint]
 }
@@ -151,10 +155,14 @@ private struct StorageHygieneRepositoryCacheFingerprint: Codable {
 }
 
 enum StorageHygieneReportCacheStore {
-    private static let schemaVersion: UInt8 = 1
+    private static let schemaVersion: UInt8 = 2
     private static let fileName = "storage-hygiene-report-cache-v1.json"
 
-    static func loadIfValid() -> StorageHygieneReportCacheLoadResult {
+    static func loadIfValid(
+        roots: [String],
+        maxDepth: UInt32,
+        limit: UInt32
+    ) -> StorageHygieneReportCacheLoadResult {
         guard let url = cacheURL(createDirectory: false) else {
             return .miss("cache directory unavailable")
         }
@@ -167,6 +175,28 @@ enum StorageHygieneReportCacheStore {
         }
         guard record.schemaVersion == schemaVersion else {
             return .stale("cache schema changed")
+        }
+        let requestedRoots = normalizedRequestedRoots(roots)
+        guard record.requestedRoots == requestedRoots else {
+            return .stale("scan roots changed")
+        }
+        guard record.maxDepth == maxDepth else {
+            return .stale("scan max depth changed")
+        }
+        guard record.limit == limit else {
+            return .stale("scan result limit changed")
+        }
+        let currentScannedRoots = currentScannableRoots(for: roots)
+        guard Set(record.scannedRoots) == Set(currentScannedRoots) else {
+            return .stale("scannable root set changed")
+        }
+        let currentRepoRoots = currentRepositoryRoots(
+            scanRoots: currentScannedRoots,
+            maxDepth: Int(maxDepth)
+        )
+        let cachedRepoRoots = Set(record.repositories.map(\.repoRoot))
+        guard cachedRepoRoots == currentRepoRoots else {
+            return .stale("repository set changed")
         }
         guard let reportData = record.reportJson.data(using: .utf8) else {
             return .stale("cached report JSON is invalid")
@@ -191,12 +221,22 @@ enum StorageHygieneReportCacheStore {
         return .stale(staleReason)
     }
 
-    static func save(report: StorageHygieneReportModel, rawJSON: String) {
+    static func save(
+        report: StorageHygieneReportModel,
+        rawJSON: String,
+        roots: [String],
+        maxDepth: UInt32,
+        limit: UInt32
+    ) {
         guard let url = cacheURL(createDirectory: true) else { return }
         let record = StorageHygieneReportCacheRecord(
             schemaVersion: schemaVersion,
             savedAtMillis: currentMillis(),
             reportCapturedAtMillis: report.capturedAtMillis,
+            requestedRoots: normalizedRequestedRoots(roots),
+            scannedRoots: normalizedPathSet(report.roots),
+            maxDepth: maxDepth,
+            limit: limit,
             reportJson: rawJSON,
             repositories: report.repositoryInventory.map(StorageHygieneRepositoryCacheFingerprint.init)
         )
@@ -224,6 +264,126 @@ enum StorageHygieneReportCacheStore {
             )
         }
         return directory.appendingPathComponent(fileName, isDirectory: false)
+    }
+
+    private static func normalizedRequestedRoots(_ roots: [String]) -> [String] {
+        let selected = roots.isEmpty ? defaultStorageRoots() : roots
+        return normalizedPathSet(Array(selected.prefix(24)))
+    }
+
+    private static func currentScannableRoots(for roots: [String]) -> [String] {
+        normalizedRequestedRoots(roots).filter { path in
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+                isDirectory.boolValue
+            else {
+                return false
+            }
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
+            return values?.isSymbolicLink != true
+        }
+    }
+
+    private static func currentRepositoryRoots(
+        scanRoots: [String],
+        maxDepth: Int
+    ) -> Set<String> {
+        var repositories = Set<String>()
+        for root in scanRoots {
+            collectRepositoryRoots(
+                at: URL(fileURLWithPath: root, isDirectory: true),
+                depth: 0,
+                maxDepth: maxDepth,
+                repositories: &repositories
+            )
+        }
+        return repositories
+    }
+
+    private static func collectRepositoryRoots(
+        at url: URL,
+        depth: Int,
+        maxDepth: Int,
+        repositories: inout Set<String>
+    ) {
+        guard depth <= maxDepth else { return }
+        let dotGit = url.appendingPathComponent(".git", isDirectory: false)
+        if FileManager.default.fileExists(atPath: dotGit.path) {
+            repositories.insert(normalizedPath(url.path))
+        }
+        guard depth < maxDepth else { return }
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: []
+        )) ?? []
+        for child in contents {
+            let name = child.lastPathComponent
+            guard !directoryNamesSkippedForRepoDiscovery.contains(name) else { continue }
+            let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values?.isDirectory == true, values?.isSymbolicLink != true else { continue }
+            collectRepositoryRoots(
+                at: child,
+                depth: depth + 1,
+                maxDepth: maxDepth,
+                repositories: &repositories
+            )
+        }
+    }
+
+    private static let directoryNamesSkippedForRepoDiscovery: Set<String> = [
+        ".git",
+        ".build",
+        ".cache",
+        ".gradle",
+        ".next",
+        ".swiftpm",
+        ".venv",
+        "DerivedData",
+        "build",
+        "coverage",
+        "dist",
+        "node_modules",
+        "target",
+    ]
+
+    private static func defaultStorageRoots() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        guard !home.isEmpty else { return [] }
+        return [
+            "Repositories",
+            "Downloads/Repositories",
+            "Developer",
+            "Projects",
+            ".claude",
+            ".codex",
+            ".cursor",
+            ".aider",
+            "Library/Developer/Xcode/DerivedData",
+            "Library/Caches/org.swift.swiftpm",
+            "Library/Caches/com.apple.dt.Xcode",
+        ].map { "\(home)/\($0)" }
+    }
+
+    private static func normalizedPathSet(_ paths: [String]) -> [String] {
+        Array(Set(paths.map(normalizedPath).filter { !$0.isEmpty })).sorted()
+    }
+
+    private static func normalizedPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let expanded: String
+        if trimmed == "~" {
+            expanded = FileManager.default.homeDirectoryForCurrentUser.path
+        } else if trimmed.hasPrefix("~/") {
+            expanded = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(String(trimmed.dropFirst(2)))
+                .path
+        } else {
+            expanded = trimmed
+        }
+        return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL.path
     }
 
     private static func staleReason(

@@ -1763,7 +1763,7 @@ public final class AppState {
     /// bounded and read-only; explicit refreshes call `runStorageHygieneScan`.
     func ensureStorageHygieneScan() {
         guard storageHygieneReport == nil, !storageHygieneIsLoading else { return }
-        switch StorageHygieneReportCacheStore.loadIfValid() {
+        switch StorageHygieneReportCacheStore.loadIfValid(roots: [], maxDepth: 5, limit: 80) {
         case let .hit(cache):
             storageHygieneReport = cache.report
             storageHygieneCompletedAt = Date(timeIntervalSince1970: Double(cache.savedAtMillis) / 1000.0)
@@ -1822,7 +1822,13 @@ public final class AppState {
                     self.previousStorageHygieneReport = self.storageHygieneReport
                     self.storageHygieneReport = report
                     if let rawJSON = result.json {
-                        StorageHygieneReportCacheStore.save(report: report, rawJSON: rawJSON)
+                        StorageHygieneReportCacheStore.save(
+                            report: report,
+                            rawJSON: rawJSON,
+                            roots: roots,
+                            maxDepth: maxDepth,
+                            limit: limit
+                        )
                     }
                     let baseline = StorageHygieneBaselineModel(report: report)
                     StorageHygieneBaselineStore.save(baseline)
