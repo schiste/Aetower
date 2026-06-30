@@ -664,6 +664,27 @@ public struct SettingsView: View {
             ) {
                 monitorMetricRingsControls
             }
+
+            SettingsCard(
+                title: "Storage prevention",
+                subtitle: "Optional background scans that feed warning-only storage budgets."
+            ) {
+                Toggle("Run scheduled storage scans", isOn: $settings.storageScheduledScansEnabled)
+                Text("Off by default. When enabled, Aetower uses the same non-blocking Storage scan job path and never deletes files automatically.")
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+
+                intervalSlider(
+                    title: "Scheduled scan interval",
+                    value: $settings.storageScheduledScanIntervalHours,
+                    range: 1...168,
+                    step: 1,
+                    format: "%.0fh",
+                    valueWidth: 46,
+                    note: "Storage budgets remain warning-only. Safe-tier auto-trash still requires a separate explicit opt-in policy."
+                )
+                .disabled(!settings.storageScheduledScansEnabled)
+            }
         }
     }
 
@@ -1304,6 +1325,7 @@ public struct SettingsView: View {
                     hasLoadedIntegrationDraft = true
                     state.applyNotificationSettings(settings)
                     state.applyRuntimeCollectionSettings(settings)
+                    state.applyStoragePolicySettings(settings)
                     state.applyIntegrationSettings(settings)
                     state.applyLocalMcpClientRegistrationSettings(settings)
                     appliedIntegrationSnapshot = currentIntegrationSnapshot
@@ -1388,6 +1410,7 @@ public struct SettingsView: View {
         state.clearDiagnostics()
         state.applyNotificationSettings(settings)
         state.applyRuntimeCollectionSettings(settings)
+        state.applyStoragePolicySettings(settings)
         state.applyIntegrationSettings(settings)
         state.applyLocalMcpClientRegistrationSettings(settings)
         appliedIntegrationSnapshot = currentIntegrationSnapshot

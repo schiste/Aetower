@@ -1204,6 +1204,17 @@ private struct CollectionSettingsSignature: Equatable {
     }
 }
 
+private struct StoragePolicySettingsSignature: Equatable {
+    let scheduledScansEnabled: Bool
+    let scheduledScanIntervalHours: Double
+
+    @MainActor
+    init(_ settings: SettingsStore) {
+        scheduledScansEnabled = settings.storageScheduledScansEnabled
+        scheduledScanIntervalHours = settings.storageScheduledScanIntervalHours
+    }
+}
+
 @main
 struct AetowerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -1229,6 +1240,10 @@ struct AetowerApp: App {
 
     private var collectionSettingsSignature: CollectionSettingsSignature {
         CollectionSettingsSignature(settings)
+    }
+
+    private var storagePolicySettingsSignature: StoragePolicySettingsSignature {
+        StoragePolicySettingsSignature(settings)
     }
 
     private var computedMenuBarTitle: String {
@@ -1290,6 +1305,7 @@ struct AetowerApp: App {
                 state.startLocalMcpServer(autoRegisterClients: settings.autoRegisterLocalMcpClientsEnabled)
                 state.applyNotificationSettings(settings)
                 state.applyRuntimeCollectionSettings(settings)
+                state.applyStoragePolicySettings(settings)
                 state.applyIntegrationSettings(settings)
                 // NSApplication.terminate exits before SwiftUI @State deinit,
                 // so rely on the will-terminate notification to tear down the
@@ -1325,6 +1341,9 @@ struct AetowerApp: App {
             }
             .onChange(of: collectionSettingsSignature) { _, _ in
                 state.applyRuntimeCollectionSettings(settings)
+            }
+            .onChange(of: storagePolicySettingsSignature) { _, _ in
+                state.applyStoragePolicySettings(settings)
             }
             .onChange(of: settings.autoRegisterLocalMcpClientsEnabled) { _, _ in
                 state.applyLocalMcpClientRegistrationSettings(settings)

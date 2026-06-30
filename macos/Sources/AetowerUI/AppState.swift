@@ -392,6 +392,12 @@ public final class AppState {
     @ObservationIgnored
     private var storageHygieneTask: Task<Void, Never>?
     @ObservationIgnored
+    private var storageScheduledScanTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var storageScheduledScansEnabled = false
+    @ObservationIgnored
+    private var storageScheduledScanIntervalSeconds: TimeInterval = 86_400
+    @ObservationIgnored
     private var repositoryScorecardTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored
     private var repositoryScorecardRunIDs: [String: String] = [:]
@@ -667,6 +673,8 @@ public final class AppState {
         diagnosticsLoadTask = nil
         storageHygieneTask?.cancel()
         storageHygieneTask = nil
+        storageScheduledScanTask?.cancel()
+        storageScheduledScanTask = nil
         repositoryScorecardTasks.values.forEach { $0.cancel() }
         repositoryScorecardTasks.removeAll()
         repositoryScorecardRunIDs.removeAll()
@@ -1337,6 +1345,47 @@ public final class AppState {
         refresh(force: true)
     }
 
+    public func applyStoragePolicySettings(_ settings: SettingsStore) {
+        storageScheduledScansEnabled = settings.storageScheduledScansEnabled
+        storageScheduledScanIntervalSeconds =
+            SettingsStore.normalizedStorageScheduledScanIntervalHours(
+                settings.storageScheduledScanIntervalHours
+            ) * 3600
+
+        storageScheduledScanTask?.cancel()
+        storageScheduledScanTask = nil
+
+        guard storageScheduledScansEnabled else {
+            return
+        }
+
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "storage-scheduled-scans-enabled",
+            message: "Storage scheduled scans are enabled.",
+            fields: [
+                DiagnosticsField(
+                    key: "interval_hours",
+                    value: String(format: "%.1f", storageScheduledScanIntervalSeconds / 3600)
+                )
+            ]
+        )
+        storageScheduledScanTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                let sleepNanos = await MainActor.run {
+                    self.storageScheduledScanSleepNanos()
+                }
+                try? await Task.sleep(nanoseconds: sleepNanos)
+                guard !Task.isCancelled else { break }
+                await MainActor.run {
+                    self.runScheduledStorageHygieneScanIfDue()
+                }
+            }
+        }
+    }
+
     public func applyIntegrationSettings(_ settings: SettingsStore) {
         let chromiumEndpoint = settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let privilegedHelperPath = settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2000,6 +2049,51 @@ public final class AppState {
         )
     }
 
+    private func storageScheduledScanSleepNanos() -> UInt64 {
+        guard storageScheduledScansEnabled else {
+            return 900_000_000_000
+        }
+        let now = Date()
+        let interval = max(3600, storageScheduledScanIntervalSeconds)
+        let lastScanDate = storageHygieneCompletedAt
+        let secondsUntilDue: TimeInterval
+        if let lastScanDate {
+            secondsUntilDue = max(0, interval - now.timeIntervalSince(lastScanDate))
+        } else {
+            secondsUntilDue = 30
+        }
+        // Wake at least every 15 minutes so setting changes, cancellations, and
+        // manual scans are reflected without keeping a hot timer alive.
+        let boundedSeconds = min(max(5, secondsUntilDue), 900)
+        return UInt64(boundedSeconds * 1_000_000_000)
+    }
+
+    private func runScheduledStorageHygieneScanIfDue() {
+        guard storageScheduledScansEnabled else { return }
+        guard !storageHygieneIsLoading else { return }
+
+        let interval = max(3600, storageScheduledScanIntervalSeconds)
+        if let completedAt = storageHygieneCompletedAt,
+           Date().timeIntervalSince(completedAt) < interval
+        {
+            return
+        }
+
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "storage-scheduled-scan-started",
+            message: "Started an opt-in scheduled storage prevention scan.",
+            fields: [
+                DiagnosticsField(
+                    key: "interval_hours",
+                    value: String(format: "%.1f", interval / 3600)
+                )
+            ]
+        )
+        runStorageHygieneScan(mode: "fast_changed_only")
+    }
+
     func runRepositoryScorecard(
         repoRoot: String,
         mode: String = "auto",
@@ -2498,7 +2592,7 @@ public final class AppState {
     }
 
     func runProcessAction(
-        pid: UInt32,
+        pid targetPid: UInt32,
         action: ProcessActionKind,
         reason: String? = nil,
         actionID: String? = nil,
@@ -2507,7 +2601,7 @@ public final class AppState {
         privilegedHelperApproved: Bool = false
     ) {
         processActionController.runProcessAction(
-            pid: pid,
+            pid: targetPid,
             action: action,
             reason: reason,
             actionID: actionID,
@@ -3561,17 +3655,17 @@ public final class AppState {
         }
     }
 
-    private func jsonDecoder() -> JSONDecoder {
+    private func appStateJSONDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return decoder
     }
 
     private func decodeJsonQueryResult<T: Decodable>(_ result: JsonQueryResult, as type: T.Type) -> T? {
-        guard let json = result.json, let data = json.data(using: .utf8) else {
+        guard let payload = result.json?.data(using: .utf8) else {
             return nil
         }
-        return try? jsonDecoder().decode(T.self, from: data)
+        return try? appStateJSONDecoder().decode(type, from: payload)
     }
 
     private func jsonQueryErrorMessage(_ result: JsonQueryResult, fallback: String?) -> String? {

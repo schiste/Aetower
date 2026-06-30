@@ -53,6 +53,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertFalse(store.privilegedHelperEnabled)
         XCTAssertFalse(store.telemetryEnabled)
         XCTAssertFalse(store.autoRegisterLocalMcpClientsEnabled)
+        XCTAssertFalse(store.storageScheduledScansEnabled)
         XCTAssertTrue(store.operatorSafeModeEnabled)
         XCTAssertEqual(store.exportPrivacyTier, .redacted)
         XCTAssertEqual(store.collectionProfile, .balanced)
@@ -80,6 +81,23 @@ final class SettingsStoreTests: XCTestCase {
 
         let reloaded = SettingsStore(defaults: defaults)
         XCTAssertTrue(reloaded.metricRingsFixedScaling)
+    }
+
+    func testStorageScheduledScanPreferencesPersistAndClamp() {
+        let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = SettingsStore(defaults: defaults)
+        store.storageScheduledScansEnabled = true
+        store.storageScheduledScanIntervalHours = 0.1
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertTrue(reloaded.storageScheduledScansEnabled)
+        XCTAssertEqual(
+            reloaded.storageScheduledScanIntervalHours,
+            SettingsStore.minimumStorageScheduledScanIntervalHours
+        )
     }
 
     func testChau7AgentCommandPreferencePersistsAndNormalizesBlankValues() {
@@ -137,6 +155,7 @@ final class SettingsStoreTests: XCTestCase {
         store.frictionNotificationThreshold = .nan
         store.electricityPricePerKwh = .nan
         store.gridCarbonIntensityGramsPerKwh = .nan
+        store.storageScheduledScanIntervalHours = .nan
 
         let reloaded = SettingsStore(defaults: defaults)
 
@@ -150,6 +169,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.frictionNotificationThreshold, 60.0)
         XCTAssertEqual(reloaded.electricityPricePerKwh, 0.15)
         XCTAssertEqual(reloaded.gridCarbonIntensityGramsPerKwh, 480.0)
+        XCTAssertEqual(reloaded.storageScheduledScanIntervalHours, 24.0)
     }
 
     private func makeStore() -> SettingsStore {

@@ -298,6 +298,7 @@ public final class SettingsStore {
     public nonisolated static let minimumTelemetryExportIntervalSeconds = 5.0
     public nonisolated static let minimumEngineTickSeconds = 0.5
     public nonisolated static let minimumGPUSampleIntervalSeconds = 5.0
+    public nonisolated static let minimumStorageScheduledScanIntervalHours = 1.0
 
     public var showMenuBarExtra: Bool {
         didSet { persist() }
@@ -423,6 +424,14 @@ public final class SettingsStore {
     public var metricRingsFixedScaling: Bool {
         didSet { persist() }
     }
+    /// Optional prevention scans. Disabled by default so Aetower never adds
+    /// recurring disk work unless the operator explicitly opts in.
+    public var storageScheduledScansEnabled: Bool {
+        didSet { persist() }
+    }
+    public var storageScheduledScanIntervalHours: Double {
+        didSet { persist() }
+    }
     /// Opt-in consent for VirusTotal binary-reputation lookups (off by default).
     /// The API key itself lives in the Keychain, not here.
     public var binaryReputationEnabled: Bool {
@@ -483,6 +492,11 @@ public final class SettingsStore {
             rawValue: defaults.string(forKey: Self.monitorMetricCardFocusKey) ?? ""
         ) ?? .all
         self.metricRingsFixedScaling = defaults.object(forKey: Self.metricRingsFixedScalingKey) as? Bool ?? false
+        self.storageScheduledScansEnabled =
+            defaults.object(forKey: Self.storageScheduledScansEnabledKey) as? Bool ?? false
+        self.storageScheduledScanIntervalHours = defaults.object(
+            forKey: Self.storageScheduledScanIntervalHoursKey
+        ) as? Double ?? 24.0
         self.binaryReputationEnabled = defaults.object(forKey: Self.binaryReputationEnabledKey) as? Bool ?? false
         let persistedTier = defaults.string(forKey: Self.exportPrivacyTierKey)
         let legacySensitive = defaults.object(forKey: Self.includeSensitiveExportsKey) as? Bool ?? false
@@ -554,6 +568,8 @@ public final class SettingsStore {
     private static let monitorMetricCardPlacementKey = "settings.monitorMetricCardPlacement"
     private static let monitorMetricCardFocusKey = "settings.monitorMetricCardFocus"
     private static let metricRingsFixedScalingKey = "settings.metricRingsFixedScaling"
+    private static let storageScheduledScansEnabledKey = "settings.storageScheduledScansEnabled"
+    private static let storageScheduledScanIntervalHoursKey = "settings.storageScheduledScanIntervalHours"
     private static let binaryReputationEnabledKey = "settings.binaryReputationEnabled"
     private static let exportPrivacyTierKey = "settings.exportPrivacyTier"
     private static let autoRegisterLocalMcpClientsEnabledKey = "settings.autoRegisterLocalMcpClientsEnabled"
@@ -595,6 +611,14 @@ public final class SettingsStore {
         )
         let bounded = min(Double(UInt32.max), seconds.rounded())
         return UInt32(bounded)
+    }
+
+    public nonisolated static func normalizedStorageScheduledScanIntervalHours(_ value: Double) -> Double {
+        finiteOrDefault(
+            value,
+            fallback: 24.0,
+            minimum: minimumStorageScheduledScanIntervalHours
+        )
     }
 
     public nonisolated static func milliseconds(from seconds: Double, minimumSeconds: Double) -> UInt64 {
@@ -666,6 +690,9 @@ public final class SettingsStore {
             fallback: 480.0,
             minimum: 0
         )
+        storageScheduledScanIntervalHours = Self.normalizedStorageScheduledScanIntervalHours(
+            storageScheduledScanIntervalHours
+        )
         enforceRuntimeIntervalRelationships()
     }
 
@@ -720,6 +747,8 @@ extension SettingsStore {
         monitorMetricCardPlacement = .top
         monitorMetricCardFocus = .all
         metricRingsFixedScaling = false
+        storageScheduledScansEnabled = false
+        storageScheduledScanIntervalHours = 24.0
         binaryReputationEnabled = false
         KeychainHelper.delete(account: KeychainHelper.binaryReputationAccount)
         exportPrivacyTier = .redacted
@@ -765,6 +794,11 @@ extension SettingsStore {
         defaults.set(monitorMetricCardPlacement.rawValue, forKey: Self.monitorMetricCardPlacementKey)
         defaults.set(monitorMetricCardFocus.rawValue, forKey: Self.monitorMetricCardFocusKey)
         defaults.set(metricRingsFixedScaling, forKey: Self.metricRingsFixedScalingKey)
+        defaults.set(storageScheduledScansEnabled, forKey: Self.storageScheduledScansEnabledKey)
+        defaults.set(
+            Self.normalizedStorageScheduledScanIntervalHours(storageScheduledScanIntervalHours),
+            forKey: Self.storageScheduledScanIntervalHoursKey
+        )
         defaults.set(binaryReputationEnabled, forKey: Self.binaryReputationEnabledKey)
         defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
         defaults.set(autoRegisterLocalMcpClientsEnabled, forKey: Self.autoRegisterLocalMcpClientsEnabledKey)
