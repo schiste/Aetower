@@ -91,6 +91,7 @@ private struct RepositorySummary: Identifiable {
     let liveCPUPercent: Float
     let agentArtifactBytes: UInt64
     let agentCount: Int
+    let scorecardReport: RepositoryScorecardReportModel?
 
     var attentionScore: Double {
         let artifactScore = min(Double(artifactBytes) / Double(512 * 1024 * 1024), 18)
@@ -105,7 +106,63 @@ private struct RepositorySummary: Identifiable {
         let dirtyScore = gitDirtyStatus == "dirty" ? 2.0 : 0.0
         let storageScore = artifactScore + growthScore + reviewScore + staleScore
         let runtimeScore = violationScore + liveScore + qualityScore
-        return storageScore + runtimeScore + duplicateScore + dirtyScore
+        return storageScore + runtimeScore + duplicateScore + dirtyScore + scorecardAttentionScore
+    }
+
+    var scorecardAttentionScore: Double {
+        guard let scorecardReport, scorecardReport.status == "ok" else { return 0 }
+        let aggregateScore: Double
+        if let score = scorecardReport.score {
+            if score < 5 {
+                aggregateScore = 12
+            } else if score <= 7 {
+                aggregateScore = 6
+            } else {
+                aggregateScore = 1
+            }
+        } else {
+            aggregateScore = 0
+        }
+        let criticalFailureScore = scorecardCriticalFailureCount > 0 ? 10.0 : 0.0
+        return max(aggregateScore, criticalFailureScore)
+    }
+
+    var scorecardCriticalFailureCount: Int {
+        guard let scorecardReport else { return 0 }
+        let highSeverityChecks = Set(scorecardReport.recommendations.compactMap { recommendation in
+            ["critical", "high"].contains(recommendation.severity.lowercased())
+                ? Self.normalizedScorecardCheckName(recommendation.checkName)
+                : nil
+        })
+        return scorecardReport.failedChecks.filter { check in
+            if let score = check.score, score <= 0 { return true }
+            return highSeverityChecks.contains(Self.normalizedScorecardCheckName(check.name))
+        }.count
+    }
+
+    var scorecardCaveat: String? {
+        guard let scorecardReport else {
+            return "OpenSSF Scorecard has not been run for this repository; supply-chain attention is unchanged."
+        }
+        guard scorecardReport.status == "ok" else {
+            return "OpenSSF Scorecard is unavailable for this repository (\(scorecardReport.status)); supply-chain attention is unchanged."
+        }
+        guard scorecardReport.score != nil else {
+            return "OpenSSF Scorecard completed without an aggregate score; supply-chain attention is unchanged."
+        }
+        return nil
+    }
+
+    var hasScorecardAttention: Bool {
+        scorecardAttentionScore >= 5 || scorecardCriticalFailureCount > 0
+    }
+
+    private static func normalizedScorecardCheckName(_ name: String) -> String {
+        name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+            .replacingOccurrences(of: " ", with: "-")
     }
 
     var qualityIssueCount: Int {
@@ -132,9 +189,11 @@ private struct RepositorySummary: Identifiable {
         if agentReadinessStatus == "blocked" { return "Agent blocked" }
         if agentReadinessStatus == "weak" { return "Agent weak" }
         if agentGuidanceStatus == "error" { return "Guidance" }
+        if scorecardAttentionScore >= 10 { return "Scorecard" }
         if cloneGroupCount > 1 { return "Cloned" }
         if (growthBytes ?? 0) > 0 { return "Growing" }
         if gitDirtyStatus == "dirty" { return "Dirty" }
+        if scorecardAttentionScore >= 5 { return "Scorecard" }
         if reviewItemCount > 0 { return "Review" }
         if liveSessionCount > 0 || liveEntityCount > 0 { return "Active" }
         if !hasStorageFootprint { return "Indexed" }
@@ -146,9 +205,11 @@ private struct RepositorySummary: Identifiable {
         if agentReadinessStatus == "blocked" { return AetowerDesign.Status.error }
         if agentReadinessStatus == "weak" { return AetowerDesign.Status.warning }
         if agentGuidanceStatus == "error" { return AetowerDesign.Status.error }
+        if scorecardAttentionScore >= 10 { return AetowerDesign.Status.error }
         if cloneGroupCount > 1 { return AetowerDesign.Status.warning }
         if (growthBytes ?? 0) > 512 * 1024 * 1024 { return AetowerDesign.Status.warning }
         if gitDirtyStatus == "dirty" { return AetowerDesign.Tone.energy }
+        if scorecardAttentionScore >= 5 { return AetowerDesign.Status.warning }
         if reviewItemCount > 0 { return AetowerDesign.Status.warning }
         if liveSessionCount > 0 || liveEntityCount > 0 { return AetowerDesign.Status.ready }
         return AetowerDesign.Status.neutral
@@ -156,14 +217,23 @@ private struct RepositorySummary: Identifiable {
 }
 
 private enum Chau7ContractLaunchState: Equatable {
-    case launching
+    case preparingKit
+    case verifyingKit(String)
+    case kitReady(String)
+    case openingChau7(String)
     case launched(String, warning: Bool)
     case failed(String)
 
     var label: String {
         switch self {
-        case .launching:
-            return "Launching"
+        case .preparingKit:
+            return "Preparing kit"
+        case .verifyingKit:
+            return "Verifying kit"
+        case .kitReady:
+            return "Kit ready"
+        case .openingChau7:
+            return "Opening Chau7"
         case let .launched(_, warning):
             return warning ? "Prompt pending" : "Launched"
         case .failed:
@@ -173,7 +243,7 @@ private enum Chau7ContractLaunchState: Equatable {
 
     var icon: String {
         switch self {
-        case .launching:
+        case .preparingKit, .verifyingKit, .kitReady, .openingChau7:
             return "arrow.triangle.2.circlepath"
         case let .launched(_, warning):
             return warning ? "exclamationmark.triangle" : "terminal"
@@ -184,7 +254,7 @@ private enum Chau7ContractLaunchState: Equatable {
 
     var tone: Color {
         switch self {
-        case .launching:
+        case .preparingKit, .verifyingKit, .kitReady, .openingChau7:
             return AetowerDesign.Status.neutral
         case let .launched(_, warning):
             return warning ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
@@ -195,16 +265,28 @@ private enum Chau7ContractLaunchState: Equatable {
 
     var detail: String {
         switch self {
-        case .launching:
-            return "Opening Chau7 and sending the focused prompt."
+        case .preparingKit:
+            return "Copying the local Aethyme template/schema kit into the target repository."
+        case let .verifyingKit(detail), let .kitReady(detail), let .openingChau7(detail):
+            return detail
         case let .launched(detail, _), let .failed(detail):
             return detail
         }
     }
 
     var isLaunching: Bool {
-        self == .launching
+        switch self {
+        case .preparingKit, .verifyingKit, .kitReady, .openingChau7:
+            return true
+        case .launched, .failed:
+            return false
+        }
     }
+}
+
+private enum AgentContractLaunchPromptKind: Equatable {
+    case generation
+    case reconcile
 }
 
 public struct RepositoryView: View {
@@ -217,6 +299,9 @@ public struct RepositoryView: View {
     @State private var copiedRepositoryID: String?
     @State private var copiedAgentPromptKey: String?
     @State private var chau7LaunchStatusByKey: [String: Chau7ContractLaunchState] = [:]
+    @State private var scorecardWorkflowWritingRoots: Set<String> = []
+    @State private var scorecardWorkflowStatusByRoot: [String: String] = [:]
+    @State private var scorecardWorkflowErrorsByRoot: [String: String] = [:]
     @State private var selectedAgentContractByRepository: [String: String] = [:]
 
     public init(state: AppState, settings: SettingsStore) {
@@ -555,6 +640,7 @@ public struct RepositoryView: View {
                 repositorySignals(repository)
                 repositoryAgentGuidance(repository)
                 repositoryGitIntelligence(repository)
+                repositorySupplyChainReadiness(repository)
                 repositoryActions(repository)
                 topArtifacts(repository)
                 liveContext(repository)
@@ -654,6 +740,13 @@ public struct RepositoryView: View {
                 tone: agentReadinessTone(repository)
             )
             AetowerMetricTile(
+                "Supply-chain",
+                value: scorecardReadinessLabel(repository),
+                detail: scorecardReadinessDetail(repository),
+                systemImage: "shield.lefthalf.filled",
+                tone: scorecardReadinessTone(repository)
+            )
+            AetowerMetricTile(
                 "Git state",
                 value: gitOverviewLabel(repository),
                 detail: gitDetail(repository),
@@ -744,6 +837,7 @@ public struct RepositoryView: View {
     ) -> some View {
         let key = AgentContractPrompts.key(repositoryID: repository.id, contract: contract, kind: "chau7")
         let launchState = chau7LaunchStatusByKey[key]
+        let promptKind = agentContractLaunchPromptKind(contract)
         return AetowerSurface(
             level: selected ? .selected : contractSurfaceLevel(contract),
             padding: AetowerDesign.Spacing.sm
@@ -768,12 +862,13 @@ public struct RepositoryView: View {
                     Text("\(contract.coveragePercent)%")
                         .font(AetowerDesign.Typography.metadata)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
-                    Button("Chau7 it") {
+                    Button(promptKind == .reconcile ? "Reconcile" : "Generate") {
                         launchAgentContractPromptInChau7(
                             repository,
                             contract: contract,
                             issues: agentContractIssues(repository, contract: contract),
-                            key: key
+                            key: key,
+                            promptKind: promptKind
                         )
                     }
                     .buttonStyle(.bordered)
@@ -863,6 +958,7 @@ public struct RepositoryView: View {
         let generationKey = AgentContractPrompts.key(repositoryID: repository.id, contract: contract, kind: "generate")
         let reconcileKey = AgentContractPrompts.key(repositoryID: repository.id, contract: contract, kind: "reconcile")
         let chau7Key = AgentContractPrompts.key(repositoryID: repository.id, contract: contract, kind: "chau7")
+        let promptKind = agentContractLaunchPromptKind(contract)
         let copied = copiedAgentPromptKey == generationKey || copiedAgentPromptKey == reconcileKey
         let launchState = chau7LaunchStatusByKey[chau7Key]
         return AetowerSurface(level: .quiet, padding: AetowerDesign.Spacing.sm) {
@@ -881,11 +977,11 @@ public struct RepositoryView: View {
                         tone: copied ? AetowerDesign.Status.ready : AetowerDesign.Status.neutral
                     )
                 }
-                Text("Copy or launch a one-file prompt with the contract spec embedded. The target repo does not need Aetower docs or schemas.")
+                Text("Copy a self-contained prompt, or launch Chau7 with a local Aethyme template/schema kit installed under `.aethyme/`.")
                     .font(AetowerDesign.Typography.caption)
                     .foregroundStyle(AetowerDesign.Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("The agent should use local repo evidence only, create parent `.agents/` folders if needed, and report unavailable validation explicitly.")
+                Text("The agent uses `.aethyme/agent-contracts` as reference, writes portable output to `.agents/`, and reports unavailable validation explicitly.")
                     .font(AetowerDesign.Typography.metadata)
                     .foregroundStyle(AetowerDesign.Ink.tertiary)
                     .lineLimit(1)
@@ -912,10 +1008,11 @@ public struct RepositoryView: View {
                             repository,
                             contract: contract,
                             issues: issues,
-                            key: chau7Key
+                            key: chau7Key,
+                            promptKind: promptKind
                         )
                     } label: {
-                        Label("Chau7 it", systemImage: "terminal")
+                        Label(promptKind == .reconcile ? "Chau7 reconcile" : "Chau7 generate", systemImage: "terminal")
                     }
                     .disabled(launchState?.isLaunching == true)
                     Spacer(minLength: AetowerDesign.Spacing.sm)
@@ -942,28 +1039,85 @@ public struct RepositoryView: View {
         _ repository: RepositorySummary,
         contract: StorageAgentContractCoverageModel,
         issues: [StorageAgentGuidanceIssueModel],
-        key: String
+        key: String,
+        promptKind: AgentContractLaunchPromptKind
     ) {
-        let prompt = AgentContractPrompts.generationPrompt(
-            repository: agentContractPromptContext(repository),
-            contract: contract,
-            issues: issues
-        )
-        let request = Chau7AgentLaunchRequest(
-            socketPath: settings.chau7Endpoint,
-            repositoryRoot: repository.root,
-            agentCommand: settings.chau7AgentCommand,
-            prompt: prompt
-        )
-        chau7LaunchStatusByKey[key] = .launching
+        let promptContext = agentContractPromptContext(repository)
+        let repositoryRoot = repository.root
+        let contractID = contract.id
+        let contractPath = contract.path
+        let socketPath = settings.chau7Endpoint
+        let agentCommand = settings.chau7AgentCommand
+        chau7LaunchStatusByKey[key] = .preparingKit
 
         Task {
             let nextState: Chau7ContractLaunchState
             do {
+                let kitInstall = try await Task.detached(priority: .utility) {
+                    try AethymeAgentContractKitInstaller.install(in: repositoryRoot)
+                }.value
+                let requiredKitFiles = AethymeAgentContractKitInstaller.requiredRelativePaths(
+                    forContractID: contractID,
+                    contractPath: contractPath,
+                    install: kitInstall
+                )
+                await MainActor.run {
+                    chau7LaunchStatusByKey[key] = .verifyingKit(
+                        "Waiting for \(kitInstall.relativePath) templates and schemas to be readable."
+                    )
+                }
+                try await Task.detached(priority: .utility) {
+                    try AethymeAgentContractKitInstaller.waitForInstalledFiles(
+                        in: repositoryRoot,
+                        relativePaths: requiredKitFiles
+                    )
+                }.value
+                let kitStatus = kitInstall.installed
+                    ? "Installed \(kitInstall.relativePath)."
+                    : "Reused \(kitInstall.relativePath)."
+                await MainActor.run {
+                    chau7LaunchStatusByKey[key] = .kitReady(
+                        "\(kitStatus) Verified \(requiredKitFiles.count) local kit file\(requiredKitFiles.count == 1 ? "" : "s")."
+                    )
+                }
+                try await Task.sleep(nanoseconds: 150_000_000)
+
+                let prompt: String
+                switch promptKind {
+                case .generation:
+                    prompt = AgentContractPrompts.generationPrompt(
+                        repository: promptContext,
+                        contract: contract,
+                        issues: issues,
+                        kit: kitInstall.promptContext
+                    )
+                case .reconcile:
+                    prompt = AgentContractPrompts.reconcilePrompt(
+                        repository: promptContext,
+                        contract: contract,
+                        issues: issues,
+                        kit: kitInstall.promptContext
+                    )
+                }
+                await MainActor.run {
+                    chau7LaunchStatusByKey[key] = .openingChau7(
+                        "Opening Chau7 after local kit verification; the focused prompt will be sent only after Chau7 accepts the launch."
+                    )
+                }
+                let request = Chau7AgentLaunchRequest(
+                    socketPath: socketPath,
+                    repositoryRoot: repositoryRoot,
+                    agentCommand: agentCommand,
+                    prompt: prompt
+                )
                 let result = try await Chau7AgentLauncher.launch(request)
                 let promptStatus = result.promptStatus ?? "unknown"
                 let submitDetail = result.submitConfirmation.map { " Submit: \($0)." } ?? ""
-                let detail = "\(result.summary) Prompt: \(promptStatus).\(submitDetail)"
+                let kitDetail = kitInstall.installed
+                    ? " Kit installed: \(kitInstall.relativePath)."
+                    : " Kit ready: \(kitInstall.relativePath)."
+                let excludeDetail = kitInstall.excludeUpdated ? " `.aethyme/` excluded locally." : ""
+                let detail = "\(result.summary) Prompt: \(promptStatus).\(kitDetail)\(excludeDetail)\(submitDetail)"
                 nextState = .launched(detail, warning: promptStatus != "sent")
             } catch {
                 nextState = .failed(error.localizedDescription)
@@ -972,6 +1126,131 @@ public struct RepositoryView: View {
                 chau7LaunchStatusByKey[key] = nextState
             }
         }
+    }
+
+    private func launchScorecardRemediationInChau7(
+        _ repository: RepositorySummary,
+        report: RepositoryScorecardReportModel
+    ) {
+        let key = scorecardRemediationKey(repository)
+        let promptContext = agentContractPromptContext(repository)
+        let repositoryRoot = repository.root
+        let socketPath = settings.chau7Endpoint
+        let agentCommand = settings.chau7AgentCommand
+        chau7LaunchStatusByKey[key] = .preparingKit
+
+        Task {
+            let nextState: Chau7ContractLaunchState
+            do {
+                let kitInstall = try await Task.detached(priority: .utility) {
+                    try AethymeAgentContractKitInstaller.install(in: repositoryRoot)
+                }.value
+                let requiredKitFiles = AethymeAgentContractKitInstaller.requiredBaseRelativePaths(
+                    install: kitInstall
+                )
+                await MainActor.run {
+                    chau7LaunchStatusByKey[key] = .verifyingKit(
+                        "Waiting for \(kitInstall.relativePath) base kit files to be readable."
+                    )
+                }
+                try await Task.detached(priority: .utility) {
+                    try AethymeAgentContractKitInstaller.waitForInstalledFiles(
+                        in: repositoryRoot,
+                        relativePaths: requiredKitFiles
+                    )
+                }.value
+                let kitStatus = kitInstall.installed
+                    ? "Installed \(kitInstall.relativePath)."
+                    : "Reused \(kitInstall.relativePath)."
+                await MainActor.run {
+                    chau7LaunchStatusByKey[key] = .kitReady(
+                        "\(kitStatus) Verified \(requiredKitFiles.count) local kit file\(requiredKitFiles.count == 1 ? "" : "s")."
+                    )
+                }
+                try await Task.sleep(nanoseconds: 150_000_000)
+
+                let prompt = RepositoryScorecardRemediationPrompts.remediationPrompt(
+                    repository: promptContext,
+                    remote: repository.gitRemoteKey ?? repository.gitRemoteOriginUrl,
+                    report: report,
+                    kit: kitInstall.promptContext
+                )
+                await MainActor.run {
+                    chau7LaunchStatusByKey[key] = .openingChau7(
+                        "Opening Chau7 after local Aethyme kit verification; the Scorecard remediation prompt will be sent only after Chau7 accepts the launch."
+                    )
+                }
+                let request = Chau7AgentLaunchRequest(
+                    socketPath: socketPath,
+                    repositoryRoot: repositoryRoot,
+                    agentCommand: agentCommand,
+                    prompt: prompt
+                )
+                let result = try await Chau7AgentLauncher.launch(request)
+                let promptStatus = result.promptStatus ?? "unknown"
+                let submitDetail = result.submitConfirmation.map { " Submit: \($0)." } ?? ""
+                let kitDetail = kitInstall.installed
+                    ? " Kit installed: \(kitInstall.relativePath)."
+                    : " Kit ready: \(kitInstall.relativePath)."
+                let excludeDetail = kitInstall.excludeUpdated ? " `.aethyme/` excluded locally." : ""
+                let detail = "\(result.summary) Prompt: \(promptStatus).\(kitDetail)\(excludeDetail)\(submitDetail)"
+                nextState = .launched(detail, warning: promptStatus != "sent")
+            } catch {
+                nextState = .failed(error.localizedDescription)
+            }
+            await MainActor.run {
+                chau7LaunchStatusByKey[key] = nextState
+            }
+        }
+    }
+
+    private func addScorecardGitHubAction(_ repository: RepositorySummary) {
+        let root = repository.root
+        scorecardWorkflowWritingRoots.insert(root)
+        scorecardWorkflowStatusByRoot[root] = nil
+        scorecardWorkflowErrorsByRoot[root] = nil
+
+        Task {
+            do {
+                let result = try await Task.detached(priority: .utility) {
+                    try RepositoryScorecardWorkflowWriter.write(in: root)
+                }.value
+                await MainActor.run {
+                    scorecardWorkflowWritingRoots.remove(root)
+                    scorecardWorkflowStatusByRoot[root] = result.created
+                        ? "Created \(result.relativePath) with least-permission Scorecard defaults."
+                        : "\(result.relativePath) already exists; left it unchanged."
+                    scorecardWorkflowErrorsByRoot[root] = nil
+                }
+            } catch {
+                await MainActor.run {
+                    scorecardWorkflowWritingRoots.remove(root)
+                    scorecardWorkflowStatusByRoot[root] = nil
+                    scorecardWorkflowErrorsByRoot[root] = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func agentContractLaunchPromptKind(
+        _ contract: StorageAgentContractCoverageModel
+    ) -> AgentContractLaunchPromptKind {
+        contract.present ? .reconcile : .generation
+    }
+
+    private func scorecardRemediationKey(_ repository: RepositorySummary) -> String {
+        "\(repository.id)::scorecard::remediation"
+    }
+
+    private func scorecardRemediationPrompt(
+        _ repository: RepositorySummary,
+        report: RepositoryScorecardReportModel
+    ) -> String {
+        RepositoryScorecardRemediationPrompts.remediationPrompt(
+            repository: agentContractPromptContext(repository),
+            remote: repository.gitRemoteKey ?? repository.gitRemoteOriginUrl,
+            report: report
+        )
     }
 
     private func contractFact(_ label: String, _ value: String) -> some View {
@@ -1155,6 +1434,425 @@ public struct RepositoryView: View {
                 .controlSize(.small)
             }
         }
+    }
+
+    private func repositorySupplyChainReadiness(_ repository: RepositorySummary) -> some View {
+        let report = state.repositoryScorecardReportsByRoot[repository.root]
+        let isLoading = state.repositoryScorecardLoadingRoots.contains(repository.root)
+        let error = state.repositoryScorecardErrorsByRoot[repository.root]
+        return AetowerSection("Supply-chain readiness", subtitle: "OpenSSF Scorecard checks for this GitHub repository") {
+            AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                        Image(systemName: "shield.lefthalf.filled")
+                            .font(AetowerDesign.Typography.sectionTitle)
+                            .foregroundStyle(scorecardScoreTone(report))
+                            .frame(width: AetowerDesign.Size.iconSlot)
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                            Text("OpenSSF Scorecard")
+                                .font(AetowerDesign.Typography.sectionTitle)
+                                .foregroundStyle(AetowerDesign.Ink.primary)
+                            Text(scorecardStatusDetail(report: report, isLoading: isLoading, error: error))
+                                .font(AetowerDesign.Typography.caption)
+                                .foregroundStyle(AetowerDesign.Ink.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: AetowerDesign.Spacing.md)
+                        if isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        AetowerBadge(
+                            scorecardStateLabel(report: report, isLoading: isLoading, error: error),
+                            tone: scorecardStateTone(report: report, isLoading: isLoading, error: error)
+                        )
+                        Button {
+                            state.runRepositoryScorecard(repoRoot: repository.root, mode: "auto", refresh: false)
+                        } label: {
+                            Label("Run Scorecard", systemImage: "play.fill")
+                        }
+                        Button {
+                            state.runRepositoryScorecard(
+                                repoRoot: repository.root,
+                                mode: report?.requestedMode ?? "auto",
+                                refresh: true
+                            )
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                        .disabled(report == nil)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isLoading)
+
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 150), spacing: AetowerDesign.Spacing.md)],
+                        alignment: .leading,
+                        spacing: AetowerDesign.Spacing.md
+                    ) {
+                        scorecardFact(
+                            "Score",
+                            value: scorecardScoreLabel(report),
+                            detail: "current Scorecard score",
+                            icon: "number.circle",
+                            tone: scorecardScoreTone(report)
+                        )
+                        scorecardFact(
+                            "Source",
+                            value: scorecardSourceLabel(report),
+                            detail: "API or CLI mode",
+                            icon: "antenna.radiowaves.left.and.right",
+                            tone: AetowerDesign.Status.neutral
+                        )
+                        scorecardFact(
+                            "Last scan",
+                            value: scorecardLastScanLabel(report),
+                            detail: report?.cacheHit == true ? "cached result" : "latest request",
+                            icon: "clock",
+                            tone: report == nil ? AetowerDesign.Status.neutral : AetowerDesign.Status.ready
+                        )
+                        scorecardFact(
+                            "Failed",
+                            value: "\(report?.failedChecks.count ?? 0)",
+                            detail: "checks below passing",
+                            icon: "xmark.seal",
+                            tone: (report?.failedChecks.isEmpty ?? true) ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+                        )
+                        scorecardFact(
+                            "Unavailable",
+                            value: "\(report?.unavailableChecks.count ?? 0)",
+                            detail: "checks not measured",
+                            icon: "questionmark.diamond",
+                            tone: (report?.unavailableChecks.isEmpty ?? true) ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+                        )
+                    }
+
+                    if isLoading, report == nil {
+                        AetowerInfoBanner(
+                            "Scorecard is running for this repository. The default repository scan stays read-only and does not call the Scorecard API or CLI.",
+                            title: "Scanning",
+                            systemImage: "hourglass",
+                            tone: AetowerDesign.Status.neutral,
+                            level: .quiet
+                        )
+                    } else if let error {
+                        AetowerInfoBanner(
+                            error,
+                            title: "Failed",
+                            systemImage: "exclamationmark.triangle",
+                            tone: AetowerDesign.Status.error,
+                            level: .critical
+                        )
+                    } else if let report {
+                        scorecardRemediationTools(repository, report: report)
+                        scorecardReportFindings(report)
+                    } else {
+                        AetowerInfoBanner(
+                            "Run Scorecard when you want supply-chain security checks. It supports the public OpenSSF API for public GitHub repos and the local Scorecard CLI when available.",
+                            title: "Not scanned",
+                            systemImage: "shield",
+                            tone: AetowerDesign.Status.neutral,
+                            level: .quiet
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func scorecardFact(
+        _ label: String,
+        value: String,
+        detail: String,
+        icon: String,
+        tone: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Image(systemName: icon)
+                    .foregroundStyle(tone)
+                Text(label.uppercased())
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+            }
+            Text(value)
+                .font(AetowerDesign.Typography.metricValue(size: 20, weight: .semibold))
+                .foregroundStyle(AetowerDesign.Ink.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(detail)
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
+    }
+
+    private func scorecardRemediationTools(
+        _ repository: RepositorySummary,
+        report: RepositoryScorecardReportModel
+    ) -> some View {
+        let key = scorecardRemediationKey(repository)
+        let launchState = chau7LaunchStatusByKey[key]
+        let categories = RepositoryScorecardRemediationPrompts.categories(for: report)
+        let copied = copiedAgentPromptKey == key
+        let workflowIsWriting = scorecardWorkflowWritingRoots.contains(repository.root)
+        let workflowStatus = scorecardWorkflowStatusByRoot[repository.root]
+        let workflowError = scorecardWorkflowErrorsByRoot[repository.root]
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            Divider()
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: "wrench.and.screwdriver")
+                    .foregroundStyle(report.failedChecks.isEmpty ? AetowerDesign.Status.neutral : AetowerDesign.Tone.energy)
+                    .frame(width: AetowerDesign.Size.iconSlot)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        Text("Aethyme remediation")
+                            .font(AetowerDesign.Typography.controlLabel)
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                        AetowerBadge(
+                            report.failedChecks.isEmpty ? "No failed checks" : "\(report.failedChecks.count) failed",
+                            tone: report.failedChecks.isEmpty ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+                        )
+                        if copied {
+                            AetowerBadge("Copied", tone: AetowerDesign.Status.ready)
+                        }
+                    }
+                    Text("Maps failed checks into local PR-ready edits and remote GitHub settings checklist items.")
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                Button("Copy prompt") {
+                    copy(scorecardRemediationPrompt(repository, report: report))
+                    copiedAgentPromptKey = key
+                }
+                Button {
+                    launchScorecardRemediationInChau7(repository, report: report)
+                } label: {
+                    Label("Ask Chau7 to improve Scorecard posture", systemImage: "terminal")
+                }
+                .disabled(report.failedChecks.isEmpty || launchState?.isLaunching == true)
+                Button {
+                    addScorecardGitHubAction(repository)
+                } label: {
+                    Label("Add Scorecard GitHub Action", systemImage: "plus.rectangle.on.folder")
+                }
+                .disabled(workflowIsWriting)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            if workflowIsWriting {
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Writing \(RepositoryScorecardWorkflowWriter.relativePath)")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+            } else if let workflowStatus {
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(AetowerDesign.Status.ready)
+                    AetowerBadge("Workflow ready", tone: AetowerDesign.Status.ready)
+                    Text(workflowStatus)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(2)
+                }
+            } else if let workflowError {
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(AetowerDesign.Status.error)
+                    AetowerBadge("Workflow failed", tone: AetowerDesign.Status.error)
+                    Text(workflowError)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(2)
+                }
+            }
+
+            if categories.isEmpty {
+                Text("No Aethyme remediation category is active because this Scorecard payload has no failed checks.")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+            } else {
+                HStack(alignment: .top, spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(categories, id: \.rawValue) { category in
+                        AetowerBadge(category.rawValue, tone: AetowerDesign.Status.neutral)
+                    }
+                }
+            }
+
+            if let launchState {
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    Image(systemName: launchState.icon)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                    AetowerBadge(launchState.label, tone: launchState.tone)
+                    Text(launchState.detail)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    private func scorecardReportFindings(_ report: RepositoryScorecardReportModel) -> some View {
+        let failed = Array(report.failedChecks.prefix(5))
+        let unavailable = Array(report.unavailableChecks.prefix(5))
+        let recommendations = Array(report.recommendations.prefix(3))
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            if let message = scorecardReportStateMessage(report) {
+                AetowerInfoBanner(
+                    message,
+                    title: scorecardStateLabel(report: report, isLoading: false, error: nil),
+                    systemImage: scorecardStateIcon(report),
+                    tone: scorecardStateTone(report: report, isLoading: false, error: nil),
+                    level: scorecardReportStateLevel(report)
+                )
+            }
+
+            scorecardCheckGroup(
+                "Failed checks",
+                checks: failed,
+                empty: "No failed checks reported.",
+                tone: AetowerDesign.Status.warning
+            )
+            scorecardCheckGroup(
+                "Unavailable checks",
+                checks: unavailable,
+                empty: "No unavailable checks reported.",
+                tone: AetowerDesign.Status.neutral
+            )
+            scorecardRecommendationGroup(recommendations)
+
+            if !report.warnings.isEmpty {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("WARNINGS")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    ForEach(Array(report.warnings.prefix(3)), id: \.self) { warning in
+                        HStack(alignment: .top, spacing: AetowerDesign.Spacing.xs) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundStyle(AetowerDesign.Status.warning)
+                            Text(warning)
+                                .font(AetowerDesign.Typography.caption)
+                                .foregroundStyle(AetowerDesign.Ink.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func scorecardCheckGroup(
+        _ title: String,
+        checks: [RepositoryScorecardCheckModel],
+        empty: String,
+        tone: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Text(title.uppercased())
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                AetowerBadge("\(checks.count)", tone: tone)
+            }
+            if checks.isEmpty {
+                Text(empty)
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(Array(checks.enumerated()), id: \.offset) { pair in
+                        scorecardCheckRow(pair.element, tone: tone)
+                    }
+                }
+            }
+        }
+    }
+
+    private func scorecardCheckRow(_ check: RepositoryScorecardCheckModel, tone: Color) -> some View {
+        HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: "seal")
+                .foregroundStyle(tone)
+                .frame(width: AetowerDesign.Size.iconSlot)
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                Text(check.name)
+                    .font(AetowerDesign.Typography.controlLabel)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                if !check.reason.isEmpty {
+                    Text(check.reason)
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: AetowerDesign.Spacing.sm)
+            AetowerBadge(scorecardCheckScoreLabel(check), tone: scorecardCheckTone(check))
+        }
+        .padding(.vertical, AetowerDesign.Spacing.xxs)
+    }
+
+    private func scorecardRecommendationGroup(
+        _ recommendations: [RepositoryScorecardRecommendationModel]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Text("TOP RECOMMENDATIONS")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                AetowerBadge("\(recommendations.count)", tone: AetowerDesign.Tone.energy)
+            }
+            if recommendations.isEmpty {
+                Text("No recommendations reported.")
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(Array(recommendations.enumerated()), id: \.offset) { pair in
+                        scorecardRecommendationRow(pair.element)
+                    }
+                }
+            }
+        }
+    }
+
+    private func scorecardRecommendationRow(
+        _ recommendation: RepositoryScorecardRecommendationModel
+    ) -> some View {
+        HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: "arrow.up.forward.circle")
+                .foregroundStyle(scorecardSeverityTone(recommendation.severity))
+                .frame(width: AetowerDesign.Size.iconSlot)
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.xs) {
+                    Text(recommendation.title)
+                        .font(AetowerDesign.Typography.controlLabel)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    AetowerBadge(
+                        recommendation.severity.capitalized,
+                        tone: scorecardSeverityTone(recommendation.severity)
+                    )
+                }
+                Text(recommendation.detail)
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(recommendation.checkName)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .padding(.vertical, AetowerDesign.Spacing.xxs)
     }
 
     private func repositoryActions(_ repository: RepositorySummary) -> some View {
@@ -1374,6 +2072,7 @@ public struct RepositoryView: View {
                 || $0.agentReadinessStatus == "weak"
                 || $0.cloneGroupCount > 1
                 || $0.gitDirtyStatus == "dirty"
+                || $0.hasScorecardAttention
             }
         }
 
@@ -1391,6 +2090,18 @@ public struct RepositoryView: View {
                             || $0.path.localizedCaseInsensitiveContains(query)
                             || $0.status.localizedCaseInsensitiveContains(query)
                     }
+                    || scorecardReadinessLabel(repository).localizedCaseInsensitiveContains(query)
+                    || scorecardReadinessDetail(repository).localizedCaseInsensitiveContains(query)
+                    || (repository.scorecardReport?.recommendations.contains {
+                        $0.title.localizedCaseInsensitiveContains(query)
+                            || $0.checkName.localizedCaseInsensitiveContains(query)
+                            || $0.severity.localizedCaseInsensitiveContains(query)
+                    } ?? false)
+                    || (repository.scorecardReport?.failedChecks.contains {
+                        $0.name.localizedCaseInsensitiveContains(query)
+                            || $0.outcome.localizedCaseInsensitiveContains(query)
+                            || $0.reason.localizedCaseInsensitiveContains(query)
+                    } ?? false)
                     || (repository.lastBranchTouched?.localizedCaseInsensitiveContains(query) ?? false)
                     || (repository.lastWriterProcess?.localizedCaseInsensitiveContains(query) ?? false)
                     || repository.topArtifactFolders.contains {
@@ -1563,6 +2274,10 @@ public struct RepositoryView: View {
     ) -> RepositorySummary {
         let live = liveContext(for: root)
         let agent = agentContext(for: root, report: report)
+        let scorecardReport = state.repositoryScorecardReportsByRoot[root]
+        let baseCaveats = footprint?.caveats ?? [
+            "Indexed from Git repository discovery. No tracked storage artifacts were found in the bounded hygiene scan."
+        ]
         return RepositorySummary(
             id: id,
             root: root,
@@ -1606,9 +2321,7 @@ public struct RepositoryView: View {
             lastWriterPid: footprint?.lastWriterPid,
             lastBranchTouched: footprint?.lastBranchTouched ?? gitBranch ?? gitHead,
             topArtifactFolders: footprint?.topArtifactFolders ?? [],
-            caveats: footprint?.caveats ?? [
-                "Indexed from Git repository discovery. No tracked storage artifacts were found in the bounded hygiene scan."
-            ],
+            caveats: repositoryCaveats(base: baseCaveats, scorecardReport: scorecardReport),
             violationCount: violations,
             reviewItemCount: items.filter { $0.safety != "safe" }.count,
             safeItemCount: items.filter { $0.safety == "safe" }.count,
@@ -1618,8 +2331,32 @@ public struct RepositoryView: View {
             liveMemoryBytes: live.memoryBytes,
             liveCPUPercent: live.cpuPercent,
             agentArtifactBytes: agent.artifactBytes,
-            agentCount: agent.agentCount
+            agentCount: agent.agentCount,
+            scorecardReport: scorecardReport
         )
+    }
+
+    private func repositoryCaveats(
+        base: [String],
+        scorecardReport: RepositoryScorecardReportModel?
+    ) -> [String] {
+        var caveats = base
+        if let scorecardReport {
+            if scorecardReport.status != "ok" {
+                caveats.append(
+                    "OpenSSF Scorecard is unavailable for this repository (\(scorecardReport.status)); supply-chain attention is unchanged."
+                )
+            } else if scorecardReport.score == nil {
+                caveats.append(
+                    "OpenSSF Scorecard completed without an aggregate score; supply-chain attention is unchanged."
+                )
+            }
+        } else {
+            caveats.append(
+                "OpenSSF Scorecard has not been run for this repository; supply-chain attention is unchanged."
+            )
+        }
+        return caveats
     }
 
     private func liveContext(for repoRoot: String) -> (sessionCount: Int, entityCount: Int, memoryBytes: UInt64, cpuPercent: Float) {
@@ -1698,6 +2435,176 @@ public struct RepositoryView: View {
         if growth > 512 * 1024 * 1024 { return AetowerDesign.Status.warning }
         if growth > 0 { return AetowerDesign.Tone.energy }
         return AetowerDesign.Status.ready
+    }
+
+    private func scorecardReadinessLabel(_ repository: RepositorySummary) -> String {
+        guard let report = repository.scorecardReport else { return "Not scanned" }
+        guard report.status == "ok" else { return "Unavailable" }
+        if repository.scorecardCriticalFailureCount > 0 {
+            return "\(repository.scorecardCriticalFailureCount) critical"
+        }
+        guard let score = report.score else { return "No score" }
+        if score < 5 { return "High attention" }
+        if score <= 7 { return "Medium" }
+        return "Low"
+    }
+
+    private func scorecardReadinessDetail(_ repository: RepositorySummary) -> String {
+        guard let report = repository.scorecardReport else {
+            return "Scorecard unavailable: attention unchanged"
+        }
+        guard report.status == "ok" else {
+            return "Scorecard unavailable: \(scorecardStateLabel(report: report, isLoading: false, error: nil).lowercased())"
+        }
+        let score = scorecardScoreLabel(report)
+        let failed = report.failedChecks.count
+        let unavailable = report.unavailableChecks.count
+        if repository.scorecardCriticalFailureCount > 0 {
+            return "\(repository.scorecardCriticalFailureCount) critical failed check\(repository.scorecardCriticalFailureCount == 1 ? "" : "s") · score \(score)"
+        }
+        if let numericScore = report.score {
+            if numericScore < 5 {
+                return "Score \(score) raises repository attention"
+            }
+            if numericScore <= 7 {
+                return "Score \(score) adds medium repository attention"
+            }
+            return "Score \(score) adds low repository attention"
+        }
+        return "\(failed) failed · \(unavailable) unavailable · no aggregate score"
+    }
+
+    private func scorecardReadinessTone(_ repository: RepositorySummary) -> Color {
+        if repository.scorecardAttentionScore >= 10 { return AetowerDesign.Status.error }
+        if repository.scorecardAttentionScore >= 5 { return AetowerDesign.Status.warning }
+        if repository.scorecardReport?.status == "ok" { return AetowerDesign.Status.ready }
+        return AetowerDesign.Status.neutral
+    }
+
+    private func scorecardScoreLabel(_ report: RepositoryScorecardReportModel?) -> String {
+        RepositoryScorecardPresentation.scoreLabel(report)
+    }
+
+    private func scorecardScoreTone(_ report: RepositoryScorecardReportModel?) -> Color {
+        guard let score = report?.score, score >= 0 else { return AetowerDesign.Status.neutral }
+        if score >= 7.0 { return AetowerDesign.Status.ready }
+        if score >= 5.0 { return AetowerDesign.Status.warning }
+        return AetowerDesign.Status.error
+    }
+
+    private func scorecardSourceLabel(_ report: RepositoryScorecardReportModel?) -> String {
+        RepositoryScorecardPresentation.sourceLabel(report)
+    }
+
+    private func scorecardLastScanLabel(_ report: RepositoryScorecardReportModel?) -> String {
+        guard let report else { return "Never" }
+        let millis: UInt64?
+        if let cachedAtMillis = report.cachedAtMillis {
+            millis = cachedAtMillis
+        } else if report.capturedAtMillis > 0 {
+            millis = report.capturedAtMillis
+        } else {
+            millis = nil
+        }
+        guard let millis else { return "Unknown" }
+        let date = Date(timeIntervalSince1970: Double(millis) / 1000.0)
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func scorecardStateLabel(
+        report: RepositoryScorecardReportModel?,
+        isLoading: Bool,
+        error: String?
+    ) -> String {
+        RepositoryScorecardPresentation.stateLabel(
+            report: report,
+            isLoading: isLoading,
+            error: error
+        )
+    }
+
+    private func scorecardStateTone(
+        report: RepositoryScorecardReportModel?,
+        isLoading: Bool,
+        error: String?
+    ) -> Color {
+        if isLoading { return AetowerDesign.Tone.cpu }
+        if let error, !error.isEmpty { return AetowerDesign.Status.error }
+        guard let report else { return AetowerDesign.Status.neutral }
+        switch report.status {
+        case "ok":
+            return scorecardScoreTone(report)
+        case "auth_required", "unsupported", "timeout":
+            return AetowerDesign.Status.warning
+        default:
+            return AetowerDesign.Status.error
+        }
+    }
+
+    private func scorecardStatusDetail(
+        report: RepositoryScorecardReportModel?,
+        isLoading: Bool,
+        error: String?
+    ) -> String {
+        RepositoryScorecardPresentation.statusDetail(
+            report: report,
+            isLoading: isLoading,
+            error: error
+        )
+    }
+
+    private func scorecardReportStateMessage(_ report: RepositoryScorecardReportModel) -> String? {
+        RepositoryScorecardPresentation.reportStateMessage(report)
+    }
+
+    private func scorecardReportStateLevel(_ report: RepositoryScorecardReportModel) -> AetowerSurfaceLevel {
+        switch report.status {
+        case "auth_required", "unsupported", "timeout", "rate_limited", "source_unavailable":
+            return .warning
+        case "ok":
+            return .quiet
+        default:
+            return .critical
+        }
+    }
+
+    private func scorecardStateIcon(_ report: RepositoryScorecardReportModel) -> String {
+        switch report.status {
+        case "auth_required":
+            return "person.badge.key"
+        case "unsupported":
+            return "network.slash"
+        case "timeout":
+            return "timer"
+        case "ok":
+            return "checkmark.seal"
+        default:
+            return "exclamationmark.triangle"
+        }
+    }
+
+    private func scorecardCheckScoreLabel(_ check: RepositoryScorecardCheckModel) -> String {
+        RepositoryScorecardPresentation.checkScoreLabel(check)
+    }
+
+    private func scorecardCheckTone(_ check: RepositoryScorecardCheckModel) -> Color {
+        guard let score = check.score, score >= 0 else { return AetowerDesign.Status.neutral }
+        if score >= 7.0 { return AetowerDesign.Status.ready }
+        if score >= 5.0 { return AetowerDesign.Status.warning }
+        return AetowerDesign.Status.error
+    }
+
+    private func scorecardSeverityTone(_ severity: String) -> Color {
+        switch severity.lowercased() {
+        case "critical", "high", "error":
+            return AetowerDesign.Status.error
+        case "medium", "warning":
+            return AetowerDesign.Status.warning
+        case "low", "info":
+            return AetowerDesign.Status.ready
+        default:
+            return AetowerDesign.Status.neutral
+        }
     }
 
     private func repositorySummarySentence(_ repository: RepositorySummary) -> String {
@@ -2012,7 +2919,26 @@ public struct RepositoryView: View {
     }
 
     private func optimizationBrief(for repository: RepositorySummary) -> String {
-        [
+        let agentContractCoverage = repository.agentContractCoverage.map {
+            "- \($0.label): \($0.coveragePercent)% \($0.status) | \($0.path) | \($0.detail)"
+        }.joined(separator: "\n")
+        let operatingContractIssues = repository.agentGuidanceIssues.prefix(8).map {
+            "- \($0.severity.uppercased()) | \($0.path) | \($0.title): \($0.detail)"
+        }.joined(separator: "\n")
+        let scorecardFailedChecks = repository.scorecardReport?.failedChecks.prefix(8).map {
+            "- \(scorecardCheckScoreLabel($0)) | \($0.name): \($0.reason)"
+        }.joined(separator: "\n") ?? "- Scorecard not available"
+        let scorecardRecommendations = repository.scorecardReport?.recommendations.prefix(5).map {
+            "- \($0.severity.uppercased()) | \($0.checkName): \($0.title) - \($0.detail)"
+        }.joined(separator: "\n") ?? "- Scorecard not available"
+        let caveats = repository.caveats.prefix(8).map {
+            "- \($0)"
+        }.joined(separator: "\n")
+        let topArtifactFolders = repository.topArtifactFolders.prefix(5).map {
+            "- \(formatBytes($0.sizeBytes)) | \($0.cleanupTier) | \($0.path)"
+        }.joined(separator: "\n")
+
+        var lines: [String] = [
             "# Repository optimization brief",
             "",
             "- Repository: \(repository.name)",
@@ -2035,26 +2961,33 @@ public struct RepositoryView: View {
             "- Agent contracts missing: \(repository.agentContractMissingCount)",
             "- Operating contract guidance: \(agentGuidanceTitle(repository))",
             "- Quality: \(qualityDetail(repository))",
+            "- Scorecard readiness: \(scorecardReadinessLabel(repository))",
+            "- Scorecard detail: \(scorecardReadinessDetail(repository))",
+            "- Scorecard attention contribution: \(String(format: "%.1f", repository.scorecardAttentionScore))",
             "",
             "Agent contract coverage:",
-            repository.agentContractCoverage.map {
-                "- \($0.label): \($0.coveragePercent)% \($0.status) | \($0.path) | \($0.detail)"
-            }.joined(separator: "\n"),
+            agentContractCoverage,
             "",
             "Operating contract issues:",
-            repository.agentGuidanceIssues.prefix(8).map {
-                "- \($0.severity.uppercased()) | \($0.path) | \($0.title): \($0.detail)"
-            }.joined(separator: "\n"),
+            operatingContractIssues,
+            "",
+            "Scorecard failed checks:",
+            scorecardFailedChecks,
+            "",
+            "Scorecard recommendations:",
+            scorecardRecommendations,
+            "",
+            "Caveats:",
+            caveats,
             "",
             "Top artifact folders:",
-            repository.topArtifactFolders.prefix(5).map {
-                "- \(formatBytes($0.sizeBytes)) | \($0.cleanupTier) | \($0.path)"
-            }.joined(separator: "\n"),
-            "",
-            "Recommended next step: inspect large rebuildable folders first, then decide whether cleanup cost is acceptable for the current branch/session."
+            topArtifactFolders,
         ]
-        .filter { !$0.isEmpty }
-        .joined(separator: "\n")
+        lines.append("")
+        lines.append(
+            "Recommended next step: inspect large rebuildable folders first, then decide whether cleanup cost is acceptable for the current branch/session."
+        )
+        return lines.filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     private func rebuildTimeLabel(_ seconds: UInt64?) -> String {

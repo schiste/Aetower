@@ -187,6 +187,10 @@ public struct StorageView: View {
     @State private var showCleanupBasket = false
     @State private var cleanupAuditEvents = StorageCleanupAuditLog.loadRecent()
     @State private var classificationExplanation: StorageClassificationExplanation?
+    @State private var storageVisualExplorerMode: StorageVisualExplorerMode = .treemap
+    @State private var showStorageTreemap = false
+    @State private var selectedTreemapNodeID: String?
+    @State private var storageExplorerPage = 0
 
     public init(state: AppState) {
         self.state = state
@@ -983,6 +987,7 @@ public struct StorageView: View {
             cleanupRecipesSection(report)
             cleanupAuditSection
             wholeComputerOptimizationSection(report)
+            visualExplorationSection(report)
             repoFootprintDashboard(report)
             storageGrowthTimeline(report)
             volumeStateSection(report)
@@ -2992,6 +2997,332 @@ public struct StorageView: View {
         .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    private func visualExplorationSection(_ report: StorageHygieneReportModel) -> some View {
+        let visibleItems = filteredItems(from: report)
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                Label("Visual exploration", systemImage: "square.grid.3x3.topleft.filled")
+                    .font(.headline)
+                Spacer()
+                Picker("", selection: $storageVisualExplorerMode) {
+                    ForEach(StorageVisualExplorerMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 210)
+            }
+
+            Text("Lazy spatial discovery over Rust projections. The map is loaded only on demand; the list stays paged and sorted from the current bounded projection.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if storageVisualExplorerMode == .treemap {
+                storageTreemapExplorer(report)
+            } else {
+                storageExplorerTable(visibleItems)
+            }
+        }
+        .padding(AetowerDesign.Spacing.lg)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func storageTreemapExplorer(_ report: StorageHygieneReportModel) -> some View {
+        let breadcrumbs = storageTreemapBreadcrumbs(in: report.treemapRoots)
+        let selectedNode = storageTreemapSelectedNode(in: report.treemapRoots)
+        let nodes = selectedNode?.children ?? report.treemapRoots
+        let totalBytes = nodes.reduce(UInt64(0)) { total, node in
+            sumBytes(total, node.sizeBytes)
+        }
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                if showStorageTreemap {
+                    Button("All roots") {
+                        selectedTreemapNodeID = nil
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    ForEach(breadcrumbs) { node in
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Button(node.label) {
+                            selectedTreemapNodeID = node.id
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                    }
+                    Spacer()
+                    AetowerBadge("\(nodes.count) block\(nodes.count == 1 ? "" : "s")", tone: AetowerDesign.Tone.disk)
+                    AetowerBadge(formatBytes(totalBytes), tone: AetowerDesign.Tone.memory)
+                } else {
+                    Label("Treemap is idle until requested.", systemImage: "pause.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        showStorageTreemap = true
+                    } label: {
+                        Label("Load visual map", systemImage: "square.grid.3x3")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(report.treemapRoots.isEmpty)
+                }
+            }
+
+            if showStorageTreemap {
+                if nodes.isEmpty {
+                    ContentUnavailableView(
+                        "No visual map yet",
+                        systemImage: "square.grid.3x3",
+                        description: Text("Run a scan with storage candidates, then load the map again.")
+                    )
+                    .frame(maxWidth: .infinity)
+                } else {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 150), spacing: AetowerDesign.Spacing.sm)],
+                        alignment: .leading,
+                        spacing: AetowerDesign.Spacing.sm
+                    ) {
+                        ForEach(nodes) { node in
+                            storageTreemapBlock(node, totalBytes: totalBytes)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func storageTreemapBlock(_ node: StorageTreemapNodeModel, totalBytes: UInt64) -> some View {
+        let ratio = totalBytes == 0 ? 0 : Double(node.sizeBytes) / Double(totalBytes)
+        let height = min(210, max(86, 86 + ratio * 320))
+        let color = storageTreemapColor(node.colorKey)
+        return Button {
+            if !node.children.isEmpty {
+                selectedTreemapNodeID = node.id
+            } else {
+                reveal(path: node.path)
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                HStack(alignment: .top, spacing: AetowerDesign.Spacing.xs) {
+                    Image(systemName: storageTreemapIcon(node))
+                        .foregroundStyle(color)
+                    Text(node.label)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(2)
+                    Spacer(minLength: AetowerDesign.Spacing.xs)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                Text(formatBytes(node.sizeBytes))
+                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                Text("\(node.itemCount) item\(node.itemCount == 1 ? "" : "s") · \(node.fileType)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if node.hasMore {
+                    Text("Grouped overflow")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(AetowerDesign.Spacing.md)
+            .frame(maxWidth: .infinity, minHeight: height, alignment: .topLeading)
+            .background(
+                LinearGradient(
+                    colors: [color.opacity(0.24), color.opacity(0.08)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(color.opacity(0.22), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help(node.path)
+    }
+
+    private func storageExplorerTable(_ visibleItems: [StorageHygieneItemModel]) -> some View {
+        let pageSize = 25
+        let pageCount = max(1, Int(ceil(Double(visibleItems.count) / Double(pageSize))))
+        let page = min(storageExplorerPage, pageCount - 1)
+        let pageItems = Array(visibleItems.dropFirst(page * pageSize).prefix(pageSize))
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                AetowerBadge("\(visibleItems.count) visible", tone: AetowerDesign.Tone.disk)
+                AetowerBadge("Page \(page + 1)/\(pageCount)", tone: AetowerDesign.Tone.memory)
+                Text("Sort/filter uses the same controls as Raw artifacts; MCP item pages now expose sort + offset for agent clients.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Previous") {
+                    storageExplorerPage = max(0, page - 1)
+                }
+                .disabled(page == 0)
+                Button("Next") {
+                    storageExplorerPage = min(pageCount - 1, page + 1)
+                }
+                .disabled(page >= pageCount - 1)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            if pageItems.isEmpty {
+                ContentUnavailableView(
+                    "No matching items",
+                    systemImage: "list.bullet.rectangle",
+                    description: Text("Change the filter, search text, or scan root.")
+                )
+            } else {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    storageExplorerTableHeader
+                    ForEach(pageItems) { item in
+                        storageExplorerTableRow(item)
+                    }
+                }
+            }
+        }
+    }
+
+    private var storageExplorerTableHeader: some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            Text("Item")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("Tier")
+                .frame(width: 105, alignment: .center)
+            Text("Kind")
+                .frame(width: 120, alignment: .center)
+            Text("Size")
+                .frame(width: 95, alignment: .trailing)
+            Text("Actions")
+                .frame(width: 180, alignment: .trailing)
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+    }
+
+    private func storageExplorerTableRow(_ item: StorageHygieneItemModel) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.displayName)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(item.path)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            cleanupTierBadge(item)
+                .frame(width: 105)
+            Text(item.kind)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 120)
+            Text(formatBytes(item.sizeBytes))
+                .font(.caption.weight(.semibold))
+                .frame(width: 95, alignment: .trailing)
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Button("Look") { quickLook(path: item.path) }
+                Button("Reveal") { reveal(path: item.path) }
+                Button("Stage") { stageCleanupItem(item) }
+                    .disabled(!storageItemIsTrashActionable(item))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+            .frame(width: 180, alignment: .trailing)
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+        .padding(.vertical, AetowerDesign.Spacing.xs)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func storageTreemapSelectedNode(
+        in roots: [StorageTreemapNodeModel]
+    ) -> StorageTreemapNodeModel? {
+        guard let selectedTreemapNodeID else { return nil }
+        return storageTreemapNode(id: selectedTreemapNodeID, in: roots)
+    }
+
+    private func storageTreemapNode(
+        id: String,
+        in nodes: [StorageTreemapNodeModel]
+    ) -> StorageTreemapNodeModel? {
+        for node in nodes {
+            if node.id == id {
+                return node
+            }
+            if let match = storageTreemapNode(id: id, in: node.children) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private func storageTreemapBreadcrumbs(
+        in roots: [StorageTreemapNodeModel]
+    ) -> [StorageTreemapNodeModel] {
+        guard let selectedTreemapNodeID else { return [] }
+        return storageTreemapPath(to: selectedTreemapNodeID, in: roots) ?? []
+    }
+
+    private func storageTreemapPath(
+        to id: String,
+        in nodes: [StorageTreemapNodeModel]
+    ) -> [StorageTreemapNodeModel]? {
+        for node in nodes {
+            if node.id == id {
+                return [node]
+            }
+            if let childPath = storageTreemapPath(to: id, in: node.children) {
+                return [node] + childPath
+            }
+        }
+        return nil
+    }
+
+    private func storageTreemapIcon(_ node: StorageTreemapNodeModel) -> String {
+        if node.nodeType == "root" { return "externaldrive" }
+        if !node.children.isEmpty { return "folder" }
+        switch node.colorKey {
+        case "xcode": return "hammer"
+        case "rust": return "gearshape.2"
+        case "node": return "network"
+        case "docker": return "shippingbox"
+        case "app": return "app.dashed"
+        case "system": return "internaldrive"
+        case "log": return "doc.text"
+        case "risky": return "exclamationmark.triangle"
+        default: return "doc"
+        }
+    }
+
+    private func storageTreemapColor(_ key: String) -> Color {
+        switch key {
+        case "xcode": return .blue
+        case "rust": return .orange
+        case "node": return .green
+        case "docker": return .cyan
+        case "app": return .pink
+        case "system": return .indigo
+        case "log": return .gray
+        case "file": return AetowerDesign.Tone.disk
+        case "expensive": return AetowerDesign.Status.warning
+        case "risky": return AetowerDesign.Status.error
+        default: return AetowerDesign.Tone.memory
+        }
+    }
+
     private func itemSection(_ report: StorageHygieneReportModel) -> some View {
         let visibleItems = filteredItems(from: report)
         return DisclosureGroup(isExpanded: $showRawArtifacts) {
@@ -4826,6 +5157,20 @@ private enum StorageMode: String, CaseIterable, Identifiable {
             return "Overview keeps the recommended cleanup action, current pressure, and guardrails visible."
         case .advanced:
             return "Advanced shows detailed tiers, cleanup bundles, recipes, repo growth, raw artifacts, roots, and caveats."
+        }
+    }
+}
+
+private enum StorageVisualExplorerMode: String, CaseIterable, Identifiable {
+    case treemap
+    case table
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .treemap: return "Treemap"
+        case .table: return "Table"
         }
     }
 }

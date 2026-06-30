@@ -24,6 +24,150 @@ private enum NotificationCategory: String {
     }
 }
 
+struct PreparedStorageHygieneResult: Sendable {
+    let report: StorageHygieneReportModel?
+    let baseline: StorageHygieneBaselineModel?
+    let rawJSON: String?
+    let errorMessage: String?
+    let payloadBytes: UInt64
+    let decodeMillis: UInt64
+    let cacheSaveMillis: UInt64
+}
+
+enum StorageHygieneDecodePipeline {
+    static func prepare(
+        _ result: JsonQueryResult,
+        roots: [String],
+        maxDepth: UInt32,
+        limit: UInt32,
+        mode: String,
+        saveCache: Bool
+    ) -> PreparedStorageHygieneResult {
+        guard let rawJSON = result.json else {
+            return PreparedStorageHygieneResult(
+                report: nil,
+                baseline: nil,
+                rawJSON: nil,
+                errorMessage: result.errorMessage ?? "Storage hygiene scan failed.",
+                payloadBytes: 0,
+                decodeMillis: 0,
+                cacheSaveMillis: 0
+            )
+        }
+
+        let decodeStarted = ContinuousClock.now
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard var report = try? decoder.decode(StorageHygieneReportModel.self, from: Data(rawJSON.utf8)) else {
+            return PreparedStorageHygieneResult(
+                report: nil,
+                baseline: nil,
+                rawJSON: rawJSON,
+                errorMessage: "Storage hygiene scan could not be decoded.",
+                payloadBytes: UInt64(rawJSON.utf8.count),
+                decodeMillis: 0,
+                cacheSaveMillis: 0
+            )
+        }
+        let decodeMillis = durationMillis(decodeStarted.duration(to: .now))
+        report.diagnostics.decodeMillis = decodeMillis
+        report.volumeStates = StorageVolumeCapacityEnricher.enrich(report.volumeStates)
+        let baseline = StorageHygieneBaselineModel(report: report)
+
+        let cacheStarted = ContinuousClock.now
+        if saveCache {
+            StorageHygieneReportCacheStore.save(
+                report: report,
+                rawJSON: rawJSON,
+                roots: roots,
+                maxDepth: maxDepth,
+                limit: limit,
+                mode: mode
+            )
+        }
+        StorageHygieneBaselineStore.save(baseline)
+        let cacheSaveMillis = durationMillis(cacheStarted.duration(to: .now))
+
+        return PreparedStorageHygieneResult(
+            report: report,
+            baseline: baseline,
+            rawJSON: rawJSON,
+            errorMessage: nil,
+            payloadBytes: UInt64(rawJSON.utf8.count),
+            decodeMillis: decodeMillis,
+            cacheSaveMillis: cacheSaveMillis
+        )
+    }
+
+    private static func durationMillis(_ duration: Duration) -> UInt64 {
+        let components = duration.components
+        let seconds = max(components.seconds, 0)
+        let millisFromAttoseconds = max(components.attoseconds, 0) / 1_000_000_000_000_000
+        return UInt64(seconds) * 1000 + UInt64(millisFromAttoseconds)
+    }
+}
+
+private final class StorageHygieneMainActorPublisher: @unchecked Sendable {
+    weak var state: AppState?
+
+    init(_ state: AppState) {
+        self.state = state
+    }
+
+    @MainActor
+    func publishCacheHit(_ cache: StorageHygieneReportCacheHit) {
+        state?.publishStorageHygieneCacheHit(cache)
+    }
+
+    @MainActor
+    func publishCacheStale(reason: String) {
+        state?.publishStorageHygieneCacheStale(reason: reason)
+    }
+
+    @MainActor
+    func publishPrepared(_ prepared: PreparedStorageHygieneResult) {
+        state?.publishPreparedStorageHygieneResult(prepared)
+    }
+
+    @MainActor
+    func startScan(
+        roots: [String],
+        maxDepth: UInt32,
+        limit: UInt32,
+        mode: String
+    ) {
+        state?.startStorageScanJob(
+            roots: roots,
+            maxDepth: maxDepth,
+            limit: limit,
+            mode: mode
+        )
+    }
+}
+
+private final class RepositoryScorecardMainActorPublisher: @unchecked Sendable {
+    weak var state: AppState?
+
+    init(_ state: AppState) {
+        self.state = state
+    }
+
+    @MainActor
+    func publishResult(
+        key: String,
+        runID: String,
+        requestedMode: String,
+        result: JsonQueryResult
+    ) {
+        state?.publishRepositoryScorecardResult(
+            key: key,
+            runID: runID,
+            requestedMode: requestedMode,
+            result: result
+        )
+    }
+}
+
 @MainActor
 @Observable
 public final class AppState {
@@ -161,9 +305,13 @@ public final class AppState {
     private(set) var storageHygieneReport: StorageHygieneReportModel?
     private(set) var previousStorageHygieneReport: StorageHygieneReportModel?
     private(set) var persistedStorageHygieneBaseline: StorageHygieneBaselineModel? = StorageHygieneBaselineStore.load()
+    private(set) var storageScanJob: StorageScanJobResponseModel?
     private(set) var storageHygieneIsLoading = false
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
+    private(set) var repositoryScorecardReportsByRoot: [String: RepositoryScorecardReportModel] = [:]
+    private(set) var repositoryScorecardLoadingRoots: Set<String> = []
+    private(set) var repositoryScorecardErrorsByRoot: [String: String] = [:]
     private(set) var processOpenResources: [UInt32: ProcessOpenResourcesReportModel] = [:]
     /// Result of the most recent reverse resource-holder lookup (which process
     /// holds a given file/port). Not pid-keyed — it's a system-wide query.
@@ -197,6 +345,7 @@ public final class AppState {
     private let processActionController: ProcessActionController
     private let localMcpController: LocalMcpController
     private let exportController: ExportController
+    private let storageScanController: StorageScanController
     @ObservationIgnored
     private let snapshotRefreshWorker: SnapshotRefreshWorker
     @ObservationIgnored
@@ -242,6 +391,12 @@ public final class AppState {
     private var persistenceScanTask: Task<Void, Never>?
     @ObservationIgnored
     private var storageHygieneTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var repositoryScorecardTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored
+    private var repositoryScorecardRunIDs: [String: String] = [:]
+    @ObservationIgnored
+    private let storageRootChangeMonitor = StorageRootChangeMonitor()
     @ObservationIgnored
     private var lastObservedSequence: UInt64
     @ObservationIgnored
@@ -363,12 +518,14 @@ public final class AppState {
         self.processActionController = ProcessActionController(bridge: bridge)
         self.localMcpController = LocalMcpController(bridge: bridge)
         self.exportController = ExportController(bridge: bridge)
+        self.storageScanController = StorageScanController(bridge: bridge)
         self.snapshotRefreshWorker = SnapshotRefreshWorker(
             bridge: bridge,
             initialSequence: initialSnapshot.sequence
         )
         self.snapshot = initialSnapshot
         self.lastObservedSequence = initialSnapshot.sequence
+        self.storageScanController.attach(self)
     }
 
     private static func emptySnapshot() -> SystemSnapshot {
@@ -508,6 +665,14 @@ public final class AppState {
         selfMemoryAttributionTask = nil
         diagnosticsLoadTask?.cancel()
         diagnosticsLoadTask = nil
+        storageHygieneTask?.cancel()
+        storageHygieneTask = nil
+        repositoryScorecardTasks.values.forEach { $0.cancel() }
+        repositoryScorecardTasks.removeAll()
+        repositoryScorecardRunIDs.removeAll()
+        repositoryScorecardLoadingRoots.removeAll()
+        storageScanController.stop()
+        storageRootChangeMonitor.stop()
         lagMonitor.stop()
         lagMonitoringActive = false
     }
@@ -1763,35 +1928,59 @@ public final class AppState {
     /// bounded and read-only; explicit refreshes call `runStorageHygieneScan`.
     func ensureStorageHygieneScan() {
         guard storageHygieneReport == nil, !storageHygieneIsLoading else { return }
-        switch StorageHygieneReportCacheStore.loadIfValid(roots: [], maxDepth: 5, limit: 80) {
-        case let .hit(cache):
-            storageHygieneReport = cache.report
-            storageHygieneCompletedAt = Date(timeIntervalSince1970: Double(cache.savedAtMillis) / 1000.0)
-            storageHygieneError = nil
-            recordLocalDiagnosticsEvent(
-                level: .info,
-                subsystem: .ui,
-                eventType: "storage-hygiene-cache-hit",
-                message: "Loaded cached repository/storage hygiene report.",
-                fields: [
-                    DiagnosticsField(key: "repository_count", value: String(cache.repositoryCount)),
-                    DiagnosticsField(key: "saved_at_millis", value: String(cache.savedAtMillis)),
-                    DiagnosticsField(key: "captured_at_millis", value: String(cache.report.capturedAtMillis)),
-                ]
+        storageHygieneTask?.cancel()
+        storageHygieneIsLoading = true
+        storageHygieneError = nil
+        let bridge = self.bridge
+        let publisher = StorageHygieneMainActorPublisher(self)
+        storageHygieneTask = Task.detached(priority: .background) {
+            let roots: [String] = []
+            let maxDepth: UInt32 = 5
+            let limit: UInt32 = 80
+            let cacheResult = StorageHygieneReportCacheStore.loadIfValid(
+                roots: roots,
+                maxDepth: maxDepth,
+                limit: limit
             )
-            return
-        case let .stale(reason):
-            recordLocalDiagnosticsEvent(
-                level: .info,
-                subsystem: .ui,
-                eventType: "storage-hygiene-cache-stale",
-                message: "Cached repository/storage hygiene report needs refresh.",
-                fields: [DiagnosticsField(key: "reason", value: reason)]
+
+            switch cacheResult {
+            case let .hit(cache):
+                guard !Task.isCancelled else { return }
+                await publisher.publishCacheHit(cache)
+                return
+            case let .stale(reason):
+                guard !Task.isCancelled else { return }
+                await publisher.publishCacheStale(reason: reason)
+            case .miss:
+                break
+            }
+
+            guard !Task.isCancelled else { return }
+            let indexed = bridge.storageHygieneIndexedJSON(
+                roots: roots,
+                maxDepth: maxDepth,
+                limit: limit
             )
-        case .miss:
-            break
+            let indexedPrepared = StorageHygieneDecodePipeline.prepare(
+                indexed,
+                roots: roots,
+                maxDepth: maxDepth,
+                limit: limit,
+                mode: "instant_cached",
+                saveCache: false
+            )
+            if indexedPrepared.report != nil {
+                await publisher.publishPrepared(indexedPrepared)
+            }
+
+            guard !Task.isCancelled else { return }
+            await publisher.startScan(
+                roots: roots,
+                maxDepth: maxDepth,
+                limit: limit,
+                mode: "fast_changed_only"
+            )
         }
-        runStorageHygieneScan()
     }
 
     /// On-demand read-only storage hygiene scan for build artifacts, logs,
@@ -1799,116 +1988,379 @@ public final class AppState {
     func runStorageHygieneScan(
         roots: [String] = [],
         maxDepth: UInt32 = 5,
-        limit: UInt32 = 80
+        limit: UInt32 = 80,
+        mode: String = "fast_changed_only"
     ) {
-        let bridge = self.bridge
         storageHygieneTask?.cancel()
+        startStorageScanJob(
+            roots: roots,
+            maxDepth: maxDepth,
+            limit: limit,
+            mode: mode
+        )
+    }
+
+    func runRepositoryScorecard(
+        repoRoot: String,
+        mode: String = "auto",
+        refresh: Bool = false
+    ) {
+        let key = repoRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+
+        let requestedMode = Self.normalizedRepositoryScorecardMode(mode)
+        let bridge = self.bridge
+        let publisher = RepositoryScorecardMainActorPublisher(self)
+
+        let runID = beginRepositoryScorecardRun(key: key)
+
+        repositoryScorecardTasks[key] = Task.detached(priority: .utility) { [bridge, publisher] in
+            let result = bridge.scorecardJSON(
+                repoRoot: key,
+                mode: requestedMode,
+                timeoutSeconds: 30,
+                refresh: refresh
+            )
+            guard !Task.isCancelled else { return }
+            await publisher.publishResult(
+                key: key,
+                runID: runID,
+                requestedMode: requestedMode,
+                result: result
+            )
+        }
+    }
+
+    @discardableResult
+    func beginRepositoryScorecardRun(
+        key: String,
+        runID: String = UUID().uuidString
+    ) -> String {
+        repositoryScorecardTasks[key]?.cancel()
+        repositoryScorecardRunIDs[key] = runID
+        repositoryScorecardLoadingRoots.insert(key)
+        repositoryScorecardErrorsByRoot[key] = nil
+        return runID
+    }
+
+    func publishRepositoryScorecardResult(
+        key: String,
+        runID: String,
+        requestedMode: String,
+        result: JsonQueryResult
+    ) {
+        publishRepositoryScorecardJSONResult(
+            key: key,
+            runID: runID,
+            requestedMode: requestedMode,
+            json: result.json,
+            errorMessage: result.errorMessage
+        )
+    }
+
+    func publishRepositoryScorecardJSONResult(
+        key: String,
+        runID: String,
+        requestedMode: String,
+        json: String?,
+        errorMessage: String?
+    ) {
+        guard repositoryScorecardRunIDs[key] == runID else { return }
+        repositoryScorecardLoadingRoots.remove(key)
+        repositoryScorecardTasks[key] = nil
+        repositoryScorecardRunIDs[key] = nil
+
+        let result = JsonQueryResult(json: json, errorMessage: errorMessage)
+        if let report = decodeJsonQueryResult(
+            result,
+            as: RepositoryScorecardReportModel.self
+        ) {
+            repositoryScorecardReportsByRoot[key] = report
+            repositoryScorecardErrorsByRoot[key] = nil
+            recordLocalDiagnosticsEvent(
+                level: report.status == "ok" ? .info : .warn,
+                subsystem: .ui,
+                eventType: "repository-scorecard-completed",
+                message: "Completed repository OpenSSF Scorecard request.",
+                fields: [
+                    DiagnosticsField(key: "repo_root", value: report.repoRoot),
+                    DiagnosticsField(key: "status", value: report.status),
+                    DiagnosticsField(key: "mode", value: report.mode),
+                    DiagnosticsField(key: "requested_mode", value: report.requestedMode),
+                    DiagnosticsField(key: "cache_hit", value: report.cacheHit ? "true" : "false"),
+                    DiagnosticsField(
+                        key: "failed_check_count",
+                        value: String(report.failedChecks.count)
+                    ),
+                    DiagnosticsField(
+                        key: "unavailable_check_count",
+                        value: String(report.unavailableChecks.count)
+                    ),
+                ]
+            )
+        } else {
+            let message = jsonQueryErrorMessage(
+                result,
+                fallback: "Repository Scorecard scan could not be collected."
+            ) ?? "Repository Scorecard scan failed."
+            repositoryScorecardErrorsByRoot[key] = message
+            recordLocalDiagnosticsEvent(
+                level: .warn,
+                subsystem: .ui,
+                eventType: "repository-scorecard-failed",
+                message: message,
+                fields: [
+                    DiagnosticsField(key: "repo_root", value: key),
+                    DiagnosticsField(key: "mode", value: requestedMode),
+                ]
+            )
+        }
+    }
+
+    func startStorageScanJob(
+        roots: [String],
+        maxDepth: UInt32,
+        limit: UInt32,
+        mode: String
+    ) {
         storageHygieneIsLoading = true
         storageHygieneError = nil
-        storageHygieneTask = Task(priority: .utility) { [weak self] in
-            let result = bridge.storageHygieneJSON(
-                roots: roots,
-                maxDepth: maxDepth,
-                limit: limit
-            )
-            await MainActor.run {
-                guard let self else { return }
-                guard !Task.isCancelled else { return }
-                self.storageHygieneIsLoading = false
-                if let report = self.decodeJsonQueryResult(
-                    result,
-                    as: StorageHygieneReportModel.self
-                ) {
-                    self.previousStorageHygieneReport = self.storageHygieneReport
-                    self.storageHygieneReport = report
-                    if let rawJSON = result.json {
-                        StorageHygieneReportCacheStore.save(
-                            report: report,
-                            rawJSON: rawJSON,
-                            roots: roots,
-                            maxDepth: maxDepth,
-                            limit: limit
-                        )
-                    }
-                    let baseline = StorageHygieneBaselineModel(report: report)
-                    StorageHygieneBaselineStore.save(baseline)
-                    self.persistedStorageHygieneBaseline = baseline
-                    self.storageHygieneCompletedAt = Date()
-                    self.storageHygieneError = nil
-                    self.recordLocalDiagnosticsEvent(
-                        level: report.truncated ? .warn : .info,
-                        subsystem: .ui,
-                        eventType: report.truncated
-                            ? "storage-hygiene-scan-truncated"
-                            : "storage-hygiene-scan-completed",
-                        message: "Completed read-only developer storage hygiene scan.",
-                        fields: [
-                            DiagnosticsField(
-                                key: "duration_millis",
-                                value: String(report.scanDurationMillis)
-                            ),
-                            DiagnosticsField(
-                                key: "item_count",
-                                value: String(report.summary.itemCount)
-                            ),
-                            DiagnosticsField(
-                                key: "reclaimable_bytes",
-                                value: String(report.summary.totalReclaimableBytes)
-                            ),
-                            DiagnosticsField(
-                                key: "repository_inventory_count",
-                                value: String(report.repositoryInventory.count)
-                            ),
-                            DiagnosticsField(
-                                key: "repo_storage_footprint_count",
-                                value: String(report.repoFootprints.count)
-                            ),
-                            DiagnosticsField(
-                                key: "persisted_baseline_available",
-                                value: self.persistedStorageHygieneBaseline == nil ? "false" : "true"
-                            ),
-                            DiagnosticsField(
-                                key: "budget_violation_count",
-                                value: String(report.budgetGuardrails.violations.count)
-                            ),
-                            DiagnosticsField(
-                                key: "cleanup_bundle_count",
-                                value: String(report.cleanupBundles.count)
-                            ),
-                            DiagnosticsField(
-                                key: "cleanup_bundle_bytes",
-                                value: String(
-                                    report.cleanupBundles.reduce(UInt64(0)) {
-                                        $0 + $1.estimatedReclaimableBytes
-                                    }
-                                )
-                            ),
-                            DiagnosticsField(
-                                key: "agent_hygiene_count",
-                                value: String(report.agentHygiene.agentCount)
-                            ),
-                            DiagnosticsField(
-                                key: "agent_hygiene_bytes",
-                                value: String(report.agentHygiene.totalAgentArtifactBytes)
-                            ),
-                            DiagnosticsField(
-                                key: "truncated",
-                                value: report.truncated ? "true" : "false"
-                            ),
-                        ]
-                    )
-                } else {
-                    self.storageHygieneError =
-                        result.errorMessage ?? "Storage hygiene scan could not be collected."
-                    self.recordLocalDiagnosticsEvent(
-                        level: .warn,
-                        subsystem: .ui,
-                        eventType: "storage-hygiene-scan-failed",
-                        message: self.storageHygieneError ?? "Storage hygiene scan failed."
-                    )
-                }
-            }
+        storageScanJob = nil
+        storageScanController.start(
+            roots: roots,
+            maxDepth: maxDepth,
+            limit: limit,
+            mode: mode,
+            throttleHint: storageScanThrottleHint,
+            dirtyPaths: StorageRootChangeJournal.dirtyPaths()
+        )
+    }
+
+    fileprivate func publishStorageHygieneCacheHit(_ cache: StorageHygieneReportCacheHit) {
+        guard !Task.isCancelled else { return }
+        storageHygieneIsLoading = false
+        storageHygieneReport = cache.report
+        storageRootChangeMonitor.startWatching(roots: cache.report.roots)
+        storageHygieneCompletedAt =
+            Date(timeIntervalSince1970: Double(cache.savedAtMillis) / 1000.0)
+        storageHygieneError = nil
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "storage-hygiene-cache-hit",
+            message: "Loaded cached repository/storage hygiene report.",
+            fields: [
+                DiagnosticsField(key: "repository_count", value: String(cache.repositoryCount)),
+                DiagnosticsField(key: "saved_at_millis", value: String(cache.savedAtMillis)),
+                DiagnosticsField(key: "captured_at_millis", value: String(cache.report.capturedAtMillis)),
+            ]
+        )
+    }
+
+    fileprivate func publishStorageHygieneCacheStale(reason: String) {
+        guard !Task.isCancelled else { return }
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "storage-hygiene-cache-stale",
+            message: "Cached repository/storage hygiene report needs refresh.",
+            fields: [DiagnosticsField(key: "reason", value: reason)]
+        )
+    }
+
+    func publishStorageScanJob(_ job: StorageScanJobResponseModel) {
+        storageScanJob = job
+        storageScanController.setActiveJobId(job.isActive ? job.jobId : nil)
+        switch job.status {
+        case "queued", "running", "paused":
+            storageHygieneIsLoading = true
+            storageHygieneError = nil
+        case "complete":
+            storageHygieneIsLoading = true
+            storageHygieneError = nil
+        case "cancelled":
+            storageHygieneIsLoading = false
+            storageHygieneError = "Storage scan cancelled."
+        case "failed":
+            storageHygieneIsLoading = false
+            storageHygieneError = job.errorMessage ?? "Storage scan failed."
+        default:
+            storageHygieneIsLoading = false
         }
+    }
+
+    func publishStorageScanFailure(_ message: String) {
+        storageHygieneIsLoading = false
+        storageHygieneError = message
+        recordLocalDiagnosticsEvent(
+            level: .warn,
+            subsystem: .ui,
+            eventType: "storage-scan-job-failed",
+            message: message
+        )
+    }
+
+    func publishPreparedStorageHygieneResult(
+        _ prepared: PreparedStorageHygieneResult
+    ) {
+        guard !Task.isCancelled else { return }
+        storageHygieneIsLoading = false
+        if let report = prepared.report {
+            storageScanController.setActiveJobId(nil)
+            previousStorageHygieneReport = storageHygieneReport
+            storageHygieneReport = report
+            persistedStorageHygieneBaseline = prepared.baseline
+            storageRootChangeMonitor.startWatching(roots: report.roots)
+            if report.scanMode != "instant_cached" {
+                StorageRootChangeJournal.clearDirtyPaths()
+            }
+            storageHygieneCompletedAt = Date()
+            storageHygieneError = nil
+            recordLocalDiagnosticsEvent(
+                level: report.truncated ? .warn : .info,
+                subsystem: .ui,
+                eventType: report.truncated
+                    ? "storage-hygiene-scan-truncated"
+                    : "storage-hygiene-scan-completed",
+                message: "Completed read-only developer storage hygiene scan.",
+                fields: [
+                    DiagnosticsField(
+                        key: "duration_millis",
+                        value: String(report.scanDurationMillis)
+                    ),
+                    DiagnosticsField(
+                        key: "item_count",
+                        value: String(report.summary.itemCount)
+                    ),
+                    DiagnosticsField(
+                        key: "reclaimable_bytes",
+                        value: String(report.summary.totalReclaimableBytes)
+                    ),
+                    DiagnosticsField(
+                        key: "repository_inventory_count",
+                        value: String(report.repositoryInventory.count)
+                    ),
+                    DiagnosticsField(
+                        key: "payload_bytes",
+                        value: String(prepared.payloadBytes)
+                    ),
+                    DiagnosticsField(
+                        key: "decode_millis",
+                        value: String(prepared.decodeMillis)
+                    ),
+                    DiagnosticsField(
+                        key: "cache_save_millis",
+                        value: String(prepared.cacheSaveMillis)
+                    ),
+                    DiagnosticsField(
+                        key: "scan_mode",
+                        value: report.scanMode
+                    ),
+                    DiagnosticsField(
+                        key: "root_walk_millis",
+                        value: String(report.diagnostics.rootWalkMillis)
+                    ),
+                    DiagnosticsField(
+                        key: "size_walk_millis",
+                        value: String(report.diagnostics.sizeWalkMillis)
+                    ),
+                    DiagnosticsField(
+                        key: "git_millis",
+                        value: String(report.diagnostics.gitMillis)
+                    ),
+                    DiagnosticsField(
+                        key: "sized_entry_count",
+                        value: String(report.diagnostics.sizedEntryCount)
+                    ),
+                    DiagnosticsField(
+                        key: "storage_index_hits",
+                        value: String(report.diagnostics.storageIndexHits)
+                    ),
+                    DiagnosticsField(
+                        key: "storage_index_misses",
+                        value: String(report.diagnostics.storageIndexMisses)
+                    ),
+                    DiagnosticsField(
+                        key: "lazy_git_status",
+                        value: report.diagnostics.lazyGitStatus ? "true" : "false"
+                    ),
+                    DiagnosticsField(
+                        key: "repo_storage_footprint_count",
+                        value: String(report.repoFootprints.count)
+                    ),
+                    DiagnosticsField(
+                        key: "persisted_baseline_available",
+                        value: persistedStorageHygieneBaseline == nil ? "false" : "true"
+                    ),
+                    DiagnosticsField(
+                        key: "budget_violation_count",
+                        value: String(report.budgetGuardrails.violations.count)
+                    ),
+                    DiagnosticsField(
+                        key: "cleanup_bundle_count",
+                        value: String(report.cleanupBundles.count)
+                    ),
+                    DiagnosticsField(
+                        key: "cleanup_bundle_bytes",
+                        value: String(
+                            report.cleanupBundles.reduce(UInt64(0)) {
+                                $0 + $1.estimatedReclaimableBytes
+                            }
+                        )
+                    ),
+                    DiagnosticsField(
+                        key: "agent_hygiene_count",
+                        value: String(report.agentHygiene.agentCount)
+                    ),
+                    DiagnosticsField(
+                        key: "agent_hygiene_bytes",
+                        value: String(report.agentHygiene.totalAgentArtifactBytes)
+                    ),
+                    DiagnosticsField(
+                        key: "truncated",
+                        value: report.truncated ? "true" : "false"
+                    ),
+                ]
+            )
+        } else {
+            storageScanController.setActiveJobId(nil)
+            storageHygieneError =
+                prepared.errorMessage ?? "Storage hygiene scan could not be collected."
+            recordLocalDiagnosticsEvent(
+                level: .warn,
+                subsystem: .ui,
+                eventType: "storage-hygiene-scan-failed",
+                message: storageHygieneError ?? "Storage hygiene scan failed."
+            )
+        }
+    }
+
+    func pauseStorageHygieneScan() {
+        storageScanController.pause()
+    }
+
+    func resumeStorageHygieneScan() {
+        storageScanController.resume()
+    }
+
+    func cancelStorageHygieneScan() {
+        storageScanController.cancel()
+    }
+
+    private var storageScanThrottleHint: String {
+        var hints: [String] = []
+        if snapshot.host.onBattery || snapshot.host.lowPowerMode {
+            hints.append("battery")
+        }
+        switch snapshot.host.thermalState {
+        case .serious, .critical:
+            hints.append("thermal-pressure")
+        case .fair:
+            hints.append("thermal")
+        case .nominal:
+            break
+        }
+        return hints.isEmpty ? "normal" : hints.joined(separator: ",")
     }
 
     private static func changedPersistenceItemIds(
@@ -3096,6 +3548,16 @@ public final class AppState {
         entityAnalysisErrorMessages[key] = jsonQueryErrorMessage(result, fallback: fallback)
         if entityAnalysisErrorMessages[key] == nil {
             entityAnalysisUpdatedAtByKey[key] = Date()
+        }
+    }
+
+    private static func normalizedRepositoryScorecardMode(_ mode: String) -> String {
+        let normalized = mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "public_api", "live_cli", "auto":
+            return normalized
+        default:
+            return "auto"
         }
     }
 

@@ -65,6 +65,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
     let duplicateGroups: [StorageDuplicateGroupModel]
     let appFootprints: [StorageAppFootprintModel]
     let systemDataBuckets: [StorageSystemDataBucketModel]
+    let treemapRoots: [StorageTreemapNodeModel]
     let items: [StorageHygieneItemModel]
     let roots: [String]
     let skippedRoots: [StorageSkippedRootModel]
@@ -90,6 +91,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         case duplicateGroups
         case appFootprints
         case systemDataBuckets
+        case treemapRoots
         case items
         case roots
         case skippedRoots
@@ -122,6 +124,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         appFootprints = try container.decodeIfPresent([StorageAppFootprintModel].self, forKey: .appFootprints) ?? []
         systemDataBuckets =
             try container.decodeIfPresent([StorageSystemDataBucketModel].self, forKey: .systemDataBuckets) ?? []
+        treemapRoots = try container.decodeIfPresent([StorageTreemapNodeModel].self, forKey: .treemapRoots) ?? []
         items = try container.decode([StorageHygieneItemModel].self, forKey: .items)
         roots = try container.decode([String].self, forKey: .roots)
         skippedRoots = try container.decode([StorageSkippedRootModel].self, forKey: .skippedRoots)
@@ -1057,6 +1060,20 @@ struct StorageSystemDataBucketModel: Decodable, Identifiable, Sendable {
     let recommendedAction: String
     let paths: [String]
     let requiresFullDiskAccess: Bool
+}
+
+struct StorageTreemapNodeModel: Decodable, Identifiable, Sendable {
+    let id: String
+    let path: String
+    let label: String
+    let depth: Int
+    let nodeType: String
+    let fileType: String
+    let colorKey: String
+    let sizeBytes: UInt64
+    let itemCount: Int
+    let children: [StorageTreemapNodeModel]
+    let hasMore: Bool
 }
 
 struct StorageRepositoryInventoryModel: Decodable, Identifiable, Sendable {
