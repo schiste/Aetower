@@ -16,6 +16,11 @@ private struct StorageGrowthTimelineEvent: Identifiable {
     let command: String?
     let processTree: String?
     let aiAgentSession: String?
+    let confidence: String
+    let confidenceScore: UInt8
+    let ambiguous: Bool
+    let attributionSummary: String
+    let attributionEvidence: [String]
 }
 
 private struct StorageTopOffender: Identifiable {
@@ -146,20 +151,7 @@ private enum StorageCleanupAuditLog {
     }
 
     private static func auditURL(createDirectory: Bool) -> URL? {
-        guard let baseURL = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else {
-            return nil
-        }
-        let directory = baseURL.appendingPathComponent("Aetower", isDirectory: true)
-        if createDirectory {
-            try? FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
-            )
-        }
-        return directory.appendingPathComponent(fileName, isDirectory: false)
+        storageSupportFileURL(fileName: fileName, createDirectory: createDirectory)
     }
 }
 
@@ -724,13 +716,14 @@ public struct StorageView: View {
             id: "growth|\(event.id)",
             title: event.displayName,
             path: event.path,
-            classification: "Recently grew · \(cleanupTierLabel(event.cleanupTier))",
+            classification: "Recently grew · \(cleanupTierLabel(event.cleanupTier)) · \(storageGrowthConfidenceLabel(event))",
             consequence: storageGrowthCorrelationDetail(event),
             evidence: [
                 "Current size is \(formatBytes(event.currentBytes)); previous baseline was \(formatBytes(event.previousBytes)).",
                 "Positive delta is \(formatBytes(UInt64(event.deltaBytes))).",
                 "Observed around \(storageGrowthEventTime(event)).",
-            ],
+                event.attributionSummary,
+            ].filter { !$0.isEmpty } + event.attributionEvidence,
             blockers: []
         )
     }
@@ -1937,6 +1930,26 @@ public struct StorageView: View {
                     value: formatBytes(report.budgetGuardrails.repoGrowthBudgetBytesPerDay),
                     detail: "per repo per day"
                 )
+                footprintMetric(
+                    "Free floor",
+                    value: formatBytes(report.budgetGuardrails.freeSpaceFloorBytes),
+                    detail: "\(report.budgetGuardrails.volumePressureFloorPercent)% volume floor"
+                )
+                footprintMetric(
+                    "Policy mode",
+                    value: report.budgetGuardrails.warningOnlyByDefault ? "Warn" : "Active",
+                    detail: report.budgetGuardrails.autoTrashSafeTierEnabled ? "safe auto-trash opt-in" : "no auto-trash"
+                )
+            }
+
+            if !report.budgetGuardrails.preventionSuggestions.isEmpty {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    Text("Prevention suggestions")
+                        .font(AetowerDesign.Typography.controlLabel)
+                    ForEach(report.budgetGuardrails.preventionSuggestions) { suggestion in
+                        preventionSuggestionRow(suggestion, report: report)
+                    }
+                }
             }
 
             if report.budgetGuardrails.violations.isEmpty {
@@ -1950,9 +1963,93 @@ public struct StorageView: View {
                     }
                 }
             }
+
+            if !report.budgetGuardrails.policies.isEmpty {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    Text("Policy boundaries")
+                        .font(AetowerDesign.Typography.controlLabel)
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 240), spacing: AetowerDesign.Spacing.sm)],
+                        alignment: .leading,
+                        spacing: AetowerDesign.Spacing.sm
+                    ) {
+                        ForEach(report.budgetGuardrails.policies) { policy in
+                            preventionPolicyCard(policy)
+                        }
+                    }
+                }
+            }
         }
         .padding(AetowerDesign.Spacing.md)
         .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func preventionSuggestionRow(
+        _ suggestion: StoragePreventionSuggestionModel,
+        report: StorageHygieneReportModel
+    ) -> some View {
+        AetowerSurface(level: .card, padding: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: preventionSuggestionIcon(suggestion))
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .frame(width: AetowerDesign.Size.iconSlot)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        Text(suggestion.title)
+                            .font(AetowerDesign.Typography.controlLabel)
+                        AetowerBadge(
+                            suggestion.safety.uppercased(),
+                            tone: preventionSuggestionTone(suggestion)
+                        )
+                    }
+                    Text(suggestion.detail)
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    if suggestion.estimatedReclaimableBytes > 0 {
+                        Text(formatBytes(suggestion.estimatedReclaimableBytes))
+                            .font(AetowerDesign.Typography.data)
+                    }
+                    Button {
+                        stagePreventionSuggestion(suggestion, report: report)
+                    } label: {
+                        Text(suggestion.actionLabel)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func preventionPolicyCard(_ policy: StoragePreventionPolicyModel) -> some View {
+        AetowerSurface(level: .card, padding: AetowerDesign.Spacing.sm) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    Image(systemName: policy.enabled ? "bell.badge" : "hand.raised")
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    Text(policy.title)
+                        .font(AetowerDesign.Typography.metadataStrong)
+                        .lineLimit(1)
+                    Spacer()
+                    AetowerBadge(
+                        policy.mode.uppercased(),
+                        tone: policy.enabled ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+                    )
+                }
+                Text(policy.detail)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(policy.nextStep)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private func budgetViolationRow(_ violation: StorageBudgetViolationModel) -> some View {
@@ -2964,6 +3061,10 @@ public struct StorageView: View {
                             .padding(.vertical, 3)
                             .background(AetowerDesign.Status.ready.opacity(0.12), in: Capsule())
                     }
+                    AetowerBadge(
+                        storageGrowthConfidenceLabel(event),
+                        tone: storageGrowthConfidenceTone(event)
+                    )
                 }
 
                 Text(storageGrowthEventTitle(event))
@@ -2981,6 +3082,12 @@ public struct StorageView: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                if !event.attributionEvidence.isEmpty {
+                    Text(event.attributionEvidence.prefix(2).joined(separator: " "))
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Spacer(minLength: AetowerDesign.Spacing.md)
@@ -3972,6 +4079,42 @@ public struct StorageView: View {
     private func storageGrowthEvents(
         from report: StorageHygieneReportModel
     ) -> [StorageGrowthTimelineEvent] {
+        let ledgerEvents = report.growthDeltas
+            .filter { $0.deltaBytes > 0 }
+            .sorted {
+                if $0.scanMillis == $1.scanMillis {
+                    return $0.deltaBytes > $1.deltaBytes
+                }
+                return $0.scanMillis > $1.scanMillis
+            }
+            .prefix(12)
+            .map { delta in
+                StorageGrowthTimelineEvent(
+                    id: delta.id,
+                    timestampMillis: delta.scanMillis,
+                    repoName: delta.repoName,
+                    repoRoot: delta.repoRoot,
+                    branch: delta.gitBranch ?? delta.gitHead,
+                    displayName: lastPathComponent(delta.path),
+                    path: delta.path,
+                    cleanupTier: delta.cleanupTier,
+                    deltaBytes: delta.deltaBytes,
+                    previousBytes: delta.previousPhysicalBytes,
+                    currentBytes: delta.currentPhysicalBytes,
+                    command: delta.command,
+                    processTree: delta.processTree,
+                    aiAgentSession: delta.aiAgentSession,
+                    confidence: delta.attributionConfidence,
+                    confidenceScore: delta.attributionConfidenceScore,
+                    ambiguous: delta.attributionAmbiguous,
+                    attributionSummary: delta.attributionSummary,
+                    attributionEvidence: delta.attributionEvidence
+                )
+            }
+        if !ledgerEvents.isEmpty {
+            return Array(ledgerEvents)
+        }
+
         let previousItemsByID: [String: UInt64]
         if let previousReport = state.previousStorageHygieneReport {
             previousItemsByID = previousReport.items.reduce(into: [String: UInt64]()) {
@@ -4005,7 +4148,12 @@ public struct StorageView: View {
                 currentBytes: item.sizeBytes,
                 command: item.attribution.command,
                 processTree: item.attribution.processTree,
-                aiAgentSession: item.attribution.aiAgentSession
+                aiAgentSession: item.attribution.aiAgentSession,
+                confidence: item.attribution.confidence,
+                confidenceScore: storageAttributionConfidenceScore(item.attribution.confidence),
+                ambiguous: false,
+                attributionSummary: "Baseline diff from visible Storage items; indexed writer ledger was not available.",
+                attributionEvidence: item.attribution.notes
             )
         }
         .sorted {
@@ -4025,6 +4173,9 @@ public struct StorageView: View {
 
     private func storageGrowthCorrelationDetail(_ event: StorageGrowthTimelineEvent) -> String {
         var parts: [String] = []
+        if event.ambiguous {
+            parts.append("ambiguous writer attribution")
+        }
         if let command = event.command {
             parts.append("command \(command)")
         }
@@ -4035,7 +4186,9 @@ public struct StorageView: View {
             parts.append("AI session \(session)")
         }
         if parts.isEmpty {
-            parts.append("writer unknown: Aetower needs a file-event journal to tie this jump to a command/process/session")
+            parts.append(event.attributionSummary.isEmpty ? "writer unknown: no command/process/session matched" : event.attributionSummary)
+        } else if !event.attributionSummary.isEmpty {
+            parts.append(event.attributionSummary)
         }
         return parts.joined(separator: " · ")
     }
@@ -4046,6 +4199,35 @@ public struct StorageView: View {
         }
         let date = Date(timeIntervalSince1970: Double(timestampMillis) / 1000.0)
         return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    private func storageGrowthConfidenceLabel(_ event: StorageGrowthTimelineEvent) -> String {
+        if event.ambiguous {
+            return "ambiguous \(event.confidenceScore)%"
+        }
+        return "\(event.confidence) \(event.confidenceScore)%"
+    }
+
+    private func storageGrowthConfidenceTone(_ event: StorageGrowthTimelineEvent) -> Color {
+        if event.ambiguous {
+            return AetowerDesign.Status.warning
+        }
+        if event.confidenceScore >= 80 {
+            return AetowerDesign.Status.ready
+        }
+        if event.confidenceScore >= 50 {
+            return AetowerDesign.Status.warning
+        }
+        return AetowerDesign.Status.neutral
+    }
+
+    private func storageAttributionConfidenceScore(_ confidence: String) -> UInt8 {
+        switch confidence.lowercased() {
+        case "high": return 82
+        case "medium": return 62
+        case "ambiguous": return 45
+        default: return 25
+        }
     }
 
     private func storageGrowthDelta(for footprint: StorageRepoFootprintModel) -> Int64? {
@@ -4597,6 +4779,66 @@ public struct StorageView: View {
         }
     }
 
+    private func stagePreventionSuggestion(
+        _ suggestion: StoragePreventionSuggestionModel,
+        report: StorageHygieneReportModel
+    ) {
+        let candidates: [StorageHygieneItemModel]
+        switch suggestion.trigger {
+        case "safe-reclaim":
+            candidates = report.items.filter {
+                $0.cleanupTier == "safe" && storageItemIsTrashActionable($0)
+            }
+        case "post-build":
+            let repoRoot = suggestion.id.replacingOccurrences(of: "post-build-cleanup|", with: "")
+            candidates = report.items.filter {
+                $0.cleanupTier == "rebuildable"
+                    && $0.attribution.repoRoot == repoRoot
+                    && storageItemIsTrashActionable($0)
+            }
+        case "artifact-budget":
+            candidates = report.items.filter {
+                ($0.cleanupTier == "safe" || $0.cleanupTier == "rebuildable")
+                    && storageItemIsTrashActionable($0)
+            }
+        default:
+            candidates = []
+        }
+
+        var staged = 0
+        for item in uniqueStorageItems(candidates).prefix(80) {
+            if stageCleanupItem(item, showBasket: false) {
+                staged += 1
+            }
+        }
+        if staged > 0 {
+            showCleanupBasket = true
+        } else {
+            copy(preventionSuggestionPlan(suggestion, report: report))
+        }
+    }
+
+    private func preventionSuggestionPlan(
+        _ suggestion: StoragePreventionSuggestionModel,
+        report: StorageHygieneReportModel
+    ) -> String {
+        [
+            "# Aetower storage prevention suggestion",
+            "",
+            "- Trigger: \(suggestion.trigger)",
+            "- Suggestion: \(suggestion.title)",
+            "- Safety: \(suggestion.safety)",
+            "- Estimated reclaimable: \(formatBytes(suggestion.estimatedReclaimableBytes))",
+            "- Requires approval: \(suggestion.requiresApproval ? "yes" : "no")",
+            "",
+            "## Detail",
+            suggestion.detail,
+            "",
+            "## Policy",
+            "Aetower is warning-only by default. Auto-trash is \(report.budgetGuardrails.autoTrashSafeTierEnabled ? "enabled for Safe-tier only" : "disabled").",
+        ].joined(separator: "\n")
+    }
+
     private func storageHomeActionPlan(_ action: StorageHomeAction) -> String {
         var lines = [
             "# Aetower storage action",
@@ -4985,7 +5227,7 @@ public struct StorageView: View {
 
     private func budgetGuardrailSummary(_ guardrails: StorageBudgetGuardrailsModel) -> String {
         if guardrails.violations.isEmpty {
-            return "Warn when a repo exceeds \(formatBytes(guardrails.repoArtifactBudgetBytes)), grows more than \(formatBytes(guardrails.repoGrowthBudgetBytesPerDay)) per day, or total local dev artifacts exceed \(formatBytes(guardrails.totalArtifactBudgetBytes))."
+            return "Warning-only by default: repo artifact, repo growth, total artifact, and volume pressure budgets are watched before storage becomes an emergency."
         }
         return "\(guardrails.violations.count) budget warning\(guardrails.violations.count == 1 ? "" : "s") need review before the machine slows down."
     }
@@ -5013,6 +5255,34 @@ public struct StorageView: View {
             return "checkmark.shield"
         default:
             return "gauge.with.dots.needle.67percent"
+        }
+    }
+
+    private func preventionSuggestionTone(_ suggestion: StoragePreventionSuggestionModel) -> Color {
+        switch suggestion.safety {
+        case "safe", "non-destructive":
+            return AetowerDesign.Status.ready
+        case "rebuildable":
+            return AetowerDesign.Tone.disk
+        case "review":
+            return AetowerDesign.Status.warning
+        default:
+            return .secondary
+        }
+    }
+
+    private func preventionSuggestionIcon(_ suggestion: StoragePreventionSuggestionModel) -> String {
+        switch suggestion.trigger {
+        case "safe-reclaim":
+            return "trash.circle"
+        case "post-build":
+            return "hammer.circle"
+        case "artifact-budget":
+            return "shippingbox.circle"
+        case "policy-violation":
+            return "calendar.badge.clock"
+        default:
+            return "bell.badge"
         }
     }
 

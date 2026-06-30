@@ -1,5 +1,16 @@
 import Foundation
 
+func storageSupportFileURL(fileName: String, createDirectory: Bool) -> URL? {
+    guard let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        return nil
+    }
+    let directory = baseURL.appendingPathComponent("Aetower", isDirectory: true)
+    if createDirectory {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    return directory.appendingPathComponent(fileName, isDirectory: false)
+}
+
 struct StorageScanJobProgressModel: Decodable, Sendable {
     let phase: String
     let scannedFiles: UInt64
@@ -66,6 +77,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
     let appFootprints: [StorageAppFootprintModel]
     let systemDataBuckets: [StorageSystemDataBucketModel]
     let treemapRoots: [StorageTreemapNodeModel]
+    let growthDeltas: [StorageGrowthDeltaModel]
     let items: [StorageHygieneItemModel]
     let roots: [String]
     let skippedRoots: [StorageSkippedRootModel]
@@ -92,6 +104,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         case appFootprints
         case systemDataBuckets
         case treemapRoots
+        case growthDeltas
         case items
         case roots
         case skippedRoots
@@ -125,6 +138,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         systemDataBuckets =
             try container.decodeIfPresent([StorageSystemDataBucketModel].self, forKey: .systemDataBuckets) ?? []
         treemapRoots = try container.decodeIfPresent([StorageTreemapNodeModel].self, forKey: .treemapRoots) ?? []
+        growthDeltas = try container.decodeIfPresent([StorageGrowthDeltaModel].self, forKey: .growthDeltas) ?? []
         items = try container.decode([StorageHygieneItemModel].self, forKey: .items)
         roots = try container.decode([String].self, forKey: .roots)
         skippedRoots = try container.decode([StorageSkippedRootModel].self, forKey: .skippedRoots)
@@ -446,20 +460,7 @@ enum StorageHygieneReportCacheStore {
     }
 
     private static func cacheURL(createDirectory: Bool) -> URL? {
-        guard let baseURL = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else {
-            return nil
-        }
-        let directory = baseURL.appendingPathComponent("Aetower", isDirectory: true)
-        if createDirectory {
-            try? FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
-            )
-        }
-        return directory.appendingPathComponent(fileName, isDirectory: false)
+        storageSupportFileURL(fileName: fileName, createDirectory: createDirectory)
     }
 
     private static func normalizedRequestedRoots(_ roots: [String]) -> [String] {
@@ -931,8 +932,52 @@ struct StorageBudgetGuardrailsModel: Decodable, Sendable {
     let repoGrowthBudgetBytesPerDay: UInt64
     let repoArtifactBudgetBytes: UInt64
     let totalArtifactBudgetBytes: UInt64
+    let freeSpaceFloorBytes: UInt64
+    let volumePressureFloorPercent: UInt64
+    let warningOnlyByDefault: Bool
+    let autoTrashSafeTierEnabled: Bool
+    let scheduledScanRecommended: Bool
+    let scheduledScanIntervalHours: UInt64
     let status: String
     let violations: [StorageBudgetViolationModel]
+    let policies: [StoragePreventionPolicyModel]
+    let preventionSuggestions: [StoragePreventionSuggestionModel]
+
+    private enum CodingKeys: String, CodingKey {
+        case repoGrowthBudgetBytesPerDay
+        case repoArtifactBudgetBytes
+        case totalArtifactBudgetBytes
+        case freeSpaceFloorBytes
+        case volumePressureFloorPercent
+        case warningOnlyByDefault
+        case autoTrashSafeTierEnabled
+        case scheduledScanRecommended
+        case scheduledScanIntervalHours
+        case status
+        case violations
+        case policies
+        case preventionSuggestions
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        repoGrowthBudgetBytesPerDay = try container.decode(UInt64.self, forKey: .repoGrowthBudgetBytesPerDay)
+        repoArtifactBudgetBytes = try container.decode(UInt64.self, forKey: .repoArtifactBudgetBytes)
+        totalArtifactBudgetBytes = try container.decode(UInt64.self, forKey: .totalArtifactBudgetBytes)
+        freeSpaceFloorBytes =
+            try container.decodeIfPresent(UInt64.self, forKey: .freeSpaceFloorBytes) ?? 20 * 1_024 * 1_024 * 1_024
+        volumePressureFloorPercent =
+            try container.decodeIfPresent(UInt64.self, forKey: .volumePressureFloorPercent) ?? 10
+        warningOnlyByDefault = try container.decodeIfPresent(Bool.self, forKey: .warningOnlyByDefault) ?? true
+        autoTrashSafeTierEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoTrashSafeTierEnabled) ?? false
+        scheduledScanRecommended = try container.decodeIfPresent(Bool.self, forKey: .scheduledScanRecommended) ?? false
+        scheduledScanIntervalHours = try container.decodeIfPresent(UInt64.self, forKey: .scheduledScanIntervalHours) ?? 24
+        status = try container.decode(String.self, forKey: .status)
+        violations = try container.decode([StorageBudgetViolationModel].self, forKey: .violations)
+        policies = try container.decodeIfPresent([StoragePreventionPolicyModel].self, forKey: .policies) ?? []
+        preventionSuggestions =
+            try container.decodeIfPresent([StoragePreventionSuggestionModel].self, forKey: .preventionSuggestions) ?? []
+    }
 }
 
 struct StorageBudgetViolationModel: Decodable, Identifiable, Sendable {
@@ -946,6 +991,28 @@ struct StorageBudgetViolationModel: Decodable, Identifiable, Sendable {
     let observedBytes: UInt64
     let limitBytes: UInt64
     let recommendation: String
+}
+
+struct StoragePreventionPolicyModel: Decodable, Identifiable, Sendable {
+    let id: String
+    let title: String
+    let mode: String
+    let enabled: Bool
+    let action: String
+    let tier: String
+    let detail: String
+    let nextStep: String
+}
+
+struct StoragePreventionSuggestionModel: Decodable, Identifiable, Sendable {
+    let id: String
+    let trigger: String
+    let title: String
+    let detail: String
+    let actionLabel: String
+    let estimatedReclaimableBytes: UInt64
+    let safety: String
+    let requiresApproval: Bool
 }
 
 struct StorageAgentHygieneSummaryModel: Decodable, Sendable {
@@ -1074,6 +1141,32 @@ struct StorageTreemapNodeModel: Decodable, Identifiable, Sendable {
     let itemCount: Int
     let children: [StorageTreemapNodeModel]
     let hasMore: Bool
+}
+
+struct StorageGrowthDeltaModel: Decodable, Identifiable, Sendable {
+    let bucketMillis: UInt64
+    let scanMillis: UInt64
+    let path: String
+    let sourceRoot: String
+    let repoRoot: String?
+    let repoName: String?
+    let gitBranch: String?
+    let gitHead: String?
+    let kind: String
+    let cleanupTier: String
+    let previousPhysicalBytes: UInt64
+    let currentPhysicalBytes: UInt64
+    let deltaBytes: Int64
+    let command: String?
+    let processTree: String?
+    let aiAgentSession: String?
+    let attributionConfidence: String
+    let attributionConfidenceScore: UInt8
+    let attributionAmbiguous: Bool
+    let attributionSummary: String
+    let attributionEvidence: [String]
+
+    var id: String { "\(bucketMillis)|\(path)|\(deltaBytes)" }
 }
 
 struct StorageRepositoryInventoryModel: Decodable, Identifiable, Sendable {
