@@ -1024,10 +1024,6 @@ public struct RepositoryView: View {
                                     contract: contract,
                                     selected: selectedAgentContract(repository)?.id == contract.id
                                 )
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    selectedAgentContractByRepository[repository.id] = contract.id
-                                }
                             }
                         }
                     }
@@ -1070,43 +1066,54 @@ public struct RepositoryView: View {
             padding: AetowerDesign.Spacing.sm
         ) {
             HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
-                agentContractIconImage(contract)
-                    .frame(width: AetowerDesign.Size.iconSlot)
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-                    Text(contract.label)
-                        .font(AetowerDesign.Typography.controlLabel)
-                        .foregroundStyle(AetowerDesign.Ink.primary)
-                        .lineLimit(1)
-                    Text(contract.path)
-                        .font(AetowerDesign.Typography.metadata)
-                        .foregroundStyle(AetowerDesign.Ink.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                Button {
+                    selectedAgentContractByRepository[repository.id] = contract.id
+                } label: {
+                    HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                        agentContractIconImage(contract)
+                            .frame(width: AetowerDesign.Size.iconSlot)
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                            Text(contract.label)
+                                .font(AetowerDesign.Typography.controlLabel)
+                                .foregroundStyle(AetowerDesign.Ink.primary)
+                                .lineLimit(1)
+                            Text(contract.path)
+                                .font(AetowerDesign.Typography.metadata)
+                                .foregroundStyle(AetowerDesign.Ink.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer(minLength: AetowerDesign.Spacing.xs)
+                        VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xxs) {
+                            AetowerBadge(agentContractStatusLabel(contract), tone: agentContractTone(contract))
+                            Text("\(contract.coveragePercent)%")
+                                .font(AetowerDesign.Typography.metadata)
+                                .foregroundStyle(AetowerDesign.Ink.secondary)
+                        }
+                    }
                 }
-                Spacer(minLength: AetowerDesign.Spacing.xs)
-                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xxs) {
-                    AetowerBadge(agentContractStatusLabel(contract), tone: agentContractTone(contract))
-                    Text("\(contract.coveragePercent)%")
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(contract.label), \(agentContractStatusLabel(contract))")
+                .accessibilityValue(selected ? "Selected" : "Not selected")
+                .accessibilityAddTraits(selected ? .isSelected : [])
+
+                Button(promptKind == .reconcile ? "Reconcile" : "Generate") {
+                    launchAgentContractPromptInChau7(
+                        repository,
+                        contract: contract,
+                        issues: agentContractIssues(repository, contract: contract),
+                        key: key,
+                        promptKind: promptKind
+                    )
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .disabled(launchState?.isLaunching == true)
+                if let launchState {
+                    Image(systemName: launchState.icon)
                         .font(AetowerDesign.Typography.metadata)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
-                    Button(promptKind == .reconcile ? "Reconcile" : "Generate") {
-                        launchAgentContractPromptInChau7(
-                            repository,
-                            contract: contract,
-                            issues: agentContractIssues(repository, contract: contract),
-                            key: key,
-                            promptKind: promptKind
-                        )
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .disabled(launchState?.isLaunching == true)
-                    if let launchState {
-                        Image(systemName: launchState.icon)
-                            .font(AetowerDesign.Typography.metadata)
-                            .foregroundStyle(AetowerDesign.Ink.secondary)
-                            .help(launchState.detail)
-                    }
+                        .help(launchState.detail)
                 }
             }
         }
