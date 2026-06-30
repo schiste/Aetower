@@ -5,6 +5,7 @@ pub(crate) mod diagnostics;
 pub(crate) mod export;
 pub(crate) mod history;
 pub(crate) mod process;
+pub(crate) mod repository;
 pub(crate) mod runtime;
 pub(crate) mod snapshot;
 pub(crate) mod storage;

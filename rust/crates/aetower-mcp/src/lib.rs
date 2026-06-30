@@ -58,7 +58,17 @@ use reports::process::{
     build_process_tree_report, entity_process_ids, format_metric_value,
     process_dynamic_tool_request, vmmap_regions_for_processes,
 };
-pub use reports::storage::storage_hygiene_json;
+pub use reports::repository_scorecard::{
+    repository_scorecard_json, repository_scorecard_json_cached,
+    repository_scorecard_json_from_scorecard_json, repository_scorecard_json_with_timeout,
+};
+pub use reports::storage::{
+    storage_hygiene_actions_json, storage_hygiene_deep_scan_json, storage_hygiene_indexed_json,
+    storage_hygiene_items_page_json, storage_hygiene_json, storage_hygiene_mode_json,
+    storage_hygiene_overview_json, storage_hygiene_repo_detail_json, storage_scan_cancel_json,
+    storage_scan_pause_json, storage_scan_result_json, storage_scan_resume_json,
+    storage_scan_start_json, storage_scan_status_json,
+};
 
 use reports::diagnostics::{
     build_anomaly_explanations, build_diagnostics_summary_report, build_recommendations,
@@ -3514,7 +3524,13 @@ mod tests {
             "aetower_capability_status",
             "aetower_history_store_health",
             "aetower_history_data_quality",
+            "aetower_repository_scorecard",
             "aetower_storage_hygiene",
+            "aetower_storage_hygiene_overview",
+            "aetower_storage_hygiene_actions",
+            "aetower_storage_hygiene_items_page",
+            "aetower_storage_hygiene_repo_detail",
+            "aetower_storage_hygiene_deep_scan",
             "aetower_memory_breakdown",
             "aetower_profile_entity",
             "aetower_wakeup_attribution",

@@ -658,6 +658,12 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
      */
     func resourceHoldersByPortJson(port: UInt32)  -> JsonQueryResult
 
+    /**
+     * Explicit OpenSSF Scorecard repository readiness scan. On-demand only;
+     * uses the repository Scorecard cache unless refresh is requested.
+     */
+    func scorecardJson(repoRoot: String, mode: String, timeoutSeconds: UInt32, refresh: Bool)  -> JsonQueryResult
+
     func selfMemoryAttributionJson(topRegions: UInt32)  -> JsonQueryResult
 
     /**
@@ -691,12 +697,28 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
      */
     func stopLocalMcpServer()
 
+    func storageHygieneIndexedJson(roots: [String], maxDepth: UInt32, limit: UInt32)  -> JsonQueryResult
+
     /**
      * Read-only developer storage hygiene scan. Bounded and on-demand; reports
      * local build artifacts, logs, caches, and dependency trees without
      * deleting anything.
      */
     func storageHygieneJson(roots: [String], maxDepth: UInt32, limit: UInt32)  -> JsonQueryResult
+
+    func storageHygieneModeJson(roots: [String], maxDepth: UInt32, limit: UInt32, mode: String)  -> JsonQueryResult
+
+    func storageScanCancelJson(jobId: String)  -> JsonQueryResult
+
+    func storageScanPauseJson(jobId: String)  -> JsonQueryResult
+
+    func storageScanResultJson(jobId: String)  -> JsonQueryResult
+
+    func storageScanResumeJson(jobId: String)  -> JsonQueryResult
+
+    func storageScanStartJson(roots: [String], maxDepth: UInt32, limit: UInt32, mode: String, throttleHint: String, dirtyPaths: [String])  -> JsonQueryResult
+
+    func storageScanStatusJson(jobId: String)  -> JsonQueryResult
 
     func updateFrontmostAppState(state: FrontmostAppState)
 
@@ -1164,6 +1186,21 @@ open func resourceHoldersByPortJson(port: UInt32) -> JsonQueryResult  {
 })
 }
 
+    /**
+     * Explicit OpenSSF Scorecard repository readiness scan. On-demand only;
+     * uses the repository Scorecard cache unless refresh is requested.
+     */
+open func scorecardJson(repoRoot: String, mode: String, timeoutSeconds: UInt32, refresh: Bool) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_scorecard_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(repoRoot),
+        FfiConverterString.lower(mode),
+        FfiConverterUInt32.lower(timeoutSeconds),
+        FfiConverterBool.lower(refresh),$0
+    )
+})
+}
+
 open func selfMemoryAttributionJson(topRegions: UInt32) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_self_memory_attribution_json(self.uniffiClonePointer(),
@@ -1240,6 +1277,16 @@ open func stopLocalMcpServer()  {try! rustCall() {
 }
 }
 
+open func storageHygieneIndexedJson(roots: [String], maxDepth: UInt32, limit: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_hygiene_indexed_json(self.uniffiClonePointer(),
+        FfiConverterSequenceString.lower(roots),
+        FfiConverterUInt32.lower(maxDepth),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+
     /**
      * Read-only developer storage hygiene scan. Bounded and on-demand; reports
      * local build artifacts, logs, caches, and dependency trees without
@@ -1251,6 +1298,70 @@ open func storageHygieneJson(roots: [String], maxDepth: UInt32, limit: UInt32) -
         FfiConverterSequenceString.lower(roots),
         FfiConverterUInt32.lower(maxDepth),
         FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+
+open func storageHygieneModeJson(roots: [String], maxDepth: UInt32, limit: UInt32, mode: String) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_hygiene_mode_json(self.uniffiClonePointer(),
+        FfiConverterSequenceString.lower(roots),
+        FfiConverterUInt32.lower(maxDepth),
+        FfiConverterUInt32.lower(limit),
+        FfiConverterString.lower(mode),$0
+    )
+})
+}
+
+open func storageScanCancelJson(jobId: String) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_scan_cancel_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(jobId),$0
+    )
+})
+}
+
+open func storageScanPauseJson(jobId: String) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_scan_pause_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(jobId),$0
+    )
+})
+}
+
+open func storageScanResultJson(jobId: String) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_scan_result_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(jobId),$0
+    )
+})
+}
+
+open func storageScanResumeJson(jobId: String) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_scan_resume_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(jobId),$0
+    )
+})
+}
+
+open func storageScanStartJson(roots: [String], maxDepth: UInt32, limit: UInt32, mode: String, throttleHint: String, dirtyPaths: [String]) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_scan_start_json(self.uniffiClonePointer(),
+        FfiConverterSequenceString.lower(roots),
+        FfiConverterUInt32.lower(maxDepth),
+        FfiConverterUInt32.lower(limit),
+        FfiConverterString.lower(mode),
+        FfiConverterString.lower(throttleHint),
+        FfiConverterSequenceString.lower(dirtyPaths),$0
+    )
+})
+}
+
+open func storageScanStatusJson(jobId: String) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_scan_status_json(self.uniffiClonePointer(),
+        FfiConverterString.lower(jobId),$0
     )
 })
 }
@@ -11783,6 +11894,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_resource_holders_by_port_json() != 5617) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_scorecard_json() != 19535) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_self_memory_attribution_json() != 32687) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11804,7 +11918,31 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_stop_local_mcp_server() != 53847) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_hygiene_indexed_json() != 33984) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_hygiene_json() != 26381) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_hygiene_mode_json() != 34230) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_scan_cancel_json() != 49188) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_scan_pause_json() != 20793) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_scan_result_json() != 58920) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_scan_resume_json() != 46990) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_scan_start_json() != 53180) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_scan_status_json() != 33708) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_update_frontmost_app_state() != 57149) {

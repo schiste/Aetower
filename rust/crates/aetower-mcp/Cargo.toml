@@ -13,6 +13,7 @@ aetower-model = { path = "../aetower-model" }
 aetower-policy = { path = "../aetower-policy" }
 dirs = "5"
 libc = "0.2"
+rusqlite = { version = "0.34", features = ["bundled"] }
 rhai.workspace = true
 serde.workspace = true
 serde_json.workspace = true

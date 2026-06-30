@@ -9,6 +9,7 @@ pub(crate) mod filter;
 pub(crate) mod history;
 pub(crate) mod persistence;
 pub(crate) mod process;
+pub(crate) mod repository_scorecard;
 pub(crate) mod runtime;
 pub(crate) mod snapshot;
 pub(crate) mod storage;

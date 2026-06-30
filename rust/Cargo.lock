@@ -132,6 +132,7 @@ dependencies = [
  "dirs",
  "libc",
  "rhai",
+ "rusqlite",
  "serde",
  "serde_json",
 ]

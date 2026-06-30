@@ -252,9 +252,70 @@ public final class EngineBridge: @unchecked Sendable {
     public func storageHygieneJSON(
         roots: [String] = [],
         maxDepth: UInt32 = 5,
+        limit: UInt32 = 80,
+        mode: String = "fast_changed_only"
+    ) -> JsonQueryResult {
+        engine.storageHygieneModeJson(roots: roots, maxDepth: maxDepth, limit: limit, mode: mode)
+    }
+
+    public func storageHygieneIndexedJSON(
+        roots: [String] = [],
+        maxDepth: UInt32 = 5,
         limit: UInt32 = 80
     ) -> JsonQueryResult {
-        engine.storageHygieneJson(roots: roots, maxDepth: maxDepth, limit: limit)
+        engine.storageHygieneIndexedJson(roots: roots, maxDepth: maxDepth, limit: limit)
+    }
+
+    public func scorecardJSON(
+        repoRoot: String,
+        mode: String = "auto",
+        timeoutSeconds: UInt32 = 30,
+        refresh: Bool = false
+    ) -> JsonQueryResult {
+        engine.scorecardJson(
+            repoRoot: repoRoot,
+            mode: mode,
+            timeoutSeconds: timeoutSeconds,
+            refresh: refresh
+        )
+    }
+
+    public func storageScanStartJSON(
+        roots: [String] = [],
+        maxDepth: UInt32 = 5,
+        limit: UInt32 = 80,
+        mode: String = "fast_changed_only",
+        throttleHint: String = "normal",
+        dirtyPaths: [String] = []
+    ) -> JsonQueryResult {
+        engine.storageScanStartJson(
+            roots: roots,
+            maxDepth: maxDepth,
+            limit: limit,
+            mode: mode,
+            throttleHint: throttleHint,
+            dirtyPaths: dirtyPaths
+        )
+    }
+
+    public func storageScanStatusJSON(jobId: String) -> JsonQueryResult {
+        engine.storageScanStatusJson(jobId: jobId)
+    }
+
+    public func storageScanCancelJSON(jobId: String) -> JsonQueryResult {
+        engine.storageScanCancelJson(jobId: jobId)
+    }
+
+    public func storageScanPauseJSON(jobId: String) -> JsonQueryResult {
+        engine.storageScanPauseJson(jobId: jobId)
+    }
+
+    public func storageScanResumeJSON(jobId: String) -> JsonQueryResult {
+        engine.storageScanResumeJson(jobId: jobId)
+    }
+
+    public func storageScanResultJSON(jobId: String) -> JsonQueryResult {
+        engine.storageScanResultJson(jobId: jobId)
     }
 
     public func filterEntitiesJSON(expression: String) -> JsonQueryResult {

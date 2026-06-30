@@ -49,6 +49,9 @@ const STORAGE_SCAN_QUEUE_POLL: Duration = Duration::from_millis(120);
 const STORAGE_GROWTH_BUCKET_MILLIS: u64 = 60 * 60 * 1000;
 const STORAGE_INDEX_SNAPSHOT_READ_MULTIPLIER: usize = 24;
 const RECENT_CLEANUP_BLOCK_MILLIS: u64 = 10 * 60 * 1000;
+const STORAGE_TREEMAP_MAX_DEPTH: usize = 4;
+const STORAGE_TREEMAP_MAX_CHILDREN: usize = 14;
+const STORAGE_TREEMAP_MAX_ITEMS: usize = 160;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StorageScanMode {
@@ -791,6 +794,7 @@ pub(crate) struct StorageHygieneReport {
     duplicate_groups: Vec<StorageDuplicateGroup>,
     app_footprints: Vec<StorageAppFootprint>,
     system_data_buckets: Vec<StorageSystemDataBucket>,
+    treemap_roots: Vec<StorageTreemapNode>,
     items: Vec<StorageHygieneItem>,
     roots: Vec<String>,
     skipped_roots: Vec<StorageSkippedRoot>,
@@ -929,6 +933,33 @@ struct StorageHygieneItem {
     cleanup_blockers: Vec<String>,
     default_cleanup_action: String,
     attribution: StorageArtifactAttribution,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StorageTreemapNode {
+    id: String,
+    path: String,
+    label: String,
+    depth: usize,
+    node_type: String,
+    file_type: String,
+    color_key: String,
+    size_bytes: u64,
+    item_count: usize,
+    children: Vec<StorageTreemapNode>,
+    has_more: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct StorageTreemapAccumulator {
+    path: String,
+    label: String,
+    depth: usize,
+    size_bytes: u64,
+    item_count: usize,
+    kind_bytes: BTreeMap<String, u64>,
+    color_bytes: BTreeMap<String, u64>,
+    children: BTreeMap<String, StorageTreemapAccumulator>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -2042,6 +2073,7 @@ pub fn storage_hygiene_overview_json(
         duplicate_groups: report.duplicate_groups.into_iter().take(6).collect(),
         app_footprints: report.app_footprints.into_iter().take(6).collect(),
         system_data_buckets: report.system_data_buckets,
+        treemap_roots: report.treemap_roots,
         roots: report.roots,
         skipped_roots: report.skipped_roots,
         source_coverage: report.source_coverage,
@@ -2072,18 +2104,90 @@ pub fn storage_hygiene_actions_json(
     .map_err(|error| error.to_string())
 }
 
+#[derive(Clone, Copy)]
+enum StorageItemSortKey {
+    Size,
+    Path,
+    Modified,
+    Accessed,
+    Tier,
+    Kind,
+}
+
+impl StorageItemSortKey {
+    fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "path" | "name" => Self::Path,
+            "modified" | "mtime" | "newest" | "oldest" => Self::Modified,
+            "accessed" | "atime" | "unused" => Self::Accessed,
+            "tier" | "cleanup_tier" | "safety" => Self::Tier,
+            "kind" | "type" => Self::Kind,
+            _ => Self::Size,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Size => "size",
+            Self::Path => "path",
+            Self::Modified => "modified",
+            Self::Accessed => "accessed",
+            Self::Tier => "tier",
+            Self::Kind => "kind",
+        }
+    }
+}
+
+fn sort_storage_items(
+    items: &mut [StorageHygieneItem],
+    sort_key: StorageItemSortKey,
+    descending: bool,
+) {
+    items.sort_by(|left, right| {
+        let ordering = match sort_key {
+            StorageItemSortKey::Size => left.size_bytes.cmp(&right.size_bytes),
+            StorageItemSortKey::Path => left.path.cmp(&right.path),
+            StorageItemSortKey::Modified => left
+                .modified_millis
+                .unwrap_or_default()
+                .cmp(&right.modified_millis.unwrap_or_default()),
+            StorageItemSortKey::Accessed => left
+                .accessed_millis
+                .unwrap_or_default()
+                .cmp(&right.accessed_millis.unwrap_or_default()),
+            StorageItemSortKey::Tier => left
+                .cleanup_tier
+                .cmp(&right.cleanup_tier)
+                .then_with(|| left.safety.cmp(&right.safety)),
+            StorageItemSortKey::Kind => left.kind.cmp(&right.kind),
+        };
+
+        if ordering == Ordering::Equal {
+            left.path.cmp(&right.path)
+        } else if descending {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    });
+}
+
 pub fn storage_hygiene_items_page_json(
     roots: Vec<String>,
     max_depth: usize,
     offset: usize,
     limit: usize,
     mode: &str,
+    sort_key: &str,
+    sort_descending: bool,
 ) -> Result<String, String> {
     let requested_limit = offset.saturating_add(limit).clamp(1, MAX_LIMIT);
     let report = build_storage_hygiene_projection_report(roots, max_depth, requested_limit, mode);
-    let total_available = report.items.len();
-    let items = report
-        .items
+    let sort_key = StorageItemSortKey::parse(sort_key);
+    let mut report_items = report.items;
+    sort_storage_items(&mut report_items, sort_key, sort_descending);
+    let total_available = report_items.len();
+    let items = report_items
         .into_iter()
         .skip(offset)
         .take(limit.min(MAX_LIMIT))
@@ -2094,6 +2198,8 @@ pub fn storage_hygiene_items_page_json(
         diagnostics: report.diagnostics,
         offset,
         limit,
+        sort_key: sort_key.as_str().to_owned(),
+        sort_descending,
         returned_count: items.len(),
         total_available,
         has_more: offset.saturating_add(items.len()) < total_available,
@@ -2152,6 +2258,7 @@ struct StorageHygieneOverviewResponse {
     duplicate_groups: Vec<StorageDuplicateGroup>,
     app_footprints: Vec<StorageAppFootprint>,
     system_data_buckets: Vec<StorageSystemDataBucket>,
+    treemap_roots: Vec<StorageTreemapNode>,
     roots: Vec<String>,
     skipped_roots: Vec<StorageSkippedRoot>,
     source_coverage: Vec<StorageSourceCoverage>,
@@ -2179,6 +2286,8 @@ struct StorageHygieneItemsPageResponse {
     diagnostics: StorageScanDiagnostics,
     offset: usize,
     limit: usize,
+    sort_key: String,
+    sort_descending: bool,
     returned_count: usize,
     total_available: usize,
     has_more: bool,
@@ -2343,6 +2452,7 @@ fn build_storage_hygiene_report_with_options(
     let duplicate_groups = summarize_duplicate_groups(&items);
     let app_footprints = summarize_app_footprints(&items);
     let system_data_buckets = summarize_system_data_buckets(&items);
+    let treemap_roots = build_storage_treemap_roots(&items, &scanned_roots);
     let repository_inventory =
         summarize_repository_inventory(repository_roots, started, options.mode, &mut metrics);
     let budget_guardrails = evaluate_budget_guardrails(&summary, &repo_footprints);
@@ -2390,6 +2500,7 @@ fn build_storage_hygiene_report_with_options(
         duplicate_groups,
         app_footprints,
         system_data_buckets,
+        treemap_roots,
         items,
         roots: scanned_roots,
         skipped_roots,
@@ -2486,6 +2597,7 @@ fn build_storage_hygiene_report_from_index(
     let duplicate_groups = summarize_duplicate_groups(&items);
     let app_footprints = summarize_app_footprints(&items);
     let system_data_buckets = summarize_system_data_buckets(&items);
+    let treemap_roots = build_storage_treemap_roots(&items, &scanned_roots);
     metrics.discovered_repository_count = repository_roots.len().min(u64::MAX as usize) as u64;
     metrics.sized_entry_count = items.len().min(u64::MAX as usize) as u64;
     metrics.candidate_seen_count = metrics.sized_entry_count;
@@ -2540,6 +2652,7 @@ fn build_storage_hygiene_report_from_index(
         duplicate_groups,
         app_footprints,
         system_data_buckets,
+        treemap_roots,
         items,
         roots: scanned_roots,
         skipped_roots,
@@ -4015,6 +4128,223 @@ fn size_of_path(
         );
     }
     result
+}
+
+impl StorageTreemapAccumulator {
+    fn new(path: String, label: String, depth: usize) -> Self {
+        Self {
+            path,
+            label,
+            depth,
+            ..Self::default()
+        }
+    }
+
+    fn add_item(&mut self, item: &StorageHygieneItem, components: &[String]) {
+        self.size_bytes = self.size_bytes.saturating_add(item.size_bytes);
+        self.item_count = self.item_count.saturating_add(1);
+        add_bytes(&mut self.kind_bytes, &item.kind, item.size_bytes);
+        add_bytes(
+            &mut self.color_bytes,
+            &storage_treemap_color_key(item),
+            item.size_bytes,
+        );
+
+        if components.is_empty() || self.depth >= STORAGE_TREEMAP_MAX_DEPTH {
+            return;
+        }
+
+        let segment = components[0].clone();
+        let child_path = Path::new(&self.path).join(&segment).display().to_string();
+        let child = self.children.entry(segment.clone()).or_insert_with(|| {
+            StorageTreemapAccumulator::new(child_path, segment, self.depth.saturating_add(1))
+        });
+        child.add_item(item, &components[1..]);
+    }
+}
+
+fn build_storage_treemap_roots(
+    items: &[StorageHygieneItem],
+    roots: &[String],
+) -> Vec<StorageTreemapNode> {
+    let normalized_roots = roots
+        .iter()
+        .map(|root| PathBuf::from(root).display().to_string())
+        .collect::<Vec<_>>();
+    let mut root_nodes = BTreeMap::<String, StorageTreemapAccumulator>::new();
+
+    for item in items.iter().take(STORAGE_TREEMAP_MAX_ITEMS) {
+        let root_path = storage_treemap_root_for_item(item, &normalized_roots);
+        let root_label = storage_treemap_label_for_path(&root_path);
+        let components = storage_treemap_components(&item.path, &root_path);
+        let root = root_nodes
+            .entry(root_path.clone())
+            .or_insert_with(|| StorageTreemapAccumulator::new(root_path, root_label, 0));
+        root.add_item(item, &components);
+    }
+
+    let mut roots = root_nodes
+        .into_values()
+        .map(storage_treemap_node_from_accumulator)
+        .collect::<Vec<_>>();
+    roots.sort_by(storage_treemap_node_sort);
+    roots
+}
+
+fn storage_treemap_node_from_accumulator(
+    accumulator: StorageTreemapAccumulator,
+) -> StorageTreemapNode {
+    let mut children = accumulator
+        .children
+        .into_values()
+        .collect::<Vec<StorageTreemapAccumulator>>();
+    children.sort_by(|left, right| {
+        right
+            .size_bytes
+            .cmp(&left.size_bytes)
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    let has_more = children.len() > STORAGE_TREEMAP_MAX_CHILDREN;
+    let mut visible_children = children
+        .iter()
+        .take(STORAGE_TREEMAP_MAX_CHILDREN)
+        .cloned()
+        .map(storage_treemap_node_from_accumulator)
+        .collect::<Vec<_>>();
+    if has_more {
+        let overflow = children.iter().skip(STORAGE_TREEMAP_MAX_CHILDREN).fold(
+            StorageTreemapAccumulator::new(
+                format!("{}/__other", accumulator.path),
+                "Other".to_owned(),
+                accumulator.depth.saturating_add(1),
+            ),
+            |mut overflow, child| {
+                overflow.size_bytes = overflow.size_bytes.saturating_add(child.size_bytes);
+                overflow.item_count = overflow.item_count.saturating_add(child.item_count);
+                merge_bytes(&mut overflow.kind_bytes, &child.kind_bytes);
+                merge_bytes(&mut overflow.color_bytes, &child.color_bytes);
+                overflow
+            },
+        );
+        visible_children.push(storage_treemap_node_from_accumulator(overflow));
+    }
+
+    let file_type = dominant_key(&accumulator.kind_bytes).unwrap_or_else(|| "unknown".to_owned());
+    let color_key = dominant_key(&accumulator.color_bytes).unwrap_or_else(|| "other".to_owned());
+    let node_type = if accumulator.depth == 0 {
+        "root"
+    } else if visible_children.is_empty() {
+        "item"
+    } else {
+        "folder"
+    }
+    .to_owned();
+
+    StorageTreemapNode {
+        id: accumulator.path.clone(),
+        path: accumulator.path,
+        label: accumulator.label,
+        depth: accumulator.depth,
+        node_type,
+        file_type,
+        color_key,
+        size_bytes: accumulator.size_bytes,
+        item_count: accumulator.item_count,
+        children: visible_children,
+        has_more,
+    }
+}
+
+fn storage_treemap_node_sort(left: &StorageTreemapNode, right: &StorageTreemapNode) -> Ordering {
+    right
+        .size_bytes
+        .cmp(&left.size_bytes)
+        .then_with(|| left.path.cmp(&right.path))
+}
+
+fn storage_treemap_root_for_item(item: &StorageHygieneItem, roots: &[String]) -> String {
+    roots
+        .iter()
+        .filter(|root| item.path == **root || item.path.starts_with(&format!("{root}/")))
+        .max_by_key(|root| root.len())
+        .cloned()
+        .or_else(|| item.attribution.repo_root.clone())
+        .unwrap_or_else(|| {
+            Path::new(&item.path)
+                .parent()
+                .map(|parent| parent.display().to_string())
+                .unwrap_or_else(|| item.path.clone())
+        })
+}
+
+fn storage_treemap_components(path: &str, root: &str) -> Vec<String> {
+    let path = Path::new(path);
+    let root = Path::new(root);
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    let mut components = relative
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .filter(|component| !component.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if components.is_empty()
+        && let Some(name) = path.file_name().and_then(|name| name.to_str())
+    {
+        components.push(name.to_owned());
+    }
+    components
+}
+
+fn storage_treemap_label_for_path(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| path.to_owned())
+}
+
+fn storage_treemap_color_key(item: &StorageHygieneItem) -> String {
+    let kind = item.kind.as_str();
+    if item.cleanup_tier == "risky" || item.safety == "risky" {
+        "risky"
+    } else if matches!(item.cleanup_tier.as_str(), "safe" | "rebuildable") {
+        match kind {
+            kind if kind.contains("xcode") || kind.contains("swift") => "xcode",
+            kind if kind.contains("rust") || kind.contains("cargo") => "rust",
+            kind if kind.contains("node") || kind.contains("npm") || kind.contains("pnpm") => {
+                "node"
+            }
+            kind if kind.contains("docker") => "docker",
+            kind if kind.contains("log") => "log",
+            kind if kind.contains("app") => "app",
+            kind if kind.contains("system") || kind.contains("snapshot") => "system",
+            kind if kind.contains("large") || kind.contains("cold") => "file",
+            _ => "cache",
+        }
+    } else if item.cleanup_tier == "expensive" {
+        "expensive"
+    } else {
+        "other"
+    }
+    .to_owned()
+}
+
+fn add_bytes(map: &mut BTreeMap<String, u64>, key: &str, bytes: u64) {
+    let entry = map.entry(key.to_owned()).or_insert(0);
+    *entry = entry.saturating_add(bytes);
+}
+
+fn merge_bytes(target: &mut BTreeMap<String, u64>, source: &BTreeMap<String, u64>) {
+    for (key, bytes) in source {
+        add_bytes(target, key, *bytes);
+    }
+}
+
+fn dominant_key(map: &BTreeMap<String, u64>) -> Option<String> {
+    map.iter()
+        .max_by(|left, right| left.1.cmp(right.1).then_with(|| right.0.cmp(left.0)))
+        .map(|(key, _)| key.clone())
 }
 
 fn summarize_storage_items(
@@ -8297,6 +8627,12 @@ mod tests {
         assert!(overview.get("items").is_none());
         assert!(overview.get("summary").is_some());
         assert!(overview.get("diagnostics").is_some());
+        assert!(
+            overview["treemap_roots"]
+                .as_array()
+                .is_some_and(|roots| !roots.is_empty())
+        );
+        assert_eq!(overview["treemap_roots"][0]["node_type"], "root");
 
         let actions = storage_hygiene_actions_json(
             vec![root.display().to_string()],
@@ -8315,9 +8651,13 @@ mod tests {
             0,
             1,
             "fast_changed_only",
+            "path",
+            false,
         );
         let page = must_ok(page, "items page serializes");
         let page = parse_json_value(&page, "page JSON parses");
+        assert_eq!(page["sort_key"], "path");
+        assert_eq!(page["sort_descending"], false);
         assert_eq!(page["returned_count"], 1);
         assert!(
             page["items"]

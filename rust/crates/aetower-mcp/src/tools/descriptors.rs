@@ -300,14 +300,82 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
             AetowerMcpServer::tool_history_data_quality,
         ),
         ToolDescriptor::with_args(
+            "aetower_repository_scorecard",
+            "Run an explicit OpenSSF Scorecard repository readiness scan for one GitHub repository root. Uses cached results unless refresh is true; never runs during default repository discovery.",
+            vec![
+                string("repo_root").required().described("Absolute path to the local Git repository root."),
+                string_enum("mode", &["auto", "public_api", "live_cli"]).described("Scorecard source mode. auto tries the public API, then falls back to the local scorecard CLI."),
+                uint("timeout_seconds", Some(1), Some(120), Some(30)),
+                boolean("refresh", Some(false)).described("Bypass the local Scorecard cache and run the selected source again."),
+            ],
+            AetowerMcpServer::tool_repository_scorecard,
+        ),
+        ToolDescriptor::with_args(
             "aetower_storage_hygiene",
             "Scan bounded local developer storage roots for build artifacts, logs, caches, and dependency trees. Read-only: reports size, age, safety tier, caveats, and review guidance without deleting anything.",
             vec![
                 string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths. Defaults to common developer and Xcode cache locations."),
                 uint("max_depth", Some(1), Some(12), Some(5)),
                 uint("limit", Some(1), Some(200), Some(80)),
+                string("mode").described("Scan mode: instant_cached, fast_changed_only, deep_native, or forensic_verified. Defaults to fast_changed_only."),
             ],
             AetowerMcpServer::tool_storage_hygiene,
+        ),
+        ToolDescriptor::with_args(
+            "aetower_storage_hygiene_overview",
+            "Return a compact storage overview: summary, top findings, guardrails, top repo footprints, and scan diagnostics.",
+            vec![
+                string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths."),
+                uint("max_depth", Some(1), Some(12), Some(5)),
+                string("mode").described("Scan mode. Defaults to fast_changed_only."),
+            ],
+            AetowerMcpServer::tool_storage_hygiene_overview,
+        ),
+        ToolDescriptor::with_args(
+            "aetower_storage_hygiene_actions",
+            "Return cleanup tiers, recipes, bundles, guardrails, and diagnostics without the raw artifact list.",
+            vec![
+                string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths."),
+                uint("max_depth", Some(1), Some(12), Some(5)),
+                uint("limit", Some(1), Some(200), Some(80)),
+                string("mode").described("Scan mode. Defaults to fast_changed_only."),
+            ],
+            AetowerMcpServer::tool_storage_hygiene_actions,
+        ),
+        ToolDescriptor::with_args(
+            "aetower_storage_hygiene_items_page",
+            "Return one page of ranked storage items plus diagnostics.",
+            vec![
+                string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths."),
+                uint("max_depth", Some(1), Some(12), Some(5)),
+                uint("offset", Some(0), Some(200), Some(0)),
+                uint("limit", Some(1), Some(200), Some(80)),
+                string("mode").described("Scan mode. Defaults to fast_changed_only."),
+                string_enum("sort_key", &["size", "path", "modified", "accessed", "tier", "kind"])
+                    .described("Server-side sort key for the returned page. Defaults to size."),
+                boolean("sort_descending", Some(true))
+                    .described("Sort descending when true. Defaults to true for largest-first pages."),
+            ],
+            AetowerMcpServer::tool_storage_hygiene_items_page,
+        ),
+        ToolDescriptor::with_args(
+            "aetower_storage_hygiene_repo_detail",
+            "Return storage detail for one repository root: repo intelligence, top artifacts, cleanup actions, and diagnostics.",
+            vec![
+                string("repo_root").required(),
+                string("mode").described("Scan mode. Defaults to fast_changed_only."),
+            ],
+            AetowerMcpServer::tool_storage_hygiene_repo_detail,
+        ),
+        ToolDescriptor::with_args(
+            "aetower_storage_hygiene_deep_scan",
+            "Run an explicit deep storage scan using the deep_native mode. Heavier than the default fast scan.",
+            vec![
+                string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths."),
+                uint("max_depth", Some(1), Some(12), Some(8)),
+                uint("limit", Some(1), Some(200), Some(120)),
+            ],
+            AetowerMcpServer::tool_storage_hygiene_deep_scan,
         ),
         ToolDescriptor::with_args(
             "aetower_memory_breakdown",

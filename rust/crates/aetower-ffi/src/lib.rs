@@ -11,8 +11,11 @@ use aetower_mcp::{
     is_socket_listener_reachable, memory_breakdown_json, persistence_deep_scan_json,
     persistence_scan_json, process_action_history_json, process_action_json, process_inspect_json,
     process_open_resources_json, process_sample_json, profile_entity_json,
-    resource_holders_by_file_json, resource_holders_by_port_json, self_memory_attribution_json,
-    start_local_socket_server, storage_hygiene_json, wakeup_attribution_json,
+    repository_scorecard_json_cached, resource_holders_by_file_json, resource_holders_by_port_json,
+    self_memory_attribution_json, start_local_socket_server, storage_hygiene_indexed_json,
+    storage_hygiene_json, storage_hygiene_mode_json, storage_scan_cancel_json,
+    storage_scan_pause_json, storage_scan_result_json, storage_scan_resume_json,
+    storage_scan_start_json, storage_scan_status_json, wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1659,6 +1662,90 @@ impl MonitorEngine {
             max_depth as usize,
             limit as usize,
         ))
+    }
+
+    pub fn storage_hygiene_mode_json(
+        &self,
+        roots: Vec<String>,
+        max_depth: u32,
+        limit: u32,
+        mode: String,
+    ) -> JsonQueryResult {
+        json_query_result(storage_hygiene_mode_json(
+            roots,
+            max_depth as usize,
+            limit as usize,
+            &mode,
+        ))
+    }
+
+    pub fn storage_hygiene_indexed_json(
+        &self,
+        roots: Vec<String>,
+        max_depth: u32,
+        limit: u32,
+    ) -> JsonQueryResult {
+        json_query_result(storage_hygiene_indexed_json(
+            roots,
+            max_depth as usize,
+            limit as usize,
+        ))
+    }
+
+    /// Explicit OpenSSF Scorecard repository readiness scan. On-demand only;
+    /// uses the repository Scorecard cache unless refresh is requested.
+    pub fn scorecard_json(
+        &self,
+        repo_root: String,
+        mode: String,
+        timeout_seconds: u32,
+        refresh: bool,
+    ) -> JsonQueryResult {
+        json_query_result(repository_scorecard_json_cached(
+            repo_root,
+            &mode,
+            timeout_seconds as u64,
+            refresh,
+        ))
+    }
+
+    pub fn storage_scan_start_json(
+        &self,
+        roots: Vec<String>,
+        max_depth: u32,
+        limit: u32,
+        mode: String,
+        throttle_hint: String,
+        dirty_paths: Vec<String>,
+    ) -> JsonQueryResult {
+        json_query_result(storage_scan_start_json(
+            roots,
+            max_depth as usize,
+            limit as usize,
+            &mode,
+            &throttle_hint,
+            dirty_paths,
+        ))
+    }
+
+    pub fn storage_scan_status_json(&self, job_id: String) -> JsonQueryResult {
+        json_query_result(storage_scan_status_json(&job_id))
+    }
+
+    pub fn storage_scan_cancel_json(&self, job_id: String) -> JsonQueryResult {
+        json_query_result(storage_scan_cancel_json(&job_id))
+    }
+
+    pub fn storage_scan_pause_json(&self, job_id: String) -> JsonQueryResult {
+        json_query_result(storage_scan_pause_json(&job_id))
+    }
+
+    pub fn storage_scan_resume_json(&self, job_id: String) -> JsonQueryResult {
+        json_query_result(storage_scan_resume_json(&job_id))
+    }
+
+    pub fn storage_scan_result_json(&self, job_id: String) -> JsonQueryResult {
+        json_query_result(storage_scan_result_json(&job_id))
     }
 
     /// Evaluate a sandboxed Rhai filter expression against the latest snapshot,
