@@ -106,7 +106,29 @@ Aetower combines:
 
 ---
 
-## 5. Diagnostics
+## 5. Repos
+
+**What it does**
+
+Repository inventory and readiness. Discovers local Git roots from the bounded storage scan, overlays artifact footprint and growth, shows branch/HEAD/dirty state, groups duplicate clones by sanitized remote identity, and reports operating-contract readiness for `AGENTS.md` plus `.agents/*.yaml`.
+
+**Its role**
+
+The developer-workspace control surface. Use it when you want to know which repositories are active, growing, duplicated, dirty, missing agent contracts, or carrying large rebuildable artifacts. Most actions reveal folders or copy briefs. Chau7 launches also prepare a local `.aethyme/agent-contracts/` reference kit in the target repo and exclude `.aethyme/` through `.git/info/exclude`; portable contract output still belongs in `AGENTS.md` and `.agents/*.yaml`.
+
+**Aetower's value vs competitors**
+
+Generic cleanup tools see folders and sizes. Git clients see branches and remotes. AI agent dashboards see sessions. The Repos tab joins those views: storage pressure, Git identity, duplicate clones, live agent context, and portable operating-contract readiness in one local-only inventory.
+
+**3 things to do with this tab**
+
+1. **Start with Attention** — review repos flagged for budget pressure, missing contracts, dirty worktrees, duplicate clones, or live agent activity.
+2. **Check operating contracts** — open a repo, inspect expected files, then copy a self-contained prompt or launch Chau7 with local `.aethyme/` templates and schemas for missing or partial contracts.
+3. **Avoid blind cleanup** — use top artifact folders and copied briefs to decide whether build/cache cleanup is worth the rebuild cost on the current branch.
+
+---
+
+## 6. Diagnostics
 
 **What it does**
 
@@ -128,7 +150,7 @@ No competitor exposes its own internal pipeline metrics. This is Aetower "eating
 
 ---
 
-## 6. Fleet
+## 7. Fleet
 
 **What it does**
 
@@ -150,7 +172,7 @@ iStat Menus and Stats are single-machine tools with no network awareness. Sensei
 
 ---
 
-## 7. Settings
+## 8. Settings
 
 **What it does**
 
