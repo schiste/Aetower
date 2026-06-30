@@ -1,0 +1,18 @@
+schema_version: 1
+generated_by: aethyme-agent-contract-kit
+source_files:
+  - AGENTS.md
+roots:
+  - path: .
+    kind: repository
+    purpose: Repository root and fallback context.
+    constraints:
+      - Inspect tracked project files, not build caches or ignored local tooling.
+generated_roots:
+  - path: .aethyme
+    source: Aethyme local tooling
+    owner: local-operator
+ignored_roots:
+  - path: .git
+    reason: Git metadata.
+

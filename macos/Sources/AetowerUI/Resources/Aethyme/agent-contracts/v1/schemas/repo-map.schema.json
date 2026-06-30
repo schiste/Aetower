@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aethyme.dev/agents/schema-v1/repo-map.schema.json",
+  "title": "Agent Repository Map Contract",
+  "description": "Machine-readable repository topology for AI agents.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x_[A-Za-z0-9_]+$": true
+  },
+  "required": ["schema_version", "generated_by", "source_files", "roots"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "reviewed_by": { "type": "string", "minLength": 1 },
+    "reviewed_at": { "type": "string", "format": "date-time" },
+    "source_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/relativePath" },
+      "uniqueItems": true
+    },
+    "roots": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/root" }
+    },
+    "workspaces": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/workspace" }
+    },
+    "entrypoints": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entrypoint" }
+    },
+    "test_roots": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/relativePath" },
+      "uniqueItems": true
+    },
+    "generated_roots": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/generatedRoot" }
+    },
+    "ignored_roots": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ignoredRoot" }
+    },
+    "owners": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/owner" }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(~|/)|(^|/)\\.\\.(/|$)" }
+    },
+    "glob": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(~|/).*$" }
+    },
+    "commandId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "ruleId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["path", "kind", "purpose"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "kind": {
+          "enum": [
+            "agent",
+            "app",
+            "assets",
+            "ci",
+            "config",
+            "docs",
+            "fixtures",
+            "generated",
+            "hooks",
+            "infra",
+            "migrations",
+            "package",
+            "scripts",
+            "service",
+            "support",
+            "tests",
+            "tool",
+            "other"
+          ]
+        },
+        "purpose": { "type": "string", "minLength": 1 },
+        "language": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "package_file": { "$ref": "#/$defs/relativePath" },
+        "owner": { "type": "string", "minLength": 1 },
+        "agent_critical": { "type": "boolean" },
+        "source_of_truth": { "$ref": "#/$defs/relativePath" },
+        "local_agent_file": { "$ref": "#/$defs/relativePath" },
+        "validation_rule_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ruleId" },
+          "uniqueItems": true
+        },
+        "boundary_layer_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "do_not": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "agent_notes": { "type": "string", "minLength": 1 }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["name", "manager", "manifest"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "manager": {
+          "enum": ["pnpm", "npm", "yarn", "bun", "cargo", "swiftpm", "go", "python", "make", "mixed", "other"]
+        },
+        "manifest": { "$ref": "#/$defs/relativePath" },
+        "members": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relativePath" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["id", "path", "kind"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "kind": { "enum": ["app", "cli", "server", "worker", "library", "test", "script", "other"] },
+        "command_id": { "$ref": "#/$defs/commandId" },
+        "purpose": { "type": "string", "minLength": 1 }
+      }
+    },
+    "generatedRoot": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["path", "source", "owner"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "source": { "type": "string", "minLength": 1 },
+        "owner": { "type": "string", "minLength": 1 },
+        "safe_to_delete": { "type": "boolean" }
+      }
+    },
+    "ignoredRoot": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["path", "reason"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["id", "paths"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/glob" }
+        }
+      }
+    }
+  }
+}

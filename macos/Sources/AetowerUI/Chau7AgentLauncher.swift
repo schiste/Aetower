@@ -71,7 +71,11 @@ enum Chau7AgentLauncher {
             timeoutSeconds: 45
         )
         var launchResult = try parseLaunchResult(result)
-        launchResult = try confirmPromptSubmissionIfNeeded(launchResult, client: client)
+        launchResult = try confirmPromptSubmissionIfNeeded(
+            launchResult,
+            client: client,
+            promptWasRequested: !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        )
         return launchResult
     }
 
@@ -129,9 +133,13 @@ enum Chau7AgentLauncher {
 
     private static func confirmPromptSubmissionIfNeeded(
         _ result: Chau7AgentLaunchResult,
-        client: Chau7JSONRPCClient
+        client: Chau7JSONRPCClient,
+        promptWasRequested: Bool
     ) throws -> Chau7AgentLaunchResult {
-        guard result.promptStatus == "sent", !result.tabIDs.isEmpty else {
+        guard promptWasRequested, !result.tabIDs.isEmpty else {
+            return result
+        }
+        guard promptStatusNeedsSubmit(result.promptStatus) else {
             return result
         }
 
@@ -139,7 +147,7 @@ enum Chau7AgentLauncher {
         // If the Enter races ahead of prompt persistence, users see the prompt typed
         // but not submitted. A delayed submit is idempotent for the stuck-visible
         // prompt case and keeps Aetower's action deterministic.
-        Thread.sleep(forTimeInterval: 0.8)
+        Thread.sleep(forTimeInterval: 1.2)
 
         let confirmations = try result.tabIDs.map { tabID in
             let submitResult = try callTool(
@@ -166,6 +174,26 @@ enum Chau7AgentLauncher {
             submitConfirmation: confirmations.joined(separator: ", "),
             summary: result.summary
         )
+    }
+
+    private static func promptStatusNeedsSubmit(_ status: String?) -> Bool {
+        guard let status else {
+            return true
+        }
+        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else {
+            return true
+        }
+        return ![
+            "submitted",
+            "not_sent",
+            "not-sent",
+            "none",
+            "missing",
+            "failed",
+            "error",
+            "unsupported",
+        ].contains(normalized)
     }
 
     private static func extractStructuredContent(_ result: [String: Any]) -> [String: Any]? {

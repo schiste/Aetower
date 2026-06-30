@@ -62,7 +62,10 @@ let package = Package(
                 "AetowerBridge",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
-            path: "Sources/AetowerUI"
+            path: "Sources/AetowerUI",
+            resources: [
+                .copy("Resources/Aethyme")
+            ]
         ),
         .executableTarget(
             name: "AetowerApp",

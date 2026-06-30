@@ -1,0 +1,31 @@
+{
+  "kit_id": "agent-contracts",
+  "brand": "Aethyme",
+  "version": "v1",
+  "contract_schema_version": 1,
+  "description": "Portable agent operating contract templates and schemas for repository preparation.",
+  "templates": [
+    "templates/AGENTS.md",
+    "templates/manifest.yaml",
+    "templates/tasks.yaml",
+    "templates/repo-map.yaml",
+    "templates/contracts.yaml",
+    "templates/commands.yaml",
+    "templates/validation.yaml",
+    "templates/boundaries.yaml",
+    "templates/risks.yaml",
+    "templates/references.yaml"
+  ],
+  "schemas": [
+    "schemas/manifest.schema.json",
+    "schemas/tasks.schema.json",
+    "schemas/repo-map.schema.json",
+    "schemas/contracts.schema.json",
+    "schemas/commands.schema.json",
+    "schemas/validation.schema.json",
+    "schemas/boundaries.schema.json",
+    "schemas/risks.schema.json",
+    "schemas/references.schema.json"
+  ]
+}
+

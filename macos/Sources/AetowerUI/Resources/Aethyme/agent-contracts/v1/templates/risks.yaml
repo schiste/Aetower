@@ -1,0 +1,21 @@
+schema_version: 1
+reviewed_by: pending-human-review
+reviewed_at: 2026-06-29T00:00:00Z
+source_files:
+  - AGENTS.md
+surfaces:
+  - id: broad_repository_change
+    category: process-control
+    risk: Broad edits can overwrite unrelated user work or bypass required validation.
+    paths:
+      - "**/*"
+    approval_required: operator
+    forbidden_without_approval:
+      - destructive cleanup
+      - broad formatting
+      - dependency installation
+    manual_review_required: true
+notes:
+  - Replace fallback risk surfaces with repository-specific risks backed by local evidence.
+  - Keep pending-human-review until a human reviews this file.
+

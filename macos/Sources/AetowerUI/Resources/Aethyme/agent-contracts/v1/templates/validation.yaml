@@ -1,0 +1,19 @@
+schema_version: 1
+reviewed_by: pending-human-review
+reviewed_at: 2026-06-29T00:00:00Z
+source_files:
+  - AGENTS.md
+changed_files_mode: all
+max_cost_without_user_approval: medium
+reason_required_if_skipped: true
+rules:
+  - id: manual_review
+    description: Fallback rule when no reliable local command is known.
+    paths:
+      - "**/*"
+    risk: medium
+    manual_review_required: true
+notes:
+  - Replace fallback rules with exact command-backed validation when local evidence supports it.
+  - Keep pending-human-review until a human reviews this file.
+

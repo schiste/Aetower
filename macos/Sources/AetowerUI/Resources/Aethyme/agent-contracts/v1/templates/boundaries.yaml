@@ -1,0 +1,23 @@
+schema_version: 1
+reviewed_by: pending-human-review
+reviewed_at: 2026-06-29T00:00:00Z
+source_files:
+  - AGENTS.md
+layers:
+  - id: repository
+    description: Repository-wide fallback layer.
+    paths:
+      - "**/*"
+rules:
+  - id: preserve_generated_local_tooling
+    severity: medium
+    description: Do not treat local Aethyme tooling cache as committed source.
+    applies_to:
+      - .aethyme/**
+    rationale: .aethyme is local reference/cache material installed by Aethyme.
+    safe_alternatives:
+      - Write portable contracts under .agents/ instead.
+notes:
+  - Replace fallback boundaries with architecture constraints proven by local evidence.
+  - Keep pending-human-review until a human reviews this file.
+

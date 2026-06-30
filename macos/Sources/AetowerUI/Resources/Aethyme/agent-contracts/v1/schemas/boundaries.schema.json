@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aethyme.dev/agents/schema-v1/boundaries.schema.json",
+  "title": "Agent Architecture Boundaries Contract",
+  "description": "Architecture and dependency rules that agents must preserve.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x_[A-Za-z0-9_]+$": true
+  },
+  "required": ["schema_version", "reviewed_by", "reviewed_at", "source_files", "layers", "rules"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "reviewed_by": { "type": "string", "minLength": 1 },
+    "reviewed_at": { "type": "string", "format": "date-time" },
+    "source_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/relativePath" },
+      "uniqueItems": true
+    },
+    "enforcement_commands": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/commandId" },
+      "uniqueItems": true
+    },
+    "layers": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/layer" }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/rule" }
+    },
+    "generated_code": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/generatedCode" }
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(~|/)|(^|/)\\.\\.(/|$)" }
+    },
+    "glob": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(~|/).*$" }
+    },
+    "commandId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "ruleId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "layerId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "example": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["description"],
+      "properties": {
+        "description": { "type": "string", "minLength": 1 },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "snippet": { "type": "string", "minLength": 1 }
+      }
+    },
+    "layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["id", "paths"],
+      "properties": {
+        "id": { "$ref": "#/$defs/layerId" },
+        "description": { "type": "string", "minLength": 1 },
+        "default_policy": { "enum": ["allow", "deny"] },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/glob" },
+          "uniqueItems": true
+        },
+        "may_import": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/layerId" },
+          "uniqueItems": true
+        },
+        "must_not_import": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/layerId" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["id", "severity", "description"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ruleId" },
+        "severity": { "enum": ["warning", "error", "critical"] },
+        "description": { "type": "string", "minLength": 1 },
+        "rationale": { "type": "string", "minLength": 1 },
+        "from_layer": { "$ref": "#/$defs/layerId" },
+        "to_layer": { "$ref": "#/$defs/layerId" },
+        "rule_type": {
+          "enum": [
+            "import",
+            "layer",
+            "ownership",
+            "generated-code",
+            "data-access",
+            "security",
+            "runtime",
+            "other"
+          ]
+        },
+        "forbidden_imports": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/importRule" }
+        },
+        "forbidden_operations": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "allowed_alternatives": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "enforced_by_command_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/commandId" },
+          "uniqueItems": true
+        },
+        "examples_bad": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/example" }
+        },
+        "examples_good": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/example" }
+        },
+        "paths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/glob" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "importRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "$ref": "#/$defs/glob" },
+        "to": { "$ref": "#/$defs/glob" },
+        "from_layer": { "$ref": "#/$defs/layerId" },
+        "to_layer": { "$ref": "#/$defs/layerId" },
+        "except": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/glob" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "generatedCode": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["path", "owner", "regeneration_command"],
+      "properties": {
+        "path": { "$ref": "#/$defs/glob" },
+        "owner": { "type": "string", "minLength": 1 },
+        "regeneration_command": { "$ref": "#/$defs/commandId" },
+        "manual_edits_allowed": { "type": "boolean" },
+        "source_files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relativePath" },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

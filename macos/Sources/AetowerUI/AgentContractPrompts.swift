@@ -8,6 +8,61 @@ struct AgentContractPromptContext {
     let dirtyDetail: String?
 }
 
+struct AgentContractKitPromptContext: Sendable, Equatable {
+    let kitID: String
+    let version: String
+    let relativePath: String
+    let absolutePath: String
+    let fingerprint: String
+
+    func templatePath(for contract: StorageAgentContractCoverageModel) -> String {
+        "\(relativePath)/templates/\(templateFilename(for: contract))"
+    }
+
+    func schemaPath(for contract: StorageAgentContractCoverageModel) -> String? {
+        guard let filename = schemaFilename(for: contract) else {
+            return nil
+        }
+        return "\(relativePath)/schemas/\(filename)"
+    }
+
+    private func templateFilename(for contract: StorageAgentContractCoverageModel) -> String {
+        switch contract.id {
+        case "agents_md":
+            return "AGENTS.md"
+        case "repo_map":
+            return "repo-map.yaml"
+        default:
+            return contract.path.split(separator: "/").last.map(String.init) ?? "\(contract.id).yaml"
+        }
+    }
+
+    private func schemaFilename(for contract: StorageAgentContractCoverageModel) -> String? {
+        switch contract.id {
+        case "manifest":
+            return "manifest.schema.json"
+        case "tasks":
+            return "tasks.schema.json"
+        case "repo_map":
+            return "repo-map.schema.json"
+        case "contracts":
+            return "contracts.schema.json"
+        case "commands":
+            return "commands.schema.json"
+        case "validation":
+            return "validation.schema.json"
+        case "boundaries":
+            return "boundaries.schema.json"
+        case "risks":
+            return "risks.schema.json"
+        case "references":
+            return "references.schema.json"
+        default:
+            return nil
+        }
+    }
+}
+
 enum AgentContractPrompts {
     static func key(
         repositoryID: String,
@@ -20,7 +75,8 @@ enum AgentContractPrompts {
     static func generationPrompt(
         repository: AgentContractPromptContext,
         contract: StorageAgentContractCoverageModel,
-        issues: [StorageAgentGuidanceIssueModel]
+        issues: [StorageAgentGuidanceIssueModel],
+        kit: AgentContractKitPromptContext? = nil
     ) -> String {
         """
         You are generating or updating one portable agent operating contract file.
@@ -37,10 +93,13 @@ enum AgentContractPrompts {
         - Current status: \(status(repository: repository, contract: contract))
 
         This prompt is self-contained:
-        - Do not assume this repository contains Aetower docs, Aetower schemas, or any prior `.agents/` files.
-        - Do not spend time searching for Aetower prompt guides or schemas in this repository.
+        - Do not assume this repository contains Aethyme docs, Aethyme schemas, or any prior `.agents/` files unless a local Aethyme kit is listed below.
+        - Do not spend time searching for Aethyme prompt guides or schemas in this repository.
         - If the target file is under `.agents/`, create the `.agents/` directory if needed.
-        - Use only local repository evidence plus the embedded contract spec below.
+        - Use only local repository evidence, the Aethyme kit when listed, and the embedded contract spec below.
+
+        Aethyme local reference kit:
+        \(kitInstructions(kit, contract: contract))
 
         Scope:
         - Edit only \(contract.path).
@@ -58,18 +117,19 @@ enum AgentContractPrompts {
         Embedded contract spec:
         \(embeddedSpec(for: contract))
 
-        Current Aetower findings for this file:
+        Current Aethyme findings for this file:
         \(issueSummary(issues, contract: contract))
 
         Validation:
-        \(validation(for: contract))
+        \(validation(for: contract, kit: kit))
         """
     }
 
     static func reconcilePrompt(
         repository: AgentContractPromptContext,
         contract: StorageAgentContractCoverageModel,
-        issues: [StorageAgentGuidanceIssueModel]
+        issues: [StorageAgentGuidanceIssueModel],
+        kit: AgentContractKitPromptContext? = nil
     ) -> String {
         """
         You are reconciling one portable agent operating contract file against the local repository.
@@ -80,11 +140,14 @@ enum AgentContractPrompts {
         Target file:
         \(contract.path)
 
-        Current Aetower status:
+        Current Aethyme status:
         \(status(repository: repository, contract: contract))
 
-        Current Aetower findings for this file:
+        Current Aethyme findings for this file:
         \(issueSummary(issues, contract: contract))
+
+        Aethyme local reference kit:
+        \(kitInstructions(kit, contract: contract))
 
         Embedded contract spec:
         \(embeddedSpec(for: contract))
@@ -92,69 +155,17 @@ enum AgentContractPrompts {
         Instructions:
         - Run `git status --short` first.
         - Edit only \(contract.path).
-        - Do not assume this repository contains Aetower docs, Aetower schemas, or any prior `.agents/` files.
-        - Do not spend time searching for Aetower prompt guides or schemas in this repository.
+        - Do not assume this repository contains Aethyme docs, Aethyme schemas, or any prior `.agents/` files unless a local Aethyme kit is listed above.
+        - Do not spend time searching for Aethyme prompt guides or schemas in this repository.
         - Preserve unrelated user changes.
-        - Use only local repository evidence plus the embedded contract spec below.
+        - Use only local repository evidence, the Aethyme kit when listed, and the embedded contract spec below.
         - Compare the file against real local evidence. Do not invent paths, commands, risks, boundaries, references, or owners.
         - Remove stale claims that no longer match the repository.
-        - Keep review-only fields unset unless a human actually reviewed the contract.
+        - Do not claim completed human review. If the schema requires review fields and no human reviewed the contract, use `reviewed_by: pending-human-review`, a current ISO-8601 `reviewed_at`, and a note that review is pending.
         - If uncertainty remains, leave a short review note rather than encoding a guess as fact.
         - Run the applicable validation:
-        \(validation(for: contract))
+        \(validation(for: contract, kit: kit))
         """
-    }
-
-    static func guide(for contract: StorageAgentContractCoverageModel) -> String {
-        switch contract.id {
-        case "agents_md":
-            return "docs/agent-contract-prompts/01-agents-md.md"
-        case "manifest":
-            return "docs/agent-contract-prompts/02-manifest-yaml.md"
-        case "tasks":
-            return "docs/agent-contract-prompts/03-tasks-yaml.md"
-        case "repo_map":
-            return "docs/agent-contract-prompts/04-repo-map-yaml.md"
-        case "contracts":
-            return "docs/agent-contract-prompts/05-contracts-yaml.md"
-        case "commands":
-            return "docs/agent-contract-prompts/06-commands-yaml.md"
-        case "validation":
-            return "docs/agent-contract-prompts/07-validation-yaml.md"
-        case "boundaries":
-            return "docs/agent-contract-prompts/08-boundaries-yaml.md"
-        case "risks":
-            return "docs/agent-contract-prompts/09-risks-yaml.md"
-        case "references":
-            return "docs/agent-contract-prompts/10-references-yaml.md"
-        default:
-            return "docs/agent-contract-prompts/README.md"
-        }
-    }
-
-    static func schemaPath(for contract: StorageAgentContractCoverageModel) -> String {
-        switch contract.id {
-        case "manifest":
-            return ".agents/schema-v1/manifest.schema.json"
-        case "tasks":
-            return ".agents/schema-v1/tasks.schema.json"
-        case "repo_map":
-            return ".agents/schema-v1/repo-map.schema.json"
-        case "contracts":
-            return ".agents/schema-v1/contracts.schema.json"
-        case "commands":
-            return ".agents/schema-v1/commands.schema.json"
-        case "validation":
-            return ".agents/schema-v1/validation.schema.json"
-        case "boundaries":
-            return ".agents/schema-v1/boundaries.schema.json"
-        case "risks":
-            return ".agents/schema-v1/risks.schema.json"
-        case "references":
-            return ".agents/schema-v1/references.schema.json"
-        default:
-            return "Not required"
-        }
     }
 
     private static func status(
@@ -336,20 +347,77 @@ enum AgentContractPrompts {
         }
     }
 
-    private static func validation(for contract: StorageAgentContractCoverageModel) -> String {
-        if schemaPath(for: contract) == "Not required" {
+    private static func kitInstructions(
+        _ kit: AgentContractKitPromptContext?,
+        contract: StorageAgentContractCoverageModel
+    ) -> String {
+        guard let kit else {
+            return bulletList([
+                "No local Aethyme kit is attached to this copied prompt.",
+                "Use the embedded spec below as the fallback contract shape.",
+            ])
+        }
+
+        var items = [
+            "Installed reference path: \(kit.relativePath).",
+            "Template for this file: \(kit.templatePath(for: contract)).",
+            "Read files under \(kit.relativePath) when useful, but do not edit or commit `.aethyme/`.",
+            "Write the actual repository contract only to \(contract.path).",
+            "Treat `.aethyme/` as local Aethyme tooling/cache, not as portable contract content.",
+        ]
+        if let schemaPath = kit.schemaPath(for: contract) {
+            items.insert("Reference schema for this file: \(schemaPath).", at: 2)
+        }
+        return bulletList(items)
+    }
+
+    private static func validation(
+        for contract: StorageAgentContractCoverageModel,
+        kit: AgentContractKitPromptContext?
+    ) -> String {
+        if schemaFilename(for: contract) == nil {
             return bulletList([
                 "Check markdown fences are balanced.",
                 "Check referenced local paths exist or are explicitly marked for review.",
                 "Report changed files, validation performed, and residual risk.",
             ])
         }
-        return bulletList([
+        var items = [
             "Check YAML parses and uses the embedded shape above.",
+            "Compare shape against the Aethyme reference schema at \(kit?.schemaPath(for: contract) ?? "the local Aethyme kit schema") when useful.",
             "If this repo already has a local contract checker command, run it. Otherwise report that schema validation was unavailable.",
             "Check referenced local paths and command IDs exist when the target file references them.",
             "Report changed files, validation performed, and residual risk.",
-        ])
+        ]
+        if kit == nil {
+            items.insert("No local Aethyme schema path is attached to this copied prompt.", at: 1)
+        }
+        return bulletList(items)
+    }
+
+    private static func schemaFilename(for contract: StorageAgentContractCoverageModel) -> String? {
+        switch contract.id {
+        case "manifest":
+            return "manifest.schema.json"
+        case "tasks":
+            return "tasks.schema.json"
+        case "repo_map":
+            return "repo-map.schema.json"
+        case "contracts":
+            return "contracts.schema.json"
+        case "commands":
+            return "commands.schema.json"
+        case "validation":
+            return "validation.schema.json"
+        case "boundaries":
+            return "boundaries.schema.json"
+        case "risks":
+            return "risks.schema.json"
+        case "references":
+            return "references.schema.json"
+        default:
+            return nil
+        }
     }
 
     private static func embeddedSpec(for contract: StorageAgentContractCoverageModel) -> String {
@@ -393,7 +461,7 @@ enum AgentContractPrompts {
         case "repo_map":
             return yamlSpec(
                 purpose: "Machine-readable repository topology for agents.",
-                requiredTopLevel: ["schema_version", "source_files", "roots"],
+                requiredTopLevel: ["schema_version", "generated_by", "source_files", "roots"],
                 fields: [
                     "Describe major roots, workspaces, packages, services, entrypoints, generated roots, ignored roots, hooks, CI, assets, migrations, fixtures, and agent-critical files.",
                     "Each root should have a stable ID or path, kind, description, paths/globs, ownership if known, constraints, source-of-truth notes, local AGENTS.md if present, validation rule IDs, and boundary layer ID when known.",
@@ -416,7 +484,7 @@ enum AgentContractPrompts {
         case "commands":
             return yamlSpec(
                 purpose: "Canonical command registry for agents.",
-                requiredTopLevel: ["schema_version", "source_files", "commands"],
+                requiredTopLevel: ["schema_version", "generated_by", "source_files", "commands"],
                 fields: [
                     "`commands`: list commands with stable `id`, `purpose`, `cwd`, `cost`, `mutates_files`, `needs_approval`, `scope`, and `timeout_seconds`.",
                     "Prefer `argv` arrays. Use `shell_command` only when shell semantics are required, and set `uses_shell` accordingly.",
@@ -452,9 +520,9 @@ enum AgentContractPrompts {
         case "risks":
             return yamlSpec(
                 purpose: "High-risk surfaces and failure modes agents must slow down for.",
-                requiredTopLevel: ["schema_version", "reviewed_by", "reviewed_at", "source_files", "risks"],
+                requiredTopLevel: ["schema_version", "reviewed_by", "reviewed_at", "source_files", "surfaces"],
                 fields: [
-                    "`risks`: list risk surfaces with stable `id`, category, severity, signals, affected paths, approval type, forbidden operations, safe read-only commands, validation command IDs, and manual-review requirements when applicable.",
+                    "`surfaces`: list risk surfaces with stable `id`, category, risk, paths, approval type, forbidden operations, safe read-only commands, validation command IDs, and manual-review requirements when applicable.",
                     "Use categories such as auth, authorization, tenant-isolation, pii, data-export, ai-llm, dependencies, ci, hooks, infra, observability, generated-code, migration, deploy, billing, webhooks, or other.",
                     "Do not overstate risk without evidence; explain common failure modes only when visible in this repo.",
                     "Validation commands are optional when no reliable local command exists; require manual review instead.",
@@ -464,7 +532,7 @@ enum AgentContractPrompts {
         case "references":
             return yamlSpec(
                 purpose: "Pointers to deeper context that agents should load only when relevant.",
-                requiredTopLevel: ["schema_version", "source_files", "references"],
+                requiredTopLevel: ["schema_version", "generated_by", "source_files", "references"],
                 fields: [
                     "`references`: list docs/specs/runbooks with stable `id`, kind, title, summary, path or URI, load triggers, applicable paths, task triggers, freshness, canonical status, and supersedes metadata where useful.",
                     "Use kinds such as agent, workflow, architecture, security, privacy, api, runbook, adr, configuration, schema, contract, onboarding, product, or external.",

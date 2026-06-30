@@ -1,0 +1,78 @@
+schema_version: 1
+source_files:
+  - AGENTS.md
+contracts:
+  - id: agents_md
+    path: AGENTS.md
+    schema: https://aethyme.dev/agents/schema-v1/agents-md
+    required: true
+    generated: false
+  - id: manifest
+    path: .agents/manifest.yaml
+    schema: https://aethyme.dev/agents/schema-v1/manifest.schema.json
+    required: true
+    generated: true
+  - id: tasks
+    path: .agents/tasks.yaml
+    schema: https://aethyme.dev/agents/schema-v1/tasks.schema.json
+    required: true
+    generated: false
+    review_required: true
+  - id: repo_map
+    path: .agents/repo-map.yaml
+    schema: https://aethyme.dev/agents/schema-v1/repo-map.schema.json
+    required: true
+    generated: true
+  - id: contracts
+    path: .agents/contracts.yaml
+    schema: https://aethyme.dev/agents/schema-v1/contracts.schema.json
+    required: true
+    generated: false
+    review_required: true
+  - id: commands
+    path: .agents/commands.yaml
+    schema: https://aethyme.dev/agents/schema-v1/commands.schema.json
+    required: true
+    generated: true
+  - id: validation
+    path: .agents/validation.yaml
+    schema: https://aethyme.dev/agents/schema-v1/validation.schema.json
+    required: true
+    generated: false
+    review_required: true
+  - id: boundaries
+    path: .agents/boundaries.yaml
+    schema: https://aethyme.dev/agents/schema-v1/boundaries.schema.json
+    required: true
+    generated: false
+    review_required: true
+  - id: risks
+    path: .agents/risks.yaml
+    schema: https://aethyme.dev/agents/schema-v1/risks.schema.json
+    required: true
+    generated: false
+    review_required: true
+  - id: references
+    path: .agents/references.yaml
+    schema: https://aethyme.dev/agents/schema-v1/references.schema.json
+    required: true
+    generated: true
+integrity:
+  unique_id_namespaces:
+    - commands
+    - validation_rules
+    - boundary_rules
+    - risk_surfaces
+    - references
+    - contracts
+  command_reference_files:
+    - .agents/tasks.yaml
+    - .agents/validation.yaml
+    - .agents/risks.yaml
+  source_files_exist: true
+  local_references_exist: true
+  generated_files_fresh: false
+  schema_validation_required: false
+  stale_references_forbidden: true
+notes:
+  - Replace starter values with local repository evidence.

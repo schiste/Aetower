@@ -1,0 +1,19 @@
+schema_version: 1
+reviewed_by: pending-human-review
+reviewed_at: 2026-06-29T00:00:00Z
+source_files:
+  - AGENTS.md
+contracts:
+  - id: preserve_user_changes
+    category: process-control
+    rule: Agents must preserve unrelated user changes and keep edits scoped to the requested task.
+    paths:
+      - "**/*"
+    severity: high
+    source_of_truth:
+      - id: agents_md
+        description: Root agent operating contract.
+        path: AGENTS.md
+notes:
+  - Replace starter invariants with repository-specific contracts backed by local evidence.
+  - Keep pending-human-review until a human reviews this file.

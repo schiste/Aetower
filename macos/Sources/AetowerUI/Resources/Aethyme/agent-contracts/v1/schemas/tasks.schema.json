@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aethyme.dev/agents/schema-v1/tasks.schema.json",
+  "title": "Agent Task Routing Contract",
+  "description": "Task classification, routing, required reads, validation, and completion requirements for coding agents.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x_[A-Za-z0-9_]+$": true
+  },
+  "required": ["schema_version", "reviewed_by", "reviewed_at", "source_files", "tasks"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "reviewed_by": { "type": "string", "minLength": 1 },
+    "reviewed_at": { "type": "string", "format": "date-time" },
+    "source_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/relativePath" },
+      "uniqueItems": true
+    },
+    "default_task": { "$ref": "#/$defs/taskId" },
+    "classification_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "properties": {
+        "prefer_highest_risk_match": { "type": "boolean" },
+        "allow_multiple_matches": { "type": "boolean" },
+        "require_reason_when_uncertain": { "type": "boolean" },
+        "fallback_task_id": { "$ref": "#/$defs/taskId" }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/task" }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(~|/)|(^|/)\\.\\.(/|$)" }
+    },
+    "glob": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(~|/).*$" }
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "commandId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "contractId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "ruleId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "enum": ["phrase", "path_glob", "command_id", "risk_id", "contract_id", "domain_id"] },
+        "value": { "type": "string", "minLength": 1 },
+        "weight": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "completionReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "properties": {
+        "require_task_type": { "type": "boolean" },
+        "require_files_changed": { "type": "boolean" },
+        "require_contracts_touched": { "type": "boolean" },
+        "require_validation_run": { "type": "boolean" },
+        "require_skipped_checks": { "type": "boolean" },
+        "require_residual_risks": { "type": "boolean" }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": true
+      },
+      "required": ["id", "description", "signals", "strategy", "validation_rule_ids"],
+      "properties": {
+        "id": { "$ref": "#/$defs/taskId" },
+        "description": { "type": "string", "minLength": 1 },
+        "risk": { "enum": ["low", "medium", "high", "critical"] },
+        "signals": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/signal" }
+        },
+        "strategy": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "classify_first",
+              "read_contracts_first",
+              "reproduce_first",
+              "smallest_correct_patch",
+              "prefer_existing_patterns",
+              "add_regression_test",
+              "avoid_broad_refactor",
+              "ask_before_architecture_change",
+              "manual_review_required"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "required_reads": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relativePath" },
+          "uniqueItems": true
+        },
+        "likely_paths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/glob" },
+          "uniqueItems": true
+        },
+        "domain_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ruleId" },
+          "uniqueItems": true
+        },
+        "required_contract_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/contractId" },
+          "uniqueItems": true
+        },
+        "risk_surface_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ruleId" },
+          "uniqueItems": true
+        },
+        "boundary_rule_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ruleId" },
+          "uniqueItems": true
+        },
+        "validation_rule_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ruleId" },
+          "uniqueItems": true
+        },
+        "required_command_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/commandId" },
+          "uniqueItems": true
+        },
+        "approval_required": { "type": "boolean" },
+        "completion_report": { "$ref": "#/$defs/completionReport" },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}
+

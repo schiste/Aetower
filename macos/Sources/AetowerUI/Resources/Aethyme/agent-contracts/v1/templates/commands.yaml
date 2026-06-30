@@ -1,0 +1,26 @@
+schema_version: 1
+generated_by: aethyme-agent-contract-kit
+source_files:
+  - AGENTS.md
+commands:
+  - id: git_status_short
+    purpose: Inspect worktree state before editing.
+    cwd: .
+    cost: instant
+    mutates_files: false
+    needs_approval: false
+    scope: repository
+    timeout_seconds: 10
+    argv:
+      - git
+      - status
+      - --short
+    uses_shell: false
+    requires_network: false
+    requires_secrets: false
+    writes_outside_repo: false
+    external_effects: false
+    allowed_in_hooks: true
+notes:
+  - Add only commands proven by package manifests, scripts, hooks, CI, or docs.
+

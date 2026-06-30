@@ -1,0 +1,30 @@
+schema_version: 1
+reviewed_by: pending-human-review
+reviewed_at: 2026-06-29T00:00:00Z
+source_files:
+  - AGENTS.md
+classification_policy:
+  prefer_highest_risk_match: true
+  allow_multiple_matches: true
+  require_reason_when_uncertain: true
+  fallback_task_id: general_change
+tasks:
+  - id: general_change
+    description: Default route for repository changes when no more specific task class matches.
+    risk: medium
+    signals:
+      - kind: phrase
+        value: change
+    strategy:
+      - classify_first
+      - prefer_existing_patterns
+      - smallest_correct_patch
+    required_reads:
+      - AGENTS.md
+    likely_paths:
+      - "**/*"
+    validation_rule_ids:
+      - manual_review
+notes:
+  - Replace starter task classes, paths, and validation IDs with local evidence.
+  - Keep pending-human-review until a human reviews this file.

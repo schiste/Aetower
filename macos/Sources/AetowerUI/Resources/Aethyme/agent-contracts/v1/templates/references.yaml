@@ -1,0 +1,15 @@
+schema_version: 1
+generated_by: aethyme-agent-contract-kit
+source_files:
+  - AGENTS.md
+references:
+  - id: agents_md
+    title: Root agent operating contract
+    path: AGENTS.md
+    kind: agent
+    summary: Canonical repository-local instructions for coding agents.
+    load_when:
+      - every_task
+notes:
+  - Add only canonical local docs, runbooks, ADRs, and relevant external URIs.
+
