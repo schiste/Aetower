@@ -37,6 +37,24 @@ private enum RepositorySort: String, CaseIterable, Identifiable {
     }
 }
 
+private struct RepositoryAttentionItem: Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+    let systemImage: String
+    let tone: Color
+    let level: AetowerSurfaceLevel
+}
+
+private struct ScorecardWorkflowPreview: Identifiable {
+    let id: String
+    let repositoryName: String
+    let repositoryRoot: String
+    let relativePath: String
+    let absolutePath: String
+    let contents: String
+}
+
 private struct RepositorySummary: Identifiable {
     let id: String
     let root: String
@@ -155,6 +173,19 @@ private struct RepositorySummary: Identifiable {
 
     var hasScorecardAttention: Bool {
         scorecardAttentionScore >= 5 || scorecardCriticalFailureCount > 0
+    }
+
+    var requiresAttention: Bool {
+        attentionScore >= 8
+            || violationCount > 0
+            || reviewItemCount > 0
+            || qualityIssueCount > 0
+            || agentGuidanceIssueCount > 0
+            || agentReadinessStatus == "blocked"
+            || agentReadinessStatus == "weak"
+            || cloneGroupCount > 1
+            || gitDirtyStatus == "dirty"
+            || hasScorecardAttention
     }
 
     private static func normalizedScorecardCheckName(_ name: String) -> String {
@@ -370,12 +401,19 @@ public struct RepositoryView: View {
                     systemImage: "exclamationmark.triangle",
                     tone: attentionBadgeTone
                 )
+                AetowerToolBadge(
+                    "Scan",
+                    value: repositoryScanStatusLabel,
+                    systemImage: repositoryScanStatusIcon,
+                    tone: repositoryScanStatusTone
+                )
+                .help(repositoryScanStatusHelp)
             }
         } actions: {
             Button {
                 state.runStorageHygieneScan()
             } label: {
-                Label("Scan", systemImage: "arrow.clockwise")
+                Label(state.storageHygieneReport == nil ? "Scan" : "Refresh", systemImage: "arrow.clockwise")
             }
             .buttonStyle(.borderedProminent)
             .disabled(state.storageHygieneIsLoading)
@@ -424,12 +462,77 @@ public struct RepositoryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var repositoryScanProgressBanner: some View {
+        AetowerInfoBanner(
+            repositoryScanStatusHelp,
+            title: repositoryScanStatusLabel,
+            systemImage: repositoryScanStatusIcon,
+            tone: repositoryScanStatusTone,
+            level: .quiet
+        )
+    }
+
+    private var repositoryScanStatusLabel: String {
+        if state.storageHygieneIsLoading {
+            guard let job = state.storageScanJob else { return "Scanning" }
+            switch job.status {
+            case "queued": return "Queued"
+            case "running": return job.progress.phase.isEmpty ? "Running" : job.progress.phase.capitalized
+            case "paused": return "Paused"
+            case "complete": return "Finalizing"
+            default: return job.status.replacingOccurrences(of: "_", with: " ").capitalized
+            }
+        }
+        guard let completedAt = state.storageHygieneCompletedAt else { return "Not run" }
+        return "Last \(completedAt.formatted(date: .omitted, time: .shortened))"
+    }
+
+    private var repositoryScanStatusIcon: String {
+        if let job = state.storageScanJob, job.status == "paused" { return "pause.circle" }
+        return state.storageHygieneIsLoading ? "arrow.triangle.2.circlepath" : "clock"
+    }
+
+    private var repositoryScanStatusTone: Color {
+        if let job = state.storageScanJob, job.status == "paused" { return AetowerDesign.Status.warning }
+        return state.storageHygieneIsLoading ? AetowerDesign.Tone.cpu : AetowerDesign.Status.neutral
+    }
+
+    private var repositoryScanStatusHelp: String {
+        guard let job = state.storageScanJob else {
+            if state.storageHygieneIsLoading {
+                return "Preparing repository inventory refresh."
+            }
+            if let completedAt = state.storageHygieneCompletedAt {
+                return "Last repository scan completed \(completedAt.formatted(date: .abbreviated, time: .shortened))."
+            }
+            return "Repository inventory has not been scanned yet."
+        }
+        var parts = [
+            "Status \(job.status)",
+            "\(job.progress.scannedFiles) files",
+            formatBytes(job.progress.scannedBytes),
+        ]
+        if !job.progress.phase.isEmpty {
+            parts.append("phase \(job.progress.phase)")
+        }
+        if let currentPathHint = job.progress.currentPathHint, !currentPathHint.isEmpty {
+            parts.append(shortPath(currentPathHint))
+        }
+        if let throttleReason = job.progress.throttleReason, !throttleReason.isEmpty {
+            parts.append(throttleReason)
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private func repositoryDashboard(_ report: StorageHygieneReportModel) -> some View {
         let repositories = filteredRepositories(from: report)
 
         return ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
                 repositoryOverview(report, repositories: repositories)
+                if state.storageHygieneIsLoading {
+                    repositoryScanProgressBanner
+                }
 
                 if repositories.isEmpty {
                     AetowerEmptyState(
@@ -457,16 +560,7 @@ public struct RepositoryView: View {
         let duplicateCloneCount = allRepositories.filter { $0.cloneGroupCount > 1 }.count
         let dirtyCount = allRepositories.filter { $0.gitDirtyStatus == "dirty" }.count
         let agentReadyCount = allRepositories.filter { $0.agentReadinessStatus == "ready" }.count
-        let reviewCount = allRepositories.filter {
-            $0.reviewItemCount > 0
-                || $0.violationCount > 0
-                || $0.qualityIssueCount > 0
-                || $0.agentGuidanceIssueCount > 0
-                || $0.agentReadinessStatus == "blocked"
-                || $0.agentReadinessStatus == "weak"
-                || $0.cloneGroupCount > 1
-                || $0.gitDirtyStatus == "dirty"
-        }.count
+        let reviewCount = allRepositories.filter(\.requiresAttention).count
 
         return LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 180), spacing: AetowerDesign.Spacing.md)],
@@ -634,17 +728,18 @@ public struct RepositoryView: View {
         _ repository: RepositorySummary,
         report: StorageHygieneReportModel
     ) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-                repositoryHero(repository)
-                repositorySignals(repository)
-                repositoryAgentGuidance(repository)
-                repositoryGitIntelligence(repository)
-                repositorySupplyChainReadiness(repository)
-                repositoryActions(repository)
-                topArtifacts(repository)
-                liveContext(repository)
-                futureOptimizationLanes(repository, report: report)
+            ScrollView {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                    repositoryHero(repository)
+                    repositoryActions(repository)
+                    repositoryAttentionSummary(repository)
+                    repositorySignals(repository)
+                    repositorySupplyChainReadiness(repository)
+                    repositoryAgentGuidance(repository)
+                    repositoryGitIntelligence(repository)
+                    topArtifacts(repository)
+                    liveContext(repository)
+                    futureOptimizationLanes(repository, report: report)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(AetowerDesign.Spacing.xxl)
@@ -689,6 +784,138 @@ public struct RepositoryView: View {
                 }
             }
         }
+    }
+
+    private func repositoryAttentionSummary(_ repository: RepositorySummary) -> some View {
+        let items = Array(repositoryAttentionItems(repository).prefix(4))
+        return AetowerSection("Top risks", subtitle: "Immediate reasons this repository needs attention") {
+            if items.isEmpty {
+                AetowerInfoBanner(
+                    "No immediate repository attention signals are active. Git, storage, agents, and supply-chain details remain available below.",
+                    title: "No active risks",
+                    systemImage: "checkmark.circle",
+                    tone: AetowerDesign.Status.ready,
+                    level: .quiet
+                )
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 220), spacing: AetowerDesign.Spacing.sm)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.sm
+                ) {
+                    ForEach(items) { item in
+                        repositoryAttentionCard(item)
+                    }
+                }
+            }
+        }
+    }
+
+    private func repositoryAttentionCard(_ item: RepositoryAttentionItem) -> some View {
+        AetowerSurface(level: item.level, padding: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: item.systemImage)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .frame(width: AetowerDesign.Size.iconSlot)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        Text(item.title)
+                            .font(AetowerDesign.Typography.controlLabel)
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                        AetowerBadge("Attention", tone: item.tone)
+                    }
+                    Text(item.detail)
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func repositoryAttentionItems(_ repository: RepositorySummary) -> [RepositoryAttentionItem] {
+        var items: [RepositoryAttentionItem] = []
+        if repository.violationCount > 0 {
+            items.append(RepositoryAttentionItem(
+                id: "budget",
+                title: "Budget guardrail",
+                detail: "\(repository.violationCount) repository budget signal\(repository.violationCount == 1 ? "" : "s") need review before cleanup.",
+                systemImage: "exclamationmark.triangle",
+                tone: AetowerDesign.Status.error,
+                level: .critical
+            ))
+        }
+        if repository.agentReadinessStatus == "blocked" || repository.agentReadinessStatus == "weak" {
+            items.append(RepositoryAttentionItem(
+                id: "contract-readiness",
+                title: "Contract readiness",
+                detail: agentReadinessDetail(repository),
+                systemImage: "checklist.checked",
+                tone: agentReadinessTone(repository),
+                level: repository.agentReadinessStatus == "blocked" ? .critical : .warning
+            ))
+        }
+        if repository.agentGuidanceIssueCount > 0 || repository.qualityIssueCount > 0 {
+            items.append(RepositoryAttentionItem(
+                id: "guidance",
+                title: agentGuidanceTitle(repository),
+                detail: qualityDetail(repository),
+                systemImage: "doc.badge.exclamationmark",
+                tone: repository.qualityStatusTone,
+                level: repository.agentGuidanceStatus == "error" ? .critical : .warning
+            ))
+        }
+        if repository.hasScorecardAttention {
+            items.append(RepositoryAttentionItem(
+                id: "scorecard",
+                title: "Scorecard posture",
+                detail: scorecardReadinessDetail(repository),
+                systemImage: "shield.lefthalf.filled",
+                tone: scorecardReadinessTone(repository),
+                level: repository.scorecardAttentionScore >= 10 ? .critical : .warning
+            ))
+        }
+        if repository.cloneGroupCount > 1 {
+            items.append(RepositoryAttentionItem(
+                id: "clone-group",
+                title: "Duplicate clone group",
+                detail: cloneGroupDetail(repository),
+                systemImage: "square.stack.3d.up",
+                tone: AetowerDesign.Status.warning,
+                level: .warning
+            ))
+        }
+        if repository.gitDirtyStatus == "dirty" {
+            items.append(RepositoryAttentionItem(
+                id: "dirty",
+                title: "Dirty worktree",
+                detail: dirtyDetail(repository),
+                systemImage: "pencil.and.scribble",
+                tone: AetowerDesign.Tone.energy,
+                level: .warning
+            ))
+        }
+        if (repository.growthBytes ?? 0) > 0 {
+            items.append(RepositoryAttentionItem(
+                id: "growth",
+                title: "Storage growth",
+                detail: "\(growthLabel(repository)) in \(repository.growthWindow).",
+                systemImage: "chart.line.uptrend.xyaxis",
+                tone: growthTone(repository),
+                level: .warning
+            ))
+        }
+        if repository.reviewItemCount > 0 {
+            items.append(RepositoryAttentionItem(
+                id: "review-items",
+                title: "Reviewable artifacts",
+                detail: "\(repository.reviewItemCount) item\(repository.reviewItemCount == 1 ? "" : "s") need human review before cleanup.",
+                systemImage: "shippingbox",
+                tone: AetowerDesign.Status.warning,
+                level: .warning
+            ))
+        }
+        return items
     }
 
     private func repositorySignals(_ repository: RepositorySummary) -> some View {
@@ -2040,7 +2267,7 @@ public struct RepositoryView: View {
 
     private var attentionCountLabel: String {
         guard let report = state.storageHygieneReport else { return "0" }
-        return "\(repositorySummaries(from: report).filter { $0.attentionScore >= 8 }.count)"
+        return "\(repositorySummaries(from: report).filter(\.requiresAttention).count)"
     }
 
     private var repositoryBadgeTone: Color {
@@ -2049,7 +2276,7 @@ public struct RepositoryView: View {
 
     private var attentionBadgeTone: Color {
         guard let report = state.storageHygieneReport else { return AetowerDesign.Status.neutral }
-        return repositorySummaries(from: report).contains { $0.attentionScore >= 8 }
+        return repositorySummaries(from: report).contains(where: \.requiresAttention)
             ? AetowerDesign.Status.warning
             : AetowerDesign.Status.ready
     }
@@ -2062,18 +2289,7 @@ public struct RepositoryView: View {
         case .overview:
             break
         case .attention:
-            repositories = repositories.filter {
-                $0.attentionScore >= 8
-                    || $0.violationCount > 0
-                || $0.reviewItemCount > 0
-                || $0.qualityIssueCount > 0
-                || $0.agentGuidanceIssueCount > 0
-                || $0.agentReadinessStatus == "blocked"
-                || $0.agentReadinessStatus == "weak"
-                || $0.cloneGroupCount > 1
-                || $0.gitDirtyStatus == "dirty"
-                || $0.hasScorecardAttention
-            }
+            repositories = repositories.filter(\.requiresAttention)
         }
 
         if !query.isEmpty {
