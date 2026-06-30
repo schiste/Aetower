@@ -333,6 +333,7 @@ public struct RepositoryView: View {
     @State private var scorecardWorkflowWritingRoots: Set<String> = []
     @State private var scorecardWorkflowStatusByRoot: [String: String] = [:]
     @State private var scorecardWorkflowErrorsByRoot: [String: String] = [:]
+    @State private var scorecardWorkflowPreview: ScorecardWorkflowPreview?
     @State private var selectedAgentContractByRepository: [String: String] = [:]
 
     public init(state: AppState, settings: SettingsStore) {
@@ -353,6 +354,9 @@ public struct RepositoryView: View {
         }
         .task {
             state.ensureStorageHygieneScan()
+        }
+        .sheet(item: $scorecardWorkflowPreview) { preview in
+            scorecardWorkflowPreviewSheet(preview)
         }
     }
 
@@ -1438,8 +1442,29 @@ public struct RepositoryView: View {
         }
     }
 
-    private func addScorecardGitHubAction(_ repository: RepositorySummary) {
-        let root = repository.root
+    private func showScorecardWorkflowPreview(_ repository: RepositorySummary) {
+        let rootURL = URL(fileURLWithPath: repository.root, isDirectory: true)
+            .standardizedFileURL
+        let workflowURL = rootURL.appendingPathComponent(
+            RepositoryScorecardWorkflowWriter.relativePath,
+            isDirectory: false
+        )
+        scorecardWorkflowPreview = ScorecardWorkflowPreview(
+            id: repository.root,
+            repositoryName: repository.name,
+            repositoryRoot: repository.root,
+            relativePath: RepositoryScorecardWorkflowWriter.relativePath,
+            absolutePath: workflowURL.path,
+            contents: RepositoryScorecardWorkflowWriter.workflowContents
+        )
+    }
+
+    private func confirmScorecardWorkflowWrite(_ preview: ScorecardWorkflowPreview) {
+        scorecardWorkflowPreview = nil
+        addScorecardGitHubAction(repoRoot: preview.repositoryRoot)
+    }
+
+    private func addScorecardGitHubAction(repoRoot root: String) {
         scorecardWorkflowWritingRoots.insert(root)
         scorecardWorkflowStatusByRoot[root] = nil
         scorecardWorkflowErrorsByRoot[root] = nil
@@ -1464,6 +1489,70 @@ public struct RepositoryView: View {
                 }
             }
         }
+    }
+
+    private func scorecardWorkflowPreviewSheet(_ preview: ScorecardWorkflowPreview) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: "plus.rectangle.on.folder")
+                    .foregroundStyle(AetowerDesign.Status.warning)
+                    .frame(width: AetowerDesign.Size.iconSlot)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Add Scorecard GitHub Action")
+                        .font(AetowerDesign.Typography.sectionTitle)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    Text("Review the exact workflow file before Aetower writes it into \(preview.repositoryName).")
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            AetowerSurface(level: .warning, padding: AetowerDesign.Spacing.md) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text(preview.relativePath)
+                        .font(AetowerDesign.Typography.controlLabel)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    Text(preview.absolutePath)
+                        .font(AetowerDesign.Typography.compactData(size: 10))
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                    Text("If this file already exists, Aetower leaves it unchanged.")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                }
+            }
+
+            AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md) {
+                ScrollView {
+                    Text(preview.contents)
+                        .font(AetowerDesign.Typography.compactData(size: 11))
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .frame(minHeight: 260, idealHeight: 320, maxHeight: 420)
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                Button("Cancel", role: .cancel) {
+                    scorecardWorkflowPreview = nil
+                }
+                Button {
+                    confirmScorecardWorkflowWrite(preview)
+                } label: {
+                    Label("Write workflow", systemImage: "square.and.pencil")
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+            .controlSize(.small)
+        }
+        .padding(AetowerDesign.Spacing.xxl)
+        .frame(minWidth: 640, idealWidth: 720, maxWidth: 820, minHeight: 520, idealHeight: 580)
     }
 
     private func agentContractLaunchPromptKind(
@@ -1680,7 +1769,7 @@ public struct RepositoryView: View {
                     HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
                         Image(systemName: "shield.lefthalf.filled")
                             .font(AetowerDesign.Typography.sectionTitle)
-                            .foregroundStyle(scorecardScoreTone(report))
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
                             .frame(width: AetowerDesign.Size.iconSlot)
                         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                             Text("OpenSSF Scorecard")
@@ -1805,7 +1894,7 @@ public struct RepositoryView: View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
             HStack(spacing: AetowerDesign.Spacing.xs) {
                 Image(systemName: icon)
-                    .foregroundStyle(tone)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
                 Text(label.uppercased())
                     .font(AetowerDesign.Typography.metadata)
                     .foregroundStyle(AetowerDesign.Ink.tertiary)
@@ -1870,9 +1959,9 @@ public struct RepositoryView: View {
                 }
                 .disabled(report.failedChecks.isEmpty || launchState?.isLaunching == true)
                 Button {
-                    addScorecardGitHubAction(repository)
+                    showScorecardWorkflowPreview(repository)
                 } label: {
-                    Label("Add Scorecard GitHub Action", systemImage: "plus.rectangle.on.folder")
+                    Label("Preview Scorecard workflow", systemImage: "plus.rectangle.on.folder")
                 }
                 .disabled(workflowIsWriting)
             }
@@ -2004,17 +2093,17 @@ public struct RepositoryView: View {
             } else {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                     ForEach(Array(checks.enumerated()), id: \.offset) { pair in
-                        scorecardCheckRow(pair.element, tone: tone)
+                        scorecardCheckRow(pair.element)
                     }
                 }
             }
         }
     }
 
-    private func scorecardCheckRow(_ check: RepositoryScorecardCheckModel, tone: Color) -> some View {
+    private func scorecardCheckRow(_ check: RepositoryScorecardCheckModel) -> some View {
         HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
             Image(systemName: "seal")
-                .foregroundStyle(tone)
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
                 .frame(width: AetowerDesign.Size.iconSlot)
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                 Text(check.name)
@@ -2062,7 +2151,7 @@ public struct RepositoryView: View {
     ) -> some View {
         HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
             Image(systemName: "arrow.up.forward.circle")
-                .foregroundStyle(scorecardSeverityTone(recommendation.severity))
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
                 .frame(width: AetowerDesign.Size.iconSlot)
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                 HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.xs) {
@@ -2096,7 +2185,7 @@ public struct RepositoryView: View {
                     Text("Repository actions")
                         .font(AetowerDesign.Typography.sectionTitle)
                         .foregroundStyle(AetowerDesign.Ink.primary)
-                    Text("Read-only today. This is where optimization, cleanup, branch hygiene, and build-cache actions will attach later.")
+                    Text("Fast local actions for this repository. Any repository write is shown with a preview before it runs.")
                         .font(AetowerDesign.Typography.caption)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
                 }
