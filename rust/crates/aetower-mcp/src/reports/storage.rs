@@ -17,7 +17,7 @@ use std::{
 };
 
 use rusqlite::{Connection, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const MAX_LIMIT: usize = 200;
 const MAX_ROOTS: usize = 64;
@@ -39,6 +39,9 @@ const AGENT_READINESS_MAX_SCORE: u64 = 100;
 const REPO_ARTIFACT_BUDGET_BYTES: u64 = 30 * 1024 * 1024 * 1024;
 const REPO_GROWTH_BUDGET_BYTES_PER_DAY: u64 = 2 * 1024 * 1024 * 1024;
 const TOTAL_ARTIFACT_BUDGET_BYTES: u64 = 30 * 1024 * 1024 * 1024;
+const FREE_SPACE_FLOOR_BYTES: u64 = 20 * 1024 * 1024 * 1024;
+const VOLUME_PRESSURE_FLOOR_PERCENT: u64 = 10;
+const SCHEDULED_SCAN_INTERVAL_HOURS: u64 = 24;
 const FAST_SIZE_WALK_MAX_ENTRIES: u64 = 30_000;
 const DEEP_SIZE_WALK_MAX_ENTRIES: u64 = SIZE_WALK_MAX_ENTRIES;
 const FORENSIC_SIZE_WALK_MAX_ENTRIES: u64 = 300_000;
@@ -52,6 +55,8 @@ const RECENT_CLEANUP_BLOCK_MILLIS: u64 = 10 * 60 * 1000;
 const STORAGE_TREEMAP_MAX_DEPTH: usize = 4;
 const STORAGE_TREEMAP_MAX_CHILDREN: usize = 14;
 const STORAGE_TREEMAP_MAX_ITEMS: usize = 160;
+const STORAGE_WRITER_LEDGER_MAX_BYTES: u64 = 2 * 1024 * 1024;
+const STORAGE_WRITER_LEDGER_TIME_FUZZ_MILLIS: u64 = 10 * 60 * 1000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StorageScanMode {
@@ -895,11 +900,65 @@ struct StorageGrowthDelta {
     path: String,
     source_root: String,
     repo_root: Option<String>,
+    repo_name: Option<String>,
+    git_branch: Option<String>,
+    git_head: Option<String>,
     kind: String,
     cleanup_tier: String,
     previous_physical_bytes: u64,
     current_physical_bytes: u64,
     delta_bytes: i64,
+    command: Option<String>,
+    process_tree: Option<String>,
+    ai_agent_session: Option<String>,
+    attribution_confidence: String,
+    attribution_confidence_score: u8,
+    attribution_ambiguous: bool,
+    attribution_summary: String,
+    attribution_evidence: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct StorageWriterLedgerRecord {
+    #[serde(default)]
+    timestamp_millis: Option<u64>,
+    #[serde(default)]
+    started_at_millis: Option<u64>,
+    #[serde(default)]
+    ended_at_millis: Option<u64>,
+    #[serde(default)]
+    path_prefix: Option<String>,
+    #[serde(default)]
+    repo_root: Option<String>,
+    #[serde(default)]
+    repo_name: Option<String>,
+    #[serde(default)]
+    git_branch: Option<String>,
+    #[serde(default)]
+    git_head: Option<String>,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    process_tree: Option<String>,
+    #[serde(default)]
+    ai_agent_session: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct StorageGrowthAttribution {
+    repo_name: Option<String>,
+    git_branch: Option<String>,
+    git_head: Option<String>,
+    command: Option<String>,
+    process_tree: Option<String>,
+    ai_agent_session: Option<String>,
+    confidence: String,
+    confidence_score: u8,
+    ambiguous: bool,
+    summary: String,
+    evidence: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1069,8 +1128,16 @@ struct StorageBudgetGuardrails {
     repo_growth_budget_bytes_per_day: u64,
     repo_artifact_budget_bytes: u64,
     total_artifact_budget_bytes: u64,
+    free_space_floor_bytes: u64,
+    volume_pressure_floor_percent: u64,
+    warning_only_by_default: bool,
+    auto_trash_safe_tier_enabled: bool,
+    scheduled_scan_recommended: bool,
+    scheduled_scan_interval_hours: u64,
     status: String,
     violations: Vec<StorageBudgetViolation>,
+    policies: Vec<StoragePreventionPolicy>,
+    prevention_suggestions: Vec<StoragePreventionSuggestion>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1085,6 +1152,30 @@ struct StorageBudgetViolation {
     observed_bytes: u64,
     limit_bytes: u64,
     recommendation: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StoragePreventionPolicy {
+    id: String,
+    title: String,
+    mode: String,
+    enabled: bool,
+    action: String,
+    tier: String,
+    detail: String,
+    next_step: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct StoragePreventionSuggestion {
+    id: String,
+    trigger: String,
+    title: String,
+    detail: String,
+    action_label: String,
+    estimated_reclaimable_bytes: u64,
+    safety: String,
+    requires_approval: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -1884,6 +1975,7 @@ impl StorageSizeIndex {
         let Some(connection) = self.connection.as_ref() else {
             return Vec::new();
         };
+        let writer_ledger = load_storage_writer_ledger_records();
         let Ok(mut statement) = connection.prepare(
             "SELECT bucket_millis, scan_millis, path, source_root, repo_root, kind, cleanup_tier,
                     previous_physical_bytes, current_physical_bytes, delta_bytes
@@ -1904,16 +1996,43 @@ impl StorageSizeIndex {
                 path: row.get(2)?,
                 source_root: row.get(3)?,
                 repo_root: row.get(4)?,
+                repo_name: None,
+                git_branch: None,
+                git_head: None,
                 kind: row.get(5)?,
                 cleanup_tier: row.get(6)?,
                 previous_physical_bytes: previous_physical_bytes.max(0) as u64,
                 current_physical_bytes: current_physical_bytes.max(0) as u64,
                 delta_bytes: row.get(9)?,
+                command: None,
+                process_tree: None,
+                ai_agent_session: None,
+                attribution_confidence: "low".to_owned(),
+                attribution_confidence_score: 0,
+                attribution_ambiguous: false,
+                attribution_summary: String::new(),
+                attribution_evidence: Vec::new(),
             })
         }) else {
             return Vec::new();
         };
-        rows.flatten().collect()
+        rows.flatten()
+            .map(|mut delta| {
+                let attribution = attribute_storage_growth_delta(&delta, &writer_ledger);
+                delta.repo_name = attribution.repo_name;
+                delta.git_branch = attribution.git_branch;
+                delta.git_head = attribution.git_head;
+                delta.command = attribution.command;
+                delta.process_tree = attribution.process_tree;
+                delta.ai_agent_session = attribution.ai_agent_session;
+                delta.attribution_confidence = attribution.confidence;
+                delta.attribution_confidence_score = attribution.confidence_score;
+                delta.attribution_ambiguous = attribution.ambiguous;
+                delta.attribution_summary = attribution.summary;
+                delta.attribution_evidence = attribution.evidence;
+                delta
+            })
+            .collect()
     }
 }
 
@@ -2448,19 +2567,26 @@ fn build_storage_hygiene_report_with_options(
     let cleanup_tiers = summarize_cleanup_tiers(&items);
     let cleanup_recipes = build_cleanup_recipes(&items);
     let cleanup_bundles = build_cleanup_bundles(&items);
-    let repo_footprints = summarize_repo_footprints(&items);
+    let mut repo_footprints = summarize_repo_footprints(&items);
     let duplicate_groups = summarize_duplicate_groups(&items);
     let app_footprints = summarize_app_footprints(&items);
     let system_data_buckets = summarize_system_data_buckets(&items);
     let treemap_roots = build_storage_treemap_roots(&items, &scanned_roots);
     let repository_inventory =
         summarize_repository_inventory(repository_roots, started, options.mode, &mut metrics);
-    let budget_guardrails = evaluate_budget_guardrails(&summary, &repo_footprints);
+    let growth_deltas = storage_index.load_growth_deltas(40);
+    apply_growth_deltas_to_repo_footprints(&mut repo_footprints, &growth_deltas);
     let agent_hygiene = summarize_agent_hygiene(&items);
     let source_coverage =
         summarize_source_coverage(&requested_roots, &scanned_roots, &skipped_roots, &items);
     let volume_states = summarize_volume_states(&requested_roots);
-    let growth_deltas = storage_index.load_growth_deltas(40);
+    let budget_guardrails = evaluate_budget_guardrails(
+        &summary,
+        &repo_footprints,
+        &volume_states,
+        &items,
+        &growth_deltas,
+    );
     let diagnostics = StorageScanDiagnostics {
         mode: options.mode.as_str().to_owned(),
         root_walk_millis: metrics.root_walk_millis,
@@ -2517,7 +2643,7 @@ fn build_storage_hygiene_report_with_options(
                 .to_owned(),
             "Last-access timestamps can be unavailable, coarse, or lazily updated depending on the macOS volume."
                 .to_owned(),
-            "Command and process-tree attribution require file-event or runtime baselines; known local AI-agent directories are inferred conservatively."
+            "Command and process-tree attribution uses indexed deltas plus optional writer ledgers from Aetower/Chau7; unmatched writers are reported as low-confidence instead of guessed."
                 .to_owned(),
             "Repository inventory is Git-root based; storage footprints are a bounded artifact subset overlaid on top."
                 .to_owned(),
@@ -2593,7 +2719,7 @@ fn build_storage_hygiene_report_from_index(
     let cleanup_tiers = summarize_cleanup_tiers(&items);
     let cleanup_recipes = build_cleanup_recipes(&items);
     let cleanup_bundles = build_cleanup_bundles(&items);
-    let repo_footprints = summarize_repo_footprints(&items);
+    let mut repo_footprints = summarize_repo_footprints(&items);
     let duplicate_groups = summarize_duplicate_groups(&items);
     let app_footprints = summarize_app_footprints(&items);
     let system_data_buckets = summarize_system_data_buckets(&items);
@@ -2607,12 +2733,19 @@ fn build_storage_hygiene_report_from_index(
         StorageScanMode::InstantCached,
         &mut metrics,
     );
-    let budget_guardrails = evaluate_budget_guardrails(&summary, &repo_footprints);
+    let growth_deltas = storage_index.load_growth_deltas(40);
+    apply_growth_deltas_to_repo_footprints(&mut repo_footprints, &growth_deltas);
     let agent_hygiene = summarize_agent_hygiene(&items);
     let source_coverage =
         summarize_source_coverage(&requested_roots, &scanned_roots, &skipped_roots, &items);
     let volume_states = summarize_volume_states(&requested_roots);
-    let growth_deltas = storage_index.load_growth_deltas(40);
+    let budget_guardrails = evaluate_budget_guardrails(
+        &summary,
+        &repo_footprints,
+        &volume_states,
+        &items,
+        &growth_deltas,
+    );
     let diagnostics = StorageScanDiagnostics {
         mode: StorageScanMode::InstantCached.as_str().to_owned(),
         root_walk_millis: 0,
@@ -2664,7 +2797,7 @@ fn build_storage_hygiene_report_from_index(
             "Loaded from Aetower's persistent storage index for instant display.".to_owned(),
             "Run a refresh before destructive cleanup when the displayed path changed recently."
                 .to_owned(),
-            "Growth attribution is based on indexed size deltas until command/session ledgers are available."
+            "Growth attribution is based on indexed size deltas and optional Aetower/Chau7 writer ledger records."
                 .to_owned(),
         ],
     })
@@ -4260,6 +4393,253 @@ fn storage_treemap_node_sort(left: &StorageTreemapNode, right: &StorageTreemapNo
         .size_bytes
         .cmp(&left.size_bytes)
         .then_with(|| left.path.cmp(&right.path))
+}
+
+fn attribute_storage_growth_delta(
+    delta: &StorageGrowthDelta,
+    writer_ledger: &[StorageWriterLedgerRecord],
+) -> StorageGrowthAttribution {
+    let repo_root = delta.repo_root.as_deref().map(Path::new);
+    let git_head = repo_root.map(read_git_head).unwrap_or_default();
+    let repo_name = delta.repo_root.as_deref().and_then(|root| {
+        Path::new(root)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+    });
+    let inferred_agent_session = known_agent_path(Path::new(&delta.path))
+        .map(|(_, display_name)| format!("{display_name} local artifacts"));
+    let matching_records = writer_ledger
+        .iter()
+        .filter(|record| storage_writer_record_matches_delta(record, delta))
+        .collect::<Vec<_>>();
+    let mut evidence = vec![format!(
+        "Indexed growth delta: {} -> {} bytes.",
+        delta.previous_physical_bytes, delta.current_physical_bytes
+    )];
+
+    if let Some(repo_root) = delta.repo_root.as_deref() {
+        evidence.push(format!("Repo matched by indexed path: {repo_root}."));
+    }
+    if let Some(session) = inferred_agent_session.as_deref() {
+        evidence.push(format!("AI-agent directory evidence: {session}."));
+    }
+
+    if matching_records.len() == 1 {
+        let record = matching_records[0];
+        let command = first_non_empty(record.command.as_deref(), None);
+        let process_tree = first_non_empty(record.process_tree.as_deref(), None);
+        let ai_agent_session = first_non_empty(
+            record.ai_agent_session.as_deref(),
+            inferred_agent_session.as_deref(),
+        );
+        if let Some(source) = record.source.as_deref().filter(|value| !value.is_empty()) {
+            evidence.push(format!("Writer ledger source: {source}."));
+        }
+        if let Some(prefix) = record
+            .path_prefix
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            evidence.push(format!("Writer ledger path prefix matched: {prefix}."));
+        }
+        if let Some(command) = command.as_deref() {
+            evidence.push(format!("Command matched: {command}."));
+        }
+        if let Some(process_tree) = process_tree.as_deref() {
+            evidence.push(format!("Process tree matched: {process_tree}."));
+        }
+        if let Some(session) = ai_agent_session.as_deref() {
+            evidence.push(format!("AI session matched: {session}."));
+        }
+
+        return StorageGrowthAttribution {
+            repo_name: first_non_empty(record.repo_name.as_deref(), repo_name.as_deref()),
+            git_branch: first_non_empty(record.git_branch.as_deref(), git_head.branch.as_deref()),
+            git_head: first_non_empty(record.git_head.as_deref(), git_head.short_head.as_deref()),
+            command,
+            process_tree,
+            ai_agent_session,
+            confidence: "high".to_owned(),
+            confidence_score: 92,
+            ambiguous: false,
+            summary: "Single writer ledger record matched this growth window.".to_owned(),
+            evidence,
+        };
+    }
+
+    if matching_records.len() > 1 {
+        let candidate_labels = matching_records
+            .iter()
+            .take(4)
+            .map(|record| {
+                record
+                    .command
+                    .as_deref()
+                    .or(record.ai_agent_session.as_deref())
+                    .or(record.process_tree.as_deref())
+                    .or(record.source.as_deref())
+                    .unwrap_or("unknown writer")
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        evidence.push(format!(
+            "{} writer ledger records overlapped this path/time window: {}.",
+            matching_records.len(),
+            candidate_labels.join(", ")
+        ));
+        return StorageGrowthAttribution {
+            repo_name,
+            git_branch: git_head.branch,
+            git_head: git_head.short_head,
+            command: None,
+            process_tree: None,
+            ai_agent_session: inferred_agent_session,
+            confidence: "ambiguous".to_owned(),
+            confidence_score: 45,
+            ambiguous: true,
+            summary: "Multiple writer records overlapped; Aetower will not pick a single culprit."
+                .to_owned(),
+            evidence,
+        };
+    }
+
+    let (confidence, confidence_score, summary) = if delta.repo_root.is_some()
+        && inferred_agent_session.is_some()
+    {
+        (
+            "medium",
+            74,
+            "Repo and AI-agent directory evidence matched, but no command writer record was available.",
+        )
+    } else if delta.repo_root.is_some() {
+        (
+            "medium",
+            64,
+            "Repo/branch attribution is available from the indexed path, but command/session writer evidence is missing.",
+        )
+    } else if inferred_agent_session.is_some() {
+        (
+            "medium",
+            58,
+            "AI-agent directory evidence matched, but no repo or command writer record was available.",
+        )
+    } else {
+        (
+            "low",
+            25,
+            "Only an indexed storage delta is available; no repo, command, process tree, or AI session matched.",
+        )
+    };
+    evidence.push("No matching writer ledger record was available for this delta.".to_owned());
+
+    StorageGrowthAttribution {
+        repo_name,
+        git_branch: git_head.branch,
+        git_head: git_head.short_head,
+        command: None,
+        process_tree: None,
+        ai_agent_session: inferred_agent_session,
+        confidence: confidence.to_owned(),
+        confidence_score,
+        ambiguous: false,
+        summary: summary.to_owned(),
+        evidence,
+    }
+}
+
+fn storage_writer_record_matches_delta(
+    record: &StorageWriterLedgerRecord,
+    delta: &StorageGrowthDelta,
+) -> bool {
+    let path_matches = record
+        .path_prefix
+        .as_deref()
+        .filter(|prefix| !prefix.trim().is_empty())
+        .is_some_and(|prefix| {
+            delta.path == prefix || delta.path.starts_with(&format!("{prefix}/"))
+        });
+    let repo_matches = record
+        .repo_root
+        .as_deref()
+        .zip(delta.repo_root.as_deref())
+        .is_some_and(|(record_repo, delta_repo)| record_repo == delta_repo);
+    if !path_matches && !repo_matches {
+        return false;
+    }
+    storage_writer_record_time_matches(record, delta.scan_millis, delta.bucket_millis)
+}
+
+fn storage_writer_record_time_matches(
+    record: &StorageWriterLedgerRecord,
+    scan_millis: u64,
+    bucket_millis: u64,
+) -> bool {
+    if let Some(started) = record.started_at_millis {
+        let ended = record.ended_at_millis.unwrap_or(scan_millis);
+        return scan_millis.saturating_add(STORAGE_WRITER_LEDGER_TIME_FUZZ_MILLIS) >= started
+            && ended.saturating_add(STORAGE_WRITER_LEDGER_TIME_FUZZ_MILLIS) >= bucket_millis;
+    }
+    if let Some(timestamp) = record.timestamp_millis {
+        let lower = bucket_millis.saturating_sub(STORAGE_WRITER_LEDGER_TIME_FUZZ_MILLIS);
+        let upper = scan_millis.saturating_add(STORAGE_WRITER_LEDGER_TIME_FUZZ_MILLIS);
+        return (lower..=upper).contains(&timestamp);
+    }
+    true
+}
+
+fn load_storage_writer_ledger_records() -> Vec<StorageWriterLedgerRecord> {
+    storage_writer_ledger_paths()
+        .into_iter()
+        .flat_map(|path| load_storage_writer_ledger_records_from_path(&path))
+        .take(512)
+        .collect()
+}
+
+fn storage_writer_ledger_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(path) = std::env::var("AETOWER_STORAGE_WRITER_LEDGER")
+        && !path.trim().is_empty()
+    {
+        paths.push(PathBuf::from(path));
+    }
+    if let Some(base_dir) = dirs::data_local_dir() {
+        paths.push(
+            base_dir
+                .join("Aetower")
+                .join("storage-writer-ledger.ndjson"),
+        );
+    }
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join(".aetower").join("storage-writer-ledger.ndjson"));
+        paths.push(home.join(".chau7").join("storage-writer-ledger.ndjson"));
+    }
+    paths
+}
+
+fn load_storage_writer_ledger_records_from_path(path: &Path) -> Vec<StorageWriterLedgerRecord> {
+    let Ok(metadata) = fs::metadata(path) else {
+        return Vec::new();
+    };
+    if !metadata.is_file() || metadata.len() > STORAGE_WRITER_LEDGER_MAX_BYTES {
+        return Vec::new();
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    content
+        .lines()
+        .rev()
+        .take(512)
+        .filter_map(|line| serde_json::from_str::<StorageWriterLedgerRecord>(line).ok())
+        .collect()
+}
+
+fn first_non_empty(primary: Option<&str>, fallback: Option<&str>) -> Option<String> {
+    primary
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| fallback.filter(|value| !value.trim().is_empty()))
+        .map(str::to_owned)
 }
 
 fn storage_treemap_root_for_item(item: &StorageHygieneItem, roots: &[String]) -> String {
@@ -6655,6 +7035,9 @@ fn unique_limited(values: Vec<String>, limit: usize) -> Vec<String> {
 fn evaluate_budget_guardrails(
     summary: &StorageHygieneSummary,
     repo_footprints: &[StorageRepoFootprint],
+    volume_states: &[StorageVolumeState],
+    items: &[StorageHygieneItem],
+    growth_deltas: &[StorageGrowthDelta],
 ) -> StorageBudgetGuardrails {
     let mut violations = Vec::new();
 
@@ -6721,6 +7104,41 @@ fn evaluate_budget_guardrails(
         }
     }
 
+    for volume in volume_states {
+        let pressure_percent = percent_u64(volume.available_bytes, volume.total_bytes);
+        if volume.available_bytes < FREE_SPACE_FLOOR_BYTES
+            || pressure_percent < VOLUME_PRESSURE_FLOOR_PERCENT
+        {
+            let severity = if volume.available_bytes < FREE_SPACE_FLOOR_BYTES / 2 {
+                "critical"
+            } else {
+                "warning"
+            };
+            violations.push(StorageBudgetViolation {
+                id: format!("volume-pressure|{}", volume.device_id),
+                scope: "volume-pressure".to_owned(),
+                severity: severity.to_owned(),
+                title: format!("Volume {} is under storage pressure", volume.path),
+                detail: format!(
+                    "{} available on {}; floor is {} or {}%.",
+                    human_bytes(volume.available_bytes),
+                    volume.path,
+                    human_bytes(FREE_SPACE_FLOOR_BYTES),
+                    VOLUME_PRESSURE_FLOOR_PERCENT
+                ),
+                repo_root: None,
+                repo_name: None,
+                observed_bytes: volume.available_bytes,
+                limit_bytes: FREE_SPACE_FLOOR_BYTES,
+                recommendation: "Stage Safe and Rebuildable cleanup first; Aetower will not delete anything automatically unless Safe-tier auto-trash is explicitly enabled.".to_owned(),
+            });
+        }
+    }
+
+    let policies = storage_prevention_policies();
+    let prevention_suggestions =
+        storage_prevention_suggestions(summary, repo_footprints, items, growth_deltas, &violations);
+    let scheduled_scan_recommended = !violations.is_empty() || !prevention_suggestions.is_empty();
     let status = if violations.is_empty() {
         "ok"
     } else if violations
@@ -6737,8 +7155,231 @@ fn evaluate_budget_guardrails(
         repo_growth_budget_bytes_per_day: REPO_GROWTH_BUDGET_BYTES_PER_DAY,
         repo_artifact_budget_bytes: REPO_ARTIFACT_BUDGET_BYTES,
         total_artifact_budget_bytes: TOTAL_ARTIFACT_BUDGET_BYTES,
+        free_space_floor_bytes: FREE_SPACE_FLOOR_BYTES,
+        volume_pressure_floor_percent: VOLUME_PRESSURE_FLOOR_PERCENT,
+        warning_only_by_default: true,
+        auto_trash_safe_tier_enabled: false,
+        scheduled_scan_recommended,
+        scheduled_scan_interval_hours: SCHEDULED_SCAN_INTERVAL_HOURS,
         status,
         violations,
+        policies,
+        prevention_suggestions,
+    }
+}
+
+fn storage_prevention_policies() -> Vec<StoragePreventionPolicy> {
+    vec![
+        StoragePreventionPolicy {
+            id: "repo-growth-budget".to_owned(),
+            title: "Repository growth budget".to_owned(),
+            mode: "warn".to_owned(),
+            enabled: true,
+            action: "warn".to_owned(),
+            tier: "prevention".to_owned(),
+            detail: format!(
+                "Warn when a repository grows more than {} per day.",
+                human_bytes(REPO_GROWTH_BUDGET_BYTES_PER_DAY)
+            ),
+            next_step: "Inspect the growth timeline, then stage rebuildable artifacts if the build/session is finished.".to_owned(),
+        },
+        StoragePreventionPolicy {
+            id: "dev-artifact-budget".to_owned(),
+            title: "Developer artifact budget".to_owned(),
+            mode: "warn".to_owned(),
+            enabled: true,
+            action: "warn".to_owned(),
+            tier: "prevention".to_owned(),
+            detail: format!(
+                "Warn when local developer artifacts exceed {} total or {} in one repo.",
+                human_bytes(TOTAL_ARTIFACT_BUDGET_BYTES),
+                human_bytes(REPO_ARTIFACT_BUDGET_BYTES)
+            ),
+            next_step: "Prefer Safe and Rebuildable cleanup bundles before touching package stores or source-like files.".to_owned(),
+        },
+        StoragePreventionPolicy {
+            id: "volume-pressure-floor".to_owned(),
+            title: "Free-space floor".to_owned(),
+            mode: "warn".to_owned(),
+            enabled: true,
+            action: "warn".to_owned(),
+            tier: "prevention".to_owned(),
+            detail: format!(
+                "Warn when any scanned volume drops below {} or {}% available.",
+                human_bytes(FREE_SPACE_FLOOR_BYTES),
+                VOLUME_PRESSURE_FLOOR_PERCENT
+            ),
+            next_step: "Stage cleanup, then move to Finder Trash only after reviewing the manifest.".to_owned(),
+        },
+        StoragePreventionPolicy {
+            id: "scheduled-scan".to_owned(),
+            title: "Optional scheduled scan".to_owned(),
+            mode: "opt-in".to_owned(),
+            enabled: false,
+            action: "suggest".to_owned(),
+            tier: "prevention".to_owned(),
+            detail: format!(
+                "Suggested cadence is every {} hours when storage pressure or repeated growth is detected.",
+                SCHEDULED_SCAN_INTERVAL_HOURS
+            ),
+            next_step: "Enable later from Settings; current public behavior remains manual/warning-only.".to_owned(),
+        },
+        StoragePreventionPolicy {
+            id: "safe-tier-auto-trash".to_owned(),
+            title: "Safe-tier auto-trash".to_owned(),
+            mode: "explicit-opt-in".to_owned(),
+            enabled: false,
+            action: "trash-after-approval".to_owned(),
+            tier: "safe-only".to_owned(),
+            detail: "Disabled by default. If enabled later, it may only target Safe-tier items that already pass Trash guardrails.".to_owned(),
+            next_step: "Use Stage cleanup for now; never auto-trash Rebuildable, Expensive, Risky, source-like, tracked, modified, or recent files.".to_owned(),
+        },
+    ]
+}
+
+fn storage_prevention_suggestions(
+    summary: &StorageHygieneSummary,
+    repo_footprints: &[StorageRepoFootprint],
+    items: &[StorageHygieneItem],
+    growth_deltas: &[StorageGrowthDelta],
+    violations: &[StorageBudgetViolation],
+) -> Vec<StoragePreventionSuggestion> {
+    let mut suggestions = Vec::new();
+
+    if let Some(bytes) = safe_reclaimable_bytes(items)
+        && bytes > 0
+    {
+        suggestions.push(StoragePreventionSuggestion {
+            id: "safe-reclaim-before-pressure".to_owned(),
+            trigger: "safe-reclaim".to_owned(),
+            title: "Stage Safe reclaim before pressure rises".to_owned(),
+            detail: "Safe-tier candidates can be reviewed and moved to Finder Trash without touching source-like work.".to_owned(),
+            action_label: "Stage Safe cleanup".to_owned(),
+            estimated_reclaimable_bytes: bytes,
+            safety: "safe".to_owned(),
+            requires_approval: true,
+        });
+    }
+
+    if summary.total_reclaimable_bytes > TOTAL_ARTIFACT_BUDGET_BYTES / 2 {
+        suggestions.push(StoragePreventionSuggestion {
+            id: "developer-artifacts-drift".to_owned(),
+            trigger: "artifact-budget".to_owned(),
+            title: "Set a developer artifact cleanup habit".to_owned(),
+            detail: format!(
+                "{} of local artifacts are visible now; review rebuildable outputs before package stores.",
+                human_bytes(summary.total_reclaimable_bytes)
+            ),
+            action_label: "Review developer artifacts".to_owned(),
+            estimated_reclaimable_bytes: summary.total_reclaimable_bytes,
+            safety: "review".to_owned(),
+            requires_approval: true,
+        });
+    }
+
+    if let Some((repo, bytes)) = post_build_cleanup_candidate(repo_footprints, items, growth_deltas)
+    {
+        suggestions.push(StoragePreventionSuggestion {
+            id: format!("post-build-cleanup|{}", repo.repo_root),
+            trigger: "post-build".to_owned(),
+            title: format!("Post-build cleanup available for {}", repo.repo_name),
+            detail: "A recent build/session grew this repo and left rebuildable artifacts. Stage cleanup only after the build and related agents are idle.".to_owned(),
+            action_label: "Stage post-build cleanup".to_owned(),
+            estimated_reclaimable_bytes: bytes,
+            safety: "rebuildable".to_owned(),
+            requires_approval: true,
+        });
+    }
+
+    if !violations.is_empty() {
+        suggestions.push(StoragePreventionSuggestion {
+            id: "scheduled-scan-recommended".to_owned(),
+            trigger: "policy-violation".to_owned(),
+            title: "Consider scheduled warning scans".to_owned(),
+            detail: format!(
+                "{} policy warning{} detected. A daily warning-only scan would catch this earlier.",
+                violations.len(),
+                if violations.len() == 1 { "" } else { "s" }
+            ),
+            action_label: "Review scan policy".to_owned(),
+            estimated_reclaimable_bytes: 0,
+            safety: "non-destructive".to_owned(),
+            requires_approval: false,
+        });
+    }
+
+    suggestions.truncate(6);
+    suggestions
+}
+
+fn safe_reclaimable_bytes(items: &[StorageHygieneItem]) -> Option<u64> {
+    let bytes = items
+        .iter()
+        .filter(|item| item.cleanup_tier == "safe" && cleanup_item_is_trash_actionable(item))
+        .fold(0u64, |total, item| total.saturating_add(item.size_bytes));
+    (bytes > 0).then_some(bytes)
+}
+
+fn post_build_cleanup_candidate<'a>(
+    repo_footprints: &'a [StorageRepoFootprint],
+    items: &[StorageHygieneItem],
+    growth_deltas: &[StorageGrowthDelta],
+) -> Option<(&'a StorageRepoFootprint, u64)> {
+    let grown_repo = growth_deltas
+        .iter()
+        .filter(|delta| delta.delta_bytes > 0)
+        .filter(|delta| {
+            delta.cleanup_tier == "rebuildable"
+                || delta
+                    .command
+                    .as_deref()
+                    .is_some_and(command_looks_like_build)
+                || delta
+                    .attribution_summary
+                    .to_ascii_lowercase()
+                    .contains("writer ledger")
+        })
+        .filter_map(|delta| delta.repo_root.as_deref())
+        .find_map(|repo_root| {
+            repo_footprints
+                .iter()
+                .find(|footprint| footprint.repo_root == repo_root)
+        })?;
+    let bytes = items
+        .iter()
+        .filter(|item| {
+            item.attribution
+                .repo_root
+                .as_deref()
+                .is_some_and(|repo_root| repo_root == grown_repo.repo_root)
+                && item.cleanup_tier == "rebuildable"
+                && cleanup_item_is_trash_actionable(item)
+        })
+        .fold(0u64, |total, item| total.saturating_add(item.size_bytes));
+    (bytes > 0).then_some((grown_repo, bytes))
+}
+
+fn command_looks_like_build(command: &str) -> bool {
+    let command = command.to_ascii_lowercase();
+    [
+        "build",
+        "xcodebuild",
+        "cargo",
+        "swift",
+        "npm",
+        "pnpm",
+        "yarn",
+        "make",
+    ]
+    .iter()
+    .any(|needle| command.contains(needle))
+}
+
+fn percent_u64(numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 {
+        0
+    } else {
+        numerator.saturating_mul(100) / denominator
     }
 }
 
@@ -7391,6 +8032,63 @@ fn repo_footprint_for_items(
             "Last writer process and exact growth require a file-event journal or scan baseline."
                 .to_owned(),
         ],
+    }
+}
+
+fn apply_growth_deltas_to_repo_footprints(
+    footprints: &mut [StorageRepoFootprint],
+    growth_deltas: &[StorageGrowthDelta],
+) {
+    for footprint in footprints {
+        let matching = growth_deltas
+            .iter()
+            .filter(|delta| {
+                delta.delta_bytes > 0
+                    && delta
+                        .repo_root
+                        .as_deref()
+                        .is_some_and(|repo_root| repo_root == footprint.repo_root)
+            })
+            .collect::<Vec<_>>();
+        if matching.is_empty() {
+            continue;
+        }
+        let growth_bytes = matching
+            .iter()
+            .fold(0i64, |total, delta| total.saturating_add(delta.delta_bytes));
+        let strongest = matching
+            .iter()
+            .max_by(|left, right| {
+                left.attribution_confidence_score
+                    .cmp(&right.attribution_confidence_score)
+                    .then_with(|| left.delta_bytes.cmp(&right.delta_bytes))
+            })
+            .copied();
+        footprint.growth_bytes = Some(growth_bytes);
+        footprint.growth_window = "since indexed storage baseline".to_owned();
+        if let Some(delta) = strongest {
+            footprint.last_branch_touched = delta
+                .git_branch
+                .clone()
+                .or(delta.git_head.clone())
+                .or_else(|| footprint.last_branch_touched.clone());
+            footprint.last_writer_process = delta
+                .command
+                .clone()
+                .or(delta.process_tree.clone())
+                .or(delta.ai_agent_session.clone());
+            if footprint.last_writer_process.is_some() {
+                footprint.caveats.push(format!(
+                    "Growth attribution confidence: {} ({}%).",
+                    delta.attribution_confidence, delta.attribution_confidence_score
+                ));
+            } else {
+                footprint.caveats.push(
+                    "Growth is repo-attributed, but command/session writer evidence is missing."
+                        .to_owned(),
+                );
+            }
+        }
     }
 }
 
@@ -8755,7 +9453,24 @@ mod tests {
         assert!(json.contains("\"budget_guardrails\""));
         assert!(json.contains("\"repo_growth_budget_bytes_per_day\":2147483648"));
         assert!(json.contains("\"total_artifact_budget_bytes\":32212254720"));
-        assert!(json.contains("\"status\":\"ok\""));
+        assert!(json.contains("\"free_space_floor_bytes\":21474836480"));
+        assert!(json.contains("\"volume_pressure_floor_percent\":10"));
+        assert!(json.contains("\"warning_only_by_default\":true"));
+        assert!(json.contains("\"auto_trash_safe_tier_enabled\":false"));
+        assert!(json.contains("\"scheduled_scan_interval_hours\":24"));
+        assert!(json.contains("\"id\":\"safe-tier-auto-trash\""));
+        assert!(json.contains("\"enabled\":false"));
+        assert!(json.contains("\"prevention_suggestions\""));
+        assert!(json.contains("\"action_label\":\"Review scan policy\""));
+        let value = parse_json_value(&json, "storage hygiene JSON parses");
+        let budget_violations = value["budget_guardrails"]["violations"]
+            .as_array()
+            .unwrap_or_else(|| panic!("budget guardrail violations serialize as an array"));
+        assert!(
+            budget_violations
+                .iter()
+                .all(|violation| violation["scope"] == "volume-pressure")
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -9531,6 +10246,84 @@ mod tests {
     }
 
     #[test]
+    fn storage_growth_attribution_uses_single_writer_record() {
+        let root = test_root("growth-attribution-single-writer");
+        let repo = root.join("project");
+        create_git_repo(&repo, "main");
+        let artifact_path = repo.join("target").join("debug");
+        let delta = test_growth_delta(&artifact_path, Some(&repo), 1_000, 128, 4_096);
+        let writer = StorageWriterLedgerRecord {
+            started_at_millis: Some(900),
+            ended_at_millis: Some(1_100),
+            path_prefix: Some(repo.display().to_string()),
+            repo_root: Some(repo.display().to_string()),
+            command: Some("cargo build".to_owned()),
+            process_tree: Some("zsh > cargo build".to_owned()),
+            ai_agent_session: Some("Claude session A".to_owned()),
+            source: Some("test-ledger".to_owned()),
+            ..StorageWriterLedgerRecord::default()
+        };
+
+        let attribution = attribute_storage_growth_delta(&delta, &[writer]);
+
+        assert_eq!(attribution.confidence, "high");
+        assert_eq!(attribution.confidence_score, 92);
+        assert!(!attribution.ambiguous);
+        assert_eq!(attribution.command.as_deref(), Some("cargo build"));
+        assert_eq!(
+            attribution.ai_agent_session.as_deref(),
+            Some("Claude session A")
+        );
+        assert_eq!(attribution.git_branch.as_deref(), Some("main"));
+        assert!(
+            attribution
+                .evidence
+                .iter()
+                .any(|entry| entry.contains("Writer ledger source"))
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_growth_attribution_marks_overlapping_writers_ambiguous() {
+        let root = test_root("growth-attribution-ambiguous");
+        let repo = root.join("project");
+        create_git_repo(&repo, "main");
+        let artifact_path = repo.join(".build");
+        let delta = test_growth_delta(&artifact_path, Some(&repo), 2_000, 256, 8_192);
+        let writers = vec![
+            StorageWriterLedgerRecord {
+                started_at_millis: Some(1_900),
+                ended_at_millis: Some(2_100),
+                path_prefix: Some(repo.display().to_string()),
+                command: Some("swift build".to_owned()),
+                ..StorageWriterLedgerRecord::default()
+            },
+            StorageWriterLedgerRecord {
+                started_at_millis: Some(1_950),
+                ended_at_millis: Some(2_050),
+                path_prefix: Some(repo.display().to_string()),
+                ai_agent_session: Some("Codex session B".to_owned()),
+                ..StorageWriterLedgerRecord::default()
+            },
+        ];
+
+        let attribution = attribute_storage_growth_delta(&delta, &writers);
+
+        assert_eq!(attribution.confidence, "ambiguous");
+        assert!(attribution.ambiguous);
+        assert!(attribution.command.is_none());
+        assert!(
+            attribution
+                .summary
+                .contains("Multiple writer records overlapped")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn cleanup_guardrails_block_untracked_source_like_files() {
         let now_millis = crate::current_unix_millis().unwrap_or_default();
         let mut items = vec![test_storage_item(
@@ -9857,6 +10650,42 @@ mod tests {
         }
         if let Err(error) = fs::write(ref_path, "1234567890abcdef1234567890abcdef12345678\n") {
             panic!("write git ref: {error}");
+        }
+    }
+
+    fn test_growth_delta(
+        path: &Path,
+        repo_root: Option<&Path>,
+        scan_millis: u64,
+        previous_bytes: u64,
+        current_bytes: u64,
+    ) -> StorageGrowthDelta {
+        StorageGrowthDelta {
+            bucket_millis: (scan_millis / STORAGE_GROWTH_BUCKET_MILLIS)
+                * STORAGE_GROWTH_BUCKET_MILLIS,
+            scan_millis,
+            path: path.display().to_string(),
+            source_root: repo_root
+                .unwrap_or_else(|| path.parent().unwrap_or(path))
+                .display()
+                .to_string(),
+            repo_root: repo_root.map(|repo| repo.display().to_string()),
+            repo_name: None,
+            git_branch: None,
+            git_head: None,
+            kind: "rust-build".to_owned(),
+            cleanup_tier: "rebuildable".to_owned(),
+            previous_physical_bytes: previous_bytes,
+            current_physical_bytes: current_bytes,
+            delta_bytes: current_bytes as i64 - previous_bytes as i64,
+            command: None,
+            process_tree: None,
+            ai_agent_session: None,
+            attribution_confidence: "low".to_owned(),
+            attribution_confidence_score: 0,
+            attribution_ambiguous: false,
+            attribution_summary: String::new(),
+            attribution_evidence: Vec::new(),
         }
     }
 
