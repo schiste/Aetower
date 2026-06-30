@@ -27,6 +27,142 @@ private struct StorageTopOffender: Identifiable {
     let tone: Color
 }
 
+private struct StorageHomeAction: Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+    let consequence: String
+    let systemImage: String
+    let tone: Color
+    let bytes: UInt64
+    let itemCount: Int
+    let confidence: UInt8
+    let sampleItems: [StorageHygieneItemModel]
+    let stageItems: [StorageHygieneItemModel]
+    let growthEvents: [StorageGrowthTimelineEvent]
+
+    var hasStageableItems: Bool {
+        !stageItems.isEmpty
+    }
+}
+
+private struct StorageClassificationExplanation: Identifiable {
+    let id: String
+    let title: String
+    let path: String
+    let classification: String
+    let consequence: String
+    let evidence: [String]
+    let blockers: [String]
+}
+
+private struct StorageCleanupExecutionRequest: Identifiable, Sendable {
+    let id = UUID()
+    let title: String
+    let subtitle: String
+    let operation: StorageCleanupOperation
+    let command: String
+    let targetPaths: [String]
+    let estimatedBytes: UInt64
+    let destructive: Bool
+    let requiresReview: Bool
+    let prerequisites: [String]
+
+    var targetPath: String? { targetPaths.first }
+}
+
+private struct StorageCleanupBasketItem: Identifiable, Sendable {
+    let id: String
+    let title: String
+    let path: String
+    let source: String
+    let cleanupTier: String
+    let safety: String
+    let estimatedBytes: UInt64
+    let command: String
+    let requiresReview: Bool
+    let blockers: [String]
+    let prerequisites: [String]
+}
+
+private enum StorageCleanupOperation: String, Sendable {
+    case moveToTrash
+    case shellCommand
+}
+
+private struct StorageCleanupExecutionResult: Sendable {
+    let exitCode: Int32
+    let output: String
+    let durationSeconds: Double
+
+    var succeeded: Bool { exitCode == 0 }
+}
+
+private struct StorageCleanupAuditEvent: Codable, Identifiable, Sendable {
+    let id: String
+    let timestampMillis: UInt64
+    let action: String
+    let path: String
+    let detail: String
+    let bytes: UInt64
+    let succeeded: Bool?
+}
+
+private enum StorageCleanupAuditLog {
+    private static let fileName = "storage-cleanup-audit.ndjson"
+
+    static func append(_ event: StorageCleanupAuditEvent) {
+        guard let url = auditURL(createDirectory: true),
+            let data = try? JSONEncoder().encode(event)
+        else { return }
+        var line = data
+        line.append(0x0A)
+        if FileManager.default.fileExists(atPath: url.path),
+            let handle = try? FileHandle(forWritingTo: url)
+        {
+            do {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: line)
+                try handle.close()
+            } catch {
+                try? handle.close()
+            }
+        } else {
+            try? line.write(to: url, options: [.atomic])
+        }
+    }
+
+    static func loadRecent(limit: Int = 40) -> [StorageCleanupAuditEvent] {
+        guard let url = auditURL(createDirectory: false),
+            let text = try? String(contentsOf: url, encoding: .utf8)
+        else { return [] }
+        let decoder = JSONDecoder()
+        return text
+            .split(separator: "\n")
+            .suffix(limit)
+            .compactMap { line in
+                try? decoder.decode(StorageCleanupAuditEvent.self, from: Data(line.utf8))
+            }
+    }
+
+    private static func auditURL(createDirectory: Bool) -> URL? {
+        guard let baseURL = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            return nil
+        }
+        let directory = baseURL.appendingPathComponent("Aetower", isDirectory: true)
+        if createDirectory {
+            try? FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+        }
+        return directory.appendingPathComponent(fileName, isDirectory: false)
+    }
+}
+
 public struct StorageView: View {
     let state: AppState
     @State private var selectedFilter: StorageFilter = .attention
@@ -35,6 +171,7 @@ public struct StorageView: View {
     @State private var searchText = ""
     @State private var customRoot = ""
     @State private var maxDepth = 5.0
+    @State private var scanMode: StorageScanModeSelection = .fast
     @State private var copiedCleanupBundleID: String?
     @State private var copiedCleanupRecipeID: String?
     @State private var candidateCommandPreviewBundle: StorageCleanupBundleModel?
@@ -43,6 +180,13 @@ public struct StorageView: View {
     @State private var showRawArtifacts = false
     @State private var showScannedRoots = false
     @State private var showCaveats = false
+    @State private var pendingCleanupExecutionRequest: StorageCleanupExecutionRequest?
+    @State private var cleanupExecutionResult: StorageCleanupExecutionResult?
+    @State private var cleanupExecutionIsRunning = false
+    @State private var cleanupBasket: [StorageCleanupBasketItem] = []
+    @State private var showCleanupBasket = false
+    @State private var cleanupAuditEvents = StorageCleanupAuditLog.loadRecent()
+    @State private var classificationExplanation: StorageClassificationExplanation?
 
     public init(state: AppState) {
         self.state = state
@@ -54,8 +198,6 @@ public struct StorageView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                    safetyBanner
-
                     if let error = state.storageHygieneError {
                         warningBanner(error)
                     }
@@ -81,6 +223,15 @@ public struct StorageView: View {
         }
         .sheet(item: $candidateCommandPreviewBundle) { bundle in
             cleanupCommandPreviewSheet(bundle)
+        }
+        .sheet(item: $pendingCleanupExecutionRequest) { request in
+            cleanupExecutionSheet(request)
+        }
+        .sheet(isPresented: $showCleanupBasket) {
+            cleanupBasketSheet
+        }
+        .sheet(item: $classificationExplanation) { explanation in
+            classificationExplanationSheet(explanation)
         }
     }
 
@@ -128,6 +279,14 @@ public struct StorageView: View {
                 )
                 .font(AetowerDesign.Typography.caption)
                 .frame(width: 118)
+                Picker("Scan mode", selection: $scanMode) {
+                    ForEach(StorageScanModeSelection.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 220)
             }
         } badges: {
             HStack(spacing: AetowerDesign.Spacing.sm) {
@@ -159,6 +318,35 @@ public struct StorageView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(state.storageHygieneIsLoading)
+                if state.storageHygieneIsLoading {
+                    Button {
+                        if state.storageScanJob?.isPaused == true {
+                            state.resumeStorageHygieneScan()
+                        } else {
+                            state.pauseStorageHygieneScan()
+                        }
+                    } label: {
+                        Label(
+                            state.storageScanJob?.isPaused == true ? "Resume" : "Pause",
+                            systemImage: state.storageScanJob?.isPaused == true ? "play.fill" : "pause.fill"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    Button(role: .cancel) {
+                        state.cancelStorageHygieneScan()
+                    } label: {
+                        Label("Cancel", systemImage: "xmark.circle")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                if !cleanupBasket.isEmpty {
+                    Button {
+                        showCleanupBasket = true
+                    } label: {
+                        Label("\(cleanupBasket.count) staged", systemImage: "tray.full")
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
     }
@@ -190,22 +378,13 @@ public struct StorageView: View {
         return "\(report.scanDurationMillis) ms"
     }
 
-    private var safetyBanner: some View {
-        AetowerInfoBanner(
-            "Aetower does not delete files from this view. It estimates size, age, and cleanup confidence, then gives reveal/copy actions so operators stay in control.",
-            title: "Read-only inventory",
-            systemImage: "shield.checkered",
-            tone: AetowerDesign.Status.ready,
-            level: .card
-        )
-    }
-
     private func storageOverview(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-            storageActionPanel(report)
-            reclaimSpaceSection(report)
+            storageHomeActionsSection(report)
+            wholeComputerOptimizationSection(report)
             topOffenderCallout(report)
             budgetGuardrailsSection(report)
+            storageCoverageOverview(report)
             if shouldShowAgentHygieneOverview(report) {
                 agentHygieneSection(report)
             }
@@ -215,14 +394,598 @@ public struct StorageView: View {
         }
     }
 
+    private func storageHomeActionsSection(_ report: StorageHygieneReportModel) -> some View {
+        let actions = storageHomeActions(from: report)
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Storage actions")
+                        .font(.title3.weight(.semibold))
+                    Text("Six decisions first: what is safe, what is rebuildable, what grew, what is old, and what must be reviewed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                if !cleanupBasket.isEmpty {
+                    Button {
+                        showCleanupBasket = true
+                    } label: {
+                        Label(basketSummaryLabel, systemImage: "tray.full")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 300), spacing: AetowerDesign.Spacing.md)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.md
+            ) {
+                ForEach(actions) { action in
+                    storageHomeActionCard(action)
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.lg)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func storageHomeActionCard(_ action: StorageHomeAction) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: action.systemImage)
+                    .foregroundStyle(action.tone)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(action.title)
+                        .font(.subheadline.weight(.semibold))
+                    Text(action.detail)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(formatBytes(action.bytes))
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    Text("\(action.confidence)% confidence")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 105), spacing: AetowerDesign.Spacing.xs)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.xs
+            ) {
+                footprintMetric("Items", value: "\(action.itemCount)", detail: "matched")
+                footprintMetric("Impact", value: action.bytes == 0 ? "None" : "Visible", detail: "ranked")
+            }
+
+            Text(action.consequence)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            storageHomeActionSamples(action)
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                if action.hasStageableItems {
+                    Button {
+                        stageStorageHomeAction(action)
+                    } label: {
+                        Label("Stage cleanup", systemImage: "tray.and.arrow.down")
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button {
+                        copy(storageHomeActionPlan(action))
+                    } label: {
+                        Label("Copy cleanup plan", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+
+                Button("Explain") {
+                    classificationExplanation = explanation(for: action)
+                }
+                Spacer()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .frame(maxWidth: .infinity, minHeight: 270, alignment: .topLeading)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func storageHomeActionSamples(_ action: StorageHomeAction) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+            if !action.sampleItems.isEmpty {
+                ForEach(Array(action.sampleItems.prefix(3))) { item in
+                    storageHomeItemSample(item)
+                }
+            } else if !action.growthEvents.isEmpty {
+                ForEach(Array(action.growthEvents.prefix(3))) { event in
+                    storageHomeGrowthSample(event)
+                }
+            } else {
+                Label("No current candidates in this lane.", systemImage: "checkmark.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func storageHomeItemSample(_ item: StorageHygieneItemModel) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.xs) {
+            Image(systemName: icon(for: item))
+                .foregroundStyle(tone(for: item))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.displayName)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(item.path)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: AetowerDesign.Spacing.xs)
+            Text(formatBytes(item.sizeBytes))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Button("Quick Look") { quickLook(path: item.path) }
+            Button("Reveal") { reveal(path: item.path) }
+            Button("Explain") { classificationExplanation = explanation(for: item) }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
+    }
+
+    private func storageHomeGrowthSample(_ event: StorageGrowthTimelineEvent) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.xs) {
+            Image(systemName: cleanupTierIcon(event.cleanupTier))
+                .foregroundStyle(tone(forCleanupTier: event.cleanupTier))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(event.displayName)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(storageGrowthCorrelationDetail(event))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: AetowerDesign.Spacing.xs)
+            Text("+\(formatBytes(UInt64(event.deltaBytes)))")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(AetowerDesign.Status.warning)
+            Button("Quick Look") { quickLook(path: event.path) }
+            Button("Reveal") { reveal(path: event.path) }
+            Button("Explain") { classificationExplanation = explanation(for: event) }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
+    }
+
+    private func classificationExplanationSheet(_ explanation: StorageClassificationExplanation) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "questionmark.folder")
+                    .foregroundStyle(AetowerDesign.Tone.disk)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text(explanation.title)
+                        .font(.title3.weight(.semibold))
+                    Text(explanation.classification)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        Text("Path")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(explanation.path.isEmpty ? "No single path." : explanation.path)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .padding(AetowerDesign.Spacing.sm)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        Text("Consequence")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(explanation.consequence)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if !explanation.blockers.isEmpty {
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                            Text("Cleanup blockers")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(AetowerDesign.Status.error)
+                            ForEach(explanation.blockers, id: \.self) { blocker in
+                                Label(blocker, systemImage: "hand.raised")
+                                    .font(.caption2)
+                                    .foregroundStyle(AetowerDesign.Status.error)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        Text("Evidence")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(explanation.evidence, id: \.self) { evidence in
+                            Label(evidence, systemImage: "smallcircle.filled.circle")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(.trailing, AetowerDesign.Spacing.sm)
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button("Close") {
+                    classificationExplanation = nil
+                }
+                Spacer()
+                if !explanation.path.isEmpty {
+                    Button("Quick Look") {
+                        quickLook(path: explanation.path)
+                    }
+                    Button("Reveal in Finder") {
+                        reveal(path: explanation.path)
+                    }
+                }
+                Button("Copy explanation") {
+                    copy(classificationExplanationMarkdown(explanation))
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(AetowerDesign.Spacing.xl)
+        .frame(width: 720, height: 560, alignment: .topLeading)
+    }
+
+    private func explanation(for action: StorageHomeAction) -> StorageClassificationExplanation {
+        return StorageClassificationExplanation(
+            id: "action|\(action.id)",
+            title: action.title,
+            path: action.sampleItems.first?.path ?? action.growthEvents.first?.path ?? "",
+            classification: "\(action.itemCount) item(s) · \(formatBytes(action.bytes)) · \(action.confidence)% confidence",
+            consequence: action.consequence,
+            evidence: actionEvidence(action),
+            blockers: action.sampleItems.flatMap(\.cleanupBlockers).prefix(8).map { $0 }
+        )
+    }
+
+    private func explanation(for item: StorageHygieneItemModel) -> StorageClassificationExplanation {
+        var evidence = item.evidence.isEmpty ? [item.reason, item.recommendation] : item.evidence
+        if let rebuildCommand = item.rebuildCommand, !rebuildCommand.isEmpty {
+            evidence.append("Rebuild command: \(rebuildCommand).")
+        }
+        evidence.append(
+            "Estimated rebuild cost: \(item.estimatedRebuildCost) (\(rebuildTimeLabel(item.estimatedRebuildSeconds)))."
+        )
+        return StorageClassificationExplanation(
+            id: "item|\(item.id)",
+            title: item.displayName,
+            path: item.path,
+            classification: "\(cleanupTierLabel(item.cleanupTier)) · \(storageRoleLabel(item.storageRole)) · \(gitStatusLabel(item.gitStatus))",
+            consequence: item.cleanupConsequence.isEmpty ? item.nextStep : item.cleanupConsequence,
+            evidence: evidence,
+            blockers: item.cleanupBlockers
+        )
+    }
+
+    private func explanation(for item: StorageCleanupBundleItemModel) -> StorageClassificationExplanation {
+        StorageClassificationExplanation(
+            id: "bundle-item|\(item.id)",
+            title: item.displayName,
+            path: item.path,
+            classification: "\(cleanupTierLabel(item.cleanupTier)) · \(item.safety) · \(item.confidenceScore)% confidence",
+            consequence: item.rollbackNote,
+            evidence: [
+                item.reason,
+                cleanupBundleItemIsActionable(item)
+                    ? "Default action is Finder Trash."
+                    : "Default action is manual review.",
+            ],
+            blockers: item.cleanupBlockers
+        )
+    }
+
+    private func explanation(for event: StorageGrowthTimelineEvent) -> StorageClassificationExplanation {
+        StorageClassificationExplanation(
+            id: "growth|\(event.id)",
+            title: event.displayName,
+            path: event.path,
+            classification: "Recently grew · \(cleanupTierLabel(event.cleanupTier))",
+            consequence: storageGrowthCorrelationDetail(event),
+            evidence: [
+                "Current size is \(formatBytes(event.currentBytes)); previous baseline was \(formatBytes(event.previousBytes)).",
+                "Positive delta is \(formatBytes(UInt64(event.deltaBytes))).",
+                "Observed around \(storageGrowthEventTime(event)).",
+            ],
+            blockers: []
+        )
+    }
+
+    private func explanation(for finding: StorageInvestigationFindingModel) -> StorageClassificationExplanation {
+        StorageClassificationExplanation(
+            id: "finding|\(finding.id)",
+            title: finding.title,
+            path: finding.path,
+            classification: "\(cleanupTierLabel(finding.cleanupTier)) · \(storageRoleLabel(finding.storageRole)) · \(finding.confidenceScore)% confidence",
+            consequence: finding.recommendedAction,
+            evidence: finding.evidence.isEmpty ? [finding.detail] : finding.evidence,
+            blockers: finding.safety == "safe" ? [] : ["Finding requires manual review because safety is \(finding.safety)."]
+        )
+    }
+
+    private func explanation(for recipe: StorageCleanupRecipeModel) -> StorageClassificationExplanation {
+        StorageClassificationExplanation(
+            id: "recipe|\(recipe.id)",
+            title: recipe.title,
+            path: recipe.affectedPath,
+            classification: "\(cleanupTierLabel(recipe.safety)) · \(recipe.requiresReview ? "manual review" : "ready")",
+            consequence: recipe.reason,
+            evidence: recipe.prerequisites.isEmpty ? [recipe.command] : recipe.prerequisites,
+            blockers: recipe.requiresReview ? ["Recipe requires review before cleanup."] : []
+        )
+    }
+
+    private func explanation(for item: StorageAgentItemSummaryModel) -> StorageClassificationExplanation {
+        StorageClassificationExplanation(
+            id: "agent-item|\(item.id)",
+            title: item.displayName,
+            path: item.path,
+            classification: "\(cleanupTierLabel(item.cleanupTier)) · AI-agent attributed · \(item.kind)",
+            consequence: "This artifact is attributed to an AI-agent storage lane. Review the owning session or repository before cleanup.",
+            evidence: [
+                "Estimated size: \(formatBytes(item.sizeBytes)).",
+                "Kind: \(item.kind).",
+                "Cleanup tier: \(cleanupTierLabel(item.cleanupTier)).",
+            ],
+            blockers: item.cleanupTier == "risky" ? ["Risky tier requires manual review."] : []
+        )
+    }
+
+    private func explanation(for item: StorageCleanupBasketItem) -> StorageClassificationExplanation {
+        StorageClassificationExplanation(
+            id: "basket|\(item.id)",
+            title: item.title,
+            path: item.path,
+            classification: "\(cleanupTierLabel(item.cleanupTier)) · \(item.safety) · \(item.source)",
+            consequence: item.requiresReview
+                ? "This staged target needs manual review before moving it to Trash."
+                : "This staged target can be moved to Finder Trash after basket review.",
+            evidence: item.prerequisites.isEmpty
+                ? ["Estimated reclaim: \(formatBytes(item.estimatedBytes))."]
+                : item.prerequisites,
+            blockers: item.blockers
+        )
+    }
+
+    private func actionEvidence(_ action: StorageHomeAction) -> [String] {
+        var evidence = [
+            "Estimated bytes: \(formatBytes(action.bytes)).",
+            "Matched items: \(action.itemCount).",
+            "Confidence: \(action.confidence)%.",
+        ]
+        evidence.append(contentsOf: action.sampleItems.prefix(4).map {
+            "\($0.displayName): \($0.reason)"
+        })
+        evidence.append(contentsOf: action.growthEvents.prefix(4).map(storageGrowthEventTitle))
+        return evidence
+    }
+
+    private func classificationExplanationMarkdown(_ explanation: StorageClassificationExplanation) -> String {
+        var lines = [
+            "# \(explanation.title)",
+            "",
+            "- Path: \(explanation.path.isEmpty ? "n/a" : explanation.path)",
+            "- Classification: \(explanation.classification)",
+            "- Consequence: \(explanation.consequence)",
+        ]
+        if !explanation.blockers.isEmpty {
+            lines.append(contentsOf: ["", "## Blockers"])
+            lines.append(contentsOf: explanation.blockers.map { "- \($0)" })
+        }
+        lines.append(contentsOf: ["", "## Evidence"])
+        lines.append(contentsOf: explanation.evidence.map { "- \($0)" })
+        return lines.joined(separator: "\n")
+    }
+
+    private func storageHomeActions(from report: StorageHygieneReportModel) -> [StorageHomeAction] {
+        let allItems = report.items.sorted { left, right in
+            left.sizeBytes == right.sizeBytes ? left.path < right.path : left.sizeBytes > right.sizeBytes
+        }
+        let stageable = allItems.filter(storageItemIsTrashActionable)
+        let safe = stageable.filter {
+            $0.safety == "safe" && ($0.cleanupTier == "safe" || $0.cleanupTier == "rebuildable")
+        }
+        let developer = stageable.filter(isDeveloperStorageArtifact)
+        let largest = Array(allItems.prefix(8))
+        let recentlyGrew = storageGrowthEvents(from: report)
+        let oldUnused = allItems.filter(isOldUnusedStorageItem)
+        let risky = allItems.filter {
+            $0.cleanupTier == "risky" || $0.safety != "safe" || !$0.cleanupAllowed || !$0.cleanupBlockers.isEmpty
+        }
+
+        return [
+            StorageHomeAction(
+                id: "safe-reclaim",
+                title: "Safe Reclaim",
+                detail: "High-confidence logs, caches, and rebuildable artifacts.",
+                consequence: "Moves eligible local artifacts to Finder Trash. Reversal is normally possible from Trash or by rebuilding.",
+                systemImage: "checkmark.shield",
+                tone: AetowerDesign.Status.ready,
+                bytes: sumItemBytes(safe),
+                itemCount: safe.count,
+                confidence: safe.isEmpty ? 0 : 94,
+                sampleItems: Array(safe.prefix(4)),
+                stageItems: safe,
+                growthEvents: []
+            ),
+            StorageHomeAction(
+                id: "developer-artifacts",
+                title: "Developer Artifacts",
+                detail: "Build outputs, dependency trees, caches, and local environments.",
+                consequence: "Reclaiming can cost rebuild time, package downloads, or simulator/toolchain regeneration.",
+                systemImage: "hammer",
+                tone: AetowerDesign.Tone.cpu,
+                bytes: sumItemBytes(developer),
+                itemCount: developer.count,
+                confidence: developer.isEmpty ? 0 : 86,
+                sampleItems: Array(developer.prefix(4)),
+                stageItems: developer,
+                growthEvents: []
+            ),
+            StorageHomeAction(
+                id: "largest-offenders",
+                title: "Largest Offenders",
+                detail: "Biggest physical-space candidates in the current scan.",
+                consequence: "Largest is not the same as safe. Inspect classification before staging anything.",
+                systemImage: "chart.bar.xaxis",
+                tone: AetowerDesign.Tone.disk,
+                bytes: sumItemBytes(largest),
+                itemCount: largest.count,
+                confidence: largest.isEmpty ? 0 : 58,
+                sampleItems: Array(largest.prefix(4)),
+                stageItems: largest.filter(storageItemIsTrashActionable),
+                growthEvents: []
+            ),
+            StorageHomeAction(
+                id: "recently-grew",
+                title: "Recently Grew",
+                detail: "Largest positive deltas since the previous scan or saved baseline.",
+                consequence: "Use this to explain sudden disk pressure; attribution may be partial without a live file-event ledger.",
+                systemImage: "timeline.selection",
+                tone: AetowerDesign.Status.warning,
+                bytes: sumGrowthBytes(recentlyGrew),
+                itemCount: recentlyGrew.count,
+                confidence: recentlyGrew.isEmpty ? 0 : 72,
+                sampleItems: itemsMatchingGrowthEvents(recentlyGrew, in: allItems),
+                stageItems: itemsMatchingGrowthEvents(recentlyGrew, in: stageable),
+                growthEvents: recentlyGrew
+            ),
+            StorageHomeAction(
+                id: "old-unused",
+                title: "Old Unused",
+                detail: "Cold or long-unmodified files that may be forgotten.",
+                consequence: "Old files can still be important. Aetower stages only policy-approved items and leaves source-like work blocked.",
+                systemImage: "snowflake",
+                tone: AetowerDesign.Tone.memory,
+                bytes: sumItemBytes(oldUnused),
+                itemCount: oldUnused.count,
+                confidence: oldUnused.isEmpty ? 0 : 52,
+                sampleItems: Array(oldUnused.prefix(4)),
+                stageItems: oldUnused.filter(storageItemIsTrashActionable),
+                growthEvents: []
+            ),
+            StorageHomeAction(
+                id: "risky-review",
+                title: "Risky Review",
+                detail: "Source-like, protected, dirty, recent, or manually-blocked candidates.",
+                consequence: "No unattended cleanup. Review blockers, reveal paths, and decide outside automatic reclaim.",
+                systemImage: "exclamationmark.triangle",
+                tone: AetowerDesign.Status.error,
+                bytes: sumItemBytes(risky),
+                itemCount: risky.count,
+                confidence: risky.isEmpty ? 0 : 30,
+                sampleItems: Array(risky.prefix(4)),
+                stageItems: [],
+                growthEvents: []
+            ),
+        ]
+    }
+
+    private func sumItemBytes(_ items: [StorageHygieneItemModel]) -> UInt64 {
+        items.reduce(UInt64(0)) { total, item in
+            let sum = total.addingReportingOverflow(item.sizeBytes)
+            return sum.overflow ? UInt64.max : sum.partialValue
+        }
+    }
+
+    private func sumBytes(_ left: UInt64, _ right: UInt64) -> UInt64 {
+        let sum = left.addingReportingOverflow(right)
+        return sum.overflow ? UInt64.max : sum.partialValue
+    }
+
+    private func sumGrowthBytes(_ events: [StorageGrowthTimelineEvent]) -> UInt64 {
+        events.reduce(UInt64(0)) { total, event in
+            let sum = total.addingReportingOverflow(UInt64(max(0, event.deltaBytes)))
+            return sum.overflow ? UInt64.max : sum.partialValue
+        }
+    }
+
+    private func storageItemSizeSort(_ left: StorageHygieneItemModel, _ right: StorageHygieneItemModel) -> Bool {
+        left.sizeBytes == right.sizeBytes ? left.path < right.path : left.sizeBytes > right.sizeBytes
+    }
+
+    private func isDeveloperStorageArtifact(_ item: StorageHygieneItemModel) -> Bool {
+        matches(
+            item.storageRole,
+            anyOf: ["build-artifact", "cache", "dependency-tree", "environment", "temporary", "log"]
+        ) || matches(
+            item.kind,
+            anyOf: [
+                "rust", "swift", "xcode", "node", "python", "frontend", "coverage", "tool-cache",
+                "docker", "npm", "pnpm", "yarn", "test-output", "release-artifact",
+            ]
+        )
+    }
+
+    private func isOldUnusedStorageItem(_ item: StorageHygieneItemModel) -> Bool {
+        item.cold || (item.accessAgeDays ?? 0) >= 365 || (item.ageDays ?? 0) >= 365
+    }
+
+    private func itemsMatchingGrowthEvents(
+        _ events: [StorageGrowthTimelineEvent],
+        in items: [StorageHygieneItemModel]
+    ) -> [StorageHygieneItemModel] {
+        let eventIDs = Set(events.map(\.id))
+        let eventPaths = Set(events.map(\.path))
+        return items.filter { eventIDs.contains($0.id) || eventPaths.contains($0.path) }
+    }
+
+    private func matches(_ value: String, anyOf needles: [String]) -> Bool {
+        let lowered = value.lowercased()
+        return needles.contains { lowered.contains($0) }
+    }
+
     private func storageAdvanced(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             summaryGrid(report)
             cleanupPreviewSection(report)
             cleanupBundlesSection(report)
             cleanupRecipesSection(report)
+            cleanupAuditSection
+            wholeComputerOptimizationSection(report)
             repoFootprintDashboard(report)
             storageGrowthTimeline(report)
+            volumeStateSection(report)
             if report.truncated {
                 warningBanner("The scan hit a cap or time budget. Results are partial; narrow the root or refresh when the machine is idle.")
             }
@@ -232,9 +995,278 @@ public struct StorageView: View {
         }
     }
 
+    private func wholeComputerOptimizationSection(_ report: StorageHygieneReportModel) -> some View {
+        let largeFiles = report.items
+            .filter { $0.kind == "large-file" || $0.kind == "release-artifact" }
+            .sorted(by: storageItemSizeSort)
+        let oldUnused = report.items
+            .filter(isOldUnusedStorageItem)
+            .sorted(by: storageItemSizeSort)
+        let systemBytes = report.systemDataBuckets.reduce(UInt64(0)) { total, bucket in
+            sumBytes(total, bucket.sizeBytes)
+        }
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "sparkles.square.filled.on.square")
+                    .foregroundStyle(AetowerDesign.Tone.disk)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Whole-computer optimization")
+                        .font(.headline)
+                    Text("Large files, cold data, duplicates, app footprints, and macOS System Data buckets from the current bounded scan.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                AetowerBadge(
+                    "\(largeFiles.count + oldUnused.count + report.duplicateGroups.count + report.appFootprints.count) leads",
+                    tone: AetowerDesign.Tone.disk
+                )
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 145), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                footprintMetric("Large files", value: "\(largeFiles.count)", detail: largeFiles.first.map { formatBytes($0.sizeBytes) } ?? "none")
+                footprintMetric("Old unused", value: "\(oldUnused.count)", detail: oldUnused.first.map { formatBytes($0.sizeBytes) } ?? "none")
+                footprintMetric("Duplicates", value: "\(report.duplicateGroups.count)", detail: formatBytes(report.duplicateGroups.reduce(UInt64(0)) { sumBytes($0, $1.reclaimableBytes) }))
+                footprintMetric("Apps", value: "\(report.appFootprints.count)", detail: report.appFootprints.first.map { formatBytes($0.totalBytes) } ?? "none")
+                footprintMetric("System Data", value: formatBytes(systemBytes), detail: "\(report.systemDataBuckets.filter { $0.sizeBytes > 0 }.count) active bucket\(report.systemDataBuckets.filter { $0.sizeBytes > 0 }.count == 1 ? "" : "s")")
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 300), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                wholeComputerItemCard(
+                    title: "Large file finder",
+                    detail: "Largest standalone files and release packages. Large does not mean safe.",
+                    empty: "No large standalone files in the retained scan candidates.",
+                    items: Array(largeFiles.prefix(4))
+                )
+                wholeComputerItemCard(
+                    title: "Old unused finder",
+                    detail: "Cold or long-unmodified files. Review personal data before reclaiming.",
+                    empty: "No cold files in the retained scan candidates.",
+                    items: Array(oldUnused.prefix(4))
+                )
+                duplicateGroupsCard(report.duplicateGroups)
+                appFootprintsCard(report.appFootprints)
+                systemDataBucketsCard(report.systemDataBuckets)
+            }
+        }
+        .padding(AetowerDesign.Spacing.lg)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func wholeComputerItemCard(
+        title: String,
+        detail: String,
+        empty: String,
+        items: [StorageHygieneItemModel]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            Text(detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if items.isEmpty {
+                Label(empty, systemImage: "checkmark.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(items) { item in
+                    compactStorageItemActionRow(item)
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .frame(maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func duplicateGroupsCard(_ groups: [StorageDuplicateGroupModel]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            Text("Duplicate finder")
+                .font(.subheadline.weight(.semibold))
+            Text("Cheap size/type grouping first; full content hashing only for candidate files within the scan hash budget.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if groups.isEmpty {
+                Label("No duplicate candidates in the retained scan set.", systemImage: "checkmark.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(groups.prefix(3)) { group in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(group.confirmed ? "Confirmed duplicates" : "Potential duplicates")
+                                .font(.caption.weight(.semibold))
+                            Spacer()
+                            Text(formatBytes(group.reclaimableBytes))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(group.confirmed ? AetowerDesign.Status.ready : AetowerDesign.Status.warning)
+                        }
+                        Text("\(group.fileCount) file\(group.fileCount == 1 ? "" : "s") · \(group.confidenceScore)% confidence")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        ForEach(group.paths.prefix(2)) { item in
+                            HStack(spacing: AetowerDesign.Spacing.xs) {
+                                Text(item.displayName)
+                                    .font(.caption2.weight(.semibold))
+                                    .lineLimit(1)
+                                Spacer()
+                                Button("Quick Look") { quickLook(path: item.path) }
+                                Button("Reveal") { reveal(path: item.path) }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .frame(maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func appFootprintsCard(_ footprints: [StorageAppFootprintModel]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            Text("App footprints")
+                .font(.subheadline.weight(.semibold))
+            Text("Uninstall view: app bundle, support data, caches, containers, and launch items when visible to the scan.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if footprints.isEmpty {
+                Label("No app footprints in the retained scan set.", systemImage: "app.dashed")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(footprints.prefix(3)) { footprint in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(footprint.appName)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                            Spacer()
+                            Text(formatBytes(footprint.totalBytes))
+                                .font(.caption2.weight(.semibold))
+                        }
+                        Text("\(footprint.componentCount) component\(footprint.componentCount == 1 ? "" : "s") · \(footprint.confidenceScore)% confidence")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        ForEach(footprint.components.prefix(2)) { component in
+                            HStack(spacing: AetowerDesign.Spacing.xs) {
+                                Text(component.component)
+                                    .font(.caption2.weight(.semibold))
+                                Text(component.path)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer()
+                                Button("Reveal") { reveal(path: component.path) }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .frame(maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func systemDataBucketsCard(_ buckets: [StorageSystemDataBucketModel]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            Text("System Data explainer")
+                .font(.subheadline.weight(.semibold))
+            Text("Common macOS System Data buckets with plain-English cleanup guidance.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(buckets.prefix(4)) { bucket in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(bucket.title)
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        Text(formatBytes(bucket.sizeBytes))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(bucket.sizeBytes > 0 ? tone(forCleanupTier: bucket.cleanupTier) : .secondary)
+                    }
+                    Text(bucket.sizeBytes > 0 ? bucket.recommendedAction : bucket.explanation)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    if let path = bucket.paths.first {
+                        HStack(spacing: AetowerDesign.Spacing.xs) {
+                            Text(path)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Button("Reveal") { reveal(path: path) }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .frame(maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func compactStorageItemActionRow(_ item: StorageHygieneItemModel) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.xs) {
+            Image(systemName: icon(for: item))
+                .foregroundStyle(tone(for: item))
+                .frame(width: 15)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.displayName)
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                Text(item.path)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: AetowerDesign.Spacing.xs)
+            Text(formatBytes(item.sizeBytes))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if storageItemIsTrashActionable(item) {
+                Button("Stage") { _ = stageCleanupItem(item) }
+            }
+            Button("Quick Look") { quickLook(path: item.path) }
+            Button("Reveal") { reveal(path: item.path) }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
+    }
+
     private func storageActionPanel(_ report: StorageHygieneReportModel) -> some View {
         let primaryBundle = report.cleanupBundles.first
-        let hasCandidateCommands = primaryBundle?.manifest.contains(where: { $0.cleanupCommand != nil }) ?? false
+        let hasCandidateCommands = primaryBundle.map(cleanupBundleHasActionableCommands) ?? false
 
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
             HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
@@ -245,7 +1277,7 @@ public struct StorageView: View {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                     Text(primaryBundle?.title ?? "No cleanup plan yet")
                         .font(.title3.weight(.semibold))
-                    Text(primaryBundle?.subtitle ?? "Run or narrow a scan to build a read-only cleanup plan. Aetower copies instructions only; it does not delete files.")
+                    Text(primaryBundle?.subtitle ?? "Run or narrow a scan to build a cleanup plan with Trash actions, reveal targets, verification commands, and advanced permanent commands.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -291,13 +1323,31 @@ public struct StorageView: View {
 
             if let primaryBundle {
                 HStack(spacing: AetowerDesign.Spacing.sm) {
-                    Button {
+                    if hasCandidateCommands {
+                        Button {
+                            stageCleanupBundle(primaryBundle)
+                        } label: {
+                            Label("Stage cleanup", systemImage: "tray.and.arrow.down")
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button("Review permanent commands") {
+                            candidateCommandPreviewBundle = primaryBundle
+                        }
+                    } else {
+                        Button {
+                            copy(cleanupBundleManifest(primaryBundle))
+                            copiedCleanupBundleID = primaryBundle.id
+                        } label: {
+                            Label("Copy cleanup plan", systemImage: "doc.on.doc")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+
+                    Button("Copy plan") {
                         copy(cleanupBundleManifest(primaryBundle))
                         copiedCleanupBundleID = primaryBundle.id
-                    } label: {
-                        Label("Copy cleanup plan", systemImage: "doc.on.doc")
                     }
-                    .buttonStyle(.borderedProminent)
 
                     Button("Copy verify commands") {
                         copy(primaryBundle.dryRunCommands.joined(separator: "\n"))
@@ -305,15 +1355,15 @@ public struct StorageView: View {
                     }
                     .disabled(primaryBundle.dryRunCommands.isEmpty)
 
-                    if hasCandidateCommands {
-                        Button("Review candidate commands") {
-                            candidateCommandPreviewBundle = primaryBundle
+                    if !cleanupBasket.isEmpty {
+                        Button("Review basket") {
+                            showCleanupBasket = true
                         }
                     }
 
                     Spacer()
 
-                    Text(copiedCleanupBundleID == primaryBundle.id ? "Copied" : "No files changed")
+                    Text(copiedCleanupBundleID == primaryBundle.id ? "Copied" : basketSummaryLabel)
                         .font(.caption2)
                         .foregroundStyle(copiedCleanupBundleID == primaryBundle.id ? AetowerDesign.Status.ready : .secondary)
                 }
@@ -327,6 +1377,231 @@ public struct StorageView: View {
         }
         .padding(AetowerDesign.Spacing.lg)
         .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func storageCoverageOverview(_ report: StorageHygieneReportModel) -> some View {
+        let sources = report.sourceCoverage
+        let scanned = sources.filter(\.scanned).count
+        let blocked = sources.filter { $0.permissionState == "needs_full_disk_access" }.count
+        let cloud = sources.filter { $0.kind == "cloud" || $0.cloudPlaceholder }.count
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Computer coverage")
+                        .font(.headline)
+                    Text("Every default source Aetower considered, including unreadable, cloud-backed, and external locations.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                AetowerBadge("\(scanned)/\(sources.count) scanned", tone: blocked == 0 ? AetowerDesign.Status.ready : AetowerDesign.Status.warning)
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 190), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                footprintMetric("Scanned", value: "\(scanned)", detail: "\(sources.count) source\(sources.count == 1 ? "" : "s")")
+                footprintMetric("Needs access", value: "\(blocked)", detail: "Full Disk Access or unavailable")
+                footprintMetric("Cloud roots", value: "\(cloud)", detail: "local bytes are separated")
+                footprintMetric("Volumes", value: "\(report.volumeStates.count)", detail: "capacity sources")
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 250), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                ForEach(sources.prefix(8)) { source in
+                    storageSourceCard(source)
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.lg)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func volumeStateSection(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            advancedSectionLabel(
+                title: "Volume capacity",
+                detail: "\(report.volumeStates.count) volume\(report.volumeStates.count == 1 ? "" : "s") with free, available, and macOS capacity signals",
+                systemImage: "internaldrive"
+            )
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 260), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                ForEach(report.volumeStates) { volume in
+                    volumeStateCard(volume)
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.lg)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func storageInvestigationSection(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "magnifyingglass.circle")
+                    .foregroundStyle(AetowerDesign.Tone.disk)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Investigation")
+                        .font(.headline)
+                    Text("Where storage pressure comes from, why Aetower classified it that way, and what to inspect before cleanup.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.md)
+
+                Button("Advanced details") {
+                    selectedMode = .advanced
+                    showRawArtifacts = true
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 150), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                footprintMetric(
+                    "Caches/builds",
+                    value: formatBytes(report.investigation.knownCacheBytes),
+                    detail: "known patterns"
+                )
+                footprintMetric(
+                    "Rebuildable",
+                    value: formatBytes(report.investigation.rebuildableBytes),
+                    detail: "toolchain-owned"
+                )
+                footprintMetric(
+                    "Expensive",
+                    value: formatBytes(report.investigation.expensiveBytes),
+                    detail: "slow to restore"
+                )
+                footprintMetric(
+                    "Risky",
+                    value: formatBytes(report.investigation.riskyBytes),
+                    detail: "\(report.investigation.largeFileCount) large file\(report.investigation.largeFileCount == 1 ? "" : "s")"
+                )
+                footprintMetric(
+                    "Cold",
+                    value: formatBytes(report.investigation.coldFileBytes),
+                    detail: "\(report.investigation.coldFileCount) over 1y"
+                )
+                footprintMetric(
+                    "Review",
+                    value: "\(report.investigation.reviewItemCount)",
+                    detail: "manual decision"
+                )
+            }
+
+            if report.investigation.topFindings.isEmpty {
+                Label("No storage pressure findings were produced for this scan.", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 280), spacing: AetowerDesign.Spacing.sm)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.sm
+                ) {
+                    ForEach(report.investigation.topFindings) { finding in
+                        storageInvestigationFindingCard(finding)
+                    }
+                }
+            }
+
+            if !report.investigation.recommendedNextSteps.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(report.investigation.recommendedNextSteps.prefix(3), id: \.self) { step in
+                        Label(step, systemImage: "checklist")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func storageInvestigationFindingCard(_ finding: StorageInvestigationFindingModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: cleanupTierIcon(finding.cleanupTier))
+                    .foregroundStyle(tone(forCleanupTier: finding.cleanupTier))
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        Text(finding.title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        AetowerBadge(storageRoleLabel(finding.storageRole), tone: tone(forCleanupTier: finding.cleanupTier))
+                    }
+                    Text(finding.detail)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(formatBytes(finding.sizeBytes))
+                        .font(.caption.weight(.semibold))
+                    Text("\(finding.confidenceScore)%")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(finding.path)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(finding.evidence.prefix(3), id: \.self) { evidence in
+                    Label(evidence, systemImage: "smallcircle.filled.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                }
+            }
+
+            Text(finding.recommendedAction)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button("Quick Look") { quickLook(path: finding.path) }
+                Button("Reveal") { reveal(path: finding.path) }
+                Button("Explain") { classificationExplanation = explanation(for: finding) }
+                Button("Copy path") { copy(finding.path) }
+                Spacer()
+                Text(finding.safety == "safe" ? "actionable finding" : "manual review")
+                    .font(.caption2)
+                    .foregroundStyle(finding.safety == "safe" ? .secondary : AetowerDesign.Status.warning)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func reclaimSpaceSection(_ report: StorageHygieneReportModel) -> some View {
@@ -344,7 +1619,7 @@ public struct StorageView: View {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                     Text("Reclaim space")
                         .font(.headline)
-                    Text("Concrete cleanup actions for the largest high-confidence local artifacts. Aetower copies commands and reveals targets; it does not run deletion commands.")
+                    Text("Concrete cleanup actions for the largest high-confidence local artifacts. Reveal targets, verify candidates, then copy the exact command you choose to run.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -382,12 +1657,18 @@ public struct StorageView: View {
 
                 HStack(spacing: AetowerDesign.Spacing.sm) {
                     Button {
+                        stageCleanupRecipes(recipes)
+                    } label: {
+                        Label("Stage visible", systemImage: "tray.and.arrow.down")
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
                         copy(recipes.map(\.command).joined(separator: "\n"))
                         copiedCleanupRecipeID = "overview-visible"
                     } label: {
                         Label("Copy visible commands", systemImage: "doc.on.doc")
                     }
-                    .buttonStyle(.borderedProminent)
 
                     Button("Show all actions") {
                         selectedMode = .advanced
@@ -449,11 +1730,20 @@ public struct StorageView: View {
                     copy(recipe.command)
                     copiedCleanupRecipeID = recipe.id
                 }
+                Button("Stage") {
+                    stageCleanupRecipe(recipe)
+                }
+                Button("Quick Look") {
+                    quickLook(path: recipe.affectedPath)
+                }
                 Button("Reveal") {
                     reveal(path: recipe.affectedPath)
                 }
+                Button("Explain") {
+                    classificationExplanation = explanation(for: recipe)
+                }
                 Spacer()
-                Text(copiedCleanupRecipeID == recipe.id ? "Copied" : "No files changed")
+                Text(copiedCleanupRecipeID == recipe.id ? "Copied" : "Ready")
                     .font(.caption2)
                     .foregroundStyle(copiedCleanupRecipeID == recipe.id ? AetowerDesign.Status.ready : .secondary)
             }
@@ -867,7 +2157,12 @@ public struct StorageView: View {
                             Text(formatBytes(item.sizeBytes))
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.secondary)
+                            Button("Quick Look") { quickLook(path: item.path) }
+                            Button("Reveal") { reveal(path: item.path) }
+                            Button("Explain") { classificationExplanation = explanation(for: item) }
                         }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
                     }
                 }
             }
@@ -908,7 +2203,7 @@ public struct StorageView: View {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                 Text("Dry-run cleanup bundles")
                     .font(.headline)
-                Text("One-click planning bundles with a full manifest, confidence score, verification commands, and rollback notes. Aetower copies plans only; it does not delete files.")
+                Text("One-click cleanup bundles with a full manifest, confidence score, verification commands, candidate commands, and rollback notes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1036,24 +2331,32 @@ public struct StorageView: View {
             }
 
             HStack(spacing: AetowerDesign.Spacing.sm) {
+                if cleanupBundleHasActionableCommands(bundle) {
+                    Button {
+                        stageCleanupBundle(bundle)
+                    } label: {
+                        Label("Stage bundle", systemImage: "tray.and.arrow.down")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
                 Button {
                     copy(cleanupBundleManifest(bundle))
                     copiedCleanupBundleID = bundle.id
                 } label: {
-                    Label("Copy cleanup plan", systemImage: "doc.on.doc")
+                    Label("Copy plan", systemImage: "doc.on.doc")
                 }
                 Button("Copy verify commands") {
                     copy(bundle.dryRunCommands.joined(separator: "\n"))
                     copiedCleanupBundleID = bundle.id
                 }
                 .disabled(bundle.dryRunCommands.isEmpty)
-                if bundle.manifest.contains(where: { $0.cleanupCommand != nil }) {
-                    Button("Copy candidate commands") {
+                if cleanupBundleHasActionableCommands(bundle) {
+                    Button("Review permanent commands") {
                         candidateCommandPreviewBundle = bundle
                     }
                 }
                 Spacer()
-                Text(copiedCleanupBundleID == bundle.id ? "Copied" : "no files changed")
+                Text(copiedCleanupBundleID == bundle.id ? "Copied" : "Ready")
                     .font(.caption2)
                     .foregroundStyle(copiedCleanupBundleID == bundle.id ? AetowerDesign.Status.ready : .secondary)
             }
@@ -1073,7 +2376,7 @@ public struct StorageView: View {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                     Text("Review candidate cleanup commands")
                         .font(.title3.weight(.semibold))
-                    Text("Aetower will only copy these commands. Files are not changed unless you paste and run them in a shell.")
+                    Text("Review the exact permanent commands, prerequisites, and manifest before bypassing Trash.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1090,7 +2393,7 @@ public struct StorageView: View {
                     )
 
                     VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                        Text("Commands to copy")
+                        Text("Permanent commands")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                         Text(cleanupBundleCleanupCommands(bundle))
@@ -1126,7 +2429,12 @@ public struct StorageView: View {
                                 Text(formatBytes(item.sizeBytes))
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(.secondary)
+                                Button("Quick Look") { quickLook(path: item.path) }
+                                Button("Reveal") { reveal(path: item.path) }
+                                Button("Explain") { classificationExplanation = explanation(for: item) }
                             }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
                             .padding(.vertical, 2)
                         }
                     }
@@ -1139,12 +2447,23 @@ public struct StorageView: View {
                     candidateCommandPreviewBundle = nil
                 }
                 Spacer()
-                Button("Copy candidate commands") {
+                Button("Stage bundle") {
+                    candidateCommandPreviewBundle = nil
+                    stageCleanupBundle(bundle)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("Run permanent commands") {
+                    candidateCommandPreviewBundle = nil
+                    presentCleanupExecution(bundleShellExecutionRequest(bundle))
+                }
+                .disabled(cleanupBundleCleanupCommandList(bundle).isEmpty)
+
+                Button("Copy commands") {
                     copy(cleanupBundleCleanupCommands(bundle))
                     copiedCleanupBundleID = bundle.id
                     candidateCommandPreviewBundle = nil
                 }
-                .buttonStyle(.borderedProminent)
                 .disabled(cleanupBundleCleanupCommandList(bundle).isEmpty)
             }
         }
@@ -1152,10 +2471,136 @@ public struct StorageView: View {
         .frame(width: 720, height: 560, alignment: .topLeading)
     }
 
+    private func cleanupExecutionSheet(_ request: StorageCleanupExecutionRequest) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: request.operation == .moveToTrash ? "trash" : "exclamationmark.triangle")
+                    .foregroundStyle(request.operation == .moveToTrash ? AetowerDesign.Status.warning : AetowerDesign.Status.error)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text(request.title)
+                        .font(.title3.weight(.semibold))
+                    Text(request.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                if cleanupExecutionIsRunning {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 160), spacing: AetowerDesign.Spacing.sm)],
+                        alignment: .leading,
+                        spacing: AetowerDesign.Spacing.sm
+                    ) {
+                        footprintMetric(
+                            "Potential reclaim",
+                            value: formatBytes(request.estimatedBytes),
+                            detail: request.requiresReview ? "manual review" : "ready"
+                        )
+                        footprintMetric(
+                            "Action",
+                            value: request.operation == .moveToTrash ? "Trash" : "Permanent",
+                            detail: cleanupExecutionIsRunning ? "running" : "waiting"
+                        )
+                        if let result = cleanupExecutionResult {
+                            footprintMetric(
+                                "Exit",
+                                value: "\(result.exitCode)",
+                                detail: result.succeeded ? "success" : "failed"
+                            )
+                        }
+                    }
+
+                    if !request.prerequisites.isEmpty {
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                            Text("Before running")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            ForEach(request.prerequisites.prefix(8), id: \.self) { prerequisite in
+                                Label(prerequisite, systemImage: "checklist")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        Text(request.operation == .moveToTrash ? "Targets" : "Command")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(request.operation == .moveToTrash ? targetPathList(request.targetPaths) : request.command)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .padding(AetowerDesign.Spacing.sm)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+
+                    if let result = cleanupExecutionResult {
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                            Text(result.succeeded ? "Result" : "Result: needs attention")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(result.succeeded ? AetowerDesign.Status.ready : AetowerDesign.Status.error)
+                            Text(result.output.isEmpty ? "Command completed with no output." : result.output)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .padding(AetowerDesign.Spacing.sm)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            Text(String(format: "%.1fs", result.durationSeconds))
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .padding(.trailing, AetowerDesign.Spacing.sm)
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button(cleanupExecutionResult == nil ? "Cancel" : "Close") {
+                    pendingCleanupExecutionRequest = nil
+                    cleanupExecutionResult = nil
+                    cleanupExecutionIsRunning = false
+                }
+                .disabled(cleanupExecutionIsRunning)
+
+                if let targetPath = request.targetPath {
+                    Button("Reveal target") {
+                        reveal(path: targetPath)
+                    }
+                }
+
+                Button(request.operation == .moveToTrash ? "Copy targets" : "Copy command") {
+                    copy(request.operation == .moveToTrash ? request.targetPaths.joined(separator: "\n") : request.command)
+                }
+
+                Spacer()
+
+                Button(cleanupExecutionIsRunning ? "Running..." : cleanupExecutionButtonTitle(request)) {
+                    runCleanupExecution(request)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(cleanupExecutionIsRunning || !cleanupExecutionCanRun(request))
+            }
+        }
+        .padding(AetowerDesign.Spacing.xl)
+        .frame(width: 760, height: 620, alignment: .topLeading)
+    }
+
     private func cleanupRecipesSection(_ report: StorageHygieneReportModel) -> some View {
         DisclosureGroup(isExpanded: $showCleanupRecipes) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-                Text("Exact commands for common cleanup tasks. Aetower does not run these; copy and execute only after reviewing the prerequisites.")
+                Text("Exact commands for common cleanup tasks. Copy and execute only after reviewing prerequisites, active processes, and rollback notes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -1181,6 +2626,59 @@ public struct StorageView: View {
                 detail: "\(report.cleanupRecipes.count) command recipe\(report.cleanupRecipes.count == 1 ? "" : "s")",
                 systemImage: "terminal"
             )
+        }
+    }
+
+    private var cleanupAuditSection: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                Text("Cleanup audit")
+                    .font(.headline)
+                Text("Local record of staged, blocked, trashed, override, and failed cleanup actions.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if cleanupAuditEvents.isEmpty {
+                Label("No cleanup actions have been recorded yet.", systemImage: "doc.text.magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(AetowerDesign.Spacing.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(Array(cleanupAuditEvents.prefix(12))) { event in
+                        HStack(spacing: AetowerDesign.Spacing.sm) {
+                            Image(systemName: event.succeeded == false ? "exclamationmark.triangle" : "checkmark.circle")
+                                .foregroundStyle(event.succeeded == false ? AetowerDesign.Status.error : AetowerDesign.Status.ready)
+                                .frame(width: 18)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: AetowerDesign.Spacing.xs) {
+                                    Text(event.action)
+                                        .font(.caption.weight(.semibold))
+                                    Text(formatBytes(event.bytes))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text(event.path)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Text(event.detail)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(2)
+                            }
+                            Spacer()
+                        }
+                        .padding(AetowerDesign.Spacing.sm)
+                        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+            }
         }
     }
 
@@ -1242,9 +2740,13 @@ public struct StorageView: View {
 
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 Button("Copy command") { copy(recipe.command) }
+                Button("Stage") { stageCleanupRecipe(recipe) }
+                Button("Permanent command") { presentCleanupExecution(recipeShellExecutionRequest(recipe)) }
+                Button("Quick Look") { quickLook(path: recipe.affectedPath) }
                 Button("Reveal target") { reveal(path: recipe.affectedPath) }
+                Button("Explain") { classificationExplanation = explanation(for: recipe) }
                 Spacer()
-                Text(recipe.destructive ? "destructive command" : "read-only command")
+                Text(recipe.destructive ? "cleanup command" : "verification command")
                     .font(.caption2)
                     .foregroundStyle(recipe.destructive ? AetowerDesign.Status.warning : .secondary)
             }
@@ -1308,6 +2810,10 @@ public struct StorageView: View {
                         .textSelection(.enabled)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    Text(footprint.optimizationSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: AetowerDesign.Spacing.md)
@@ -1335,6 +2841,16 @@ public struct StorageView: View {
                     "Rebuild cost",
                     value: footprint.estimatedRebuildCost,
                     detail: rebuildTimeLabel(footprint.estimatedRebuildSeconds)
+                )
+                footprintMetric(
+                    "Rebuildable",
+                    value: formatBytes(footprint.rebuildableBytes),
+                    detail: "\(formatPercent(footprint.rebuildablePercent)) of artifacts"
+                )
+                footprintMetric(
+                    "Costly/Risky",
+                    value: formatBytes(sumBytes(footprint.expensiveBytes, footprint.riskyBytes)),
+                    detail: "\(formatBytes(footprint.expensiveBytes)) expensive · \(formatBytes(footprint.riskyBytes)) risky"
                 )
                 footprintMetric(
                     "Last writer",
@@ -1541,8 +3057,18 @@ public struct StorageView: View {
                             .font(.subheadline.weight(.semibold))
                         cleanupTierBadge(item)
                         safetyBadge(item)
+                        AetowerBadge(storageRoleLabel(item.storageRole), tone: tone(forCleanupTier: item.cleanupTier))
+                        AetowerBadge(gitStatusLabel(item.gitStatus), tone: gitStatusTone(item.gitStatus))
                         if item.stale {
                             Text("Stale")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(AetowerDesign.Status.warning)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(AetowerDesign.Status.warning.opacity(0.12), in: Capsule())
+                        }
+                        if item.cold {
+                            Text("Cold")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(AetowerDesign.Status.warning)
                                 .padding(.horizontal, 7)
@@ -1557,6 +3083,14 @@ public struct StorageView: View {
                                 .padding(.vertical, 3)
                                 .background(AetowerDesign.Surface.badge, in: Capsule())
                         }
+                        if !storageItemIsTrashActionable(item) {
+                            Text("Blocked")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(AetowerDesign.Status.error)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(AetowerDesign.Status.error.opacity(0.12), in: Capsule())
+                        }
                     }
 
                     Text(item.path)
@@ -1566,16 +3100,41 @@ public struct StorageView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
 
+                    Text(accessSummary(for: item))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+
+                    if !item.cleanupBlockers.isEmpty {
+                        Text("Cleanup blocked: \(item.cleanupBlockers.joined(separator: "; "))")
+                            .font(.caption2)
+                            .foregroundStyle(AetowerDesign.Status.error)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     Text(item.reason)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(item.recommendation)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
+                    Text(item.nextStep)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Label(attributionSummary(for: item), systemImage: "point.3.connected.trianglepath.dotted")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .lineLimit(2)
+                    if !item.evidence.isEmpty {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(item.evidence.prefix(4), id: \.self) { evidence in
+                                Label(evidence, systemImage: "smallcircle.filled.circle")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
                 }
 
                 Spacer(minLength: AetowerDesign.Spacing.md)
@@ -1590,9 +3149,13 @@ public struct StorageView: View {
             }
 
             HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button("Quick Look") { quickLook(path: item.path) }
                 Button("Reveal") { reveal(path: item.path) }
+                Button("Explain") { classificationExplanation = explanation(for: item) }
                 Button("Copy path") { copy(item.path) }
                 Button("Copy command") { copy(item.commandHint) }
+                Button("Stage") { stageCleanupItem(item) }
+                    .disabled(!storageItemIsTrashActionable(item))
                 Spacer()
                 Text(item.kind)
                     .font(.caption2)
@@ -1608,18 +3171,30 @@ public struct StorageView: View {
     private func rootsSection(_ report: StorageHygieneReportModel) -> some View {
         DisclosureGroup(isExpanded: $showScannedRoots) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                ForEach(report.roots, id: \.self) { root in
-                    rootLine(root, detail: "scanned", systemImage: "checkmark.circle")
-                }
-                ForEach(report.skippedRoots) { root in
-                    rootLine(root.path, detail: root.reason, systemImage: "exclamationmark.triangle")
+                if report.sourceCoverage.isEmpty {
+                    ForEach(report.roots, id: \.self) { root in
+                        rootLine(root, detail: "scanned", systemImage: "checkmark.circle")
+                    }
+                    ForEach(report.skippedRoots) { root in
+                        rootLine(root.path, detail: root.reason, systemImage: "exclamationmark.triangle")
+                    }
+                } else {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 260), spacing: AetowerDesign.Spacing.sm)],
+                        alignment: .leading,
+                        spacing: AetowerDesign.Spacing.sm
+                    ) {
+                        ForEach(report.sourceCoverage) { source in
+                            storageSourceCard(source)
+                        }
+                    }
                 }
             }
             .padding(.top, AetowerDesign.Spacing.sm)
         } label: {
             advancedSectionLabel(
-                title: "Scanned and skipped roots",
-                detail: "\(report.roots.count) scanned · \(report.skippedRoots.count) skipped",
+                title: "Source coverage",
+                detail: "\(report.roots.count) scanned · \(report.skippedRoots.count) skipped · \(report.sourceCoverage.count) considered",
                 systemImage: "folder.badge.questionmark"
             )
         }
@@ -1650,18 +3225,64 @@ public struct StorageView: View {
     private var loadingSection: some View {
         VStack(spacing: AetowerDesign.Spacing.md) {
             ProgressView()
-            Text("Scanning bounded developer storage roots...")
+            Text(storageScanLoadingTitle)
+                .font(AetowerDesign.Typography.body)
+            Text(storageScanLoadingDetail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            if let reason = state.storageScanJob?.progress.throttleReason, !reason.isEmpty {
+                Text("Throttled: \(reason)")
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button {
+                    if state.storageScanJob?.isPaused == true {
+                        state.resumeStorageHygieneScan()
+                    } else {
+                        state.pauseStorageHygieneScan()
+                    }
+                } label: {
+                    Label(
+                        state.storageScanJob?.isPaused == true ? "Resume" : "Pause",
+                        systemImage: state.storageScanJob?.isPaused == true ? "play.fill" : "pause.fill"
+                    )
+                }
+                .buttonStyle(.bordered)
+                Button(role: .cancel) {
+                    state.cancelStorageHygieneScan()
+                } label: {
+                    Label("Cancel", systemImage: "xmark.circle")
+                }
+                .buttonStyle(.bordered)
+            }
         }
         .frame(maxWidth: .infinity, minHeight: 220)
+    }
+
+    private var storageScanLoadingTitle: String {
+        guard let job = state.storageScanJob else {
+            return "Starting storage scan..."
+        }
+        return "\(job.status.capitalized) \(job.progress.phase)"
+    }
+
+    private var storageScanLoadingDetail: String {
+        guard let job = state.storageScanJob else {
+            return "Preparing scan job."
+        }
+        let progress = job.progress
+        let path = progress.currentPathHint ?? "discovering roots"
+        return "\(formatBytes(progress.scannedBytes)) scanned · \(progress.scannedDirectories) dirs · \(progress.scannedFiles) files · \(path)"
     }
 
     private var emptySection: some View {
         ContentUnavailableView(
             "No storage report yet",
             systemImage: "externaldrive",
-            description: Text("Run a read-only scan to inventory local development artifacts.")
+            description: Text("Run a scan to find storage pressure and prepare cleanup actions.")
         )
         .frame(maxWidth: .infinity, minHeight: 220)
     }
@@ -1754,6 +3375,107 @@ public struct StorageView: View {
         }
     }
 
+    private func storageSourceCard(_ source: StorageSourceCoverageModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: sourceIcon(source))
+                    .foregroundStyle(sourceTone(source))
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(source.label)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text(source.path)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                AetowerBadge(source.permissionState.replacingOccurrences(of: "_", with: " "), tone: sourceTone(source))
+            }
+            Text(source.detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Text("reclaim \(source.reclaimableBytes.map(formatBytes) ?? "none")")
+                if let local = source.localBytes, let logical = source.logicalBytes, logical > local {
+                    Text("local \(formatBytes(local)) / logical \(formatBytes(logical))")
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func volumeStateCard(_ volume: StorageVolumeStateModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack {
+                Image(systemName: "internaldrive")
+                    .foregroundStyle(AetowerDesign.Tone.disk)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(volume.path)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(volume.filesystemType)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(formatBytes(volume.totalBytes))
+                    .font(.caption.weight(.semibold))
+            }
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 110), spacing: AetowerDesign.Spacing.xs)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.xs
+            ) {
+                miniCapacityMetric("free now", bytes: volume.freeNowBytes)
+                miniCapacityMetric("available", bytes: volume.availableBytes)
+                miniCapacityMetric("important", bytes: volume.importantUsageAvailableBytes)
+                miniCapacityMetric("opportunistic", bytes: volume.opportunisticUsageAvailableBytes)
+            }
+            Text(volume.detail)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(2)
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func miniCapacityMetric(_ label: String, bytes: UInt64?) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+            Text(bytes.map(formatBytes) ?? "n/a")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func sourceIcon(_ source: StorageSourceCoverageModel) -> String {
+        if source.permissionState == "needs_full_disk_access" { return "lock.trianglebadge.exclamationmark" }
+        if source.cloudPlaceholder || source.kind == "cloud" { return "icloud" }
+        if source.network { return "externaldrive.connected.to.line.below" }
+        if source.kind == "applications" { return "app.dashed" }
+        if source.kind == "package-cache" { return "shippingbox" }
+        if source.kind == "docker" { return "square.stack.3d.up" }
+        return source.scanned ? "checkmark.circle" : "folder.badge.questionmark"
+    }
+
+    private func sourceTone(_ source: StorageSourceCoverageModel) -> Color {
+        if source.permissionState == "needs_full_disk_access" { return AetowerDesign.Status.warning }
+        if source.status == "unavailable" || source.status == "skipped" { return AetowerDesign.Status.error }
+        if source.status == "partial" { return AetowerDesign.Status.warning }
+        return AetowerDesign.Status.ready
+    }
+
     private func advancedSectionLabel(title: String, detail: String, systemImage: String) -> some View {
         HStack(spacing: AetowerDesign.Spacing.sm) {
             Image(systemName: systemImage)
@@ -1790,8 +3512,13 @@ public struct StorageView: View {
                         || item.displayName.lowercased().contains(query)
                         || item.path.lowercased().contains(query)
                         || item.kind.lowercased().contains(query)
+                        || item.storageRole.lowercased().contains(query)
+                        || item.gitStatus.lowercased().contains(query)
                         || item.reason.lowercased().contains(query)
+                        || item.recommendation.lowercased().contains(query)
+                        || item.nextStep.lowercased().contains(query)
                         || item.cleanupTier.lowercased().contains(query)
+                        || item.evidence.contains(where: { $0.lowercased().contains(query) })
                         || (item.attribution.repoName?.lowercased().contains(query) ?? false)
                         || (item.attribution.gitBranch?.lowercased().contains(query) ?? false)
                         || (item.attribution.command?.lowercased().contains(query) ?? false)
@@ -1807,7 +3534,8 @@ public struct StorageView: View {
         state.runStorageHygieneScan(
             roots: root.isEmpty ? [] : [root],
             maxDepth: UInt32(maxDepth),
-            limit: 120
+            limit: scanMode.resultLimit,
+            mode: scanMode.rawValue
         )
     }
 
@@ -2080,6 +3808,61 @@ public struct StorageView: View {
         }
     }
 
+    private func storageRoleLabel(_ role: String) -> String {
+        switch role {
+        case "build-artifact":
+            return "Build artifact"
+        case "dependency-tree":
+            return "Dependency tree"
+        case "large-file":
+            return "Large file"
+        case "cold-file":
+            return "Cold file"
+        case "cache":
+            return "Cache"
+        case "environment":
+            return "Environment"
+        case "temporary":
+            return "Temporary"
+        case "log":
+            return "Log"
+        default:
+            return role.replacingOccurrences(of: "-", with: " ").capitalized
+        }
+    }
+
+    private func gitStatusLabel(_ status: String) -> String {
+        switch status {
+        case "tracked":
+            return "Tracked"
+        case "ignored":
+            return "Ignored"
+        case "generated-or-cache":
+            return "Generated"
+        case "untracked":
+            return "Untracked"
+        case "outside-git":
+            return "Outside Git"
+        case "repo-linked", "repo-linked-unchecked":
+            return "Repo-linked"
+        default:
+            return "Git unknown"
+        }
+    }
+
+    private func gitStatusTone(_ status: String) -> Color {
+        switch status {
+        case "tracked":
+            return AetowerDesign.Status.error
+        case "untracked":
+            return AetowerDesign.Status.warning
+        case "ignored", "generated-or-cache":
+            return AetowerDesign.Status.ready
+        default:
+            return .secondary
+        }
+    }
+
     private func cleanupTierLabel(_ tier: String) -> String {
         switch tier {
         case "safe":
@@ -2198,6 +3981,10 @@ public struct StorageView: View {
         lines.append(contentsOf: ["", "## Full manifest"])
         for item in bundle.manifest {
             lines.append("- \(formatBytes(item.sizeBytes)) | \(item.confidenceScore)% | \(item.cleanupTier) | \(item.path)")
+            lines.append("  - Cleanup: \(cleanupBundleItemIsActionable(item) ? "Trash-actionable" : "blocked/manual review")")
+            if !item.cleanupBlockers.isEmpty {
+                lines.append("  - Blockers: \(item.cleanupBlockers.joined(separator: "; "))")
+            }
             lines.append("  - Reason: \(item.reason)")
             lines.append("  - Rollback: \(item.rollbackNote)")
         }
@@ -2216,10 +4003,653 @@ public struct StorageView: View {
     private func cleanupBundleCleanupCommandList(_ bundle: StorageCleanupBundleModel) -> [String] {
         var seen = Set<String>()
         var commands: [String] = []
-        for command in bundle.manifest.compactMap(\.cleanupCommand) where seen.insert(command).inserted {
+        for item in actionableManifestItems(bundle) {
+            guard let command = item.cleanupCommand, seen.insert(command).inserted else {
+                continue
+            }
             commands.append(command)
         }
         return commands
+    }
+
+    private func actionableManifestItems(_ bundle: StorageCleanupBundleModel) -> [StorageCleanupBundleItemModel] {
+        bundle.manifest.filter(cleanupBundleItemIsActionable)
+    }
+
+    private func cleanupBundleHasActionableCommands(_ bundle: StorageCleanupBundleModel) -> Bool {
+        actionableManifestItems(bundle).contains { $0.cleanupCommand != nil }
+    }
+
+    private func cleanupBundleItemIsActionable(_ item: StorageCleanupBundleItemModel) -> Bool {
+        item.cleanupAllowed
+            && item.defaultCleanupAction == "trash"
+            && item.cleanupBlockers.isEmpty
+            && item.cleanupTier != "risky"
+    }
+
+    private func storageItemIsTrashActionable(_ item: StorageHygieneItemModel) -> Bool {
+        item.cleanupAllowed
+            && item.defaultCleanupAction == "trash"
+            && item.cleanupBlockers.isEmpty
+            && item.cleanupTier != "risky"
+            && !item.sizeTruncated
+    }
+
+    private var basketSummaryLabel: String {
+        cleanupBasket.isEmpty
+            ? "Ready"
+            : "\(cleanupBasket.count) staged · \(formatBytes(cleanupBasketTotalBytes()))"
+    }
+
+    private func cleanupBasketTotalBytes() -> UInt64 {
+        cleanupBasket.reduce(UInt64(0)) { total, item in
+            let sum = total.addingReportingOverflow(item.estimatedBytes)
+            return sum.overflow ? UInt64.max : sum.partialValue
+        }
+    }
+
+    private var cleanupBasketSheet: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "trash")
+                    .foregroundStyle(AetowerDesign.Status.warning)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Cleanup basket")
+                        .font(.title3.weight(.semibold))
+                    Text("Review staged targets. Aetower moves files to Finder Trash by default and records every action in the local audit log.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 160), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                footprintMetric("Staged", value: "\(cleanupBasket.count)", detail: "target\(cleanupBasket.count == 1 ? "" : "s")")
+                footprintMetric("Potential reclaim", value: formatBytes(cleanupBasketTotalBytes()), detail: "Trash first")
+                footprintMetric(
+                    "Review",
+                    value: cleanupBasket.contains(where: \.requiresReview) ? "Needed" : "Ready",
+                    detail: "single confirmation"
+                )
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    if cleanupBasket.isEmpty {
+                        Label("No cleanup targets are staged.", systemImage: "tray")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(AetowerDesign.Spacing.md)
+                            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    } else {
+                        ForEach(cleanupBasket) { item in
+                            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                                Image(systemName: cleanupTierIcon(item.cleanupTier))
+                                    .foregroundStyle(tone(forCleanupTier: item.cleanupTier))
+                                    .frame(width: 18)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                                        Text(item.title)
+                                            .font(.caption.weight(.semibold))
+                                        Text(item.source)
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(AetowerDesign.Surface.badge, in: Capsule())
+                                    }
+                                    Text(item.path)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    if !item.blockers.isEmpty {
+                                        Text(item.blockers.joined(separator: "; "))
+                                            .font(.caption2)
+                                            .foregroundStyle(AetowerDesign.Status.error)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                Spacer(minLength: AetowerDesign.Spacing.sm)
+                                Text(formatBytes(item.estimatedBytes))
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                Button("Quick Look") {
+                                    quickLook(path: item.path)
+                                }
+                                Button("Reveal") {
+                                    reveal(path: item.path)
+                                }
+                                Button("Explain") {
+                                    classificationExplanation = explanation(for: item)
+                                }
+                                Button("Remove") {
+                                    cleanupBasket.removeAll { $0.id == item.id }
+                                    appendCleanupAudit(
+                                        action: "unstage",
+                                        path: item.path,
+                                        detail: "Removed \(item.title) from cleanup basket.",
+                                        bytes: item.estimatedBytes,
+                                        succeeded: true
+                                    )
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .padding(AetowerDesign.Spacing.sm)
+                            .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    }
+
+                    if !cleanupAuditEvents.isEmpty {
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                            Text("Recent audit trail")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            ForEach(Array(cleanupAuditEvents.prefix(8))) { event in
+                                HStack(spacing: AetowerDesign.Spacing.sm) {
+                                    Text(event.action)
+                                        .font(.caption2.weight(.semibold))
+                                    Text(event.path)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer()
+                                    if let succeeded = event.succeeded {
+                                        Text(succeeded ? "ok" : "failed")
+                                            .font(.caption2)
+                                            .foregroundStyle(succeeded ? AetowerDesign.Status.ready : AetowerDesign.Status.error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.trailing, AetowerDesign.Spacing.sm)
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button("Close") {
+                    showCleanupBasket = false
+                }
+                Button("Clear basket") {
+                    for item in cleanupBasket {
+                        appendCleanupAudit(
+                            action: "unstage",
+                            path: item.path,
+                            detail: "Cleared \(item.title) from cleanup basket.",
+                            bytes: item.estimatedBytes,
+                            succeeded: true
+                        )
+                    }
+                    cleanupBasket.removeAll()
+                }
+                .disabled(cleanupBasket.isEmpty)
+                Spacer()
+                Button(cleanupBasket.count == 1 ? "Move staged item to Trash" : "Move \(cleanupBasket.count) staged items to Trash") {
+                    let request = basketTrashExecutionRequest()
+                    showCleanupBasket = false
+                    presentCleanupExecution(request)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(cleanupBasket.isEmpty)
+            }
+        }
+        .padding(AetowerDesign.Spacing.xl)
+        .frame(width: 760, height: 620, alignment: .topLeading)
+    }
+
+    private func stageCleanupBundle(_ bundle: StorageCleanupBundleModel) {
+        var staged = 0
+        for item in bundle.manifest {
+            guard cleanupBundleItemIsActionable(item) else {
+                appendCleanupAudit(
+                    action: "policy-blocked",
+                    path: item.path,
+                    detail: item.cleanupBlockers.isEmpty ? "Bundle item requires manual review." : item.cleanupBlockers.joined(separator: "; "),
+                    bytes: item.sizeBytes,
+                    succeeded: false
+                )
+                continue
+            }
+            let basketItem = StorageCleanupBasketItem(
+                id: "bundle|\(bundle.id)|\(item.path)",
+                title: item.displayName,
+                path: item.path,
+                source: bundle.title,
+                cleanupTier: item.cleanupTier,
+                safety: item.safety,
+                estimatedBytes: item.sizeBytes,
+                command: item.cleanupCommand ?? "",
+                requiresReview: bundle.safety != "safe" || bundle.confidenceScore < 90,
+                blockers: item.cleanupBlockers,
+                prerequisites: bundle.prerequisites + bundle.caveats
+            )
+            if stageBasketItem(basketItem) {
+                staged += 1
+            }
+        }
+        if staged > 0 {
+            showCleanupBasket = true
+        }
+    }
+
+    private func stageCleanupRecipes(_ recipes: [StorageCleanupRecipeModel]) {
+        var staged = 0
+        for recipe in recipes where stageCleanupRecipe(recipe, showBasket: false) {
+            staged += 1
+        }
+        if staged > 0 {
+            showCleanupBasket = true
+        }
+    }
+
+    private func stageStorageHomeAction(_ action: StorageHomeAction) {
+        var staged = 0
+        for item in uniqueStorageItems(action.stageItems).prefix(80) {
+            if stageCleanupItem(item, showBasket: false) {
+                staged += 1
+            }
+        }
+        if staged > 0 {
+            showCleanupBasket = true
+        } else {
+            copy(storageHomeActionPlan(action))
+        }
+    }
+
+    private func storageHomeActionPlan(_ action: StorageHomeAction) -> String {
+        var lines = [
+            "# Aetower storage action",
+            "",
+            "- Action: \(action.title)",
+            "- Estimated bytes: \(formatBytes(action.bytes))",
+            "- Items: \(action.itemCount)",
+            "- Confidence: \(action.confidence)%",
+            "- Consequence: \(action.consequence)",
+            "",
+            "## Recommended path",
+            action.hasStageableItems
+                ? "Stage eligible items into the cleanup basket, review once, then move them to Finder Trash."
+                : "Review classification evidence first. Aetower did not find unattended cleanup candidates for this lane.",
+        ]
+
+        if !action.sampleItems.isEmpty {
+            lines.append(contentsOf: ["", "## Sample items"])
+            for item in action.sampleItems.prefix(12) {
+                lines.append("- \(formatBytes(item.sizeBytes)) | \(item.cleanupTier) | \(item.path)")
+                if !item.cleanupBlockers.isEmpty {
+                    lines.append("  - Blocked: \(item.cleanupBlockers.joined(separator: "; "))")
+                }
+                lines.append("  - Why: \(item.reason)")
+            }
+        }
+
+        if !action.growthEvents.isEmpty {
+            lines.append(contentsOf: ["", "## Growth evidence"])
+            for event in action.growthEvents.prefix(12) {
+                lines.append("- +\(formatBytes(UInt64(event.deltaBytes))) | \(event.path)")
+                lines.append("  - \(storageGrowthCorrelationDetail(event))")
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func uniqueStorageItems(_ items: [StorageHygieneItemModel]) -> [StorageHygieneItemModel] {
+        var seen = Set<String>()
+        var result: [StorageHygieneItemModel] = []
+        for item in items where seen.insert(item.path).inserted {
+            result.append(item)
+        }
+        return result
+    }
+
+    @discardableResult
+    private func stageCleanupItem(_ item: StorageHygieneItemModel, showBasket: Bool = true) -> Bool {
+        guard storageItemIsTrashActionable(item) else {
+            appendCleanupAudit(
+                action: "policy-blocked",
+                path: item.path,
+                detail: item.cleanupBlockers.isEmpty ? "Item is not eligible for Trash cleanup." : item.cleanupBlockers.joined(separator: "; "),
+                bytes: item.sizeBytes,
+                succeeded: false
+            )
+            return false
+        }
+        let basketItem = StorageCleanupBasketItem(
+            id: "item|\(item.id)",
+            title: item.displayName,
+            path: item.path,
+            source: "artifact",
+            cleanupTier: item.cleanupTier,
+            safety: item.safety,
+            estimatedBytes: item.sizeBytes,
+            command: "",
+            requiresReview: item.safety != "safe",
+            blockers: item.cleanupBlockers,
+            prerequisites: ["Reveal and inspect the target before moving it to Trash."]
+        )
+        let staged = stageBasketItem(basketItem)
+        if staged && showBasket {
+            showCleanupBasket = true
+        }
+        return staged
+    }
+
+    @discardableResult
+    private func stageCleanupRecipe(_ recipe: StorageCleanupRecipeModel, showBasket: Bool = true) -> Bool {
+        let item = StorageCleanupBasketItem(
+            id: "recipe|\(recipe.id)",
+            title: recipe.title,
+            path: recipe.affectedPath,
+            source: recipe.category,
+            cleanupTier: recipe.safety,
+            safety: recipe.safety,
+            estimatedBytes: recipe.estimatedReclaimableBytes,
+            command: recipe.command,
+            requiresReview: recipe.requiresReview,
+            blockers: [],
+            prerequisites: recipe.prerequisites
+        )
+        let staged = stageBasketItem(item)
+        if staged && showBasket {
+            showCleanupBasket = true
+        }
+        return staged
+    }
+
+    @discardableResult
+    private func stageBasketItem(_ item: StorageCleanupBasketItem) -> Bool {
+        guard item.blockers.isEmpty else {
+            appendCleanupAudit(
+                action: "policy-blocked",
+                path: item.path,
+                detail: item.blockers.joined(separator: "; "),
+                bytes: item.estimatedBytes,
+                succeeded: false
+            )
+            return false
+        }
+        guard !cleanupBasket.contains(where: { $0.path == item.path }) else {
+            return false
+        }
+        cleanupBasket.append(item)
+        appendCleanupAudit(
+            action: "stage",
+            path: item.path,
+            detail: "Staged \(item.title) for Finder Trash cleanup.",
+            bytes: item.estimatedBytes,
+            succeeded: true
+        )
+        return true
+    }
+
+    private func basketTrashExecutionRequest() -> StorageCleanupExecutionRequest {
+        let prerequisites = uniqueStrings(cleanupBasket.flatMap(\.prerequisites))
+        return StorageCleanupExecutionRequest(
+            title: "Move cleanup basket to Trash",
+            subtitle: "Move staged cleanup targets to Finder Trash. Nothing is permanently deleted by this action.",
+            operation: .moveToTrash,
+            command: uniqueStrings(cleanupBasket.map(\.command).filter { !$0.isEmpty }).joined(separator: "\n"),
+            targetPaths: uniquePaths(cleanupBasket.map(\.path)),
+            estimatedBytes: cleanupBasketTotalBytes(),
+            destructive: true,
+            requiresReview: cleanupBasket.contains(where: \.requiresReview),
+            prerequisites: prerequisites
+        )
+    }
+
+    private func recipeShellExecutionRequest(_ recipe: StorageCleanupRecipeModel) -> StorageCleanupExecutionRequest {
+        return StorageCleanupExecutionRequest(
+            title: "Run permanent command: \(recipe.title)",
+            subtitle: recipe.reason,
+            operation: .shellCommand,
+            command: recipe.command,
+            targetPaths: [recipe.affectedPath],
+            estimatedBytes: recipe.estimatedReclaimableBytes,
+            destructive: recipe.destructive,
+            requiresReview: true,
+            prerequisites: recipe.prerequisites
+        )
+    }
+
+    private func bundleShellExecutionRequest(_ bundle: StorageCleanupBundleModel) -> StorageCleanupExecutionRequest {
+        StorageCleanupExecutionRequest(
+            title: "Run permanent cleanup commands",
+            subtitle: bundle.subtitle,
+            operation: .shellCommand,
+            command: cleanupBundleCleanupCommands(bundle),
+            targetPaths: uniquePaths(actionableManifestItems(bundle).map(\.path)),
+            estimatedBytes: bundle.estimatedReclaimableBytes,
+            destructive: true,
+            requiresReview: true,
+            prerequisites: bundle.prerequisites + bundle.caveats
+        )
+    }
+
+    private func uniquePaths(_ paths: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for path in paths where seen.insert(path).inserted {
+            result.append(path)
+        }
+        return result
+    }
+
+    private func uniqueStrings(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, seen.insert(trimmed).inserted {
+                result.append(trimmed)
+            }
+        }
+        return result
+    }
+
+    private func targetPathList(_ paths: [String]) -> String {
+        if paths.isEmpty {
+            return "No targets available."
+        }
+        let visible = paths.prefix(80).joined(separator: "\n")
+        if paths.count > 80 {
+            return "\(visible)\n... \(paths.count - 80) more target(s) ..."
+        }
+        return visible
+    }
+
+    private func cleanupExecutionButtonTitle(_ request: StorageCleanupExecutionRequest) -> String {
+        switch request.operation {
+        case .moveToTrash:
+            return request.targetPaths.count == 1 ? "Move to Trash" : "Move \(request.targetPaths.count) to Trash"
+        case .shellCommand:
+            return "Run permanent command"
+        }
+    }
+
+    private func cleanupExecutionCanRun(_ request: StorageCleanupExecutionRequest) -> Bool {
+        switch request.operation {
+        case .moveToTrash:
+            return !request.targetPaths.isEmpty
+        case .shellCommand:
+            return !request.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private func presentCleanupExecution(_ request: StorageCleanupExecutionRequest) {
+        cleanupExecutionResult = nil
+        cleanupExecutionIsRunning = false
+        pendingCleanupExecutionRequest = request
+    }
+
+    private func runCleanupExecution(_ request: StorageCleanupExecutionRequest) {
+        cleanupExecutionIsRunning = true
+        cleanupExecutionResult = nil
+        let operation = request.operation
+        let command = request.command
+        let targetPaths = request.targetPaths
+        Task.detached(priority: .utility) {
+            let result: StorageCleanupExecutionResult = switch operation {
+            case .moveToTrash:
+                Self.movePathsToTrash(targetPaths)
+            case .shellCommand:
+                Self.runShellCommand(command)
+            }
+            await MainActor.run {
+                cleanupExecutionResult = result
+                cleanupExecutionIsRunning = false
+                recordCleanupExecutionResult(request: request, result: result)
+            }
+        }
+    }
+
+    private func recordCleanupExecutionResult(
+        request: StorageCleanupExecutionRequest,
+        result: StorageCleanupExecutionResult
+    ) {
+        let bytesByPath = Dictionary(
+            uniqueKeysWithValues: cleanupBasket.map { ($0.path, $0.estimatedBytes) }
+        )
+        let fallbackBytes = request.targetPaths.count == 1 ? request.estimatedBytes : 0
+        let action: String
+        if request.operation == .moveToTrash {
+            action = result.succeeded ? "trash" : "failed-trash"
+            if result.succeeded {
+                let removed = Set(request.targetPaths)
+                cleanupBasket.removeAll { removed.contains($0.path) }
+            }
+        } else {
+            action = result.succeeded ? "override-permanent-command" : "failed-permanent-command"
+        }
+
+        for path in request.targetPaths {
+            appendCleanupAudit(
+                action: action,
+                path: path,
+                detail: result.output,
+                bytes: bytesByPath[path] ?? fallbackBytes,
+                succeeded: result.succeeded
+            )
+        }
+    }
+
+    private func appendCleanupAudit(
+        action: String,
+        path: String,
+        detail: String,
+        bytes: UInt64,
+        succeeded: Bool?
+    ) {
+        let event = StorageCleanupAuditEvent(
+            id: UUID().uuidString,
+            timestampMillis: UInt64(Date().timeIntervalSince1970 * 1000),
+            action: action,
+            path: path,
+            detail: detail,
+            bytes: bytes,
+            succeeded: succeeded
+        )
+        StorageCleanupAuditLog.append(event)
+        cleanupAuditEvents = StorageCleanupAuditLog.loadRecent()
+    }
+
+    nonisolated private static func movePathsToTrash(_ paths: [String]) -> StorageCleanupExecutionResult {
+        let started = Date()
+        var moved = 0
+        var output: [String] = []
+        for path in paths {
+            let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let url = URL(fileURLWithPath: trimmed)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                output.append("Missing: \(trimmed)")
+                continue
+            }
+            do {
+                var resultingURL: NSURL?
+                try FileManager.default.trashItem(
+                    at: url,
+                    resultingItemURL: &resultingURL
+                )
+                moved += 1
+                if let resultingURL {
+                    output.append("Moved: \(trimmed) -> \(resultingURL.path ?? "Trash")")
+                } else {
+                    output.append("Moved: \(trimmed) -> Trash")
+                }
+            } catch {
+                output.append("Failed: \(trimmed) - \(error.localizedDescription)")
+            }
+        }
+
+        let failed = output.filter { $0.hasPrefix("Failed:") || $0.hasPrefix("Missing:") }.count
+        let summary = "Moved \(moved) item\(moved == 1 ? "" : "s") to Trash; \(failed) issue\(failed == 1 ? "" : "s")."
+        return StorageCleanupExecutionResult(
+            exitCode: failed == 0 ? 0 : 1,
+            output: ([summary] + output).joined(separator: "\n"),
+            durationSeconds: Date().timeIntervalSince(started)
+        )
+    }
+
+    nonisolated private static func runShellCommand(_ command: String) -> StorageCleanupExecutionResult {
+        let started = Date()
+        let process = Process()
+        let outputPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", command]
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+
+        do {
+            try process.run()
+        } catch {
+            return StorageCleanupExecutionResult(
+                exitCode: -1,
+                output: "Failed to launch command: \(error.localizedDescription)",
+                durationSeconds: Date().timeIntervalSince(started)
+            )
+        }
+
+        let waitGroup = DispatchGroup()
+        waitGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            process.waitUntilExit()
+            waitGroup.leave()
+        }
+
+        var timedOut = false
+        if waitGroup.wait(timeout: .now() + 120) == .timedOut {
+            timedOut = true
+            process.terminate()
+            _ = waitGroup.wait(timeout: .now() + 5)
+        }
+
+        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        var output = String(data: data, encoding: .utf8) ?? ""
+        if output.count > 12_000 {
+            output = String(output.prefix(12_000)) + "\n... output truncated ..."
+        }
+        if timedOut {
+            output = output.isEmpty
+                ? "Command timed out after 120 seconds."
+                : "\(output)\nCommand timed out after 120 seconds."
+        }
+
+        return StorageCleanupExecutionResult(
+            exitCode: timedOut ? 124 : process.terminationStatus,
+            output: output.trimmingCharacters(in: .whitespacesAndNewlines),
+            durationSeconds: Date().timeIntervalSince(started)
+        )
     }
 
     private func budgetGuardrailSummary(_ guardrails: StorageBudgetGuardrailsModel) -> String {
@@ -2294,6 +4724,15 @@ public struct StorageView: View {
     private func icon(for item: StorageHygieneItemModel) -> String {
         switch item.kind {
         case "log-file", "logs": return "doc.text"
+        case "cold-file": return "snowflake"
+        case "large-file": return "doc.badge.exclamationmark"
+        case "release-artifact": return "archivebox"
+        case "macos-app-bundle": return "app"
+        case "app-support-data", "app-container": return "shippingbox"
+        case "app-launch-item": return "powerplug"
+        case "ios-backup": return "iphone"
+        case "mail-attachments", "message-attachments": return "paperclip"
+        case "local-snapshot": return "clock.arrow.circlepath"
         case "node-dependencies", "python-environment": return "shippingbox"
         case let kind where kind.contains("cache"): return "tray"
         default: return "folder"
@@ -2309,6 +4748,22 @@ public struct StorageView: View {
             return date.formatted(date: .abbreviated, time: .omitted)
         }
         return "age unknown"
+    }
+
+    private func accessSummary(for item: StorageHygieneItemModel) -> String {
+        var parts: [String] = []
+        if let accessAgeDays = item.accessAgeDays {
+            parts.append(accessAgeDays == 0 ? "accessed today" : "last accessed \(accessAgeDays)d ago")
+        } else if let accessedMillis = item.accessedMillis {
+            let date = Date(timeIntervalSince1970: Double(accessedMillis) / 1000.0)
+            parts.append("accessed \(date.formatted(date: .abbreviated, time: .omitted))")
+        } else {
+            parts.append("access time unavailable")
+        }
+        if let ageDays = item.ageDays {
+            parts.append(ageDays == 0 ? "modified today" : "modified \(ageDays)d ago")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func formatBytes(_ bytes: UInt64) -> String {
@@ -2328,6 +4783,21 @@ public struct StorageView: View {
 
     private func reveal(path: String) {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
+    private func quickLook(path: String) {
+        let expanded = NSString(string: path).expandingTildeInPath
+        let url = URL(fileURLWithPath: expanded)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            reveal(path: expanded)
+            return
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/qlmanage")
+        process.arguments = ["-p", url.path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
     }
 
     private func copy(_ text: String) {
@@ -2360,9 +4830,34 @@ private enum StorageMode: String, CaseIterable, Identifiable {
     }
 }
 
+private enum StorageScanModeSelection: String, CaseIterable, Identifiable {
+    case fast = "fast_changed_only"
+    case deep = "deep_native"
+    case forensic = "forensic_verified"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .fast: return "Fast"
+        case .deep: return "Deep"
+        case .forensic: return "Forensic"
+        }
+    }
+
+    var resultLimit: UInt32 {
+        switch self {
+        case .fast: return 120
+        case .deep: return 160
+        case .forensic: return 200
+        }
+    }
+}
+
 private enum StorageArtifactScope: String, CaseIterable, Identifiable {
     case all
     case large
+    case cold
     case stale
     case repoLinked
     case agentLinked
@@ -2374,6 +4869,7 @@ private enum StorageArtifactScope: String, CaseIterable, Identifiable {
         switch self {
         case .all: return "All scopes"
         case .large: return "Large"
+        case .cold: return "Cold"
         case .stale: return "Stale"
         case .repoLinked: return "Repo-linked"
         case .agentLinked: return "Agent-linked"
@@ -2387,6 +4883,8 @@ private enum StorageArtifactScope: String, CaseIterable, Identifiable {
             return true
         case .large:
             return item.sizeBytes >= 100 * 1024 * 1024
+        case .cold:
+            return item.cold
         case .stale:
             return item.stale
         case .repoLinked:
@@ -2479,6 +4977,7 @@ private enum StorageFilter: String, CaseIterable, Identifiable {
                 || item.cleanupTier == "expensive"
                 || item.safety != "safe"
                 || item.sizeTruncated
+                || item.cold
                 || item.sizeBytes >= 100 * 1024 * 1024
         case .safe:
             item.cleanupTier == "safe"
