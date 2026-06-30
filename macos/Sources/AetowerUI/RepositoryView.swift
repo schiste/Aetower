@@ -59,33 +59,6 @@ private struct RepositorySummary: Identifiable {
     let id: String
     let root: String
     let name: String
-    let gitBranch: String?
-    let gitHead: String?
-    let gitRef: String?
-    let gitDetachedHead: Bool
-    let gitRemoteOriginUrl: String?
-    let gitRemoteKey: String?
-    let gitRemoteHost: String?
-    let gitRemoteOwner: String?
-    let gitRemoteName: String?
-    let gitDirtyStatus: String
-    let gitDirtyFileCount: UInt64?
-    let gitDirtyTruncated: Bool
-    let cloneGroupCount: UInt64
-    let cloneGroupRoots: [String]
-    let discoveredRoot: String?
-    let hasAgentsMd: Bool
-    let hasClaudeMd: Bool
-    let claudeMdBytes: UInt64?
-    let claudeMdDelegationMaxBytes: UInt64
-    let claudeMdDelegatesToAgentsMd: Bool
-    let agentReadinessScore: UInt8
-    let agentReadinessStatus: String
-    let agentContractMissingCount: UInt64
-    let agentContractCoverage: [StorageAgentContractCoverageModel]
-    let agentGuidanceStatus: String
-    let agentGuidanceIssueCount: UInt64
-    let agentGuidanceIssues: [StorageAgentGuidanceIssueModel]
     let hasStorageFootprint: Bool
     let currentSizeBytes: UInt64
     let artifactBytes: UInt64
@@ -94,9 +67,6 @@ private struct RepositorySummary: Identifiable {
     let growthWindow: String
     let estimatedRebuildCost: String
     let estimatedRebuildSeconds: UInt64?
-    let lastWriterProcess: String?
-    let lastWriterPid: UInt32?
-    let lastBranchTouched: String?
     let topArtifactFolders: [StorageRepoArtifactFolderModel]
     let caveats: [String]
     let violationCount: Int
@@ -110,6 +80,36 @@ private struct RepositorySummary: Identifiable {
     let agentArtifactBytes: UInt64
     let agentCount: Int
     let scorecardReport: RepositoryScorecardReportModel?
+    let gitDirtyStatus: String
+    let gitDirtyFileCount: UInt64?
+    let gitDirtyTruncated: Bool
+    let gitBranch: String?
+    let gitHead: String?
+    let gitRef: String?
+    let gitDetachedHead: Bool
+    let cloneGroupCount: UInt64
+    let cloneGroupRoots: [String]
+    let discoveredRoot: String?
+    let gitRemoteOriginUrl: String?
+    let gitRemoteKey: String?
+    let gitRemoteHost: String?
+    let gitRemoteOwner: String?
+    let gitRemoteName: String?
+    let agentReadinessScore: UInt8
+    let agentReadinessStatus: String
+    let agentContractMissingCount: UInt64
+    let agentContractCoverage: [StorageAgentContractCoverageModel]
+    let agentGuidanceStatus: String
+    let agentGuidanceIssueCount: UInt64
+    let agentGuidanceIssues: [StorageAgentGuidanceIssueModel]
+    let hasAgentsMd: Bool
+    let hasClaudeMd: Bool
+    let claudeMdBytes: UInt64?
+    let claudeMdDelegationMaxBytes: UInt64
+    let claudeMdDelegatesToAgentsMd: Bool
+    let lastWriterProcess: String?
+    let lastWriterPid: UInt32?
+    let lastBranchTouched: String?
 
     var attentionScore: Double {
         let artifactScore = min(Double(artifactBytes) / Double(512 * 1024 * 1024), 18)
@@ -2594,33 +2594,6 @@ public struct RepositoryView: View {
             id: id,
             root: root,
             name: name,
-            gitBranch: gitBranch,
-            gitHead: gitHead,
-            gitRef: gitRef,
-            gitDetachedHead: gitDetachedHead,
-            gitRemoteOriginUrl: gitRemoteOriginUrl,
-            gitRemoteKey: gitRemoteKey,
-            gitRemoteHost: gitRemoteHost,
-            gitRemoteOwner: gitRemoteOwner,
-            gitRemoteName: gitRemoteName,
-            gitDirtyStatus: gitDirtyStatus,
-            gitDirtyFileCount: gitDirtyFileCount,
-            gitDirtyTruncated: gitDirtyTruncated,
-            cloneGroupCount: cloneGroupCount,
-            cloneGroupRoots: cloneGroupRoots,
-            discoveredRoot: discoveredRoot,
-            hasAgentsMd: hasAgentsMd,
-            hasClaudeMd: hasClaudeMd,
-            claudeMdBytes: claudeMdBytes,
-            claudeMdDelegationMaxBytes: claudeMdDelegationMaxBytes,
-            claudeMdDelegatesToAgentsMd: claudeMdDelegatesToAgentsMd,
-            agentReadinessScore: agentReadinessScore,
-            agentReadinessStatus: agentReadinessStatus,
-            agentContractMissingCount: agentContractMissingCount,
-            agentContractCoverage: agentContractCoverage,
-            agentGuidanceStatus: agentGuidanceStatus,
-            agentGuidanceIssueCount: agentGuidanceIssueCount,
-            agentGuidanceIssues: agentGuidanceIssues,
             hasStorageFootprint: footprint != nil,
             currentSizeBytes: footprint?.currentSizeBytes ?? 0,
             artifactBytes: footprint?.artifactBytes ?? 0,
@@ -2629,9 +2602,6 @@ public struct RepositoryView: View {
             growthWindow: footprint.map { storageGrowthWindow(for: $0) } ?? "no storage footprint baseline",
             estimatedRebuildCost: footprint?.estimatedRebuildCost ?? "None",
             estimatedRebuildSeconds: footprint?.estimatedRebuildSeconds ?? 0,
-            lastWriterProcess: footprint?.lastWriterProcess,
-            lastWriterPid: footprint?.lastWriterPid,
-            lastBranchTouched: footprint?.lastBranchTouched ?? gitBranch ?? gitHead,
             topArtifactFolders: footprint?.topArtifactFolders ?? [],
             caveats: repositoryCaveats(base: baseCaveats, scorecardReport: scorecardReport),
             violationCount: violations,
@@ -2644,7 +2614,37 @@ public struct RepositoryView: View {
             liveCPUPercent: live.cpuPercent,
             agentArtifactBytes: agent.artifactBytes,
             agentCount: agent.agentCount,
-            scorecardReport: scorecardReport
+            scorecardReport: scorecardReport,
+            gitDirtyStatus: gitDirtyStatus,
+            gitDirtyFileCount: gitDirtyFileCount,
+            gitDirtyTruncated: gitDirtyTruncated,
+            gitBranch: gitBranch,
+            gitHead: gitHead,
+            gitRef: gitRef,
+            gitDetachedHead: gitDetachedHead,
+            cloneGroupCount: cloneGroupCount,
+            cloneGroupRoots: cloneGroupRoots,
+            discoveredRoot: discoveredRoot,
+            gitRemoteOriginUrl: gitRemoteOriginUrl,
+            gitRemoteKey: gitRemoteKey,
+            gitRemoteHost: gitRemoteHost,
+            gitRemoteOwner: gitRemoteOwner,
+            gitRemoteName: gitRemoteName,
+            agentReadinessScore: agentReadinessScore,
+            agentReadinessStatus: agentReadinessStatus,
+            agentContractMissingCount: agentContractMissingCount,
+            agentContractCoverage: agentContractCoverage,
+            agentGuidanceStatus: agentGuidanceStatus,
+            agentGuidanceIssueCount: agentGuidanceIssueCount,
+            agentGuidanceIssues: agentGuidanceIssues,
+            hasAgentsMd: hasAgentsMd,
+            hasClaudeMd: hasClaudeMd,
+            claudeMdBytes: claudeMdBytes,
+            claudeMdDelegationMaxBytes: claudeMdDelegationMaxBytes,
+            claudeMdDelegatesToAgentsMd: claudeMdDelegatesToAgentsMd,
+            lastWriterProcess: footprint?.lastWriterProcess,
+            lastWriterPid: footprint?.lastWriterPid,
+            lastBranchTouched: footprint?.lastBranchTouched ?? gitBranch ?? gitHead
         )
     }
 
