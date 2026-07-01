@@ -72,6 +72,11 @@ struct StorageHygieneReportModel: Decodable, Sendable {
     let budgetGuardrails: StorageBudgetGuardrailsModel
     let agentHygiene: StorageAgentHygieneSummaryModel
     let repositoryInventory: [StorageRepositoryInventoryModel]
+    let repositoryInventoryComplete: Bool
+    let repositoryInventoryTruncated: Bool
+    let repositoryInventoryRoots: [String]
+    let repositoryInventoryPartialRoots: [String]
+    let repositoryInventoryCoverage: [StorageRepositoryInventoryCoverageModel]
     let repoFootprints: [StorageRepoFootprintModel]
     let duplicateGroups: [StorageDuplicateGroupModel]
     let appFootprints: [StorageAppFootprintModel]
@@ -99,6 +104,11 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         case budgetGuardrails
         case agentHygiene
         case repositoryInventory
+        case repositoryInventoryComplete
+        case repositoryInventoryTruncated
+        case repositoryInventoryRoots
+        case repositoryInventoryPartialRoots
+        case repositoryInventoryCoverage
         case repoFootprints
         case duplicateGroups
         case appFootprints
@@ -129,8 +139,33 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         cleanupBundles = try container.decode([StorageCleanupBundleModel].self, forKey: .cleanupBundles)
         budgetGuardrails = try container.decode(StorageBudgetGuardrailsModel.self, forKey: .budgetGuardrails)
         agentHygiene = try container.decode(StorageAgentHygieneSummaryModel.self, forKey: .agentHygiene)
-        repositoryInventory =
+        let decodedRepositoryInventory =
             try container.decodeIfPresent([StorageRepositoryInventoryModel].self, forKey: .repositoryInventory) ?? []
+        let decodedRepositoryInventoryCoverage =
+            try container.decodeIfPresent(
+                [StorageRepositoryInventoryCoverageModel].self,
+                forKey: .repositoryInventoryCoverage
+            ) ?? []
+        let decodedRepositoryInventoryTruncated =
+            try container.decodeIfPresent(Bool.self, forKey: .repositoryInventoryTruncated)
+                ?? decodedRepositoryInventoryCoverage.contains { $0.truncated }
+        let decodedRepositoryInventoryRoots =
+            try container.decodeIfPresent([String].self, forKey: .repositoryInventoryRoots)
+                ?? decodedRepositoryInventoryCoverage.map(\.path)
+        let decodedRepositoryInventoryPartialRoots =
+            try container.decodeIfPresent([String].self, forKey: .repositoryInventoryPartialRoots)
+                ?? decodedRepositoryInventoryCoverage
+                    .filter { !$0.scanned || $0.truncated || $0.status == "partial" }
+                    .map(\.path)
+        let decodedRepositoryInventoryComplete =
+            try container.decodeIfPresent(Bool.self, forKey: .repositoryInventoryComplete)
+                ?? (!decodedRepositoryInventoryTruncated && decodedRepositoryInventoryPartialRoots.isEmpty)
+        repositoryInventory = decodedRepositoryInventory
+        repositoryInventoryCoverage = decodedRepositoryInventoryCoverage
+        repositoryInventoryTruncated = decodedRepositoryInventoryTruncated
+        repositoryInventoryRoots = decodedRepositoryInventoryRoots
+        repositoryInventoryPartialRoots = decodedRepositoryInventoryPartialRoots
+        repositoryInventoryComplete = decodedRepositoryInventoryComplete
         repoFootprints = try container.decode([StorageRepoFootprintModel].self, forKey: .repoFootprints)
         duplicateGroups =
             try container.decodeIfPresent([StorageDuplicateGroupModel].self, forKey: .duplicateGroups) ?? []
@@ -161,6 +196,28 @@ struct StorageHygieneBaselineModel: Codable, Sendable {
         repoFootprints = report.repoFootprints.map(StorageRepoFootprintBaselineModel.init)
         items = report.items.map(StorageHygieneItemBaselineModel.init)
     }
+}
+
+struct RepositoryInventoryReportModel: Decodable, Sendable {
+    let capturedAtMillis: UInt64
+    let scanDurationMillis: UInt64
+    let roots: [String]
+    let repositoryInventory: [StorageRepositoryInventoryModel]
+    let repositoryInventoryComplete: Bool
+    let repositoryInventoryTruncated: Bool
+    let repositoryInventoryRoots: [String]
+    let repositoryInventoryPartialRoots: [String]
+    let repositoryInventoryCoverage: [StorageRepositoryInventoryCoverageModel]
+    let truncated: Bool
+    let diagnostics: RepositoryInventoryDiagnosticsModel
+}
+
+struct RepositoryInventoryDiagnosticsModel: Decodable, Sendable {
+    let repositoryWalkMillis: UInt64
+    let gitMillis: UInt64
+    let discoveredRepositoryCount: UInt64
+    let scannedDirectoryCount: UInt64
+    let skippedDirectoryCount: UInt64
 }
 
 struct StorageRepoFootprintBaselineModel: Codable, Identifiable, Sendable {
@@ -1185,6 +1242,7 @@ struct StorageRepositoryInventoryModel: Decodable, Identifiable, Sendable {
     let gitDirtyStatus: String
     let gitDirtyFileCount: UInt64?
     let gitDirtyTruncated: Bool
+    let notSeenInLatestScan: Bool
     let cloneGroupCount: UInt64
     let cloneGroupRoots: [String]
     let discoveredRoot: String
@@ -1217,6 +1275,7 @@ struct StorageRepositoryInventoryModel: Decodable, Identifiable, Sendable {
         case gitDirtyStatus
         case gitDirtyFileCount
         case gitDirtyTruncated
+        case notSeenInLatestScan
         case cloneGroupCount
         case cloneGroupRoots
         case discoveredRoot
@@ -1251,6 +1310,7 @@ struct StorageRepositoryInventoryModel: Decodable, Identifiable, Sendable {
         gitDirtyStatus = try container.decodeIfPresent(String.self, forKey: .gitDirtyStatus) ?? "unknown"
         gitDirtyFileCount = try container.decodeIfPresent(UInt64.self, forKey: .gitDirtyFileCount)
         gitDirtyTruncated = try container.decodeIfPresent(Bool.self, forKey: .gitDirtyTruncated) ?? false
+        notSeenInLatestScan = try container.decodeIfPresent(Bool.self, forKey: .notSeenInLatestScan) ?? false
         cloneGroupCount = try container.decodeIfPresent(UInt64.self, forKey: .cloneGroupCount) ?? 1
         cloneGroupRoots = try container.decodeIfPresent([String].self, forKey: .cloneGroupRoots) ?? []
         discoveredRoot = try container.decode(String.self, forKey: .discoveredRoot)
@@ -1545,6 +1605,20 @@ struct StorageSourceCoverageModel: Decodable, Identifiable, Sendable {
     let reclaimableBytes: UInt64?
     let cloudPlaceholder: Bool
     let network: Bool
+    let scanned: Bool
+}
+
+struct StorageRepositoryInventoryCoverageModel: Decodable, Identifiable, Sendable {
+    let id: String
+    let label: String
+    let path: String
+    let status: String
+    let permissionState: String
+    let detail: String
+    let repositoryCount: UInt64
+    let scannedDirectoryCount: UInt64
+    let skippedDirectoryCount: UInt64
+    let truncated: Bool
     let scanned: Bool
 }
 
