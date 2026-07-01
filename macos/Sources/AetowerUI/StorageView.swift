@@ -167,7 +167,7 @@ public struct StorageView: View {
     @State private var copiedCleanupBundleID: String?
     @State private var copiedCleanupRecipeID: String?
     @State private var candidateCommandPreviewBundle: StorageCleanupBundleModel?
-    @State private var selectedMode: StorageMode = .overview
+    @State private var selectedSection: StorageSection = .actions
     @State private var showCleanupRecipes = false
     @State private var showRawArtifacts = false
     @State private var showScannedRoots = false
@@ -192,27 +192,28 @@ public struct StorageView: View {
         VStack(spacing: AetowerDesign.Spacing.none) {
             storageTabToolBand
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                    if let error = state.storageHygieneError {
-                        warningBanner(error)
-                    }
-
-                    if let report = state.storageHygieneReport {
-                        if selectedMode == .overview {
-                            storageOverview(report)
-                        } else {
-                            storageAdvanced(report)
+            HStack(spacing: AetowerDesign.Spacing.none) {
+                storageNavigationRail(report: state.storageHygieneReport)
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+                        if let error = state.storageHygieneError {
+                            warningBanner(error)
                         }
-                    } else if state.storageHygieneIsLoading {
-                        loadingSection
-                    } else {
-                        emptySection
+
+                        if let report = state.storageHygieneReport {
+                            storageSectionContent(report)
+                        } else if state.storageHygieneIsLoading {
+                            loadingSection
+                        } else {
+                            emptySection
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(AetowerDesign.Spacing.xxl)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(AetowerDesign.Spacing.xxl)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .task {
             state.ensureStorageHygieneScan()
@@ -237,28 +238,18 @@ public struct StorageView: View {
             searchPrompt: "Search storage artifacts and paths",
             searchWidth: 300
         ) {
-            Picker("", selection: $selectedMode) {
-                ForEach(StorageMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityLabel("Storage view")
-            .frame(width: 220)
+            EmptyView()
         } filterTools: {
             HStack(spacing: AetowerDesign.Spacing.xs) {
-                if selectedMode == .advanced {
-                    Picker("", selection: $selectedFilter) {
-                        ForEach(StorageFilter.allCases) { filter in
-                            Text(filter.label).tag(filter)
-                        }
+                Picker("", selection: $selectedFilter) {
+                    ForEach(StorageFilter.allCases) { filter in
+                        Text(filter.label).tag(filter)
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .accessibilityLabel("Storage filter")
-                    .frame(width: 430)
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityLabel("Storage filter")
+                .frame(width: 430)
                 TextField("Optional root, for example ~/Repositories", text: $customRoot)
                     .aetowerUtilityTextInput()
                     .textFieldStyle(.plain)
@@ -347,6 +338,88 @@ public struct StorageView: View {
         }
     }
 
+    private func storageNavigationRail(report: StorageHygieneReportModel?) -> some View {
+        AetowerNavigationRail(width: 264) {
+            AetowerRailGroup {
+                ForEach(StorageSection.allCases) { section in
+                    storageNavigationButton(section, report: report)
+                }
+            }
+        }
+    }
+
+    private func storageNavigationButton(
+        _ section: StorageSection,
+        report: StorageHygieneReportModel?
+    ) -> some View {
+        AetowerRailButton(
+            title: section.label,
+            role: section.role,
+            summary: section.summary,
+            signal: storageSectionSignal(section, report: report),
+            systemImage: section.systemImage,
+            signalTone: storageSectionTone(section, report: report),
+            isSelected: selectedSection == section
+        ) {
+            selectedSection = section
+        }
+    }
+
+    private func storageSectionSignal(
+        _ section: StorageSection,
+        report: StorageHygieneReportModel?
+    ) -> String? {
+        guard let report else {
+            return state.storageHygieneIsLoading ? "Scanning" : "No scan"
+        }
+        switch section {
+        case .actions:
+            return formatBytes(report.summary.totalReclaimableBytes)
+        case .reclaim:
+            let actions = report.cleanupBundles.count + report.cleanupRecipes.count
+            return "\(actions) action\(actions == 1 ? "" : "s")"
+        case .growth:
+            let growthCount = report.growthDeltas.filter { $0.deltaBytes > 0 }.count
+            return "\(growthCount) growth signal\(growthCount == 1 ? "" : "s")"
+        case .explorer:
+            return "\(report.summary.itemCount) item\(report.summary.itemCount == 1 ? "" : "s")"
+        case .inventory:
+            return "\(report.summary.itemCount) item\(report.summary.itemCount == 1 ? "" : "s")"
+        case .sources:
+            return "\(report.volumeStates.count) volume\(report.volumeStates.count == 1 ? "" : "s")"
+        case .policies:
+            let violations = report.budgetGuardrails.violations.count
+            return violations == 0 ? "No violations" : "\(violations) violation\(violations == 1 ? "" : "s")"
+        case .advanced:
+            return report.truncated ? "Partial scan" : "\(report.scanDurationMillis) ms"
+        }
+    }
+
+    private func storageSectionTone(
+        _ section: StorageSection,
+        report: StorageHygieneReportModel?
+    ) -> Color {
+        guard let report else {
+            return state.storageHygieneIsLoading ? AetowerDesign.Tone.disk : AetowerDesign.Status.neutral
+        }
+        switch section {
+        case .actions:
+            return report.summary.totalReclaimableBytes > 0 ? AetowerDesign.Tone.disk : AetowerDesign.Status.ready
+        case .reclaim:
+            return report.cleanupBundles.isEmpty && report.cleanupRecipes.isEmpty ? AetowerDesign.Status.neutral : AetowerDesign.Status.ready
+        case .growth:
+            return report.growthDeltas.contains { $0.deltaBytes > 0 } ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+        case .explorer, .inventory:
+            return AetowerDesign.Tone.memory
+        case .sources:
+            return report.skippedRoots.isEmpty ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+        case .policies:
+            return report.budgetGuardrails.violations.isEmpty ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+        case .advanced:
+            return report.truncated ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+        }
+    }
+
     private var storageReclaimableLabel: String {
         guard let report = state.storageHygieneReport else {
             return state.storageHygieneIsLoading ? "Loading" : "No scan"
@@ -374,20 +447,96 @@ public struct StorageView: View {
         return "\(report.scanDurationMillis) ms"
     }
 
-    private func storageOverview(_ report: StorageHygieneReportModel) -> some View {
+    @ViewBuilder
+    private func storageSectionContent(_ report: StorageHygieneReportModel) -> some View {
+        switch selectedSection {
+        case .actions:
+            storageActionHome(report)
+        case .reclaim:
+            storageReclaimWorkspace(report)
+        case .growth:
+            storageGrowthWorkspace(report)
+        case .explorer:
+            storageExplorerWorkspace(report)
+        case .inventory:
+            storageInventoryWorkspace(report)
+        case .sources:
+            storageSourcesWorkspace(report)
+        case .policies:
+            storagePoliciesWorkspace(report)
+        case .advanced:
+            storageAdvanced(report)
+        }
+    }
+
+    private func storageActionHome(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             storageHomeActionsSection(report)
-            wholeComputerOptimizationSection(report)
+            storageActionPanel(report)
             topOffenderCallout(report)
+            if report.truncated {
+                warningBanner("The scan hit a cap or time budget. Results are partial; use Sources to inspect coverage or narrow the root.")
+            }
+        }
+    }
+
+    private func storageReclaimWorkspace(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            storageActionPanel(report)
+            cleanupPreviewSection(report)
+            cleanupBundlesSection(report)
+            reclaimSpaceSection(report)
+            cleanupRecipesSection(report)
+            cleanupAuditSection
+        }
+    }
+
+    private func storageGrowthWorkspace(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            topOffenderCallout(report)
+            storageGrowthTimeline(report)
+            repoFootprintDashboard(report)
             budgetGuardrailsSection(report)
-            storageCoverageOverview(report)
+        }
+    }
+
+    private func storageExplorerWorkspace(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            visualExplorationSection(report)
+            itemSection(report)
+        }
+    }
+
+    private func storageInventoryWorkspace(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            wholeComputerOptimizationSection(report)
             if shouldShowAgentHygieneOverview(report) {
                 agentHygieneSection(report)
             }
-            if report.truncated {
-                warningBanner("The scan hit a cap or time budget. Results are partial; use Advanced to inspect raw artifacts or narrow the root.")
-            }
+            storageInvestigationSection(report)
+            summaryGrid(report)
         }
+    }
+
+    private func storageSourcesWorkspace(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            storageCoverageOverview(report)
+            volumeStateSection(report)
+            rootsSection(report)
+            caveatsSection(report)
+        }
+    }
+
+    private func storagePoliciesWorkspace(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            budgetGuardrailsSection(report)
+            cleanupAuditSection
+            cleanupPreviewSection(report)
+        }
+    }
+
+    private func storageOverview(_ report: StorageHygieneReportModel) -> some View {
+        storageActionHome(report)
     }
 
     private func storageHomeActionsSection(_ report: StorageHygieneReportModel) -> some View {
@@ -1460,7 +1609,7 @@ public struct StorageView: View {
                 Spacer(minLength: AetowerDesign.Spacing.md)
 
                 Button("Advanced details") {
-                    selectedMode = .advanced
+                    selectedSection = .advanced
                     showRawArtifacts = true
                 }
                 .buttonStyle(.bordered)
@@ -1639,7 +1788,7 @@ public struct StorageView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Inspect details") {
-                        selectedMode = .advanced
+                        selectedSection = .advanced
                     }
                 }
             } else {
@@ -1669,7 +1818,7 @@ public struct StorageView: View {
                     }
 
                     Button("Show all actions") {
-                        selectedMode = .advanced
+                        selectedSection = .reclaim
                         showCleanupRecipes = true
                     }
 
@@ -5408,25 +5557,75 @@ public struct StorageView: View {
     }
 }
 
-private enum StorageMode: String, CaseIterable, Identifiable {
-    case overview
+private enum StorageSection: String, CaseIterable, Identifiable {
+    case actions
+    case reclaim
+    case growth
+    case explorer
+    case inventory
+    case sources
+    case policies
     case advanced
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .overview: return "Overview"
+        case .actions: return "Actions"
+        case .reclaim: return "Reclaim"
+        case .growth: return "Growth"
+        case .explorer: return "Explorer"
+        case .inventory: return "Inventory"
+        case .sources: return "Sources"
+        case .policies: return "Policies"
         case .advanced: return "Advanced"
         }
     }
 
-    var helperText: String {
+    var role: String {
         switch self {
-        case .overview:
-            return "Overview keeps the recommended cleanup action, current pressure, and guardrails visible."
+        case .actions: return "Start here"
+        case .reclaim: return "Cleanup workflow"
+        case .growth: return "What changed"
+        case .explorer: return "Visual + list"
+        case .inventory: return "Classified data"
+        case .sources: return "Coverage"
+        case .policies: return "Prevention"
+        case .advanced: return "Raw detail"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .actions:
+            return "Recommended cleanup moves and current pressure."
+        case .reclaim:
+            return "Bundles, recipes, staged basket, and audit trail."
+        case .growth:
+            return "Storage jumps, repo footprint, and top offender context."
+        case .explorer:
+            return "Lazy treemap, table view, and filtered artifacts."
+        case .inventory:
+            return "Large files, old data, duplicates, apps, system data, and agent artifacts."
+        case .sources:
+            return "Volumes, roots, permissions, skipped paths, and caveats."
+        case .policies:
+            return "Budgets, guardrails, warning-only policies, and cleanup safety."
         case .advanced:
-            return "Advanced shows detailed tiers, cleanup bundles, recipes, repo growth, raw artifacts, roots, and caveats."
+            return "Complete diagnostic composition for power review."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .actions: return "bolt.circle"
+        case .reclaim: return "trash.circle"
+        case .growth: return "chart.line.uptrend.xyaxis"
+        case .explorer: return "square.grid.3x3.topleft.filled"
+        case .inventory: return "shippingbox"
+        case .sources: return "externaldrive.connected.to.line.below"
+        case .policies: return "shield.lefthalf.filled"
+        case .advanced: return "slider.horizontal.3"
         }
     }
 }
