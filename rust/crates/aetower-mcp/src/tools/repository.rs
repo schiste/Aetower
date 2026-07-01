@@ -5,6 +5,21 @@ use serde_json::Value;
 use crate::*;
 
 impl AetowerMcpServer {
+    pub(crate) fn tool_repository_inventory(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            roots: Vec<String>,
+            #[serde(default = "default_repository_inventory_depth")]
+            max_depth: usize,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let json = crate::reports::storage::repository_inventory_json(args.roots, args.max_depth)
+            .map_err(|error| tool_error(format!("repository_inventory_failed: {error}")))?;
+        parse_tool_json(&json)
+    }
+
     pub(crate) fn tool_repository_scorecard(&self, arguments: Value) -> Result<Value, Value> {
         #[derive(Deserialize)]
         struct Args {
@@ -31,7 +46,11 @@ impl AetowerMcpServer {
 
 fn parse_tool_json(json: &str) -> Result<Value, Value> {
     serde_json::from_str(json)
-        .map_err(|error| tool_error(format!("repository_scorecard_json_failed: {error}")))
+        .map_err(|error| tool_error(format!("repository_json_failed: {error}")))
+}
+
+fn default_repository_inventory_depth() -> usize {
+    5
 }
 
 fn default_repository_scorecard_mode() -> String {

@@ -300,6 +300,15 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
             AetowerMcpServer::tool_history_data_quality,
         ),
         ToolDescriptor::with_args(
+            "aetower_repository_inventory",
+            "Discover local Git repository roots with a cheap inventory-only scan. Skips heavy artifact directories and returns per-root coverage without sizing files.",
+            vec![
+                string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths. Defaults to common developer repository roots."),
+                uint("max_depth", Some(1), Some(12), Some(5)),
+            ],
+            AetowerMcpServer::tool_repository_inventory,
+        ),
+        ToolDescriptor::with_args(
             "aetower_repository_scorecard",
             "Run an explicit OpenSSF Scorecard repository readiness scan for one GitHub repository root. Uses cached results unless refresh is true; never runs during default repository discovery.",
             vec![

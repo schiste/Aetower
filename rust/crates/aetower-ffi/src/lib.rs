@@ -11,11 +11,12 @@ use aetower_mcp::{
     is_socket_listener_reachable, memory_breakdown_json, persistence_deep_scan_json,
     persistence_scan_json, process_action_history_json, process_action_json, process_inspect_json,
     process_open_resources_json, process_sample_json, profile_entity_json,
-    repository_scorecard_json_cached, resource_holders_by_file_json, resource_holders_by_port_json,
-    self_memory_attribution_json, start_local_socket_server, storage_hygiene_indexed_json,
-    storage_hygiene_json, storage_hygiene_mode_json, storage_scan_cancel_json,
-    storage_scan_pause_json, storage_scan_result_json, storage_scan_resume_json,
-    storage_scan_start_json, storage_scan_status_json, wakeup_attribution_json,
+    repository_inventory_json, repository_scorecard_json_cached, resource_holders_by_file_json,
+    resource_holders_by_port_json, self_memory_attribution_json, start_local_socket_server,
+    storage_hygiene_indexed_json, storage_hygiene_json, storage_hygiene_mode_json,
+    storage_scan_cancel_json, storage_scan_pause_json, storage_scan_result_json,
+    storage_scan_resume_json, storage_scan_start_json, storage_scan_status_json,
+    wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1690,6 +1691,12 @@ impl MonitorEngine {
             max_depth as usize,
             limit as usize,
         ))
+    }
+
+    /// Cheap Git-root inventory scan for repository management. Does not size
+    /// artifacts or traverse known heavy dependency/build directories.
+    pub fn repository_inventory_json(&self, roots: Vec<String>, max_depth: u32) -> JsonQueryResult {
+        json_query_result(repository_inventory_json(roots, max_depth as usize))
     }
 
     /// Explicit OpenSSF Scorecard repository readiness scan. On-demand only;

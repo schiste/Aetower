@@ -1,6 +1,6 @@
 use std::{
     cmp::{Ordering, Reverse},
-    collections::{BTreeMap, BTreeSet, BinaryHeap},
+    collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque},
     ffi::CString,
     fs,
     io::{Read, Write},
@@ -57,6 +57,12 @@ const STORAGE_TREEMAP_MAX_CHILDREN: usize = 14;
 const STORAGE_TREEMAP_MAX_ITEMS: usize = 160;
 const STORAGE_WRITER_LEDGER_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const STORAGE_WRITER_LEDGER_TIME_FUZZ_MILLIS: u64 = 10 * 60 * 1000;
+const REPOSITORY_INVENTORY_TIME_BUDGET: Duration = Duration::from_millis(30_000);
+const REPOSITORY_INVENTORY_MAX_DIRECTORIES: u64 = 200_000;
+const STORAGE_SCAN_PHASE_REPOSITORY_INVENTORY: &str = "repository_inventory";
+const STORAGE_SCAN_PHASE_ARTIFACT_SIZING: &str = "artifact_sizing";
+const STORAGE_SCAN_PHASE_SCORECARD_OVERLAY: &str = "scorecard_overlay";
+const STORAGE_SCAN_PHASE_FINALIZING: &str = "finalizing";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StorageScanMode {
@@ -430,6 +436,21 @@ impl StorageScanRuntimeContext {
         self.throttle.maybe_sleep(checkpoint_index, &self.control);
         !self.control.is_cancelled()
     }
+
+    fn set_phase(&self, phase: &str, path_hint: Option<&Path>) -> bool {
+        if !self.control.wait_until_runnable() {
+            return false;
+        }
+        {
+            let mut progress = lock_or_recover(&self.progress);
+            progress.phase = phase.to_owned();
+            if let Some(path_hint) = path_hint {
+                progress.current_path_hint = Some(path_hint.display().to_string());
+            }
+            progress.updated_at_millis = storage_now_millis();
+        }
+        !self.control.is_cancelled()
+    }
 }
 
 struct StorageScanJob {
@@ -497,6 +518,22 @@ impl StorageScanJob {
         }
     }
 
+    fn set_status_preserving_phase(&self, status: StorageScanJobStatusKind) {
+        let now_millis = storage_now_millis();
+        let progress_snapshot = {
+            let mut progress = lock_or_recover(&self.progress);
+            progress.updated_at_millis = now_millis;
+            progress.clone()
+        };
+        let mut state = lock_or_recover(&self.state);
+        state.status = status;
+        state.progress = progress_snapshot;
+        state.updated_at_millis = now_millis;
+        if !status.is_active() {
+            state.completed_at_millis = Some(now_millis);
+        }
+    }
+
     fn refresh_progress(&self) {
         let now_millis = storage_now_millis();
         let progress_snapshot = lock_or_recover(&self.progress).clone();
@@ -545,12 +582,12 @@ impl StorageScanJob {
 
     fn pause(&self) {
         self.control.pause();
-        self.set_status(StorageScanJobStatusKind::Paused, "paused");
+        self.set_status_preserving_phase(StorageScanJobStatusKind::Paused);
     }
 
     fn resume(&self) {
         self.control.resume();
-        self.set_status(StorageScanJobStatusKind::Running, "running");
+        self.set_status_preserving_phase(StorageScanJobStatusKind::Running);
     }
 }
 
@@ -707,7 +744,10 @@ fn run_storage_scan_job(manager: &'static StorageScanJobManager, job: Arc<Storag
         return;
     }
 
-    job.set_status(StorageScanJobStatusKind::Running, "running");
+    job.set_status(
+        StorageScanJobStatusKind::Running,
+        STORAGE_SCAN_PHASE_REPOSITORY_INVENTORY,
+    );
     let result = std::panic::catch_unwind({
         let job = Arc::clone(&job);
         move || {
@@ -730,6 +770,10 @@ fn run_storage_scan_job(manager: &'static StorageScanJobManager, job: Arc<Storag
             if job.control.is_cancelled() {
                 return Err("cancelled".to_owned());
             }
+            job.set_status(
+                StorageScanJobStatusKind::Running,
+                STORAGE_SCAN_PHASE_FINALIZING,
+            );
             let serialize_started = Instant::now();
             let json = serde_json::to_string(&report).map_err(|error| error.to_string())?;
             report.diagnostics.serialize_millis = serialize_started.elapsed().as_millis() as u64;
@@ -795,6 +839,11 @@ pub(crate) struct StorageHygieneReport {
     budget_guardrails: StorageBudgetGuardrails,
     agent_hygiene: StorageAgentHygieneSummary,
     repository_inventory: Vec<StorageRepositoryInventoryItem>,
+    repository_inventory_complete: bool,
+    repository_inventory_truncated: bool,
+    repository_inventory_roots: Vec<String>,
+    repository_inventory_partial_roots: Vec<String>,
+    repository_inventory_coverage: Vec<RepositoryInventoryRootCoverage>,
     repo_footprints: Vec<StorageRepoFootprint>,
     duplicate_groups: Vec<StorageDuplicateGroup>,
     app_footprints: Vec<StorageAppFootprint>,
@@ -877,6 +926,29 @@ struct StorageSourceCoverage {
     cloud_placeholder: bool,
     network: bool,
     scanned: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct RepositoryInventoryRootCoverage {
+    id: String,
+    label: String,
+    path: String,
+    status: String,
+    permission_state: String,
+    detail: String,
+    repository_count: u64,
+    scanned_directory_count: u64,
+    skipped_directory_count: u64,
+    truncated: bool,
+    scanned: bool,
+}
+
+#[derive(Clone, Debug)]
+struct RepositoryInventoryCompleteness {
+    complete: bool,
+    truncated: bool,
+    roots: Vec<String>,
+    partial_roots: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1335,6 +1407,7 @@ struct StorageRepositoryInventoryItem {
     git_dirty_status: String,
     git_dirty_file_count: Option<u64>,
     git_dirty_truncated: bool,
+    not_seen_in_latest_scan: bool,
     clone_group_count: u64,
     clone_group_roots: Vec<String>,
     discovered_root: String,
@@ -1644,7 +1717,18 @@ impl StorageSizeIndex {
              CREATE INDEX IF NOT EXISTS idx_storage_growth_delta_bucket
                 ON storage_growth_delta(bucket_millis DESC, delta_bytes DESC);
              CREATE INDEX IF NOT EXISTS idx_storage_growth_delta_path
-                ON storage_growth_delta(path, bucket_millis DESC);",
+                ON storage_growth_delta(path, bucket_millis DESC);
+             CREATE TABLE IF NOT EXISTS storage_repository_inventory_cache (
+                repo_root TEXT PRIMARY KEY,
+                discovered_root TEXT NOT NULL,
+                git_config_fingerprint TEXT NOT NULL,
+                git_index_fingerprint TEXT NOT NULL,
+                first_seen_millis INTEGER NOT NULL,
+                last_seen_millis INTEGER NOT NULL,
+                last_scan_millis INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_repository_inventory_cache_root
+                ON storage_repository_inventory_cache(discovered_root, last_seen_millis DESC);",
         )?;
         let schema: i64 = connection.query_row(
             "SELECT value FROM storage_index_meta WHERE key = 'schema_version'",
@@ -1715,7 +1799,18 @@ impl StorageSizeIndex {
                  CREATE INDEX idx_storage_growth_delta_bucket
                     ON storage_growth_delta(bucket_millis DESC, delta_bytes DESC);
                  CREATE INDEX idx_storage_growth_delta_path
-                    ON storage_growth_delta(path, bucket_millis DESC);",
+                    ON storage_growth_delta(path, bucket_millis DESC);
+                 CREATE TABLE storage_repository_inventory_cache (
+                    repo_root TEXT PRIMARY KEY,
+                    discovered_root TEXT NOT NULL,
+                    git_config_fingerprint TEXT NOT NULL,
+                    git_index_fingerprint TEXT NOT NULL,
+                    first_seen_millis INTEGER NOT NULL,
+                    last_seen_millis INTEGER NOT NULL,
+                    last_scan_millis INTEGER NOT NULL
+                 );
+                 CREATE INDEX idx_storage_repository_inventory_cache_root
+                    ON storage_repository_inventory_cache(discovered_root, last_seen_millis DESC);",
             )?;
         }
         Ok(())
@@ -1971,6 +2066,77 @@ impl StorageSizeIndex {
         Ok(retained)
     }
 
+    fn load_repository_inventory_cache(&self, roots: &[PathBuf]) -> BTreeMap<String, String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return BTreeMap::new();
+        };
+        let Ok(mut statement) = connection.prepare(
+            "SELECT repo_root, discovered_root
+             FROM storage_repository_inventory_cache
+             ORDER BY last_seen_millis DESC, repo_root ASC",
+        ) else {
+            return BTreeMap::new();
+        };
+        let Ok(rows) = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }) else {
+            return BTreeMap::new();
+        };
+
+        let mut repositories = BTreeMap::new();
+        for row in rows.flatten() {
+            let (repo_root, discovered_root) = row;
+            if roots.is_empty()
+                || roots
+                    .iter()
+                    .any(|root| path_is_under_root(&repo_root, root))
+            {
+                repositories.insert(repo_root, discovered_root);
+            }
+        }
+        repositories
+    }
+
+    fn store_repository_inventory_cache(
+        &self,
+        repositories_by_root: &BTreeMap<String, String>,
+        now_millis: u64,
+        metrics: &mut StorageScanMetrics,
+    ) {
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        for (repo_root, discovered_root) in repositories_by_root {
+            let repo_path = Path::new(repo_root);
+            let git_config_fingerprint = repository_git_file_fingerprint(repo_path, "config");
+            let git_index_fingerprint = repository_git_file_fingerprint(repo_path, "index");
+            if connection
+                .execute(
+                    "INSERT INTO storage_repository_inventory_cache (
+                        repo_root, discovered_root, git_config_fingerprint, git_index_fingerprint,
+                        first_seen_millis, last_seen_millis, last_scan_millis
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?5)
+                     ON CONFLICT(repo_root) DO UPDATE SET
+                        discovered_root = excluded.discovered_root,
+                        git_config_fingerprint = excluded.git_config_fingerprint,
+                        git_index_fingerprint = excluded.git_index_fingerprint,
+                        last_seen_millis = excluded.last_seen_millis,
+                        last_scan_millis = excluded.last_scan_millis",
+                    params![
+                        repo_root,
+                        discovered_root,
+                        git_config_fingerprint,
+                        git_index_fingerprint,
+                        now_millis.min(i64::MAX as u64) as i64,
+                    ],
+                )
+                .is_ok()
+            {
+                metrics.storage_index_writes = metrics.storage_index_writes.saturating_add(1);
+            }
+        }
+    }
+
     fn load_growth_deltas(&self, limit: usize) -> Vec<StorageGrowthDelta> {
         let Some(connection) = self.connection.as_ref() else {
             return Vec::new();
@@ -2094,6 +2260,76 @@ pub fn storage_hygiene_json(
     )
 }
 
+pub fn repository_inventory_json(roots: Vec<String>, max_depth: usize) -> Result<String, String> {
+    let started = Instant::now();
+    let captured_at_millis = crate::current_unix_millis().unwrap_or_default();
+    let requested_roots = normalize_roots(roots);
+    let root_labels = requested_roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>();
+    let repository_cache = StorageSizeIndex::open();
+    let cached_repository_roots =
+        repository_cache.load_repository_inventory_cache(&requested_roots);
+    let scan = scan_repository_inventory_roots(&requested_roots, max_depth);
+    let repository_walk_millis = started.elapsed().as_millis() as u64;
+    let discovered_repository_count = scan.repositories_by_root.len().min(u64::MAX as usize) as u64;
+    let scanned_directory_count = scan
+        .coverage
+        .iter()
+        .map(|coverage| coverage.scanned_directory_count)
+        .fold(0u64, u64::saturating_add);
+    let skipped_directory_count = scan
+        .coverage
+        .iter()
+        .map(|coverage| coverage.skipped_directory_count)
+        .fold(0u64, u64::saturating_add);
+
+    let mut metrics = StorageScanMetrics {
+        storage_index_status: "repository_inventory_only".to_owned(),
+        ..StorageScanMetrics::default()
+    };
+    repository_cache.store_repository_inventory_cache(
+        &scan.repositories_by_root,
+        captured_at_millis,
+        &mut metrics,
+    );
+    let (repository_roots, not_seen_repository_roots) =
+        merge_repository_inventory_cache(cached_repository_roots, scan.repositories_by_root);
+    let repository_inventory = summarize_repository_inventory(
+        repository_roots,
+        &not_seen_repository_roots,
+        started,
+        StorageScanMode::FastChangedOnly,
+        &mut metrics,
+    );
+    let mut repository_inventory_completeness =
+        repository_inventory_completeness(&scan.coverage, scan.truncated);
+    if !not_seen_repository_roots.is_empty() {
+        repository_inventory_completeness.complete = false;
+    }
+    let report = RepositoryInventoryReport {
+        captured_at_millis,
+        scan_duration_millis: started.elapsed().as_millis() as u64,
+        roots: root_labels,
+        repository_inventory,
+        repository_inventory_complete: repository_inventory_completeness.complete,
+        repository_inventory_truncated: repository_inventory_completeness.truncated,
+        repository_inventory_roots: repository_inventory_completeness.roots,
+        repository_inventory_partial_roots: repository_inventory_completeness.partial_roots,
+        repository_inventory_coverage: scan.coverage,
+        truncated: scan.truncated,
+        diagnostics: RepositoryInventoryDiagnostics {
+            repository_walk_millis,
+            git_millis: metrics.git_millis,
+            discovered_repository_count,
+            scanned_directory_count,
+            skipped_directory_count,
+        },
+    };
+    serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
 pub fn storage_hygiene_mode_json(
     roots: Vec<String>,
     max_depth: usize,
@@ -2188,6 +2424,11 @@ pub fn storage_hygiene_overview_json(
         cleanup_tiers: report.cleanup_tiers,
         budget_guardrails: report.budget_guardrails,
         agent_hygiene: report.agent_hygiene,
+        repository_inventory_complete: report.repository_inventory_complete,
+        repository_inventory_truncated: report.repository_inventory_truncated,
+        repository_inventory_roots: report.repository_inventory_roots,
+        repository_inventory_partial_roots: report.repository_inventory_partial_roots,
+        repository_inventory_coverage: report.repository_inventory_coverage,
         repo_footprints: report.repo_footprints.into_iter().take(8).collect(),
         duplicate_groups: report.duplicate_groups.into_iter().take(6).collect(),
         app_footprints: report.app_footprints.into_iter().take(6).collect(),
@@ -2373,6 +2614,11 @@ struct StorageHygieneOverviewResponse {
     cleanup_tiers: Vec<StorageCleanupTierSummary>,
     budget_guardrails: StorageBudgetGuardrails,
     agent_hygiene: StorageAgentHygieneSummary,
+    repository_inventory_complete: bool,
+    repository_inventory_truncated: bool,
+    repository_inventory_roots: Vec<String>,
+    repository_inventory_partial_roots: Vec<String>,
+    repository_inventory_coverage: Vec<RepositoryInventoryRootCoverage>,
     repo_footprints: Vec<StorageRepoFootprint>,
     duplicate_groups: Vec<StorageDuplicateGroup>,
     app_footprints: Vec<StorageAppFootprint>,
@@ -2385,6 +2631,30 @@ struct StorageHygieneOverviewResponse {
     growth_deltas: Vec<StorageGrowthDelta>,
     truncated: bool,
     caveats: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RepositoryInventoryReport {
+    captured_at_millis: u64,
+    scan_duration_millis: u64,
+    roots: Vec<String>,
+    repository_inventory: Vec<StorageRepositoryInventoryItem>,
+    repository_inventory_complete: bool,
+    repository_inventory_truncated: bool,
+    repository_inventory_roots: Vec<String>,
+    repository_inventory_partial_roots: Vec<String>,
+    repository_inventory_coverage: Vec<RepositoryInventoryRootCoverage>,
+    truncated: bool,
+    diagnostics: RepositoryInventoryDiagnostics,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct RepositoryInventoryDiagnostics {
+    repository_walk_millis: u64,
+    git_millis: u64,
+    discovered_repository_count: u64,
+    scanned_directory_count: u64,
+    skipped_directory_count: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2476,12 +2746,35 @@ fn build_storage_hygiene_report_with_options(
         StorageSizeIndex::disabled("mode_requires_fresh_walk")
     };
     metrics.storage_index_status = storage_index.status.clone();
+    let repository_cache = StorageSizeIndex::open();
+    let cached_repository_roots =
+        repository_cache.load_repository_inventory_cache(&requested_roots);
+    if let Some(runtime) = options.runtime.as_ref() {
+        let _ = runtime.set_phase(STORAGE_SCAN_PHASE_REPOSITORY_INVENTORY, None);
+    }
+    let repository_inventory_scan = scan_repository_inventory_roots_with_budget(
+        &requested_roots,
+        options.max_depth,
+        REPOSITORY_INVENTORY_TIME_BUDGET,
+        options.runtime.as_ref(),
+    );
+    if let Some(runtime) = options.runtime.as_ref() {
+        let _ = runtime.set_phase(STORAGE_SCAN_PHASE_ARTIFACT_SIZING, None);
+    }
     let mut collector = StorageCandidateCollector::new(options.limit);
-    let mut repository_roots = BTreeMap::<String, String>::new();
+    repository_cache.store_repository_inventory_cache(
+        &repository_inventory_scan.repositories_by_root,
+        now_millis,
+        &mut metrics,
+    );
+    let (repository_roots, not_seen_repository_roots) = merge_repository_inventory_cache(
+        cached_repository_roots,
+        repository_inventory_scan.repositories_by_root.clone(),
+    );
     let mut scanned_roots = Vec::new();
     let mut skipped_roots = Vec::new();
     let mut scanned_directory_count = 0;
-    let mut truncated = false;
+    let mut truncated = repository_inventory_scan.truncated;
 
     for root in roots {
         if started.elapsed() >= SCAN_TIME_BUDGET {
@@ -2489,7 +2782,7 @@ fn build_storage_hygiene_report_with_options(
             break;
         }
         if let Some(runtime) = options.runtime.as_ref()
-            && !runtime.checkpoint("root", Some(&root), 0, 0, 0)
+            && !runtime.checkpoint(STORAGE_SCAN_PHASE_ARTIFACT_SIZING, Some(&root), 0, 0, 0)
         {
             truncated = true;
             break;
@@ -2524,7 +2817,7 @@ fn build_storage_hygiene_report_with_options(
 
         scanned_roots.push(root.display().to_string());
         let root_started = Instant::now();
-        let (root_repositories, root_dirs, root_truncated) = scan_root(
+        let (_root_repositories, root_dirs, root_truncated) = scan_root(
             &root,
             &options,
             started,
@@ -2538,11 +2831,6 @@ fn build_storage_hygiene_report_with_options(
             .saturating_add(root_started.elapsed().as_millis() as u64);
         scanned_directory_count += root_dirs;
         truncated |= root_truncated;
-        for repo_root in root_repositories {
-            repository_roots
-                .entry(repo_root.display().to_string())
-                .or_insert_with(|| root.display().to_string());
-        }
     }
 
     metrics.candidate_seen_count = collector.seen;
@@ -2562,6 +2850,27 @@ fn build_storage_hygiene_report_with_options(
         item.next_step = storage_item_next_step(item);
     }
 
+    if let Some(runtime) = options.runtime.as_ref() {
+        let _ = runtime.set_phase(STORAGE_SCAN_PHASE_SCORECARD_OVERLAY, None);
+    }
+    let mut repository_inventory_completeness = repository_inventory_completeness(
+        &repository_inventory_scan.coverage,
+        repository_inventory_scan.truncated,
+    );
+    if !not_seen_repository_roots.is_empty() {
+        repository_inventory_completeness.complete = false;
+    }
+    let repository_inventory = summarize_repository_inventory(
+        repository_roots,
+        &not_seen_repository_roots,
+        started,
+        options.mode,
+        &mut metrics,
+    );
+    if let Some(runtime) = options.runtime.as_ref() {
+        let _ = runtime.set_phase(STORAGE_SCAN_PHASE_FINALIZING, None);
+    }
+
     let summary = summarize_storage_items(&items, scanned_directory_count);
     let investigation = summarize_storage_investigation(&items, truncated);
     let cleanup_tiers = summarize_cleanup_tiers(&items);
@@ -2572,8 +2881,6 @@ fn build_storage_hygiene_report_with_options(
     let app_footprints = summarize_app_footprints(&items);
     let system_data_buckets = summarize_system_data_buckets(&items);
     let treemap_roots = build_storage_treemap_roots(&items, &scanned_roots);
-    let repository_inventory =
-        summarize_repository_inventory(repository_roots, started, options.mode, &mut metrics);
     let growth_deltas = storage_index.load_growth_deltas(40);
     apply_growth_deltas_to_repo_footprints(&mut repo_footprints, &growth_deltas);
     let agent_hygiene = summarize_agent_hygiene(&items);
@@ -2622,6 +2929,11 @@ fn build_storage_hygiene_report_with_options(
         budget_guardrails,
         agent_hygiene,
         repository_inventory,
+        repository_inventory_complete: repository_inventory_completeness.complete,
+        repository_inventory_truncated: repository_inventory_completeness.truncated,
+        repository_inventory_roots: repository_inventory_completeness.roots,
+        repository_inventory_partial_roots: repository_inventory_completeness.partial_roots,
+        repository_inventory_coverage: repository_inventory_scan.coverage,
         repo_footprints,
         duplicate_groups,
         app_footprints,
@@ -2645,7 +2957,7 @@ fn build_storage_hygiene_report_with_options(
                 .to_owned(),
             "Command and process-tree attribution uses indexed deltas plus optional writer ledgers from Aetower/Chau7; unmatched writers are reported as low-confidence instead of guessed."
                 .to_owned(),
-            "Repository inventory is Git-root based; storage footprints are a bounded artifact subset overlaid on top."
+            "Repository inventory runs before artifact sizing so repository coverage remains available even when artifact sizing truncates."
                 .to_owned(),
         ],
     }
@@ -2666,20 +2978,14 @@ fn build_storage_hygiene_report_from_index(
     };
     let storage_index = StorageSizeIndex::open();
     metrics.storage_index_status = storage_index.status.clone();
+    let cached_repository_roots = storage_index.load_repository_inventory_cache(&requested_roots);
     let limit = limit.clamp(1, MAX_LIMIT);
     let rows = storage_index.load_candidate_rows(&roots, limit, &mut metrics)?;
-    if rows.is_empty() {
+    if rows.is_empty() && cached_repository_roots.is_empty() {
         return Err("storage index has no candidate rows yet".to_owned());
     }
 
-    let mut repository_roots = BTreeMap::<String, String>::new();
-    for row in &rows {
-        if let Some(repo_root) = row.repo_root.as_deref() {
-            repository_roots
-                .entry(repo_root.to_owned())
-                .or_insert_with(|| row.source_root.clone());
-        }
-    }
+    let repository_roots = cached_repository_roots;
     let mut items = rows
         .into_iter()
         .map(|row| storage_item_for_indexed_row(row, now_millis))
@@ -2700,6 +3006,19 @@ fn build_storage_hygiene_report_from_index(
         item.evidence = storage_item_evidence(item);
         item.next_step = storage_item_next_step(item);
     }
+    metrics.discovered_repository_count = repository_roots.len().min(u64::MAX as usize) as u64;
+    let repository_inventory_coverage =
+        cached_repository_inventory_coverage(&requested_roots, &repository_roots);
+    let repository_inventory_completeness =
+        repository_inventory_completeness(&repository_inventory_coverage, false);
+    let not_seen_repository_roots = BTreeSet::new();
+    let repository_inventory = summarize_repository_inventory(
+        repository_roots,
+        &not_seen_repository_roots,
+        started,
+        StorageScanMode::InstantCached,
+        &mut metrics,
+    );
 
     let scanned_roots = roots
         .iter()
@@ -2724,15 +3043,8 @@ fn build_storage_hygiene_report_from_index(
     let app_footprints = summarize_app_footprints(&items);
     let system_data_buckets = summarize_system_data_buckets(&items);
     let treemap_roots = build_storage_treemap_roots(&items, &scanned_roots);
-    metrics.discovered_repository_count = repository_roots.len().min(u64::MAX as usize) as u64;
     metrics.sized_entry_count = items.len().min(u64::MAX as usize) as u64;
     metrics.candidate_seen_count = metrics.sized_entry_count;
-    let repository_inventory = summarize_repository_inventory(
-        repository_roots,
-        started,
-        StorageScanMode::InstantCached,
-        &mut metrics,
-    );
     let growth_deltas = storage_index.load_growth_deltas(40);
     apply_growth_deltas_to_repo_footprints(&mut repo_footprints, &growth_deltas);
     let agent_hygiene = summarize_agent_hygiene(&items);
@@ -2781,6 +3093,11 @@ fn build_storage_hygiene_report_from_index(
         budget_guardrails,
         agent_hygiene,
         repository_inventory,
+        repository_inventory_complete: repository_inventory_completeness.complete,
+        repository_inventory_truncated: repository_inventory_completeness.truncated,
+        repository_inventory_roots: repository_inventory_completeness.roots,
+        repository_inventory_partial_roots: repository_inventory_completeness.partial_roots,
+        repository_inventory_coverage,
         repo_footprints,
         duplicate_groups,
         app_footprints,
@@ -2823,7 +3140,7 @@ fn scan_root(
             break;
         }
         if let Some(runtime) = options.runtime.as_ref()
-            && !runtime.checkpoint("walking", Some(&path), 0, 0, 0)
+            && !runtime.checkpoint(STORAGE_SCAN_PHASE_ARTIFACT_SIZING, Some(&path), 0, 0, 0)
         {
             truncated = true;
             break;
@@ -2876,7 +3193,7 @@ fn scan_root(
 
         scanned_dirs += 1;
         if let Some(runtime) = options.runtime.as_ref()
-            && !runtime.checkpoint("walking", Some(&path), 0, 1, 0)
+            && !runtime.checkpoint(STORAGE_SCAN_PHASE_ARTIFACT_SIZING, Some(&path), 0, 1, 0)
         {
             truncated = true;
             break;
@@ -4091,7 +4408,13 @@ fn size_of_path(
             None
         };
         if let Some(runtime) = runtime
-            && !runtime.checkpoint("sizing", Some(path), 1, 0, metadata.len())
+            && !runtime.checkpoint(
+                STORAGE_SCAN_PHASE_ARTIFACT_SIZING,
+                Some(path),
+                1,
+                0,
+                metadata.len(),
+            )
         {
             let result = SizeWalkResult {
                 bytes: metadata.len(),
@@ -4174,7 +4497,7 @@ fn size_of_path(
             break;
         }
         if let Some(runtime) = runtime
-            && !runtime.checkpoint("sizing", Some(&current), 0, 0, 0)
+            && !runtime.checkpoint(STORAGE_SCAN_PHASE_ARTIFACT_SIZING, Some(&current), 0, 0, 0)
         {
             result.truncated = true;
             break;
@@ -4219,7 +4542,13 @@ fn size_of_path(
                     );
                 }
                 if let Some(runtime) = runtime
-                    && !runtime.checkpoint("sizing", Some(&path), 1, 0, logical_bytes)
+                    && !runtime.checkpoint(
+                        STORAGE_SCAN_PHASE_ARTIFACT_SIZING,
+                        Some(&path),
+                        1,
+                        0,
+                        logical_bytes,
+                    )
                 {
                     result.truncated = true;
                     break;
@@ -5532,6 +5861,7 @@ fn summarize_repo_footprints(items: &[StorageHygieneItem]) -> Vec<StorageRepoFoo
 
 fn summarize_repository_inventory(
     repositories_by_root: BTreeMap<String, String>,
+    not_seen_roots: &BTreeSet<String>,
     started: Instant,
     mode: StorageScanMode,
     metrics: &mut StorageScanMetrics,
@@ -5562,6 +5892,7 @@ fn summarize_repository_inventory(
                 .and_then(|name| name.to_str())
                 .unwrap_or("repository")
                 .to_owned();
+            let not_seen_in_latest_scan = not_seen_roots.contains(&repo_root);
 
             StorageRepositoryInventoryItem {
                 id: repo_root.clone(),
@@ -5579,6 +5910,7 @@ fn summarize_repository_inventory(
                 git_dirty_status: git.dirty_status,
                 git_dirty_file_count: git.dirty_file_count,
                 git_dirty_truncated: git.dirty_truncated,
+                not_seen_in_latest_scan,
                 clone_group_count: 1,
                 clone_group_roots: Vec::new(),
                 discovered_root,
@@ -8717,6 +9049,467 @@ fn is_git_repository_root(path: &Path) -> bool {
     resolve_git_dir(path).is_some()
 }
 
+#[derive(Clone, Debug, Default)]
+struct RepositoryInventoryScan {
+    repositories_by_root: BTreeMap<String, String>,
+    coverage: Vec<RepositoryInventoryRootCoverage>,
+    truncated: bool,
+}
+
+fn scan_repository_inventory_roots(
+    requested_roots: &[PathBuf],
+    max_depth: usize,
+) -> RepositoryInventoryScan {
+    scan_repository_inventory_roots_with_budget(
+        requested_roots,
+        max_depth,
+        REPOSITORY_INVENTORY_TIME_BUDGET,
+        None,
+    )
+}
+
+fn scan_repository_inventory_roots_with_budget(
+    requested_roots: &[PathBuf],
+    max_depth: usize,
+    budget: Duration,
+    runtime: Option<&StorageScanRuntimeContext>,
+) -> RepositoryInventoryScan {
+    let started = Instant::now();
+    let mut repositories_by_root = BTreeMap::<String, String>::new();
+    let mut coverage = Vec::new();
+    let mut truncated = false;
+
+    for root in requested_roots {
+        let path = root.display().to_string();
+        let label = storage_source_label(root, &storage_source_kind(root));
+        if let Some(runtime) = runtime
+            && !runtime.set_phase(STORAGE_SCAN_PHASE_REPOSITORY_INVENTORY, Some(root))
+        {
+            truncated = true;
+            coverage.push(repository_inventory_coverage_entry(
+                root,
+                label,
+                "partial",
+                "partial",
+                "Repository inventory stopped before this root because the scan was cancelled.",
+                0,
+                0,
+                0,
+                true,
+                false,
+            ));
+            continue;
+        }
+
+        if started.elapsed() >= budget {
+            truncated = true;
+            coverage.push(repository_inventory_coverage_entry(
+                root,
+                label,
+                "partial",
+                "partial",
+                "Repository inventory stopped before this root because the inventory budget ended.",
+                0,
+                0,
+                0,
+                true,
+                false,
+            ));
+            continue;
+        }
+
+        if !root.exists() {
+            coverage.push(repository_inventory_coverage_entry(
+                root,
+                label,
+                "unavailable",
+                "unavailable",
+                "Path does not exist on this machine or provider is not configured.",
+                0,
+                0,
+                0,
+                false,
+                false,
+            ));
+            continue;
+        }
+
+        let metadata = match fs::symlink_metadata(root) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                let detail = error.to_string();
+                let permission_state = skipped_root_permission_state(&detail);
+                coverage.push(repository_inventory_coverage_entry(
+                    root,
+                    label,
+                    "skipped",
+                    &permission_state,
+                    &detail,
+                    0,
+                    0,
+                    0,
+                    false,
+                    false,
+                ));
+                continue;
+            }
+        };
+
+        if metadata.file_type().is_symlink() {
+            coverage.push(repository_inventory_coverage_entry(
+                root,
+                label,
+                "skipped",
+                "skipped",
+                "Symlink root skipped during repository inventory.",
+                0,
+                0,
+                0,
+                false,
+                false,
+            ));
+            continue;
+        }
+
+        if !is_git_repository_root(root)
+            && let Some(reason) = repository_inventory_skip_reason(root)
+        {
+            coverage.push(repository_inventory_coverage_entry(
+                root, label, "skipped", "skipped", reason, 0, 0, 1, false, false,
+            ));
+            continue;
+        }
+
+        let before = repositories_by_root.len();
+        let root_scan = scan_repository_inventory_root(root, max_depth, started, budget, runtime);
+        truncated |= root_scan.truncated;
+        for repo_root in root_scan.repositories {
+            repositories_by_root
+                .entry(repo_root.display().to_string())
+                .or_insert_with(|| path.clone());
+        }
+        let repository_count = repositories_by_root.len().saturating_sub(before) as u64;
+        coverage.push(repository_inventory_coverage_entry(
+            root,
+            label,
+            if root_scan.truncated {
+                "partial"
+            } else {
+                "scanned"
+            },
+            if root_scan.truncated {
+                "partial"
+            } else {
+                "readable"
+            },
+            if root_scan.truncated {
+                "Repository inventory was partially scanned before the inventory budget ended."
+            } else {
+                "Readable and scanned by the repository inventory pass."
+            },
+            repository_count,
+            root_scan.scanned_directory_count,
+            root_scan.skipped_directory_count,
+            root_scan.truncated,
+            !root_scan.truncated,
+        ));
+    }
+
+    RepositoryInventoryScan {
+        repositories_by_root,
+        coverage,
+        truncated,
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct RepositoryInventoryRootScan {
+    repositories: BTreeSet<PathBuf>,
+    scanned_directory_count: u64,
+    skipped_directory_count: u64,
+    truncated: bool,
+}
+
+fn scan_repository_inventory_root(
+    root: &Path,
+    max_depth: usize,
+    started: Instant,
+    budget: Duration,
+    runtime: Option<&StorageScanRuntimeContext>,
+) -> RepositoryInventoryRootScan {
+    let max_depth = max_depth.clamp(1, 12);
+    let mut queue = VecDeque::from([(root.to_path_buf(), 0usize)]);
+    let mut repositories = BTreeSet::new();
+    let mut scanned_directory_count = 0u64;
+    let mut skipped_directory_count = 0u64;
+    let mut truncated = false;
+
+    while let Some((path, depth)) = queue.pop_front() {
+        if started.elapsed() >= budget
+            || scanned_directory_count >= REPOSITORY_INVENTORY_MAX_DIRECTORIES
+        {
+            truncated = true;
+            break;
+        }
+
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            continue;
+        }
+
+        let is_repo = is_git_repository_root(&path);
+        if is_repo {
+            repositories.insert(path.clone());
+        } else if depth > 0 && repository_inventory_skip_reason(&path).is_some() {
+            skipped_directory_count = skipped_directory_count.saturating_add(1);
+            continue;
+        }
+
+        if depth >= max_depth {
+            continue;
+        }
+
+        scanned_directory_count = scanned_directory_count.saturating_add(1);
+        if let Some(runtime) = runtime
+            && !runtime.checkpoint(
+                STORAGE_SCAN_PHASE_REPOSITORY_INVENTORY,
+                Some(&path),
+                0,
+                1,
+                0,
+            )
+        {
+            truncated = true;
+            break;
+        }
+        let Ok(entries) = fs::read_dir(&path) else {
+            continue;
+        };
+        let mut children = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        children.sort();
+        for child in children {
+            if child
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == ".git")
+            {
+                skipped_directory_count = skipped_directory_count.saturating_add(1);
+                continue;
+            }
+            queue.push_back((child, depth + 1));
+        }
+    }
+
+    RepositoryInventoryRootScan {
+        repositories,
+        scanned_directory_count,
+        skipped_directory_count,
+        truncated,
+    }
+}
+
+fn repository_inventory_skip_reason(path: &Path) -> Option<&'static str> {
+    match path.file_name().and_then(|name| name.to_str())? {
+        ".git" => Some("Git internals skipped during repository inventory."),
+        "node_modules" => Some("Dependency tree skipped during repository inventory."),
+        "target" => Some("Rust build output skipped during repository inventory."),
+        ".build" => Some("Build output skipped during repository inventory."),
+        "DerivedData" => Some("Xcode DerivedData skipped during repository inventory."),
+        ".cache" => Some("Cache directory skipped during repository inventory."),
+        "Library" => Some("macOS Library tree skipped during repository inventory."),
+        ".docker" => Some("Docker data skipped during repository inventory."),
+        ".npm" => Some("Package cache skipped during repository inventory."),
+        ".pnpm-store" => Some("Package cache skipped during repository inventory."),
+        ".cargo" => Some("Package cache skipped during repository inventory."),
+        ".gradle" => Some("Gradle cache skipped during repository inventory."),
+        ".venv" | "venv" => Some("Virtual environment skipped during repository inventory."),
+        ".tox" => Some("Python test environment skipped during repository inventory."),
+        "__pycache__" => Some("Python bytecode cache skipped during repository inventory."),
+        ".next" | ".turbo" => Some("Frontend build cache skipped during repository inventory."),
+        "Pods" => Some("Dependency tree skipped during repository inventory."),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn repository_inventory_coverage_entry(
+    root: &Path,
+    label: String,
+    status: &str,
+    permission_state: &str,
+    detail: &str,
+    repository_count: u64,
+    scanned_directory_count: u64,
+    skipped_directory_count: u64,
+    truncated: bool,
+    scanned: bool,
+) -> RepositoryInventoryRootCoverage {
+    let path = root.display().to_string();
+    RepositoryInventoryRootCoverage {
+        id: path.clone(),
+        label,
+        path,
+        status: status.to_owned(),
+        permission_state: permission_state.to_owned(),
+        detail: detail.to_owned(),
+        repository_count,
+        scanned_directory_count,
+        skipped_directory_count,
+        truncated,
+        scanned,
+    }
+}
+
+fn repository_inventory_completeness(
+    coverage: &[RepositoryInventoryRootCoverage],
+    truncated: bool,
+) -> RepositoryInventoryCompleteness {
+    let roots = coverage
+        .iter()
+        .map(|root| root.path.clone())
+        .collect::<Vec<_>>();
+    let partial_roots = coverage
+        .iter()
+        .filter(|root| root.truncated || !root.scanned || root.status == "partial")
+        .map(|root| root.path.clone())
+        .collect::<Vec<_>>();
+    let truncated = truncated || coverage.iter().any(|root| root.truncated);
+    RepositoryInventoryCompleteness {
+        complete: !truncated && partial_roots.is_empty(),
+        truncated,
+        roots,
+        partial_roots,
+    }
+}
+
+fn cached_repository_inventory_coverage(
+    requested_roots: &[PathBuf],
+    repositories_by_root: &BTreeMap<String, String>,
+) -> Vec<RepositoryInventoryRootCoverage> {
+    requested_roots
+        .iter()
+        .map(|root| {
+            let label = storage_source_label(root, &storage_source_kind(root));
+            if !root.exists() {
+                return repository_inventory_coverage_entry(
+                    root,
+                    label,
+                    "unavailable",
+                    "unavailable",
+                    "Path does not exist on this machine or provider is not configured.",
+                    0,
+                    0,
+                    0,
+                    false,
+                    false,
+                );
+            }
+
+            let metadata = match fs::symlink_metadata(root) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    let detail = error.to_string();
+                    let permission_state = skipped_root_permission_state(&detail);
+                    return repository_inventory_coverage_entry(
+                        root,
+                        label,
+                        "skipped",
+                        &permission_state,
+                        &detail,
+                        0,
+                        0,
+                        0,
+                        false,
+                        false,
+                    );
+                }
+            };
+            if metadata.file_type().is_symlink() {
+                return repository_inventory_coverage_entry(
+                    root,
+                    label,
+                    "skipped",
+                    "skipped",
+                    "Symlink root skipped during cached repository inventory coverage.",
+                    0,
+                    0,
+                    0,
+                    false,
+                    false,
+                );
+            }
+
+            let root_display = root.display().to_string();
+            let repository_count = repositories_by_root
+                .values()
+                .filter(|discovered_root| *discovered_root == &root_display)
+                .count() as u64;
+            let (status, detail) = if repository_count == 0 {
+                (
+                    "cached_empty",
+                    "No repositories are currently present in the storage index for this root; run a refresh for authoritative inventory.",
+                )
+            } else {
+                (
+                    "cached_partial",
+                    "Repository inventory was restored from the storage index snapshot; run a refresh for authoritative inventory.",
+                )
+            };
+            repository_inventory_coverage_entry(
+                root,
+                label,
+                status,
+                "cached",
+                detail,
+                repository_count,
+                0,
+                0,
+                false,
+                false,
+            )
+        })
+        .collect()
+}
+
+fn merge_repository_inventory_cache(
+    cached: BTreeMap<String, String>,
+    latest: BTreeMap<String, String>,
+) -> (BTreeMap<String, String>, BTreeSet<String>) {
+    let mut merged = cached;
+    let mut not_seen = merged.keys().cloned().collect::<BTreeSet<_>>();
+    for (repo_root, discovered_root) in latest {
+        not_seen.remove(&repo_root);
+        merged.insert(repo_root, discovered_root);
+    }
+    (merged, not_seen)
+}
+
+fn repository_git_file_fingerprint(repo_root: &Path, file_name: &str) -> String {
+    let Some(git_dir) = resolve_git_dir(repo_root) else {
+        return format!("{file_name}:missing-git-dir");
+    };
+    let path = git_dir.join(file_name);
+    let Ok(metadata) = fs::symlink_metadata(&path) else {
+        return format!("{file_name}:missing");
+    };
+    let modified_millis = unix_metadata_millis(metadata.mtime(), metadata.mtime_nsec());
+    let changed_millis = unix_metadata_millis(metadata.ctime(), metadata.ctime_nsec());
+    format!(
+        "{}:{}:{}:{}:{}:{}",
+        file_name,
+        metadata.dev(),
+        metadata.ino(),
+        metadata.len(),
+        modified_millis,
+        changed_millis
+    )
+}
+
 fn short_hash(value: &str) -> String {
     value.chars().take(12).collect()
 }
@@ -9299,6 +10092,10 @@ mod tests {
             value["repository_inventory"][0]["git_dirty_status"],
             "not_checked_lazy"
         );
+        assert_eq!(
+            value["repository_inventory_coverage"][0]["repository_count"].as_u64(),
+            Some(1)
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -9476,25 +10273,24 @@ mod tests {
     }
 
     #[test]
-    fn storage_hygiene_indexes_git_repositories_without_artifacts() {
+    fn repository_inventory_indexes_git_repositories_without_artifacts() {
         let root = test_root("indexes-clean-repositories");
         let repo_a = root.join("CleanOne");
         let repo_b = root.join("Nested").join("CleanTwo");
         create_git_repo(&repo_a, "main");
         create_git_repo(&repo_b, "feature/clean");
 
-        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let json = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("repository inventory json: {error}"),
+        };
         let value: serde_json::Value = match serde_json::from_str(&json) {
             Ok(value) => value,
-            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+            Err(error) => panic!("repository inventory JSON parses: {error}"),
         };
         let inventory = match value["repository_inventory"].as_array() {
             Some(inventory) => inventory,
             None => panic!("repository inventory is an array"),
-        };
-        let footprints = match value["repo_footprints"].as_array() {
-            Some(footprints) => footprints,
-            None => panic!("repo footprints is an array"),
         };
 
         assert_eq!(inventory.len(), 2);
@@ -9505,13 +10301,13 @@ mod tests {
                 .iter()
                 .any(|repo| repo["git_branch"] == "feature/clean")
         );
-        assert!(footprints.is_empty());
+        assert!(value.get("repo_footprints").is_none());
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn storage_hygiene_reports_repository_agent_guidance_quality() {
+    fn repository_inventory_reports_agent_guidance_quality() {
         let root = test_root("repository-quality");
         let valid_repo = root.join("ValidGuidance");
         let invalid_repo = root.join("InvalidGuidance");
@@ -9541,10 +10337,13 @@ mod tests {
             panic!("write oversized CLAUDE.md: {error}");
         }
 
-        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let json = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("repository inventory json: {error}"),
+        };
         let value: serde_json::Value = match serde_json::from_str(&json) {
             Ok(value) => value,
-            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+            Err(error) => panic!("repository inventory JSON parses: {error}"),
         };
         let inventory = match value["repository_inventory"].as_array() {
             Some(inventory) => inventory,
@@ -9589,7 +10388,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_hygiene_reports_agent_guidance_policy_issues() {
+    fn repository_inventory_reports_agent_guidance_policy_issues() {
         let root = test_root("agent-guidance-policy");
         let missing_repo = root.join("MissingAgents");
         let untracked_repo = root.join("UntrackedAgents");
@@ -9602,10 +10401,13 @@ mod tests {
             panic!("write AGENTS.md: {error}");
         }
 
-        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let json = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("repository inventory json: {error}"),
+        };
         let value: serde_json::Value = match serde_json::from_str(&json) {
             Ok(value) => value,
-            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+            Err(error) => panic!("repository inventory JSON parses: {error}"),
         };
         let inventory = match value["repository_inventory"].as_array() {
             Some(inventory) => inventory,
@@ -9636,7 +10438,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_hygiene_reports_agent_contract_coverage() {
+    fn repository_inventory_reports_agent_contract_coverage() {
         let root = test_root("agent-contract-coverage");
         let ready_repo = root.join("ReadyRepo");
         let partial_repo = root.join("PartialRepo");
@@ -9647,10 +10449,13 @@ mod tests {
         git_add_all(&ready_repo);
         git_add_all(&partial_repo);
 
-        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let json = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("repository inventory json: {error}"),
+        };
         let value: serde_json::Value = match serde_json::from_str(&json) {
             Ok(value) => value,
-            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+            Err(error) => panic!("repository inventory JSON parses: {error}"),
         };
         let inventory = match value["repository_inventory"].as_array() {
             Some(inventory) => inventory,
@@ -9688,7 +10493,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_human_review_does_not_count_as_reviewed_contract() {
+    fn repository_inventory_pending_human_review_does_not_count_as_reviewed_contract() {
         let root = test_root("pending-human-review-contract");
         let repo = root.join("PendingReviewRepo");
         create_indexed_git_repo(&repo);
@@ -9711,10 +10516,13 @@ mod tests {
         }
         git_add_all(&repo);
 
-        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let json = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("repository inventory json: {error}"),
+        };
         let value: serde_json::Value = match serde_json::from_str(&json) {
             Ok(value) => value,
-            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+            Err(error) => panic!("repository inventory JSON parses: {error}"),
         };
         let inventory = value["repository_inventory"]
             .as_array()
@@ -9796,7 +10604,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_hygiene_groups_duplicate_git_remotes() {
+    fn repository_inventory_groups_duplicate_git_remotes() {
         let root = test_root("duplicate-remotes");
         let repo_a = root.join("Mockup");
         let repo_b = root.join("Mockup-Frontend");
@@ -9808,10 +10616,13 @@ mod tests {
         write_git_origin_config(&repo_b, "git@github.com:Aeptus/mockup.git");
         write_git_origin_config(&repo_c, "https://github.com/schiste/Aetower.git");
 
-        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let json = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("repository inventory json: {error}"),
+        };
         let value: serde_json::Value = match serde_json::from_str(&json) {
             Ok(value) => value,
-            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+            Err(error) => panic!("repository inventory JSON parses: {error}"),
         };
         let inventory = match value["repository_inventory"].as_array() {
             Some(inventory) => inventory,
@@ -9845,7 +10656,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_hygiene_redacts_git_remote_credentials() {
+    fn repository_inventory_redacts_git_remote_credentials() {
         let root = test_root("remote-redaction");
         let repo = root.join("PrivateRepo");
         create_git_repo(&repo, "main");
@@ -9854,12 +10665,15 @@ mod tests {
             "https://user:secret-token@github.com/Aeptus/private.git?access_token=secret-token",
         );
 
-        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let json = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("repository inventory json: {error}"),
+        };
         assert!(!json.contains("secret-token"));
         assert!(!json.contains("user:"));
         let value: serde_json::Value = match serde_json::from_str(&json) {
             Ok(value) => value,
-            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+            Err(error) => panic!("repository inventory JSON parses: {error}"),
         };
         let inventory = match value["repository_inventory"].as_array() {
             Some(inventory) => inventory,
@@ -9882,7 +10696,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_hygiene_reads_packed_git_branch_head() {
+    fn repository_inventory_reads_packed_git_branch_head() {
         let root = test_root("packed-head");
         let repo = root.join("PackedRepo");
         create_git_repo(&repo, "main");
@@ -9898,10 +10712,13 @@ mod tests {
             panic!("write packed refs: {error}");
         }
 
-        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let json = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("repository inventory json: {error}"),
+        };
         let value: serde_json::Value = match serde_json::from_str(&json) {
             Ok(value) => value,
-            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+            Err(error) => panic!("repository inventory JSON parses: {error}"),
         };
         let inventory = match value["repository_inventory"].as_array() {
             Some(inventory) => inventory,
@@ -9935,7 +10752,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_hygiene_repository_inventory_continues_after_artifact_limit() {
+    fn repository_inventory_continues_without_artifact_payload_limit() {
         let root = test_root("inventory-ignores-artifact-limit");
         for index in 0..3 {
             let project = root.join(format!("Repo{index}"));
@@ -9952,22 +10769,378 @@ mod tests {
             }
         }
 
-        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 1);
+        let json = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("repository inventory json: {error}"),
+        };
         let value: serde_json::Value = match serde_json::from_str(&json) {
             Ok(value) => value,
-            Err(error) => panic!("storage hygiene JSON parses: {error}"),
+            Err(error) => panic!("repository inventory JSON parses: {error}"),
         };
         let inventory = match value["repository_inventory"].as_array() {
             Some(inventory) => inventory,
             None => panic!("repository inventory is an array"),
         };
-        let items = match value["items"].as_array() {
-            Some(items) => items,
-            None => panic!("items is an array"),
-        };
 
         assert_eq!(inventory.len(), 3);
+        assert_eq!(value["repository_inventory_complete"], true);
+        assert_eq!(value["repository_inventory_truncated"], false);
+        assert_eq!(
+            value["repository_inventory_roots"][0].as_str(),
+            Some(root.to_str().unwrap_or_default())
+        );
+        assert!(
+            value["repository_inventory_partial_roots"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
+        assert!(value.get("items").is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_runs_repository_inventory_before_artifact_scan() {
+        let root = test_root("storage-hygiene-inventory-first");
+        let repo = root.join("Repo");
+        let target = repo.join("target").join("debug");
+        let ignored_repo = repo.join("target").join("IgnoredRepo");
+        create_git_repo(&repo, "main");
+        create_git_repo(&ignored_repo, "main");
+        if let Err(error) = fs::create_dir_all(&target) {
+            panic!("create target dir: {error}");
+        }
+        if let Err(error) = fs::write(
+            target.join("large-artifact"),
+            vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write artifact file: {error}");
+        }
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 10);
+        let value = parse_json_value(&json, "storage hygiene JSON parses");
+        let inventory = value["repository_inventory"]
+            .as_array()
+            .unwrap_or_else(|| panic!("repository inventory is an array"));
+        let coverage = value["repository_inventory_coverage"]
+            .as_array()
+            .unwrap_or_else(|| panic!("repository inventory coverage is an array"));
+        let items = value["items"]
+            .as_array()
+            .unwrap_or_else(|| panic!("items is an array"));
+        let names = inventory
+            .iter()
+            .filter_map(|repo| repo["repo_name"].as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(names.contains("Repo"));
+        assert!(!names.contains("IgnoredRepo"));
+        assert_eq!(value["repository_inventory_complete"], true);
+        assert_eq!(value["repository_inventory_truncated"], false);
+        assert_eq!(coverage[0]["repository_count"].as_u64(), Some(1));
+        assert!(!items.is_empty());
+        assert!(
+            value["summary"]["total_reclaimable_bytes"]
+                .as_u64()
+                .is_some_and(|bytes| bytes >= MIN_ITEM_BYTES)
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn repository_inventory_json_returns_inventory_without_artifact_payload() {
+        let root = test_root("repository-inventory-json");
+        let repo = root.join("Repo");
+        let ignored_repo = root.join("node_modules").join("IgnoredRepo");
+
+        create_git_repo(&repo, "main");
+        create_git_repo(&ignored_repo, "main");
+        if let Err(error) = fs::create_dir_all(repo.join("target").join("debug")) {
+            panic!("create artifact tree: {error}");
+        }
+        if let Err(error) = fs::write(
+            repo.join("target").join("debug").join("large.o"),
+            "artifact",
+        ) {
+            panic!("write artifact file: {error}");
+        }
+
+        let json = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("repository inventory json: {error}"),
+        };
+        let value = parse_json_value(&json, "repository inventory JSON parses");
+        let inventory = value["repository_inventory"]
+            .as_array()
+            .unwrap_or_else(|| panic!("repository inventory is an array"));
+        let names = inventory
+            .iter()
+            .filter_map(|repo| repo["repo_name"].as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(names.contains("Repo"));
+        assert!(!names.contains("IgnoredRepo"));
+        assert!(value.get("items").is_none());
+        assert!(value.get("repo_footprints").is_none());
+        assert_eq!(
+            value["repository_inventory_coverage"][0]["repository_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            value["diagnostics"]["discovered_repository_count"].as_u64(),
+            Some(1)
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn repository_inventory_cache_marks_repos_not_seen_in_latest_scan() {
+        let root = test_root("repository-inventory-cache-stale");
+        let repo = root.join("CachedRepo");
+        create_git_repo(&repo, "main");
+
+        let first = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("initial repository inventory json: {error}"),
+        };
+        let first_value = parse_json_value(&first, "initial repository inventory JSON parses");
+        let first_inventory = first_value["repository_inventory"]
+            .as_array()
+            .unwrap_or_else(|| panic!("initial repository inventory is an array"));
+        assert_eq!(first_inventory.len(), 1);
+        assert_eq!(
+            first_inventory[0]["not_seen_in_latest_scan"].as_bool(),
+            Some(false)
+        );
+
+        if let Err(error) = fs::remove_dir_all(&repo) {
+            panic!("remove repo before stale inventory scan: {error}");
+        }
+
+        let second = match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(json) => json,
+            Err(error) => panic!("stale repository inventory json: {error}"),
+        };
+        let second_value = parse_json_value(&second, "stale repository inventory JSON parses");
+        let second_inventory = second_value["repository_inventory"]
+            .as_array()
+            .unwrap_or_else(|| panic!("stale repository inventory is an array"));
+
+        assert_eq!(second_inventory.len(), 1);
+        assert_eq!(second_inventory[0]["repo_name"], "CachedRepo");
+        assert_eq!(
+            second_inventory[0]["not_seen_in_latest_scan"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(second_value["repository_inventory_complete"], false);
+        assert_eq!(
+            second_value["diagnostics"]["discovered_repository_count"].as_u64(),
+            Some(0)
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_indexed_snapshot_returns_cached_repository_inventory_without_artifacts() {
+        let root = test_root("indexed-cache-inventory-only");
+        let repo = root.join("CachedOnlyRepo");
+        create_git_repo(&repo, "main");
+
+        match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(_) => {}
+            Err(error) => panic!("prime repository inventory cache: {error}"),
+        }
+
+        let json = match storage_hygiene_indexed_json(vec![root.display().to_string()], 5, 80) {
+            Ok(json) => json,
+            Err(error) => panic!("indexed storage hygiene json: {error}"),
+        };
+        let value = parse_json_value(&json, "indexed cache inventory JSON parses");
+        let inventory = value["repository_inventory"]
+            .as_array()
+            .unwrap_or_else(|| panic!("repository inventory is an array"));
+        let items = value["items"]
+            .as_array()
+            .unwrap_or_else(|| panic!("items is an array"));
+
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(inventory[0]["repo_name"], "CachedOnlyRepo");
+        assert_eq!(
+            inventory[0]["not_seen_in_latest_scan"].as_bool(),
+            Some(false)
+        );
+        assert!(items.is_empty());
+        assert_eq!(value["repository_inventory_complete"], false);
+        assert_eq!(
+            value["repository_inventory_coverage"][0]["status"].as_str(),
+            Some("cached_partial")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_indexed_snapshot_keeps_artifact_rows_as_repository_overlay_only() {
+        let root = test_root("indexed-overlay-only");
+        let repo = root.join("OverlayRepo");
+        let artifact = repo.join("target").join("debug").join("large.o");
+        create_git_repo(&repo, "main");
+        if let Some(parent) = artifact.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            panic!("create artifact directory: {error}");
+        }
+        if let Err(error) = fs::write(&artifact, vec![0u8; (MIN_ITEM_BYTES + 128) as usize]) {
+            panic!("write artifact file: {error}");
+        }
+        let metadata = match fs::symlink_metadata(&artifact) {
+            Ok(metadata) => metadata,
+            Err(error) => panic!("artifact metadata: {error}"),
+        };
+        let now_millis = crate::current_unix_millis().unwrap_or_default();
+        let storage_index = StorageSizeIndex::open();
+        let mut metrics = StorageScanMetrics::default();
+        storage_index.store_indexed_row(
+            &StorageIndexedFileRow {
+                path: artifact.display().to_string(),
+                device: metadata.dev() as i64,
+                inode: metadata.ino() as i64,
+                file_id: "test-overlay-row".to_owned(),
+                source_root: root.display().to_string(),
+                repo_root: Some(repo.display().to_string()),
+                kind: "rust-build".to_owned(),
+                storage_role: "build-artifact".to_owned(),
+                safety: "safe".to_owned(),
+                cleanup_tier: "rebuildable".to_owned(),
+                logical_bytes: MIN_ITEM_BYTES + 128,
+                physical_bytes: MIN_ITEM_BYTES + 128,
+                modified_millis: Some(now_millis),
+                changed_millis: Some(now_millis),
+                accessed_millis: Some(now_millis),
+                birth_millis: Some(now_millis),
+                is_directory: false,
+                entries: 1,
+                truncated: false,
+                last_scan_millis: now_millis,
+            },
+            &mut metrics,
+        );
+
+        let json = match storage_hygiene_indexed_json(vec![root.display().to_string()], 5, 80) {
+            Ok(json) => json,
+            Err(error) => panic!("indexed storage hygiene json: {error}"),
+        };
+        let value = parse_json_value(&json, "indexed overlay JSON parses");
+        let inventory = value["repository_inventory"]
+            .as_array()
+            .unwrap_or_else(|| panic!("repository inventory is an array"));
+        let items = value["items"]
+            .as_array()
+            .unwrap_or_else(|| panic!("items is an array"));
+        let footprints = value["repo_footprints"]
+            .as_array()
+            .unwrap_or_else(|| panic!("repo footprints is an array"));
+
+        assert!(inventory.is_empty());
         assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["attribution"]["repo_root"].as_str(), repo.to_str());
+        assert_eq!(footprints.len(), 1);
+        assert_eq!(footprints[0]["repo_root"].as_str(), repo.to_str());
+        assert_eq!(
+            value["repository_inventory_coverage"][0]["status"].as_str(),
+            Some("cached_empty")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_runtime_reports_inventory_before_finalizing() {
+        let root = test_root("runtime-repository-inventory-phase");
+        let repo = root.join("Repo");
+        let target = repo.join("target").join("debug");
+        create_git_repo(&repo, "main");
+        if let Err(error) = fs::create_dir_all(&target) {
+            panic!("create target dir: {error}");
+        }
+        if let Err(error) = fs::write(
+            target.join("blob"),
+            vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write build artifact: {error}");
+        }
+
+        let progress = Arc::new(Mutex::new(StorageScanJobProgress::new(0, None)));
+        let runtime = StorageScanRuntimeContext::new(
+            Arc::new(StorageScanControl::new()),
+            Arc::clone(&progress),
+            StorageScanThrottle {
+                sleep_every_checkpoints: 0,
+                sleep_millis: 0,
+                reason: None,
+            },
+        );
+        let report = build_storage_hygiene_report_with_options(
+            vec![root.display().to_string()],
+            StorageHygieneOptions {
+                max_depth: 5,
+                limit: 1,
+                mode: StorageScanMode::FastChangedOnly,
+                runtime: Some(runtime),
+                dirty_paths: Vec::new(),
+            },
+        );
+        let progress = lock_or_recover(&progress).clone();
+
+        assert_eq!(progress.phase, STORAGE_SCAN_PHASE_FINALIZING);
+        assert!(report.truncated || !report.items.is_empty());
+        assert!(report.repository_inventory_complete);
+        assert!(!report.repository_inventory_truncated);
+        assert!(report.repository_inventory_partial_roots.is_empty());
+        assert_eq!(report.repository_inventory.len(), 1);
+        assert_eq!(report.repository_inventory_coverage[0].repository_count, 1);
+        assert_eq!(report.diagnostics.discovered_repository_count, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_marks_cancelled_repository_inventory_partial() {
+        let root = test_root("runtime-repository-inventory-cancelled");
+        let repo = root.join("Repo");
+        create_git_repo(&repo, "main");
+
+        let progress = Arc::new(Mutex::new(StorageScanJobProgress::new(0, None)));
+        let control = Arc::new(StorageScanControl::new());
+        control.cancel();
+        let runtime = StorageScanRuntimeContext::new(
+            control,
+            Arc::clone(&progress),
+            StorageScanThrottle {
+                sleep_every_checkpoints: 0,
+                sleep_millis: 0,
+                reason: None,
+            },
+        );
+        let report = build_storage_hygiene_report_with_options(
+            vec![root.display().to_string()],
+            StorageHygieneOptions {
+                max_depth: 5,
+                limit: 1,
+                mode: StorageScanMode::FastChangedOnly,
+                runtime: Some(runtime),
+                dirty_paths: Vec::new(),
+            },
+        );
+
+        assert!(!report.repository_inventory_complete);
+        assert!(report.repository_inventory_truncated);
+        assert_eq!(
+            report.repository_inventory_partial_roots,
+            vec![root.display().to_string()]
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -10603,6 +11776,7 @@ mod tests {
         assert_eq!(terminal_status, "complete");
         let result = must_ok(storage_scan_result_json(&job_id), "scan result");
         assert!(result.contains("\"scan_mode\":\"fast_changed_only\""));
+        assert!(result.contains("\"repository_inventory_coverage\""));
         assert!(result.contains("\"rust-build\""));
     }
 
