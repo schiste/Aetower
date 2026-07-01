@@ -1395,6 +1395,11 @@ struct StorageRepositoryInventoryItem {
     id: String,
     repo_root: String,
     repo_name: String,
+    inventory_cache_status: String,
+    inventory_fingerprint: String,
+    inventory_fingerprint_changed: bool,
+    inventory_last_seen_millis: Option<u64>,
+    inventory_last_scan_millis: Option<u64>,
     git_branch: Option<String>,
     git_head: Option<String>,
     git_ref: Option<String>,
@@ -1608,6 +1613,23 @@ struct StorageSizeIndex {
     status: String,
 }
 
+#[derive(Clone, Debug, Default)]
+struct RepositoryInventoryCacheEntry {
+    discovered_root: String,
+    repository_fingerprint: String,
+    last_seen_millis: u64,
+    last_scan_millis: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct RepositoryInventoryCacheState {
+    status: String,
+    fingerprint: String,
+    fingerprint_changed: bool,
+    last_seen_millis: Option<u64>,
+    last_scan_millis: Option<u64>,
+}
+
 impl StorageSizeIndex {
     fn open() -> Self {
         let Some(base_dir) = dirs::data_local_dir() else {
@@ -1723,6 +1745,7 @@ impl StorageSizeIndex {
                 discovered_root TEXT NOT NULL,
                 git_config_fingerprint TEXT NOT NULL,
                 git_index_fingerprint TEXT NOT NULL,
+                repository_fingerprint TEXT NOT NULL DEFAULT '',
                 first_seen_millis INTEGER NOT NULL,
                 last_seen_millis INTEGER NOT NULL,
                 last_scan_millis INTEGER NOT NULL
@@ -1805,12 +1828,32 @@ impl StorageSizeIndex {
                     discovered_root TEXT NOT NULL,
                     git_config_fingerprint TEXT NOT NULL,
                     git_index_fingerprint TEXT NOT NULL,
+                    repository_fingerprint TEXT NOT NULL DEFAULT '',
                     first_seen_millis INTEGER NOT NULL,
                     last_seen_millis INTEGER NOT NULL,
                     last_scan_millis INTEGER NOT NULL
                  );
                  CREATE INDEX idx_storage_repository_inventory_cache_root
                     ON storage_repository_inventory_cache(discovered_root, last_seen_millis DESC);",
+            )?;
+        }
+        Self::ensure_repository_inventory_cache_columns(connection)?;
+        Ok(())
+    }
+
+    fn ensure_repository_inventory_cache_columns(connection: &Connection) -> rusqlite::Result<()> {
+        let exists: i64 = connection.query_row(
+            "SELECT COUNT(*)
+             FROM pragma_table_info('storage_repository_inventory_cache')
+             WHERE name = 'repository_fingerprint'",
+            [],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            connection.execute(
+                "ALTER TABLE storage_repository_inventory_cache
+                 ADD COLUMN repository_fingerprint TEXT NOT NULL DEFAULT ''",
+                [],
             )?;
         }
         Ok(())
@@ -2066,32 +2109,43 @@ impl StorageSizeIndex {
         Ok(retained)
     }
 
-    fn load_repository_inventory_cache(&self, roots: &[PathBuf]) -> BTreeMap<String, String> {
+    fn load_repository_inventory_cache(
+        &self,
+        roots: &[PathBuf],
+    ) -> BTreeMap<String, RepositoryInventoryCacheEntry> {
         let Some(connection) = self.connection.as_ref() else {
             return BTreeMap::new();
         };
         let Ok(mut statement) = connection.prepare(
-            "SELECT repo_root, discovered_root
+            "SELECT repo_root, discovered_root, repository_fingerprint,
+                    last_seen_millis, last_scan_millis
              FROM storage_repository_inventory_cache
              ORDER BY last_seen_millis DESC, repo_root ASC",
         ) else {
             return BTreeMap::new();
         };
         let Ok(rows) = statement.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            let repo_root: String = row.get(0)?;
+            let entry = RepositoryInventoryCacheEntry {
+                discovered_root: row.get(1)?,
+                repository_fingerprint: row.get(2)?,
+                last_seen_millis: row.get::<_, i64>(3)?.max(0) as u64,
+                last_scan_millis: row.get::<_, i64>(4)?.max(0) as u64,
+            };
+            Ok((repo_root, entry))
         }) else {
             return BTreeMap::new();
         };
 
         let mut repositories = BTreeMap::new();
         for row in rows.flatten() {
-            let (repo_root, discovered_root) = row;
+            let (repo_root, entry) = row;
             if roots.is_empty()
                 || roots
                     .iter()
                     .any(|root| path_is_under_root(&repo_root, root))
             {
-                repositories.insert(repo_root, discovered_root);
+                repositories.insert(repo_root, entry);
             }
         }
         repositories
@@ -2110,16 +2164,18 @@ impl StorageSizeIndex {
             let repo_path = Path::new(repo_root);
             let git_config_fingerprint = repository_git_file_fingerprint(repo_path, "config");
             let git_index_fingerprint = repository_git_file_fingerprint(repo_path, "index");
+            let repository_fingerprint = repository_inventory_fingerprint(repo_path);
             if connection
                 .execute(
                     "INSERT INTO storage_repository_inventory_cache (
                         repo_root, discovered_root, git_config_fingerprint, git_index_fingerprint,
-                        first_seen_millis, last_seen_millis, last_scan_millis
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?5)
+                        repository_fingerprint, first_seen_millis, last_seen_millis, last_scan_millis
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6)
                      ON CONFLICT(repo_root) DO UPDATE SET
                         discovered_root = excluded.discovered_root,
                         git_config_fingerprint = excluded.git_config_fingerprint,
                         git_index_fingerprint = excluded.git_index_fingerprint,
+                        repository_fingerprint = excluded.repository_fingerprint,
                         last_seen_millis = excluded.last_seen_millis,
                         last_scan_millis = excluded.last_scan_millis",
                     params![
@@ -2127,6 +2183,7 @@ impl StorageSizeIndex {
                         discovered_root,
                         git_config_fingerprint,
                         git_index_fingerprint,
+                        repository_fingerprint,
                         now_millis.min(i64::MAX as u64) as i64,
                     ],
                 )
@@ -2269,7 +2326,7 @@ pub fn repository_inventory_json(roots: Vec<String>, max_depth: usize) -> Result
         .map(|root| root.display().to_string())
         .collect::<Vec<_>>();
     let repository_cache = StorageSizeIndex::open();
-    let cached_repository_roots =
+    let cached_repository_entries =
         repository_cache.load_repository_inventory_cache(&requested_roots);
     let scan = scan_repository_inventory_roots(&requested_roots, max_depth);
     let repository_walk_millis = started.elapsed().as_millis() as u64;
@@ -2294,11 +2351,20 @@ pub fn repository_inventory_json(roots: Vec<String>, max_depth: usize) -> Result
         captured_at_millis,
         &mut metrics,
     );
-    let (repository_roots, not_seen_repository_roots) =
-        merge_repository_inventory_cache(cached_repository_roots, scan.repositories_by_root);
+    let cached_repository_roots = repository_inventory_cache_roots(&cached_repository_entries);
+    let (repository_roots, not_seen_repository_roots) = merge_repository_inventory_cache(
+        cached_repository_roots,
+        scan.repositories_by_root.clone(),
+    );
+    let repository_cache_states = repository_inventory_cache_states(
+        &repository_roots,
+        &scan.repositories_by_root,
+        &cached_repository_entries,
+    );
     let repository_inventory = summarize_repository_inventory(
         repository_roots,
         &not_seen_repository_roots,
+        &repository_cache_states,
         started,
         StorageScanMode::FastChangedOnly,
         &mut metrics,
@@ -2747,7 +2813,7 @@ fn build_storage_hygiene_report_with_options(
     };
     metrics.storage_index_status = storage_index.status.clone();
     let repository_cache = StorageSizeIndex::open();
-    let cached_repository_roots =
+    let cached_repository_entries =
         repository_cache.load_repository_inventory_cache(&requested_roots);
     if let Some(runtime) = options.runtime.as_ref() {
         let _ = runtime.set_phase(STORAGE_SCAN_PHASE_REPOSITORY_INVENTORY, None);
@@ -2767,9 +2833,15 @@ fn build_storage_hygiene_report_with_options(
         now_millis,
         &mut metrics,
     );
+    let cached_repository_roots = repository_inventory_cache_roots(&cached_repository_entries);
     let (repository_roots, not_seen_repository_roots) = merge_repository_inventory_cache(
         cached_repository_roots,
         repository_inventory_scan.repositories_by_root.clone(),
+    );
+    let repository_cache_states = repository_inventory_cache_states(
+        &repository_roots,
+        &repository_inventory_scan.repositories_by_root,
+        &cached_repository_entries,
     );
     let mut scanned_roots = Vec::new();
     let mut skipped_roots = Vec::new();
@@ -2863,6 +2935,7 @@ fn build_storage_hygiene_report_with_options(
     let repository_inventory = summarize_repository_inventory(
         repository_roots,
         &not_seen_repository_roots,
+        &repository_cache_states,
         started,
         options.mode,
         &mut metrics,
@@ -2978,14 +3051,14 @@ fn build_storage_hygiene_report_from_index(
     };
     let storage_index = StorageSizeIndex::open();
     metrics.storage_index_status = storage_index.status.clone();
-    let cached_repository_roots = storage_index.load_repository_inventory_cache(&requested_roots);
+    let cached_repository_entries = storage_index.load_repository_inventory_cache(&requested_roots);
+    let repository_roots = repository_inventory_cache_roots(&cached_repository_entries);
     let limit = limit.clamp(1, MAX_LIMIT);
     let rows = storage_index.load_candidate_rows(&roots, limit, &mut metrics)?;
-    if rows.is_empty() && cached_repository_roots.is_empty() {
+    if rows.is_empty() && repository_roots.is_empty() {
         return Err("storage index has no candidate rows yet".to_owned());
     }
 
-    let repository_roots = cached_repository_roots;
     let mut items = rows
         .into_iter()
         .map(|row| storage_item_for_indexed_row(row, now_millis))
@@ -3012,9 +3085,16 @@ fn build_storage_hygiene_report_from_index(
     let repository_inventory_completeness =
         repository_inventory_completeness(&repository_inventory_coverage, false);
     let not_seen_repository_roots = BTreeSet::new();
+    let latest_repository_roots = BTreeMap::new();
+    let repository_cache_states = repository_inventory_cache_states(
+        &repository_roots,
+        &latest_repository_roots,
+        &cached_repository_entries,
+    );
     let repository_inventory = summarize_repository_inventory(
         repository_roots,
         &not_seen_repository_roots,
+        &repository_cache_states,
         started,
         StorageScanMode::InstantCached,
         &mut metrics,
@@ -5862,6 +5942,7 @@ fn summarize_repo_footprints(items: &[StorageHygieneItem]) -> Vec<StorageRepoFoo
 fn summarize_repository_inventory(
     repositories_by_root: BTreeMap<String, String>,
     not_seen_roots: &BTreeSet<String>,
+    cache_states: &BTreeMap<String, RepositoryInventoryCacheState>,
     started: Instant,
     mode: StorageScanMode,
     metrics: &mut StorageScanMetrics,
@@ -5893,11 +5974,25 @@ fn summarize_repository_inventory(
                 .unwrap_or("repository")
                 .to_owned();
             let not_seen_in_latest_scan = not_seen_roots.contains(&repo_root);
+            let cache_state = cache_states.get(&repo_root).cloned().unwrap_or_else(|| {
+                RepositoryInventoryCacheState {
+                    status: "uncached".to_owned(),
+                    fingerprint: repository_inventory_fingerprint(repo_path),
+                    fingerprint_changed: false,
+                    last_seen_millis: None,
+                    last_scan_millis: None,
+                }
+            });
 
             StorageRepositoryInventoryItem {
                 id: repo_root.clone(),
                 repo_root,
                 repo_name,
+                inventory_cache_status: cache_state.status,
+                inventory_fingerprint: cache_state.fingerprint,
+                inventory_fingerprint_changed: cache_state.fingerprint_changed,
+                inventory_last_seen_millis: cache_state.last_seen_millis,
+                inventory_last_scan_millis: cache_state.last_scan_millis,
                 git_branch: git.branch,
                 git_head: git.head,
                 git_ref: git.reference,
@@ -9476,6 +9571,75 @@ fn cached_repository_inventory_coverage(
         .collect()
 }
 
+fn repository_inventory_cache_roots(
+    entries: &BTreeMap<String, RepositoryInventoryCacheEntry>,
+) -> BTreeMap<String, String> {
+    entries
+        .iter()
+        .map(|(repo_root, entry)| (repo_root.clone(), entry.discovered_root.clone()))
+        .collect()
+}
+
+fn repository_inventory_cache_states(
+    repositories_by_root: &BTreeMap<String, String>,
+    latest_repositories_by_root: &BTreeMap<String, String>,
+    cached_entries: &BTreeMap<String, RepositoryInventoryCacheEntry>,
+) -> BTreeMap<String, RepositoryInventoryCacheState> {
+    repositories_by_root
+        .keys()
+        .map(|repo_root| {
+            let current_fingerprint = repository_inventory_fingerprint(Path::new(repo_root));
+            let state = if latest_repositories_by_root.contains_key(repo_root) {
+                RepositoryInventoryCacheState {
+                    status: "scanned".to_owned(),
+                    fingerprint: current_fingerprint,
+                    fingerprint_changed: false,
+                    last_seen_millis: cached_entries
+                        .get(repo_root)
+                        .map(|entry| entry.last_seen_millis),
+                    last_scan_millis: cached_entries
+                        .get(repo_root)
+                        .map(|entry| entry.last_scan_millis),
+                }
+            } else if !Path::new(repo_root).exists() {
+                let cached = cached_entries.get(repo_root);
+                RepositoryInventoryCacheState {
+                    status: "missing".to_owned(),
+                    fingerprint: current_fingerprint,
+                    fingerprint_changed: true,
+                    last_seen_millis: cached.map(|entry| entry.last_seen_millis),
+                    last_scan_millis: cached.map(|entry| entry.last_scan_millis),
+                }
+            } else if let Some(cached) = cached_entries.get(repo_root) {
+                let cached_fingerprint = cached.repository_fingerprint.trim();
+                let (status, fingerprint_changed) = if cached_fingerprint.is_empty() {
+                    ("legacy", false)
+                } else if cached_fingerprint == current_fingerprint {
+                    ("current", false)
+                } else {
+                    ("changed", true)
+                };
+                RepositoryInventoryCacheState {
+                    status: status.to_owned(),
+                    fingerprint: current_fingerprint,
+                    fingerprint_changed,
+                    last_seen_millis: Some(cached.last_seen_millis),
+                    last_scan_millis: Some(cached.last_scan_millis),
+                }
+            } else {
+                RepositoryInventoryCacheState {
+                    status: "uncached".to_owned(),
+                    fingerprint: current_fingerprint,
+                    fingerprint_changed: false,
+                    last_seen_millis: None,
+                    last_scan_millis: None,
+                }
+            };
+            (repo_root.clone(), state)
+        })
+        .collect()
+}
+
 fn merge_repository_inventory_cache(
     cached: BTreeMap<String, String>,
     latest: BTreeMap<String, String>,
@@ -9489,25 +9653,71 @@ fn merge_repository_inventory_cache(
     (merged, not_seen)
 }
 
-fn repository_git_file_fingerprint(repo_root: &Path, file_name: &str) -> String {
+fn repository_inventory_fingerprint(repo_root: &Path) -> String {
+    let root = repo_root.display().to_string();
+    let root_fingerprint = repository_path_fingerprint(repo_root, "root");
+    let git_marker = repo_root.join(".git");
+    let marker_fingerprint = repository_path_fingerprint(&git_marker, "git-marker");
     let Some(git_dir) = resolve_git_dir(repo_root) else {
-        return format!("{file_name}:missing-git-dir");
+        return format!("v1|path={root}|{root_fingerprint}|{marker_fingerprint}|git-dir:missing");
     };
-    let path = git_dir.join(file_name);
-    let Ok(metadata) = fs::symlink_metadata(&path) else {
-        return format!("{file_name}:missing");
+
+    let head = read_git_head(repo_root);
+    let head_ref_fingerprint = head
+        .reference
+        .as_deref()
+        .filter(|reference| reference.starts_with("refs/"))
+        .map(|reference| repository_path_fingerprint(&git_dir.join(reference), "git-ref"))
+        .unwrap_or_else(|| "git-ref:detached-or-missing".to_owned());
+
+    [
+        "v1".to_owned(),
+        format!("path={root}"),
+        root_fingerprint,
+        marker_fingerprint,
+        repository_path_fingerprint(&git_dir, "git-dir"),
+        repository_path_fingerprint(&git_dir.join("config"), "config"),
+        repository_path_fingerprint(&git_dir.join("index"), "index"),
+        repository_path_fingerprint(&git_dir.join("HEAD"), "HEAD"),
+        head_ref_fingerprint,
+        repository_path_fingerprint(&git_dir.join("packed-refs"), "packed-refs"),
+    ]
+    .join("|")
+}
+
+fn repository_path_fingerprint(path: &Path, label: &str) -> String {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return format!("{label}:missing");
     };
     let modified_millis = unix_metadata_millis(metadata.mtime(), metadata.mtime_nsec());
     let changed_millis = unix_metadata_millis(metadata.ctime(), metadata.ctime_nsec());
+    let file_type = metadata.file_type();
+    let kind = if file_type.is_symlink() {
+        "symlink"
+    } else if metadata.is_dir() {
+        "dir"
+    } else if metadata.is_file() {
+        "file"
+    } else {
+        "other"
+    };
     format!(
-        "{}:{}:{}:{}:{}:{}",
-        file_name,
+        "{}:{}:{}:{}:{}:{}:{}",
+        label,
+        kind,
         metadata.dev(),
         metadata.ino(),
         metadata.len(),
         modified_millis,
         changed_millis
     )
+}
+
+fn repository_git_file_fingerprint(repo_root: &Path, file_name: &str) -> String {
+    let Some(git_dir) = resolve_git_dir(repo_root) else {
+        return format!("{file_name}:missing-git-dir");
+    };
+    repository_path_fingerprint(&git_dir.join(file_name), file_name)
 }
 
 fn short_hash(value: &str) -> String {
@@ -10913,6 +11123,14 @@ mod tests {
             first_inventory[0]["not_seen_in_latest_scan"].as_bool(),
             Some(false)
         );
+        assert_eq!(
+            first_inventory[0]["inventory_cache_status"].as_str(),
+            Some("scanned")
+        );
+        assert_eq!(
+            first_inventory[0]["inventory_fingerprint_changed"].as_bool(),
+            Some(false)
+        );
 
         if let Err(error) = fs::remove_dir_all(&repo) {
             panic!("remove repo before stale inventory scan: {error}");
@@ -10931,6 +11149,14 @@ mod tests {
         assert_eq!(second_inventory[0]["repo_name"], "CachedRepo");
         assert_eq!(
             second_inventory[0]["not_seen_in_latest_scan"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            second_inventory[0]["inventory_cache_status"].as_str(),
+            Some("missing")
+        );
+        assert_eq!(
+            second_inventory[0]["inventory_fingerprint_changed"].as_bool(),
             Some(true)
         );
         assert_eq!(second_value["repository_inventory_complete"], false);
@@ -10971,12 +11197,85 @@ mod tests {
             inventory[0]["not_seen_in_latest_scan"].as_bool(),
             Some(false)
         );
+        assert_eq!(
+            inventory[0]["inventory_cache_status"].as_str(),
+            Some("current")
+        );
+        assert_eq!(
+            inventory[0]["inventory_fingerprint_changed"].as_bool(),
+            Some(false)
+        );
+        assert!(
+            inventory[0]["inventory_fingerprint"]
+                .as_str()
+                .is_some_and(|fingerprint| fingerprint.starts_with("v1|"))
+        );
         assert!(items.is_empty());
         assert_eq!(value["repository_inventory_complete"], false);
         assert_eq!(
             value["repository_inventory_coverage"][0]["status"].as_str(),
             Some("cached_partial")
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn repository_inventory_cache_detects_git_metadata_changes() {
+        let root = test_root("repository-inventory-cache-fingerprint");
+        let repo = root.join("FingerprintRepo");
+        create_git_repo(&repo, "main");
+
+        match repository_inventory_json(vec![root.display().to_string()], 5) {
+            Ok(_) => {}
+            Err(error) => panic!("prime repository inventory cache: {error}"),
+        }
+
+        let initial = match storage_hygiene_indexed_json(vec![root.display().to_string()], 5, 80) {
+            Ok(json) => json,
+            Err(error) => panic!("initial indexed storage hygiene json: {error}"),
+        };
+        let initial_value = parse_json_value(&initial, "initial indexed inventory JSON parses");
+        let initial_inventory = initial_value["repository_inventory"]
+            .as_array()
+            .unwrap_or_else(|| panic!("initial repository inventory is an array"));
+        let initial_fingerprint = initial_inventory[0]["inventory_fingerprint"]
+            .as_str()
+            .unwrap_or_else(|| panic!("initial inventory fingerprint is a string"))
+            .to_owned();
+        assert_eq!(
+            initial_inventory[0]["inventory_cache_status"].as_str(),
+            Some("current")
+        );
+
+        if let Err(error) = fs::write(
+            repo.join(".git").join("config"),
+            "[remote \"origin\"]\n\turl = git@github.com:example/fingerprint.git\n",
+        ) {
+            panic!("write changed git config: {error}");
+        }
+
+        let changed = match storage_hygiene_indexed_json(vec![root.display().to_string()], 5, 80) {
+            Ok(json) => json,
+            Err(error) => panic!("changed indexed storage hygiene json: {error}"),
+        };
+        let changed_value = parse_json_value(&changed, "changed indexed inventory JSON parses");
+        let changed_inventory = changed_value["repository_inventory"]
+            .as_array()
+            .unwrap_or_else(|| panic!("changed repository inventory is an array"));
+        let changed_fingerprint = changed_inventory[0]["inventory_fingerprint"]
+            .as_str()
+            .unwrap_or_else(|| panic!("changed inventory fingerprint is a string"));
+
+        assert_eq!(
+            changed_inventory[0]["inventory_cache_status"].as_str(),
+            Some("changed")
+        );
+        assert_eq!(
+            changed_inventory[0]["inventory_fingerprint_changed"].as_bool(),
+            Some(true)
+        );
+        assert_ne!(initial_fingerprint, changed_fingerprint);
 
         let _ = fs::remove_dir_all(root);
     }

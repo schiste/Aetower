@@ -1230,6 +1230,11 @@ struct StorageRepositoryInventoryModel: Decodable, Identifiable, Sendable {
     let id: String
     let repoRoot: String
     let repoName: String
+    let inventoryCacheStatus: String
+    let inventoryFingerprint: String
+    let inventoryFingerprintChanged: Bool
+    let inventoryLastSeenMillis: UInt64?
+    let inventoryLastScanMillis: UInt64?
     let gitBranch: String?
     let gitHead: String?
     let gitRef: String?
@@ -1263,6 +1268,11 @@ struct StorageRepositoryInventoryModel: Decodable, Identifiable, Sendable {
         case id
         case repoRoot
         case repoName
+        case inventoryCacheStatus
+        case inventoryFingerprint
+        case inventoryFingerprintChanged
+        case inventoryLastSeenMillis
+        case inventoryLastScanMillis
         case gitBranch
         case gitHead
         case gitRef
@@ -1298,6 +1308,16 @@ struct StorageRepositoryInventoryModel: Decodable, Identifiable, Sendable {
         id = try container.decode(String.self, forKey: .id)
         repoRoot = try container.decode(String.self, forKey: .repoRoot)
         repoName = try container.decode(String.self, forKey: .repoName)
+        inventoryCacheStatus =
+            try container.decodeIfPresent(String.self, forKey: .inventoryCacheStatus) ?? "unknown"
+        inventoryFingerprint =
+            try container.decodeIfPresent(String.self, forKey: .inventoryFingerprint) ?? ""
+        inventoryFingerprintChanged =
+            try container.decodeIfPresent(Bool.self, forKey: .inventoryFingerprintChanged) ?? false
+        inventoryLastSeenMillis =
+            try container.decodeIfPresent(UInt64.self, forKey: .inventoryLastSeenMillis)
+        inventoryLastScanMillis =
+            try container.decodeIfPresent(UInt64.self, forKey: .inventoryLastScanMillis)
         gitBranch = try container.decodeIfPresent(String.self, forKey: .gitBranch)
         gitHead = try container.decodeIfPresent(String.self, forKey: .gitHead)
         gitRef = try container.decodeIfPresent(String.self, forKey: .gitRef)
