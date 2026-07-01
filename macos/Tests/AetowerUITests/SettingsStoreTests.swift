@@ -44,6 +44,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.telemetryEndpoint, SettingsStore.defaultTelemetryEndpoint)
         XCTAssertEqual(store.chau7AgentCommand, SettingsStore.defaultChau7AgentCommand)
         XCTAssertEqual(store.collectionProfile, .balanced)
+        XCTAssertEqual(store.repositoryRoots, SettingsStore.defaultRepositoryRoots)
         XCTAssertFalse(store.telemetryEnabled)
     }
 
@@ -69,6 +70,38 @@ final class SettingsStoreTests: XCTestCase {
 
         let reloaded = SettingsStore(defaults: defaults)
         XCTAssertTrue(reloaded.autoRegisterLocalMcpClientsEnabled)
+    }
+
+    func testRepositoryRootsDefaultToRepositoryOnlyLocations() {
+        let store = makeStore()
+
+        XCTAssertEqual(
+            store.repositoryRoots,
+            [
+                "~/Repositories",
+                "~/Downloads/Repositories",
+                "~/Developer",
+                "~/Projects",
+            ]
+        )
+    }
+
+    func testRepositoryRootsPersistAndDeduplicate() {
+        let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = SettingsStore(defaults: defaults)
+        store.repositoryRoots = [
+            " ~/Wikimedia/ ",
+            "~/Wikimedia",
+            "~/pentagi",
+            "",
+            "~/Downloads/Aerie",
+        ]
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertEqual(reloaded.repositoryRoots, ["~/Wikimedia", "~/pentagi", "~/Downloads/Aerie"])
     }
 
     func testMetricRingFixedScalingPreferencePersists() {

@@ -16,6 +16,7 @@ public struct SettingsView: View {
     @State private var editingAutomationRules: [AutomationRule] = []
     @State private var hasLoadedIntegrationDraft = false
     @State private var searchText = ""
+    @State private var repositoryRootDraft = ""
     /// In-memory integration draft. Values are written to SettingsStore/Keychain
     /// only when the user applies them, so endpoint edits are genuinely staged.
     @State private var integrationDraft = SettingsIntegrationDraft()
@@ -32,12 +33,14 @@ public struct SettingsView: View {
         case chau7Endpoint
         case chau7AgentCommand
         case telemetryEndpoint
+        case repositoryRoot
     }
 
     private enum SettingsSection: String, CaseIterable, Identifiable {
         case setup
         case general
         case collection
+        case repositories
         case integrations
         case aiClients
         case notifications
@@ -53,6 +56,7 @@ public struct SettingsView: View {
             case .setup: return "Setup"
             case .general: return "General"
             case .collection: return "Collection"
+            case .repositories: return "Repositories"
             case .integrations: return "Integrations"
             case .aiClients: return "AI Clients"
             case .notifications: return "Notifications"
@@ -68,6 +72,7 @@ public struct SettingsView: View {
             case .setup: return "checklist"
             case .general: return "slider.horizontal.2.square"
             case .collection: return "gauge.with.needle"
+            case .repositories: return "folder.badge.gearshape"
             case .integrations: return "point.3.connected.trianglepath.dotted"
             case .aiClients: return "cpu"
             case .notifications: return "bell.badge"
@@ -245,6 +250,8 @@ public struct SettingsView: View {
             return "\(section.title) launch window app behavior appearance menu bar \(status.label)"
         case .collection:
             return "\(section.title) sampling refresh cadence sensors metrics profile \(status.label)"
+        case .repositories:
+            return "\(section.title) repository roots git inventory scans folders paths \(status.label)"
         case .integrations:
             return "\(section.title) Chau7 Docker Chromium telemetry browser helper \(status.label)"
         case .aiClients:
@@ -283,6 +290,13 @@ public struct SettingsView: View {
             return SettingsStatus("Live", AetowerDesign.Status.success)
         case .collection:
             return SettingsStatus("Live", AetowerDesign.Status.success)
+        case .repositories:
+            return SettingsStatus(
+                "\(settings.repositoryRoots.count) roots",
+                settings.repositoryRoots.contains { !SettingsStore.repositoryRootExists($0) }
+                    ? AetowerDesign.Status.warning
+                    : AetowerDesign.Status.success
+            )
         case .integrations:
             return hasPendingIntegrationChanges
                 ? SettingsStatus("Pending Apply", AetowerDesign.Status.warning)
@@ -316,6 +330,20 @@ public struct SettingsView: View {
             return false
         }
         return appliedIntegrationSnapshot != currentIntegrationSnapshot
+    }
+
+    private var repositoryRootDraftCanBeAdded: Bool {
+        let trimmed = repositoryRootDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return SettingsStore.normalizedRepositoryRoots(settings.repositoryRoots + [trimmed]).count
+            > settings.repositoryRoots.count
+    }
+
+    private func addRepositoryRootDraft() {
+        guard repositoryRootDraftCanBeAdded else { return }
+        settings.addRepositoryRoot(repositoryRootDraft)
+        repositoryRootDraft = ""
+        focusedField = .repositoryRoot
     }
 
     private var currentIntegrationSnapshot: SettingsIntegrationSnapshot {
@@ -374,6 +402,8 @@ public struct SettingsView: View {
             generalSection
         case .collection:
             collectionSection
+        case .repositories:
+            repositoriesSection
         case .integrations:
             integrationsSection
         case .aiClients:
@@ -684,6 +714,74 @@ public struct SettingsView: View {
                     note: "Storage budgets remain warning-only. Safe-tier auto-trash still requires a separate explicit opt-in policy."
                 )
                 .disabled(!settings.storageScheduledScansEnabled)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var repositoriesSection: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            SettingsCard(
+                title: "Repository roots",
+                subtitle: "Controls repository inventory and repository-tab scans. Storage cleanup roots stay separate.",
+                status: status(for: .repositories)
+            ) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(settings.repositoryRoots, id: \.self) { root in
+                        SettingsRowCard {
+                            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                                let exists = SettingsStore.repositoryRootExists(root)
+                                Image(systemName: exists ? "folder" : "folder.badge.questionmark")
+                                    .foregroundStyle(exists ? AetowerDesign.Status.ready : AetowerDesign.Status.warning)
+                                    .frame(width: 18)
+                                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                                    Text(root)
+                                        .font(AetowerDesign.Typography.compactData(size: 12))
+                                        .textSelection(.enabled)
+                                    Text(exists ? "Available for repository inventory" : "Path is not currently available")
+                                        .font(AetowerDesign.Typography.caption)
+                                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                                }
+                                Spacer(minLength: AetowerDesign.Spacing.md)
+                                Button {
+                                    settings.removeRepositoryRoot(root)
+                                } label: {
+                                    Label("Remove", systemImage: "minus.circle")
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    TextField("Add root, for example ~/Wikimedia", text: $repositoryRootDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .aetowerUtilityTextInput()
+                        .focused($focusedField, equals: .repositoryRoot)
+                        .onSubmit(addRepositoryRootDraft)
+                    Button {
+                        addRepositoryRootDraft()
+                    } label: {
+                        Label("Add", systemImage: "plus.circle")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!repositoryRootDraftCanBeAdded)
+                }
+
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Button {
+                        settings.resetRepositoryRootsToDefaults()
+                        repositoryRootDraft = ""
+                    } label: {
+                        Label("Reset defaults", systemImage: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Text("Defaults: \(SettingsStore.defaultRepositoryRoots.joined(separator: ", "))")
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
             }
         }
     }

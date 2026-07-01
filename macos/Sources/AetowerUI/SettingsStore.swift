@@ -299,6 +299,12 @@ public final class SettingsStore {
     public nonisolated static let minimumEngineTickSeconds = 0.5
     public nonisolated static let minimumGPUSampleIntervalSeconds = 5.0
     public nonisolated static let minimumStorageScheduledScanIntervalHours = 1.0
+    public nonisolated static let defaultRepositoryRoots = [
+        "~/Repositories",
+        "~/Downloads/Repositories",
+        "~/Developer",
+        "~/Projects",
+    ]
 
     public var showMenuBarExtra: Bool {
         didSet { persist() }
@@ -432,6 +438,15 @@ public final class SettingsStore {
     public var storageScheduledScanIntervalHours: Double {
         didSet { persist() }
     }
+    public var repositoryRoots: [String] {
+        didSet {
+            let normalized = Self.normalizedRepositoryRoots(repositoryRoots)
+            if repositoryRoots != normalized {
+                repositoryRoots = normalized
+            }
+            persist()
+        }
+    }
     /// Opt-in consent for VirusTotal binary-reputation lookups (off by default).
     /// The API key itself lives in the Keychain, not here.
     public var binaryReputationEnabled: Bool {
@@ -497,6 +512,9 @@ public final class SettingsStore {
         self.storageScheduledScanIntervalHours = defaults.object(
             forKey: Self.storageScheduledScanIntervalHoursKey
         ) as? Double ?? 24.0
+        self.repositoryRoots = Self.normalizedRepositoryRoots(
+            defaults.stringArray(forKey: Self.repositoryRootsKey) ?? Self.defaultRepositoryRoots
+        )
         self.binaryReputationEnabled = defaults.object(forKey: Self.binaryReputationEnabledKey) as? Bool ?? false
         let persistedTier = defaults.string(forKey: Self.exportPrivacyTierKey)
         let legacySensitive = defaults.object(forKey: Self.includeSensitiveExportsKey) as? Bool ?? false
@@ -529,6 +547,20 @@ public final class SettingsStore {
             syncLaunchAtLoginState()
             launchAtLoginError = error.localizedDescription
         }
+    }
+
+    public func addRepositoryRoot(_ root: String) {
+        repositoryRoots = Self.normalizedRepositoryRoots(repositoryRoots + [root])
+    }
+
+    public func removeRepositoryRoot(_ root: String) {
+        let removedKey = Self.normalizedRepositoryRootKey(root)
+        let retained = repositoryRoots.filter { Self.normalizedRepositoryRootKey($0) != removedKey }
+        repositoryRoots = Self.normalizedRepositoryRoots(retained)
+    }
+
+    public func resetRepositoryRootsToDefaults() {
+        repositoryRoots = Self.defaultRepositoryRoots
     }
 
     private func syncLaunchAtLoginState() {
@@ -570,6 +602,7 @@ public final class SettingsStore {
     private static let metricRingsFixedScalingKey = "settings.metricRingsFixedScaling"
     private static let storageScheduledScansEnabledKey = "settings.storageScheduledScansEnabled"
     private static let storageScheduledScanIntervalHoursKey = "settings.storageScheduledScanIntervalHours"
+    private static let repositoryRootsKey = "settings.repositoryRoots"
     private static let binaryReputationEnabledKey = "settings.binaryReputationEnabled"
     private static let exportPrivacyTierKey = "settings.exportPrivacyTier"
     private static let autoRegisterLocalMcpClientsEnabledKey = "settings.autoRegisterLocalMcpClientsEnabled"
@@ -619,6 +652,28 @@ public final class SettingsStore {
             fallback: 24.0,
             minimum: minimumStorageScheduledScanIntervalHours
         )
+    }
+
+    public nonisolated static func normalizedRepositoryRoots(_ roots: [String]) -> [String] {
+        let selected = roots.isEmpty ? defaultRepositoryRoots : roots
+        var seen = Set<String>()
+        var normalizedRoots: [String] = []
+        for root in selected {
+            let displayPath = normalizedRepositoryRootDisplay(root)
+            guard !displayPath.isEmpty else { continue }
+            let key = normalizedRepositoryRootKey(displayPath)
+            guard seen.insert(key).inserted else { continue }
+            normalizedRoots.append(displayPath)
+        }
+        return normalizedRoots.isEmpty ? defaultRepositoryRoots : normalizedRoots
+    }
+
+    public nonisolated static func repositoryRootExists(_ root: String) -> Bool {
+        let path = normalizedRepositoryRootKey(root)
+        guard !path.isEmpty else { return false }
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
     }
 
     public nonisolated static func milliseconds(from seconds: Double, minimumSeconds: Double) -> UInt64 {
@@ -693,6 +748,7 @@ public final class SettingsStore {
         storageScheduledScanIntervalHours = Self.normalizedStorageScheduledScanIntervalHours(
             storageScheduledScanIntervalHours
         )
+        repositoryRoots = Self.normalizedRepositoryRoots(repositoryRoots)
         enforceRuntimeIntervalRelationships()
     }
 
@@ -749,6 +805,7 @@ extension SettingsStore {
         metricRingsFixedScaling = false
         storageScheduledScansEnabled = false
         storageScheduledScanIntervalHours = 24.0
+        repositoryRoots = Self.defaultRepositoryRoots
         binaryReputationEnabled = false
         KeychainHelper.delete(account: KeychainHelper.binaryReputationAccount)
         exportPrivacyTier = .redacted
@@ -799,6 +856,7 @@ extension SettingsStore {
             Self.normalizedStorageScheduledScanIntervalHours(storageScheduledScanIntervalHours),
             forKey: Self.storageScheduledScanIntervalHoursKey
         )
+        defaults.set(Self.normalizedRepositoryRoots(repositoryRoots), forKey: Self.repositoryRootsKey)
         defaults.set(binaryReputationEnabled, forKey: Self.binaryReputationEnabledKey)
         defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
         defaults.set(autoRegisterLocalMcpClientsEnabled, forKey: Self.autoRegisterLocalMcpClientsEnabledKey)
@@ -811,5 +869,27 @@ extension SettingsStore {
         let path = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers/aetower-helper").path
         return fileManager.isExecutableFile(atPath: path) ? path : ""
+    }
+
+    private nonisolated static func normalizedRepositoryRootDisplay(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"\/+$"#, with: "", options: .regularExpression)
+    }
+
+    private nonisolated static func normalizedRepositoryRootKey(_ value: String) -> String {
+        let trimmed = normalizedRepositoryRootDisplay(value)
+        guard !trimmed.isEmpty else { return "" }
+        let expanded: String
+        if trimmed == "~" {
+            expanded = FileManager.default.homeDirectoryForCurrentUser.path
+        } else if trimmed.hasPrefix("~/") {
+            expanded = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(String(trimmed.dropFirst(2)))
+                .path
+        } else {
+            expanded = trimmed
+        }
+        return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL.path
     }
 }
