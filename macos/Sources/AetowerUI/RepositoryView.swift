@@ -83,6 +83,7 @@ private struct RepositorySummary: Identifiable {
     let gitDirtyStatus: String
     let gitDirtyFileCount: UInt64?
     let gitDirtyTruncated: Bool
+    let notSeenInLatestScan: Bool
     let gitBranch: String?
     let gitHead: String?
     let gitRef: String?
@@ -227,6 +228,7 @@ private struct RepositorySummary: Identifiable {
         if scorecardAttentionScore >= 5 { return "Scorecard" }
         if reviewItemCount > 0 { return "Review" }
         if liveSessionCount > 0 || liveEntityCount > 0 { return "Active" }
+        if notSeenInLatestScan { return "Cached" }
         if !hasStorageFootprint { return "Indexed" }
         return "Stable"
     }
@@ -353,7 +355,10 @@ public struct RepositoryView: View {
             }
         }
         .task {
-            state.ensureStorageHygieneScan()
+            state.ensureStorageHygieneScan(roots: repositoryScanRoots)
+        }
+        .onChange(of: settings.repositoryRoots) { _, roots in
+            state.ensureStorageHygieneScan(roots: roots)
         }
         .sheet(item: $scorecardWorkflowPreview) { preview in
             scorecardWorkflowPreviewSheet(preview)
@@ -388,11 +393,19 @@ public struct RepositoryView: View {
         } badges: {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 AetowerToolBadge(
+                    "Roots",
+                    value: "\(settings.repositoryRoots.count)",
+                    systemImage: "folder.badge.gearshape",
+                    tone: repositoryRootsBadgeTone
+                )
+                .help(repositoryRootsHelp)
+                AetowerToolBadge(
                     "Repos",
                     value: repositoryCountLabel,
                     systemImage: "folder",
                     tone: repositoryBadgeTone
                 )
+                .help(repositoryCountHelp)
                 AetowerToolBadge(
                     "Artifacts",
                     value: artifactBytesLabel,
@@ -405,6 +418,7 @@ public struct RepositoryView: View {
                     systemImage: "exclamationmark.triangle",
                     tone: attentionBadgeTone
                 )
+                .help(attentionCountHelp)
                 AetowerToolBadge(
                     "Scan",
                     value: repositoryScanStatusLabel,
@@ -415,13 +429,34 @@ public struct RepositoryView: View {
             }
         } actions: {
             Button {
-                state.runStorageHygieneScan()
+                state.runStorageHygieneScan(roots: repositoryScanRoots)
             } label: {
                 Label(state.storageHygieneReport == nil ? "Scan" : "Refresh", systemImage: "arrow.clockwise")
             }
             .buttonStyle(.borderedProminent)
             .disabled(state.storageHygieneIsLoading)
         }
+    }
+
+    private var repositoryScanRoots: [String] {
+        SettingsStore.normalizedRepositoryRoots(settings.repositoryRoots)
+    }
+
+    private var repositoryRootsBadgeTone: Color {
+        repositoryScanRoots.contains { !SettingsStore.repositoryRootExists($0) }
+            ? AetowerDesign.Status.warning
+            : AetowerDesign.Status.ready
+    }
+
+    private var repositoryRootsHelp: String {
+        let missingRoots = repositoryScanRoots.filter { !SettingsStore.repositoryRootExists($0) }
+        let visibleRoots = repositoryScanRoots.prefix(5).joined(separator: ", ")
+        let remainingCount = repositoryScanRoots.count - min(repositoryScanRoots.count, 5)
+        let suffix = remainingCount > 0 ? ", +\(remainingCount) more" : ""
+        if missingRoots.isEmpty {
+            return "Repository inventory roots: \(visibleRoots)\(suffix)."
+        }
+        return "Repository inventory roots: \(visibleRoots)\(suffix). Missing: \(missingRoots.joined(separator: ", "))."
     }
 
     @ViewBuilder
@@ -481,11 +516,14 @@ public struct RepositoryView: View {
             guard let job = state.storageScanJob else { return "Scanning" }
             switch job.status {
             case "queued": return "Queued"
-            case "running": return job.progress.phase.isEmpty ? "Running" : job.progress.phase.capitalized
+            case "running": return repositoryScanPhaseLabel(job.progress.phase)
             case "paused": return "Paused"
             case "complete": return "Finalizing"
             default: return job.status.replacingOccurrences(of: "_", with: " ").capitalized
             }
+        }
+        if let report = state.storageHygieneReport, repositoryInventoryIsIncomplete(report) {
+            return "Inventory partial"
         }
         guard let completedAt = state.storageHygieneCompletedAt else { return "Not run" }
         return "Last \(completedAt.formatted(date: .omitted, time: .shortened))"
@@ -493,11 +531,21 @@ public struct RepositoryView: View {
 
     private var repositoryScanStatusIcon: String {
         if let job = state.storageScanJob, job.status == "paused" { return "pause.circle" }
+        if let report = state.storageHygieneReport, !state.storageHygieneIsLoading,
+           repositoryInventoryIsIncomplete(report)
+        {
+            return "exclamationmark.triangle"
+        }
         return state.storageHygieneIsLoading ? "arrow.triangle.2.circlepath" : "clock"
     }
 
     private var repositoryScanStatusTone: Color {
         if let job = state.storageScanJob, job.status == "paused" { return AetowerDesign.Status.warning }
+        if let report = state.storageHygieneReport, !state.storageHygieneIsLoading,
+           repositoryInventoryIsIncomplete(report)
+        {
+            return AetowerDesign.Status.warning
+        }
         return state.storageHygieneIsLoading ? AetowerDesign.Tone.cpu : AetowerDesign.Status.neutral
     }
 
@@ -505,6 +553,9 @@ public struct RepositoryView: View {
         guard let job = state.storageScanJob else {
             if state.storageHygieneIsLoading {
                 return "Preparing repository inventory refresh."
+            }
+            if let report = state.storageHygieneReport, repositoryInventoryIsIncomplete(report) {
+                return repositoryInventoryIncompleteHelp(report)
             }
             if let completedAt = state.storageHygieneCompletedAt {
                 return "Last repository scan completed \(completedAt.formatted(date: .abbreviated, time: .shortened))."
@@ -517,7 +568,7 @@ public struct RepositoryView: View {
             formatBytes(job.progress.scannedBytes),
         ]
         if !job.progress.phase.isEmpty {
-            parts.append("phase \(job.progress.phase)")
+            parts.append("phase \(repositoryScanPhaseLabel(job.progress.phase))")
         }
         if let currentPathHint = job.progress.currentPathHint, !currentPathHint.isEmpty {
             parts.append(shortPath(currentPathHint))
@@ -526,6 +577,33 @@ public struct RepositoryView: View {
             parts.append(throttleReason)
         }
         return parts.joined(separator: " · ")
+    }
+
+    private func repositoryScanPhaseLabel(_ phase: String) -> String {
+        switch phase {
+        case "repository_inventory":
+            return "Repository inventory"
+        case "artifact_sizing":
+            return "Artifact sizing"
+        case "scorecard_overlay":
+            return "Scorecard overlay"
+        case "finalizing":
+            return "Finalizing"
+        case "queued":
+            return "Queued"
+        case "complete":
+            return "Complete"
+        case "failed":
+            return "Failed"
+        case "cancelled":
+            return "Cancelled"
+        case "paused":
+            return "Paused"
+        case "":
+            return "Running"
+        default:
+            return phase.replacingOccurrences(of: "_", with: " ").capitalized
+        }
     }
 
     private func repositoryDashboard(_ report: StorageHygieneReportModel) -> some View {
@@ -565,6 +643,7 @@ public struct RepositoryView: View {
         let dirtyCount = allRepositories.filter { $0.gitDirtyStatus == "dirty" }.count
         let agentReadyCount = allRepositories.filter { $0.agentReadinessStatus == "ready" }.count
         let reviewCount = allRepositories.filter(\.requiresAttention).count
+        let missingRootCount = repositoryScanRoots.filter { !SettingsStore.repositoryRootExists($0) }.count
 
         return LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 180), spacing: AetowerDesign.Spacing.md)],
@@ -572,9 +651,16 @@ public struct RepositoryView: View {
             spacing: AetowerDesign.Spacing.md
         ) {
             AetowerMetricTile(
+                "Roots",
+                value: "\(repositoryScanRoots.count)",
+                detail: missingRootCount == 0 ? "configured repository roots" : "\(missingRootCount) unavailable",
+                systemImage: "folder.badge.gearshape",
+                tone: missingRootCount == 0 ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+            )
+            AetowerMetricTile(
                 "Indexed",
                 value: "\(allRepositories.count)",
-                detail: "\(repositories.count) visible · \(report.repoFootprints.count) with artifacts",
+                detail: "\(repositories.count) visible · \(allRepositories.filter(\.hasStorageFootprint).count) with artifacts",
                 systemImage: "folder",
                 tone: AetowerDesign.Tone.cpu
             )
@@ -2353,7 +2439,21 @@ public struct RepositoryView: View {
         guard let report = state.storageHygieneReport else {
             return state.storageHygieneIsLoading ? "Loading" : "0"
         }
-        return "\(repositorySummaries(from: report).count)"
+        let count = repositorySummaries(from: report).count
+        return repositoryInventoryIsIncomplete(report) ? "\(count)+" : "\(count)"
+    }
+
+    private var repositoryCountHelp: String {
+        guard let report = state.storageHygieneReport else {
+            return state.storageHygieneIsLoading
+                ? "Repository inventory is currently scanning."
+                : "Repository inventory has not been scanned yet."
+        }
+        let count = repositorySummaries(from: report).count
+        if repositoryInventoryIsIncomplete(report) {
+            return "\(count) found, scan incomplete. \(repositoryInventoryPartialRootsDetail(report))"
+        }
+        return "\(count) repositories found."
     }
 
     private var artifactBytesLabel: String {
@@ -2363,18 +2463,56 @@ public struct RepositoryView: View {
 
     private var attentionCountLabel: String {
         guard let report = state.storageHygieneReport else { return "0" }
-        return "\(repositorySummaries(from: report).filter(\.requiresAttention).count)"
+        let count = repositorySummaries(from: report).filter(\.requiresAttention).count
+        return repositoryInventoryIsIncomplete(report) ? "\(count)+" : "\(count)"
+    }
+
+    private var attentionCountHelp: String {
+        guard let report = state.storageHygieneReport else { return "No repository attention scan has run yet." }
+        let count = repositorySummaries(from: report).filter(\.requiresAttention).count
+        if repositoryInventoryIsIncomplete(report) {
+            return "\(count) attention item\(count == 1 ? "" : "s") found, scan incomplete. Additional repositories may need attention."
+        }
+        return "\(count) attention item\(count == 1 ? "" : "s") found."
     }
 
     private var repositoryBadgeTone: Color {
-        state.storageHygieneReport == nil ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+        guard let report = state.storageHygieneReport else { return AetowerDesign.Status.warning }
+        return repositoryInventoryIsIncomplete(report) ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
     }
 
     private var attentionBadgeTone: Color {
         guard let report = state.storageHygieneReport else { return AetowerDesign.Status.neutral }
+        if repositoryInventoryIsIncomplete(report) { return AetowerDesign.Status.warning }
         return repositorySummaries(from: report).contains(where: \.requiresAttention)
             ? AetowerDesign.Status.warning
             : AetowerDesign.Status.ready
+    }
+
+    private func repositoryInventoryIsIncomplete(_ report: StorageHygieneReportModel) -> Bool {
+        !report.repositoryInventoryComplete || report.repositoryInventoryTruncated
+    }
+
+    private func repositoryInventoryIncompleteHelp(_ report: StorageHygieneReportModel) -> String {
+        let count = repositorySummaries(from: report).count
+        return "\(count) found, scan incomplete. \(repositoryInventoryPartialRootsDetail(report))"
+    }
+
+    private func repositoryInventoryPartialRootsDetail(_ report: StorageHygieneReportModel) -> String {
+        let roots = report.repositoryInventoryPartialRoots
+        guard !roots.isEmpty else {
+            let staleCount = report.repositoryInventory.filter(\.notSeenInLatestScan).count
+            if staleCount > 0 {
+                return "\(staleCount) cached repositor\(staleCount == 1 ? "y was" : "ies were") not seen in the latest scan."
+            }
+            return "Some requested roots were not fully inventoried."
+        }
+        let visibleRoots = roots.prefix(3).map(shortPath).joined(separator: ", ")
+        let remainingCount = roots.count - min(roots.count, 3)
+        if remainingCount > 0 {
+            return "Partial roots: \(visibleRoots), +\(remainingCount) more."
+        }
+        return "Partial roots: \(visibleRoots)."
     }
 
     private func filteredRepositories(from report: StorageHygieneReportModel) -> [RepositorySummary] {
@@ -2462,9 +2600,7 @@ public struct RepositoryView: View {
         }, by: \.0)
         let footprintsByRoot = Dictionary(uniqueKeysWithValues: report.repoFootprints.map { ($0.repoRoot, $0) })
 
-        var seenRoots = Set<String>()
-        var summaries = report.repositoryInventory.map { inventory in
-            seenRoots.insert(inventory.repoRoot)
+        return report.repositoryInventory.map { inventory in
             let footprint = footprintsByRoot[inventory.repoRoot]
             return repositorySummary(
                 root: inventory.repoRoot,
@@ -2482,6 +2618,7 @@ public struct RepositoryView: View {
                 gitDirtyStatus: inventory.gitDirtyStatus,
                 gitDirtyFileCount: inventory.gitDirtyFileCount,
                 gitDirtyTruncated: inventory.gitDirtyTruncated,
+                notSeenInLatestScan: inventory.notSeenInLatestScan,
                 cloneGroupCount: inventory.cloneGroupCount,
                 cloneGroupRoots: inventory.cloneGroupRoots,
                 discoveredRoot: inventory.discoveredRoot,
@@ -2503,49 +2640,6 @@ public struct RepositoryView: View {
                 report: report
             )
         }
-
-        for footprint in report.repoFootprints where !seenRoots.contains(footprint.repoRoot) {
-            summaries.append(
-                repositorySummary(
-                    root: footprint.repoRoot,
-                    id: footprint.id,
-                    name: footprint.repoName,
-                    gitBranch: footprint.lastBranchTouched,
-                    gitHead: nil,
-                    gitRef: nil,
-                    gitDetachedHead: false,
-                    gitRemoteOriginUrl: nil,
-                    gitRemoteKey: nil,
-                    gitRemoteHost: nil,
-                    gitRemoteOwner: nil,
-                    gitRemoteName: nil,
-                    gitDirtyStatus: "unknown",
-                    gitDirtyFileCount: nil,
-                    gitDirtyTruncated: false,
-                    cloneGroupCount: 1,
-                    cloneGroupRoots: [],
-                    discoveredRoot: nil,
-                    hasAgentsMd: false,
-                    hasClaudeMd: false,
-                    claudeMdBytes: nil,
-                    claudeMdDelegationMaxBytes: defaultClaudeMdDelegationMaxBytes,
-                    claudeMdDelegatesToAgentsMd: false,
-                    agentReadinessScore: 0,
-                    agentReadinessStatus: "unknown",
-                    agentContractMissingCount: 0,
-                    agentContractCoverage: [],
-                    agentGuidanceStatus: "unknown",
-                    agentGuidanceIssueCount: 0,
-                    agentGuidanceIssues: [],
-                    footprint: footprint,
-                    items: itemsByRoot[footprint.repoRoot]?.map(\.1) ?? [],
-                    violations: violationsByRoot[footprint.repoRoot]?.count ?? 0,
-                    report: report
-                )
-            )
-        }
-
-        return summaries
     }
 
     private func repositorySummary(
@@ -2564,6 +2658,7 @@ public struct RepositoryView: View {
         gitDirtyStatus: String,
         gitDirtyFileCount: UInt64?,
         gitDirtyTruncated: Bool,
+        notSeenInLatestScan: Bool,
         cloneGroupCount: UInt64,
         cloneGroupRoots: [String],
         discoveredRoot: String?,
@@ -2587,9 +2682,14 @@ public struct RepositoryView: View {
         let live = liveContext(for: root)
         let agent = agentContext(for: root, report: report)
         let scorecardReport = state.repositoryScorecardReportsByRoot[root]
-        let baseCaveats = footprint?.caveats ?? [
+        var baseCaveats = footprint?.caveats ?? [
             "Indexed from Git repository discovery. No tracked storage artifacts were found in the bounded hygiene scan."
         ]
+        if notSeenInLatestScan {
+            baseCaveats.append(
+                "Repository was restored from the persistent inventory cache and was not seen in the latest scan."
+            )
+        }
         return RepositorySummary(
             id: id,
             root: root,
@@ -2618,6 +2718,7 @@ public struct RepositoryView: View {
             gitDirtyStatus: gitDirtyStatus,
             gitDirtyFileCount: gitDirtyFileCount,
             gitDirtyTruncated: gitDirtyTruncated,
+            notSeenInLatestScan: notSeenInLatestScan,
             gitBranch: gitBranch,
             gitHead: gitHead,
             gitRef: gitRef,

@@ -1975,15 +1975,19 @@ public final class AppState {
 
     /// Load the developer storage hygiene report once. The backend scan is
     /// bounded and read-only; explicit refreshes call `runStorageHygieneScan`.
-    func ensureStorageHygieneScan() {
-        guard storageHygieneReport == nil, !storageHygieneIsLoading else { return }
+    func ensureStorageHygieneScan(roots: [String] = []) {
+        guard !storageHygieneIsLoading else { return }
+        if let storageHygieneReport,
+           (roots.isEmpty || Self.storageHygieneReportMatchesRequestedRoots(storageHygieneReport, roots: roots))
+        {
+            return
+        }
         storageHygieneTask?.cancel()
         storageHygieneIsLoading = true
         storageHygieneError = nil
         let bridge = self.bridge
         let publisher = StorageHygieneMainActorPublisher(self)
         storageHygieneTask = Task.detached(priority: .background) {
-            let roots: [String] = []
             let maxDepth: UInt32 = 5
             let limit: UInt32 = 80
             let cacheResult = StorageHygieneReportCacheStore.loadIfValid(
@@ -2032,6 +2036,35 @@ public final class AppState {
         }
     }
 
+    private static func storageHygieneReportMatchesRequestedRoots(
+        _ report: StorageHygieneReportModel,
+        roots: [String]
+    ) -> Bool {
+        let requested = normalizedScanRootSet(roots)
+        guard !requested.isEmpty else { return true }
+        return normalizedScanRootSet(report.repositoryInventoryRoots) == requested
+    }
+
+    private static func normalizedScanRootSet(_ roots: [String]) -> Set<String> {
+        Set(roots.map(normalizedScanRoot).filter { !$0.isEmpty })
+    }
+
+    private static func normalizedScanRoot(_ root: String) -> String {
+        let trimmed = root.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let expanded: String
+        if trimmed == "~" {
+            expanded = FileManager.default.homeDirectoryForCurrentUser.path
+        } else if trimmed.hasPrefix("~/") {
+            expanded = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(String(trimmed.dropFirst(2)))
+                .path
+        } else {
+            expanded = trimmed
+        }
+        return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL.path
+    }
+
     /// On-demand read-only storage hygiene scan for build artifacts, logs,
     /// caches, and dependency trees. This never deletes files.
     func runStorageHygieneScan(
@@ -2041,12 +2074,37 @@ public final class AppState {
         mode: String = "fast_changed_only"
     ) {
         storageHygieneTask?.cancel()
-        startStorageScanJob(
-            roots: roots,
-            maxDepth: maxDepth,
-            limit: limit,
-            mode: mode
-        )
+        storageHygieneIsLoading = true
+        storageHygieneError = nil
+        let bridge = self.bridge
+        let publisher = StorageHygieneMainActorPublisher(self)
+        storageHygieneTask = Task.detached(priority: .background) {
+            let indexed = bridge.storageHygieneIndexedJSON(
+                roots: roots,
+                maxDepth: maxDepth,
+                limit: limit
+            )
+            let indexedPrepared = StorageHygieneDecodePipeline.prepare(
+                indexed,
+                roots: roots,
+                maxDepth: maxDepth,
+                limit: limit,
+                mode: "instant_cached",
+                saveCache: false
+            )
+            if indexedPrepared.report != nil {
+                guard !Task.isCancelled else { return }
+                await publisher.publishPrepared(indexedPrepared)
+            }
+
+            guard !Task.isCancelled else { return }
+            await publisher.startScan(
+                roots: roots,
+                maxDepth: maxDepth,
+                limit: limit,
+                mode: mode
+            )
+        }
     }
 
     private func storageScheduledScanSleepNanos() -> UInt64 {
