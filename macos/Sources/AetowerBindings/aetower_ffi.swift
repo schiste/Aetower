@@ -644,6 +644,12 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     func recordDiagnosticsEvent(event: DiagnosticsEvent)
 
     /**
+     * Cheap Git-root inventory scan for repository management. Does not size
+     * artifacts or traverse known heavy dependency/build directories.
+     */
+    func repositoryInventoryJson(roots: [String], maxDepth: UInt32)  -> JsonQueryResult
+
+    /**
      * Restore a fan to automatic (OS-controlled) mode.
      */
     func resetFanAuto(fanId: UInt8)  -> String
@@ -1151,6 +1157,19 @@ open func recordDiagnosticsEvent(event: DiagnosticsEvent)  {try! rustCall() {
         FfiConverterTypeDiagnosticsEvent_lower(event),$0
     )
 }
+}
+
+    /**
+     * Cheap Git-root inventory scan for repository management. Does not size
+     * artifacts or traverse known heavy dependency/build directories.
+     */
+open func repositoryInventoryJson(roots: [String], maxDepth: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_repository_inventory_json(self.uniffiClonePointer(),
+        FfiConverterSequenceString.lower(roots),
+        FfiConverterUInt32.lower(maxDepth),$0
+    )
+})
 }
 
     /**
@@ -11883,6 +11902,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_record_diagnostics_event() != 15141) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_repository_inventory_json() != 59172) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_reset_fan_auto() != 1522) {
