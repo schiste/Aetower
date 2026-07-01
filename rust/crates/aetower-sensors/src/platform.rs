@@ -16,6 +16,7 @@ const KERN_SUCCESS: IoReturn = 0;
 const SMC_CMD_READ_KEYINFO: u8 = 9;
 const SMC_CMD_READ_BYTES: u8 = 5;
 const SMC_CMD_WRITE_BYTES: u8 = 6;
+const MAX_PLAUSIBLE_FAN_RPM: f32 = 10_000.0;
 
 #[repr(C)]
 #[derive(Default, Clone)]
@@ -416,18 +417,24 @@ fn read_fans(smc: &SmcConnection) -> Vec<FanReading> {
     let fan_count = smc
         .read_key(*b"FNum")
         .and_then(|v| v.as_f32())
+        .filter(|value| value.is_finite() && *value >= 0.0)
         .unwrap_or(0.0) as u8;
 
     (0..fan_count.min(8))
         .filter_map(|id| {
-            let current = smc.read_key(fan_key(id, b"Ac"))?.as_f32()?;
+            let current = smc
+                .read_key(fan_key(id, b"Ac"))?
+                .as_f32()
+                .and_then(plausible_fan_rpm)?;
             let min = smc
                 .read_key(fan_key(id, b"Mn"))
                 .and_then(|v| v.as_f32())
+                .and_then(plausible_fan_rpm)
                 .unwrap_or(0.0);
             let max = smc
                 .read_key(fan_key(id, b"Mx"))
                 .and_then(|v| v.as_f32())
+                .and_then(plausible_fan_rpm)
                 .unwrap_or(0.0);
             let name = smc
                 .read_key(fan_key(id, b"ID"))
@@ -443,6 +450,14 @@ fn read_fans(smc: &SmcConnection) -> Vec<FanReading> {
             })
         })
         .collect()
+}
+
+fn plausible_fan_rpm(value: f32) -> Option<f32> {
+    if value.is_finite() && (0.0..=MAX_PLAUSIBLE_FAN_RPM).contains(&value) {
+        Some(value)
+    } else {
+        None
+    }
 }
 
 fn read_temperatures(smc: &SmcConnection) -> Vec<TemperatureReading> {

@@ -196,16 +196,21 @@ public struct SensorDashboardView: View {
                         HStack {
                             Text(fan.name).font(.caption.weight(.medium))
                             Spacer()
-                            Text("\(Int(fan.currentRpm)) rpm")
+                            Text(SensorFanFormatter.rpmLabel(fan.currentRpm))
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
+                        let progress = SensorFanFormatter.progress(
+                            currentRpm: fan.currentRpm,
+                            minRpm: fan.minRpm,
+                            maxRpm: fan.maxRpm
+                        )
                         ProgressView(
-                            value: Double(max(0, fan.currentRpm - fan.minRpm)),
-                            total: Double(max(1, fan.maxRpm - fan.minRpm))
+                            value: progress.value,
+                            total: progress.total
                         )
                         .tint(AetowerDesign.Tone.network)
-                        Text("min \(Int(fan.minRpm)) · max \(Int(fan.maxRpm)) rpm")
+                        Text(SensorFanFormatter.rangeLabel(minRpm: fan.minRpm, maxRpm: fan.maxRpm))
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
@@ -505,16 +510,24 @@ public struct SensorDashboardView: View {
         guard !host.fans.isEmpty else {
             return "Passive"
         }
-        let maxRpm = host.fans.map(\.currentRpm).max() ?? 0
-        return "\(host.fans.count) · \(Int(maxRpm)) rpm"
+        let validRpms = host.fans.compactMap { SensorFanFormatter.sanitizedRpm($0.currentRpm) }
+        guard let maxRpm = validRpms.max() else {
+            return "\(host.fans.count) · rpm n/a"
+        }
+        return "\(host.fans.count) · \(SensorFanFormatter.rpmLabel(maxRpm))"
     }
 
     private var fanSummaryTone: Color {
-        guard let hottestFan = host.fans.max(by: { $0.currentRpm < $1.currentRpm }) else {
+        let normalizedLoads = host.fans.compactMap {
+            SensorFanFormatter.normalizedLoad(
+                currentRpm: $0.currentRpm,
+                minRpm: $0.minRpm,
+                maxRpm: $0.maxRpm
+            )
+        }
+        guard let normalized = normalizedLoads.max() else {
             return AetowerDesign.Status.neutral
         }
-        let range = max(1, hottestFan.maxRpm - hottestFan.minRpm)
-        let normalized = (hottestFan.currentRpm - hottestFan.minRpm) / range
         if normalized >= 0.85 { return AetowerDesign.Status.error }
         if normalized >= 0.6 { return AetowerDesign.Status.warning }
         return AetowerDesign.Status.success
@@ -580,5 +593,58 @@ public struct SensorDashboardView: View {
             }
         }
         return result
+    }
+}
+
+enum SensorFanFormatter {
+    private static let plausibleFanRpmCeiling: Float = 10_000
+
+    static func sanitizedRpm(_ rpm: Float) -> Float? {
+        guard rpm.isFinite, rpm >= 0, rpm <= plausibleFanRpmCeiling else {
+            return nil
+        }
+        return rpm
+    }
+
+    static func rpmLabel(_ rpm: Float) -> String {
+        guard let rpm = sanitizedRpm(rpm) else {
+            return "rpm n/a"
+        }
+        return "\(Int(rpm.rounded())) rpm"
+    }
+
+    static func rangeLabel(minRpm: Float, maxRpm: Float) -> String {
+        let minLabel = sanitizedRpm(minRpm).map { "\(Int($0.rounded()))" } ?? "n/a"
+        let maxLabel = sanitizedRpm(maxRpm).map { "\(Int($0.rounded()))" } ?? "n/a"
+        return "min \(minLabel) · max \(maxLabel) rpm"
+    }
+
+    static func progress(
+        currentRpm: Float,
+        minRpm: Float,
+        maxRpm: Float
+    ) -> (value: Double, total: Double) {
+        let current = sanitizedRpm(currentRpm) ?? 0
+        let minimum = sanitizedRpm(minRpm) ?? 0
+        let reportedMaximum = sanitizedRpm(maxRpm)
+        let maximum = max(reportedMaximum ?? max(minimum + 1, current), minimum + 1)
+        let total = max(1, maximum - minimum)
+        let value = min(max(0, current - minimum), total)
+        return (Double(value), Double(total))
+    }
+
+    static func normalizedLoad(
+        currentRpm: Float,
+        minRpm: Float,
+        maxRpm: Float
+    ) -> Float? {
+        guard let current = sanitizedRpm(currentRpm) else {
+            return nil
+        }
+        let minimum = sanitizedRpm(minRpm) ?? 0
+        guard let maximum = sanitizedRpm(maxRpm), maximum > minimum else {
+            return nil
+        }
+        return min(max((current - minimum) / (maximum - minimum), 0), 1)
     }
 }
