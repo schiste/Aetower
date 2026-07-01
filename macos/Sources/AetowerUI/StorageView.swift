@@ -244,20 +244,7 @@ public struct StorageView: View {
         } filterTools: {
             EmptyView()
         } badges: {
-            HStack(spacing: AetowerDesign.Spacing.sm) {
-                AetowerToolBadge(
-                    "Reclaim",
-                    value: storageReclaimableLabel,
-                    systemImage: "externaldrive.badge.minus",
-                    tone: AetowerDesign.Tone.disk
-                )
-                AetowerToolBadge(
-                    "Items",
-                    value: storageItemCountLabel,
-                    systemImage: "shippingbox",
-                    tone: AetowerDesign.Tone.memory
-                )
-            }
+            AetowerToolBadgeGroup(storageHeaderBadges, visibleCount: 2)
         } actions: {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 storageFilterMenu
@@ -274,6 +261,23 @@ public struct StorageView: View {
                 }
             }
         }
+    }
+
+    private var storageHeaderBadges: [AetowerToolBadgeItem] {
+        [
+            AetowerToolBadgeItem(
+                    "Reclaim",
+                    value: storageReclaimableLabel,
+                    systemImage: "externaldrive.badge.minus",
+                    tone: AetowerDesign.Tone.disk
+            ),
+            AetowerToolBadgeItem(
+                    "Items",
+                    value: storageItemCountLabel,
+                    systemImage: "shippingbox",
+                    tone: AetowerDesign.Tone.memory
+            ),
+        ]
     }
 
     private var storageFilterMenu: some View {
@@ -310,53 +314,92 @@ public struct StorageView: View {
 
     private var storageScanOptionsCard: some View {
         AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md) {
-            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
-                Label("Scan options", systemImage: "slider.horizontal.3")
-                    .font(AetowerDesign.Typography.controlLabel)
-                    .foregroundStyle(AetowerDesign.Ink.secondary)
-                    .fixedSize()
-
-                TextField("Optional root, for example ~/Repositories", text: $customRoot)
-                    .aetowerUtilityTextInput()
-                    .textFieldStyle(.plain)
-                    .font(AetowerDesign.Typography.caption)
-                    .padding(.horizontal, AetowerDesign.Spacing.sm)
-                    .padding(.vertical, AetowerDesign.Spacing.xs)
-                    .frame(minWidth: 220, idealWidth: 320, maxWidth: 420)
-                    .aetowerControlChrome()
-
-                Stepper(
-                    "Depth \(Int(maxDepth))",
-                    value: $maxDepth,
-                    in: 1...12,
-                    step: 1
-                )
-                .font(AetowerDesign.Typography.caption)
-                .fixedSize()
-
-                Picker("Mode", selection: $scanMode) {
-                    ForEach(StorageScanModeSelection.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 220)
-
-                Spacer(minLength: AetowerDesign.Spacing.sm)
-
-                if state.storageHygieneIsLoading {
-                    Text(storageScanLoadingTitle)
-                        .font(AetowerDesign.Typography.caption)
-                        .foregroundStyle(AetowerDesign.Ink.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+            ViewThatFits(in: .horizontal) {
+                storageScanOptionsWide
+                    .fixedSize(horizontal: true, vertical: false)
+                storageScanOptionsStacked
             }
         }
     }
 
+    private var storageScanOptionsWide: some View {
+        HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+            storageScanOptionsTitle
+            storageScanRootField
+                .frame(width: 300)
+            storageScanDepthStepper
+            storageScanModePicker
+            storageScanLoadingStatus
+        }
+    }
+
+    private var storageScanOptionsStacked: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(spacing: AetowerDesign.Spacing.md) {
+                storageScanOptionsTitle
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                storageScanDepthStepper
+                storageScanModePicker
+            }
+            HStack(spacing: AetowerDesign.Spacing.md) {
+                storageScanRootField
+                storageScanLoadingStatus
+            }
+        }
+    }
+
+    private var storageScanOptionsTitle: some View {
+        Label("Scan options", systemImage: "slider.horizontal.3")
+            .font(AetowerDesign.Typography.controlLabel)
+            .foregroundStyle(AetowerDesign.Ink.secondary)
+            .fixedSize()
+    }
+
+    private var storageScanRootField: some View {
+        TextField("Optional root, for example ~/Repositories", text: $customRoot)
+            .aetowerUtilityTextInput()
+            .textFieldStyle(.plain)
+            .font(AetowerDesign.Typography.caption)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, AetowerDesign.Spacing.xs)
+            .frame(minWidth: 180, idealWidth: 280, maxWidth: .infinity)
+            .aetowerControlChrome()
+    }
+
+    private var storageScanDepthStepper: some View {
+        Stepper(
+            "Depth \(Int(maxDepth))",
+            value: $maxDepth,
+            in: 1...12,
+            step: 1
+        )
+        .font(AetowerDesign.Typography.caption)
+        .fixedSize()
+    }
+
+    private var storageScanModePicker: some View {
+        Picker("Mode", selection: $scanMode) {
+            ForEach(StorageScanModeSelection.allCases) { mode in
+                Text(mode.label).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 190)
+    }
+
+    @ViewBuilder
+    private var storageScanLoadingStatus: some View {
+        if state.storageHygieneIsLoading {
+            Text(storageScanLoadingTitle)
+                .font(AetowerDesign.Typography.caption)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
     private func storageNavigationRail(report: StorageHygieneReportModel?) -> some View {
-        AetowerNavigationRail(width: 264) {
+        AetowerNavigationRail(width: 228) {
             AetowerRailGroup {
                 ForEach(StorageSection.allCases) { section in
                     storageNavigationButton(section, report: report)
@@ -581,7 +624,7 @@ public struct StorageView: View {
             }
 
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 300), spacing: AetowerDesign.Spacing.md)],
+                columns: [GridItem(.adaptive(minimum: 260), spacing: AetowerDesign.Spacing.md)],
                 alignment: .leading,
                 spacing: AetowerDesign.Spacing.md
             ) {
@@ -701,12 +744,8 @@ public struct StorageView: View {
             Text(formatBytes(item.sizeBytes))
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
-            Button("Quick Look") { quickLook(path: item.path) }
-            Button("Reveal") { reveal(path: item.path) }
-            Button("Explain") { classificationExplanation = explanation(for: item) }
+            storageItemActionMenu(item)
         }
-        .buttonStyle(.bordered)
-        .controlSize(.mini)
     }
 
     private func storageHomeGrowthSample(_ event: StorageGrowthTimelineEvent) -> some View {
@@ -727,12 +766,38 @@ public struct StorageView: View {
             Text("+\(formatBytes(UInt64(event.deltaBytes)))")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(AetowerDesign.Status.warning)
-            Button("Quick Look") { quickLook(path: event.path) }
-            Button("Reveal") { reveal(path: event.path) }
-            Button("Explain") { classificationExplanation = explanation(for: event) }
+            storageGrowthActionMenu(event)
         }
-        .buttonStyle(.bordered)
+    }
+
+    private func storageItemActionMenu(_ item: StorageHygieneItemModel) -> some View {
+        Menu {
+            Button("Quick Look") { quickLook(path: item.path) }
+            Button("Reveal in Finder") { reveal(path: item.path) }
+            Button("Explain classification") { classificationExplanation = explanation(for: item) }
+            Button("Stage cleanup") { stageCleanupItem(item) }
+                .disabled(!storageItemIsTrashActionable(item))
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+        }
+        .menuStyle(.borderlessButton)
         .controlSize(.mini)
+        .help("Storage item actions")
+    }
+
+    private func storageGrowthActionMenu(_ event: StorageGrowthTimelineEvent) -> some View {
+        Menu {
+            Button("Quick Look") { quickLook(path: event.path) }
+            Button("Reveal in Finder") { reveal(path: event.path) }
+            Button("Explain classification") { classificationExplanation = explanation(for: event) }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+        }
+        .menuStyle(.borderlessButton)
+        .controlSize(.mini)
+        .help("Storage growth actions")
     }
 
     private func classificationExplanationSheet(_ explanation: StorageClassificationExplanation) -> some View {
@@ -3469,13 +3534,13 @@ public struct StorageView: View {
             Text("Item")
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text("Tier")
-                .frame(width: 105, alignment: .center)
+                .frame(width: 88, alignment: .center)
             Text("Kind")
-                .frame(width: 120, alignment: .center)
+                .frame(width: 92, alignment: .center)
             Text("Size")
-                .frame(width: 95, alignment: .trailing)
+                .frame(width: 80, alignment: .trailing)
             Text("Actions")
-                .frame(width: 180, alignment: .trailing)
+                .frame(width: 52, alignment: .trailing)
         }
         .font(.caption2.weight(.semibold))
         .foregroundStyle(.secondary)
@@ -3496,24 +3561,17 @@ public struct StorageView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             cleanupTierBadge(item)
-                .frame(width: 105)
+                .frame(width: 88)
             Text(item.kind)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .frame(width: 120)
+                .frame(width: 92)
             Text(formatBytes(item.sizeBytes))
                 .font(.caption.weight(.semibold))
-                .frame(width: 95, alignment: .trailing)
-            HStack(spacing: AetowerDesign.Spacing.xs) {
-                Button("Look") { quickLook(path: item.path) }
-                Button("Reveal") { reveal(path: item.path) }
-                Button("Stage") { stageCleanupItem(item) }
-                    .disabled(!storageItemIsTrashActionable(item))
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.mini)
-            .frame(width: 180, alignment: .trailing)
+                .frame(width: 80, alignment: .trailing)
+            storageItemActionMenu(item)
+                .frame(width: 52, alignment: .trailing)
         }
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, AetowerDesign.Spacing.xs)

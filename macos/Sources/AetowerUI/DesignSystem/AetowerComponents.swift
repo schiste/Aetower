@@ -332,8 +332,12 @@ public struct AetowerTabToolBand<LayoutTools: View, FilterTools: View, Badges: V
     public var body: some View {
         ViewThatFits(in: .horizontal) {
             horizontalBand
-            wrappedBand
+                .fixedSize(horizontal: true, vertical: false)
+            mediumBand
+                .fixedSize(horizontal: true, vertical: false)
+            compactBand
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, AetowerDesign.Spacing.md)
         .padding(.vertical, AetowerDesign.Spacing.sm)
         .background(.bar)
@@ -344,13 +348,8 @@ public struct AetowerTabToolBand<LayoutTools: View, FilterTools: View, Badges: V
             badges
                 .fixedSize(horizontal: true, vertical: false)
 
-            Spacer(minLength: AetowerDesign.Spacing.xs)
-
             AetowerTabSearchField(text: searchText, prompt: searchPrompt)
                 .frame(width: searchWidth)
-                .layoutPriority(1)
-
-            Spacer(minLength: AetowerDesign.Spacing.sm)
 
             layoutTools
                 .fixedSize(horizontal: true, vertical: false)
@@ -361,23 +360,47 @@ public struct AetowerTabToolBand<LayoutTools: View, FilterTools: View, Badges: V
             actions
                 .fixedSize(horizontal: true, vertical: false)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var wrappedBand: some View {
+    private var mediumBand: some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 badges
+                    .fixedSize(horizontal: true, vertical: false)
                 Spacer(minLength: AetowerDesign.Spacing.sm)
                 actions
+                    .fixedSize(horizontal: true, vertical: false)
             }
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 AetowerTabSearchField(text: searchText, prompt: searchPrompt)
-                    .frame(maxWidth: .infinity)
+                    .frame(width: searchWidth)
                 layoutTools
                     .fixedSize(horizontal: true, vertical: false)
                 filterTools
                     .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+    }
+
+    private var compactBand: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                badges
+                    .fixedSize(horizontal: false, vertical: false)
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                actions
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+
+            AetowerTabSearchField(text: searchText, prompt: searchPrompt)
+                .frame(maxWidth: .infinity)
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                layoutTools
+                    .fixedSize(horizontal: true, vertical: false)
+                filterTools
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: AetowerDesign.Spacing.none)
             }
         }
     }
@@ -509,6 +532,141 @@ public struct AetowerToolBadge: View {
             Capsule()
                 .stroke(tone.opacity(0.14), lineWidth: AetowerDesign.Stroke.hairline)
         }
+    }
+}
+
+public struct AetowerToolBadgeItem: Identifiable {
+    public let id: String
+    let title: String
+    let value: String
+    let systemImage: String
+    let tone: Color
+
+    public init(
+        id: String? = nil,
+        _ title: String,
+        value: String,
+        systemImage: String,
+        tone: Color = AetowerDesign.Status.neutral
+    ) {
+        self.id = id ?? "\(title)|\(systemImage)"
+        self.title = title
+        self.value = value
+        self.systemImage = systemImage
+        self.tone = tone
+    }
+}
+
+public struct AetowerToolBadgeGroup: View {
+    let items: [AetowerToolBadgeItem]
+    let visibleCount: Int
+
+    public init(
+        _ items: [AetowerToolBadgeItem],
+        visibleCount: Int = 2
+    ) {
+        self.items = items
+        self.visibleCount = max(1, visibleCount)
+    }
+
+    public var body: some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            ForEach(Array(items.prefix(visibleCount))) { item in
+                AetowerToolBadge(
+                    item.title,
+                    value: item.value,
+                    systemImage: item.systemImage,
+                    tone: item.tone
+                )
+            }
+
+            if items.count > visibleCount {
+                Menu {
+                    ForEach(Array(items.dropFirst(visibleCount))) { item in
+                        Label {
+                            Text("\(item.title): \(item.value)")
+                        } icon: {
+                            Image(systemName: item.systemImage)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        Image(systemName: "ellipsis")
+                        Text("+\(items.count - visibleCount)")
+                    }
+                    .font(AetowerDesign.Typography.metadataStrong)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .padding(.horizontal, AetowerDesign.Spacing.sm)
+                    .frame(height: AetowerDesign.Size.controlHeight)
+                    .background(AetowerDesign.Surface.card, in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .stroke(AetowerDesign.Surface.divider, lineWidth: AetowerDesign.Stroke.hairline)
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("More metrics")
+            }
+        }
+    }
+}
+
+public struct AetowerSelectionMenu<Item: Identifiable & Hashable>: View {
+    let selection: Binding<Item>
+    let options: [Item]
+    let fallbackSystemImage: String
+    let accessibilityLabel: String
+    let title: (Item) -> String
+    let systemImage: (Item) -> String?
+
+    public init(
+        selection: Binding<Item>,
+        options: [Item],
+        fallbackSystemImage: String = "rectangle.grid.1x2",
+        accessibilityLabel: String,
+        title: @escaping (Item) -> String,
+        systemImage: @escaping (Item) -> String? = { _ in nil }
+    ) {
+        self.selection = selection
+        self.options = options
+        self.fallbackSystemImage = fallbackSystemImage
+        self.accessibilityLabel = accessibilityLabel
+        self.title = title
+        self.systemImage = systemImage
+    }
+
+    public var body: some View {
+        Menu {
+            ForEach(options) { option in
+                Button {
+                    selection.wrappedValue = option
+                } label: {
+                    HStack {
+                        Label(title(option), systemImage: systemImage(option) ?? fallbackSystemImage)
+                        if selection.wrappedValue == option {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Image(systemName: systemImage(selection.wrappedValue) ?? fallbackSystemImage)
+                Text(title(selection.wrappedValue))
+                Image(systemName: "chevron.down")
+                    .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
+            }
+            .font(AetowerDesign.Typography.caption.weight(.semibold))
+            .foregroundStyle(AetowerDesign.Ink.secondary)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, AetowerDesign.Spacing.xs)
+            .aetowerControlChrome()
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 

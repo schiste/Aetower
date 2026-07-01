@@ -334,38 +334,39 @@ private struct AgentsWorkspaceView: View {
             searchPrompt: "Search agents, sessions, repos",
             searchWidth: 280
         ) {
-            Picker("", selection: selection) {
-                ForEach(AgentsWorkspaceTab.allCases) { tab in
-                    Label(tab.title, systemImage: tab.systemImage)
-                        .tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityLabel("Agents section")
-            .frame(width: 260)
+            AetowerSelectionMenu(
+                selection: selection,
+                options: AgentsWorkspaceTab.allCases,
+                accessibilityLabel: "Agents section",
+                title: { $0.title },
+                systemImage: { $0.systemImage }
+            )
         } badges: {
-            HStack(spacing: AetowerDesign.Spacing.sm) {
-                AetowerToolBadge(
-                    "Sessions",
-                    value: "\(state.snapshot.chau7Sessions.count)",
-                    systemImage: "terminal",
-                    tone: chau7Status == .enriched ? .green : .orange
-                )
-                AetowerToolBadge(
-                    "Agents",
-                    value: "\(state.snapshot.entities.filter { $0.entityKind == .aiAgent }.count)",
-                    systemImage: "cpu",
-                    tone: AetowerDesign.Tone.cpu
-                )
-                AetowerToolBadge(
-                    "Linked",
-                    value: "\(chau7LinkedEntities.count)",
-                    systemImage: "link",
-                    tone: chau7LinkedEntities.isEmpty ? .secondary : .green
-                )
-            }
+            AetowerToolBadgeGroup(agentHeaderBadges, visibleCount: 2)
         }
+    }
+
+    private var agentHeaderBadges: [AetowerToolBadgeItem] {
+        [
+            AetowerToolBadgeItem(
+                "Sessions",
+                value: "\(state.snapshot.chau7Sessions.count)",
+                systemImage: "terminal",
+                tone: chau7Status == .enriched ? Color.green : Color.orange
+            ),
+            AetowerToolBadgeItem(
+                "Agents",
+                value: "\(state.snapshot.entities.filter { $0.entityKind == .aiAgent }.count)",
+                systemImage: "cpu",
+                tone: AetowerDesign.Tone.cpu
+            ),
+            AetowerToolBadgeItem(
+                "Linked",
+                value: "\(chau7LinkedEntities.count)",
+                systemImage: "link",
+                tone: chau7LinkedEntities.isEmpty ? Color.secondary : Color.green
+            ),
+        ]
     }
 
     private func capabilityStateLabel(_ capability: CapabilitySnapshot) -> String {
@@ -433,38 +434,39 @@ private struct ActivityWorkspaceView: View {
             searchPrompt: "Search activity, events, history",
             searchWidth: 280
         ) {
-            Picker("", selection: $selectedTab) {
-                ForEach(ActivityWorkspaceTab.allCases) { tab in
-                    Label(tab.title, systemImage: tab.systemImage)
-                        .tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityLabel("Activity section")
-            .frame(width: 360)
+            AetowerSelectionMenu(
+                selection: $selectedTab,
+                options: ActivityWorkspaceTab.allCases,
+                accessibilityLabel: "Activity section",
+                title: { $0.title },
+                systemImage: { $0.systemImage }
+            )
         } badges: {
-            HStack(spacing: 8) {
-                AetowerToolBadge(
-                    "Events",
-                    value: "\(state.snapshot.timeline.count)",
-                    systemImage: "timeline.selection",
-                    tone: timelineTint
-                )
-                AetowerToolBadge(
-                    "Snapshots",
-                    value: historySnapshotLabel,
-                    systemImage: "clock",
-                    tone: historyTint
-                )
-                AetowerToolBadge(
-                    "Store",
-                    value: historyStoreLabel,
-                    systemImage: "externaldrive",
-                    tone: storageTint
-                )
-            }
+            AetowerToolBadgeGroup(activityHeaderBadges, visibleCount: 2)
         }
+    }
+
+    private var activityHeaderBadges: [AetowerToolBadgeItem] {
+        [
+            AetowerToolBadgeItem(
+                "Events",
+                value: "\(state.snapshot.timeline.count)",
+                systemImage: "timeline.selection",
+                tone: timelineTint
+            ),
+            AetowerToolBadgeItem(
+                "Snapshots",
+                value: historySnapshotLabel,
+                systemImage: "clock",
+                tone: historyTint
+            ),
+            AetowerToolBadgeItem(
+                "Store",
+                value: historyStoreLabel,
+                systemImage: "externaldrive",
+                tone: storageTint
+            ),
+        ]
     }
 
     private var navigationRail: some View {
@@ -993,38 +995,39 @@ private struct SystemWorkspaceView: View {
             searchPrompt: "Search system, startup, diagnostics",
             searchWidth: 280
         ) {
-            Picker("", selection: $selectedTab) {
-                ForEach(SystemWorkspaceTab.allCases) { tab in
-                    Label(tab.title, systemImage: tab.systemImage)
-                        .tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityLabel("System section")
-            .frame(width: 360)
+            AetowerSelectionMenu(
+                selection: $selectedTab,
+                options: SystemWorkspaceTab.allCases,
+                accessibilityLabel: "System section",
+                title: { $0.title },
+                systemImage: { $0.systemImage }
+            )
         } badges: {
-            HStack(spacing: 8) {
-                AetowerToolBadge(
-                    "Thermal",
-                    value: thermalLabel,
-                    systemImage: "thermometer.medium",
-                    tone: thermalTint
-                )
-                AetowerToolBadge(
-                    "Sensors",
-                    value: sensorCoverageLabel,
-                    systemImage: "sensor",
-                    tone: sensorCoverageTint
-                )
-                AetowerToolBadge(
-                    "Diagnostics",
-                    value: diagnosticsLabel,
-                    systemImage: "waveform.path.ecg.rectangle",
-                    tone: diagnosticsTint
-                )
-            }
+            AetowerToolBadgeGroup(systemHeaderBadges, visibleCount: 2)
         }
+    }
+
+    private var systemHeaderBadges: [AetowerToolBadgeItem] {
+        [
+            AetowerToolBadgeItem(
+                "Thermal",
+                value: thermalLabel,
+                systemImage: "thermometer.medium",
+                tone: thermalTint
+            ),
+            AetowerToolBadgeItem(
+                "Sensors",
+                value: sensorCoverageLabel,
+                systemImage: "sensor",
+                tone: sensorCoverageTint
+            ),
+            AetowerToolBadgeItem(
+                "Diagnostics",
+                value: diagnosticsLabel,
+                systemImage: "waveform.path.ecg.rectangle",
+                tone: diagnosticsTint
+            ),
+        ]
     }
 
     private var navigationRail: some View {

@@ -178,28 +178,32 @@ public struct SettingsView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
         } badges: {
-            HStack(spacing: AetowerDesign.Spacing.sm) {
-                let progress = setupChecklistProgress
-                AetowerToolBadge(
-                    "Setup",
-                    value: "\(progress.completed)/\(progress.total)",
-                    systemImage: "checklist",
-                    tone: progress.completed == progress.total ? AetowerDesign.Status.success : AetowerDesign.Status.warning
-                )
-                AetowerToolBadge(
-                    "Integrations",
-                    value: hasPendingIntegrationChanges ? "Pending" : "Applied",
-                    systemImage: "point.3.connected.trianglepath.dotted",
-                    tone: hasPendingIntegrationChanges ? AetowerDesign.Status.warning : AetowerDesign.Status.success
-                )
-                AetowerToolBadge(
-                    "Safe mode",
-                    value: settings.operatorSafeModeEnabled ? "On" : "Off",
-                    systemImage: "shield.lefthalf.filled",
-                    tone: settings.operatorSafeModeEnabled ? AetowerDesign.Status.success : AetowerDesign.Status.warning
-                )
-            }
+            AetowerToolBadgeGroup(settingsHeaderBadges, visibleCount: 2)
         }
+    }
+
+    private var settingsHeaderBadges: [AetowerToolBadgeItem] {
+        let progress = setupChecklistProgress
+        return [
+            AetowerToolBadgeItem(
+                "Setup",
+                value: "\(progress.completed)/\(progress.total)",
+                systemImage: "checklist",
+                tone: progress.completed == progress.total ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+            ),
+            AetowerToolBadgeItem(
+                "Integrations",
+                value: hasPendingIntegrationChanges ? "Pending" : "Applied",
+                systemImage: "point.3.connected.trianglepath.dotted",
+                tone: hasPendingIntegrationChanges ? AetowerDesign.Status.warning : AetowerDesign.Status.success
+            ),
+            AetowerToolBadgeItem(
+                "Safe mode",
+                value: settings.operatorSafeModeEnabled ? "On" : "Off",
+                systemImage: "shield.lefthalf.filled",
+                tone: settings.operatorSafeModeEnabled ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+            ),
+        ]
     }
 
     private var settingsSidebar: some View {
