@@ -309,50 +309,50 @@ public struct StorageView: View {
     }
 
     private var storageScanOptionsCard: some View {
-        HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
-            Label("Scan options", systemImage: "slider.horizontal.3")
-                .font(AetowerDesign.Typography.controlLabel)
-                .foregroundStyle(AetowerDesign.Ink.secondary)
+        AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                Label("Scan options", systemImage: "slider.horizontal.3")
+                    .font(AetowerDesign.Typography.controlLabel)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize()
+
+                TextField("Optional root, for example ~/Repositories", text: $customRoot)
+                    .aetowerUtilityTextInput()
+                    .textFieldStyle(.plain)
+                    .font(AetowerDesign.Typography.caption)
+                    .padding(.horizontal, AetowerDesign.Spacing.sm)
+                    .padding(.vertical, AetowerDesign.Spacing.xs)
+                    .frame(minWidth: 220, idealWidth: 320, maxWidth: 420)
+                    .aetowerControlChrome()
+
+                Stepper(
+                    "Depth \(Int(maxDepth))",
+                    value: $maxDepth,
+                    in: 1...12,
+                    step: 1
+                )
+                .font(AetowerDesign.Typography.caption)
                 .fixedSize()
 
-            TextField("Optional root, for example ~/Repositories", text: $customRoot)
-                .aetowerUtilityTextInput()
-                .textFieldStyle(.plain)
-                .font(AetowerDesign.Typography.caption)
-                .padding(.horizontal, AetowerDesign.Spacing.sm)
-                .padding(.vertical, AetowerDesign.Spacing.xs)
-                .frame(minWidth: 220, idealWidth: 320, maxWidth: 420)
-                .aetowerControlChrome()
+                Picker("Mode", selection: $scanMode) {
+                    ForEach(StorageScanModeSelection.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
 
-            Stepper(
-                "Depth \(Int(maxDepth))",
-                value: $maxDepth,
-                in: 1...12,
-                step: 1
-            )
-            .font(AetowerDesign.Typography.caption)
-            .fixedSize()
+                Spacer(minLength: AetowerDesign.Spacing.sm)
 
-            Picker("Mode", selection: $scanMode) {
-                ForEach(StorageScanModeSelection.allCases) { mode in
-                    Text(mode.label).tag(mode)
+                if state.storageHygieneIsLoading {
+                    Text(storageScanLoadingTitle)
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
-            .pickerStyle(.segmented)
-            .frame(width: 220)
-
-            Spacer(minLength: AetowerDesign.Spacing.sm)
-
-            if state.storageHygieneIsLoading {
-                Text(storageScanLoadingTitle)
-                    .font(AetowerDesign.Typography.caption)
-                    .foregroundStyle(AetowerDesign.Ink.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
         }
-        .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func storageNavigationRail(report: StorageHygieneReportModel?) -> some View {
