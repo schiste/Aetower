@@ -371,25 +371,9 @@ public struct RepositoryView: View {
             searchPrompt: "Search repositories, branches, writers",
             searchWidth: 320
         ) {
-            Picker("", selection: $mode) {
-                ForEach(RepositoryMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityLabel("Repository view")
-            .frame(width: 300)
+            repositoryModeMenu
         } filterTools: {
-            Picker("", selection: $sort) {
-                ForEach(RepositorySort.allCases) { sort in
-                    Text(sort.label).tag(sort)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityLabel("Repository sort")
-            .frame(width: 360)
+            repositorySortMenu
         } badges: {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 AetowerToolBadge(
@@ -419,23 +403,81 @@ public struct RepositoryView: View {
                     tone: attentionBadgeTone
                 )
                 .help(attentionCountHelp)
-                AetowerToolBadge(
-                    "Scan",
-                    value: repositoryScanStatusLabel,
-                    systemImage: repositoryScanStatusIcon,
-                    tone: repositoryScanStatusTone
-                )
-                .help(repositoryScanStatusHelp)
             }
         } actions: {
-            Button {
+            AetowerScanButton(
+                state.storageHygieneReport == nil ? "Scan" : "Refresh",
+                isRunning: state.storageHygieneIsLoading
+            ) {
                 state.runStorageHygieneScan(roots: repositoryScanRoots)
-            } label: {
-                Label(state.storageHygieneReport == nil ? "Scan" : "Refresh", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(state.storageHygieneIsLoading)
         }
+    }
+
+    private var repositoryModeMenu: some View {
+        Menu {
+            ForEach(RepositoryMode.allCases) { candidate in
+                Button {
+                    mode = candidate
+                } label: {
+                    HStack {
+                        Text(candidate.label)
+                        if mode == candidate {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Image(systemName: "rectangle.grid.1x2")
+                Text(mode.label)
+                Image(systemName: "chevron.down")
+                    .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
+            }
+            .font(AetowerDesign.Typography.caption.weight(.semibold))
+            .foregroundStyle(AetowerDesign.Ink.secondary)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, AetowerDesign.Spacing.xs)
+            .aetowerControlChrome()
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityLabel("Repository view")
+    }
+
+    private var repositorySortMenu: some View {
+        Menu {
+            ForEach(RepositorySort.allCases) { candidate in
+                Button {
+                    sort = candidate
+                } label: {
+                    HStack {
+                        Text(candidate.label)
+                        if sort == candidate {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Image(systemName: "arrow.up.arrow.down")
+                Text(sort.label)
+                Image(systemName: "chevron.down")
+                    .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
+            }
+            .font(AetowerDesign.Typography.caption.weight(.semibold))
+            .foregroundStyle(AetowerDesign.Ink.secondary)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, AetowerDesign.Spacing.xs)
+            .aetowerControlChrome()
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityLabel("Repository sort")
     }
 
     private var repositoryScanRoots: [String] {

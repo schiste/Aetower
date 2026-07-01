@@ -197,6 +197,8 @@ public struct StorageView: View {
                 Divider()
                 ScrollView {
                     VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+                        storageScanOptionsCard
+
                         if let error = state.storageHygieneError {
                             warningBanner(error)
                         }
@@ -240,41 +242,7 @@ public struct StorageView: View {
         ) {
             EmptyView()
         } filterTools: {
-            HStack(spacing: AetowerDesign.Spacing.xs) {
-                Picker("", selection: $selectedFilter) {
-                    ForEach(StorageFilter.allCases) { filter in
-                        Text(filter.label).tag(filter)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .accessibilityLabel("Storage filter")
-                .frame(width: 430)
-                TextField("Optional root, for example ~/Repositories", text: $customRoot)
-                    .aetowerUtilityTextInput()
-                    .textFieldStyle(.plain)
-                    .font(AetowerDesign.Typography.caption)
-                    .padding(.horizontal, AetowerDesign.Spacing.sm)
-                    .padding(.vertical, AetowerDesign.Spacing.xs)
-                    .frame(width: 230)
-                    .aetowerControlChrome()
-                Stepper(
-                    "Depth \(Int(maxDepth))",
-                    value: $maxDepth,
-                    in: 1...12,
-                    step: 1
-                )
-                .font(AetowerDesign.Typography.caption)
-                .frame(width: 118)
-                Picker("Scan mode", selection: $scanMode) {
-                    ForEach(StorageScanModeSelection.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 220)
-            }
+            EmptyView()
         } badges: {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 AetowerToolBadge(
@@ -289,42 +257,12 @@ public struct StorageView: View {
                     systemImage: "shippingbox",
                     tone: AetowerDesign.Tone.memory
                 )
-                AetowerToolBadge(
-                    "Scan",
-                    value: storageScanStatusLabel,
-                    systemImage: state.storageHygieneIsLoading ? "arrow.triangle.2.circlepath" : "shield.checkered",
-                    tone: state.storageHygieneError == nil ? AetowerDesign.Status.ready : AetowerDesign.Status.error
-                )
             }
         } actions: {
             HStack(spacing: AetowerDesign.Spacing.sm) {
-                Button {
+                storageFilterMenu
+                AetowerScanButton(isRunning: state.storageHygieneIsLoading) {
                     runScan()
-                } label: {
-                    Label("Scan", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(state.storageHygieneIsLoading)
-                if state.storageHygieneIsLoading {
-                    Button {
-                        if state.storageScanJob?.isPaused == true {
-                            state.resumeStorageHygieneScan()
-                        } else {
-                            state.pauseStorageHygieneScan()
-                        }
-                    } label: {
-                        Label(
-                            state.storageScanJob?.isPaused == true ? "Resume" : "Pause",
-                            systemImage: state.storageScanJob?.isPaused == true ? "play.fill" : "pause.fill"
-                        )
-                    }
-                    .buttonStyle(.bordered)
-                    Button(role: .cancel) {
-                        state.cancelStorageHygieneScan()
-                    } label: {
-                        Label("Cancel", systemImage: "xmark.circle")
-                    }
-                    .buttonStyle(.bordered)
                 }
                 if !cleanupBasket.isEmpty {
                     Button {
@@ -336,6 +274,85 @@ public struct StorageView: View {
                 }
             }
         }
+    }
+
+    private var storageFilterMenu: some View {
+        Menu {
+            ForEach(StorageFilter.allCases) { filter in
+                Button {
+                    selectedFilter = filter
+                } label: {
+                    HStack {
+                        Text(filter.label)
+                        if selectedFilter == filter {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                Text(selectedFilter.label)
+                Image(systemName: "chevron.down")
+                    .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
+            }
+            .font(AetowerDesign.Typography.caption.weight(.semibold))
+            .foregroundStyle(AetowerDesign.Ink.secondary)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, AetowerDesign.Spacing.xs)
+            .aetowerControlChrome()
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private var storageScanOptionsCard: some View {
+        HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+            Label("Scan options", systemImage: "slider.horizontal.3")
+                .font(AetowerDesign.Typography.controlLabel)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .fixedSize()
+
+            TextField("Optional root, for example ~/Repositories", text: $customRoot)
+                .aetowerUtilityTextInput()
+                .textFieldStyle(.plain)
+                .font(AetowerDesign.Typography.caption)
+                .padding(.horizontal, AetowerDesign.Spacing.sm)
+                .padding(.vertical, AetowerDesign.Spacing.xs)
+                .frame(minWidth: 220, idealWidth: 320, maxWidth: 420)
+                .aetowerControlChrome()
+
+            Stepper(
+                "Depth \(Int(maxDepth))",
+                value: $maxDepth,
+                in: 1...12,
+                step: 1
+            )
+            .font(AetowerDesign.Typography.caption)
+            .fixedSize()
+
+            Picker("Mode", selection: $scanMode) {
+                ForEach(StorageScanModeSelection.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+
+            Spacer(minLength: AetowerDesign.Spacing.sm)
+
+            if state.storageHygieneIsLoading {
+                Text(storageScanLoadingTitle)
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func storageNavigationRail(report: StorageHygieneReportModel?) -> some View {

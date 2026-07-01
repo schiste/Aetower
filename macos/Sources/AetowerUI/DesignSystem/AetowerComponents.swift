@@ -341,11 +341,10 @@ public struct AetowerTabToolBand<LayoutTools: View, FilterTools: View, Badges: V
 
     private var horizontalBand: some View {
         HStack(spacing: AetowerDesign.Spacing.sm) {
-            layoutTools
+            badges
                 .fixedSize(horizontal: true, vertical: false)
 
-            filterTools
-                .fixedSize(horizontal: true, vertical: false)
+            Spacer(minLength: AetowerDesign.Spacing.xs)
 
             AetowerTabSearchField(text: searchText, prompt: searchPrompt)
                 .frame(width: searchWidth)
@@ -353,7 +352,10 @@ public struct AetowerTabToolBand<LayoutTools: View, FilterTools: View, Badges: V
 
             Spacer(minLength: AetowerDesign.Spacing.sm)
 
-            badges
+            layoutTools
+                .fixedSize(horizontal: true, vertical: false)
+
+            filterTools
                 .fixedSize(horizontal: true, vertical: false)
 
             actions
@@ -365,15 +367,16 @@ public struct AetowerTabToolBand<LayoutTools: View, FilterTools: View, Badges: V
     private var wrappedBand: some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
             HStack(spacing: AetowerDesign.Spacing.sm) {
-                layoutTools
-                filterTools
+                badges
                 Spacer(minLength: AetowerDesign.Spacing.sm)
                 actions
             }
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 AetowerTabSearchField(text: searchText, prompt: searchPrompt)
                     .frame(maxWidth: .infinity)
-                badges
+                layoutTools
+                    .fixedSize(horizontal: true, vertical: false)
+                filterTools
                     .fixedSize(horizontal: true, vertical: false)
             }
         }
@@ -506,6 +509,45 @@ public struct AetowerToolBadge: View {
             Capsule()
                 .stroke(tone.opacity(0.14), lineWidth: AetowerDesign.Stroke.hairline)
         }
+    }
+}
+
+public struct AetowerScanButton: View {
+    let title: String
+    let isRunning: Bool
+    let action: () -> Void
+
+    public init(
+        _ title: String = "Scan",
+        isRunning: Bool,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.isRunning = isRunning
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                if isRunning {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.72)
+                    Text("Scanning")
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                    Text(title)
+                }
+            }
+            .font(AetowerDesign.Typography.caption.weight(.semibold))
+            .frame(height: AetowerDesign.Size.controlHeight)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .disabled(isRunning)
+        .help(isRunning ? "A scan is already running" : title)
     }
 }
 
