@@ -17,6 +17,28 @@ private enum RepositoryMode: String, CaseIterable, Identifiable {
     }
 }
 
+private enum RepositoryDetailTab: String, CaseIterable, Identifiable {
+    case actions
+    case storage
+    case contracts
+    case scorecard
+    case git
+    case live
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .actions: return "Actions"
+        case .storage: return "Storage"
+        case .contracts: return "Contracts"
+        case .scorecard: return "Scorecard"
+        case .git: return "Git"
+        case .live: return "Live"
+        }
+    }
+}
+
 private enum RepositorySort: String, CaseIterable, Identifiable {
     case attention
     case size
@@ -44,6 +66,24 @@ private struct RepositoryAttentionItem: Identifiable {
     let systemImage: String
     let tone: Color
     let level: AetowerSurfaceLevel
+}
+
+private enum RepositoryPrimaryActionKind {
+    case refreshInventory
+    case prepareContract
+    case improveScorecard
+    case runScorecard
+    case reviewCleanup
+    case reviewClones
+    case reveal
+}
+
+private struct RepositoryPrimaryAction {
+    let title: String
+    let detail: String
+    let systemImage: String
+    let tone: Color
+    let kind: RepositoryPrimaryActionKind
 }
 
 private struct ScorecardWorkflowPreview: Identifiable {
@@ -96,6 +136,10 @@ private struct RepositorySummary: Identifiable {
     let gitRemoteHost: String?
     let gitRemoteOwner: String?
     let gitRemoteName: String?
+    let inventoryCacheStatus: String
+    let inventoryFingerprintChanged: Bool
+    let inventoryLastSeenMillis: UInt64?
+    let inventoryLastScanMillis: UInt64?
     let agentReadinessScore: UInt8
     let agentReadinessStatus: String
     let agentContractMissingCount: UInt64
@@ -123,9 +167,10 @@ private struct RepositorySummary: Identifiable {
         let qualityScore = Double(qualityIssueCount + Int(agentGuidanceIssueCount)) * 2.5 + readinessPenalty
         let duplicateScore = cloneGroupCount > 1 ? Double(cloneGroupCount) * 3 : 0
         let dirtyScore = gitDirtyStatus == "dirty" ? 2.0 : 0.0
+        let inventoryScore = inventoryNeedsAttention ? 9.0 : 0.0
         let storageScore = artifactScore + growthScore + reviewScore + staleScore
         let runtimeScore = violationScore + liveScore + qualityScore
-        return storageScore + runtimeScore + duplicateScore + dirtyScore + scorecardAttentionScore
+        return storageScore + runtimeScore + duplicateScore + dirtyScore + inventoryScore + scorecardAttentionScore
     }
 
     var scorecardAttentionScore: Double {
@@ -178,6 +223,7 @@ private struct RepositorySummary: Identifiable {
 
     var requiresAttention: Bool {
         attentionScore >= 8
+            || inventoryNeedsAttention
             || violationCount > 0
             || reviewItemCount > 0
             || qualityIssueCount > 0
@@ -187,6 +233,14 @@ private struct RepositorySummary: Identifiable {
             || cloneGroupCount > 1
             || gitDirtyStatus == "dirty"
             || hasScorecardAttention
+    }
+
+    var inventoryNeedsAttention: Bool {
+        notSeenInLatestScan
+            || inventoryFingerprintChanged
+            || inventoryCacheStatus == "changed"
+            || inventoryCacheStatus == "missing"
+            || inventoryCacheStatus == "legacy"
     }
 
     private static func normalizedScorecardCheckName(_ name: String) -> String {
@@ -217,6 +271,8 @@ private struct RepositorySummary: Identifiable {
     }
 
     var statusLabel: String {
+        if inventoryCacheStatus == "missing" { return "Missing" }
+        if inventoryCacheStatus == "changed" || inventoryFingerprintChanged { return "Changed" }
         if violationCount > 0 { return "Budget" }
         if agentReadinessStatus == "blocked" { return "Agent blocked" }
         if agentReadinessStatus == "weak" { return "Agent weak" }
@@ -234,6 +290,8 @@ private struct RepositorySummary: Identifiable {
     }
 
     var statusTone: Color {
+        if inventoryCacheStatus == "missing" { return AetowerDesign.Status.error }
+        if inventoryCacheStatus == "changed" || inventoryFingerprintChanged { return AetowerDesign.Status.warning }
         if violationCount > 0 { return AetowerDesign.Status.error }
         if agentReadinessStatus == "blocked" { return AetowerDesign.Status.error }
         if agentReadinessStatus == "weak" { return AetowerDesign.Status.warning }
@@ -325,8 +383,9 @@ private enum AgentContractLaunchPromptKind: Equatable {
 public struct RepositoryView: View {
     let state: AppState
     let settings: SettingsStore
-    @State private var mode: RepositoryMode = .overview
+    @State private var mode: RepositoryMode = .attention
     @State private var sort: RepositorySort = .attention
+    @State private var detailTab: RepositoryDetailTab = .actions
     @State private var searchText = ""
     @State private var repositoryPath: [String] = []
     @State private var copiedRepositoryID: String?
@@ -375,35 +434,7 @@ public struct RepositoryView: View {
         } filterTools: {
             repositorySortMenu
         } badges: {
-            HStack(spacing: AetowerDesign.Spacing.sm) {
-                AetowerToolBadge(
-                    "Roots",
-                    value: "\(settings.repositoryRoots.count)",
-                    systemImage: "folder.badge.gearshape",
-                    tone: repositoryRootsBadgeTone
-                )
-                .help(repositoryRootsHelp)
-                AetowerToolBadge(
-                    "Repos",
-                    value: repositoryCountLabel,
-                    systemImage: "folder",
-                    tone: repositoryBadgeTone
-                )
-                .help(repositoryCountHelp)
-                AetowerToolBadge(
-                    "Artifacts",
-                    value: artifactBytesLabel,
-                    systemImage: "shippingbox",
-                    tone: AetowerDesign.Tone.disk
-                )
-                AetowerToolBadge(
-                    "Attention",
-                    value: attentionCountLabel,
-                    systemImage: "exclamationmark.triangle",
-                    tone: attentionBadgeTone
-                )
-                .help(attentionCountHelp)
-            }
+            AetowerToolBadgeGroup(repositoryHeaderBadges, visibleCount: 2)
         } actions: {
             AetowerScanButton(
                 state.storageHygieneReport == nil ? "Scan" : "Refresh",
@@ -412,6 +443,35 @@ public struct RepositoryView: View {
                 state.runStorageHygieneScan(roots: repositoryScanRoots)
             }
         }
+    }
+
+    private var repositoryHeaderBadges: [AetowerToolBadgeItem] {
+        [
+            AetowerToolBadgeItem(
+                "Roots",
+                value: "\(settings.repositoryRoots.count)",
+                systemImage: "folder.badge.gearshape",
+                tone: repositoryRootsBadgeTone
+            ),
+            AetowerToolBadgeItem(
+                "Repos",
+                value: repositoryCountLabel,
+                systemImage: "folder",
+                tone: repositoryBadgeTone
+            ),
+            AetowerToolBadgeItem(
+                "Artifacts",
+                value: artifactBytesLabel,
+                systemImage: "shippingbox",
+                tone: AetowerDesign.Tone.disk
+            ),
+            AetowerToolBadgeItem(
+                "Attention",
+                value: attentionCountLabel,
+                systemImage: "exclamationmark.triangle",
+                tone: attentionBadgeTone
+            ),
+        ]
     }
 
     private var repositoryModeMenu: some View {
@@ -652,8 +712,8 @@ public struct RepositoryView: View {
         let repositories = filteredRepositories(from: report)
 
         return ScrollView {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                repositoryOverview(report, repositories: repositories)
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                repositoryStatusStrip(report, repositories: repositories)
                 if state.storageHygieneIsLoading {
                     repositoryScanProgressBanner
                 }
@@ -666,7 +726,7 @@ public struct RepositoryView: View {
                         tone: AetowerDesign.Status.neutral
                     )
                 } else {
-                    repositoryOverviewGrid(repositories)
+                    repositoryCockpitList(repositories)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -674,124 +734,100 @@ public struct RepositoryView: View {
         }
     }
 
-    private func repositoryOverview(
+    private func repositoryStatusStrip(
         _ report: StorageHygieneReportModel,
         repositories: [RepositorySummary]
     ) -> some View {
         let allRepositories = repositorySummaries(from: report)
-        let activeCount = allRepositories.filter { $0.liveSessionCount > 0 || $0.liveEntityCount > 0 }.count
-        let growingCount = allRepositories.filter { ($0.growthBytes ?? 0) > 0 }.count
-        let duplicateCloneCount = allRepositories.filter { $0.cloneGroupCount > 1 }.count
-        let dirtyCount = allRepositories.filter { $0.gitDirtyStatus == "dirty" }.count
-        let agentReadyCount = allRepositories.filter { $0.agentReadinessStatus == "ready" }.count
-        let reviewCount = allRepositories.filter(\.requiresAttention).count
-        let missingRootCount = repositoryScanRoots.filter { !SettingsStore.repositoryRootExists($0) }.count
+        let attentionCount = allRepositories.filter(\.requiresAttention).count
+        let changedInventoryCount = allRepositories.filter(\.inventoryNeedsAttention).count
+        let completedLabel = state.storageHygieneCompletedAt.map {
+            $0.formatted(date: .omitted, time: .shortened)
+        } ?? "Not run"
 
-        return LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 180), spacing: AetowerDesign.Spacing.md)],
-            alignment: .leading,
-            spacing: AetowerDesign.Spacing.md
-        ) {
-            AetowerMetricTile(
-                "Roots",
-                value: "\(repositoryScanRoots.count)",
-                detail: missingRootCount == 0 ? "configured repository roots" : "\(missingRootCount) unavailable",
-                systemImage: "folder.badge.gearshape",
-                tone: missingRootCount == 0 ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
-            )
-            AetowerMetricTile(
-                "Indexed",
-                value: "\(allRepositories.count)",
-                detail: "\(repositories.count) visible · \(allRepositories.filter(\.hasStorageFootprint).count) with artifacts",
-                systemImage: "folder",
-                tone: AetowerDesign.Tone.cpu
-            )
-            AetowerMetricTile(
-                "Artifact weight",
-                value: formatBytes(totalArtifactBytes(allRepositories)),
-                detail: "build/log/cache footprint",
-                systemImage: "shippingbox",
-                tone: AetowerDesign.Tone.disk
-            )
-            AetowerMetricTile(
-                "Attention",
-                value: "\(reviewCount)",
-                detail: "budget, readiness, or review signals",
-                systemImage: "exclamationmark.triangle",
-                tone: reviewCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
-            )
-            AetowerMetricTile(
-                "Agent-ready",
-                value: "\(agentReadyCount)",
-                detail: "repos with >=90% contract coverage",
-                systemImage: "checkmark.seal",
-                tone: agentReadyCount == allRepositories.count ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
-            )
-            AetowerMetricTile(
-                "Active",
-                value: "\(activeCount)",
-                detail: "live sessions or attributed processes",
-                systemImage: "dot.radiowaves.left.and.right",
-                tone: activeCount > 0 ? AetowerDesign.Status.ready : AetowerDesign.Status.neutral
-            )
-            AetowerMetricTile(
-                "Growing",
-                value: "\(growingCount)",
-                detail: report.summary.attributedRepoCount > 0 ? "baseline-backed deltas" : "waiting for baseline",
-                systemImage: "chart.line.uptrend.xyaxis",
-                tone: growingCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
-            )
-            AetowerMetricTile(
-                "Clone groups",
-                value: "\(duplicateCloneCount)",
-                detail: "repos sharing a remote",
-                systemImage: "square.stack.3d.up",
-                tone: duplicateCloneCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
-            )
-            AetowerMetricTile(
-                "Dirty trees",
-                value: "\(dirtyCount)",
-                detail: "uncommitted work detected",
-                systemImage: "pencil.and.scribble",
-                tone: dirtyCount > 0 ? AetowerDesign.Tone.energy : AetowerDesign.Status.ready
-            )
-        }
-    }
-
-    private func repositoryOverviewGrid(_ repositories: [RepositorySummary]) -> some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 280), spacing: AetowerDesign.Spacing.md)],
-            alignment: .leading,
-            spacing: AetowerDesign.Spacing.md
-        ) {
-            ForEach(repositories) { repository in
-                repositoryOverviewCard(repository)
-            }
-        }
-    }
-
-    private func repositoryOverviewCard(_ repository: RepositorySummary) -> some View {
-        NavigationLink(value: repository.id) {
-            AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md) {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                    HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
-                        Text(repository.name)
-                            .font(AetowerDesign.Typography.controlLabel)
-                            .foregroundStyle(AetowerDesign.Ink.primary)
-                            .lineLimit(1)
-                        Spacer(minLength: AetowerDesign.Spacing.sm)
-                        AetowerBadge(repository.statusLabel, tone: repository.statusTone)
-                    }
-                    Text(shortPath(repository.root))
+        return AetowerSurface(level: .quiet, padding: AetowerDesign.Spacing.sm) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                AetowerBadge(
+                    "\(allRepositories.count)\(repositoryInventoryIsIncomplete(report) ? "+" : "") repos",
+                    tone: repositoryInventoryIsIncomplete(report) ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+                )
+                AetowerBadge(
+                    "\(attentionCount)\(repositoryInventoryIsIncomplete(report) ? "+" : "") attention",
+                    tone: attentionCount > 0 || repositoryInventoryIsIncomplete(report)
+                        ? AetowerDesign.Status.warning
+                        : AetowerDesign.Status.ready
+                )
+                AetowerBadge(
+                    repositoryInventoryIsIncomplete(report) ? "Inventory partial" : "Inventory complete",
+                    tone: repositoryInventoryIsIncomplete(report) ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+                )
+                if changedInventoryCount > 0 {
+                    AetowerBadge(
+                        "\(changedInventoryCount) stale",
+                        tone: AetowerDesign.Status.warning
+                    )
+                }
+                Text("\(repositories.count) visible · \(completedLabel)")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                if repositoryInventoryIsIncomplete(report) {
+                    Text(repositoryInventoryPartialRootsDetail(report))
                         .font(AetowerDesign.Typography.metadata)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
                         .lineLimit(1)
-                    repositoryOverviewStats(repository)
+                        .truncationMode(.middle)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .buttonStyle(.plain)
+    }
+
+    private func repositoryCockpitList(_ repositories: [RepositorySummary]) -> some View {
+        AetowerSurface(level: .card, padding: AetowerDesign.Spacing.none) {
+            LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.none) {
+                repositoryListHeader
+                ForEach(repositories) { repository in
+                    Divider()
+                    repositoryListRow(repository)
+                }
+            }
+        }
+    }
+
+    private var repositoryListHeader: some View {
+        HStack(spacing: AetowerDesign.Spacing.md) {
+            tableHeader("Repository", width: 260)
+            tableHeader("Status", width: 92)
+            tableHeader("Git", width: 120)
+            tableHeader("Inventory", width: 118)
+            tableHeader("Attention", width: 220)
+            Spacer(minLength: AetowerDesign.Spacing.sm)
+            tableHeader("Next action", width: 180, alignment: .trailing)
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.md)
+        .padding(.vertical, AetowerDesign.Spacing.sm)
+    }
+
+    private func tableHeader(
+        _ label: String,
+        width: CGFloat,
+        alignment: Alignment = .leading
+    ) -> some View {
+        Text(label.uppercased())
+            .font(AetowerDesign.Typography.metadata)
+            .foregroundStyle(AetowerDesign.Ink.tertiary)
+            .frame(width: width, alignment: alignment)
+    }
+
+    private func repositoryListRow(_ repository: RepositorySummary) -> some View {
+        ViewThatFits(in: .horizontal) {
+            repositoryWideRow(repository)
+            repositoryCompactRow(repository)
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.md)
+        .padding(.vertical, AetowerDesign.Spacing.sm)
+        .background(repository.inventoryNeedsAttention ? AetowerDesign.Status.warning.opacity(0.05) : Color.clear)
         .contextMenu {
             Button("Reveal in Finder") {
                 reveal(repository.root)
@@ -806,37 +842,282 @@ public struct RepositoryView: View {
         }
     }
 
-    private func repositoryOverviewStats(_ repository: RepositorySummary) -> some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 96), spacing: AetowerDesign.Spacing.xs)],
-            alignment: .leading,
-            spacing: AetowerDesign.Spacing.xs
-        ) {
-            repositoryMiniStat(
-                "Artifacts",
-                value: repository.hasStorageFootprint ? formatBytes(repository.artifactBytes) : "Clean",
-                tone: repository.hasStorageFootprint ? AetowerDesign.Tone.disk : AetowerDesign.Status.neutral
-            )
-            repositoryMiniStat("Growth", value: growthLabel(repository), tone: growthTone(repository))
-            repositoryMiniStat("Git", value: gitOverviewLabel(repository), tone: gitOverviewTone(repository))
-            repositoryMiniStat(
-                "Live",
-                value: "\(repository.liveSessionCount + repository.liveEntityCount)",
-                tone: repository.liveSessionCount + repository.liveEntityCount > 0
-                    ? AetowerDesign.Status.ready
-                    : AetowerDesign.Status.neutral
-            )
-            repositoryMiniStat("Agents", value: agentReadinessLabel(repository), tone: agentReadinessTone(repository))
+    private func repositoryWideRow(_ repository: RepositorySummary) -> some View {
+        HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+            repositoryNameCell(repository)
+                .frame(width: 260, alignment: .leading)
+            AetowerBadge(repository.statusLabel, tone: repository.statusTone)
+                .frame(width: 92, alignment: .leading)
+            repositoryCellText(gitOverviewLabel(repository), detail: repository.gitBranch ?? repository.gitHead ?? "")
+                .frame(width: 120, alignment: .leading)
+            inventoryFreshnessCell(repository)
+                .frame(width: 118, alignment: .leading)
+            repositoryAttentionReasonCell(repository)
+                .frame(width: 220, alignment: .leading)
+            Spacer(minLength: AetowerDesign.Spacing.sm)
+            repositoryPrimaryActionButton(repository)
+                .frame(width: 180, alignment: .trailing)
         }
     }
 
-    private func repositoryMiniStat(_ label: String, value: String, tone: Color) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-            Text(label.uppercased())
-                .font(AetowerDesign.Typography.metadata)
-                .foregroundStyle(AetowerDesign.Ink.tertiary)
-            AetowerBadge(value, tone: tone)
+    private func repositoryCompactRow(_ repository: RepositorySummary) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                repositoryNameCell(repository)
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                AetowerBadge(repository.statusLabel, tone: repository.statusTone)
+            }
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                repositoryCellText("Git", detail: gitOverviewLabel(repository))
+                inventoryFreshnessCell(repository)
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                repositoryPrimaryActionButton(repository)
+            }
+            repositoryAttentionReasonCell(repository)
         }
+    }
+
+    private func repositoryNameCell(_ repository: RepositorySummary) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            NavigationLink(value: repository.id) {
+                Text(repository.name)
+                    .font(AetowerDesign.Typography.controlLabel)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .buttonStyle(.plain)
+            Text(shortPath(repository.root))
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private func repositoryCellText(_ value: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            Text(value)
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+                .foregroundStyle(AetowerDesign.Ink.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+    }
+
+    private func repositoryAttentionReasonCell(_ repository: RepositorySummary) -> some View {
+        let item = repositoryAttentionItems(repository).first
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            Text(item?.title ?? "Ready")
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+                .foregroundStyle(AetowerDesign.Ink.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Text(item?.detail ?? "No immediate action required.")
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(2)
+                .truncationMode(.tail)
+        }
+    }
+
+    private func inventoryFreshnessCell(_ repository: RepositorySummary) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            AetowerBadge(inventoryFreshnessLabel(repository), tone: inventoryFreshnessTone(repository))
+            Text(inventoryFreshnessDetail(repository))
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private func repositoryPrimaryActionButton(_ repository: RepositorySummary) -> some View {
+        let action = primaryRepositoryAction(repository)
+        return Button {
+            performPrimaryRepositoryAction(action, repository: repository)
+        } label: {
+            Label(action.title, systemImage: action.systemImage)
+                .lineLimit(1)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(action.tone)
+        .help(action.detail)
+    }
+
+    private func primaryRepositoryAction(_ repository: RepositorySummary) -> RepositoryPrimaryAction {
+        if repository.inventoryNeedsAttention {
+            return RepositoryPrimaryAction(
+                title: "Refresh repo",
+                detail: inventoryFreshnessDetail(repository),
+                systemImage: "arrow.clockwise",
+                tone: AetowerDesign.Status.warning,
+                kind: .refreshInventory
+            )
+        }
+        if repository.agentReadinessStatus == "blocked"
+            || repository.agentReadinessStatus == "weak"
+            || repository.agentGuidanceIssueCount > 0
+            || repository.qualityIssueCount > 0
+        {
+            return RepositoryPrimaryAction(
+                title: "Prepare with Aethyme",
+                detail: agentGuidanceTitle(repository),
+                systemImage: "terminal",
+                tone: AetowerDesign.Tone.energy,
+                kind: .prepareContract
+            )
+        }
+        if repository.hasScorecardAttention, repository.scorecardReport != nil {
+            return RepositoryPrimaryAction(
+                title: "Ask Chau7",
+                detail: "Improve Scorecard posture with local edits and a remote settings checklist.",
+                systemImage: "terminal",
+                tone: AetowerDesign.Tone.energy,
+                kind: .improveScorecard
+            )
+        }
+        if repository.scorecardReport == nil {
+            return RepositoryPrimaryAction(
+                title: "Run Scorecard",
+                detail: "Run OpenSSF Scorecard on demand for this repository.",
+                systemImage: "shield.lefthalf.filled",
+                tone: AetowerDesign.Tone.cpu,
+                kind: .runScorecard
+            )
+        }
+        if repository.reviewItemCount > 0 || repository.artifactBytes > 0 {
+            return RepositoryPrimaryAction(
+                title: "Review cleanup",
+                detail: "Copy a focused optimization brief for artifact cleanup review.",
+                systemImage: "shippingbox",
+                tone: AetowerDesign.Tone.disk,
+                kind: .reviewCleanup
+            )
+        }
+        if repository.cloneGroupCount > 1 {
+            return RepositoryPrimaryAction(
+                title: "Review clones",
+                detail: cloneGroupDetail(repository),
+                systemImage: "square.stack.3d.up",
+                tone: AetowerDesign.Status.warning,
+                kind: .reviewClones
+            )
+        }
+        return RepositoryPrimaryAction(
+            title: "Reveal",
+            detail: "Reveal this repository in Finder.",
+            systemImage: "folder",
+            tone: AetowerDesign.Status.neutral,
+            kind: .reveal
+        )
+    }
+
+    private func performPrimaryRepositoryAction(
+        _ action: RepositoryPrimaryAction,
+        repository: RepositorySummary
+    ) {
+        switch action.kind {
+        case .refreshInventory:
+            state.runStorageHygieneScan(roots: repositoryScanRoots)
+        case .prepareContract:
+            launchPrimaryAethymeContractAction(repository)
+        case .improveScorecard:
+            if let report = repository.scorecardReport {
+                launchScorecardRemediationInChau7(repository, report: report)
+            } else {
+                state.runRepositoryScorecard(repoRoot: repository.root, mode: "auto", refresh: false)
+            }
+        case .runScorecard:
+            state.runRepositoryScorecard(repoRoot: repository.root, mode: "auto", refresh: false)
+        case .reviewCleanup:
+            copy(optimizationBrief(for: repository))
+            copiedRepositoryID = repository.id
+        case .reviewClones:
+            repositoryPath.append(repository.id)
+            detailTab = .git
+        case .reveal:
+            reveal(repository.root)
+        }
+    }
+
+    private func launchPrimaryAethymeContractAction(_ repository: RepositorySummary) {
+        guard let contract = selectedAgentContract(repository) else {
+            copy(optimizationBrief(for: repository))
+            copiedRepositoryID = repository.id
+            return
+        }
+        let key = AgentContractPrompts.key(repositoryID: repository.id, contract: contract, kind: "chau7")
+        launchAgentContractPromptInChau7(
+            repository,
+            contract: contract,
+            issues: agentContractIssues(repository, contract: contract),
+            key: key,
+            promptKind: agentContractLaunchPromptKind(contract)
+        )
+    }
+
+    private func inventoryFreshnessLabel(_ repository: RepositorySummary) -> String {
+        if repository.inventoryFingerprintChanged { return "Changed" }
+        switch repository.inventoryCacheStatus {
+        case "scanned":
+            return "Fresh"
+        case "current":
+            return "Current"
+        case "changed":
+            return "Changed"
+        case "missing":
+            return "Missing"
+        case "legacy":
+            return "Legacy"
+        case "uncached":
+            return "Uncached"
+        default:
+            return repository.notSeenInLatestScan ? "Cached" : "Unknown"
+        }
+    }
+
+    private func inventoryFreshnessTone(_ repository: RepositorySummary) -> Color {
+        if repository.inventoryCacheStatus == "missing" { return AetowerDesign.Status.error }
+        if repository.inventoryNeedsAttention { return AetowerDesign.Status.warning }
+        if repository.inventoryCacheStatus == "scanned" || repository.inventoryCacheStatus == "current" {
+            return AetowerDesign.Status.ready
+        }
+        return AetowerDesign.Status.neutral
+    }
+
+    private func inventoryFreshnessDetail(_ repository: RepositorySummary) -> String {
+        let seen = repository.inventoryLastSeenMillis.map(repositoryMillisLabel) ?? "not seen"
+        switch repository.inventoryCacheStatus {
+        case "scanned":
+            return "latest scan"
+        case "current":
+            return "cache verified · \(seen)"
+        case "changed":
+            return "Git metadata changed"
+        case "missing":
+            return "cached path missing"
+        case "legacy":
+            return "refresh fingerprint"
+        case "uncached":
+            return "not cached"
+        default:
+            return repository.notSeenInLatestScan ? "cached · \(seen)" : seen
+        }
+    }
+
+    private func repositoryMillisLabel(_ millis: UInt64) -> String {
+        guard millis > 0 else { return "unknown" }
+        let date = Date(timeIntervalSince1970: Double(millis) / 1000.0)
+        return date.formatted(date: .omitted, time: .shortened)
     }
 
     @ViewBuilder
@@ -860,23 +1141,49 @@ public struct RepositoryView: View {
         _ repository: RepositorySummary,
         report: StorageHygieneReportModel
     ) -> some View {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-                    repositoryHero(repository)
-                    repositoryActions(repository)
-                    repositoryAttentionSummary(repository)
-                    repositorySignals(repository)
-                    repositorySupplyChainReadiness(repository)
-                    repositoryAgentGuidance(repository)
-                    repositoryGitIntelligence(repository)
-                    topArtifacts(repository)
-                    liveContext(repository)
-                    futureOptimizationLanes(repository, report: report)
+        ScrollView {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                repositoryHero(repository)
+                repositoryDetailTabPicker
+                repositoryDetailTabContent(repository, report: report)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(AetowerDesign.Spacing.xxl)
         }
         .navigationTitle(repository.name)
+    }
+
+    private var repositoryDetailTabPicker: some View {
+        Picker("Repository detail", selection: $detailTab) {
+            ForEach(RepositoryDetailTab.allCases) { tab in
+                Text(tab.label).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 720, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func repositoryDetailTabContent(
+        _ repository: RepositorySummary,
+        report: StorageHygieneReportModel
+    ) -> some View {
+        switch detailTab {
+        case .actions:
+            repositoryActions(repository)
+            repositoryAttentionSummary(repository)
+        case .storage:
+            repositoryStorageSignals(repository)
+            topArtifacts(repository)
+        case .contracts:
+            repositoryAgentGuidance(repository)
+        case .scorecard:
+            repositorySupplyChainReadiness(repository)
+        case .git:
+            repositoryGitIntelligence(repository)
+        case .live:
+            liveContext(repository)
+        }
     }
 
     private func repositoryHero(_ repository: RepositorySummary) -> some View {
@@ -1050,75 +1357,49 @@ public struct RepositoryView: View {
         return items
     }
 
-    private func repositorySignals(_ repository: RepositorySummary) -> some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 160), spacing: AetowerDesign.Spacing.md)],
-            alignment: .leading,
-            spacing: AetowerDesign.Spacing.md
-        ) {
-            AetowerMetricTile(
-                "Artifacts",
-                value: formatBytes(repository.artifactBytes),
-                detail: "\(repository.itemCount) tracked item\(repository.itemCount == 1 ? "" : "s")",
-                systemImage: "shippingbox",
-                tone: AetowerDesign.Tone.disk
-            )
-            AetowerMetricTile(
-                "Growth",
-                value: growthLabel(repository),
-                detail: repository.growthWindow,
-                systemImage: "chart.line.uptrend.xyaxis",
-                tone: growthTone(repository)
-            )
-            AetowerMetricTile(
-                "Rebuild cost",
-                value: repository.estimatedRebuildCost,
-                detail: rebuildTimeLabel(repository.estimatedRebuildSeconds),
-                systemImage: "hammer",
-                tone: AetowerDesign.Tone.energy
-            )
-            AetowerMetricTile(
-                "Live load",
-                value: String(format: "%.1f%%", repository.liveCPUPercent),
-                detail: "\(formatBytes(repository.liveMemoryBytes)) memory",
-                systemImage: "cpu",
-                tone: repository.liveCPUPercent > 15 ? AetowerDesign.Status.warning : AetowerDesign.Tone.cpu
-            )
-            AetowerMetricTile(
-                "Agent cost",
-                value: formatBytes(repository.agentArtifactBytes),
-                detail: "\(repository.agentCount) agent source\(repository.agentCount == 1 ? "" : "s")",
-                systemImage: "person.crop.circle.badge.gearshape",
-                tone: repository.agentArtifactBytes > 0 ? AetowerDesign.Tone.memory : AetowerDesign.Status.neutral
-            )
-            AetowerMetricTile(
-                "Contract readiness",
-                value: agentReadinessLabel(repository),
-                detail: agentReadinessDetail(repository),
-                systemImage: "checkmark.seal",
-                tone: agentReadinessTone(repository)
-            )
-            AetowerMetricTile(
-                "Supply-chain",
-                value: scorecardReadinessLabel(repository),
-                detail: scorecardReadinessDetail(repository),
-                systemImage: "shield.lefthalf.filled",
-                tone: scorecardReadinessTone(repository)
-            )
-            AetowerMetricTile(
-                "Git state",
-                value: gitOverviewLabel(repository),
-                detail: gitDetail(repository),
-                systemImage: "arrow.triangle.branch",
-                tone: gitOverviewTone(repository)
-            )
-            AetowerMetricTile(
-                "Clone group",
-                value: cloneGroupLabel(repository),
-                detail: repository.gitRemoteKey ?? "remote unavailable",
-                systemImage: "square.stack.3d.up",
-                tone: repository.cloneGroupCount > 1 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
-            )
+    private func repositoryStorageSignals(_ repository: RepositorySummary) -> some View {
+        AetowerSection("Storage", subtitle: "Artifact footprint, growth, and cleanup review signals") {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 170), spacing: AetowerDesign.Spacing.md)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.md
+            ) {
+                AetowerMetricTile(
+                    "Artifacts",
+                    value: formatBytes(repository.artifactBytes),
+                    detail: "\(repository.itemCount) tracked item\(repository.itemCount == 1 ? "" : "s")",
+                    systemImage: "shippingbox",
+                    tone: AetowerDesign.Tone.disk
+                )
+                AetowerMetricTile(
+                    "Growth",
+                    value: growthLabel(repository),
+                    detail: repository.growthWindow,
+                    systemImage: "chart.line.uptrend.xyaxis",
+                    tone: growthTone(repository)
+                )
+                AetowerMetricTile(
+                    "Rebuild cost",
+                    value: repository.estimatedRebuildCost,
+                    detail: rebuildTimeLabel(repository.estimatedRebuildSeconds),
+                    systemImage: "hammer",
+                    tone: AetowerDesign.Tone.energy
+                )
+                AetowerMetricTile(
+                    "Review",
+                    value: "\(repository.reviewItemCount)",
+                    detail: "\(repository.safeItemCount) safe · \(repository.staleItemCount) stale",
+                    systemImage: "checklist",
+                    tone: repository.reviewItemCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+                )
+                AetowerMetricTile(
+                    "Agent cost",
+                    value: formatBytes(repository.agentArtifactBytes),
+                    detail: "\(repository.agentCount) agent source\(repository.agentCount == 1 ? "" : "s")",
+                    systemImage: "person.crop.circle.badge.gearshape",
+                    tone: repository.agentArtifactBytes > 0 ? AetowerDesign.Tone.memory : AetowerDesign.Status.neutral
+                )
+            }
         }
     }
 
@@ -2310,25 +2591,44 @@ public struct RepositoryView: View {
         AetowerSurface {
             HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                    Text("Repository actions")
+                    Text("Next action")
                         .font(AetowerDesign.Typography.sectionTitle)
                         .foregroundStyle(AetowerDesign.Ink.primary)
-                    Text("Fast local actions for this repository. Any repository write is shown with a preview before it runs.")
+                    Text(primaryRepositoryAction(repository).detail)
                         .font(AetowerDesign.Typography.caption)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: AetowerDesign.Spacing.md)
+                Menu {
+                    Button("Prepare operating contracts in Chau7") {
+                        launchPrimaryAethymeContractAction(repository)
+                    }
+                    .disabled(repository.agentContractCoverage.isEmpty)
+                    if let report = repository.scorecardReport {
+                        Button("Improve Scorecard posture in Chau7") {
+                            launchScorecardRemediationInChau7(repository, report: report)
+                        }
+                        .disabled(report.failedChecks.isEmpty)
+                    } else {
+                        Button("Run Scorecard first") {
+                            state.runRepositoryScorecard(repoRoot: repository.root, mode: "auto", refresh: false)
+                        }
+                    }
+                    Button("Copy optimization brief") {
+                        copy(optimizationBrief(for: repository))
+                        copiedRepositoryID = repository.id
+                    }
+                } label: {
+                    Label("Optimize with Aethyme", systemImage: "terminal")
+                }
+                .buttonStyle(.borderedProminent)
                 Button("Reveal") {
                     reveal(repository.root)
                 }
                 Button("Copy path") {
                     copy(repository.root)
                 }
-                Button("Copy brief") {
-                    copy(optimizationBrief(for: repository))
-                    copiedRepositoryID = repository.id
-                }
-                .buttonStyle(.borderedProminent)
                 AetowerBadge(
                     copiedRepositoryID == repository.id ? "Copied" : "Ready",
                     tone: copiedRepositoryID == repository.id ? AetowerDesign.Status.ready : AetowerDesign.Status.neutral
@@ -2414,65 +2714,6 @@ public struct RepositoryView: View {
                     systemImage: "pencil.and.list.clipboard",
                     tone: repository.lastWriterProcess == nil ? AetowerDesign.Status.neutral : AetowerDesign.Status.ready
                 )
-            }
-        }
-    }
-
-    private func futureOptimizationLanes(
-        _ repository: RepositorySummary,
-        report: StorageHygieneReportModel
-    ) -> some View {
-        AetowerSection("Optimization lanes", subtitle: "Future repository-management surface") {
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 220), spacing: AetowerDesign.Spacing.md)],
-                alignment: .leading,
-                spacing: AetowerDesign.Spacing.md
-            ) {
-                laneCard(
-                    title: "Artifact hygiene",
-                    detail: "\(formatBytes(repository.artifactBytes)) can be explained by build/log/cache folders before cleanup actions are enabled.",
-                    icon: "externaldrive.badge.minus",
-                    tone: AetowerDesign.Tone.disk
-                )
-                laneCard(
-                    title: "Growth budget",
-                    detail: "Track repo deltas against \(formatBytes(report.budgetGuardrails.repoGrowthBudgetBytesPerDay)) per day.",
-                    icon: "speedometer",
-                    tone: growthTone(repository)
-                )
-                laneCard(
-                    title: "Agent attribution",
-                    detail: "\(formatBytes(repository.agentArtifactBytes)) attributed to AI-agent sessions for this repo.",
-                    icon: "person.crop.circle.badge.gearshape",
-                    tone: AetowerDesign.Tone.memory
-                )
-                laneCard(
-                    title: "Build cost",
-                    detail: "\(repository.estimatedRebuildCost) rebuild class; defer expensive cleanup until confirmed.",
-                    icon: "hammer",
-                    tone: AetowerDesign.Tone.energy
-                )
-            }
-        }
-    }
-
-    private func laneCard(
-        title: String,
-        detail: String,
-        icon: String,
-        tone: Color
-    ) -> some View {
-        AetowerSurface(level: .card) {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                Image(systemName: icon)
-                    .foregroundStyle(tone)
-                Text(title)
-                    .font(AetowerDesign.Typography.controlLabel)
-                    .foregroundStyle(AetowerDesign.Ink.primary)
-                Text(detail)
-                    .font(AetowerDesign.Typography.caption)
-                    .foregroundStyle(AetowerDesign.Ink.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -2576,6 +2817,8 @@ public struct RepositoryView: View {
                     || (repository.gitRemoteOriginUrl?.localizedCaseInsensitiveContains(query) ?? false)
                     || (repository.gitBranch?.localizedCaseInsensitiveContains(query) ?? false)
                     || (repository.gitHead?.localizedCaseInsensitiveContains(query) ?? false)
+                    || repository.inventoryCacheStatus.localizedCaseInsensitiveContains(query)
+                    || inventoryFreshnessLabel(repository).localizedCaseInsensitiveContains(query)
                     || repository.agentReadinessStatus.localizedCaseInsensitiveContains(query)
                     || repository.agentContractCoverage.contains {
                         $0.label.localizedCaseInsensitiveContains(query)
@@ -2661,6 +2904,10 @@ public struct RepositoryView: View {
                 gitDirtyFileCount: inventory.gitDirtyFileCount,
                 gitDirtyTruncated: inventory.gitDirtyTruncated,
                 notSeenInLatestScan: inventory.notSeenInLatestScan,
+                inventoryCacheStatus: inventory.inventoryCacheStatus,
+                inventoryFingerprintChanged: inventory.inventoryFingerprintChanged,
+                inventoryLastSeenMillis: inventory.inventoryLastSeenMillis,
+                inventoryLastScanMillis: inventory.inventoryLastScanMillis,
                 cloneGroupCount: inventory.cloneGroupCount,
                 cloneGroupRoots: inventory.cloneGroupRoots,
                 discoveredRoot: inventory.discoveredRoot,
@@ -2701,6 +2948,10 @@ public struct RepositoryView: View {
         gitDirtyFileCount: UInt64?,
         gitDirtyTruncated: Bool,
         notSeenInLatestScan: Bool,
+        inventoryCacheStatus: String,
+        inventoryFingerprintChanged: Bool,
+        inventoryLastSeenMillis: UInt64?,
+        inventoryLastScanMillis: UInt64?,
         cloneGroupCount: UInt64,
         cloneGroupRoots: [String],
         discoveredRoot: String?,
@@ -2773,6 +3024,10 @@ public struct RepositoryView: View {
             gitRemoteHost: gitRemoteHost,
             gitRemoteOwner: gitRemoteOwner,
             gitRemoteName: gitRemoteName,
+            inventoryCacheStatus: inventoryCacheStatus,
+            inventoryFingerprintChanged: inventoryFingerprintChanged,
+            inventoryLastSeenMillis: inventoryLastSeenMillis,
+            inventoryLastScanMillis: inventoryLastScanMillis,
             agentReadinessScore: agentReadinessScore,
             agentReadinessStatus: agentReadinessStatus,
             agentContractMissingCount: agentContractMissingCount,
