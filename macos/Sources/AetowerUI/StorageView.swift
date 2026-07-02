@@ -165,6 +165,15 @@ private enum StorageCleanupAuditLog {
     }
 }
 
+/// Pending undo for a one-click direct-to-Trash action. `trashURL` is where
+/// Finder placed the item; nil means the trash attempt failed and the toast
+/// is informational only.
+struct StorageDirectTrashUndo {
+    let message: String
+    let originalPath: String
+    let trashURL: URL?
+}
+
 public struct StorageView: View {
     let state: AppState
     @State private var selectedFilter: StorageFilter = .attention
@@ -187,6 +196,8 @@ public struct StorageView: View {
     @State private var cleanupExecutionIsRunning = false
     @State private var cleanupBasket: [StorageCleanupBasketItem] = []
     @State private var showCleanupBasket = false
+    @State private var directTrashUndo: StorageDirectTrashUndo?
+    @State private var directTrashUndoDismissTask: Task<Void, Never>?
     @State private var cleanupAuditEvents = StorageCleanupAuditLog.loadRecent()
     @State private var classificationExplanation: StorageClassificationExplanation?
     @State private var storageVisualExplorerMode: StorageVisualExplorerMode = .fullDisk
@@ -227,6 +238,18 @@ public struct StorageView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            if !cleanupBasket.isEmpty {
+                Divider()
+                cleanupStickyBar
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let undo = directTrashUndo {
+                directTrashUndoToast(undo)
+                    .padding(.bottom, cleanupBasket.isEmpty ? 24 : 72)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .task {
             state.ensureStorageHygieneScan()
@@ -794,13 +817,46 @@ public struct StorageView: View {
         }
     }
 
+    /// Single primary action per row: safe items trash in one click (with an
+    /// undo toast); anything needing review stages silently into the batch bar.
+    @ViewBuilder
+    private func storageItemPrimaryAction(_ item: StorageHygieneItemModel) -> some View {
+        if storageItemIsTrashActionable(item) && item.safety == "safe" {
+            Button {
+                trashItemDirectly(item)
+            } label: {
+                Label("Trash", systemImage: "trash")
+            }
+            .help("Move to Finder Trash now (undoable)")
+        } else {
+            Button {
+                _ = stageCleanupItem(item)
+            } label: {
+                Label("Stage", systemImage: "tray.and.arrow.down")
+            }
+            .disabled(!storageItemIsTrashActionable(item))
+            .help(
+                storageItemIsTrashActionable(item)
+                    ? "Add to the cleanup batch for review"
+                    : "Not eligible for Trash cleanup"
+            )
+        }
+    }
+
     private func storageItemActionMenu(_ item: StorageHygieneItemModel) -> some View {
         Menu {
+            if storageItemIsTrashActionable(item) && item.safety == "safe" {
+                Button("Move to Trash now") { trashItemDirectly(item) }
+            }
+            Button("Stage cleanup") { _ = stageCleanupItem(item) }
+                .disabled(!storageItemIsTrashActionable(item))
+            Divider()
             Button("Quick Look") { quickLook(path: item.path) }
             Button("Reveal in Finder") { reveal(path: item.path) }
             Button("Explain classification") { classificationExplanation = explanation(for: item) }
-            Button("Stage cleanup") { stageCleanupItem(item) }
-                .disabled(!storageItemIsTrashActionable(item))
+            Divider()
+            Button("Copy path") { copy(item.path) }
+            Button("Copy command reference") { copy(item.commandHint) }
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(AetowerDesign.Typography.caption.weight(.semibold))
@@ -1603,10 +1659,10 @@ public struct StorageView: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
             if storageItemIsTrashActionable(item) {
-                Button("Stage") { _ = stageCleanupItem(item) }
+                storageItemPrimaryAction(item)
             }
-            Button("Quick Look") { quickLook(path: item.path) }
             Button("Reveal") { reveal(path: item.path) }
+            storageItemActionMenu(item)
         }
         .buttonStyle(.bordered)
         .controlSize(.mini)
@@ -1665,7 +1721,11 @@ public struct StorageView: View {
                 footprintMetric(
                     "Scan",
                     value: "\(report.scanDurationMillis) ms",
-                    detail: "\(report.summary.scannedDirectoryCount) folders"
+                    // Index-served modes walk nothing; "0 folders" reads as a
+                    // failure when it actually means "answered from the index".
+                    detail: report.summary.scannedDirectoryCount > 0
+                        ? "\(report.summary.scannedDirectoryCount) folders"
+                        : "from index"
                 )
             }
 
@@ -1678,36 +1738,30 @@ public struct StorageView: View {
                             Label("Stage cleanup", systemImage: "tray.and.arrow.down")
                         }
                         .buttonStyle(.borderedProminent)
+                    }
 
-                        Button("Review command references") {
-                            candidateCommandPreviewBundle = primaryBundle
-                        }
-                    } else {
-                        Button {
+                    // Reference-only actions (nothing here executes commands)
+                    // collapsed into one menu so the primary action stands out.
+                    Menu {
+                        Button("Copy plan") {
                             copy(cleanupBundleManifest(primaryBundle))
                             copiedCleanupBundleID = primaryBundle.id
-                        } label: {
-                            Label("Copy cleanup plan", systemImage: "doc.on.doc")
                         }
-                        .buttonStyle(.borderedProminent)
-                    }
-
-                    Button("Copy plan") {
-                        copy(cleanupBundleManifest(primaryBundle))
-                        copiedCleanupBundleID = primaryBundle.id
-                    }
-
-                    Button("Copy verify commands") {
-                        copy(primaryBundle.dryRunCommands.joined(separator: "\n"))
-                        copiedCleanupBundleID = primaryBundle.id
-                    }
-                    .disabled(primaryBundle.dryRunCommands.isEmpty)
-
-                    if !cleanupBasket.isEmpty {
-                        Button("Review basket") {
-                            showCleanupBasket = true
+                        Button("Copy verify commands") {
+                            copy(primaryBundle.dryRunCommands.joined(separator: "\n"))
+                            copiedCleanupBundleID = primaryBundle.id
                         }
+                        .disabled(primaryBundle.dryRunCommands.isEmpty)
+                        if hasCandidateCommands {
+                            Button("Review command references") {
+                                candidateCommandPreviewBundle = primaryBundle
+                            }
+                        }
+                    } label: {
+                        Label("References", systemImage: "doc.on.doc")
                     }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
 
                     Spacer()
 
@@ -2775,22 +2829,29 @@ public struct StorageView: View {
                     }
                     .buttonStyle(.borderedProminent)
                 }
-                Button {
-                    copy(cleanupBundleManifest(bundle))
-                    copiedCleanupBundleID = bundle.id
-                } label: {
-                    Label("Copy plan", systemImage: "doc.on.doc")
-                }
-                Button("Copy verify commands") {
-                    copy(bundle.dryRunCommands.joined(separator: "\n"))
-                    copiedCleanupBundleID = bundle.id
-                }
-                .disabled(bundle.dryRunCommands.isEmpty)
-                if cleanupBundleHasActionableCommands(bundle) {
-                    Button("Review command references") {
-                        candidateCommandPreviewBundle = bundle
+                // Command text is a manual reference only (execution is always
+                // Finder Trash), so the copy/reference actions live in one
+                // overflow menu instead of competing with the real action.
+                Menu {
+                    Button("Copy plan") {
+                        copy(cleanupBundleManifest(bundle))
+                        copiedCleanupBundleID = bundle.id
                     }
+                    Button("Copy verify commands") {
+                        copy(bundle.dryRunCommands.joined(separator: "\n"))
+                        copiedCleanupBundleID = bundle.id
+                    }
+                    .disabled(bundle.dryRunCommands.isEmpty)
+                    if cleanupBundleHasActionableCommands(bundle) {
+                        Button("Review command references") {
+                            candidateCommandPreviewBundle = bundle
+                        }
+                    }
+                } label: {
+                    Label("References", systemImage: "doc.on.doc")
                 }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
                 Spacer()
                 Text(copiedCleanupBundleID == bundle.id ? "Copied" : "Ready")
                     .font(.caption2)
@@ -4319,8 +4380,11 @@ public struct StorageView: View {
             Text(formatBytes(item.sizeBytes))
                 .font(.caption.weight(.semibold))
                 .frame(width: 80, alignment: .trailing)
+            storageItemPrimaryAction(item)
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
             storageItemActionMenu(item)
-                .frame(width: 52, alignment: .trailing)
+                .frame(width: 32, alignment: .trailing)
         }
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, AetowerDesign.Spacing.xs)
@@ -4585,13 +4649,10 @@ public struct StorageView: View {
             }
 
             HStack(spacing: AetowerDesign.Spacing.sm) {
-                Button("Quick Look") { quickLook(path: item.path) }
+                storageItemPrimaryAction(item)
                 Button("Reveal") { reveal(path: item.path) }
                 Button("Explain") { classificationExplanation = explanation(for: item) }
-                Button("Copy path") { copy(item.path) }
-                Button("Copy command") { copy(item.commandHint) }
-                Button("Stage") { stageCleanupItem(item) }
-                    .disabled(!storageItemIsTrashActionable(item))
+                storageItemActionMenu(item)
                 Spacer()
                 Text(item.kind)
                     .font(.caption2)
@@ -6135,18 +6196,12 @@ public struct StorageView: View {
                 staged += 1
             }
         }
-        if staged > 0 {
-            showCleanupBasket = true
-        }
     }
 
     private func stageCleanupRecipes(_ recipes: [StorageCleanupRecipeModel]) {
         var staged = 0
         for recipe in recipes where stageCleanupRecipe(recipe, showBasket: false) {
             staged += 1
-        }
-        if staged > 0 {
-            showCleanupBasket = true
         }
     }
 
@@ -6157,9 +6212,7 @@ public struct StorageView: View {
                 staged += 1
             }
         }
-        if staged > 0 {
-            showCleanupBasket = true
-        } else {
+        if staged == 0 {
             copy(storageHomeActionPlan(action))
         }
     }
@@ -6196,9 +6249,7 @@ public struct StorageView: View {
                 staged += 1
             }
         }
-        if staged > 0 {
-            showCleanupBasket = true
-        } else {
+        if staged == 0 {
             copy(preventionSuggestionPlan(suggestion, report: report))
         }
     }
@@ -6272,7 +6323,7 @@ public struct StorageView: View {
     }
 
     @discardableResult
-    private func stageCleanupItem(_ item: StorageHygieneItemModel, showBasket: Bool = true) -> Bool {
+    private func stageCleanupItem(_ item: StorageHygieneItemModel, showBasket: Bool = false) -> Bool {
         guard storageItemIsTrashActionable(item) else {
             appendCleanupAudit(
                 action: "policy-blocked",
@@ -6309,7 +6360,7 @@ public struct StorageView: View {
     }
 
     @discardableResult
-    private func stageCleanupRecipe(_ recipe: StorageCleanupRecipeModel, showBasket: Bool = true) -> Bool {
+    private func stageCleanupRecipe(_ recipe: StorageCleanupRecipeModel, showBasket: Bool = false) -> Bool {
         let item = StorageCleanupBasketItem(
             id: "recipe|\(recipe.id)",
             title: recipe.title,
@@ -6374,6 +6425,170 @@ public struct StorageView: View {
             requiresReview: cleanupBasket.contains(where: \.requiresReview),
             prerequisites: prerequisites
         )
+    }
+
+    // MARK: - Sticky batch bar + one-click trash
+
+    /// Persistent bar shown whenever the basket is non-empty: staging is now
+    /// silent, so this is the standing affordance for reviewing/executing the
+    /// batch (previously the basket sheet popped over the UI on every stage).
+    private var cleanupStickyBar: some View {
+        HStack(spacing: AetowerDesign.Spacing.md) {
+            Label(
+                "\(cleanupBasket.count) staged · \(formatBytes(cleanupBasketTotalBytes()))",
+                systemImage: "tray.full"
+            )
+            .font(.callout.weight(.semibold))
+            if cleanupBasket.contains(where: \.requiresReview) {
+                Text("includes review items")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Clear") { cleanupBasket.removeAll() }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            Button("Review") { showCleanupBasket = true }
+                .buttonStyle(.bordered)
+            Button {
+                pendingCleanupExecutionRequest = basketTrashExecutionRequest()
+            } label: {
+                Label("Move to Trash", systemImage: "trash")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .controlSize(.regular)
+        .padding(.horizontal, AetowerDesign.Spacing.xl)
+        .padding(.vertical, AetowerDesign.Spacing.md)
+        .background(.bar)
+    }
+
+    private func directTrashUndoToast(_ undo: StorageDirectTrashUndo) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.md) {
+            Image(systemName: undo.trashURL == nil ? "exclamationmark.triangle" : "trash")
+            Text(undo.message)
+                .font(.callout)
+                .lineLimit(1)
+            if undo.trashURL != nil {
+                Button("Undo") { undoDirectTrash(undo) }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+            Button {
+                dismissDirectTrashUndo()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
+        .padding(.vertical, AetowerDesign.Spacing.md)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(radius: 8, y: 2)
+    }
+
+    /// One-click Finder Trash for safe-tier items; non-safe items fall back to
+    /// silent staging so the review flow is preserved for anything risky.
+    private func trashItemDirectly(_ item: StorageHygieneItemModel) {
+        guard storageItemIsTrashActionable(item), item.safety == "safe" else {
+            _ = stageCleanupItem(item)
+            return
+        }
+        let path = item.path
+        let title = item.displayName
+        let bytes = item.sizeBytes
+        let tier = item.cleanupTier
+        let safety = item.safety
+        Task.detached(priority: .utility) {
+            let outcome = Self.trashSingleItem(path)
+            await MainActor.run {
+                appendCleanupAudit(
+                    action: outcome.trashURL != nil ? "trash" : "failed-trash",
+                    path: path,
+                    detail: outcome.message,
+                    bytes: bytes,
+                    cleanupTier: tier,
+                    safety: safety,
+                    succeeded: outcome.trashURL != nil
+                )
+                cleanupBasket.removeAll { $0.path == path }
+                presentDirectTrashUndo(
+                    StorageDirectTrashUndo(
+                        message: outcome.trashURL != nil
+                            ? "\(title) (\(formatBytes(bytes))) moved to Trash"
+                            : "Could not trash \(title): \(outcome.message)",
+                        originalPath: path,
+                        trashURL: outcome.trashURL
+                    )
+                )
+            }
+        }
+    }
+
+    nonisolated private static func trashSingleItem(_ path: String) -> (trashURL: URL?, message: String) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return (nil, "Empty path") }
+        let url = URL(fileURLWithPath: trimmed)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return (nil, "Path no longer exists")
+        }
+        do {
+            var resultingURL: NSURL?
+            try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
+            return (resultingURL as URL?, "Moved to Trash")
+        } catch {
+            return (nil, error.localizedDescription)
+        }
+    }
+
+    private func presentDirectTrashUndo(_ undo: StorageDirectTrashUndo) {
+        directTrashUndoDismissTask?.cancel()
+        withAnimation(.easeOut(duration: 0.2)) { directTrashUndo = undo }
+        directTrashUndoDismissTask = Task {
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { dismissDirectTrashUndo() }
+        }
+    }
+
+    private func dismissDirectTrashUndo() {
+        directTrashUndoDismissTask?.cancel()
+        directTrashUndoDismissTask = nil
+        withAnimation(.easeIn(duration: 0.15)) { directTrashUndo = nil }
+    }
+
+    private func undoDirectTrash(_ undo: StorageDirectTrashUndo) {
+        guard let trashURL = undo.trashURL else {
+            dismissDirectTrashUndo()
+            return
+        }
+        let destination = undo.originalPath
+        Task.detached(priority: .utility) {
+            var message: String
+            var succeeded: Bool
+            do {
+                try FileManager.default.moveItem(
+                    at: trashURL,
+                    to: URL(fileURLWithPath: destination)
+                )
+                message = "Restored from Trash"
+                succeeded = true
+            } catch {
+                message = "Restore failed: \(error.localizedDescription)"
+                succeeded = false
+            }
+            await MainActor.run {
+                appendCleanupAudit(
+                    action: succeeded ? "restore" : "failed-restore",
+                    path: destination,
+                    detail: message,
+                    bytes: 0,
+                    succeeded: succeeded
+                )
+                dismissDirectTrashUndo()
+            }
+        }
     }
 
     private func uniquePaths(_ paths: [String]) -> [String] {
