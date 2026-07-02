@@ -343,8 +343,6 @@ use repo::{
     repository_inventory_fingerprint, scan_repository_inventory_roots_with_budget,
     summarize_repo_footprints, summarize_repository_inventory,
 };
-#[cfg(test)]
-use report::build_storage_cold_data;
 pub(crate) use report::build_storage_hygiene_report_with_mode;
 use report::{
     StorageCandidateCollector, build_storage_hygiene_report_from_index,
@@ -355,6 +353,8 @@ use report::{
     storage_performance_budget_diagnostics, storage_source_kind, storage_source_label,
     summarize_volume_states,
 };
+#[cfg(test)]
+use report::{build_storage_cold_data, per_root_walk_slice};
 #[cfg(test)]
 pub(crate) use report::{
     build_storage_hygiene_report_for_roots, build_storage_hygiene_report_for_roots_mode,

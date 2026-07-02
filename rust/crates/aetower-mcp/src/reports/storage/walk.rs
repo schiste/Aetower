@@ -15,7 +15,7 @@ pub(super) struct SizeWalkResult {
 pub(super) fn scan_root(
     root: &Path,
     options: &StorageHygieneOptions,
-    started: Instant,
+    deadline: Instant,
     now_millis: u64,
     storage_index: &StorageSizeIndex,
     collector: &mut StorageCandidateCollector,
@@ -28,9 +28,7 @@ pub(super) fn scan_root(
     let mut truncated = false;
 
     while let Some((path, depth)) = stack.pop() {
-        if started.elapsed() >= options.mode.size_walk_time_budget()
-            || scanned_dirs >= MAX_DIRECTORIES
-        {
+        if Instant::now() >= deadline || scanned_dirs >= options.mode.dir_budget() {
             truncated = true;
             break;
         }
@@ -58,7 +56,7 @@ pub(super) fn scan_root(
                 &metadata,
                 root,
                 rule,
-                started,
+                deadline,
                 options.mode,
                 storage_index,
                 &options.dirty_paths,
@@ -116,7 +114,7 @@ pub(super) fn scan_root(
     truncated |= surface_large_directories(
         root,
         options,
-        started,
+        deadline,
         now_millis,
         storage_index,
         collector,
@@ -144,7 +142,7 @@ pub(super) fn scan_root(
 fn surface_large_directories(
     root: &Path,
     options: &StorageHygieneOptions,
-    started: Instant,
+    deadline: Instant,
     now_millis: u64,
     storage_index: &StorageSizeIndex,
     collector: &mut StorageCandidateCollector,
@@ -161,7 +159,7 @@ fn surface_large_directories(
     let mut proven_small: Vec<PathBuf> = Vec::new();
     let mut truncated = false;
     for (_, path) in candidates {
-        if started.elapsed() >= options.mode.size_walk_time_budget() {
+        if Instant::now() >= deadline {
             truncated = true;
             break;
         }
@@ -196,7 +194,7 @@ fn surface_large_directories(
             &metadata,
             root,
             LARGE_DIRECTORY_RULE,
-            started,
+            deadline,
             options.mode,
             storage_index,
             &options.dirty_paths,
@@ -489,7 +487,7 @@ fn size_of_path(
     metadata: &fs::Metadata,
     source_root: &Path,
     rule: ArtifactRule,
-    started: Instant,
+    deadline: Instant,
     mode: StorageScanMode,
     storage_index: &StorageSizeIndex,
     dirty_paths: &[String],
@@ -609,9 +607,7 @@ fn size_of_path(
     let mut result = SizeWalkResult::default();
     let mut stack = vec![path.to_path_buf()];
     while let Some(current) = stack.pop() {
-        if started.elapsed() >= mode.size_walk_time_budget()
-            || result.entries >= mode.size_walk_entry_budget()
-        {
+        if Instant::now() >= deadline || result.entries >= mode.size_walk_entry_budget() {
             result.truncated = true;
             break;
         }

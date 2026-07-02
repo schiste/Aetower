@@ -302,10 +302,14 @@ pub(super) fn build_storage_hygiene_report_with_options(
 
     // The walk phase runs on its own clock: the repository/git phase above is
     // bounded separately, so a git-heavy start (forensic mode over many repos)
-    // can no longer exhaust the budget before a single root is sized.
+    // can no longer exhaust the budget before a single root is sized. Within
+    // the walk phase, each root gets a fair slice of the remaining budget so
+    // one huge early root cannot starve every later root.
     let walk_started = Instant::now();
-    for root in roots {
-        if walk_started.elapsed() >= options.mode.size_walk_time_budget() {
+    let walk_budget = options.mode.size_walk_time_budget();
+    let total_roots = roots.len();
+    for (root_index, root) in roots.into_iter().enumerate() {
+        if walk_started.elapsed() >= walk_budget {
             truncated = true;
             break;
         }
@@ -345,10 +349,16 @@ pub(super) fn build_storage_hygiene_report_with_options(
 
         scanned_roots.push(root.display().to_string());
         let root_started = Instant::now();
+        let root_deadline = root_started
+            + per_root_walk_slice(
+                walk_budget.saturating_sub(walk_started.elapsed()),
+                total_roots.saturating_sub(root_index),
+                options.mode.per_root_slice_floor(),
+            );
         let (_root_repositories, root_dirs, root_truncated) = scan_root(
             &root,
             &options,
-            started,
+            root_deadline,
             now_millis,
             &storage_index,
             &mut collector,
@@ -497,6 +507,20 @@ pub(super) fn build_storage_hygiene_report_with_options(
                 .to_owned(),
         ],
     }
+}
+
+/// Fair walk slice for the next root: an even share of the remaining walk
+/// budget across the remaining roots (current one included), floored per mode
+/// so late roots always get a usable slice. Unspent slice time rolls forward
+/// automatically because the remaining budget is recomputed for every root;
+/// the caller's overall-budget check keeps total walk time bounded.
+pub(super) fn per_root_walk_slice(
+    remaining_budget: Duration,
+    remaining_roots: usize,
+    floor: Duration,
+) -> Duration {
+    let share = remaining_budget / remaining_roots.clamp(1, u32::MAX as usize) as u32;
+    share.max(floor)
 }
 
 pub(super) fn build_storage_hygiene_report_from_index(

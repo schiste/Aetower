@@ -3867,8 +3867,9 @@ fn forensic_walk_survives_a_slow_pre_walk_phase() {
     // Regression: the walk used to share SCAN_TIME_BUDGET with the git /
     // inventory phase, so a forensic scan over many repositories consumed the
     // whole clock before sizing a single root (observed live: root_walk 0ms,
-    // item_count 0). The walk clock is per-phase now: a start Instant that is
-    // already past the old shared budget must still walk entries.
+    // item_count 0). The walk now runs against an explicit per-root deadline
+    // derived only from the walk phase: however long the pre-walk phases
+    // took, a future deadline must still walk entries.
     let root = test_root("forensic-walk-budget");
     let target = root.join("proj").join("target");
     if let Err(error) = fs::create_dir_all(&target) {
@@ -3891,16 +3892,12 @@ fn forensic_walk_survives_a_slow_pre_walk_phase() {
     let storage_index = StorageSizeIndex::disabled("test");
     let mut collector = StorageCandidateCollector::new(options.limit);
     let mut metrics = StorageScanMetrics::default();
-    // Simulate a pre-walk phase that already burned 10s (> the old shared
-    // 6.5s budget, < the forensic walk budget).
-    let stale_started = Instant::now()
-        .checked_sub(Duration::from_secs(10))
-        .unwrap_or_else(Instant::now);
+    let deadline = Instant::now() + options.mode.per_root_slice_floor();
 
     let (_repos, scanned_dirs, truncated) = scan_root(
         &root,
         &options,
-        stale_started,
+        deadline,
         storage_now_millis(),
         &storage_index,
         &mut collector,
@@ -3909,8 +3906,123 @@ fn forensic_walk_survives_a_slow_pre_walk_phase() {
 
     assert!(
         scanned_dirs > 0,
-        "walk must proceed on its own budget (scanned {scanned_dirs} dirs, truncated={truncated})"
+        "walk must proceed on its own deadline (scanned {scanned_dirs} dirs, truncated={truncated})"
     );
+}
+
+#[test]
+fn per_root_walk_slice_shares_remaining_budget_with_floor() {
+    // Even share of the remaining budget across the remaining roots.
+    assert_eq!(
+        per_root_walk_slice(Duration::from_secs(60), 6, Duration::from_secs(2)),
+        Duration::from_secs(10)
+    );
+    // Unspent time rolls forward: fewer remaining roots means bigger slices.
+    assert_eq!(
+        per_root_walk_slice(Duration::from_secs(58), 2, Duration::from_secs(2)),
+        Duration::from_secs(29)
+    );
+    // The floor guarantees a usable slice even when the budget is nearly gone.
+    assert_eq!(
+        per_root_walk_slice(Duration::from_millis(400), 40, Duration::from_secs(2)),
+        Duration::from_secs(2)
+    );
+    assert_eq!(
+        per_root_walk_slice(Duration::from_millis(100), 10, Duration::from_millis(500)),
+        Duration::from_millis(500)
+    );
+    // Zero remaining roots is defensive: treat as one.
+    assert_eq!(
+        per_root_walk_slice(Duration::from_secs(8), 0, Duration::from_secs(2)),
+        Duration::from_secs(8)
+    );
+    // Mode floors: fast stays snappy, deep/forensic get a real slice.
+    assert_eq!(
+        StorageScanMode::FastChangedOnly.per_root_slice_floor(),
+        Duration::from_millis(500)
+    );
+    assert_eq!(
+        StorageScanMode::DeepNative.per_root_slice_floor(),
+        Duration::from_secs(2)
+    );
+}
+
+#[test]
+fn per_root_deadline_keeps_second_root_walkable_after_a_huge_first_root() {
+    // Regression for root starvation: all roots used to share one walk clock,
+    // so a huge early root (~/Repositories) consumed the whole budget and
+    // later roots were never walked. Simulate the exhausted-first-root state
+    // with an already-expired deadline, then show the second root still gets
+    // walked on its own fresh slice.
+    let first = test_root("fairness-first-huge");
+    let second = test_root("fairness-second-small");
+    for root in [&first, &second] {
+        for index in 0..12 {
+            let nested = root.join(format!("dir-{index:02}")).join("nested");
+            if let Err(error) = fs::create_dir_all(nested) {
+                panic!("create fairness fixture: {error}");
+            }
+        }
+        if let Err(error) = fs::write(
+            root.join("dir-00").join("app.log"),
+            vec![0u8; (MIN_ITEM_BYTES + 64) as usize],
+        ) {
+            panic!("write fairness artifact: {error}");
+        }
+    }
+
+    let options = StorageHygieneOptions {
+        max_depth: 5,
+        limit: 20,
+        mode: StorageScanMode::DeepNative,
+        runtime: None,
+        dirty_paths: Vec::new(),
+    };
+    let storage_index = StorageSizeIndex::disabled("test");
+    let mut collector = StorageCandidateCollector::new(options.limit);
+    let mut metrics = StorageScanMetrics::default();
+
+    // First root: injected slice already spent (the "huge root" case).
+    let expired = Instant::now();
+    let (_repos, first_dirs, first_truncated) = scan_root(
+        &first,
+        &options,
+        expired,
+        storage_now_millis(),
+        &storage_index,
+        &mut collector,
+        &mut metrics,
+    );
+    assert!(first_truncated, "expired slice must report truncation");
+    assert_eq!(first_dirs, 0, "expired slice must not keep walking");
+
+    // Second root: a fresh floor-sized slice, exactly what the fairness loop
+    // hands out after an earlier root consumed its share.
+    let fresh_deadline = Instant::now() + options.mode.per_root_slice_floor();
+    let (_repos, second_dirs, second_truncated) = scan_root(
+        &second,
+        &options,
+        fresh_deadline,
+        storage_now_millis(),
+        &storage_index,
+        &mut collector,
+        &mut metrics,
+    );
+    assert!(
+        second_dirs > 0,
+        "second root must be walked on its own slice (dirs={second_dirs}, truncated={second_truncated})"
+    );
+
+    let _ = fs::remove_dir_all(first);
+    let _ = fs::remove_dir_all(second);
+}
+
+#[test]
+fn directory_budget_is_scaled_per_mode() {
+    assert_eq!(StorageScanMode::InstantCached.dir_budget(), 25_000);
+    assert_eq!(StorageScanMode::FastChangedOnly.dir_budget(), 25_000);
+    assert_eq!(StorageScanMode::DeepNative.dir_budget(), 100_000);
+    assert_eq!(StorageScanMode::ForensicVerified.dir_budget(), 200_000);
 }
 
 #[test]

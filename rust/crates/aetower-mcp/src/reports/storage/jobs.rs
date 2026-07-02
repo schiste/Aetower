@@ -49,6 +49,28 @@ impl StorageScanMode {
         }
     }
 
+    /// Minimum walk slice granted to each root regardless of how much of the
+    /// overall walk budget earlier roots consumed. Keeps one huge early root
+    /// (e.g. ~/Repositories) from starving every later root to zero; the
+    /// outer loop's overall-budget check still bounds total walk time.
+    pub(super) fn per_root_slice_floor(self) -> Duration {
+        match self {
+            Self::InstantCached | Self::FastChangedOnly => Duration::from_millis(500),
+            Self::DeepNative | Self::ForensicVerified => Duration::from_secs(2),
+        }
+    }
+
+    /// Directory-visit cap for a single `scan_root` call. Instant/Fast keep
+    /// the historical 25k cap for snappiness; Deep/Forensic are cancellable
+    /// background jobs that can afford whole-computer coverage.
+    pub(super) fn dir_budget(self) -> u64 {
+        match self {
+            Self::InstantCached | Self::FastChangedOnly => MAX_DIRECTORIES,
+            Self::DeepNative => 100_000,
+            Self::ForensicVerified => 200_000,
+        }
+    }
+
     pub(super) fn verify_source_control(self) -> bool {
         matches!(self, Self::ForensicVerified)
     }
