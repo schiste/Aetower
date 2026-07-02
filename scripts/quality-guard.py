@@ -388,13 +388,25 @@ def check_dependency_hygiene(
                     violations.append(Violation(path, line_number, "Do not add git or branch-based Cargo dependencies."))
                 if WILDCARD_VERSION_PATTERN.search(line):
                     violations.append(Violation(path, line_number, "Do not add wildcard Cargo dependency versions."))
-        if cargo_lock_required_for_cargo_toml_changes(mode, diff_base) and "rust/Cargo.lock" not in changed_files:
+        if (
+            cargo_lock_required_for_cargo_toml_changes(mode, diff_base)
+            and "rust/Cargo.lock" not in changed_files
+            and cargo_lock_is_dirty()
+        ):
             violations.append(Violation("rust/Cargo.lock", None, "Cargo.lock must change when Cargo.toml changes."))
 
     if "macos/Package.swift" in changed_files:
         for line_number, line in added_lines.get("macos/Package.swift", []):
             if PACKAGE_SWIFT_REMOTE_DEP_PATTERN.search(line):
                 violations.append(Violation("macos/Package.swift", line_number, "Do not add remote SwiftPM packages without explicit review."))
+
+
+def cargo_lock_is_dirty() -> bool:
+    """A Cargo.toml change only demands a staged Cargo.lock when the lock
+    actually moved. Feature-list or metadata edits that resolve to the same
+    lock graph leave the lockfile byte-identical, and cargo's own --locked
+    runs later in this pipeline catch a genuinely stale lock."""
+    return bool(run_git("status", "--porcelain", "--", "rust/Cargo.lock").strip())
 
 
 def cargo_lock_required_for_cargo_toml_changes(mode: str, diff_base: str | None) -> bool:

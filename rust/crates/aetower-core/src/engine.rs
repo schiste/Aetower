@@ -1882,10 +1882,9 @@ fn process_id_set(processes: &[crate::collector::RawProcessSample]) -> BTreeSet<
 }
 
 fn is_mcp_helper_process(process: &crate::collector::RawProcessSample) -> bool {
-    process.name == "aetower-mcp"
+    process.name() == "aetower-mcp"
         || process
-            .exe
-            .as_deref()
+            .exe()
             .is_some_and(|exe| exe.ends_with("/aetower-mcp"))
 }
 
@@ -3225,22 +3224,14 @@ mod tests {
             name: &str,
         ) -> crate::collector::RawProcessSample {
             crate::collector::RawProcessSample {
-                pid,
-                parent_pid,
                 start_time_millis,
-                name: name.to_owned(),
-                exe: Some(format!("/tmp/{name}")),
-                cmd: Vec::new(),
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..crate::collector::RawProcessSample::synthetic(
+                    pid,
+                    parent_pid,
+                    name,
+                    Some(&format!("/tmp/{name}")),
+                    &[],
+                )
             }
         }
 

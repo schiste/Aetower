@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use aetower_model::{
     BatteryHealthSnapshot, BluetoothDeviceBattery, BootSessionSnapshot, CoreKind, CoreLoad,
@@ -16,14 +17,30 @@ pub struct CollectorConfig {
     pub defer_expensive_sampling: bool,
 }
 
+/// Stable identity metadata for a process (name, executable, command line,
+/// user). These strings only change when a PID is recycled, so the collector
+/// caches them per-PID behind an `Arc` and every tick's `RawProcessSample`
+/// shares the same allocation instead of deep-cloning four strings per
+/// process per tick.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessIdentity {
+    pub name: String,
+    pub exe: Option<String>,
+    pub cmd: Vec<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawProcessSample {
     pub pid: u32,
     pub parent_pid: Option<u32>,
     pub start_time_millis: u64,
-    pub name: String,
-    pub exe: Option<String>,
-    pub cmd: Vec<String>,
+    /// Shared identity strings. `#[serde(flatten)]` keeps the JSON shape
+    /// flat (`name`/`exe`/`cmd`/`user` stay top-level keys), so existing
+    /// fixtures and persisted JSON round-trip unchanged.
+    #[serde(flatten)]
+    pub identity: Arc<ProcessIdentity>,
     pub cpu_percent: f32,
     pub memory_bytes: u64,
     #[serde(default)]
@@ -40,12 +57,71 @@ pub struct RawProcessSample {
     pub energy_nj_per_s: f64,
     #[serde(default)]
     pub cwd: Option<String>,
-    #[serde(default)]
-    pub user: Option<String>,
     /// Live thread count from `proc_pidinfo(PROC_PIDTASKINFO)`. Sampled on the
     /// slow counter cadence; 0 when unavailable or off-macOS.
     #[serde(default)]
     pub thread_count: u32,
+}
+
+impl RawProcessSample {
+    pub fn name(&self) -> &str {
+        &self.identity.name
+    }
+
+    pub fn exe(&self) -> Option<&str> {
+        self.identity.exe.as_deref()
+    }
+
+    pub fn cmd(&self) -> &[String] {
+        &self.identity.cmd
+    }
+
+    pub fn user(&self) -> Option<&str> {
+        self.identity.user.as_deref()
+    }
+
+    /// Build a sample with the given identity and zeroed metrics.
+    ///
+    /// Intended for tests and fixtures across crates — production samples are
+    /// produced by [`Collector::collect`]. Combine with struct-update syntax
+    /// to set the metrics a test cares about:
+    ///
+    /// ```
+    /// use aetower_collector::RawProcessSample;
+    /// let sample = RawProcessSample {
+    ///     cpu_percent: 12.0,
+    ///     ..RawProcessSample::synthetic(42, Some(1), "zsh", Some("/bin/zsh"), &["-zsh"])
+    /// };
+    /// assert_eq!(sample.name(), "zsh");
+    /// ```
+    pub fn synthetic(
+        pid: u32,
+        parent_pid: Option<u32>,
+        name: &str,
+        exe: Option<&str>,
+        cmd: &[&str],
+    ) -> Self {
+        Self {
+            pid,
+            parent_pid,
+            start_time_millis: 0,
+            identity: Arc::new(ProcessIdentity {
+                name: name.to_owned(),
+                exe: exe.map(str::to_owned),
+                cmd: cmd.iter().map(|segment| (*segment).to_owned()).collect(),
+                user: None,
+            }),
+            cpu_percent: 0.0,
+            memory_bytes: 0,
+            memory_physical_footprint_bytes: 0,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
+            wakeups_per_second: 0.0,
+            energy_nj_per_s: 0.0,
+            cwd: None,
+            thread_count: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -145,10 +221,7 @@ struct ProcessCounterSample {
 #[derive(Debug, Clone)]
 struct ProcessIdentitySample {
     start_time_millis: u64,
-    name: String,
-    exe: Option<String>,
-    cmd: Vec<String>,
-    user: Option<String>,
+    identity: Arc<ProcessIdentity>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -511,11 +584,11 @@ impl Collector {
                     Some(cached)
                         if cached.start_time_millis == start_time_millis && !metadata_refresh =>
                     {
-                        cached.clone()
+                        // Cache hit: bump the refcount, no string clones.
+                        Arc::clone(&cached.identity)
                     }
                     _ => {
-                        let identity = ProcessIdentitySample {
-                            start_time_millis,
+                        let identity = Arc::new(ProcessIdentity {
                             name: process.name().to_string_lossy().into_owned(),
                             exe: process.exe().and_then(path_to_string),
                             cmd: process
@@ -537,8 +610,14 @@ impl Collector {
                                 }
                                 None
                             }),
-                        };
-                        self.process_identity_cache.insert(pid, identity.clone());
+                        });
+                        self.process_identity_cache.insert(
+                            pid,
+                            ProcessIdentitySample {
+                                start_time_millis,
+                                identity: Arc::clone(&identity),
+                            },
+                        );
                         identity
                     }
                 };
@@ -547,9 +626,7 @@ impl Collector {
                     pid,
                     parent_pid: process.parent().map(|parent| parent.as_u32()),
                     start_time_millis,
-                    name: identity.name,
-                    exe: identity.exe,
-                    cmd: identity.cmd,
+                    identity,
                     cpu_percent: process.cpu_usage(),
                     memory_bytes: process.memory(),
                     memory_physical_footprint_bytes: physical_footprint_bytes,
@@ -573,7 +650,6 @@ impl Collector {
                     } else {
                         self.cwd_cache.get(&pid).cloned()
                     },
-                    user: identity.user,
                     thread_count,
                 }
             })

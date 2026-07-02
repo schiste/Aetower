@@ -64,14 +64,14 @@ fn classify_process(
     process_index: &BTreeMap<u32, &RawProcessSample>,
 ) -> EntitySeed {
     if let Some(shell_process) = terminal_shell_process(process, process_index) {
-        if is_ai_agent_exe(&process.name) {
+        if is_ai_agent_exe(process.name()) {
             return EntitySeed {
                 entity_id: format!("ai-agent:{}", shell_process.pid),
                 display_name: ai_agent_display_name(process),
                 bundle_id: None,
-                executable_path: process.exe.clone(),
+                executable_path: process.identity.exe.clone(),
                 entity_kind: EntityKind::AiAgent,
-                badges: ai_runtime_badges(&process.name, "shell-tree"),
+                badges: ai_runtime_badges(process.name(), "shell-tree"),
             };
         }
         return terminal_session_seed(shell_process);
@@ -83,19 +83,18 @@ fn classify_process(
     // name alone — the name list is specific enough that false positives
     // are vanishingly unlikely. These get entity_id keyed on their
     // executable path so each distinct server binary is its own entity.
-    if is_ai_agent_exe(&process.name) {
+    if is_ai_agent_exe(process.name()) {
         let entity_id = process
-            .exe
-            .as_deref()
+            .exe()
             .map(|path| format!("ai-agent-daemon:{}", path.to_lowercase()))
-            .unwrap_or_else(|| format!("ai-agent:{}", normalized_name(&process.name)));
+            .unwrap_or_else(|| format!("ai-agent:{}", normalized_name(process.name())));
         return EntitySeed {
             entity_id,
             display_name: ai_agent_display_name(process),
             bundle_id: None,
-            executable_path: process.exe.clone(),
+            executable_path: process.identity.exe.clone(),
             entity_kind: EntityKind::AiAgent,
-            badges: ai_runtime_badges(&process.name, "daemon"),
+            badges: ai_runtime_badges(process.name(), "daemon"),
         };
     }
 
@@ -104,25 +103,23 @@ fn classify_process(
     }
 
     let daemon = process
-        .exe
-        .as_deref()
+        .exe()
         .map(|path| path.starts_with("/System/Library") || path.starts_with("/usr/libexec"))
         .unwrap_or(false);
 
     let launchd_managed = has_lineage_match(process, process_index, |ancestor| {
-        ancestor.name == "launchd"
+        ancestor.name() == "launchd"
     });
     let login_item = has_lineage_match(process, process_index, |ancestor| {
-        ancestor.name == "loginwindow" || ancestor.name == "xpcproxy"
+        ancestor.name() == "loginwindow" || ancestor.name() == "xpcproxy"
     });
-    let xpc_service = is_xpc_service_path(process.exe.as_deref().unwrap_or_default());
+    let xpc_service = is_xpc_service_path(process.exe().unwrap_or_default());
     let display_name = process_display_name(process);
     let entity_id = process
-        .exe
-        .as_deref()
+        .exe()
         .map(|path| format!("process-path:{}", path.to_lowercase()))
         .unwrap_or_else(|| format!("process:{}", normalized_name(&display_name)));
-    let mut badges = default_badges(process.exe.as_deref().unwrap_or_default(), false);
+    let mut badges = default_badges(process.exe().unwrap_or_default(), false);
     if launchd_managed {
         badges.push("launchd-managed".to_owned());
     }
@@ -137,7 +134,7 @@ fn classify_process(
         entity_id,
         display_name,
         bundle_id: None,
-        executable_path: process.exe.clone(),
+        executable_path: process.identity.exe.clone(),
         entity_kind: if daemon {
             EntityKind::Daemon
         } else {
@@ -288,8 +285,8 @@ fn is_ai_model_exe(name: &str) -> bool {
 }
 
 fn ai_agent_display_name(process: &RawProcessSample) -> String {
-    ai_runtime(&process.name).map_or_else(
-        || process.name.clone(),
+    ai_runtime(process.name()).map_or_else(
+        || process.identity.name.clone(),
         |runtime| runtime.display.to_owned(),
     )
 }
@@ -299,9 +296,9 @@ fn normalized_name(name: &str) -> String {
 }
 
 fn process_display_name(process: &RawProcessSample) -> String {
-    if !process.name.is_empty() {
-        process.name.clone()
-    } else if let Some(exe) = process.exe.as_deref() {
+    if !process.name().is_empty() {
+        process.identity.name.clone()
+    } else if let Some(exe) = process.exe() {
         exe.rsplit('/').next().unwrap_or(exe).to_owned()
     } else {
         "Unknown Process".to_owned()
@@ -313,7 +310,7 @@ fn app_bundle_seed(
     process_index: &BTreeMap<u32, &RawProcessSample>,
 ) -> Option<EntitySeed> {
     let bundle_process = root_bundle_process(process, process_index)?;
-    let bundle_path = bundle_process.exe.as_deref()?;
+    let bundle_path = bundle_process.exe()?;
     let bundle_name = extract_app_bundle_name(bundle_path)?;
     let browser = is_browser_name(&bundle_name);
     let helper_group = bundle_process.pid != process.pid || is_bundle_helper(process);
@@ -349,7 +346,7 @@ fn terminal_shell_process<'a>(
     process: &'a RawProcessSample,
     process_index: &'a BTreeMap<u32, &RawProcessSample>,
 ) -> Option<&'a RawProcessSample> {
-    if is_shell(&process.name) {
+    if is_shell(process.name()) {
         return Some(process);
     }
 
@@ -357,7 +354,7 @@ fn terminal_shell_process<'a>(
         .parent_pid
         .and_then(|pid| process_index.get(&pid).copied());
     while let Some(candidate) = current {
-        if is_shell(&candidate.name) {
+        if is_shell(candidate.name()) {
             return Some(candidate);
         }
         current = candidate
@@ -374,7 +371,7 @@ fn terminal_session_seed(shell: &RawProcessSample) -> EntitySeed {
         entity_id: format!("terminal:{}", shell.pid),
         display_name,
         bundle_id: None,
-        executable_path: shell.exe.clone(),
+        executable_path: shell.identity.exe.clone(),
         entity_kind: EntityKind::TerminalSession,
         badges: vec!["interactive".to_owned(), "shell-tree".to_owned()],
     }
@@ -382,13 +379,13 @@ fn terminal_session_seed(shell: &RawProcessSample) -> EntitySeed {
 
 fn shell_session_title(shell: &RawProcessSample) -> String {
     let title = shell
-        .cmd
+        .cmd()
         .iter()
         .skip(1)
         .find(|segment| !segment.starts_with('-'))
         .cloned()
-        .filter(|segment| segment != &shell.name)
-        .unwrap_or_else(|| format!("{} session", shell.name));
+        .filter(|segment| segment.as_str() != shell.name())
+        .unwrap_or_else(|| format!("{} session", shell.name()));
     compact_display_name(&title)
 }
 
@@ -408,7 +405,7 @@ fn root_bundle_process<'a>(
     process: &'a RawProcessSample,
     process_index: &'a BTreeMap<u32, &RawProcessSample>,
 ) -> Option<&'a RawProcessSample> {
-    let process_path = process.exe.as_deref()?;
+    let process_path = process.exe()?;
     extract_app_bundle_name(process_path)?;
     let process_bundle_root = bundle_root_path(process_path);
     let mut candidate = Some(process);
@@ -417,7 +414,7 @@ fn root_bundle_process<'a>(
         .and_then(|pid| process_index.get(&pid).copied());
 
     while let Some(ancestor) = current {
-        if ancestor.exe.as_deref().is_some_and(|path| {
+        if ancestor.exe().is_some_and(|path| {
             extract_app_bundle_name(path).is_some() && bundle_root_path(path) == process_bundle_root
         }) {
             candidate = Some(ancestor);
@@ -438,7 +435,7 @@ fn bundle_root_path(path: &str) -> &str {
 }
 
 fn is_bundle_helper(process: &RawProcessSample) -> bool {
-    process.exe.as_deref().is_some_and(|path| {
+    process.exe().is_some_and(|path| {
         path.contains("/Contents/Frameworks/")
             || path.contains("/Contents/Helpers/")
             || path.contains("/Contents/XPCServices/")
@@ -477,7 +474,7 @@ fn is_user_launch(
         .and_then(|pid| process_index.get(&pid).copied())
         .is_some_and(|parent| {
             matches!(
-                parent.name.as_str(),
+                parent.name(),
                 "Dock" | "Finder" | "launchservicesd" | "LaunchServices"
             )
         })
@@ -508,24 +505,7 @@ mod tests {
         exe: Option<&str>,
         cmd: &[&str],
     ) -> RawProcessSample {
-        RawProcessSample {
-            pid,
-            parent_pid,
-            start_time_millis: 0,
-            name: name.to_owned(),
-            exe: exe.map(str::to_owned),
-            cmd: cmd.iter().map(|value| (*value).to_owned()).collect(),
-            cpu_percent: 0.0,
-            memory_bytes: 0,
-            memory_physical_footprint_bytes: 0,
-            disk_read_bytes: 0,
-            disk_write_bytes: 0,
-            wakeups_per_second: 0.0,
-            energy_nj_per_s: 0.0,
-            cwd: None,
-            user: None,
-            thread_count: 0,
-        }
+        RawProcessSample::synthetic(pid, parent_pid, name, exe, cmd)
     }
 
     #[test]

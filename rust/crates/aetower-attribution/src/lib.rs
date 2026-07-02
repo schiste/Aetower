@@ -78,13 +78,13 @@ pub fn build_entities(
             } else {
                 ComponentKind::Process
             },
-            title: process.name.clone(),
+            title: process.identity.name.clone(),
             detail: summarize_process(process),
             adapter_context: None,
             provenance: component_provenance(process, &ancestor_roles),
             process_id: Some(process.pid),
             start_time_millis: process.start_time_millis,
-            executable_path: process.exe.clone(),
+            executable_path: process.identity.exe.clone(),
             command_line: command_line(process),
             parent_summary: parent_summary(process, &process_index),
             launched_by: launched_by(&ancestor_roles),
@@ -92,7 +92,7 @@ pub fn build_entities(
             memory_bytes: process.memory_bytes,
             memory_physical_footprint_bytes: process.memory_physical_footprint_bytes,
             cwd: process.cwd.clone(),
-            user: process.user.clone(),
+            user: process.identity.user.clone(),
             thread_count: process.thread_count,
         });
     }
@@ -286,15 +286,15 @@ fn entity_provenance(seed: &EntitySeed) -> Option<ProvenanceSnapshot> {
 }
 
 fn summarize_process(process: &RawProcessSample) -> String {
-    if process.cmd.is_empty() {
+    if process.cmd().is_empty() {
         format!("pid {}", process.pid)
     } else {
-        compact_component_detail(&process.cmd.join(" "))
+        compact_component_detail(&process.cmd().join(" "))
     }
 }
 
 fn command_line(process: &RawProcessSample) -> Option<String> {
-    (!process.cmd.is_empty()).then(|| process.cmd.join(" "))
+    (!process.cmd().is_empty()).then(|| process.cmd().join(" "))
 }
 
 fn compact_component_detail(value: &str) -> String {
@@ -392,8 +392,7 @@ fn component_provenance(
     ancestor_roles: &AncestorRoles<'_>,
 ) -> Option<ProvenanceSnapshot> {
     if process
-        .exe
-        .as_deref()
+        .exe()
         .is_some_and(|path| path.contains(".xpc/") || path.contains("/Contents/XPCServices/"))
     {
         return Some(provenance(
@@ -449,9 +448,9 @@ fn format_process_label(process: &RawProcessSample) -> String {
 }
 
 fn process_display_name(process: &RawProcessSample) -> String {
-    if !process.name.is_empty() {
-        process.name.clone()
-    } else if let Some(path) = process.exe.as_deref() {
+    if !process.name().is_empty() {
+        process.identity.name.clone()
+    } else if let Some(path) = process.exe() {
         std::path::Path::new(path)
             .file_name()
             .and_then(|value| value.to_str())
@@ -463,15 +462,15 @@ fn process_display_name(process: &RawProcessSample) -> String {
 }
 
 fn is_shell_process(process: &RawProcessSample) -> bool {
-    matches!(process.name.as_str(), "zsh" | "bash" | "fish" | "sh")
+    matches!(process.name(), "zsh" | "bash" | "fish" | "sh")
 }
 
 fn is_login_item_launcher(process: &RawProcessSample) -> bool {
-    matches!(process.name.as_str(), "loginwindow" | "xpcproxy")
+    matches!(process.name(), "loginwindow" | "xpcproxy")
 }
 
 fn is_service_manager(process: &RawProcessSample) -> bool {
-    process.name == "launchd"
+    process.name() == "launchd"
 }
 
 fn format_shell_session_label(process: &RawProcessSample) -> String {
@@ -483,7 +482,7 @@ fn format_shell_session_label(process: &RawProcessSample) -> String {
 }
 
 fn format_login_item_label(process: &RawProcessSample) -> String {
-    match process.name.as_str() {
+    match process.name() {
         "xpcproxy" => format!("xpcproxy login item launcher (pid {})", process.pid),
         "loginwindow" => format!("loginwindow session launcher (pid {})", process.pid),
         _ => format_process_label(process),
@@ -542,42 +541,32 @@ mod tests {
     fn grouped_entities_sum_memory_across_processes() {
         let processes = vec![
             RawProcessSample {
-                pid: 1,
-                parent_pid: None,
                 start_time_millis: 10,
-                name: "Renderer".to_owned(),
-                exe: Some("/Applications/Test.app/Contents/MacOS/Test".to_owned()),
-                cmd: Vec::new(),
                 cpu_percent: 10.0,
                 memory_bytes: 128,
-                memory_physical_footprint_bytes: 0,
-
                 disk_read_bytes: 100,
                 disk_write_bytes: 200,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    1,
+                    None,
+                    "Renderer",
+                    Some("/Applications/Test.app/Contents/MacOS/Test"),
+                    &[],
+                )
             },
             RawProcessSample {
-                pid: 2,
-                parent_pid: Some(1),
                 start_time_millis: 20,
-                name: "Helper".to_owned(),
-                exe: Some("/Applications/Test.app/Contents/MacOS/Test Helper".to_owned()),
-                cmd: Vec::new(),
                 cpu_percent: 5.0,
                 memory_bytes: 256,
-                memory_physical_footprint_bytes: 0,
-
                 disk_read_bytes: 300,
                 disk_write_bytes: 400,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    2,
+                    Some(1),
+                    "Helper",
+                    Some("/Applications/Test.app/Contents/MacOS/Test Helper"),
+                    &[],
+                )
             },
         ];
         let entity_id = "bundle:test".to_owned();
@@ -642,64 +631,41 @@ mod tests {
     fn process_component_tracks_parent_and_launcher() {
         let processes = vec![
             RawProcessSample {
-                pid: 10,
-                parent_pid: Some(1),
                 start_time_millis: 10,
-                name: "Test".to_owned(),
-                exe: Some("/Applications/Test.app/Contents/MacOS/Test".to_owned()),
-                cmd: vec!["/Applications/Test.app/Contents/MacOS/Test".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 128,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    10,
+                    Some(1),
+                    "Test",
+                    Some("/Applications/Test.app/Contents/MacOS/Test"),
+                    &["/Applications/Test.app/Contents/MacOS/Test"],
+                )
             },
             RawProcessSample {
-                pid: 11,
-                parent_pid: Some(10),
                 start_time_millis: 20,
-                name: "Test Helper".to_owned(),
-                exe: Some("/Applications/Test.app/Contents/MacOS/Test Helper".to_owned()),
-                cmd: vec![
-                    "/Applications/Test.app/Contents/MacOS/Test Helper".to_owned(),
-                    "--type=renderer".to_owned(),
-                ],
                 cpu_percent: 5.0,
                 memory_bytes: 256,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    11,
+                    Some(10),
+                    "Test Helper",
+                    Some("/Applications/Test.app/Contents/MacOS/Test Helper"),
+                    &[
+                        "/Applications/Test.app/Contents/MacOS/Test Helper",
+                        "--type=renderer",
+                    ],
+                )
             },
             RawProcessSample {
-                pid: 1,
-                parent_pid: None,
                 start_time_millis: 1,
-                name: "launchd".to_owned(),
-                exe: Some("/sbin/launchd".to_owned()),
-                cmd: vec!["/sbin/launchd".to_owned()],
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    1,
+                    None,
+                    "launchd",
+                    Some("/sbin/launchd"),
+                    &["/sbin/launchd"],
+                )
             },
         ];
         let identity = IdentityMap {
@@ -772,22 +738,14 @@ mod tests {
     fn process_detail_is_compacted_but_command_line_stays_complete() {
         let long_argument = "x".repeat(240);
         let process = RawProcessSample {
-            pid: 10,
-            parent_pid: None,
             start_time_millis: 1,
-            name: "python3".to_owned(),
-            exe: Some("/opt/homebrew/bin/python3".to_owned()),
-            cmd: vec!["python3".to_owned(), long_argument.clone()],
-            cpu_percent: 0.0,
-            memory_bytes: 0,
-            memory_physical_footprint_bytes: 0,
-            disk_read_bytes: 0,
-            disk_write_bytes: 0,
-            wakeups_per_second: 0.0,
-            energy_nj_per_s: 0.0,
-            cwd: None,
-            user: None,
-            thread_count: 0,
+            ..RawProcessSample::synthetic(
+                10,
+                None,
+                "python3",
+                Some("/opt/homebrew/bin/python3"),
+                &["python3", &long_argument],
+            )
         };
 
         let detail = summarize_process(&process);
@@ -804,64 +762,30 @@ mod tests {
     fn process_component_prefers_shell_session_for_external_launcher() {
         let processes = vec![
             RawProcessSample {
-                pid: 20,
-                parent_pid: Some(10),
                 start_time_millis: 10,
-                name: "zsh".to_owned(),
-                exe: Some("/bin/zsh".to_owned()),
-                cmd: vec!["-zsh".to_owned()],
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(20, Some(10), "zsh", Some("/bin/zsh"), &["-zsh"])
             },
             RawProcessSample {
-                pid: 21,
-                parent_pid: Some(20),
                 start_time_millis: 20,
-                name: "python3".to_owned(),
-                exe: Some("/opt/homebrew/bin/python3".to_owned()),
-                cmd: vec!["python3".to_owned(), "server.py".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    21,
+                    Some(20),
+                    "python3",
+                    Some("/opt/homebrew/bin/python3"),
+                    &["python3", "server.py"],
+                )
             },
             RawProcessSample {
-                pid: 10,
-                parent_pid: None,
                 start_time_millis: 1,
-                name: "Terminal".to_owned(),
-                exe: Some(
-                    "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal"
-                        .to_owned(),
-                ),
-                cmd: vec!["Terminal".to_owned()],
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    10,
+                    None,
+                    "Terminal",
+                    Some("/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal"),
+                    &["Terminal"],
+                )
             },
         ];
         let identity = IdentityMap {
@@ -893,42 +817,26 @@ mod tests {
     fn process_component_labels_service_manager_launcher() {
         let processes = vec![
             RawProcessSample {
-                pid: 31,
-                parent_pid: Some(1),
                 start_time_millis: 20,
-                name: "sync-agent".to_owned(),
-                exe: Some("/usr/libexec/sync-agent".to_owned()),
-                cmd: vec!["/usr/libexec/sync-agent".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    31,
+                    Some(1),
+                    "sync-agent",
+                    Some("/usr/libexec/sync-agent"),
+                    &["/usr/libexec/sync-agent"],
+                )
             },
             RawProcessSample {
-                pid: 1,
-                parent_pid: None,
                 start_time_millis: 1,
-                name: "launchd".to_owned(),
-                exe: Some("/sbin/launchd".to_owned()),
-                cmd: vec!["/sbin/launchd".to_owned()],
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    1,
+                    None,
+                    "launchd",
+                    Some("/sbin/launchd"),
+                    &["/sbin/launchd"],
+                )
             },
         ];
         let identity = IdentityMap {
@@ -961,83 +869,46 @@ mod tests {
     fn process_component_labels_login_item_launcher() {
         let processes = vec![
             RawProcessSample {
-                pid: 41,
-                parent_pid: Some(3),
                 start_time_millis: 20,
-                name: "MenuBarExtra".to_owned(),
-                exe: Some("/Users/test/Library/Application Support/Foo/MenuBarExtra".to_owned()),
-                cmd: vec!["MenuBarExtra".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    41,
+                    Some(3),
+                    "MenuBarExtra",
+                    Some("/Users/test/Library/Application Support/Foo/MenuBarExtra"),
+                    &["MenuBarExtra"],
+                )
             },
             RawProcessSample {
-                pid: 3,
-                parent_pid: Some(2),
                 start_time_millis: 10,
-                name: "xpcproxy".to_owned(),
-                exe: Some("/usr/libexec/xpcproxy".to_owned()),
-                cmd: vec!["/usr/libexec/xpcproxy".to_owned()],
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    3,
+                    Some(2),
+                    "xpcproxy",
+                    Some("/usr/libexec/xpcproxy"),
+                    &["/usr/libexec/xpcproxy"],
+                )
             },
             RawProcessSample {
-                pid: 2,
-                parent_pid: Some(1),
                 start_time_millis: 5,
-                name: "loginwindow".to_owned(),
-                exe: Some(
-                    "/System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow"
-                        .to_owned(),
-                ),
-                cmd: vec!["loginwindow".to_owned()],
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    2,
+                    Some(1),
+                    "loginwindow",
+                    Some("/System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow"),
+                    &["loginwindow"],
+                )
             },
             RawProcessSample {
-                pid: 1,
-                parent_pid: None,
                 start_time_millis: 1,
-                name: "launchd".to_owned(),
-                exe: Some("/sbin/launchd".to_owned()),
-                cmd: vec!["/sbin/launchd".to_owned()],
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    1,
+                    None,
+                    "launchd",
+                    Some("/sbin/launchd"),
+                    &["/sbin/launchd"],
+                )
             },
         ];
         let identity = IdentityMap {
@@ -1072,76 +943,42 @@ mod tests {
     fn mixed_launchers_add_attribution_note_and_downgrade_confidence() {
         let processes = vec![
             RawProcessSample {
-                pid: 10,
-                parent_pid: Some(1),
                 start_time_millis: 10,
-                name: "Test Helper".to_owned(),
-                exe: Some("/Applications/Test.app/Contents/MacOS/Test Helper".to_owned()),
-                cmd: vec!["helper-a".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
-                memory_physical_footprint_bytes: 0,
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    10,
+                    Some(1),
+                    "Test Helper",
+                    Some("/Applications/Test.app/Contents/MacOS/Test Helper"),
+                    &["helper-a"],
+                )
             },
             RawProcessSample {
-                pid: 11,
-                parent_pid: Some(2),
                 start_time_millis: 20,
-                name: "Test Helper".to_owned(),
-                exe: Some("/Applications/Test.app/Contents/MacOS/Test Helper".to_owned()),
-                cmd: vec!["helper-b".to_owned()],
                 cpu_percent: 1.0,
                 memory_bytes: 64,
-                memory_physical_footprint_bytes: 0,
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    11,
+                    Some(2),
+                    "Test Helper",
+                    Some("/Applications/Test.app/Contents/MacOS/Test Helper"),
+                    &["helper-b"],
+                )
             },
             RawProcessSample {
-                pid: 1,
-                parent_pid: None,
                 start_time_millis: 1,
-                name: "launchd".to_owned(),
-                exe: Some("/sbin/launchd".to_owned()),
-                cmd: vec!["/sbin/launchd".to_owned()],
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(
+                    1,
+                    None,
+                    "launchd",
+                    Some("/sbin/launchd"),
+                    &["/sbin/launchd"],
+                )
             },
             RawProcessSample {
-                pid: 2,
-                parent_pid: None,
                 start_time_millis: 2,
-                name: "zsh".to_owned(),
-                exe: Some("/bin/zsh".to_owned()),
-                cmd: vec!["-zsh".to_owned()],
-                cpu_percent: 0.0,
-                memory_bytes: 0,
-                memory_physical_footprint_bytes: 0,
-                disk_read_bytes: 0,
-                disk_write_bytes: 0,
-                wakeups_per_second: 0.0,
-                energy_nj_per_s: 0.0,
-                cwd: None,
-                user: None,
-                thread_count: 0,
+                ..RawProcessSample::synthetic(2, None, "zsh", Some("/bin/zsh"), &["-zsh"])
             },
         ];
         let identity = IdentityMap {
