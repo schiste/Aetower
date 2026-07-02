@@ -98,6 +98,10 @@ pub(super) fn scan_root(
         }
     }
 
+    // Root boundary (including cancellation/truncation breaks): make buffered
+    // index rows durable before the caller moves on or tears down.
+    storage_index.flush_pending_rows();
+
     (repositories, scanned_dirs, truncated)
 }
 
@@ -399,6 +403,9 @@ fn size_of_path(
                     ),
                     metrics,
                 );
+                // Checkpoint refused to continue (cancellation/pause): flush
+                // so the interrupted scan leaves no buffered rows behind.
+                storage_index.flush_pending_rows();
             }
             return result;
         }

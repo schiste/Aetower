@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     cmp::{Ordering, Reverse},
     collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque},
     ffi::CString,
@@ -55,6 +56,9 @@ const STORAGE_SCAN_PAUSE_POLL: Duration = Duration::from_millis(80);
 const STORAGE_SCAN_QUEUE_POLL: Duration = Duration::from_millis(120);
 const STORAGE_GROWTH_BUCKET_MILLIS: u64 = 60 * 60 * 1000;
 const STORAGE_INDEX_SNAPSHOT_READ_MULTIPLIER: usize = 24;
+const STORAGE_INDEX_FLUSH_CHUNK: usize = 512;
+const STORAGE_INDEX_LOOKUP_BIND_CHUNK: usize = 500;
+const STORAGE_GROWTH_RETENTION_MILLIS: u64 = 30 * 24 * 60 * 60 * 1000;
 const RECENT_CLEANUP_BLOCK_MILLIS: u64 = 10 * 60 * 1000;
 const STORAGE_TREEMAP_MAX_DEPTH: usize = 4;
 const STORAGE_TREEMAP_MAX_CHILDREN: usize = 14;

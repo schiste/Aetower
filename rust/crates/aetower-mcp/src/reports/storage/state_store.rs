@@ -230,6 +230,18 @@ pub(super) struct StorageItemRowsPage {
 pub(super) struct StorageSizeIndex {
     connection: Option<Connection>,
     pub(super) status: String,
+    /// Rows buffered by `store_indexed_row` and written in chunked
+    /// transactions by `flush_pending_rows`. The walk is single-threaded per
+    /// index instance, so interior mutability with `RefCell` is sufficient.
+    pending_rows: RefCell<Vec<StorageIndexedFileRow>>,
+}
+
+impl Drop for StorageSizeIndex {
+    fn drop(&mut self) {
+        // End-of-scan / cancellation safety net: whatever is still buffered
+        // must reach the database before the connection closes.
+        self.flush_pending_rows();
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -250,47 +262,37 @@ pub(super) struct RepositoryInventoryCacheState {
 }
 
 impl StorageSizeIndex {
+    fn with_status(connection: Option<Connection>, status: String) -> Self {
+        Self {
+            connection,
+            status,
+            pending_rows: RefCell::new(Vec::new()),
+        }
+    }
+
     pub(super) fn open() -> Self {
         let Some(directory) = storage_index_directory() else {
-            return Self {
-                connection: None,
-                status: "unavailable:no_data_dir".to_owned(),
-            };
+            return Self::with_status(None, "unavailable:no_data_dir".to_owned());
         };
         if let Err(error) = fs::create_dir_all(&directory) {
-            return Self {
-                connection: None,
-                status: format!("unavailable:create_dir:{error}"),
-            };
+            return Self::with_status(None, format!("unavailable:create_dir:{error}"));
         }
         let path = directory.join(STORAGE_INDEX_FILE_NAME);
         let Ok(connection) = Connection::open(path) else {
-            return Self {
-                connection: None,
-                status: "unavailable:open_failed".to_owned(),
-            };
+            return Self::with_status(None, "unavailable:open_failed".to_owned());
         };
         if let Err(error) = Self::prepare_schema(&connection) {
-            return Self {
-                connection: None,
-                status: format!("unavailable:schema:{error}"),
-            };
+            return Self::with_status(None, format!("unavailable:schema:{error}"));
         }
         // Index reads/writes tolerate short writer contention instead of
         // silently dropping rows. The scan-job state store deliberately keeps
         // the default fail-fast behavior so cancel/pause stay responsive.
         let _ = connection.busy_timeout(Duration::from_millis(2_000));
-        Self {
-            connection: Some(connection),
-            status: "ready".to_owned(),
-        }
+        Self::with_status(Some(connection), "ready".to_owned())
     }
 
     pub(super) fn disabled(reason: &str) -> Self {
-        Self {
-            connection: None,
-            status: format!("disabled:{reason}"),
-        }
+        Self::with_status(None, format!("disabled:{reason}"))
     }
 
     fn prepare_schema(connection: &Connection) -> rusqlite::Result<()> {
@@ -506,7 +508,30 @@ impl StorageSizeIndex {
             )?;
         }
         Self::ensure_repository_inventory_cache_columns(connection)?;
+        Self::ensure_storage_file_index_columns(connection)?;
         Self::ensure_storage_file_index_page_indexes(connection)?;
+        Ok(())
+    }
+
+    /// Additive migration (no `schema_version` bump, mirroring
+    /// `ensure_repository_inventory_cache_columns`): records the cleanup tier
+    /// a row had before its latest upsert so tier transitions can be surfaced
+    /// without re-touching the batched write path later.
+    fn ensure_storage_file_index_columns(connection: &Connection) -> rusqlite::Result<()> {
+        let exists: i64 = connection.query_row(
+            "SELECT COUNT(*)
+             FROM pragma_table_info('storage_file_index')
+             WHERE name = 'previous_cleanup_tier'",
+            [],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            tolerate_duplicate_column(connection.execute(
+                "ALTER TABLE storage_file_index
+                 ADD COLUMN previous_cleanup_tier TEXT NOT NULL DEFAULT ''",
+                [],
+            ))?;
+        }
         Ok(())
     }
 
@@ -542,11 +567,11 @@ impl StorageSizeIndex {
             |row| row.get(0),
         )?;
         if exists == 0 {
-            connection.execute(
+            tolerate_duplicate_column(connection.execute(
                 "ALTER TABLE storage_repository_inventory_cache
                  ADD COLUMN repository_fingerprint TEXT NOT NULL DEFAULT ''",
                 [],
-            )?;
+            ))?;
         }
         Ok(())
     }
@@ -652,108 +677,176 @@ impl StorageSizeIndex {
         }
     }
 
+    /// Buffer one indexed row; rows are written in chunked transactions by
+    /// `flush_pending_rows` (previous-values lookup + upserts + growth deltas)
+    /// instead of one SELECT and one autocommit INSERT per file.
     pub(super) fn store_indexed_row(
         &self,
         row: &StorageIndexedFileRow,
         metrics: &mut StorageScanMetrics,
     ) {
+        if self.connection.is_none() {
+            return;
+        }
+        metrics.storage_index_writes = metrics.storage_index_writes.saturating_add(1);
+        let chunk_full = {
+            let mut pending = self.pending_rows.borrow_mut();
+            pending.push(row.clone());
+            pending.len() >= STORAGE_INDEX_FLUSH_CHUNK
+        };
+        if chunk_full {
+            self.flush_pending_rows();
+        }
+    }
+
+    /// Write all buffered rows in one transaction. Per-row semantics match the
+    /// old autocommit path exactly: a growth delta is recorded only when the
+    /// physical byte count changed (new rows compare against zero), and a row
+    /// stored twice in one chunk compares against the earlier occurrence. The
+    /// growth-delta retention DELETE runs once per flush instead of once per
+    /// changed file. Failures are tolerated (best effort), matching the old
+    /// `.is_ok()` behavior.
+    pub(super) fn flush_pending_rows(&self) {
+        let rows = std::mem::take(&mut *self.pending_rows.borrow_mut());
+        if rows.is_empty() {
+            return;
+        }
         let Some(connection) = self.connection.as_ref() else {
             return;
         };
-        let previous_physical = connection
-            .query_row(
-                "SELECT physical_bytes FROM storage_file_index WHERE path = ?1",
-                params![&row.path],
-                |row| row.get::<_, i64>(0),
-            )
-            .ok()
-            .map(|value| value.max(0) as u64);
-        if connection
-            .execute(
+        // Batched previous-values lookup, chunked to stay well under SQLite's
+        // bind-variable limit. Also captures the previous cleanup tier so the
+        // upsert can persist it into `previous_cleanup_tier`.
+        let mut previous: BTreeMap<String, (u64, String)> = BTreeMap::new();
+        let unique_paths: Vec<&String> = rows
+            .iter()
+            .map(|row| &row.path)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        for chunk in unique_paths.chunks(STORAGE_INDEX_LOOKUP_BIND_CHUNK) {
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let Ok(mut statement) = connection.prepare(&format!(
+                "SELECT path, physical_bytes, cleanup_tier
+                 FROM storage_file_index
+                 WHERE path IN ({placeholders})"
+            )) else {
+                continue;
+            };
+            let Ok(found) = statement.query_map(params_from_iter(chunk.iter()), |row| {
+                let path: String = row.get(0)?;
+                let physical_bytes: i64 = row.get(1)?;
+                let cleanup_tier: String = row.get(2)?;
+                Ok((path, (physical_bytes.max(0) as u64, cleanup_tier)))
+            }) else {
+                continue;
+            };
+            for (path, entry) in found.flatten() {
+                previous.insert(path, entry);
+            }
+        }
+        let Ok(transaction) = connection.unchecked_transaction() else {
+            return;
+        };
+        let mut max_scan_millis = 0u64;
+        {
+            let Ok(mut upsert) = transaction.prepare(
                 "INSERT OR REPLACE INTO storage_file_index (
                     path, device, inode, file_id, source_root, repo_root, kind, storage_role,
                     safety, cleanup_tier, logical_bytes, physical_bytes, modified_millis,
                     changed_millis, accessed_millis, birth_millis, is_directory, entries,
-                    truncated, last_scan_millis
+                    truncated, last_scan_millis, previous_cleanup_tier
                  ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                    ?17, ?18, ?19, ?20
+                    ?17, ?18, ?19, ?20, ?21
                  )",
-                params![
-                    &row.path,
-                    row.device,
-                    row.inode,
-                    &row.file_id,
-                    &row.source_root,
-                    row.repo_root.as_deref(),
-                    &row.kind,
-                    &row.storage_role,
-                    &row.safety,
-                    &row.cleanup_tier,
-                    row.logical_bytes.min(i64::MAX as u64) as i64,
-                    row.physical_bytes.min(i64::MAX as u64) as i64,
-                    row.modified_millis
-                        .map(|value| value.min(i64::MAX as u64) as i64),
-                    row.changed_millis
-                        .map(|value| value.min(i64::MAX as u64) as i64),
-                    row.accessed_millis
-                        .map(|value| value.min(i64::MAX as u64) as i64),
-                    row.birth_millis
-                        .map(|value| value.min(i64::MAX as u64) as i64),
-                    if row.is_directory { 1i64 } else { 0i64 },
-                    row.entries.min(i64::MAX as u64) as i64,
-                    if row.truncated { 1i64 } else { 0i64 },
-                    row.last_scan_millis.min(i64::MAX as u64) as i64
-                ],
-            )
-            .is_ok()
-        {
-            metrics.storage_index_writes = metrics.storage_index_writes.saturating_add(1);
-            self.record_growth_delta(row, previous_physical);
+            ) else {
+                return;
+            };
+            let Ok(mut insert_delta) = transaction.prepare(
+                "INSERT INTO storage_growth_delta (
+                    bucket_millis, scan_millis, path, source_root, repo_root, kind, cleanup_tier,
+                    previous_physical_bytes, current_physical_bytes, delta_bytes
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            ) else {
+                return;
+            };
+            for row in &rows {
+                let previous_entry = previous.get(&row.path);
+                let previous_physical = previous_entry.map(|(bytes, _)| *bytes);
+                let previous_tier = previous_entry
+                    .map(|(_, tier)| tier.clone())
+                    .unwrap_or_default();
+                if upsert
+                    .execute(params![
+                        &row.path,
+                        row.device,
+                        row.inode,
+                        &row.file_id,
+                        &row.source_root,
+                        row.repo_root.as_deref(),
+                        &row.kind,
+                        &row.storage_role,
+                        &row.safety,
+                        &row.cleanup_tier,
+                        row.logical_bytes.min(i64::MAX as u64) as i64,
+                        row.physical_bytes.min(i64::MAX as u64) as i64,
+                        row.modified_millis
+                            .map(|value| value.min(i64::MAX as u64) as i64),
+                        row.changed_millis
+                            .map(|value| value.min(i64::MAX as u64) as i64),
+                        row.accessed_millis
+                            .map(|value| value.min(i64::MAX as u64) as i64),
+                        row.birth_millis
+                            .map(|value| value.min(i64::MAX as u64) as i64),
+                        if row.is_directory { 1i64 } else { 0i64 },
+                        row.entries.min(i64::MAX as u64) as i64,
+                        if row.truncated { 1i64 } else { 0i64 },
+                        row.last_scan_millis.min(i64::MAX as u64) as i64,
+                        previous_tier,
+                    ])
+                    .is_err()
+                {
+                    continue;
+                }
+                max_scan_millis = max_scan_millis.max(row.last_scan_millis);
+                let previous_physical = previous_physical.unwrap_or(0);
+                if previous_physical != row.physical_bytes {
+                    let delta = row.physical_bytes as i128 - previous_physical as i128;
+                    let delta = delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+                    if delta != 0 {
+                        let bucket_millis = (row.last_scan_millis / STORAGE_GROWTH_BUCKET_MILLIS)
+                            * STORAGE_GROWTH_BUCKET_MILLIS;
+                        let _ = insert_delta.execute(params![
+                            bucket_millis.min(i64::MAX as u64) as i64,
+                            row.last_scan_millis.min(i64::MAX as u64) as i64,
+                            &row.path,
+                            &row.source_root,
+                            row.repo_root.as_deref(),
+                            &row.kind,
+                            &row.cleanup_tier,
+                            previous_physical.min(i64::MAX as u64) as i64,
+                            row.physical_bytes.min(i64::MAX as u64) as i64,
+                            delta,
+                        ]);
+                    }
+                }
+                previous.insert(
+                    row.path.clone(),
+                    (row.physical_bytes, row.cleanup_tier.clone()),
+                );
+            }
+            if max_scan_millis > 0 {
+                let retention_before = max_scan_millis
+                    .saturating_sub(STORAGE_GROWTH_RETENTION_MILLIS)
+                    .min(i64::MAX as u64) as i64;
+                let _ = transaction.execute(
+                    "DELETE FROM storage_growth_delta WHERE scan_millis < ?1",
+                    params![retention_before],
+                );
+            }
         }
-    }
-
-    fn record_growth_delta(&self, row: &StorageIndexedFileRow, previous_physical: Option<u64>) {
-        let Some(connection) = self.connection.as_ref() else {
-            return;
-        };
-        let previous_physical = previous_physical.unwrap_or(0);
-        if previous_physical == row.physical_bytes {
-            return;
-        }
-        let delta = row.physical_bytes as i128 - previous_physical as i128;
-        let delta = delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
-        if delta == 0 {
-            return;
-        }
-        let bucket_millis =
-            (row.last_scan_millis / STORAGE_GROWTH_BUCKET_MILLIS) * STORAGE_GROWTH_BUCKET_MILLIS;
-        let _ = connection.execute(
-            "INSERT INTO storage_growth_delta (
-                bucket_millis, scan_millis, path, source_root, repo_root, kind, cleanup_tier,
-                previous_physical_bytes, current_physical_bytes, delta_bytes
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![
-                bucket_millis.min(i64::MAX as u64) as i64,
-                row.last_scan_millis.min(i64::MAX as u64) as i64,
-                &row.path,
-                &row.source_root,
-                row.repo_root.as_deref(),
-                &row.kind,
-                &row.cleanup_tier,
-                previous_physical.min(i64::MAX as u64) as i64,
-                row.physical_bytes.min(i64::MAX as u64) as i64,
-                delta,
-            ],
-        );
-        let retention_before = row
-            .last_scan_millis
-            .saturating_sub(30 * 24 * 60 * 60 * 1000)
-            .min(i64::MAX as u64) as i64;
-        let _ = connection.execute(
-            "DELETE FROM storage_growth_delta WHERE scan_millis < ?1",
-            params![retention_before],
-        );
+        let _ = transaction.commit();
     }
 
     pub(super) fn load_candidate_rows(
@@ -762,6 +855,7 @@ impl StorageSizeIndex {
         limit: usize,
         metrics: &mut StorageScanMetrics,
     ) -> Result<Vec<StorageIndexedFileRow>, String> {
+        self.flush_pending_rows();
         let Some(connection) = self.connection.as_ref() else {
             return Err(self.status.clone());
         };
@@ -824,6 +918,7 @@ impl StorageSizeIndex {
         limit: usize,
         metrics: &mut StorageScanMetrics,
     ) -> Result<StorageItemRowsPage, String> {
+        self.flush_pending_rows();
         let mut page =
             self.query_item_rows_page(roots, sort_key, sort_descending, offset, limit)?;
         let missing = page
@@ -1022,6 +1117,7 @@ impl StorageSizeIndex {
     }
 
     pub(super) fn load_growth_deltas(&self, limit: usize) -> Vec<StorageGrowthDelta> {
+        self.flush_pending_rows();
         let Some(connection) = self.connection.as_ref() else {
             return Vec::new();
         };
@@ -1089,6 +1185,98 @@ impl StorageSizeIndex {
                 delta
             })
             .collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_row_count(&self) -> usize {
+        self.pending_rows.borrow().len()
+    }
+
+    /// Test-only snapshot of one indexed row's byte count, cleanup tier, and
+    /// persisted previous cleanup tier. Flushes pending rows first.
+    #[cfg(test)]
+    pub(super) fn indexed_row_tier_snapshot(&self, path: &str) -> Option<(u64, String, String)> {
+        self.flush_pending_rows();
+        let connection = self.connection.as_ref()?;
+        connection
+            .query_row(
+                "SELECT physical_bytes, cleanup_tier, previous_cleanup_tier
+                 FROM storage_file_index
+                 WHERE path = ?1",
+                params![path],
+                |row| {
+                    let physical_bytes: i64 = row.get(0)?;
+                    Ok((physical_bytes.max(0) as u64, row.get(1)?, row.get(2)?))
+                },
+            )
+            .ok()
+    }
+
+    #[cfg(test)]
+    pub(super) fn count_indexed_rows_with_prefix(&self, prefix: &str) -> u64 {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return 0;
+        };
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM storage_file_index WHERE path LIKE ?1 ESCAPE '\\'",
+                params![format!("{}%", escape_like_pattern(prefix))],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as u64)
+            .unwrap_or_default()
+    }
+
+    /// Test-only raw growth-delta view (path, previous, current, delta,
+    /// scan_millis) for rows under a prefix, ordered by insertion.
+    #[cfg(test)]
+    pub(super) fn growth_deltas_with_prefix(
+        &self,
+        prefix: &str,
+    ) -> Vec<(String, u64, u64, i64, u64)> {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut statement) = connection.prepare(
+            "SELECT path, previous_physical_bytes, current_physical_bytes, delta_bytes,
+                    scan_millis
+             FROM storage_growth_delta
+             WHERE path LIKE ?1 ESCAPE '\\'
+             ORDER BY id ASC",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(
+            params![format!("{}%", escape_like_pattern(prefix))],
+            |row| {
+                let previous: i64 = row.get(1)?;
+                let current: i64 = row.get(2)?;
+                let scan_millis: i64 = row.get(4)?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    previous.max(0) as u64,
+                    current.max(0) as u64,
+                    row.get::<_, i64>(3)?,
+                    scan_millis.max(0) as u64,
+                ))
+            },
+        ) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
+    }
+}
+
+/// Two connections can race the pragma check in a guarded `ALTER TABLE ... ADD
+/// COLUMN` migration; the loser's error is benign and must not disable the
+/// index.
+fn tolerate_duplicate_column(result: rusqlite::Result<usize>) -> rusqlite::Result<()> {
+    match result {
+        Ok(_) => Ok(()),
+        Err(error) if error.to_string().contains("duplicate column name") => Ok(()),
+        Err(error) => Err(error),
     }
 }
 

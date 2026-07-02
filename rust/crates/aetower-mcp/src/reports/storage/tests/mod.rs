@@ -406,6 +406,241 @@ fn storage_hygiene_items_page_evicts_missing_rows_and_refills() {
     let _ = fs::remove_dir_all(root);
 }
 
+fn batched_flush_row(
+    root: &Path,
+    name: &str,
+    physical_bytes: u64,
+    cleanup_tier: &str,
+    last_scan_millis: u64,
+) -> StorageIndexedFileRow {
+    let path = root.join(name);
+    StorageIndexedFileRow {
+        path: path.display().to_string(),
+        device: 11,
+        inode: 1,
+        file_id: format!("11:{name}"),
+        source_root: root.display().to_string(),
+        repo_root: None,
+        kind: "rust-build".to_owned(),
+        storage_role: "build-artifact".to_owned(),
+        safety: "safe".to_owned(),
+        cleanup_tier: cleanup_tier.to_owned(),
+        logical_bytes: physical_bytes,
+        physical_bytes,
+        modified_millis: Some(last_scan_millis),
+        changed_millis: Some(last_scan_millis),
+        accessed_millis: Some(last_scan_millis),
+        birth_millis: Some(last_scan_millis),
+        is_directory: false,
+        entries: 1,
+        truncated: false,
+        last_scan_millis,
+    }
+}
+
+#[test]
+fn storage_index_batched_flush_matches_per_row_growth_semantics() {
+    let root = test_root("batched-flush-parity");
+    let prefix = format!("{}/", root.display());
+    let now_millis = storage_now_millis();
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+
+    // First generation: 600 rows crosses one 512-row chunk boundary, so one
+    // flush happens automatically and the remainder stays buffered.
+    for index in 0..600usize {
+        let row = batched_flush_row(
+            &root,
+            &format!("row-{index:04}.bin"),
+            MIN_ITEM_BYTES + index as u64,
+            "rebuildable",
+            now_millis,
+        );
+        storage_index.store_indexed_row(&row, &mut metrics);
+    }
+    assert_eq!(metrics.storage_index_writes, 600);
+    assert_eq!(
+        storage_index.pending_row_count(),
+        600 - STORAGE_INDEX_FLUSH_CHUNK,
+        "chunk-full flush drains exactly one chunk"
+    );
+    assert_eq!(storage_index.count_indexed_rows_with_prefix(&prefix), 600);
+    let deltas = storage_index.growth_deltas_with_prefix(&prefix);
+    assert_eq!(deltas.len(), 600, "every new row records one growth delta");
+    assert!(
+        deltas
+            .iter()
+            .all(|(_, previous, current, delta, _)| *previous == 0 && *delta == *current as i64)
+    );
+
+    // Second generation: half the rows grow and change tier, half are stored
+    // again unchanged. Only changed byte counts may record deltas, and the
+    // previous cleanup tier must be captured for every row.
+    for index in 0..600usize {
+        let (physical_bytes, tier) = if index < 300 {
+            ((MIN_ITEM_BYTES + index as u64) * 2, "review")
+        } else {
+            (MIN_ITEM_BYTES + index as u64, "rebuildable")
+        };
+        let row = batched_flush_row(
+            &root,
+            &format!("row-{index:04}.bin"),
+            physical_bytes,
+            tier,
+            now_millis,
+        );
+        storage_index.store_indexed_row(&row, &mut metrics);
+    }
+    storage_index.flush_pending_rows();
+    assert_eq!(storage_index.count_indexed_rows_with_prefix(&prefix), 600);
+
+    let changed_path = root.join("row-0007.bin").display().to_string();
+    let unchanged_path = root.join("row-0420.bin").display().to_string();
+    let (changed_bytes, changed_tier, changed_previous_tier) = storage_index
+        .indexed_row_tier_snapshot(&changed_path)
+        .unwrap_or_else(|| panic!("changed row snapshot exists"));
+    assert_eq!(changed_bytes, (MIN_ITEM_BYTES + 7) * 2);
+    assert_eq!(changed_tier, "review");
+    assert_eq!(changed_previous_tier, "rebuildable");
+    let (unchanged_bytes, _, unchanged_previous_tier) = storage_index
+        .indexed_row_tier_snapshot(&unchanged_path)
+        .unwrap_or_else(|| panic!("unchanged row snapshot exists"));
+    assert_eq!(unchanged_bytes, MIN_ITEM_BYTES + 420);
+    assert_eq!(unchanged_previous_tier, "rebuildable");
+
+    let deltas = storage_index.growth_deltas_with_prefix(&prefix);
+    assert_eq!(
+        deltas.len(),
+        900,
+        "600 first-seen deltas plus 300 growth deltas for the changed half"
+    );
+    let changed_deltas = deltas
+        .iter()
+        .filter(|(path, _, _, _, _)| *path == changed_path)
+        .collect::<Vec<_>>();
+    assert_eq!(changed_deltas.len(), 2);
+    assert_eq!(changed_deltas[1].1, MIN_ITEM_BYTES + 7);
+    assert_eq!(changed_deltas[1].2, (MIN_ITEM_BYTES + 7) * 2);
+    assert_eq!(changed_deltas[1].3, (MIN_ITEM_BYTES + 7) as i64);
+    assert_eq!(
+        deltas
+            .iter()
+            .filter(|(path, _, _, _, _)| *path == unchanged_path)
+            .count(),
+        1,
+        "re-storing an unchanged row must not record a delta"
+    );
+
+    // A path stored twice inside one buffered chunk keeps the sequential
+    // per-row semantics: the second store compares against the first.
+    let twice_path = root.join("stored-twice.bin").display().to_string();
+    storage_index.store_indexed_row(
+        &batched_flush_row(&root, "stored-twice.bin", 1_000, "rebuildable", now_millis),
+        &mut metrics,
+    );
+    storage_index.store_indexed_row(
+        &batched_flush_row(&root, "stored-twice.bin", 4_000, "review", now_millis),
+        &mut metrics,
+    );
+    storage_index.flush_pending_rows();
+    let twice_deltas = storage_index.growth_deltas_with_prefix(&twice_path);
+    assert_eq!(twice_deltas.len(), 2);
+    assert_eq!((twice_deltas[0].1, twice_deltas[0].2), (0, 1_000));
+    assert_eq!((twice_deltas[1].1, twice_deltas[1].2), (1_000, 4_000));
+    let (twice_bytes, twice_tier, twice_previous_tier) = storage_index
+        .indexed_row_tier_snapshot(&twice_path)
+        .unwrap_or_else(|| panic!("twice-stored row snapshot exists"));
+    assert_eq!(twice_bytes, 4_000);
+    assert_eq!(twice_tier, "review");
+    assert_eq!(twice_previous_tier, "rebuildable");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_index_buffered_rows_are_visible_to_reads_without_explicit_flush() {
+    let root = test_root("batched-flush-read-your-writes");
+    if let Err(error) = fs::create_dir_all(&root) {
+        panic!("create read-your-writes fixture dir: {error}");
+    }
+    let now_millis = storage_now_millis();
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+    for index in 0..5usize {
+        let name = format!("buffered-{index}.bin");
+        if let Err(error) = fs::write(root.join(&name), b"fixture") {
+            panic!("write buffered fixture file: {error}");
+        }
+        let row = batched_flush_row(
+            &root,
+            &name,
+            MIN_ITEM_BYTES + index as u64,
+            "rebuildable",
+            now_millis,
+        );
+        storage_index.store_indexed_row(&row, &mut metrics);
+    }
+    assert_eq!(storage_index.pending_row_count(), 5);
+
+    let page = match storage_index.load_item_rows_page(
+        std::slice::from_ref(&root),
+        StorageItemSortKey::Size,
+        true,
+        0,
+        10,
+        &mut metrics,
+    ) {
+        Ok(page) => page,
+        Err(error) => panic!("load buffered rows page: {error}"),
+    };
+    assert_eq!(page.total_available, 5, "reads observe buffered rows");
+    assert_eq!(page.rows.len(), 5);
+    assert_eq!(storage_index.pending_row_count(), 0);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_index_growth_delta_retention_prunes_once_per_flush() {
+    let root = test_root("batched-flush-retention");
+    let prefix = format!("{}/", root.display());
+    let now_millis = storage_now_millis();
+    let stale_scan_millis = now_millis.saturating_sub(40 * 24 * 60 * 60 * 1000);
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+
+    storage_index.store_indexed_row(
+        &batched_flush_row(
+            &root,
+            "old-delta.bin",
+            2_048,
+            "rebuildable",
+            stale_scan_millis,
+        ),
+        &mut metrics,
+    );
+    storage_index.flush_pending_rows();
+
+    storage_index.store_indexed_row(
+        &batched_flush_row(&root, "fresh-delta.bin", 4_096, "rebuildable", now_millis),
+        &mut metrics,
+    );
+    storage_index.flush_pending_rows();
+
+    let deltas = storage_index.growth_deltas_with_prefix(&prefix);
+    assert_eq!(
+        deltas.len(),
+        1,
+        "the per-flush retention delete prunes deltas older than 30 days"
+    );
+    assert!(deltas[0].0.ends_with("fresh-delta.bin"));
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn storage_hygiene_attributes_artifacts_to_git_repo_and_branch() {
     let root = test_root("attributes-artifacts");
@@ -1369,6 +1604,9 @@ fn storage_hygiene_indexed_snapshot_keeps_artifact_rows_as_repository_overlay_on
         },
         &mut metrics,
     );
+    // The indexed snapshot below reads through its own connection, so the
+    // buffered row must be flushed to the database first.
+    storage_index.flush_pending_rows();
 
     let json = match storage_hygiene_indexed_json(vec![root.display().to_string()], 5, 80) {
         Ok(json) => json,
