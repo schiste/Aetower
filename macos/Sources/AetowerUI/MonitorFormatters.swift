@@ -3,8 +3,13 @@ import Foundation
 
 // MARK: - Byte and rate formatters
 
-func formatBytes(_ bytes: UInt64) -> String {
+public func formatBytes(_ bytes: UInt64) -> String {
     MonitorByteFormatters.binary.string(fromByteCount: Int64(bytes))
+}
+
+/// KB-granular adaptive variant for compact per-row/tile readouts.
+public func formatBytesCompact(_ bytes: UInt64) -> String {
+    MonitorByteFormatters.compact.string(fromByteCount: Int64(bytes))
 }
 
 func formatRate(_ bytesPerSecond: UInt64) -> String {
@@ -23,6 +28,15 @@ private enum MonitorByteFormatters {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useMB, .useGB]
         formatter.countStyle = .binary
+        return formatter
+    }()
+
+    nonisolated(unsafe) static let compact: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .binary
+        formatter.includesUnit = true
+        formatter.isAdaptive = true
         return formatter
     }()
 

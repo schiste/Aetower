@@ -21,6 +21,7 @@ actor SnapshotRefreshWorker {
     func refresh(
         force: Bool,
         includeOperatorState: Bool,
+        collectPayloadDiagnostics: Bool = true,
         monitorSelectedEntityId: String? = nil,
         monitorProcessLimit: UInt32 = 160,
         monitorTrendPoints: UInt32 = MonitorUiPayloadSizing.graphPointCount
@@ -42,7 +43,8 @@ actor SnapshotRefreshWorker {
             force: force,
             processLimit: monitorProcessLimit,
             trendPoints: monitorTrendPoints,
-            selectedEntityId: monitorSelectedEntityId
+            selectedEntityId: monitorSelectedEntityId,
+            collectPayloadDiagnostics: collectPayloadDiagnostics
         )
 
         let runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
@@ -72,7 +74,8 @@ actor SnapshotRefreshWorker {
         force: Bool,
         processLimit: UInt32,
         trendPoints: UInt32,
-        selectedEntityId: String?
+        selectedEntityId: String?,
+        collectPayloadDiagnostics: Bool
     ) throws -> MonitorUiRefreshPayload {
         let fetchStartedAt = CFAbsoluteTimeGetCurrent()
         if force || lastMonitorUiSequence == 0 {
@@ -86,7 +89,7 @@ actor SnapshotRefreshWorker {
                 snapshot,
                 MonitorUiPayloadFetchDiagnostics(
                     ffiFetchMillis: elapsedMillis(since: fetchStartedAt),
-                    snapshotBytes: estimatedByteCount(snapshot),
+                    snapshotBytes: collectPayloadDiagnostics ? estimatedByteCount(snapshot) : 0,
                     compactPayloadKind: "snapshot",
                     returnedRowCount: snapshot.processRows.count
                 )
@@ -104,7 +107,7 @@ actor SnapshotRefreshWorker {
                 delta,
                 MonitorUiPayloadFetchDiagnostics(
                     ffiFetchMillis: elapsedMillis(since: fetchStartedAt),
-                    snapshotBytes: estimatedByteCount(delta),
+                    snapshotBytes: collectPayloadDiagnostics ? estimatedByteCount(delta) : 0,
                     compactPayloadKind: "delta-no-update",
                     returnedRowCount: delta.changedProcessRows.count
                 )
@@ -122,7 +125,7 @@ actor SnapshotRefreshWorker {
                 snapshot,
                 MonitorUiPayloadFetchDiagnostics(
                     ffiFetchMillis: elapsedMillis(since: fetchStartedAt),
-                    snapshotBytes: estimatedByteCount(snapshot),
+                    snapshotBytes: collectPayloadDiagnostics ? estimatedByteCount(snapshot) : 0,
                     compactPayloadKind: "snapshot-fallback",
                     returnedRowCount: snapshot.processRows.count
                 )
@@ -134,7 +137,7 @@ actor SnapshotRefreshWorker {
             delta,
             MonitorUiPayloadFetchDiagnostics(
                 ffiFetchMillis: elapsedMillis(since: fetchStartedAt),
-                snapshotBytes: estimatedByteCount(delta),
+                snapshotBytes: collectPayloadDiagnostics ? estimatedByteCount(delta) : 0,
                 compactPayloadKind: "delta",
                 returnedRowCount: delta.changedProcessRows.count
             )

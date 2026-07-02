@@ -56,7 +56,7 @@ public struct MenuBarSummaryView: View {
                 Spacer()
                 Text(
                     state.snapshot.host.gpuPercent > 0 || state.snapshot.host.gpuMemoryBytes > 0
-                        ? "\(String(format: "%.1f%%", state.snapshot.host.gpuPercent)) · \(menuBarFormatBytes(state.snapshot.host.gpuMemoryBytes))"
+                        ? "\(String(format: "%.1f%%", state.snapshot.host.gpuPercent)) · \(formatBytes(state.snapshot.host.gpuMemoryBytes))"
                         : "idle"
                 )
                 .foregroundStyle(.secondary)
@@ -130,13 +130,13 @@ public struct MenuBarSummaryView: View {
             menuSparkline(
                 "Memory",
                 samples: trend.memoryUsedBytes.map { Double($0) },
-                value: menuBarFormatBytes(host.memoryUsedBytes),
+                value: formatBytes(host.memoryUsedBytes),
                 tone: AetowerDesign.Tone.memory
             )
             menuSparkline(
                 "Network",
                 samples: trend.networkActivityBps.map { Double($0) },
-                value: "\(menuBarFormatBytes(host.networkReceiveBps + host.networkSendBps))/s",
+                value: "\(formatBytes(host.networkReceiveBps + host.networkSendBps))/s",
                 tone: AetowerDesign.Tone.network
             )
         }
@@ -201,11 +201,4 @@ private func menuBarThermalSummary(_ state: ThermalState) -> String {
     case .serious: return "serious"
     case .critical: return "critical"
     }
-}
-
-private func menuBarFormatBytes(_ bytes: UInt64) -> String {
-    let formatter = ByteCountFormatter()
-    formatter.allowedUnits = [.useMB, .useGB]
-    formatter.countStyle = .binary
-    return formatter.string(fromByteCount: Int64(bytes))
 }

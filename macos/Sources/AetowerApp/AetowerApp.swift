@@ -624,7 +624,7 @@ private struct ActivityWorkspaceView: View {
                 if let summary = historySummary {
                     activityDetailLine("Snapshots", "\(summary.snapshotCount) persisted · \(summary.rangeCount) in selected range")
                     activityDetailLine("Coverage", historyCoverageLabel)
-                    activityDetailLine("Store", "\(formatActivityBytes(summary.storeBytes)) DB · \(formatActivityBytes(summary.walBytes)) WAL")
+                    activityDetailLine("Store", "\(formatBytesCompact(summary.storeBytes)) DB · \(formatBytesCompact(summary.walBytes)) WAL")
                     if summary.quarantineCount > 0 {
                         activityDetailLine("Quarantine", "\(summary.quarantineCount) incompatible row(s)")
                     }
@@ -651,14 +651,14 @@ private struct ActivityWorkspaceView: View {
                 ) {
                     activityMetric(
                         "Database",
-                        value: formatActivityBytes(historySummary?.storeBytes ?? 0),
+                        value: formatBytesCompact(historySummary?.storeBytes ?? 0),
                         detail: "snapshot store",
                         systemImage: "externaldrive",
                         tone: storageTint
                     )
                     activityMetric(
                         "WAL",
-                        value: formatActivityBytes(historySummary?.walBytes ?? 0),
+                        value: formatBytesCompact(historySummary?.walBytes ?? 0),
                         detail: "write-ahead log",
                         systemImage: "arrow.triangle.2.circlepath",
                         tone: walTint
@@ -712,11 +712,11 @@ private struct ActivityWorkspaceView: View {
                     activityDetailLine("Pruned rows", "\(maintenance.prunedRows)")
                     activityDetailLine(
                         "Before",
-                        "\(formatActivityBytes(maintenance.storeBytesBefore)) DB · \(formatActivityBytes(maintenance.walBytesBefore)) WAL"
+                        "\(formatBytesCompact(maintenance.storeBytesBefore)) DB · \(formatBytesCompact(maintenance.walBytesBefore)) WAL"
                     )
                     activityDetailLine(
                         "After",
-                        "\(formatActivityBytes(maintenance.storeBytesAfter)) DB · \(formatActivityBytes(maintenance.walBytesAfter)) WAL"
+                        "\(formatBytesCompact(maintenance.storeBytesAfter)) DB · \(formatBytesCompact(maintenance.walBytesAfter)) WAL"
                     )
                     if let aggressiveReason = maintenance.aggressiveReason {
                         activityDetailLine("Aggressive reason", aggressiveReason)
@@ -784,7 +784,7 @@ private struct ActivityWorkspaceView: View {
         guard let historySummary else {
             return "No summary"
         }
-        return formatActivityBytes(historySummary.storeBytes + historySummary.walBytes)
+        return formatBytesCompact(historySummary.storeBytes + historySummary.walBytes)
     }
 
     private var historyRangeCountLabel: String {
@@ -952,14 +952,6 @@ private struct ActivityWorkspaceView: View {
         if seconds < 3_600 { return "\(seconds / 60)m ago" }
         if seconds < 86_400 { return "\(seconds / 3_600)h ago" }
         return "\(seconds / 86_400)d ago"
-    }
-
-    private func formatActivityBytes(_ bytes: UInt64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .binary
-        formatter.allowedUnits = [.useKB, .useMB, .useGB]
-        formatter.isAdaptive = true
-        return formatter.string(fromByteCount: Int64(bytes))
     }
 }
 

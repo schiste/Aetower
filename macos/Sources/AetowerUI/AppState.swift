@@ -327,6 +327,11 @@ public final class AppState {
     private(set) var automationRules: [AutomationRule] = AutomationStore.load()
     private var seenAutomationEventIds: Set<String> = []
     private var automationSeeded = false
+    /// Two-pass grace bookkeeping for pruning the on-demand report caches: a
+    /// key must be absent from the live snapshot on two consecutive passes
+    /// (operator-state cadence, ~30s apart) before its cached report is dropped.
+    private var stalePruneEntityIds: Set<String> = []
+    private var stalePrunePids: Set<UInt32> = []
     var processActionPreviewReports: [String: ProcessActionReportModel] {
         processActionController.processActionPreviewReports
     }
@@ -817,6 +822,14 @@ public final class AppState {
     /// fire on the historical backlog at launch. Rules run only while the app
     /// is running (documented in the Automation settings UI).
     private func evaluateAutomationRules(snapshot: SystemSnapshot) {
+        let activeRules = automationRules.filter(\.enabled)
+        // With no active rules, skip the per-tick seen-set rebuild entirely and
+        // drop the seed so re-enabling reseeds (never fires on the backlog).
+        guard !activeRules.isEmpty else {
+            automationSeeded = false
+            seenAutomationEventIds.removeAll()
+            return
+        }
         let events = snapshot.timeline
         guard automationSeeded else {
             seenAutomationEventIds = Set(events.map(\.id))
@@ -841,6 +854,13 @@ public final class AppState {
     /// the master toggle and the existing per-key cooldown. Friction and
     /// agent-budget alerts are threshold/rate-driven and handled separately.
     private func evaluateTimelineNotifications(snapshot: SystemSnapshot) {
+        // While notifications are off, skip the per-tick seen-set rebuild and
+        // drop the seed so re-enabling reseeds (never alerts on the backlog).
+        guard notificationsEnabled else {
+            notificationsSeeded = false
+            seenNotificationEventIds.removeAll()
+            return
+        }
         let events = snapshot.timeline
         // Seed-guard: ignore the backlog present on the first snapshot so we
         // don't alert for events that predate this session.
@@ -1504,12 +1524,16 @@ public final class AppState {
 
         refreshInFlight = true
         let includeOperatorState = shouldRefreshOperatorState(force: force)
+        // The per-payload byte-count walk only feeds the Diagnostics tab and
+        // telemetry mirror; skip it when neither is watching.
+        let collectPayloadDiagnostics = diagnosticsVisible || telemetryEnabled
         let worker = snapshotRefreshWorker
         refreshFetchTask = Task(priority: .utility) { [weak self] in
             do {
                 let result = try await worker.refresh(
                     force: force,
-                    includeOperatorState: includeOperatorState
+                    includeOperatorState: includeOperatorState,
+                    collectPayloadDiagnostics: collectPayloadDiagnostics
                 )
                 let wasCancelled = Task.isCancelled
                 await MainActor.run {
@@ -1581,6 +1605,7 @@ public final class AppState {
                 historyStoreSummary = operatorState.historyStoreSummary
                 lastOperatorStateRefreshDate = Date()
                 localMcpController.refreshHealthSnapshot()
+                pruneOnDemandReportCaches(snapshot: payload.snapshot)
             }
 
             evaluateAutomationRules(snapshot: payload.snapshot)
@@ -1628,6 +1653,40 @@ public final class AppState {
             pendingForcedRefresh = false
             refresh(force: true)
         }
+    }
+
+    /// Drop cached on-demand reports whose entity/pid has left the live
+    /// snapshot. Reports are refetchable, so bounding the caches to live
+    /// subjects (plus one grace pass) caps long-session memory growth.
+    private func pruneOnDemandReportCaches(snapshot: SystemSnapshot) {
+        let liveEntityIds = Set(snapshot.entities.map(\.entityId))
+        let livePids = Set(snapshot.entities.flatMap { $0.components.compactMap(\.processId) })
+
+        let entityKeys = Set(entityAnomalyExplanations.keys)
+            .union(entityProcessTreeReports.keys)
+            .union(entityMemoryBreakdowns.keys)
+            .union(entityProfiles.keys)
+            .union(entityWakeupAttributions.keys)
+        let missingEntityIds = entityKeys.subtracting(liveEntityIds)
+        for entityId in stalePruneEntityIds.intersection(missingEntityIds) {
+            entityAnomalyExplanations.removeValue(forKey: entityId)
+            entityProcessTreeReports.removeValue(forKey: entityId)
+            entityMemoryBreakdowns.removeValue(forKey: entityId)
+            entityProfiles.removeValue(forKey: entityId)
+            entityWakeupAttributions.removeValue(forKey: entityId)
+        }
+        stalePruneEntityIds = missingEntityIds
+
+        let pidKeys = Set(processInspections.keys)
+            .union(processOpenResources.keys)
+            .union(processSamples.keys)
+        let missingPids = pidKeys.subtracting(livePids)
+        for pid in stalePrunePids.intersection(missingPids) {
+            processInspections.removeValue(forKey: pid)
+            processOpenResources.removeValue(forKey: pid)
+            processSamples.removeValue(forKey: pid)
+        }
+        stalePrunePids = missingPids
     }
 
     public func setHistoryWindow(seconds: TimeInterval) {
@@ -3268,6 +3327,11 @@ public final class AppState {
     }
 
     private func applyLocalFrontmostState(appName: String?, windowTitle: String?) {
+        // In-place snapshot mutation invalidates every snapshot reader; skip
+        // the write when nothing changed.
+        guard snapshot.host.frontmostAppName != appName
+            || snapshot.host.frontmostWindowTitle != windowTitle
+        else { return }
         snapshot.host.frontmostAppName = appName
         snapshot.host.frontmostWindowTitle = windowTitle
     }

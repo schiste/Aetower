@@ -602,15 +602,6 @@ private func extractParentPid(from parentSummary: String?) -> UInt32? {
     return UInt32(digits)
 }
 
-private func formatBytesCompact(_ bytes: UInt64) -> String {
-    let formatter = ByteCountFormatter()
-    formatter.allowedUnits = [.useKB, .useMB, .useGB]
-    formatter.countStyle = .binary
-    formatter.includesUnit = true
-    formatter.isAdaptive = true
-    return formatter.string(fromByteCount: Int64(bytes))
-}
-
 private struct ProcessTreeNode: View {
     let node: TreeNode
     let isLast: Bool
