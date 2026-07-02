@@ -19,6 +19,10 @@ use serde::{Deserialize, Serialize};
 
 const SNAPSHOT_FORMAT_VERSION: i64 = 2;
 const MAX_PENDING_HISTORY_WRITES: u64 = 64;
+/// Upper bound on how long a history read waits for the background writer
+/// queue to drain before serving possibly slightly-stale data. See
+/// `HistoryStore::flush_for_read` for the tradeoff.
+const HISTORY_READ_FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
 const MIN_SIZE_PRESSURE_SNAPSHOT_TARGET: u64 = 120;
 const HISTORY_MAINTENANCE_WARN_MILLIS: u64 = 5_000;
 const HISTORY_MAINTENANCE_WAL_WARNING_BYTES: u64 = 32 * 1024 * 1024;
@@ -451,12 +455,20 @@ pub struct HistoryStore {
 struct HistoryWriter {
     command_tx: mpsc::Sender<HistoryCommand>,
     pending_writes: Arc<AtomicUsize>,
+    /// Shared with the writer thread, which records the first async write
+    /// failure here. Readers drain it (via `flush`/`flush_with_timeout`) so a
+    /// past write error fails the next read instead of vanishing silently.
+    last_error: Arc<Mutex<Option<String>>>,
     handle: Option<JoinHandle<()>>,
 }
 
 enum HistoryCommand {
     Store(Box<SystemSnapshot>),
-    Flush(mpsc::Sender<Result<(), String>>),
+    /// Pure queue barrier: the reply carries no data. Callers drain
+    /// `HistoryWriter::last_error` themselves after the barrier completes,
+    /// so an abandoned reply channel (bounded-wait timeout) never swallows a
+    /// recorded write error.
+    Flush(mpsc::Sender<()>),
     Prune(u64, mpsc::Sender<Result<u64, String>>),
     PruneKeepLatest(u64, mpsc::Sender<Result<u64, String>>),
     TrimQuarantineKeepLatest(u64, mpsc::Sender<Result<u64, String>>),
@@ -613,6 +625,46 @@ impl HistoryStore {
         self.writer.store(snapshot.clone()).is_ok()
     }
 
+    /// Bounded pre-read flush shared by `load_range_page` and
+    /// `range_summary`.
+    ///
+    /// Tradeoff: an unbounded `writer.flush()` guarantees read-your-writes but
+    /// couples read latency to the writer queue — when the writer falls
+    /// behind (slow disk, checkpoint stall) a UI read could block for the
+    /// full backlog. Instead we skip the round trip entirely when the queue
+    /// is empty (the common case, so read-your-writes still holds), wait up
+    /// to `HISTORY_READ_FLUSH_TIMEOUT` when it is not, and on timeout serve
+    /// the read against slightly-stale data while emitting a
+    /// `history-read-behind` diagnostic. Either path still drains and
+    /// surfaces any stored async writer error, so a past write failure fails
+    /// the next read exactly as before.
+    fn flush_for_read(&self, context: &'static str) -> Result<(), String> {
+        match self.writer.flush_with_timeout(HISTORY_READ_FLUSH_TIMEOUT) {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                if let Some(diagnostics) = self.diagnostics.as_ref() {
+                    diagnostics.emit(
+                        DiagnosticsEvent::builder(
+                            DiagnosticsLevel::Warn,
+                            DiagnosticsSubsystem::Persistence,
+                            "history-read-behind",
+                            "Served a history read before the writer queue fully drained.",
+                        )
+                        .field("context", context)
+                        .field("pending_writes", self.writer.pending_writes())
+                        .field(
+                            "flush_timeout_millis",
+                            HISTORY_READ_FLUSH_TIMEOUT.as_millis() as u64,
+                        )
+                        .build(),
+                    );
+                }
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// Load snapshots in a time range (inclusive).
     pub fn load_range(
         &self,
@@ -629,7 +681,7 @@ impl HistoryStore {
         before_millis_exclusive: Option<u64>,
         limit: u32,
     ) -> Result<Vec<SystemSnapshot>, String> {
-        self.writer.flush()?;
+        self.flush_for_read("load-range")?;
         let mut stmt = match self
             .conn
             .prepare(
@@ -777,7 +829,7 @@ impl HistoryStore {
         start_millis: u64,
         end_millis: u64,
     ) -> Result<HistoryRangeSummary, String> {
-        self.writer.flush()?;
+        self.flush_for_read("range-summary")?;
         let (range_count, oldest_millis, newest_millis): (u64, Option<u64>, Option<u64>) = self
             .conn
             .query_row(
@@ -1611,7 +1663,7 @@ impl HistoryWriter {
         let last_error = Arc::new(Mutex::new(None));
         let last_error_for_thread = Arc::clone(&last_error);
         let handle = thread::spawn(move || {
-            let conn = match Connection::open(&path) {
+            let mut conn = match Connection::open(&path) {
                 Ok(conn) => conn,
                 Err(error) => {
                     let _ = ready_tx.send(Err(format!(
@@ -1635,13 +1687,13 @@ impl HistoryWriter {
             while let Ok(command) = command_rx.recv() {
                 match command {
                     HistoryCommand::Store(snapshot) => {
-                        if let Err(error) = store_snapshot(&conn, &snapshot) {
+                        if let Err(error) = store_snapshot(&mut conn, &snapshot) {
                             record_writer_error(&last_error_for_thread, error);
                         }
                         pending_for_thread.fetch_sub(1, Ordering::Relaxed);
                     }
                     HistoryCommand::Flush(reply) => {
-                        let _ = reply.send(drain_writer_error(&last_error_for_thread));
+                        let _ = reply.send(());
                     }
                     HistoryCommand::Prune(cutoff_millis, reply) => {
                         let result = conn
@@ -1716,6 +1768,7 @@ impl HistoryWriter {
             Ok(Ok(())) => Ok(Self {
                 command_tx,
                 pending_writes,
+                last_error,
                 handle: Some(handle),
             }),
             Ok(Err(error)) => {
@@ -1741,13 +1794,51 @@ impl HistoryWriter {
         Ok(())
     }
 
+    /// Full read barrier: blocks until every write queued so far has been
+    /// applied, then surfaces (and clears) any async write error recorded
+    /// since the previous drain.
     fn flush(&self) -> Result<(), String> {
         let (tx, rx) = mpsc::channel();
         self.command_tx
             .send(HistoryCommand::Flush(tx))
             .map_err(|error| format!("history writer queue: {error}"))?;
         rx.recv()
-            .map_err(|error| format!("history writer flush: {error}"))?
+            .map_err(|error| format!("history writer flush: {error}"))?;
+        drain_writer_error(&self.last_error)
+    }
+
+    /// Bounded read barrier for latency-sensitive readers.
+    ///
+    /// Fast path: if the queue is already empty (the common case — the engine
+    /// stores at most one snapshot per tick), skip the writer-thread round
+    /// trip entirely and just drain any stored async write error. Otherwise
+    /// send a barrier and wait at most `timeout` for the queue to drain.
+    ///
+    /// Returns `Ok(true)` when the queue fully drained (read-your-writes
+    /// holds), `Ok(false)` on timeout — the caller may proceed against
+    /// slightly-stale data — and `Err` if a past async write failed (error
+    /// slot drained either way, matching `flush` semantics).
+    fn flush_with_timeout(&self, timeout: Duration) -> Result<bool, String> {
+        if self.pending_writes() == 0 {
+            drain_writer_error(&self.last_error)?;
+            return Ok(true);
+        }
+        let (tx, rx) = mpsc::channel();
+        self.command_tx
+            .send(HistoryCommand::Flush(tx))
+            .map_err(|error| format!("history writer queue: {error}"))?;
+        let drained = match rx.recv_timeout(timeout) {
+            Ok(()) => true,
+            Err(mpsc::RecvTimeoutError::Timeout) => false,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("history writer flush: writer thread gone".to_owned());
+            }
+        };
+        // Drain the error slot even on timeout: writes that already completed
+        // may have failed, and the whole point of the pre-read flush is that
+        // a past write error fails the next read.
+        drain_writer_error(&self.last_error)?;
+        Ok(drained)
     }
 
     fn prune(&self, cutoff_millis: u64) -> Result<u64, String> {
@@ -1930,13 +2021,21 @@ fn decode_snapshot_blob(blob: &[u8], format_version: i64) -> Result<SystemSnapsh
     bincode::deserialize(blob).map_err(|error| format!("bincode deserialize: {error}"))
 }
 
-fn store_snapshot(conn: &Connection, snapshot: &SystemSnapshot) -> Result<usize, String> {
+fn store_snapshot(conn: &mut Connection, snapshot: &SystemSnapshot) -> Result<usize, String> {
     let envelope = PersistedSnapshotEnvelope {
         version: SNAPSHOT_FORMAT_VERSION as u16,
         snapshot: compact_snapshot_for_history(snapshot),
     };
     let blob = bincode::serialize(&envelope).map_err(|e| format!("serialize snapshot: {e}"))?;
-    let inserted = conn
+    // One explicit transaction per stored snapshot: the snapshots INSERT and
+    // the per-bucket rollup upserts commit together as a single WAL commit
+    // instead of three. This is both the dominant per-tick write cost and a
+    // consistency win — a failure anywhere rolls the whole snapshot back, so
+    // rollups can never drift ahead of (or behind) the snapshots table.
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("begin snapshot transaction: {e}"))?;
+    let inserted = tx
         .execute(
         "INSERT INTO snapshots (captured_at_millis, sequence, format_version, bincode_blob) VALUES (?1, ?2, ?3, ?4)",
         params![
@@ -1947,7 +2046,9 @@ fn store_snapshot(conn: &Connection, snapshot: &SystemSnapshot) -> Result<usize,
         ],
     )
         .map_err(|e| format!("insert: {e}"))?;
-    upsert_history_rollups(conn, snapshot)?;
+    upsert_history_rollups(&tx, snapshot)?;
+    tx.commit()
+        .map_err(|e| format!("commit snapshot transaction: {e}"))?;
     Ok(inserted)
 }
 
@@ -2206,6 +2307,78 @@ mod tests {
         };
 
         assert_eq!(rows, vec![(60_000, 2), (3_600_000, 2)]);
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    }
+
+    #[test]
+    fn snapshot_insert_and_rollups_commit_atomically() {
+        let path = temp_db();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+        // Sabotage the rollup upsert (second statement of the write
+        // transaction) so the snapshot INSERT (first statement) must roll
+        // back with it.
+        store
+            .conn
+            .execute("DROP TABLE history_rollups", [])
+            .unwrap_or_else(|error| panic!("drop rollups: {error}"));
+
+        store.maybe_store(&material_snapshot(1, 61_000));
+        let error = store
+            .writer
+            .flush()
+            .expect_err("rollup failure must surface through flush");
+        assert!(error.contains("rollup"), "unexpected error: {error}");
+
+        let snapshot_count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM snapshots", [], |row| row.get(0))
+            .unwrap_or_else(|error| panic!("count snapshots: {error}"));
+        assert_eq!(
+            snapshot_count, 0,
+            "snapshot insert must roll back when the rollup upsert fails"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    }
+
+    #[test]
+    fn read_fast_path_skips_flush_but_still_surfaces_writer_errors() {
+        let path = temp_db();
+        let mut store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+        store
+            .conn
+            .execute("DROP TABLE history_rollups", [])
+            .unwrap_or_else(|error| panic!("drop rollups: {error}"));
+
+        store.maybe_store(&material_snapshot(1, 61_000));
+        // Wait for the writer to drain the queue so the subsequent read takes
+        // the non-blocking fast path (pending == 0, no barrier round trip).
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while store.pending_writes() > 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(store.pending_writes(), 0, "writer did not drain in time");
+
+        let error = store
+            .load_range(0, 100_000)
+            .expect_err("stored async writer error must fail the next read");
+        assert!(error.contains("rollup"), "unexpected error: {error}");
+
+        // The error slot drains once (same as the old flush semantics); the
+        // next read succeeds and sees the rolled-back (empty) store.
+        let loaded = store
+            .load_range(0, 100_000)
+            .unwrap_or_else(|error| panic!("second read should succeed: {error}"));
+        assert!(loaded.is_empty());
+
         drop(store);
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}-wal", path.display()));
