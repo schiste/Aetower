@@ -184,6 +184,23 @@ private final class RepositoryDetailMainActorPublisher: @unchecked Sendable {
     }
 }
 
+private final class StorageItemsPageMainActorPublisher: @unchecked Sendable {
+    weak var state: AppState?
+
+    init(_ state: AppState) {
+        self.state = state
+    }
+
+    @MainActor
+    func publish(runID: String, page: StorageHygieneItemsPageModel?, errorMessage: String?) {
+        state?.publishStorageItemsPage(
+            runID: runID,
+            page: page,
+            errorMessage: errorMessage
+        )
+    }
+}
+
 private final class RepositoryScorecardMainActorPublisher: @unchecked Sendable {
     weak var state: AppState?
 
@@ -409,6 +426,16 @@ public final class AppState {
     private(set) var storageHygieneIsVerifyingCache = false
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
+    /// Server-paged Storage Explorer table state. The page is fetched on
+    /// demand from `storage_hygiene_items_page_json` (index-backed, sorted
+    /// server-side); the offset/sort properties record the most recent
+    /// *request* so the view can render sort indicators before the reply.
+    private(set) var storageItemsPage: StorageHygieneItemsPageModel?
+    private(set) var storageItemsPageIsLoading = false
+    private(set) var storageItemsPageError: String?
+    private(set) var storageItemsPageOffset = 0
+    private(set) var storageItemsPageSortKey = "size"
+    private(set) var storageItemsPageSortDescending = true
     /// Bumped whenever any input of the repository summary join changes
     /// (report publish/merge, scorecard results, project links). Views key
     /// their summary caches on this instead of re-deriving per render.
@@ -527,6 +554,11 @@ public final class AppState {
     private var repositoryScorecardTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var repositoryDetailTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var repositoryDetailRunIDs: [String: String] = [:]
+    @ObservationIgnored private var storageItemsPageTask: Task<Void, Never>?
+    @ObservationIgnored private var storageItemsPageRunID: String?
+    /// Capture stamp of the hygiene report the current page request was made
+    /// against; a newer report invalidates the dedupe so the page refreshes.
+    @ObservationIgnored private var storageItemsPageReportCaptureMillis: UInt64?
     @ObservationIgnored
     private var repositoryScorecardRunIDs: [String: String] = [:]
     @ObservationIgnored
@@ -2729,6 +2761,92 @@ public final class AppState {
             repositoryDetailErrorsByRoot[key] = nil
         } else {
             repositoryDetailErrorsByRoot[key] = errorMessage ?? "Repository detail unavailable."
+        }
+    }
+
+    /// On-demand Storage Explorer page fetch. instant_cached serves from the
+    /// SQLite index (sorted + paged server-side), so this stays cheap, but the
+    /// endpoint can still fall back to a projection scan on a cold index, so
+    /// it always runs detached with a loading state. A newer request cancels
+    /// and supersedes any in-flight one.
+    func loadStorageItemsPage(
+        offset: Int,
+        limit: Int = 100,
+        sortKey: String,
+        sortDescending: Bool,
+        force: Bool = false
+    ) {
+        let clampedOffset = max(0, offset)
+        let clampedLimit = max(1, limit)
+        let reportStamp = storageHygieneReport?.capturedAtMillis
+        if !force,
+           storageItemsPageOffset == clampedOffset,
+           storageItemsPageSortKey == sortKey,
+           storageItemsPageSortDescending == sortDescending,
+           storageItemsPageReportCaptureMillis == reportStamp,
+           storageItemsPage != nil || storageItemsPageIsLoading
+        {
+            return
+        }
+
+        let runID = UUID().uuidString
+        storageItemsPageTask?.cancel()
+        storageItemsPageRunID = runID
+        storageItemsPageIsLoading = true
+        storageItemsPageError = nil
+        storageItemsPageOffset = clampedOffset
+        storageItemsPageSortKey = sortKey
+        storageItemsPageSortDescending = sortDescending
+        storageItemsPageReportCaptureMillis = reportStamp
+
+        let roots = storageHygieneReport?.roots ?? []
+        let bridge = self.bridge
+        let publisher = StorageItemsPageMainActorPublisher(self)
+        storageItemsPageTask = Task.detached(priority: .utility) { [bridge, publisher] in
+            let result = bridge.storageHygieneItemsPageJSON(
+                roots: roots,
+                maxDepth: 5,
+                offset: UInt32(clampedOffset),
+                limit: UInt32(clampedLimit),
+                mode: "instant_cached",
+                sortKey: sortKey,
+                sortDescending: sortDescending
+            )
+            let decoded: StorageHygieneItemsPageModel?
+            let errorMessage: String?
+            if let json = result.json, result.errorMessage == nil, let data = json.data(using: .utf8) {
+                do {
+                    decoded = try AetowerJSON.snakeCaseDecoder().decode(StorageHygieneItemsPageModel.self, from: data)
+                    errorMessage = nil
+                } catch {
+                    decoded = nil
+                    errorMessage = "Storage items page decode failed: \(error.localizedDescription)"
+                }
+            } else {
+                decoded = nil
+                errorMessage = result.errorMessage ?? "Storage items page returned no payload."
+            }
+            guard !Task.isCancelled else { return }
+            await publisher.publish(runID: runID, page: decoded, errorMessage: errorMessage)
+        }
+    }
+
+    func publishStorageItemsPage(
+        runID: String,
+        page: StorageHygieneItemsPageModel?,
+        errorMessage: String?
+    ) {
+        // Stale run guard: a newer page request supersedes this one.
+        guard storageItemsPageRunID == runID else { return }
+        storageItemsPageIsLoading = false
+        storageItemsPageTask = nil
+        if let page {
+            storageItemsPage = page
+            storageItemsPageError = nil
+        } else {
+            // Keep the previous page (if any) so the table stays usable while
+            // the banner explains the failed refresh.
+            storageItemsPageError = errorMessage ?? "Storage items page unavailable."
         }
     }
 

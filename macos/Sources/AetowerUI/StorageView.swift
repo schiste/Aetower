@@ -3810,6 +3810,173 @@ public struct StorageView: View {
     }
 
     private func storageExplorerTable(_ visibleItems: [StorageHygieneItemModel]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            if let error = state.storageItemsPageError {
+                storageItemsPageErrorBanner(error)
+            }
+            if let page = state.storageItemsPage {
+                storageServerExplorerTable(page)
+            } else {
+                // Fallback for the first paint and for older engines that do
+                // not serve the items-page endpoint: the in-memory top-K
+                // report slice with client-side sort/filter/paging.
+                storageLocalExplorerTable(visibleItems)
+            }
+        }
+        .overlay(alignment: .center) {
+            if state.storageItemsPageIsLoading {
+                ProgressView("Loading page…")
+                    .controlSize(.small)
+                    .padding(AetowerDesign.Spacing.md)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+        .task(id: state.storageHygieneReport?.capturedAtMillis) {
+            guard state.storageHygieneReport != nil else { return }
+            state.loadStorageItemsPage(
+                offset: state.storageItemsPage?.offset ?? 0,
+                sortKey: state.storageItemsPageSortKey,
+                sortDescending: state.storageItemsPageSortDescending
+            )
+        }
+    }
+
+    private func storageItemsPageErrorBanner(_ message: String) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(AetowerDesign.Status.warning)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            Button("Retry") {
+                state.loadStorageItemsPage(
+                    offset: state.storageItemsPage?.offset ?? 0,
+                    sortKey: state.storageItemsPageSortKey,
+                    sortDescending: state.storageItemsPageSortDescending,
+                    force: true
+                )
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(state.storageItemsPageIsLoading)
+        }
+        .padding(AetowerDesign.Spacing.sm)
+        .background(AetowerDesign.Status.warning.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func storageServerExplorerTable(_ page: StorageHygieneItemsPageModel) -> some View {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let visibleItems = query.isEmpty
+            ? page.items
+            : page.items.filter { storageItemMatchesSearch($0, query: query) }
+        let pageLimit = max(1, page.limit)
+        let firstRow = page.items.isEmpty ? page.offset : page.offset + 1
+        let lastRow = page.offset + page.items.count
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                if let total = page.totalAvailable {
+                    AetowerBadge("rows \(firstRow)-\(lastRow) of \(total)", tone: AetowerDesign.Tone.disk)
+                } else {
+                    AetowerBadge("rows \(firstRow)-\(lastRow)", tone: AetowerDesign.Tone.disk)
+                }
+                if !query.isEmpty {
+                    AetowerBadge("\(visibleItems.count) match on this page", tone: AetowerDesign.Tone.memory)
+                }
+                Text("Sorted server-side from the storage index; click a column to re-sort. Search filters current page.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Previous") {
+                    state.loadStorageItemsPage(
+                        offset: max(0, page.offset - pageLimit),
+                        limit: pageLimit,
+                        sortKey: state.storageItemsPageSortKey,
+                        sortDescending: state.storageItemsPageSortDescending
+                    )
+                }
+                .disabled(page.offset == 0 || state.storageItemsPageIsLoading)
+                Button("Next") {
+                    state.loadStorageItemsPage(
+                        offset: page.offset + pageLimit,
+                        limit: pageLimit,
+                        sortKey: state.storageItemsPageSortKey,
+                        sortDescending: state.storageItemsPageSortDescending
+                    )
+                }
+                .disabled(!page.hasMore || state.storageItemsPageIsLoading)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            if visibleItems.isEmpty {
+                ContentUnavailableView(
+                    "No matching items",
+                    systemImage: "list.bullet.rectangle",
+                    description: Text(
+                        query.isEmpty
+                            ? "This page is empty. Move to another page or run a scan."
+                            : "No rows on this page match the search; it filters the current page only."
+                    )
+                )
+            } else {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    storageServerExplorerTableHeader(pageLimit: pageLimit)
+                    ForEach(visibleItems) { item in
+                        storageExplorerTableRow(item)
+                    }
+                }
+            }
+        }
+    }
+
+    private func storageServerExplorerTableHeader(pageLimit: Int) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            storageExplorerSortButton("Item", key: "path", pageLimit: pageLimit)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            storageExplorerSortButton("Tier", key: "tier", pageLimit: pageLimit)
+                .frame(width: 88, alignment: .center)
+            storageExplorerSortButton("Kind", key: "kind", pageLimit: pageLimit)
+                .frame(width: 92, alignment: .center)
+            storageExplorerSortButton("Size", key: "size", pageLimit: pageLimit)
+                .frame(width: 80, alignment: .trailing)
+            Text("Actions")
+                .frame(width: 52, alignment: .trailing)
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+    }
+
+    private func storageExplorerSortButton(_ label: String, key: String, pageLimit: Int) -> some View {
+        let isActive = state.storageItemsPageSortKey == key
+        return Button {
+            let descending = isActive
+                ? !state.storageItemsPageSortDescending
+                : key == "size"
+            state.loadStorageItemsPage(
+                offset: 0,
+                limit: pageLimit,
+                sortKey: key,
+                sortDescending: descending
+            )
+        } label: {
+            HStack(spacing: 2) {
+                Text(label)
+                if isActive {
+                    Image(systemName: state.storageItemsPageSortDescending ? "arrow.down" : "arrow.up")
+                        .font(.system(size: 8, weight: .bold))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(state.storageItemsPageIsLoading)
+        .help("Sort by \(label.lowercased()) (server-side)")
+    }
+
+    private func storageLocalExplorerTable(_ visibleItems: [StorageHygieneItemModel]) -> some View {
         let pageSize = 25
         let pageCount = max(1, Int(ceil(Double(visibleItems.count) / Double(pageSize))))
         let page = min(storageExplorerPage, pageCount - 1)
@@ -4869,26 +5036,29 @@ public struct StorageView: View {
         return report.items.filter { item in
             selectedFilter.matches(item)
                 && artifactScope.matches(item)
-                && (
-                    query.isEmpty
-                        || item.displayName.lowercased().contains(query)
-                        || item.path.lowercased().contains(query)
-                        || item.kind.lowercased().contains(query)
-                        || item.storageRole.lowercased().contains(query)
-                        || item.gitStatus.lowercased().contains(query)
-                        || item.reason.lowercased().contains(query)
-                        || item.recommendation.lowercased().contains(query)
-                        || item.nextStep.lowercased().contains(query)
-                        || item.cleanupTier.lowercased().contains(query)
-                        || item.evidence.contains(where: { $0.lowercased().contains(query) })
-                        || (item.attribution.repoName?.lowercased().contains(query) ?? false)
-                        || (item.attribution.gitBranch?.lowercased().contains(query) ?? false)
-                        || (item.attribution.command?.lowercased().contains(query) ?? false)
-                        || (item.attribution.processTree?.lowercased().contains(query) ?? false)
-                        || (item.attribution.aiAgentSession?.lowercased().contains(query) ?? false)
-                )
+                && (query.isEmpty || storageItemMatchesSearch(item, query: query))
         }
         .sorted(by: artifactSort.areInIncreasingOrder)
+    }
+
+    /// Shared text-search predicate for hygiene items. `query` must already be
+    /// trimmed and lowercased.
+    private func storageItemMatchesSearch(_ item: StorageHygieneItemModel, query: String) -> Bool {
+        item.displayName.lowercased().contains(query)
+            || item.path.lowercased().contains(query)
+            || item.kind.lowercased().contains(query)
+            || item.storageRole.lowercased().contains(query)
+            || item.gitStatus.lowercased().contains(query)
+            || item.reason.lowercased().contains(query)
+            || item.recommendation.lowercased().contains(query)
+            || item.nextStep.lowercased().contains(query)
+            || item.cleanupTier.lowercased().contains(query)
+            || item.evidence.contains(where: { $0.lowercased().contains(query) })
+            || (item.attribution.repoName?.lowercased().contains(query) ?? false)
+            || (item.attribution.gitBranch?.lowercased().contains(query) ?? false)
+            || (item.attribution.command?.lowercased().contains(query) ?? false)
+            || (item.attribution.processTree?.lowercased().contains(query) ?? false)
+            || (item.attribution.aiAgentSession?.lowercased().contains(query) ?? false)
     }
 
     private func runScan() {
