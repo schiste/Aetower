@@ -17,6 +17,7 @@ private struct StorageGrowthTimelineEvent: Identifiable {
     let processTree: String?
     let aiAgentSession: String?
     let writerSource: String?
+    let writerDisplay: String?
     let matchedWriterCount: UInt64
     let attributionSources: [String]
     let confidence: String
@@ -192,6 +193,7 @@ public struct StorageView: View {
     @State private var showStorageTreemap = false
     @State private var selectedTreemapNodeID: String?
     @State private var storageExplorerPage = 0
+    @State private var coldDataSort: StorageColdDataSort = .recommended
 
     public init(state: AppState) {
         self.state = state
@@ -560,6 +562,9 @@ public struct StorageView: View {
             cleanupPreviewSection(report)
             cleanupBundlesSection(report)
             reclaimSpaceSection(report)
+            if let coldData = report.coldData, coldData.bands.contains(where: { $0.itemCount > 0 }) {
+                coldDataLaneSection(coldData)
+            }
             cleanupRecipesSection(report)
             cleanupAuditSection
         }
@@ -568,6 +573,12 @@ public struct StorageView: View {
     private func storageGrowthWorkspace(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             topOffenderCallout(report)
+            if let insights = report.growthInsights {
+                storageGrowthInsightsSection(insights)
+                if let diff = insights.sinceLastScan {
+                    storageSinceLastScanSection(diff)
+                }
+            }
             storageGrowthTimeline(report)
             repoFootprintDashboard(report)
             budgetGuardrailsSection(report)
@@ -3424,6 +3435,231 @@ public struct StorageView: View {
         .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    private func storageGrowthInsightsSection(_ insights: StorageGrowthInsightsModel) -> some View {
+        let topRepo = insights.perRepoRates.first
+        let topRoot = insights.perRootRates.first
+        let forecast = insights.volumeForecasts.first
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                Text("Growth rate and forecast")
+                    .font(.headline)
+                Text("Daily rates aggregated from the full \(insights.windowDays)-day growth history in the persistent index, with a half-window trend and a days-to-full forecast once three days of history exist.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 190), spacing: AetowerDesign.Spacing.md)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.md
+            ) {
+                AetowerMetricTile(
+                    "Top repo growth",
+                    value: topRepo.map { "\(storageSignedBytes($0.dailyRateBytes))/day" } ?? "No data",
+                    detail: topRepo.map { "\($0.repoName ?? $0.scope) · \($0.trend)" } ?? "no repo growth recorded",
+                    systemImage: topRepo.map { storageGrowthTrendIcon($0.trend) } ?? "chart.line.flattrend.xyaxis",
+                    tone: topRepo.map { storageGrowthTrendTone($0.trend) } ?? AetowerDesign.Status.neutral
+                )
+                AetowerMetricTile(
+                    "Top root growth",
+                    value: topRoot.map { "\(storageSignedBytes($0.dailyRateBytes))/day" } ?? "No data",
+                    detail: topRoot.map { "\(lastPathComponent($0.scope)) · \($0.trend)" } ?? "no root growth recorded",
+                    systemImage: topRoot.map { storageGrowthTrendIcon($0.trend) } ?? "chart.line.flattrend.xyaxis",
+                    tone: topRoot.map { storageGrowthTrendTone($0.trend) } ?? AetowerDesign.Status.neutral
+                )
+                AetowerMetricTile(
+                    "Disk-full forecast",
+                    value: forecast.map { "~\(Int($0.daysToFull.rounded())) days" } ?? "Pending",
+                    detail: forecast.map {
+                        "\($0.volumePath) at \(storageSignedBytes($0.dailyRateBytes))/day · \($0.confidence) confidence"
+                    } ?? "needs 3+ days of growth history and a positive rate",
+                    systemImage: "externaldrive.badge.exclamationmark",
+                    tone: forecast.map { $0.daysToFull < 30 ? AetowerDesign.Status.warning : AetowerDesign.Tone.disk }
+                        ?? AetowerDesign.Status.neutral
+                )
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func storageSinceLastScanSection(_ diff: StorageScanDiffModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Since last scan")
+                        .font(.headline)
+                    Text("Newly appeared paths and cleanup-tier transitions from the latest scan generation.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                AetowerBadge(
+                    "\(diff.appearedCount) appeared · \(formatBytes(diff.appearedTotalBytes))",
+                    tone: diff.appearedCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+                )
+                AetowerBadge(
+                    "\(diff.tierChangedCount) tier changed",
+                    tone: diff.tierChangedCount > 0 ? AetowerDesign.Tone.memory : AetowerDesign.Status.ready
+                )
+            }
+
+            if diff.appeared.isEmpty && diff.tierChanged.isEmpty {
+                Label("No new paths or tier transitions in the latest scan generation.", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(AetowerDesign.Status.ready)
+            } else {
+                if !diff.appeared.isEmpty {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        Text("Appeared")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(diff.appeared.prefix(6)) { entry in
+                            storageScanDiffRow(entry, badge: "+\(formatBytes(UInt64(max(0, entry.deltaBytes))))")
+                        }
+                    }
+                }
+                if !diff.tierChanged.isEmpty {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        Text("Tier changed")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(diff.tierChanged.prefix(6)) { entry in
+                            storageScanDiffRow(
+                                entry,
+                                badge: "\(cleanupTierLabel(entry.previousCleanupTier)) → \(cleanupTierLabel(entry.cleanupTier))"
+                            )
+                        }
+                    }
+                }
+            }
+
+            if !diff.disappearedNote.isEmpty {
+                Text(diff.disappearedNote)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func storageScanDiffRow(_ entry: StorageScanDiffEntryModel, badge: String) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: cleanupTierIcon(entry.cleanupTier))
+                .foregroundStyle(tone(forCleanupTier: entry.cleanupTier))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.displayName)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(entry.path)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: AetowerDesign.Spacing.sm)
+            AetowerBadge(badge, tone: tone(forCleanupTier: entry.cleanupTier))
+            Text(formatBytes(entry.physicalBytes))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .trailing)
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+        .padding(.vertical, AetowerDesign.Spacing.xs)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func storageGrowthTrendIcon(_ trend: String) -> String {
+        switch trend {
+        case "accelerating": return "arrow.up.right"
+        case "slowing": return "arrow.down.right"
+        case "shrinking": return "arrow.down"
+        default: return "arrow.right"
+        }
+    }
+
+    private func storageGrowthTrendTone(_ trend: String) -> Color {
+        switch trend {
+        case "accelerating": return AetowerDesign.Status.warning
+        case "shrinking": return AetowerDesign.Status.ready
+        default: return AetowerDesign.Tone.disk
+        }
+    }
+
+    private func coldDataLaneSection(_ coldData: StorageColdDataModel) -> some View {
+        let totalBytes = coldData.bands.reduce(UInt64(0)) { total, band in
+            sumBytes(total, band.totalBytes)
+        }
+        let totalCount = coldData.bands.reduce(UInt64(0)) { $0 + $1.itemCount }
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "snowflake")
+                    .foregroundStyle(AetowerDesign.Tone.memory)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Cold data")
+                        .font(.headline)
+                    Text("Safe and rebuildable items untouched for months, ranked by size within each band. \(coldData.caveat)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(formatBytes(totalBytes))
+                        .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    Text("\(totalCount) cold item\(totalCount == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Text("Sort top items")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Picker("", selection: $coldDataSort) {
+                    ForEach(StorageColdDataSort.allCases) { sort in
+                        Text(sort.label).tag(sort)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+                Spacer()
+            }
+
+            ForEach(coldData.bands) { band in
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Text(band.label)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        AetowerBadge("\(band.itemCount) item\(band.itemCount == 1 ? "" : "s")", tone: AetowerDesign.Tone.memory)
+                        AetowerBadge(formatBytes(band.totalBytes), tone: AetowerDesign.Tone.disk)
+                        Spacer()
+                    }
+                    if band.topItems.isEmpty {
+                        Text("No items in this band.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        ForEach(coldDataSort.sorted(band.topItems)) { item in
+                            storageExplorerTableRow(item, showScore: coldDataSort == .recommended)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
     private func visualExplorationSection(_ report: StorageHygieneReportModel) -> some View {
         let visibleItems = filteredItems(from: report)
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
@@ -3925,7 +4161,7 @@ public struct StorageView: View {
                 LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                     storageServerExplorerTableHeader(pageLimit: pageLimit)
                     ForEach(visibleItems) { item in
-                        storageExplorerTableRow(item)
+                        storageExplorerTableRow(item, showScore: true)
                     }
                 }
             }
@@ -3940,6 +4176,8 @@ public struct StorageView: View {
                 .frame(width: 88, alignment: .center)
             storageExplorerSortButton("Kind", key: "kind", pageLimit: pageLimit)
                 .frame(width: 92, alignment: .center)
+            storageExplorerSortButton("Score", key: "score", pageLimit: pageLimit)
+                .frame(width: 56, alignment: .trailing)
             storageExplorerSortButton("Size", key: "size", pageLimit: pageLimit)
                 .frame(width: 80, alignment: .trailing)
             Text("Actions")
@@ -3955,7 +4193,7 @@ public struct StorageView: View {
         return Button {
             let descending = isActive
                 ? !state.storageItemsPageSortDescending
-                : key == "size"
+                : key == "size" || key == "score"
             state.loadStorageItemsPage(
                 offset: 0,
                 limit: pageLimit,
@@ -4037,7 +4275,10 @@ public struct StorageView: View {
         .padding(.horizontal, AetowerDesign.Spacing.sm)
     }
 
-    private func storageExplorerTableRow(_ item: StorageHygieneItemModel) -> some View {
+    private func storageExplorerTableRow(
+        _ item: StorageHygieneItemModel,
+        showScore: Bool = false
+    ) -> some View {
         HStack(spacing: AetowerDesign.Spacing.sm) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.displayName)
@@ -4063,6 +4304,13 @@ public struct StorageView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(width: 92)
+            if showScore {
+                Text(storageRecommendationScoreLabel(item.recommendationScore))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 56, alignment: .trailing)
+                    .help("Composite reclaim-recommendation score (size x tier x staleness)")
+            }
             Text(formatBytes(item.sizeBytes))
                 .font(.caption.weight(.semibold))
                 .frame(width: 80, alignment: .trailing)
@@ -4072,6 +4320,10 @@ public struct StorageView: View {
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, AetowerDesign.Spacing.xs)
         .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func storageRecommendationScoreLabel(_ score: Double) -> String {
+        score <= 0 ? "–" : String(format: "%.1f", score)
     }
 
     private func storageByteAccountingSummary(_ item: StorageHygieneItemModel) -> String? {
@@ -5087,6 +5339,9 @@ public struct StorageView: View {
         if let session = item.attribution.aiAgentSession {
             parts.append("session \(session)")
         }
+        if let writerDisplay = item.attribution.writerDisplay {
+            parts.append("written by \(writerDisplay)")
+        }
         if parts.isEmpty {
             return "No repo/session attribution available"
         }
@@ -5199,6 +5454,7 @@ public struct StorageView: View {
                     processTree: delta.processTree,
                     aiAgentSession: delta.aiAgentSession,
                     writerSource: delta.writerSource,
+                    writerDisplay: delta.writerDisplay,
                     matchedWriterCount: delta.matchedWriterCount ?? 0,
                     attributionSources: delta.attributionSources ?? [],
                     confidence: delta.attributionConfidence,
@@ -5247,6 +5503,7 @@ public struct StorageView: View {
                 processTree: item.attribution.processTree,
                 aiAgentSession: item.attribution.aiAgentSession,
                 writerSource: nil,
+                writerDisplay: item.attribution.writerDisplay,
                 matchedWriterCount: 0,
                 attributionSources: ["ui_baseline_diff"],
                 confidence: item.attribution.confidence,
@@ -5275,6 +5532,9 @@ public struct StorageView: View {
         var parts: [String] = []
         if event.ambiguous {
             parts.append("ambiguous writer attribution")
+        }
+        if let writerDisplay = event.writerDisplay {
+            parts.append("written by \(writerDisplay)")
         }
         if let command = event.command {
             parts.append("command \(command)")
@@ -6612,8 +6872,38 @@ private enum StorageArtifactScope: String, CaseIterable, Identifiable {
     }
 }
 
+private enum StorageColdDataSort: String, CaseIterable, Identifiable {
+    case recommended
+    case largest
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .recommended: return "Recommended (score)"
+        case .largest: return "Largest"
+        }
+    }
+
+    func sorted(_ items: [StorageHygieneItemModel]) -> [StorageHygieneItemModel] {
+        items.sorted { left, right in
+            switch self {
+            case .recommended:
+                return left.recommendationScore == right.recommendationScore
+                    ? left.path < right.path
+                    : left.recommendationScore > right.recommendationScore
+            case .largest:
+                return left.sizeBytes == right.sizeBytes
+                    ? left.path < right.path
+                    : left.sizeBytes > right.sizeBytes
+            }
+        }
+    }
+}
+
 private enum StorageArtifactSort: String, CaseIterable, Identifiable {
     case largest
+    case recommended
     case smallest
     case newest
     case oldest
@@ -6625,6 +6915,7 @@ private enum StorageArtifactSort: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .largest: return "Largest first"
+        case .recommended: return "Recommended (score)"
         case .smallest: return "Smallest first"
         case .newest: return "Newest first"
         case .oldest: return "Oldest first"
@@ -6638,6 +6929,10 @@ private enum StorageArtifactSort: String, CaseIterable, Identifiable {
         _ right: StorageHygieneItemModel
     ) -> Bool {
         switch self {
+        case .recommended:
+            return left.recommendationScore == right.recommendationScore
+                ? left.path < right.path
+                : left.recommendationScore > right.recommendationScore
         case .largest:
             return left.sizeBytes == right.sizeBytes
                 ? left.path < right.path

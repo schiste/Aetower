@@ -89,6 +89,8 @@ struct StorageHygieneReportModel: Decodable, Sendable {
     let systemDataBuckets: [StorageSystemDataBucketModel]
     let treemapRoots: [StorageTreemapNodeModel]
     let growthDeltas: [StorageGrowthDeltaModel]
+    let growthInsights: StorageGrowthInsightsModel?
+    let coldData: StorageColdDataModel?
     let items: [StorageHygieneItemModel]
     let roots: [String]
     let skippedRoots: [StorageSkippedRootModel]
@@ -121,6 +123,8 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         case systemDataBuckets
         case treemapRoots
         case growthDeltas
+        case growthInsights
+        case coldData
         case items
         case roots
         case skippedRoots
@@ -182,6 +186,10 @@ struct StorageHygieneReportModel: Decodable, Sendable {
             try container.decodeIfPresent([StorageSystemDataBucketModel].self, forKey: .systemDataBuckets) ?? []
         treemapRoots = try container.decodeIfPresent([StorageTreemapNodeModel].self, forKey: .treemapRoots) ?? []
         growthDeltas = try container.decodeIfPresent([StorageGrowthDeltaModel].self, forKey: .growthDeltas) ?? []
+        // Additive insight blocks (growth intelligence + cold-data lane); a
+        // shape drift there must not sink the whole report decode.
+        growthInsights = (try? container.decodeIfPresent(StorageGrowthInsightsModel.self, forKey: .growthInsights)) ?? nil
+        coldData = (try? container.decodeIfPresent(StorageColdDataModel.self, forKey: .coldData)) ?? nil
         items = try container.decodeIfPresent([StorageHygieneItemModel].self, forKey: .items) ?? []
         roots = try container.decodeIfPresent([String].self, forKey: .roots) ?? []
         skippedRoots = try container.decodeIfPresent([StorageSkippedRootModel].self, forKey: .skippedRoots) ?? []
@@ -412,7 +420,10 @@ private struct StorageHygieneContractCacheFingerprint: Codable, Equatable {
 }
 
 enum StorageHygieneReportCacheStore {
-    private static let schemaVersion: UInt8 = 4
+    // v5: growth insights, cold-data lane, recommendation score, and writer
+    // identity fields landed; older cached reports without them are treated as
+    // stale so the new sections repaint from a fresh engine payload.
+    private static let schemaVersion: UInt8 = 5
     private static let fileName = "storage-hygiene-report-cache-v1.json"
     private static let cacheMaxAgeMillis: UInt64 = 7 * 24 * 60 * 60 * 1000
 
@@ -1001,6 +1012,11 @@ struct StorageGrowthDeltaModel: Decodable, Identifiable, Sendable {
     let processTree: String?
     let aiAgentSession: String?
     let writerSource: String?
+    let provider: String?
+    let sessionId: String?
+    let tabName: String?
+    let chau7SessionId: String?
+    let writerDisplay: String?
     let matchedWriterCount: UInt64?
     let attributionSources: [String]?
     let attributionConfidence: String
@@ -1311,6 +1327,9 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
     let cleanupAllowed: Bool
     let cleanupBlockers: [String]
     let defaultCleanupAction: String
+    /// Composite reclaim-recommendation score from the engine; 0 on payloads
+    /// that predate the score column.
+    let recommendationScore: Double
     let attribution: StorageArtifactAttributionModel
 
     private enum CodingKeys: String, CodingKey {
@@ -1350,6 +1369,7 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
         case cleanupAllowed
         case cleanupBlockers
         case defaultCleanupAction
+        case recommendationScore
         case attribution
     }
 
@@ -1395,6 +1415,7 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
         cleanupAllowed = try container.decodeIfPresent(Bool.self, forKey: .cleanupAllowed) ?? true
         cleanupBlockers = try container.decodeIfPresent([String].self, forKey: .cleanupBlockers) ?? []
         defaultCleanupAction = try container.decodeIfPresent(String.self, forKey: .defaultCleanupAction) ?? "trash"
+        recommendationScore = try container.decodeIfPresent(Double.self, forKey: .recommendationScore) ?? 0
     }
 
     private static func legacyStorageRole(kind: String) -> String {
@@ -1434,6 +1455,11 @@ struct StorageArtifactAttributionModel: Decodable, Sendable {
     let command: String?
     let processTree: String?
     let aiAgentSession: String?
+    let provider: String?
+    let sessionId: String?
+    let tabName: String?
+    let chau7SessionId: String?
+    let writerDisplay: String?
     let confidence: String
     let notes: [String]
 }
@@ -1547,6 +1573,221 @@ struct StorageVolumeStateModel: Decodable, Identifiable, Sendable {
     let detail: String
 
     var id: String { "\(deviceId)|\(path)" }
+}
+
+/// Daily growth rate for one repository or source root. Lenient decoding:
+/// every field is defaulted so later payload enrichments never sink a decode.
+struct StorageGrowthRateModel: Decodable, Identifiable, Sendable {
+    let scope: String
+    let scopeKind: String
+    let repoName: String?
+    let windowDays: UInt64
+    let totalDeltaBytes: Int64
+    let dailyRateBytes: Int64
+    let trend: String
+    let dayBucketCount: UInt64
+
+    var id: String { "\(scopeKind)|\(scope)" }
+
+    private enum CodingKeys: String, CodingKey {
+        case scope
+        case scopeKind
+        case repoName
+        case windowDays
+        case totalDeltaBytes
+        case dailyRateBytes
+        case trend
+        case dayBucketCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        scope = try container.decodeIfPresent(String.self, forKey: .scope) ?? ""
+        scopeKind = try container.decodeIfPresent(String.self, forKey: .scopeKind) ?? "source_root"
+        repoName = try container.decodeIfPresent(String.self, forKey: .repoName)
+        windowDays = try container.decodeIfPresent(UInt64.self, forKey: .windowDays) ?? 30
+        totalDeltaBytes = try container.decodeIfPresent(Int64.self, forKey: .totalDeltaBytes) ?? 0
+        dailyRateBytes = try container.decodeIfPresent(Int64.self, forKey: .dailyRateBytes) ?? 0
+        trend = try container.decodeIfPresent(String.self, forKey: .trend) ?? "steady"
+        dayBucketCount = try container.decodeIfPresent(UInt64.self, forKey: .dayBucketCount) ?? 0
+    }
+}
+
+struct StorageGrowthForecastModel: Decodable, Identifiable, Sendable {
+    let volumePath: String
+    let freeNowBytes: UInt64
+    let dailyRateBytes: Int64
+    let daysToFull: Double
+    let confidence: String
+
+    var id: String { volumePath }
+
+    private enum CodingKeys: String, CodingKey {
+        case volumePath
+        case freeNowBytes
+        case dailyRateBytes
+        case daysToFull
+        case confidence
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        volumePath = try container.decodeIfPresent(String.self, forKey: .volumePath) ?? ""
+        freeNowBytes = try container.decodeIfPresent(UInt64.self, forKey: .freeNowBytes) ?? 0
+        dailyRateBytes = try container.decodeIfPresent(Int64.self, forKey: .dailyRateBytes) ?? 0
+        daysToFull = try container.decodeIfPresent(Double.self, forKey: .daysToFull) ?? 0
+        confidence = try container.decodeIfPresent(String.self, forKey: .confidence) ?? "low"
+    }
+}
+
+struct StorageScanDiffEntryModel: Decodable, Identifiable, Sendable {
+    let path: String
+    let displayName: String
+    let sourceRoot: String
+    let repoRoot: String?
+    let kind: String
+    let cleanupTier: String
+    let previousCleanupTier: String
+    let physicalBytes: UInt64
+    let deltaBytes: Int64
+    let scanMillis: UInt64
+
+    var id: String { path }
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case displayName
+        case sourceRoot
+        case repoRoot
+        case kind
+        case cleanupTier
+        case previousCleanupTier
+        case physicalBytes
+        case deltaBytes
+        case scanMillis
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+            ?? (path as NSString).lastPathComponent
+        sourceRoot = try container.decodeIfPresent(String.self, forKey: .sourceRoot) ?? ""
+        repoRoot = try container.decodeIfPresent(String.self, forKey: .repoRoot)
+        kind = try container.decodeIfPresent(String.self, forKey: .kind) ?? ""
+        cleanupTier = try container.decodeIfPresent(String.self, forKey: .cleanupTier) ?? ""
+        previousCleanupTier = try container.decodeIfPresent(String.self, forKey: .previousCleanupTier) ?? ""
+        physicalBytes = try container.decodeIfPresent(UInt64.self, forKey: .physicalBytes) ?? 0
+        deltaBytes = try container.decodeIfPresent(Int64.self, forKey: .deltaBytes) ?? 0
+        scanMillis = try container.decodeIfPresent(UInt64.self, forKey: .scanMillis) ?? 0
+    }
+}
+
+struct StorageScanDiffModel: Decodable, Sendable {
+    let latestScanMillis: UInt64
+    let appearedCount: UInt64
+    let appearedTotalBytes: UInt64
+    let appeared: [StorageScanDiffEntryModel]
+    let tierChangedCount: UInt64
+    let tierChanged: [StorageScanDiffEntryModel]
+    let disappeared: [StorageScanDiffEntryModel]
+    let disappearedNote: String
+
+    private enum CodingKeys: String, CodingKey {
+        case latestScanMillis
+        case appearedCount
+        case appearedTotalBytes
+        case appeared
+        case tierChangedCount
+        case tierChanged
+        case disappeared
+        case disappearedNote
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        latestScanMillis = try container.decodeIfPresent(UInt64.self, forKey: .latestScanMillis) ?? 0
+        appearedCount = try container.decodeIfPresent(UInt64.self, forKey: .appearedCount) ?? 0
+        appearedTotalBytes = try container.decodeIfPresent(UInt64.self, forKey: .appearedTotalBytes) ?? 0
+        appeared = try container.decodeIfPresent([StorageScanDiffEntryModel].self, forKey: .appeared) ?? []
+        tierChangedCount = try container.decodeIfPresent(UInt64.self, forKey: .tierChangedCount) ?? 0
+        tierChanged = try container.decodeIfPresent([StorageScanDiffEntryModel].self, forKey: .tierChanged) ?? []
+        disappeared = try container.decodeIfPresent([StorageScanDiffEntryModel].self, forKey: .disappeared) ?? []
+        disappearedNote = try container.decodeIfPresent(String.self, forKey: .disappearedNote) ?? ""
+    }
+}
+
+struct StorageGrowthInsightsModel: Decodable, Sendable {
+    let windowDays: UInt64
+    let perRepoRates: [StorageGrowthRateModel]
+    let perRootRates: [StorageGrowthRateModel]
+    let volumeForecasts: [StorageGrowthForecastModel]
+    let sinceLastScan: StorageScanDiffModel?
+
+    private enum CodingKeys: String, CodingKey {
+        case windowDays
+        case perRepoRates
+        case perRootRates
+        case volumeForecasts
+        case sinceLastScan
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        windowDays = try container.decodeIfPresent(UInt64.self, forKey: .windowDays) ?? 30
+        perRepoRates = try container.decodeIfPresent([StorageGrowthRateModel].self, forKey: .perRepoRates) ?? []
+        perRootRates = try container.decodeIfPresent([StorageGrowthRateModel].self, forKey: .perRootRates) ?? []
+        volumeForecasts =
+            try container.decodeIfPresent([StorageGrowthForecastModel].self, forKey: .volumeForecasts) ?? []
+        sinceLastScan = try container.decodeIfPresent(StorageScanDiffModel.self, forKey: .sinceLastScan)
+    }
+}
+
+struct StorageColdDataBandModel: Decodable, Identifiable, Sendable {
+    let id: String
+    let label: String
+    let minAgeDays: UInt64
+    let maxAgeDays: UInt64?
+    let itemCount: UInt64
+    let totalBytes: UInt64
+    let topItems: [StorageHygieneItemModel]
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case minAgeDays
+        case maxAgeDays
+        case itemCount
+        case totalBytes
+        case topItems
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        minAgeDays = try container.decodeIfPresent(UInt64.self, forKey: .minAgeDays) ?? 0
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? "cold-\(minAgeDays)"
+        label = try container.decodeIfPresent(String.self, forKey: .label) ?? "Untouched \(minAgeDays)+ days"
+        maxAgeDays = try container.decodeIfPresent(UInt64.self, forKey: .maxAgeDays)
+        itemCount = try container.decodeIfPresent(UInt64.self, forKey: .itemCount) ?? 0
+        totalBytes = try container.decodeIfPresent(UInt64.self, forKey: .totalBytes) ?? 0
+        topItems = try container.decodeIfPresent([StorageHygieneItemModel].self, forKey: .topItems) ?? []
+    }
+}
+
+struct StorageColdDataModel: Decodable, Sendable {
+    let bands: [StorageColdDataBandModel]
+    let caveat: String
+
+    private enum CodingKeys: String, CodingKey {
+        case bands
+        case caveat
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bands = try container.decodeIfPresent([StorageColdDataBandModel].self, forKey: .bands) ?? []
+        caveat = try container.decodeIfPresent(String.self, forKey: .caveat) ?? ""
+    }
 }
 
 enum StorageVolumeCapacityEnricher {
