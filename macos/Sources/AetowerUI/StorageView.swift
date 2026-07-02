@@ -106,8 +106,14 @@ private struct StorageCleanupExecutionResult: Sendable {
     let exitCode: Int32
     let output: String
     let durationSeconds: Double
+    /// Paths actually moved to Trash, and paths that failed with the reason.
+    /// Batch outcomes are per-path: one root-owned folder failing must not
+    /// report the other 41 successful moves as failures.
+    let movedPaths: [String]
+    let failedPaths: [String: String]
 
     var succeeded: Bool { exitCode == 0 }
+    var partiallySucceeded: Bool { !movedPaths.isEmpty && !failedPaths.isEmpty }
 }
 
 private struct StorageCleanupAuditEvent: Codable, Identifiable, Sendable {
@@ -3002,9 +3008,11 @@ public struct StorageView: View {
                         )
                         if let result = cleanupExecutionResult {
                             footprintMetric(
-                                "Exit",
-                                value: "\(result.exitCode)",
-                                detail: result.succeeded ? "success" : "failed"
+                                "Moved",
+                                value: "\(result.movedPaths.count)/\(result.movedPaths.count + result.failedPaths.count)",
+                                detail: result.succeeded
+                                    ? "success"
+                                    : result.partiallySucceeded ? "partial" : "failed"
                             )
                         }
                     }
@@ -3038,9 +3046,21 @@ public struct StorageView: View {
 
                     if let result = cleanupExecutionResult {
                         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                            Text(result.succeeded ? "Result" : "Result: needs attention")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(result.succeeded ? AetowerDesign.Status.ready : AetowerDesign.Status.error)
+                            Text(
+                                result.succeeded
+                                    ? "Result: \(result.movedPaths.count) moved to Trash"
+                                    : result.partiallySucceeded
+                                        ? "Result: \(result.movedPaths.count) moved to Trash · \(result.failedPaths.count) failed"
+                                        : "Result: needs attention"
+                            )
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(
+                                result.succeeded
+                                    ? AetowerDesign.Status.ready
+                                    : result.partiallySucceeded
+                                        ? AetowerDesign.Status.warning
+                                        : AetowerDesign.Status.error
+                            )
                             Text(result.output.isEmpty ? "Cleanup completed with no output." : result.output)
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(.secondary)
@@ -6662,23 +6682,27 @@ public struct StorageView: View {
             uniqueKeysWithValues: cleanupBasket.map { ($0.path, $0) }
         )
         let fallbackBytes = request.targetPaths.count == 1 ? request.estimatedBytes : 0
-        let action = result.succeeded ? "trash" : "failed-trash"
-        if result.succeeded {
-            let removed = Set(request.targetPaths)
-            cleanupBasket.removeAll { removed.contains($0.path) }
-        }
+        // Outcomes are per-path: items that reached the Trash leave the basket
+        // and audit as "trash" even when a sibling in the same batch failed.
+        // The old batch-level bookkeeping marked all 42 paths failed (and kept
+        // them staged for a doomed re-run) because 1 of 42 was root-owned.
+        let moved = Set(result.movedPaths)
+        cleanupBasket.removeAll { moved.contains($0.path) }
 
         for path in request.targetPaths {
             let metadata = metadataByPath[path]
+            let pathSucceeded = moved.contains(path)
             appendCleanupAudit(
-                action: action,
+                action: pathSucceeded ? "trash" : "failed-trash",
                 path: path,
-                detail: result.output,
+                detail: pathSucceeded
+                    ? "Moved to Finder Trash."
+                    : (result.failedPaths[path] ?? "Not attempted."),
                 bytes: bytesByPath[path] ?? fallbackBytes,
                 cleanupTier: metadata?.cleanupTier,
                 safety: metadata?.safety,
                 blockers: metadata?.blockers ?? [],
-                succeeded: result.succeeded
+                succeeded: pathSucceeded
             )
         }
     }
@@ -6711,13 +6735,15 @@ public struct StorageView: View {
 
     nonisolated private static func movePathsToTrash(_ paths: [String]) -> StorageCleanupExecutionResult {
         let started = Date()
-        var moved = 0
+        var movedPaths: [String] = []
+        var failedPaths: [String: String] = [:]
         var output: [String] = []
         for path in paths {
             let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
             let url = URL(fileURLWithPath: trimmed)
             guard FileManager.default.fileExists(atPath: url.path) else {
+                failedPaths[trimmed] = "Path no longer exists"
                 output.append("Missing: \(trimmed)")
                 continue
             }
@@ -6727,23 +6753,25 @@ public struct StorageView: View {
                     at: url,
                     resultingItemURL: &resultingURL
                 )
-                moved += 1
+                movedPaths.append(trimmed)
                 if let resultingURL {
                     output.append("Moved: \(trimmed) -> \(resultingURL.path ?? "Trash")")
                 } else {
                     output.append("Moved: \(trimmed) -> Trash")
                 }
             } catch {
+                failedPaths[trimmed] = error.localizedDescription
                 output.append("Failed: \(trimmed) - \(error.localizedDescription)")
             }
         }
 
-        let failed = output.filter { $0.hasPrefix("Failed:") || $0.hasPrefix("Missing:") }.count
-        let summary = "Moved \(moved) item\(moved == 1 ? "" : "s") to Trash; \(failed) issue\(failed == 1 ? "" : "s")."
+        let summary = "Moved \(movedPaths.count) item\(movedPaths.count == 1 ? "" : "s") to Trash; \(failedPaths.count) issue\(failedPaths.count == 1 ? "" : "s")."
         return StorageCleanupExecutionResult(
-            exitCode: failed == 0 ? 0 : 1,
+            exitCode: failedPaths.isEmpty ? 0 : 1,
             output: ([summary] + output).joined(separator: "\n"),
-            durationSeconds: Date().timeIntervalSince(started)
+            durationSeconds: Date().timeIntervalSince(started),
+            movedPaths: movedPaths,
+            failedPaths: failedPaths
         )
     }
 
