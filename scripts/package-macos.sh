@@ -94,8 +94,10 @@ if [ -z "$SIGN_IDENTITY" ]; then
         SIGN_IDENTITY="-"
     fi
 fi
-ENTITLEMENTS_PATH="${AETOWER_ENTITLEMENTS_PATH:-}"
-HELPER_ENTITLEMENTS_PATH="${AETOWER_HELPER_ENTITLEMENTS_PATH:-}"
+# Hardened-runtime builds (any real identity) must carry the entitlements or
+# Apple Events are denied at runtime; ad-hoc builds ignore them harmlessly.
+ENTITLEMENTS_PATH="${AETOWER_ENTITLEMENTS_PATH:-$ROOT/macos/Aetower.entitlements}"
+HELPER_ENTITLEMENTS_PATH="${AETOWER_HELPER_ENTITLEMENTS_PATH:-$ROOT/macos/AetowerHelper.entitlements}"
 NOTARIZE="${AETOWER_NOTARIZE:-0}"
 STAPLE="${AETOWER_STAPLE:-0}"
 NOTARY_PROFILE="${AETOWER_NOTARY_PROFILE:-}"
