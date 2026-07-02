@@ -27,7 +27,9 @@ pub(super) fn scan_root(
     let mut truncated = false;
 
     while let Some((path, depth)) = stack.pop() {
-        if started.elapsed() >= SCAN_TIME_BUDGET || scanned_dirs >= MAX_DIRECTORIES {
+        if started.elapsed() >= options.mode.size_walk_time_budget()
+            || scanned_dirs >= MAX_DIRECTORIES
+        {
             truncated = true;
             break;
         }
@@ -478,7 +480,8 @@ fn size_of_path(
     let mut result = SizeWalkResult::default();
     let mut stack = vec![path.to_path_buf()];
     while let Some(current) = stack.pop() {
-        if started.elapsed() >= SCAN_TIME_BUDGET || result.entries >= mode.size_walk_entry_budget()
+        if started.elapsed() >= mode.size_walk_time_budget()
+            || result.entries >= mode.size_walk_entry_budget()
         {
             result.truncated = true;
             break;

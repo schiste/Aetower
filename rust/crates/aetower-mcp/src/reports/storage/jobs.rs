@@ -36,6 +36,19 @@ impl StorageScanMode {
         }
     }
 
+    /// Wall-clock budget for the artifact size walk. The ambient fast pass
+    /// must stay snappy; Deep/Forensic run as cancellable background jobs
+    /// with checkpoints, so minutes-scale walks are safe there. This budget
+    /// covers ONLY the walk phase — the git/inventory phase has its own
+    /// (SCAN_TIME_BUDGET) so it can never starve the walk to zero again.
+    pub(super) fn size_walk_time_budget(self) -> Duration {
+        match self {
+            Self::InstantCached | Self::FastChangedOnly => SCAN_TIME_BUDGET,
+            Self::DeepNative => Duration::from_secs(60),
+            Self::ForensicVerified => Duration::from_secs(120),
+        }
+    }
+
     pub(super) fn verify_source_control(self) -> bool {
         matches!(self, Self::ForensicVerified)
     }

@@ -37,7 +37,7 @@ pub(super) struct StorageCandidateCollector {
 }
 
 impl StorageCandidateCollector {
-    fn new(limit: usize) -> Self {
+    pub(super) fn new(limit: usize) -> Self {
         Self {
             limit,
             heap: BinaryHeap::new(),
@@ -300,8 +300,12 @@ pub(super) fn build_storage_hygiene_report_with_options(
     let mut scanned_directory_count = 0;
     let mut truncated = repository_inventory_scan.truncated;
 
+    // The walk phase runs on its own clock: the repository/git phase above is
+    // bounded separately, so a git-heavy start (forensic mode over many repos)
+    // can no longer exhaust the budget before a single root is sized.
+    let walk_started = Instant::now();
     for root in roots {
-        if started.elapsed() >= SCAN_TIME_BUDGET {
+        if walk_started.elapsed() >= options.mode.size_walk_time_budget() {
             truncated = true;
             break;
         }

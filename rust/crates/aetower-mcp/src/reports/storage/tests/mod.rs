@@ -3845,3 +3845,70 @@ fn test_storage_item(
         },
     }
 }
+
+#[test]
+fn size_walk_budget_is_scaled_per_mode() {
+    assert_eq!(
+        StorageScanMode::FastChangedOnly.size_walk_time_budget(),
+        SCAN_TIME_BUDGET
+    );
+    assert_eq!(
+        StorageScanMode::DeepNative.size_walk_time_budget(),
+        Duration::from_secs(60)
+    );
+    assert_eq!(
+        StorageScanMode::ForensicVerified.size_walk_time_budget(),
+        Duration::from_secs(120)
+    );
+}
+
+#[test]
+fn forensic_walk_survives_a_slow_pre_walk_phase() {
+    // Regression: the walk used to share SCAN_TIME_BUDGET with the git /
+    // inventory phase, so a forensic scan over many repositories consumed the
+    // whole clock before sizing a single root (observed live: root_walk 0ms,
+    // item_count 0). The walk clock is per-phase now: a start Instant that is
+    // already past the old shared budget must still walk entries.
+    let root = test_root("forensic-walk-budget");
+    let target = root.join("proj").join("target");
+    if let Err(error) = fs::create_dir_all(&target) {
+        panic!("create target dir: {error}");
+    }
+    if let Err(error) = fs::write(
+        target.join("blob"),
+        vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+    ) {
+        panic!("write artifact: {error}");
+    }
+
+    let options = StorageHygieneOptions {
+        max_depth: 5,
+        limit: 10,
+        mode: StorageScanMode::ForensicVerified,
+        runtime: None,
+        dirty_paths: Vec::new(),
+    };
+    let storage_index = StorageSizeIndex::disabled("test");
+    let mut collector = StorageCandidateCollector::new(options.limit);
+    let mut metrics = StorageScanMetrics::default();
+    // Simulate a pre-walk phase that already burned 10s (> the old shared
+    // 6.5s budget, < the forensic walk budget).
+    let stale_started = Instant::now()
+        .checked_sub(Duration::from_secs(10))
+        .unwrap_or_else(Instant::now);
+
+    let (_repos, scanned_dirs, truncated) = scan_root(
+        &root,
+        &options,
+        stale_started,
+        storage_now_millis(),
+        &storage_index,
+        &mut collector,
+        &mut metrics,
+    );
+
+    assert!(
+        scanned_dirs > 0,
+        "walk must proceed on its own budget (scanned {scanned_dirs} dirs, truncated={truncated})"
+    );
+}

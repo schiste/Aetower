@@ -2277,7 +2277,7 @@ public final class AppState {
         let publisher = StorageHygieneMainActorPublisher(self)
         storageHygieneTask = Task.detached(priority: .background) {
             let maxDepth: UInt32 = 5
-            let limit: UInt32 = 80
+            let limit: UInt32 = 200
             var publishedReport = false
             let cacheResult = StorageHygieneReportCacheStore.loadIfValid(
                 roots: roots
@@ -2403,7 +2403,7 @@ public final class AppState {
     func runStorageHygieneScan(
         roots: [String] = [],
         maxDepth: UInt32 = 5,
-        limit: UInt32 = 80,
+        limit: UInt32 = 200,
         mode: String = "fast_changed_only"
     ) {
         storageHygieneTask?.cancel()
