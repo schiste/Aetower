@@ -178,6 +178,7 @@ struct StorageDirectTrashUndo {
     let message: String
     let originalPath: String
     let trashURL: URL?
+    let bytes: UInt64
 }
 
 public struct StorageView: View {
@@ -204,6 +205,12 @@ public struct StorageView: View {
     @State private var showCleanupBasket = false
     @State private var directTrashUndo: StorageDirectTrashUndo?
     @State private var directTrashUndoDismissTask: Task<Void, Never>?
+    /// Bytes this session has moved into Finder Trash but not yet freed —
+    /// reclaim is a two-step operation (Trash, then empty) and the second
+    /// step must stay visible until it happens.
+    @State private var trashPendingBytes: UInt64 = 0
+    @State private var confirmEmptyTrash = false
+    @State private var emptyTrashInFlight = false
     @State private var cleanupAuditEvents = StorageCleanupAuditLog.loadRecent()
     @State private var classificationExplanation: StorageClassificationExplanation?
     @State private var storageVisualExplorerMode: StorageVisualExplorerMode = .fullDisk
@@ -245,10 +252,20 @@ public struct StorageView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-            if !cleanupBasket.isEmpty {
+            if !cleanupBasket.isEmpty || trashPendingBytes > 0 {
                 Divider()
                 cleanupStickyBar
             }
+        }
+        .confirmationDialog(
+            "Empty the Trash?",
+            isPresented: $confirmEmptyTrash,
+            titleVisibility: .visible
+        ) {
+            Button("Empty Trash", role: .destructive) { emptyTrash() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes everything in the Trash — including items that did not come from Aetower. This cannot be undone.")
         }
         .overlay(alignment: .bottom) {
             if let undo = directTrashUndo {
@@ -3071,6 +3088,32 @@ public struct StorageView: View {
                             Text(String(format: "%.1fs", result.durationSeconds))
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
+
+                            if !result.movedPaths.isEmpty {
+                                // The step users miss: items in the Trash still
+                                // occupy disk until the Trash is emptied.
+                                HStack(spacing: AetowerDesign.Spacing.sm) {
+                                    Label(
+                                        "Items are in the Trash — disk space frees when you empty it.",
+                                        systemImage: "info.circle"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    Button("Open Trash") { openTrash() }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                    Button("Empty Trash…") { confirmEmptyTrash = true }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                        .disabled(emptyTrashInFlight)
+                                }
+                                .padding(AetowerDesign.Spacing.sm)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    AetowerDesign.Status.warning.opacity(0.08),
+                                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                )
+                            }
                         }
                     }
                 }
@@ -6454,28 +6497,78 @@ public struct StorageView: View {
     /// batch (previously the basket sheet popped over the UI on every stage).
     private var cleanupStickyBar: some View {
         HStack(spacing: AetowerDesign.Spacing.md) {
-            Label(
-                "\(cleanupBasket.count) staged · \(formatBytes(cleanupBasketTotalBytes()))",
-                systemImage: "tray.full"
-            )
-            .font(.callout.weight(.semibold))
-            if cleanupBasket.contains(where: \.requiresReview) {
-                Text("includes review items")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if !cleanupBasket.isEmpty {
+                Label(
+                    "\(cleanupBasket.count) staged · \(formatBytes(cleanupBasketTotalBytes()))",
+                    systemImage: "tray.full"
+                )
+                .font(.callout.weight(.semibold))
+                if cleanupBasket.contains(where: \.requiresReview) {
+                    Text("includes review items")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-            Spacer()
-            Button("Clear") { cleanupBasket.removeAll() }
-                .buttonStyle(.plain)
+
+            if trashPendingBytes > 0 {
+                if !cleanupBasket.isEmpty {
+                    Divider().frame(height: 18)
+                }
+                // Step 2 of the reclaim: nothing is freed until the Trash is
+                // emptied, so the pending amount stays on screen until then.
+                Label(
+                    "\(formatBytes(trashPendingBytes)) in Trash — space frees when emptied",
+                    systemImage: "arrow.down.circle"
+                )
+                .font(.callout)
                 .foregroundStyle(.secondary)
-            Button("Review") { showCleanupBasket = true }
-                .buttonStyle(.bordered)
-            Button {
-                pendingCleanupExecutionRequest = basketTrashExecutionRequest()
-            } label: {
-                Label("Move to Trash", systemImage: "trash")
             }
-            .buttonStyle(.borderedProminent)
+
+            Spacer()
+
+            if trashPendingBytes > 0 {
+                Button("Open Trash") { openTrash() }
+                    .buttonStyle(.bordered)
+                // Prominent only when it is the sole next step; a non-empty
+                // basket keeps Move to Trash as the single primary action.
+                if cleanupBasket.isEmpty {
+                    Button {
+                        confirmEmptyTrash = true
+                    } label: {
+                        Label(
+                            emptyTrashInFlight ? "Emptying…" : "Empty Trash…",
+                            systemImage: "trash.slash"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(emptyTrashInFlight)
+                } else {
+                    Button {
+                        confirmEmptyTrash = true
+                    } label: {
+                        Label(
+                            emptyTrashInFlight ? "Emptying…" : "Empty Trash…",
+                            systemImage: "trash.slash"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(emptyTrashInFlight)
+                }
+            }
+
+            if !cleanupBasket.isEmpty {
+                Button("Clear") { cleanupBasket.removeAll() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                Button("Review") { showCleanupBasket = true }
+                    .buttonStyle(.bordered)
+                Button {
+                    pendingCleanupExecutionRequest = basketTrashExecutionRequest()
+                } label: {
+                    Label("Move to Trash", systemImage: "trash")
+                }
+                .buttonStyle(.borderedProminent)
+            }
         }
         .controlSize(.regular)
         .padding(.horizontal, AetowerDesign.Spacing.xl)
@@ -6533,13 +6626,18 @@ public struct StorageView: View {
                     succeeded: outcome.trashURL != nil
                 )
                 cleanupBasket.removeAll { $0.path == path }
+                if outcome.trashURL != nil {
+                    let (sum, overflow) = trashPendingBytes.addingReportingOverflow(bytes)
+                    trashPendingBytes = overflow ? UInt64.max : sum
+                }
                 presentDirectTrashUndo(
                     StorageDirectTrashUndo(
                         message: outcome.trashURL != nil
                             ? "\(title) (\(formatBytes(bytes))) moved to Trash"
                             : "Could not trash \(title): \(outcome.message)",
                         originalPath: path,
-                        trashURL: outcome.trashURL
+                        trashURL: outcome.trashURL,
+                        bytes: bytes
                     )
                 )
             }
@@ -6603,10 +6701,46 @@ public struct StorageView: View {
                     action: succeeded ? "restore" : "failed-restore",
                     path: destination,
                     detail: message,
-                    bytes: 0,
+                    bytes: undo.bytes,
                     succeeded: succeeded
                 )
+                if succeeded {
+                    trashPendingBytes = trashPendingBytes >= undo.bytes
+                        ? trashPendingBytes - undo.bytes
+                        : 0
+                }
                 dismissDirectTrashUndo()
+            }
+        }
+    }
+
+    private func openTrash() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory() + "/.Trash"))
+    }
+
+    /// Finder performs the empty (one-time Automation consent prompt). The
+    /// in-app confirmation dialog runs first — this is the only permanent
+    /// deletion in the app.
+    private func emptyTrash() {
+        emptyTrashInFlight = true
+        Task.detached(priority: .userInitiated) {
+            var errorInfo: NSDictionary?
+            let script = NSAppleScript(source: "tell application \"Finder\" to empty trash")
+            script?.executeAndReturnError(&errorInfo)
+            let failure = (errorInfo?[NSAppleScript.errorBriefMessage] as? String)
+                ?? (errorInfo?[NSAppleScript.errorMessage] as? String)
+            await MainActor.run {
+                emptyTrashInFlight = false
+                appendCleanupAudit(
+                    action: failure == nil ? "empty-trash" : "failed-empty-trash",
+                    path: "~/.Trash",
+                    detail: failure ?? "Emptied Finder Trash (\(formatBytes(trashPendingBytes)) pending from cleanups).",
+                    bytes: trashPendingBytes,
+                    succeeded: failure == nil
+                )
+                if failure == nil {
+                    trashPendingBytes = 0
+                }
             }
         }
     }
@@ -6688,6 +6822,10 @@ public struct StorageView: View {
         // them staged for a doomed re-run) because 1 of 42 was root-owned.
         let moved = Set(result.movedPaths)
         cleanupBasket.removeAll { moved.contains($0.path) }
+        trashPendingBytes = result.movedPaths.reduce(trashPendingBytes) { acc, path in
+            let (sum, overflow) = acc.addingReportingOverflow(bytesByPath[path] ?? fallbackBytes)
+            return overflow ? UInt64.max : sum
+        }
 
         for path in request.targetPaths {
             let metadata = metadataByPath[path]
