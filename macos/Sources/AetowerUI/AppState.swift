@@ -3122,13 +3122,31 @@ public final class AppState {
             previousStorageHygieneReport = storageHygieneReport
         }
         repositorySummaryInputsGeneration += 1
-        report.repositoryInventory = inventory.repositoryInventory
-        report.repositoryInventoryComplete = inventory.repositoryInventoryComplete
-        report.repositoryInventoryTruncated = inventory.repositoryInventoryTruncated
-        report.repositoryInventoryRoots = inventory.repositoryInventoryRoots
-        report.repositoryInventoryPartialRoots = inventory.repositoryInventoryPartialRoots
-        report.repositoryInventoryCoverage = inventory.repositoryInventoryCoverage
-        storageHygieneReport = report
+        // An incomplete verification walk (budget-truncated under load) must
+        // not replace a richer inventory already on screen.
+        let displayedCount = report.repositoryInventory.count
+        let verifiedIsRicher = inventory.repositoryInventoryComplete
+            || inventory.repositoryInventory.count >= displayedCount
+        if verifiedIsRicher {
+            report.repositoryInventory = inventory.repositoryInventory
+            report.repositoryInventoryComplete = inventory.repositoryInventoryComplete
+            report.repositoryInventoryTruncated = inventory.repositoryInventoryTruncated
+            report.repositoryInventoryRoots = inventory.repositoryInventoryRoots
+            report.repositoryInventoryPartialRoots = inventory.repositoryInventoryPartialRoots
+            report.repositoryInventoryCoverage = inventory.repositoryInventoryCoverage
+            storageHygieneReport = report
+        } else {
+            recordLocalDiagnosticsEvent(
+                level: .warn,
+                subsystem: .ui,
+                eventType: "storage-hygiene-verification-skipped-thin",
+                message: "Skipped merging truncated inventory verification over a richer displayed inventory.",
+                fields: [
+                    DiagnosticsField(key: "verified_count", value: String(inventory.repositoryInventory.count)),
+                    DiagnosticsField(key: "displayed_count", value: String(displayedCount)),
+                ]
+            )
+        }
         storageRootChangeMonitor.startWatching(roots: report.roots)
         storageHygieneError = nil
 
