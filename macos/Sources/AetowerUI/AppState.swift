@@ -2357,7 +2357,12 @@ public final class AppState {
                 maxDepth: maxDepth,
                 limit: limit,
                 mode: "instant_cached",
-                saveCache: false,
+                // Persist the authoritative indexed report so the NEXT launch
+                // paints instantly from the synchronous cache read. Previously
+                // only the manual full-scan button saved the cache, so every
+                // launch missed and paid the multi-second index query with a
+                // "Starting storage scan" flash.
+                saveCache: true,
                 saveBaseline: true
             )
             if indexedPrepared.report != nil {
