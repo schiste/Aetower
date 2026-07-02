@@ -80,7 +80,20 @@ if [ -z "$BUILD_NUMBER" ]; then
     BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 fi
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
-SIGN_IDENTITY="${AETOWER_SIGN_IDENTITY:--}"
+SIGN_IDENTITY="${AETOWER_SIGN_IDENTITY:-}"
+if [ -z "$SIGN_IDENTITY" ]; then
+    # Ad-hoc signatures change every build, so macOS TCC treats each rebuild
+    # as a new app and re-prompts for every permission. Prefer a stable local
+    # identity so grants survive rebuilds; fall back to ad-hoc only when no
+    # signing certificate exists.
+    if security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application"; then
+        SIGN_IDENTITY="Developer ID Application"
+    elif security find-identity -v -p codesigning 2>/dev/null | grep -q "Apple Development"; then
+        SIGN_IDENTITY="Apple Development"
+    else
+        SIGN_IDENTITY="-"
+    fi
+fi
 ENTITLEMENTS_PATH="${AETOWER_ENTITLEMENTS_PATH:-}"
 HELPER_ENTITLEMENTS_PATH="${AETOWER_HELPER_ENTITLEMENTS_PATH:-}"
 NOTARIZE="${AETOWER_NOTARIZE:-0}"
