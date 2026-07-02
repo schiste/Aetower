@@ -258,11 +258,11 @@ pub(super) fn build_storage_hygiene_report_with_options(
         storage_index_status: "not_opened".to_owned(),
         ..StorageScanMetrics::default()
     };
-    let storage_index = if options.mode.use_storage_index() {
-        StorageSizeIndex::open()
-    } else {
-        StorageSizeIndex::disabled("mode_requires_fresh_walk")
-    };
+    // Every mode persists its findings into the shared index so instant_cached
+    // readers (overview, launch repaint) re-derive from the freshest scan.
+    // Deep/Forensic still walk fresh: they only skip READING cached directory
+    // sizes (`StorageScanMode::serve_sizes_from_index`).
+    let storage_index = StorageSizeIndex::open();
     metrics.storage_index_status = storage_index.status.clone();
     let repository_cache = StorageSizeIndex::open();
     let cached_repository_entries =

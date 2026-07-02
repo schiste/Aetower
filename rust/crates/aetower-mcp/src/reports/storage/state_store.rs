@@ -291,6 +291,10 @@ impl StorageSizeIndex {
         Self::with_status(Some(connection), "ready".to_owned())
     }
 
+    /// Connection-less handle whose reads and writes all no-op. Production
+    /// code now opens the index for every scan mode; tests use this to
+    /// exercise the unavailable-index paths.
+    #[cfg(test)]
     pub(super) fn disabled(reason: &str) -> Self {
         Self::with_status(None, format!("disabled:{reason}"))
     }

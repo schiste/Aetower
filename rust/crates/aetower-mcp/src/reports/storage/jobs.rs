@@ -79,7 +79,12 @@ impl StorageScanMode {
         matches!(self, Self::ForensicVerified)
     }
 
-    pub(super) fn use_storage_index(self) -> bool {
+    /// Whether the size walk may ANSWER from cached directory sizes in the
+    /// persistent `StorageSizeIndex`. Deep/Forensic must walk fresh, so they
+    /// never read cached sizes — but every mode still PERSISTS its findings
+    /// into the index so `instant_cached` readers (overview, launch repaint)
+    /// always see the freshest scan.
+    pub(super) fn serve_sizes_from_index(self) -> bool {
         matches!(self, Self::InstantCached | Self::FastChangedOnly)
     }
 

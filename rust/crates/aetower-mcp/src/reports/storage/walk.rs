@@ -507,11 +507,7 @@ fn size_of_path(
         let allocated_bytes = blocks.saturating_mul(512);
         let sparse_or_shared = allocated_bytes > 0 && allocated_bytes < metadata.len();
         let cloud_placeholder = metadata.len() > 0 && allocated_bytes == 0;
-        let repo_root = if mode.use_storage_index() {
-            find_git_root(path).map(|root| root.display().to_string())
-        } else {
-            None
-        };
+        let repo_root = find_git_root(path).map(|root| root.display().to_string());
         if let Some(runtime) = runtime
             && !runtime.checkpoint(
                 STORAGE_SCAN_PHASE_ARTIFACT_SIZING,
@@ -531,42 +527,6 @@ fn size_of_path(
                 sparse_or_shared,
                 cloud_placeholder,
             };
-            if mode.use_storage_index() {
-                storage_index.store_indexed_row(
-                    &indexed_row_for_path(
-                        path,
-                        metadata,
-                        source_root,
-                        repo_root.as_deref(),
-                        rule.kind,
-                        storage_role_for_kind(rule.kind),
-                        rule.safety,
-                        rule.cleanup_tier,
-                        result.bytes,
-                        result.allocated_bytes,
-                        result.entries,
-                        result.truncated,
-                        now_millis,
-                    ),
-                    metrics,
-                );
-                // Checkpoint refused to continue (cancellation/pause): flush
-                // so the interrupted scan leaves no buffered rows behind.
-                storage_index.flush_pending_rows();
-            }
-            return result;
-        }
-        let result = SizeWalkResult {
-            bytes: metadata.len(),
-            allocated_bytes,
-            truncated: false,
-            entries: 1,
-            max_hardlink_count: hardlink_count,
-            has_hardlinks: hardlink_count > 1,
-            sparse_or_shared,
-            cloud_placeholder,
-        };
-        if mode.use_storage_index() {
             storage_index.store_indexed_row(
                 &indexed_row_for_path(
                     path,
@@ -585,25 +545,53 @@ fn size_of_path(
                 ),
                 metrics,
             );
+            // Checkpoint refused to continue (cancellation/pause): flush
+            // so the interrupted scan leaves no buffered rows behind.
+            storage_index.flush_pending_rows();
+            return result;
         }
+        let result = SizeWalkResult {
+            bytes: metadata.len(),
+            allocated_bytes,
+            truncated: false,
+            entries: 1,
+            max_hardlink_count: hardlink_count,
+            has_hardlinks: hardlink_count > 1,
+            sparse_or_shared,
+            cloud_placeholder,
+        };
+        storage_index.store_indexed_row(
+            &indexed_row_for_path(
+                path,
+                metadata,
+                source_root,
+                repo_root.as_deref(),
+                rule.kind,
+                storage_role_for_kind(rule.kind),
+                rule.safety,
+                rule.cleanup_tier,
+                result.bytes,
+                result.allocated_bytes,
+                result.entries,
+                result.truncated,
+                now_millis,
+            ),
+            metrics,
+        );
         return result;
     }
     if !metadata.is_dir() {
         return SizeWalkResult::default();
     }
 
-    if mode.use_storage_index()
+    if mode.serve_sizes_from_index()
         && let Some(cached) = storage_index.lookup(path, metadata, kind, dirty_paths, metrics)
     {
         metrics.sized_entry_count = metrics.sized_entry_count.saturating_add(cached.entries);
         return cached;
     }
 
-    let repo_root = if mode.use_storage_index() {
-        find_git_root(path).map(|root| root.display().to_string())
-    } else {
-        None
-    };
+    let repo_root = find_git_root(path).map(|root| root.display().to_string());
     let mut result = SizeWalkResult::default();
     let mut stack = vec![path.to_path_buf()];
     while let Some(current) = stack.pop() {
@@ -641,26 +629,24 @@ fn size_of_path(
                 result.has_hardlinks |= hardlink_count > 1;
                 result.sparse_or_shared |= physical_bytes > 0 && physical_bytes < logical_bytes;
                 result.cloud_placeholder |= logical_bytes > 0 && physical_bytes == 0;
-                if mode.use_storage_index() {
-                    storage_index.store_indexed_row(
-                        &indexed_row_for_path(
-                            &path,
-                            &metadata,
-                            source_root,
-                            repo_root.as_deref(),
-                            "indexed-file",
-                            "file",
-                            "",
-                            "",
-                            logical_bytes,
-                            physical_bytes,
-                            1,
-                            false,
-                            now_millis,
-                        ),
-                        metrics,
-                    );
-                }
+                storage_index.store_indexed_row(
+                    &indexed_row_for_path(
+                        &path,
+                        &metadata,
+                        source_root,
+                        repo_root.as_deref(),
+                        "indexed-file",
+                        "file",
+                        "",
+                        "",
+                        logical_bytes,
+                        physical_bytes,
+                        1,
+                        false,
+                        now_millis,
+                    ),
+                    metrics,
+                );
                 if let Some(runtime) = runtime
                     && !runtime.checkpoint(
                         STORAGE_SCAN_PHASE_ARTIFACT_SIZING,
@@ -680,35 +666,33 @@ fn size_of_path(
     metrics.size_walk_millis = metrics
         .size_walk_millis
         .saturating_add(size_started.elapsed().as_millis() as u64);
-    if mode.use_storage_index() {
-        storage_index.store(
+    storage_index.store(
+        path,
+        metadata,
+        kind,
+        repo_root.as_deref(),
+        &result,
+        now_millis,
+        metrics,
+    );
+    storage_index.store_indexed_row(
+        &indexed_row_for_path(
             path,
             metadata,
-            kind,
+            source_root,
             repo_root.as_deref(),
-            &result,
+            rule.kind,
+            storage_role_for_kind(rule.kind),
+            rule.safety,
+            rule.cleanup_tier,
+            result.bytes,
+            result.allocated_bytes,
+            result.entries,
+            result.truncated,
             now_millis,
-            metrics,
-        );
-        storage_index.store_indexed_row(
-            &indexed_row_for_path(
-                path,
-                metadata,
-                source_root,
-                repo_root.as_deref(),
-                rule.kind,
-                storage_role_for_kind(rule.kind),
-                rule.safety,
-                rule.cleanup_tier,
-                result.bytes,
-                result.allocated_bytes,
-                result.entries,
-                result.truncated,
-                now_millis,
-            ),
-            metrics,
-        );
-    }
+        ),
+        metrics,
+    );
     result
 }
 

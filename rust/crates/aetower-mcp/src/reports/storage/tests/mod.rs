@@ -188,6 +188,96 @@ fn storage_hygiene_indexed_snapshot_reuses_persistent_rows() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// Staleness regression: `instant_cached` reports must re-derive from the
+/// persistent index, and the index must be fed by EVERY scan mode. A fast
+/// scan seeds the index, then a later deep scan discovers a new artifact —
+/// the next instant_cached overview has to surface the deep scan's finding
+/// instead of replaying only the earlier fast scan's rows.
+#[test]
+fn instant_cached_report_surfaces_rows_from_later_deep_scan() {
+    let root = test_root("deep-scan-freshness");
+    let fast_target = root.join("fast-project").join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&fast_target) {
+        panic!("create fast target dir: {error}");
+    }
+    if let Err(error) = fs::write(
+        fast_target.join("blob"),
+        vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+    ) {
+        panic!("write fast build artifact: {error}");
+    }
+
+    let _ = build_storage_hygiene_report_for_roots_mode(
+        vec![root.display().to_string()],
+        5,
+        80,
+        "fast_changed_only",
+    );
+
+    let overview = must_ok(
+        storage_hygiene_overview_json(vec![root.display().to_string()], 5, "instant_cached"),
+        "instant overview after fast scan serializes",
+    );
+    let overview = parse_json_value(&overview, "instant overview after fast scan parses");
+    assert_eq!(overview["scan_mode"], "instant_cached");
+    let item_paths = |value: &serde_json::Value| -> Vec<String> {
+        value["items"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item["path"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let fast_paths = item_paths(&overview);
+    assert!(
+        fast_paths.iter().any(|path| path.contains("fast-project")),
+        "fast scan rows should be visible via instant_cached: {fast_paths:?}"
+    );
+
+    // A later deep scan discovers an artifact the fast scan never saw.
+    let deep_target = root.join("deep-project").join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&deep_target) {
+        panic!("create deep target dir: {error}");
+    }
+    if let Err(error) = fs::write(
+        deep_target.join("blob"),
+        vec![0u8; (MIN_ITEM_BYTES + 256) as usize],
+    ) {
+        panic!("write deep build artifact: {error}");
+    }
+    let _ = build_storage_hygiene_report_for_roots_mode(
+        vec![root.display().to_string()],
+        5,
+        80,
+        "deep_native",
+    );
+
+    let refreshed = must_ok(
+        storage_hygiene_overview_json(vec![root.display().to_string()], 5, "instant_cached"),
+        "instant overview after deep scan serializes",
+    );
+    let refreshed = parse_json_value(&refreshed, "instant overview after deep scan parses");
+    assert_eq!(refreshed["scan_mode"], "instant_cached");
+    let refreshed_paths = item_paths(&refreshed);
+    assert!(
+        refreshed_paths
+            .iter()
+            .any(|path| path.contains("deep-project")),
+        "instant_cached must surface rows persisted by the later deep scan: {refreshed_paths:?}"
+    );
+    assert!(
+        refreshed_paths
+            .iter()
+            .any(|path| path.contains("fast-project")),
+        "earlier fast-scan rows must remain visible: {refreshed_paths:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[derive(Clone)]
 struct SeededPageRow {
     path: String,
