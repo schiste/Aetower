@@ -18,15 +18,15 @@ public struct MenuBarSummaryView: View {
             HStack {
                 Text("Host CPU")
                 Spacer()
-                Text(String(format: "%.1f%%", state.snapshot.host.cpuPercent))
+                Text(String(format: "%.1f%%", state.hostState.cpuPercent))
                     .monospacedDigit()
-                    .foregroundStyle(cpuColor(state.snapshot.host.cpuPercent))
+                    .foregroundStyle(cpuColor(state.hostState.cpuPercent))
             }
 
             HStack {
                 Text("Frontmost")
                 Spacer()
-                Text(state.snapshot.host.frontmostAppName ?? "n/a")
+                Text(state.hostState.frontmostAppName ?? "n/a")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -34,7 +34,7 @@ public struct MenuBarSummaryView: View {
             HStack {
                 Text("Power")
                 Spacer()
-                Text(menuBarPowerSummary(state.snapshot.host))
+                Text(menuBarPowerSummary(state.hostState))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -43,9 +43,9 @@ public struct MenuBarSummaryView: View {
                 Text("Thermal")
                 Spacer()
                 HStack(spacing: 4) {
-                    Image(systemName: thermalIcon(state.snapshot.host.thermalState))
-                        .foregroundStyle(thermalColor(state.snapshot.host.thermalState))
-                    Text(menuBarThermalSummary(state.snapshot.host.thermalState))
+                    Image(systemName: thermalIcon(state.hostState.thermalState))
+                        .foregroundStyle(thermalColor(state.hostState.thermalState))
+                    Text(menuBarThermalSummary(state.hostState.thermalState))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -55,15 +55,15 @@ public struct MenuBarSummaryView: View {
                 Text("GPU")
                 Spacer()
                 Text(
-                    state.snapshot.host.gpuPercent > 0 || state.snapshot.host.gpuMemoryBytes > 0
-                        ? "\(String(format: "%.1f%%", state.snapshot.host.gpuPercent)) · \(formatBytes(state.snapshot.host.gpuMemoryBytes))"
+                    state.hostState.gpuPercent > 0 || state.hostState.gpuMemoryBytes > 0
+                        ? "\(String(format: "%.1f%%", state.hostState.gpuPercent)) · \(formatBytes(state.hostState.gpuMemoryBytes))"
                         : "idle"
                 )
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
 
-            let agentEntities = state.snapshot.entities.filter { $0.entityKind == .aiAgent }
+            let agentEntities = state.entitiesState.filter { $0.entityKind == .aiAgent }
             if !agentEntities.isEmpty {
                 let running = agentEntities.filter { $0.badges.contains(where: { $0 == "running" }) }.count
                 let agentSummary = running > 0
@@ -77,7 +77,7 @@ public struct MenuBarSummaryView: View {
                 }
             }
 
-            if let top = state.snapshot.entities.first {
+            if let top = state.entitiesState.first {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Top friction")
                         .font(.caption)
@@ -118,8 +118,8 @@ public struct MenuBarSummaryView: View {
     }
 
     private var sparklineRow: some View {
-        let trend = state.snapshot.hostTrend
-        let host = state.snapshot.host
+        let trend = state.hostTrendState
+        let host = state.hostState
         return HStack(spacing: 8) {
             menuSparkline(
                 "CPU",

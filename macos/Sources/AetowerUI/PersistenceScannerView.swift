@@ -60,8 +60,8 @@ public struct PersistenceScannerView: View {
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
         self.settings = settings
-        _runtimeIndex = State(initialValue: PersistenceRuntimeIndex(snapshot: state.snapshot))
-        _runtimeIndexSequence = State(initialValue: state.snapshot.sequence)
+        _runtimeIndex = State(initialValue: PersistenceRuntimeIndex(entities: state.entitiesState))
+        _runtimeIndexSequence = State(initialValue: state.snapshotSequence)
     }
 
     private var report: PersistenceScanReportModel? { state.persistenceScanReport }
@@ -105,8 +105,8 @@ public struct PersistenceScannerView: View {
         .onAppear {
             state.ensurePersistenceScan()
         }
-        .task(id: state.snapshot.sequence) {
-            refreshRuntimeIndexIfNeeded(snapshot: state.snapshot)
+        .task(id: state.snapshotSequence) {
+            refreshRuntimeIndexIfNeeded(sequence: state.snapshotSequence, entities: state.entitiesState)
         }
     }
 
@@ -487,10 +487,10 @@ public struct PersistenceScannerView: View {
         }
     }
 
-    private func refreshRuntimeIndexIfNeeded(snapshot: SystemSnapshot) {
-        guard runtimeIndexSequence != snapshot.sequence else { return }
-        runtimeIndex = PersistenceRuntimeIndex(snapshot: snapshot)
-        runtimeIndexSequence = snapshot.sequence
+    private func refreshRuntimeIndexIfNeeded(sequence: UInt64, entities: [EntitySnapshot]) {
+        guard runtimeIndexSequence != sequence else { return }
+        runtimeIndex = PersistenceRuntimeIndex(entities: entities)
+        runtimeIndexSequence = sequence
     }
 
     private func derivedInventory(
@@ -1051,10 +1051,10 @@ private struct PersistenceRuntimeIndex {
     private let byExecutable: [String: [PersistenceRuntimeMatch]]
     private let byProcessName: [String: [PersistenceRuntimeMatch]]
 
-    init(snapshot: SystemSnapshot) {
+    init(entities: [EntitySnapshot]) {
         var executable: [String: [PersistenceRuntimeMatch]] = [:]
         var processName: [String: [PersistenceRuntimeMatch]] = [:]
-        for entity in snapshot.entities {
+        for entity in entities {
             for component in entity.components {
                 guard let pid = component.processId else { continue }
                 let match = PersistenceRuntimeMatch(

@@ -177,7 +177,7 @@ private struct AgentsWorkspaceView: View {
     }
 
     private var chau7Status: Chau7Status {
-        if !state.snapshot.chau7Sessions.isEmpty || !chau7LinkedEntities.isEmpty {
+        if !state.agentContextState.chau7Sessions.isEmpty || !chau7LinkedEntities.isEmpty {
             return .enriched
         }
         if chau7Entity != nil {
@@ -192,11 +192,11 @@ private struct AgentsWorkspaceView: View {
     }
 
     private var chau7Capability: CapabilitySnapshot? {
-        state.snapshot.capabilities.first { $0.kind == .chau7 }
+        state.capabilitiesState.first { $0.kind == .chau7 }
     }
 
     private var chau7Entity: EntitySnapshot? {
-        state.snapshot.entities.first { entity in
+        state.entitiesState.first { entity in
             entity.bundleId == "local.chau7"
                 || entity.entityId == "bundle-path:/applications/chau7.app"
                 || entity.executablePath == "/Applications/Chau7.app/Contents/MacOS/Chau7"
@@ -205,7 +205,7 @@ private struct AgentsWorkspaceView: View {
     }
 
     private var chau7LinkedEntities: [EntitySnapshot] {
-        state.snapshot.entities.filter { entity in
+        state.entitiesState.filter { entity in
             entity.badges.contains("chau7-live")
                 || entity.components.contains { $0.adapterContext?.kind == .chau7Session }
         }
@@ -232,7 +232,7 @@ private struct AgentsWorkspaceView: View {
     private var matchingChau7Sessions: [Chau7SessionSummary] {
         let query = agentSearchQuery
         guard !query.isEmpty else { return [] }
-        return state.snapshot.chau7Sessions.filter { session in
+        return state.agentContextState.chau7Sessions.filter { session in
             [
                 session.title,
                 session.provider,
@@ -249,7 +249,7 @@ private struct AgentsWorkspaceView: View {
     private var matchingAgentEntities: [EntitySnapshot] {
         let query = agentSearchQuery
         guard !query.isEmpty else { return [] }
-        return state.snapshot.entities.filter { entity in
+        return state.entitiesState.filter { entity in
             entity.entityKind == .aiAgent
                 && [
                     entity.displayName,
@@ -350,13 +350,13 @@ private struct AgentsWorkspaceView: View {
         [
             AetowerToolBadgeItem(
                 "Sessions",
-                value: "\(state.snapshot.chau7Sessions.count)",
+                value: "\(state.agentContextState.chau7Sessions.count)",
                 systemImage: "terminal",
                 tone: chau7Status == .enriched ? Color.green : Color.orange
             ),
             AetowerToolBadgeItem(
                 "Agents",
-                value: "\(state.snapshot.entities.filter { $0.entityKind == .aiAgent }.count)",
+                value: "\(state.entitiesState.filter { $0.entityKind == .aiAgent }.count)",
                 systemImage: "cpu",
                 tone: AetowerDesign.Tone.cpu
             ),
@@ -450,7 +450,7 @@ private struct ActivityWorkspaceView: View {
         [
             AetowerToolBadgeItem(
                 "Events",
-                value: "\(state.snapshot.timeline.count)",
+                value: "\(state.timelineState.count)",
                 systemImage: "timeline.selection",
                 tone: timelineTint
             ),
@@ -517,7 +517,7 @@ private struct ActivityWorkspaceView: View {
                 ) {
                     activityMetric(
                         "Timeline events",
-                        value: "\(state.snapshot.timeline.count)",
+                        value: "\(state.timelineState.count)",
                         detail: timelinePressureDetail,
                         systemImage: "timeline.selection",
                         tone: timelineTint
@@ -810,7 +810,7 @@ private struct ActivityWorkspaceView: View {
 
     private var recentEvents: [TimelineEvent] {
         let query = activitySearchQuery
-        let events = state.snapshot.timeline
+        let events = state.timelineState
             .filter { event in
                 guard !query.isEmpty else { return true }
                 return event.title.localizedCaseInsensitiveContains(query)
@@ -839,11 +839,11 @@ private struct ActivityWorkspaceView: View {
     }
 
     private var warningEventCount: Int {
-        state.snapshot.timeline.filter { $0.severity == .warning }.count
+        state.timelineState.filter { $0.severity == .warning }.count
     }
 
     private var criticalEventCount: Int {
-        state.snapshot.timeline.filter { $0.severity == .critical }.count
+        state.timelineState.filter { $0.severity == .critical }.count
     }
 
     private var timelineTint: Color {
@@ -899,7 +899,7 @@ private struct ActivityWorkspaceView: View {
     private func moduleSignal(for tab: ActivityWorkspaceTab) -> String {
         switch tab {
         case .overview:
-            return "\(state.snapshot.timeline.count) events · \(state.historySnapshots.count) loaded"
+            return "\(state.timelineState.count) events · \(state.historySnapshots.count) loaded"
         case .history:
             return state.historyIsLoading ? "loading persisted snapshots" : "\(state.historySnapshots.count) loaded snapshots"
         case .timeline:
@@ -1063,7 +1063,7 @@ private struct SystemWorkspaceView: View {
     }
 
     private var thermalLabel: String {
-        switch state.snapshot.host.thermalState {
+        switch state.hostState.thermalState {
         case .nominal: return "Nominal"
         case .fair: return "Fair"
         case .serious: return "Serious"
@@ -1072,7 +1072,7 @@ private struct SystemWorkspaceView: View {
     }
 
     private var thermalTint: Color {
-        switch state.snapshot.host.thermalState {
+        switch state.hostState.thermalState {
         case .nominal: return .green
         case .fair: return .orange
         case .serious, .critical: return .red
@@ -1080,7 +1080,7 @@ private struct SystemWorkspaceView: View {
     }
 
     private var sensorCoverageLabel: String {
-        let host = state.snapshot.host
+        let host = state.hostState
         let channels = [
             !host.perCoreCpu.isEmpty,
             !host.fans.isEmpty,
@@ -1242,7 +1242,7 @@ struct AetowerApp: App {
     }
 
     private var computedMenuBarTitle: String {
-        let entities = state.snapshot.entities
+        let entities = state.entitiesState
         if entities.isEmpty { return "Aetower" }
         let topFriction = entities.first?.friction.totalScore ?? 0
         return String(format: "%.0f", topFriction)
@@ -1319,7 +1319,7 @@ struct AetowerApp: App {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 state.start(refreshInterval: settings.refreshIntervalSeconds)
             }
-            .onChange(of: state.snapshot.sequence) { _, _ in
+            .onChange(of: state.snapshotSequence) { _, _ in
                 refreshMenuBarTitle()
             }
             .onChange(of: settings.refreshIntervalSeconds) { _, newValue in

@@ -137,7 +137,7 @@ public struct Chau7View: View {
     }
 
     private var chau7Entity: EntitySnapshot? {
-        state.snapshot.entities.first { entity in
+        state.entitiesState.first { entity in
             entity.bundleId == "local.chau7"
                 || entity.entityId == "bundle-path:/applications/chau7.app"
                 || entity.executablePath == "/Applications/Chau7.app/Contents/MacOS/Chau7"
@@ -145,11 +145,11 @@ public struct Chau7View: View {
     }
 
     private var chau7Capability: CapabilitySnapshot? {
-        state.snapshot.capabilities.first { $0.kind == .chau7 }
+        state.capabilitiesState.first { $0.kind == .chau7 }
     }
 
     private var derivedSessions: DerivedSessions {
-        let entities = state.snapshot.entities
+        let entities = state.entitiesState
         var entityByID: [String: EntitySnapshot] = [:]
         entityByID.reserveCapacity(entities.count)
         for entity in entities {
@@ -158,7 +158,7 @@ public struct Chau7View: View {
 
         let linkedEntities = entities.filter(isChau7Linked)
         let linkedEntityIDs = Set(linkedEntities.map(\.entityId))
-        let rawSessions = state.snapshot.chau7Sessions.compactMap {
+        let rawSessions = state.agentContextState.chau7Sessions.compactMap {
             sessionSummary(from: $0, entityByID: entityByID)
         }
         let sessionSummaries = rawSessions.isEmpty
@@ -339,7 +339,7 @@ public struct Chau7View: View {
                     title: "Recent peak load",
                     detail: "CPU peaked at \(String(format: "%.0f%%", peakCpu)), wakeups at \(String(format: "%.0f/s", peakWakeups)), and resident memory at \(formatBytes(peakResident)) in the recent trend window.",
                     tone: AetowerDesign.Status.warning,
-                    timestampMillis: state.snapshot.capturedAtMillis
+                    timestampMillis: state.snapshotCapturedAtMillis
                 )
             )
         }
@@ -359,7 +359,7 @@ public struct Chau7View: View {
 
     private func chau7TimelineEvents(linkedEntityIDs: Set<String>) -> [TimelineEvent] {
         let ids = linkedEntityIDs.union(chau7Entity.map { [$0.entityId] } ?? [])
-        return state.snapshot.timeline.filter { event in
+        return state.timelineState.filter { event in
             if let entityId = event.entityId, ids.contains(entityId) {
                 return true
             }
@@ -404,7 +404,7 @@ public struct Chau7View: View {
         .onChange(of: state.historySnapshots.count) { _, _ in
             initializeComparisonIfNeeded()
         }
-        .onChange(of: state.snapshot.sequence) { _, _ in
+        .onChange(of: state.snapshotSequence) { _, _ in
             ensureSelectedSessionValid(derivedSessions.sessionSummaries)
         }
     }
@@ -1084,7 +1084,7 @@ public struct Chau7View: View {
                         .font(.headline)
                     ProcessTreeView(
                         entity: primaryEntity,
-                        allEntities: state.snapshot.entities,
+                        allEntities: state.entitiesState,
                         seedEntities: linked
                     )
                 }

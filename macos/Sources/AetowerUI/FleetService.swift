@@ -228,10 +228,10 @@ public final class FleetService {
     /// Previously duplicated in updatePeers (2x) and pollPeers.
     private func syncLocalPeerMetrics(_ peer: inout FleetPeer) {
         guard let state else { return }
-        peer.cpuPercent = state.snapshot.host.cpuPercent
-        peer.entityCount = state.snapshot.entities.count
-        peer.friction = state.snapshot.entities.first?.friction.totalScore ?? 0
-        peer.unsignedCount = state.snapshot.entities.filter {
+        peer.cpuPercent = state.hostState.cpuPercent
+        peer.entityCount = state.entitiesState.count
+        peer.friction = state.entitiesState.first?.friction.totalScore ?? 0
+        peer.unsignedCount = state.entitiesState.filter {
             Self.isUnsigned(classification: $0.signingClassification, isAdhoc: $0.isAdhoc)
         }.count
         peer.lastSeen = .now

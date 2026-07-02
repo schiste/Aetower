@@ -20,13 +20,13 @@ public struct CompactHUDView: View {
 
                 Spacer()
 
-                Text(String(format: "CPU %.0f%%", state.snapshot.host.cpuPercent))
+                Text(String(format: "CPU %.0f%%", state.hostState.cpuPercent))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
             // Top entities with friction bars
-            ForEach(Array(state.snapshot.entities.prefix(5).enumerated()), id: \.offset) { _, entity in
+            ForEach(Array(state.entitiesState.prefix(5).enumerated()), id: \.offset) { _, entity in
                 HStack(spacing: 6) {
                     // Mini friction bar
                     ZStack(alignment: .leading) {
@@ -56,11 +56,11 @@ public struct CompactHUDView: View {
                 }
             }
 
-            if state.snapshot.host.aiAgentCount > 0 {
+            if state.hostState.aiAgentCount > 0 {
                 Divider()
                 HStack(spacing: 4) {
                     Circle().fill(.blue).frame(width: 5, height: 5)
-                    Text("\(state.snapshot.host.aiAgentCount) AI agent\(state.snapshot.host.aiAgentCount == 1 ? "" : "s")")
+                    Text("\(state.hostState.aiAgentCount) AI agent\(state.hostState.aiAgentCount == 1 ? "" : "s")")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
@@ -72,6 +72,6 @@ public struct CompactHUDView: View {
     }
 
     private var machineFriction: Float {
-        Float(state.snapshot.hostTrend.machineFriction.last ?? 0)
+        Float(state.hostTrendState.machineFriction.last ?? 0)
     }
 }

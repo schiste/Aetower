@@ -383,7 +383,7 @@ public struct SettingsView: View {
     }
 
     private func isCapabilityReady(_ kind: CapabilityKind) -> Bool {
-        guard let capability = state.snapshot.capabilities.first(where: { $0.kind == kind }) else {
+        guard let capability = state.capabilitiesState.first(where: { $0.kind == kind }) else {
             return false
         }
         if case .granted = capability.state {
@@ -1383,7 +1383,7 @@ public struct SettingsView: View {
                 subtitle: "Richer integrations stay behind explicit capability gates.",
                 status: status(for: .advanced)
             ) {
-                ForEach(state.snapshot.capabilities, id: \.kind) { capability in
+                ForEach(state.capabilitiesState, id: \.kind) { capability in
                     SettingsRowCard {
                         HStack {
                             Text(capabilityKindDisplayName(capability.kind))

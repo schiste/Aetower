@@ -150,12 +150,12 @@ struct ProcessOriginSnapshotCache: Sendable {
 final class ProcessOriginSnapshotCacheStore: ObservableObject {
     private var cache: ProcessOriginSnapshotCache?
 
-    func cache(for snapshot: SystemSnapshot) -> ProcessOriginSnapshotCache {
-        if let cache, cache.sequence == snapshot.sequence {
+    func cache(sequence: UInt64, entities: [EntitySnapshot]) -> ProcessOriginSnapshotCache {
+        if let cache, cache.sequence == sequence {
             return cache
         }
 
-        let refreshed = ProcessOriginSnapshotCache(snapshot: snapshot)
+        let refreshed = ProcessOriginSnapshotCache(sequence: sequence, entities: entities)
         cache = refreshed
         return refreshed
     }

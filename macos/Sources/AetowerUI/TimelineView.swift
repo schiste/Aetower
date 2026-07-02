@@ -97,7 +97,7 @@ public struct TimelineView: View {
     }
 
     private var events: [TimelineEvent] {
-        state.snapshot.timeline
+        state.timelineState
     }
 
     private var defaultVisibleEventLimit: Int {
@@ -263,7 +263,7 @@ public struct TimelineView: View {
             .padding(AetowerDesign.Spacing.xxl)
         }
         // Throttle history reconstruction to ~every 30s of snapshot time.
-        .task(id: state.snapshot.capturedAtMillis / 30_000) {
+        .task(id: state.snapshotCapturedAtMillis / 30_000) {
             state.refreshRecentlyFinished()
         }
         .task(id: filterCacheToken) {

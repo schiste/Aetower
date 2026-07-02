@@ -741,7 +741,8 @@ private final class MonitorEntitySectionCacheStore: ObservableObject {
 
     func sections(
         for key: MonitorSectionCacheKey,
-        snapshot: SystemSnapshot,
+        entities: [EntitySnapshot],
+        host: HostSnapshot,
         originCache: ProcessOriginSnapshotCache,
         advancedFilterEntityIds: Set<String>?
     ) -> MonitorEntitySections {
@@ -779,7 +780,7 @@ private final class MonitorEntitySectionCacheStore: ObservableObject {
             uniqueKeysWithValues: filteredEntities.map { ($0.entityId, $0) }
         )
         var seenLeaderIDs = Set<String>()
-        let burdenLeaderEntities = buildBurdenLeaders(snapshot: snapshot)
+        let burdenLeaderEntities = buildBurdenLeaders(entities: entities, host: host)
             .map(\.entityId)
             .filter { seenLeaderIDs.insert($0).inserted }
             .compactMap { eligibleByID[$0] }
@@ -1526,7 +1527,7 @@ public struct MainListView: View {
     }
 
     private var processOriginCache: ProcessOriginSnapshotCache {
-        processOriginCacheStore.cache(for: state.snapshot)
+        processOriginCacheStore.cache(sequence: state.snapshotSequence, entities: state.entitiesState)
     }
 
     public var body: some View {
@@ -2190,7 +2191,7 @@ public struct MainListView: View {
                 }
                 .animation(AetowerDesign.Motion.standard, value: sortKey)
                 .animation(AetowerDesign.Motion.standard, value: listMode)
-                .animation(nil, value: state.snapshot.sequence)
+                .animation(nil, value: state.snapshotSequence)
             }
         }
     }
@@ -2303,7 +2304,7 @@ public struct MainListView: View {
 
     @ViewBuilder
     private var thermalForecastBanner: some View {
-        if let forecast = state.snapshot.thermalForecast {
+        if let forecast = state.thermalForecastState {
             let tone =
                 forecast.state == .nominal || forecast.state == .fair
                 ? AetowerDesign.Status.warning : AetowerDesign.Status.error
@@ -2341,8 +2342,7 @@ public struct MainListView: View {
             return monitorMetricCardsLayout(compactCards)
         }
 
-        let snapshot = state.snapshot
-        let host = snapshot.host
+        let host = state.hostState
         let frictionScore = machineFrictionScore(for: host)
         let frictionSamples = monitorFallbackTrendSamples(frictionScore)
         let cpuSamples = monitorFallbackTrendSamples(Double(host.cpuPercent))
@@ -2851,7 +2851,7 @@ public struct MainListView: View {
     private var monitorUiPerformanceBudgetToken: String {
         let durationBucket = Int((monitorVisibleRowBuildMillis * 10).rounded())
         return [
-            "\(state.snapshot.sequence)",
+            "\(state.snapshotSequence)",
             listMode.rawValue,
             "\(monitorVisibleRowCount)",
             "\(durationBucket)",
@@ -2911,7 +2911,7 @@ public struct MainListView: View {
     // redundant filteredEntities evaluation per render cycle.
     private var selectedEntity: EntitySnapshot? {
         guard let selectedEntityID else { return nil }
-        return state.snapshot.entities.first { $0.entityId == selectedEntityID }
+        return state.entitiesState.first { $0.entityId == selectedEntityID }
     }
 
     private var selectedEntityGroup: EntityGroup? {
@@ -2946,7 +2946,8 @@ public struct MainListView: View {
         guard let key = currentMonitorSectionCacheKey else { return .empty }
         return monitorSectionCacheStore.sections(
             for: key,
-            snapshot: state.snapshot,
+            entities: state.entitiesState,
+            host: state.hostState,
             originCache: processOriginCache,
             advancedFilterEntityIds: state.advancedFilterEntityIds
         )
@@ -2966,7 +2967,7 @@ public struct MainListView: View {
     private var currentGroupingCacheKey: GroupingCacheKey? {
         guard isGroupedMode else { return nil }
         return GroupingCacheKey(
-            sequence: state.snapshot.sequence,
+            sequence: state.snapshotSequence,
             query: normalizedSearchQuery,
             originFilter: originFilter,
             sortKey: sortKey,
@@ -2976,7 +2977,7 @@ public struct MainListView: View {
 
     private var currentMonitorSectionCacheKey: MonitorSectionCacheKey? {
         MonitorSectionCacheKey(
-            sequence: state.snapshot.sequence,
+            sequence: state.snapshotSequence,
             query: normalizedSearchQuery,
             originFilter: originFilter,
             sortKey: sortKey,
@@ -3080,7 +3081,7 @@ public struct MainListView: View {
             return
         }
 
-        if state.snapshot.entities.contains(where: { $0.entityId == requestedEntityID }) {
+        if state.entitiesState.contains(where: { $0.entityId == requestedEntityID }) {
             originFilter = .all
             listMode = .flat
             selectedEntityID = requestedEntityID
@@ -3139,7 +3140,7 @@ public struct MainListView: View {
         case .cpu:
             return "\(entity.displayName) is currently highest by CPU usage at \(String(format: "%.1f%%", entity.metrics.cpuPercent))."
         case .memory:
-            return "\(entity.displayName) is currently highest by charged-memory load at \(String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.snapshot.host.memoryTotalBytes)))."
+            return "\(entity.displayName) is currently highest by charged-memory load at \(String(format: "%.1f%%", entityMemoryLoadPercent(entity, totalBytes: state.hostState.memoryTotalBytes)))."
         case .wakeups:
             return "\(entity.displayName) is currently highest by wakeup rate at \(formatWakeups(entity.metrics.wakeupsPerSecond))."
         case .processCount:
@@ -3155,9 +3156,9 @@ public struct MainListView: View {
         case .alphabeticalDesc:
             return "\(entity.displayName) is first in the current alphabetical Z-A sort."
         case .oldestFirst:
-            return "\(entity.displayName) has the oldest process group in the current list at \(ageLabel(from: entity.oldestProcessStartMillis, now: state.snapshot.capturedAtMillis))."
+            return "\(entity.displayName) has the oldest process group in the current list at \(ageLabel(from: entity.oldestProcessStartMillis, now: state.snapshotCapturedAtMillis))."
         case .newestFirst:
-            return "\(entity.displayName) has the newest process group in the current list at \(ageLabel(from: entity.newestProcessStartMillis, now: state.snapshot.capturedAtMillis))."
+            return "\(entity.displayName) has the newest process group in the current list at \(ageLabel(from: entity.newestProcessStartMillis, now: state.snapshotCapturedAtMillis))."
         }
     }
 

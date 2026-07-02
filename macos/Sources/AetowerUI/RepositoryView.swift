@@ -3070,10 +3070,10 @@ public struct RepositoryView: View {
     }
 
     private func liveContext(for repoRoot: String) -> (sessionCount: Int, entityCount: Int, memoryBytes: UInt64, cpuPercent: Float) {
-        let sessions = state.snapshot.chau7Sessions.filter { session in
+        let sessions = state.agentContextState.chau7Sessions.filter { session in
             session.repoRoot == repoRoot || session.workspacePath == repoRoot
         }
-        let entities = state.snapshot.entities.filter { entity in
+        let entities = state.entitiesState.filter { entity in
             entity.components.contains { component in
                 component.adapterContext?.repoRoot == repoRoot || component.cwd == repoRoot
             }

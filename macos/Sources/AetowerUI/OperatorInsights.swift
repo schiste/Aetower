@@ -122,10 +122,10 @@ func buildHostIncident(
     )
 }
 
-func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
+func buildBurdenLeaders(entities: [EntitySnapshot], host: HostSnapshot) -> [BurdenLeaderSummary] {
     var leaders: [BurdenLeaderSummary] = []
 
-    if let memoryLeader = snapshot.entities.max(by: { entityEffectiveMemoryBytes($0) < entityEffectiveMemoryBytes($1) }),
+    if let memoryLeader = entities.max(by: { entityEffectiveMemoryBytes($0) < entityEffectiveMemoryBytes($1) }),
        entityEffectiveMemoryBytes(memoryLeader) > 0
     {
         leaders.append(
@@ -136,12 +136,12 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
                 entityName: memoryLeader.displayName,
                 metricValue: formatBytes(entityEffectiveMemoryBytes(memoryLeader)),
                 detail: "Largest charged memory footprint in the current snapshot.",
-                severity: operatorHostPressureBand(snapshot.host)
+                severity: operatorHostPressureBand(host)
             )
         )
     }
 
-    if let wakeupLeader = snapshot.entities.max(by: { $0.metrics.wakeupsPerSecond < $1.metrics.wakeupsPerSecond }),
+    if let wakeupLeader = entities.max(by: { $0.metrics.wakeupsPerSecond < $1.metrics.wakeupsPerSecond }),
        wakeupLeader.metrics.wakeupsPerSecond >= 100
     {
         leaders.append(
@@ -152,12 +152,12 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
                 entityName: wakeupLeader.displayName,
                 metricValue: formatWakeups(wakeupLeader.metrics.wakeupsPerSecond),
                 detail: "Top timer and interrupt churn source right now.",
-                severity: operatorWakeupBand(snapshot.host.wakeupsPerSecond)
+                severity: operatorWakeupBand(host.wakeupsPerSecond)
             )
         )
     }
 
-    if let diskLeader = snapshot.entities.max(by: {
+    if let diskLeader = entities.max(by: {
         ($0.metrics.diskReadBps + $0.metrics.diskWriteBps) < ($1.metrics.diskReadBps + $1.metrics.diskWriteBps)
     }) {
         let throughput = diskLeader.metrics.diskReadBps + diskLeader.metrics.diskWriteBps
@@ -176,7 +176,7 @@ func buildBurdenLeaders(snapshot: SystemSnapshot) -> [BurdenLeaderSummary] {
         }
     }
 
-    if let networkLeader = snapshot.entities.max(by: {
+    if let networkLeader = entities.max(by: {
         ($0.metrics.networkReceiveBps + $0.metrics.networkSendBps) < ($1.metrics.networkReceiveBps + $1.metrics.networkSendBps)
     }) {
         let throughput = networkLeader.metrics.networkReceiveBps + networkLeader.metrics.networkSendBps

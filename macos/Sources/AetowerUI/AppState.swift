@@ -172,6 +172,22 @@ private final class RepositoryScorecardMainActorPublisher: @unchecked Sendable {
 @Observable
 public final class AppState {
     public private(set) var snapshot: SystemSnapshot
+    // MARK: Snapshot slices
+    // `snapshot` is reassigned wholesale every tick, so every reader is
+    // invalidated once per tick regardless of what it looks at. Views should
+    // read these stored slices instead: the hot ones (host/entities) change
+    // every tick anyway, while the rare-change ones are only reassigned when
+    // their content actually differs, which prunes per-tick invalidation for
+    // timeline-, capability-, and agent-driven views.
+    public private(set) var hostState: HostSnapshot
+    public private(set) var hostTrendState: HostTrend
+    public private(set) var entitiesState: [EntitySnapshot] = []
+    public private(set) var timelineState: [TimelineEvent] = []
+    public private(set) var capabilitiesState: [CapabilitySnapshot] = []
+    public private(set) var agentContextState = AgentContextSlice()
+    public private(set) var thermalForecastState: ThermalForecast?
+    public private(set) var snapshotSequence: UInt64 = 0
+    public private(set) var snapshotCapturedAtMillis: UInt64 = 0
     private(set) var monitorViewModel = MonitorViewModel.empty
     public private(set) var historySnapshots: [SystemSnapshot] = []
     public private(set) var historyLoadError: String?
@@ -535,11 +551,13 @@ public final class AppState {
             initialSequence: initialSnapshot.sequence
         )
         self.snapshot = initialSnapshot
+        self.hostState = initialSnapshot.host
+        self.hostTrendState = initialSnapshot.hostTrend
         self.lastObservedSequence = initialSnapshot.sequence
         self.storageScanController.attach(self)
     }
 
-    private static func emptySnapshot() -> SystemSnapshot {
+    static func emptySnapshot() -> SystemSnapshot {
         SystemSnapshot(
             sequence: 0,
             capturedAtMillis: 0,
@@ -1594,6 +1612,7 @@ public final class AppState {
             let monitorDecodeMillis = (CFAbsoluteTimeGetCurrent() - decodeStartedAt) * 1000.0
             let publishStartedAt = CFAbsoluteTimeGetCurrent()
             snapshot = payload.snapshot
+            publishSnapshotSlices(payload.snapshot)
             lastObservedSequence = payload.snapshot.sequence
             applyLocalFrontmostState(
                 appName: lastPublishedFrontmostAppName,
@@ -3326,6 +3345,34 @@ public final class AppState {
         lastPublishedWindowTitle = windowTitle
     }
 
+    /// Publish the per-slice projections of a freshly-applied snapshot. Hot
+    /// slices change every engine tick, so a deep == there would be an O(n)
+    /// walk that almost always fails; rare-change slices are equality-gated,
+    /// which is where the invalidation pruning comes from.
+    func publishSnapshotSlices(_ snapshot: SystemSnapshot) {
+        hostState = snapshot.host
+        hostTrendState = snapshot.hostTrend
+        entitiesState = snapshot.entities
+        snapshotSequence = snapshot.sequence
+        snapshotCapturedAtMillis = snapshot.capturedAtMillis
+        if timelineState != snapshot.timeline {
+            timelineState = snapshot.timeline
+        }
+        if capabilitiesState != snapshot.capabilities {
+            capabilitiesState = snapshot.capabilities
+        }
+        let agentContext = AgentContextSlice(
+            chau7Sessions: snapshot.chau7Sessions,
+            aiRepoSummaries: snapshot.aiRepoSummaries
+        )
+        if agentContextState != agentContext {
+            agentContextState = agentContext
+        }
+        if thermalForecastState != snapshot.thermalForecast {
+            thermalForecastState = snapshot.thermalForecast
+        }
+    }
+
     private func applyLocalFrontmostState(appName: String?, windowTitle: String?) {
         // In-place snapshot mutation invalidates every snapshot reader; skip
         // the write when nothing changed.
@@ -3334,6 +3381,8 @@ public final class AppState {
         else { return }
         snapshot.host.frontmostAppName = appName
         snapshot.host.frontmostWindowTitle = windowTitle
+        hostState.frontmostAppName = appName
+        hostState.frontmostWindowTitle = windowTitle
     }
 
     private func diffAnomalyStates() {

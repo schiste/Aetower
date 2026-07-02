@@ -119,10 +119,10 @@ package struct AIAgentsView: View {
         return formatter
     }()
 
-    private var host: HostSnapshot { state.snapshot.host }
+    private var host: HostSnapshot { state.hostState }
 
     private var derived: DerivedData {
-        let aiAgents = state.snapshot.entities.filter { $0.entityKind == .aiAgent }
+        let aiAgents = state.entitiesState.filter { $0.entityKind == .aiAgent }
         let aiAgentIDs = Set(aiAgents.map(\.entityId))
         let aiLifecycleTitles = Set(
             aiAgents.map { "\($0.displayName) session ended".localizedLowercase }
@@ -139,7 +139,7 @@ package struct AIAgentsView: View {
             }
             return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
-        let sortedRepoSummaries = state.snapshot.aiRepoSummaries.sorted {
+        let sortedRepoSummaries = state.agentContextState.aiRepoSummaries.sorted {
             if $0.totalCostUsd != $1.totalCostUsd {
                 return $0.totalCostUsd > $1.totalCostUsd
             }
@@ -149,7 +149,7 @@ package struct AIAgentsView: View {
             return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
         let aiTimelineEvents = Array(
-            state.snapshot.timeline
+            state.timelineState
                 .filter { isRelevantAiTimelineEvent($0, aiAgentIDs: aiAgentIDs, aiLifecycleTitles: aiLifecycleTitles) }
                 .suffix(10)
                 .reversed()
@@ -1249,7 +1249,7 @@ package struct AIAgentsView: View {
                 return nil
             }
 
-            let timestamp = entity.sessionMarkers.map(\.timestampMillis).max() ?? state.snapshot.capturedAtMillis
+            let timestamp = entity.sessionMarkers.map(\.timestampMillis).max() ?? state.snapshotCapturedAtMillis
             let tone: Color
             if entity.badges.contains("agent-error") {
                 tone = AetowerDesign.Status.error

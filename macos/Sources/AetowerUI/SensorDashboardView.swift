@@ -13,7 +13,7 @@ public struct SensorDashboardView: View {
         self.settings = settings
     }
 
-    private var host: HostSnapshot { state.snapshot.host }
+    private var host: HostSnapshot { state.hostState }
 
     private var hasAnySensor: Bool {
         !host.perCoreCpu.isEmpty
@@ -39,7 +39,7 @@ public struct SensorDashboardView: View {
                         description: Text("This Mac is not reporting sensor readings, or collection has not sampled them yet.")
                     )
                 } else {
-                    if state.snapshot.thermalForecast != nil { thermalForecastSection }
+                    if state.thermalForecastState != nil { thermalForecastSection }
                     if totalAttributedWatts > 0 { energyCostSection }
                     if !host.perCoreCpu.isEmpty { coresSection }
                     if !host.fans.isEmpty { fansSection }
@@ -247,7 +247,7 @@ public struct SensorDashboardView: View {
 
     @ViewBuilder
     private var thermalForecastSection: some View {
-        if let forecast = state.snapshot.thermalForecast {
+        if let forecast = state.thermalForecastState {
             GroupBox("Thermal forecast") {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                     HStack(spacing: 8) {
@@ -263,7 +263,7 @@ public struct SensorDashboardView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     }
-                    let temps = state.snapshot.hostTrend.maxCpuTemperature.map { Double($0) }
+                    let temps = state.hostTrendState.maxCpuTemperature.map { Double($0) }
                     if temps.count >= 2 {
                         HorizonGraph(
                             title: "CPU temperature",
@@ -304,7 +304,7 @@ public struct SensorDashboardView: View {
 
     /// Total per-process power Aetower has attributed to running entities.
     private var totalAttributedWatts: Double {
-        state.snapshot.entities
+        state.entitiesState
             .compactMap { EnergyTranslation.watts(fromNjPerS: $0.metrics.energyNjPerS) }
             .reduce(0, +)
     }
@@ -471,7 +471,7 @@ public struct SensorDashboardView: View {
     }
 
     private var thermalDetail: String {
-        if let forecast = state.snapshot.thermalForecast,
+        if let forecast = state.thermalForecastState,
            let minutes = forecast.minutesToThrottle
         {
             return String(format: "throttle risk in ~%.0f min", minutes)

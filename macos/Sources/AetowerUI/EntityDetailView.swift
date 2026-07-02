@@ -630,9 +630,9 @@ public struct EntityDetailView: View {
 
     /// "~22 of ~73 min remaining" when on battery, else "on AC power" / "—".
     private func batteryShareLabel(entityWatts: Double) -> String {
-        let host = state.snapshot.host
+        let host = state.hostState
         guard host.onBattery else { return "on AC power" }
-        let totalWatts = state.snapshot.entities
+        let totalWatts = state.entitiesState
             .compactMap { EnergyTranslation.watts(fromNjPerS: $0.metrics.energyNjPerS) }
             .reduce(0, +)
         guard
@@ -1072,7 +1072,7 @@ public struct EntityDetailView: View {
                 } else {
                     ProcessTreeView(
                         entity: entity,
-                        allEntities: state.snapshot.entities,
+                        allEntities: state.entitiesState,
                         seedEntities: processTreeSeedEntities
                     )
                 }
