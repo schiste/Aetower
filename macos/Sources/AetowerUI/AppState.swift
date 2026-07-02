@@ -133,8 +133,11 @@ private final class StorageHygieneMainActorPublisher: @unchecked Sendable {
     }
 
     @MainActor
-    func publishInventoryVerification(_ inventory: RepositoryInventoryReportModel) {
-        state?.publishStorageRepositoryInventoryVerification(inventory)
+    func publishInventoryVerification(
+        _ inventory: RepositoryInventoryReportModel,
+        signalOnly: Bool = false
+    ) {
+        state?.publishStorageRepositoryInventoryVerification(inventory, signalOnly: signalOnly)
     }
 
     @MainActor
@@ -159,6 +162,24 @@ private final class StorageHygieneMainActorPublisher: @unchecked Sendable {
             maxDepth: maxDepth,
             limit: limit,
             mode: mode
+        )
+    }
+}
+
+private final class RepositoryDetailMainActorPublisher: @unchecked Sendable {
+    weak var state: AppState?
+
+    init(_ state: AppState) {
+        self.state = state
+    }
+
+    @MainActor
+    func publish(key: String, runID: String, detail: StorageRepoDetailModel?, errorMessage: String?) {
+        state?.publishRepositoryStorageDetail(
+            key: key,
+            runID: runID,
+            detail: detail,
+            errorMessage: errorMessage
         )
     }
 }
@@ -388,8 +409,15 @@ public final class AppState {
     private(set) var storageHygieneIsVerifyingCache = false
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
+    /// Bumped whenever any input of the repository summary join changes
+    /// (report publish/merge, scorecard results, project links). Views key
+    /// their summary caches on this instead of re-deriving per render.
+    private(set) var repositorySummaryInputsGeneration: UInt64 = 0
     private(set) var repositoryScorecardReportsByRoot: [String: RepositoryScorecardReportModel] = [:]
     private(set) var repositoryScorecardLoadingRoots: Set<String> = []
+    private(set) var repositoryDetailReportsByRoot: [String: StorageRepoDetailModel] = [:]
+    private(set) var repositoryDetailLoadingRoots: Set<String> = []
+    private(set) var repositoryDetailErrorsByRoot: [String: String] = [:]
     private(set) var repositoryScorecardErrorsByRoot: [String: String] = [:]
     private(set) var repositoryProjects: [RepositoryProjectModel] = RepositoryProjectStore.load()
     private(set) var repositoryProjectGitHubLoadingRoots: Set<String> = []
@@ -422,6 +450,7 @@ public final class AppState {
     /// notification, and anomaly evaluators keep running on fresh data.
     @ObservationIgnored private var fullSnapshotDemandTokens: Set<UUID> = []
     @ObservationIgnored private var frontmostTitleProbeTask: Task<Void, Never>?
+    @ObservationIgnored private var lastInventorySignalRefreshMillis: UInt64 = 0
     @ObservationIgnored private var ticksSinceFullSnapshot = 0
     @ObservationIgnored private let fullSnapshotFloorTicks = 5
     var processActionPreviewReports: [String: ProcessActionReportModel] {
@@ -496,6 +525,8 @@ public final class AppState {
     private var storageScheduledScanIntervalSeconds: TimeInterval = 86_400
     @ObservationIgnored
     private var repositoryScorecardTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var repositoryDetailTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var repositoryDetailRunIDs: [String: String] = [:]
     @ObservationIgnored
     private var repositoryScorecardRunIDs: [String: String] = [:]
     @ObservationIgnored
@@ -1717,6 +1748,7 @@ public final class AppState {
                 historyStoreSummary = operatorState.historyStoreSummary
                 lastOperatorStateRefreshDate = Date()
                 localMcpController.refreshHealthSnapshot()
+                refreshRepositoryInventorySignalsIfQuiescent()
                 if let refreshedSnapshot = payload.snapshot {
                     pruneOnDemandReportCaches(snapshot: refreshedSnapshot)
                 }
@@ -1787,6 +1819,35 @@ public final class AppState {
         if pendingForcedRefresh {
             pendingForcedRefresh = false
             refresh(force: true)
+        }
+    }
+
+    /// Event-driven git-signal refresh: when FSEvents recorded changes under
+    /// watched roots and the filesystem has been quiet for a beat, re-derive
+    /// the lightweight repository inventory (branch/dirty/fingerprints) and
+    /// merge it into the displayed report — without a full storage scan.
+    /// Checked on the operator-state cadence (~30s), so worst-case freshness
+    /// is quiescence window + one cadence tick.
+    private func refreshRepositoryInventorySignalsIfQuiescent() {
+        guard let report = storageHygieneReport else { return }
+        guard !storageHygieneIsLoading, !storageHygieneIsVerifyingCache, storageScanJob == nil else { return }
+        guard let lastChange = StorageRootChangeJournal.lastChangeMillis() else { return }
+        guard lastChange > lastInventorySignalRefreshMillis else { return }
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        // Require quiescence, not just an event: builds fire FSEvents storms.
+        guard nowMillis >= lastChange + 45_000 else { return }
+        lastInventorySignalRefreshMillis = nowMillis
+
+        let roots = report.roots
+        // Same bounded depth the scheduled verification pass uses.
+        let maxDepth: UInt32 = 5
+        let bridge = self.bridge
+        let publisher = StorageHygieneMainActorPublisher(self)
+        Task.detached(priority: .utility) { [bridge, publisher] in
+            let inventory = bridge.repositoryInventoryJSON(roots: roots, maxDepth: maxDepth)
+            guard !Task.isCancelled else { return }
+            guard let decoded = Self.decodeRepositoryInventoryReport(inventory) else { return }
+            await publisher.publishInventoryVerification(decoded, signalOnly: true)
         }
     }
 
@@ -2415,11 +2476,13 @@ public final class AppState {
 
     func upsertRepositoryProject(_ project: RepositoryProjectModel) {
         repositoryProjects = RepositoryProjectStore.upsert(project, into: repositoryProjects)
+        repositorySummaryInputsGeneration += 1
         RepositoryProjectStore.save(repositoryProjects)
     }
 
     func removeRepositoryProject(id: String) {
         repositoryProjects = RepositoryProjectStore.remove(id: id, from: repositoryProjects)
+        repositorySummaryInputsGeneration += 1
         RepositoryProjectStore.save(repositoryProjects)
     }
 
@@ -2503,6 +2566,7 @@ public final class AppState {
         }
         project.githubStatus = status
         repositoryProjects = RepositoryProjectStore.upsert(project, into: repositoryProjects)
+        repositorySummaryInputsGeneration += 1
         RepositoryProjectStore.save(repositoryProjects)
     }
 
@@ -2603,7 +2667,69 @@ public final class AppState {
             left.resourceName.localizedCaseInsensitiveCompare(right.resourceName) == .orderedAscending
         }
         repositoryProjects = RepositoryProjectStore.upsert(project, into: repositoryProjects)
+        repositorySummaryInputsGeneration += 1
         RepositoryProjectStore.save(repositoryProjects)
+    }
+
+    /// On-demand per-repo storage drill-down. instant_cached serves from the
+    /// index; the endpoint can fall back to a real projection scan on a cold
+    /// index, so this always runs detached with a loading state.
+    func loadRepositoryStorageDetail(
+        repoRoot: String,
+        mode: String = "instant_cached",
+        force: Bool = false
+    ) {
+        let key = repoRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        if !force, repositoryDetailReportsByRoot[key] != nil || repositoryDetailLoadingRoots.contains(key) {
+            return
+        }
+
+        let runID = UUID().uuidString
+        repositoryDetailTasks[key]?.cancel()
+        repositoryDetailRunIDs[key] = runID
+        repositoryDetailLoadingRoots.insert(key)
+        repositoryDetailErrorsByRoot[key] = nil
+
+        let bridge = self.bridge
+        let publisher = RepositoryDetailMainActorPublisher(self)
+        repositoryDetailTasks[key] = Task.detached(priority: .utility) { [bridge, publisher] in
+            let result = bridge.storageHygieneRepoDetailJSON(repoRoot: key, mode: mode)
+            let decoded: StorageRepoDetailModel?
+            let errorMessage: String?
+            if let json = result.json, result.errorMessage == nil, let data = json.data(using: .utf8) {
+                do {
+                    decoded = try AetowerJSON.snakeCaseDecoder().decode(StorageRepoDetailModel.self, from: data)
+                    errorMessage = nil
+                } catch {
+                    decoded = nil
+                    errorMessage = "Repository detail decode failed: \(error.localizedDescription)"
+                }
+            } else {
+                decoded = nil
+                errorMessage = result.errorMessage ?? "Repository detail returned no payload."
+            }
+            guard !Task.isCancelled else { return }
+            await publisher.publish(key: key, runID: runID, detail: decoded, errorMessage: errorMessage)
+        }
+    }
+
+    func publishRepositoryStorageDetail(
+        key: String,
+        runID: String,
+        detail: StorageRepoDetailModel?,
+        errorMessage: String?
+    ) {
+        // Stale run guard: a newer request for the same root supersedes this one.
+        guard repositoryDetailRunIDs[key] == runID else { return }
+        repositoryDetailLoadingRoots.remove(key)
+        repositoryDetailTasks[key] = nil
+        if let detail {
+            repositoryDetailReportsByRoot[key] = detail
+            repositoryDetailErrorsByRoot[key] = nil
+        } else {
+            repositoryDetailErrorsByRoot[key] = errorMessage ?? "Repository detail unavailable."
+        }
     }
 
     func runRepositoryScorecard(
@@ -2682,6 +2808,7 @@ public final class AppState {
             as: RepositoryScorecardReportModel.self
         ) {
             repositoryScorecardReportsByRoot[key] = report
+            repositorySummaryInputsGeneration += 1
             repositoryScorecardErrorsByRoot[key] = nil
             recordLocalDiagnosticsEvent(
                 level: report.status == "ok" ? .info : .warn,
@@ -2748,6 +2875,7 @@ public final class AppState {
         storageHygieneIsLoading = false
         storageScanJob = nil
         storageHygieneReport = cache.report
+        repositorySummaryInputsGeneration += 1
         storageRootChangeMonitor.startWatching(roots: cache.report.roots)
         storageHygieneCompletedAt =
             Date(timeIntervalSince1970: Double(cache.savedAtMillis) / 1000.0)
@@ -2790,12 +2918,15 @@ public final class AppState {
     }
 
     fileprivate func publishStorageRepositoryInventoryVerification(
-        _ inventory: RepositoryInventoryReportModel
+        _ inventory: RepositoryInventoryReportModel,
+        signalOnly: Bool = false
     ) {
         guard !Task.isCancelled else { return }
-        storageHygieneIsLoading = false
-        storageHygieneIsVerifyingCache = false
-        storageHygieneTask = nil
+        if !signalOnly {
+            storageHygieneIsLoading = false
+            storageHygieneIsVerifyingCache = false
+            storageHygieneTask = nil
+        }
         guard var report = storageHygieneReport else {
             recordLocalDiagnosticsEvent(
                 level: .info,
@@ -2812,7 +2943,13 @@ public final class AppState {
             return
         }
 
-        previousStorageHygieneReport = storageHygieneReport
+        if !signalOnly {
+            // Signal-only refreshes must not rotate the growth baseline:
+            // previousStorageHygieneReport feeds repo growth deltas and would
+            // flap if every git-status refresh replaced it.
+            previousStorageHygieneReport = storageHygieneReport
+        }
+        repositorySummaryInputsGeneration += 1
         report.repositoryInventory = inventory.repositoryInventory
         report.repositoryInventoryComplete = inventory.repositoryInventoryComplete
         report.repositoryInventoryTruncated = inventory.repositoryInventoryTruncated
@@ -2912,6 +3049,7 @@ public final class AppState {
             let storagePublishStartedAt = CFAbsoluteTimeGetCurrent()
             previousStorageHygieneReport = storageHygieneReport
             storageHygieneReport = report
+            repositorySummaryInputsGeneration += 1
             persistedStorageHygieneBaseline = prepared.baseline
             storageRootChangeMonitor.startWatching(roots: report.roots)
             if report.scanMode != "instant_cached" {

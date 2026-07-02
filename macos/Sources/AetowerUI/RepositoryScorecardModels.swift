@@ -110,4 +110,35 @@ struct RepositoryScorecardRecommendationModel: Decodable, Identifiable, Sendable
     var id: String {
         "\(category)-\(checkName)-\(title)"
     }
+
+    var severityRank: Int {
+        switch severity.lowercased() {
+        case "critical": return 3
+        case "high": return 2
+        case "medium": return 1
+        default: return 0
+        }
+    }
+
+    /// "local" recommendations are fixable in the working tree; "remote" ones
+    /// need repository-host settings (branch protection, tokens).
+    var isLocallyActionable: Bool {
+        actionability.lowercased() == "local"
+    }
+}
+
+/// Severity first (critical -> low), locally-actionable before remote within
+/// a severity band, stable by title.
+func orderedScorecardRecommendations(
+    _ recommendations: [RepositoryScorecardRecommendationModel]
+) -> [RepositoryScorecardRecommendationModel] {
+    recommendations.sorted { left, right in
+        if left.severityRank != right.severityRank {
+            return left.severityRank > right.severityRank
+        }
+        if left.isLocallyActionable != right.isLocallyActionable {
+            return left.isLocallyActionable
+        }
+        return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
+    }
 }

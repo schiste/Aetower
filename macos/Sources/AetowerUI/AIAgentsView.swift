@@ -1344,12 +1344,7 @@ package struct AIAgentsView: View {
     // here allocated a fresh formatter per call with different precision.
 
     private func formatTokens(_ tokens: UInt64) -> String {
-        if tokens >= 1_000_000 {
-            return String(format: "%.1fM tok", Double(tokens) / 1_000_000)
-        } else if tokens >= 1000 {
-            return String(format: "%.1fk tok", Double(tokens) / 1000)
-        }
-        return "\(tokens) tok"
+        formatTokenCount(tokens)
     }
 
     private func formatTimestamp(_ millis: UInt64) -> String {

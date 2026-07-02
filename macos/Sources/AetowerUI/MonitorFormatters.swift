@@ -16,6 +16,15 @@ func formatRate(_ bytesPerSecond: UInt64) -> String {
     "\(MonitorByteFormatters.rate.string(fromByteCount: Int64(bytesPerSecond)))/s"
 }
 
+func formatTokenCount(_ tokens: UInt64) -> String {
+    if tokens >= 1_000_000 {
+        return String(format: "%.1fM tok", Double(tokens) / 1_000_000)
+    } else if tokens >= 1000 {
+        return String(format: "%.1fk tok", Double(tokens) / 1000)
+    }
+    return "\(tokens) tok"
+}
+
 func formatWakeups(_ wakeupsPerSecond: Float) -> String {
     if wakeupsPerSecond >= 100 {
         return String(format: "%.0f/s", wakeupsPerSecond)

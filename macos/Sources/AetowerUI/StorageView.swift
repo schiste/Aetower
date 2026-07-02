@@ -3283,35 +3283,7 @@ public struct StorageView: View {
             }
 
             if !footprint.artifactMix.isEmpty {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                    Text("Artifact mix")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    ForEach(footprint.artifactMix.prefix(4)) { artifact in
-                        HStack(spacing: AetowerDesign.Spacing.sm) {
-                            Image(systemName: cleanupTierIcon(artifact.cleanupTier))
-                                .foregroundStyle(tone(forCleanupTier: artifact.cleanupTier))
-                                .frame(width: 16)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(artifact.label)
-                                    .font(.caption.weight(.semibold))
-                                Text(artifact.rebuildCommand ?? "No regenerate command")
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            Spacer()
-                            VStack(alignment: .trailing, spacing: 2) {
-                                Text(formatBytes(artifact.bytes))
-                                    .font(.caption2.weight(.semibold))
-                                Text("\(artifact.itemCount) item\(artifact.itemCount == 1 ? "" : "s") · \(artifact.estimatedRebuildCost)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
+                StorageArtifactMixList(artifactMix: footprint.artifactMix)
             }
 
             if !footprint.topArtifactFolders.isEmpty {
@@ -5273,18 +5245,7 @@ public struct StorageView: View {
     }
 
     private func tone(forCleanupTier tier: String) -> Color {
-        switch tier {
-        case "safe":
-            return AetowerDesign.Status.ready
-        case "rebuildable":
-            return AetowerDesign.Tone.disk
-        case "expensive":
-            return AetowerDesign.Status.warning
-        case "risky":
-            return AetowerDesign.Status.error
-        default:
-            return .secondary
-        }
+        storageCleanupTierTone(tier)
     }
 
     private func storageRoleLabel(_ role: String) -> String {
@@ -5358,18 +5319,7 @@ public struct StorageView: View {
     }
 
     private func cleanupTierIcon(_ tier: String) -> String {
-        switch tier {
-        case "safe":
-            return "checkmark.shield"
-        case "rebuildable":
-            return "hammer"
-        case "expensive":
-            return "clock.badge.exclamationmark"
-        case "risky":
-            return "exclamationmark.triangle"
-        default:
-            return "folder"
-        }
+        storageCleanupTierIcon(tier)
     }
 
     private func cleanupRecipeIcon(_ recipe: StorageCleanupRecipeModel) -> String {
@@ -6296,10 +6246,7 @@ public struct StorageView: View {
     }
 
     private func formatPercent(_ value: Double) -> String {
-        if value.rounded() == value {
-            return "\(Int(value))%"
-        }
-        return String(format: "%.1f%%", value)
+        storageFormatPercent(value)
     }
 
     private func lastPathComponent(_ path: String) -> String {

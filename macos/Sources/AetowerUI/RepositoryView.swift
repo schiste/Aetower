@@ -44,6 +44,7 @@ private enum RepositorySort: String, CaseIterable, Identifiable {
     case size
     case growth
     case artifacts
+    case aiSpend
     case name
 
     var id: String { rawValue }
@@ -54,6 +55,7 @@ private enum RepositorySort: String, CaseIterable, Identifiable {
         case .size: return "Size"
         case .growth: return "Growth"
         case .artifacts: return "Artifacts"
+        case .aiSpend: return "AI spend"
         case .name: return "Name"
         }
     }
@@ -192,268 +194,6 @@ private struct RepositoryCloudflareLinkRequest: Identifiable {
     let repository: RepositorySummary
 }
 
-private struct RepositorySummary: Identifiable {
-    let id: String
-    let root: String
-    let name: String
-    let hasStorageFootprint: Bool
-    let currentSizeBytes: UInt64
-    let artifactBytes: UInt64
-    let itemCount: Int
-    let growthBytes: Int64?
-    let growthWindow: String
-    let estimatedRebuildCost: String
-    let estimatedRebuildSeconds: UInt64?
-    let topArtifactFolders: [StorageRepoArtifactFolderModel]
-    let caveats: [String]
-    let violationCount: Int
-    let reviewItemCount: Int
-    let safeItemCount: Int
-    let staleItemCount: Int
-    let liveSessionCount: Int
-    let liveEntityCount: Int
-    let liveMemoryBytes: UInt64
-    let liveCPUPercent: Float
-    let agentArtifactBytes: UInt64
-    let agentCount: Int
-    let scorecardReport: RepositoryScorecardReportModel?
-    let gitDirtyStatus: String
-    let gitDirtyFileCount: UInt64?
-    let gitDirtyTruncated: Bool
-    let notSeenInLatestScan: Bool
-    let gitBranch: String?
-    let gitHead: String?
-    let gitRef: String?
-    let gitDetachedHead: Bool
-    let cloneGroupCount: UInt64
-    let cloneGroupRoots: [String]
-    let discoveredRoot: String?
-    let project: RepositoryProjectModel?
-    let gitRemoteOriginUrl: String?
-    let gitRemoteKey: String?
-    let gitRemoteHost: String?
-    let gitRemoteOwner: String?
-    let gitRemoteName: String?
-    let inventoryCacheStatus: String
-    let inventoryFingerprintChanged: Bool
-    let inventoryLastSeenMillis: UInt64?
-    let inventoryLastScanMillis: UInt64?
-    let agentReadinessScore: UInt8
-    let agentReadinessStatus: String
-    let agentContractMissingCount: UInt64
-    let agentContractCoverage: [StorageAgentContractCoverageModel]
-    let agentGuidanceStatus: String
-    let agentGuidanceIssueCount: UInt64
-    let agentGuidanceIssues: [StorageAgentGuidanceIssueModel]
-    let hasAgentsMd: Bool
-    let hasClaudeMd: Bool
-    let claudeMdBytes: UInt64?
-    let claudeMdDelegationMaxBytes: UInt64
-    let claudeMdDelegatesToAgentsMd: Bool
-    let lastWriterProcess: String?
-    let lastWriterPid: UInt32?
-    let lastBranchTouched: String?
-
-    var attentionScore: Double {
-        let artifactScore = min(Double(artifactBytes) / Double(512 * 1024 * 1024), 18)
-        let growthScore = growthBytes.map { max(0, Double($0) / Double(256 * 1024 * 1024)) } ?? 0
-        let reviewScore = Double(reviewItemCount) * 2.2
-        let staleScore = Double(staleItemCount) * 0.7
-        let violationScore = Double(violationCount) * 8
-        let liveScore = Double(liveSessionCount + liveEntityCount) * 1.4
-        let readinessPenalty = Double(100 - Int(agentReadinessScore)) / 8.0
-        let qualityScore = Double(qualityIssueCount + Int(agentGuidanceIssueCount)) * 2.5 + readinessPenalty
-        let duplicateScore = cloneGroupCount > 1 ? Double(cloneGroupCount) * 3 : 0
-        let dirtyScore = gitDirtyStatus == "dirty" ? 2.0 : 0.0
-        let inventoryScore = inventoryNeedsAttention ? 9.0 : 0.0
-        let storageScore = artifactScore + growthScore + reviewScore + staleScore
-        let runtimeScore = violationScore + liveScore + qualityScore
-        return storageScore
-            + runtimeScore
-            + duplicateScore
-            + dirtyScore
-            + inventoryScore
-            + scorecardAttentionScore
-            + githubProviderAttentionScore
-            + cloudflareProviderAttentionScore
-    }
-
-    var githubProviderAttentionScore: Double {
-        guard let status = project?.githubStatus else { return 0 }
-        if status.failedLatestCIOnDefaultBranch {
-            return status.latestCheckState == "failing" ? 10 : 8
-        }
-        if status.staleOpenPullRequestCount() > 0 {
-            return 5
-        }
-        return 0
-    }
-
-    var scorecardAttentionScore: Double {
-        guard let scorecardReport, scorecardReport.status == "ok" else { return 0 }
-        let aggregateScore: Double
-        if let score = scorecardReport.score {
-            if score < 5 {
-                aggregateScore = 12
-            } else if score <= 7 {
-                aggregateScore = 6
-            } else {
-                aggregateScore = 1
-            }
-        } else {
-            aggregateScore = 0
-        }
-        let criticalFailureScore = scorecardCriticalFailureCount > 0 ? 10.0 : 0.0
-        return max(aggregateScore, criticalFailureScore)
-    }
-
-    var scorecardCriticalFailureCount: Int {
-        guard let scorecardReport else { return 0 }
-        let highSeverityChecks = Set(scorecardReport.recommendations.compactMap { recommendation in
-            ["critical", "high"].contains(recommendation.severity.lowercased())
-                ? Self.normalizedScorecardCheckName(recommendation.checkName)
-                : nil
-        })
-        return scorecardReport.failedChecks.filter { check in
-            if let score = check.score, score <= 0 { return true }
-            return highSeverityChecks.contains(Self.normalizedScorecardCheckName(check.name))
-        }.count
-    }
-
-    var scorecardCaveat: String? {
-        guard let scorecardReport else {
-            return "OpenSSF Scorecard has not been run for this repository; supply-chain attention is unchanged."
-        }
-        guard scorecardReport.status == "ok" else {
-            return "OpenSSF Scorecard is unavailable for this repository (\(scorecardReport.status)); supply-chain attention is unchanged."
-        }
-        guard scorecardReport.score != nil else {
-            return "OpenSSF Scorecard completed without an aggregate score; supply-chain attention is unchanged."
-        }
-        return nil
-    }
-
-    var hasScorecardAttention: Bool {
-        scorecardAttentionScore >= 5 || scorecardCriticalFailureCount > 0
-    }
-
-    var hasGitHubProviderAttention: Bool {
-        githubProviderAttentionScore >= 5
-    }
-
-    var cloudflareProviderAttentionScore: Double {
-        guard let project else { return 0 }
-        let failedRank = project.cloudflareEnvironmentGroups.compactMap { group -> Int? in
-            group.links.contains {
-                project.cloudflareStatus(for: $0)?.hasFailedDeployment == true
-            } ? group.rank : nil
-        }.max() ?? 0
-        if failedRank >= 80 { return 10 }
-        if failedRank >= 50 { return 6 }
-        if failedRank > 0 { return 3 }
-        return 0
-    }
-
-    var hasCloudflareProviderAttention: Bool {
-        cloudflareProviderAttentionScore >= 5
-    }
-
-    var requiresAttention: Bool {
-        attentionScore >= 8
-            || inventoryNeedsAttention
-            || violationCount > 0
-            || reviewItemCount > 0
-            || qualityIssueCount > 0
-            || agentGuidanceIssueCount > 0
-            || agentReadinessStatus == "blocked"
-            || agentReadinessStatus == "weak"
-            || cloneGroupCount > 1
-            || gitDirtyStatus == "dirty"
-            || hasScorecardAttention
-            || hasGitHubProviderAttention
-            || hasCloudflareProviderAttention
-    }
-
-    var inventoryNeedsAttention: Bool {
-        notSeenInLatestScan
-            || inventoryFingerprintChanged
-            || inventoryCacheStatus == "changed"
-            || inventoryCacheStatus == "missing"
-            || inventoryCacheStatus == "legacy"
-    }
-
-    private static func normalizedScorecardCheckName(_ name: String) -> String {
-        name
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "-")
-            .replacingOccurrences(of: " ", with: "-")
-    }
-
-    var qualityIssueCount: Int {
-        [
-            !hasAgentsMd,
-            !hasClaudeMd,
-            hasClaudeMd && !claudeMdDelegatesToAgentsMd,
-        ].filter { $0 }.count
-    }
-
-    var qualityStatusLabel: String {
-        let count = max(UInt64(qualityIssueCount), agentGuidanceIssueCount)
-        return count == 0 ? "Guidance ok" : "\(count) guidance gap\(count == 1 ? "" : "s")"
-    }
-
-    var qualityStatusTone: Color {
-        if agentGuidanceStatus == "error" { return AetowerDesign.Status.error }
-        if agentGuidanceStatus == "warning" || qualityIssueCount > 0 { return AetowerDesign.Status.warning }
-        return AetowerDesign.Status.ready
-    }
-
-    var statusLabel: String {
-        if inventoryCacheStatus == "missing" { return "Missing" }
-        if inventoryCacheStatus == "changed" || inventoryFingerprintChanged { return "Changed" }
-        if violationCount > 0 { return "Budget" }
-        if agentReadinessStatus == "blocked" { return "Agent blocked" }
-        if agentReadinessStatus == "weak" { return "Agent weak" }
-        if agentGuidanceStatus == "error" { return "Guidance" }
-        if scorecardAttentionScore >= 10 { return "Scorecard" }
-        if githubProviderAttentionScore >= 8 { return "CI" }
-        if cloudflareProviderAttentionScore >= 8 { return "Deploy" }
-        if cloneGroupCount > 1 { return "Cloned" }
-        if (growthBytes ?? 0) > 0 { return "Growing" }
-        if gitDirtyStatus == "dirty" { return "Dirty" }
-        if scorecardAttentionScore >= 5 { return "Scorecard" }
-        if githubProviderAttentionScore >= 5 { return "GitHub" }
-        if cloudflareProviderAttentionScore >= 5 { return "Cloudflare" }
-        if reviewItemCount > 0 { return "Review" }
-        if liveSessionCount > 0 || liveEntityCount > 0 { return "Active" }
-        if notSeenInLatestScan { return "Cached" }
-        if !hasStorageFootprint { return "Indexed" }
-        return "Stable"
-    }
-
-    var statusTone: Color {
-        if inventoryCacheStatus == "missing" { return AetowerDesign.Status.error }
-        if inventoryCacheStatus == "changed" || inventoryFingerprintChanged { return AetowerDesign.Status.warning }
-        if violationCount > 0 { return AetowerDesign.Status.error }
-        if agentReadinessStatus == "blocked" { return AetowerDesign.Status.error }
-        if agentReadinessStatus == "weak" { return AetowerDesign.Status.warning }
-        if agentGuidanceStatus == "error" { return AetowerDesign.Status.error }
-        if scorecardAttentionScore >= 10 { return AetowerDesign.Status.error }
-        if githubProviderAttentionScore >= 8 { return AetowerDesign.Status.error }
-        if cloudflareProviderAttentionScore >= 8 { return AetowerDesign.Status.error }
-        if cloneGroupCount > 1 { return AetowerDesign.Status.warning }
-        if (growthBytes ?? 0) > 512 * 1024 * 1024 { return AetowerDesign.Status.warning }
-        if gitDirtyStatus == "dirty" { return AetowerDesign.Tone.energy }
-        if scorecardAttentionScore >= 5 { return AetowerDesign.Status.warning }
-        if githubProviderAttentionScore >= 5 { return AetowerDesign.Status.warning }
-        if cloudflareProviderAttentionScore >= 5 { return AetowerDesign.Status.warning }
-        if reviewItemCount > 0 { return AetowerDesign.Status.warning }
-        if liveSessionCount > 0 || liveEntityCount > 0 { return AetowerDesign.Status.ready }
-        return AetowerDesign.Status.neutral
-    }
-}
-
 private enum Chau7ContractLaunchState: Equatable {
     case preparingKit
     case verifyingKit(String)
@@ -531,6 +271,7 @@ public struct RepositoryView: View {
     let state: AppState
     let settings: SettingsStore
     @State private var mode: RepositoryMode = .attention
+    @State private var summaryCache = RepositorySummaryCacheStore()
     @State private var sort: RepositorySort = .attention
     @State private var detailTab: RepositoryDetailTab = .actions
     @State private var searchText = ""
@@ -1072,8 +813,21 @@ public struct RepositoryView: View {
                 if let project = repositoryProject(for: repository) {
                     repositoryProjectChip(project)
                 }
+                if repository.aiRunCount > 0 {
+                    repositoryAiUsageChip(repository)
+                }
             }
         }
+    }
+
+    private func repositoryAiUsageChip(_ repository: RepositorySummary) -> some View {
+        Text(repositoryAiUsageLabel(repository))
+            .font(AetowerDesign.Typography.metadataStrong)
+            .foregroundStyle(AetowerDesign.Tone.energy)
+            .padding(.horizontal, AetowerDesign.Spacing.xs)
+            .padding(.vertical, 1)
+            .background(AetowerDesign.Tone.energy.opacity(0.08), in: Capsule())
+            .help(repositoryAiUsageHelp(repository))
     }
 
     private func repositoryProjectChip(_ project: RepositoryProjectModel) -> some View {
@@ -1765,6 +1519,10 @@ public struct RepositoryView: View {
             repositoryAttentionSummary(repository)
         case .storage:
             repositoryStorageSignals(repository)
+                .task(id: repository.root) {
+                    state.loadRepositoryStorageDetail(repoRoot: repository.root)
+                }
+            repositoryStorageDetailSection(repository)
             topArtifacts(repository)
         case .contracts:
             repositoryAgentGuidance(repository)
@@ -2010,6 +1768,111 @@ public struct RepositoryView: View {
                     systemImage: "person.crop.circle.badge.gearshape",
                     tone: repository.agentArtifactBytes > 0 ? AetowerDesign.Tone.memory : AetowerDesign.Status.neutral
                 )
+                if let footprint = repository.footprint {
+                    AetowerMetricTile(
+                        "Rebuildable",
+                        value: formatBytes(footprint.rebuildableBytes),
+                        detail: "\(storageFormatPercent(footprint.rebuildablePercent)) of artifacts regenerate",
+                        systemImage: "arrow.triangle.2.circlepath",
+                        tone: AetowerDesign.Tone.disk
+                    )
+                    AetowerMetricTile(
+                        "Costly/Risky",
+                        value: formatBytes(
+                            footprint.expensiveBytes.addingReportingOverflow(footprint.riskyBytes).partialValue
+                        ),
+                        detail: "\(formatBytes(footprint.expensiveBytes)) expensive · \(formatBytes(footprint.riskyBytes)) risky",
+                        systemImage: "exclamationmark.triangle",
+                        tone: footprint.riskyBytes > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+                    )
+                }
+            }
+            if let footprint = repository.footprint, !footprint.artifactMix.isEmpty {
+                StorageArtifactMixList(artifactMix: footprint.artifactMix)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func repositoryStorageDetailSection(_ repository: RepositorySummary) -> some View {
+        let detail = state.repositoryDetailReportsByRoot[repository.root]
+        AetowerSection(
+            "Storage detail",
+            subtitle: "On-demand per-repository drill-down from the storage index"
+        ) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                if state.repositoryDetailLoadingRoots.contains(repository.root) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        ProgressView().controlSize(.small)
+                        Text("Loading repository storage detail…")
+                            .font(AetowerDesign.Typography.caption)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                    }
+                } else if let error = state.repositoryDetailErrorsByRoot[repository.root] {
+                    AetowerInfoBanner(
+                        error,
+                        title: "Detail unavailable",
+                        systemImage: "exclamationmark.triangle",
+                        tone: AetowerDesign.Status.warning,
+                        level: .card
+                    )
+                } else if let detail {
+                    if detail.items.isEmpty {
+                        Text("No tracked storage items attributed to this repository in the index.")
+                            .font(AetowerDesign.Typography.caption)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                    } else {
+                        ForEach(detail.items.prefix(8)) { item in
+                            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                                Image(systemName: storageCleanupTierIcon(item.cleanupTier))
+                                    .foregroundStyle(storageCleanupTierTone(item.cleanupTier))
+                                    .frame(width: 16)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.displayName)
+                                        .font(AetowerDesign.Typography.controlLabel)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Text(item.recommendation)
+                                        .font(AetowerDesign.Typography.caption)
+                                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                                        .lineLimit(2)
+                                }
+                                Spacer()
+                                Text(formatBytes(item.sizeBytes))
+                                    .font(AetowerDesign.Typography.caption)
+                                    .foregroundStyle(AetowerDesign.Ink.primary)
+                            }
+                        }
+                        if detail.items.count > 8 {
+                            Text("+\(detail.items.count - 8) more in the Storage tab's explorer, scoped to this root.")
+                                .font(AetowerDesign.Typography.metadata)
+                                .foregroundStyle(AetowerDesign.Ink.tertiary)
+                        }
+                    }
+                    ForEach(detail.caveats.prefix(2), id: \.self) { caveat in
+                        Text(caveat)
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    }
+                }
+                HStack {
+                    Button("Refresh detail") {
+                        state.loadRepositoryStorageDetail(
+                            repoRoot: repository.root,
+                            mode: "fast_changed_only",
+                            force: true
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(state.repositoryDetailLoadingRoots.contains(repository.root))
+                    if let detail {
+                        Text("mode: \(detail.scanMode)")
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    }
+                    Spacer()
+                }
             }
         }
     }
@@ -3045,9 +2908,9 @@ public struct RepositoryView: View {
     }
 
     private func scorecardReportFindings(_ report: RepositoryScorecardReportModel) -> some View {
-        let failed = Array(report.failedChecks.prefix(5))
-        let unavailable = Array(report.unavailableChecks.prefix(5))
-        let recommendations = Array(report.recommendations.prefix(3))
+        let failed = report.failedChecks
+        let unavailable = report.unavailableChecks
+        let recommendations = orderedScorecardRecommendations(report.recommendations)
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             if let message = scorecardReportStateMessage(report) {
                 AetowerInfoBanner(
@@ -3112,8 +2975,18 @@ public struct RepositoryView: View {
                     .foregroundStyle(AetowerDesign.Ink.secondary)
             } else {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                    ForEach(Array(checks.enumerated()), id: \.offset) { pair in
+                    ForEach(Array(checks.prefix(5).enumerated()), id: \.offset) { pair in
                         scorecardCheckRow(pair.element)
+                    }
+                    if checks.count > 5 {
+                        DisclosureGroup("Show all \(checks.count)") {
+                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                                ForEach(Array(checks.dropFirst(5).enumerated()), id: \.offset) { pair in
+                                    scorecardCheckRow(pair.element)
+                                }
+                            }
+                        }
+                        .font(AetowerDesign.Typography.caption)
                     }
                 }
             }
@@ -3158,8 +3031,18 @@ public struct RepositoryView: View {
                     .foregroundStyle(AetowerDesign.Ink.secondary)
             } else {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                    ForEach(Array(recommendations.enumerated()), id: \.offset) { pair in
+                    ForEach(Array(recommendations.prefix(3).enumerated()), id: \.offset) { pair in
                         scorecardRecommendationRow(pair.element)
+                    }
+                    if recommendations.count > 3 {
+                        DisclosureGroup("Show all \(recommendations.count)") {
+                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                                ForEach(Array(recommendations.dropFirst(3).enumerated()), id: \.offset) { pair in
+                                    scorecardRecommendationRow(pair.element)
+                                }
+                            }
+                        }
+                        .font(AetowerDesign.Typography.caption)
                     }
                 }
             }
@@ -3182,6 +3065,12 @@ public struct RepositoryView: View {
                     AetowerBadge(
                         recommendation.severity.capitalized,
                         tone: scorecardSeverityTone(recommendation.severity)
+                    )
+                    AetowerBadge(
+                        recommendation.isLocallyActionable ? "Local fix" : "Remote",
+                        tone: recommendation.isLocallyActionable
+                            ? AetowerDesign.Status.ready
+                            : AetowerDesign.Status.neutral
                     )
                 }
                 Text(recommendation.detail)
@@ -3325,8 +3214,37 @@ public struct RepositoryView: View {
                     systemImage: "pencil.and.list.clipboard",
                     tone: repository.lastWriterProcess == nil ? AetowerDesign.Status.neutral : AetowerDesign.Status.ready
                 )
+                AetowerMetricTile(
+                    "AI usage",
+                    value: repository.aiRunCount > 0
+                        ? String(format: "$%.2f", repository.aiCostUsd)
+                        : "None",
+                    detail: repository.aiRunCount > 0
+                        ? "\(repository.aiRunCount) runs · \(formatTokenCount(repository.aiTotalTokens)) tokens"
+                            + (repository.aiProviders.isEmpty ? "" : " · \(repository.aiProviders.joined(separator: ", "))")
+                        : "no recorded agent runs in this repository",
+                    systemImage: "brain",
+                    tone: repository.aiRunCount > 0 ? AetowerDesign.Tone.energy : AetowerDesign.Status.neutral
+                )
             }
         }
+    }
+
+    private func repositoryAiUsageLabel(_ repository: RepositorySummary) -> String {
+        String(format: "$%.2f · %d run%@", repository.aiCostUsd, repository.aiRunCount, repository.aiRunCount == 1 ? "" : "s")
+    }
+
+    private func repositoryAiUsageHelp(_ repository: RepositorySummary) -> String {
+        var parts = [
+            "AI agent usage attributed to this repository:",
+            String(format: "$%.2f estimated cost", repository.aiCostUsd),
+            "\(repository.aiRunCount) runs",
+            "\(formatTokenCount(repository.aiTotalTokens)) tokens",
+        ]
+        if !repository.aiProviders.isEmpty {
+            parts.append("providers: \(repository.aiProviders.joined(separator: ", "))")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private var repositoryCountLabel: String {
@@ -3480,285 +3398,58 @@ public struct RepositoryView: View {
             return left.artifactBytes == right.artifactBytes
                 ? left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
                 : left.artifactBytes > right.artifactBytes
+        case .aiSpend:
+            if left.aiCostUsd != right.aiCostUsd {
+                return left.aiCostUsd > right.aiCostUsd
+            }
+            if left.aiTotalTokens != right.aiTotalTokens {
+                return left.aiTotalTokens > right.aiTotalTokens
+            }
+            return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
         case .name:
             return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
         }
     }
 
     private func repositorySummaries(from report: StorageHygieneReportModel) -> [RepositorySummary] {
-        let violationsByRoot = Dictionary(grouping: report.budgetGuardrails.violations.compactMap { violation -> (String, StorageBudgetViolationModel)? in
-            guard let repoRoot = violation.repoRoot else { return nil }
-            return (repoRoot, violation)
-        }, by: \.0)
-        let itemsByRoot = Dictionary(grouping: report.items.compactMap { item -> (String, StorageHygieneItemModel)? in
-            guard let repoRoot = item.attribution.repoRoot else { return nil }
-            return (repoRoot, item)
-        }, by: \.0)
-        let footprintsByRoot = Dictionary(uniqueKeysWithValues: report.repoFootprints.map { ($0.repoRoot, $0) })
-
-        return report.repositoryInventory.map { inventory in
-            let footprint = footprintsByRoot[inventory.repoRoot]
-            return repositorySummary(
-                root: inventory.repoRoot,
-                id: inventory.id,
-                name: inventory.repoName,
-                gitBranch: inventory.gitBranch,
-                gitHead: inventory.gitHead,
-                gitRef: inventory.gitRef,
-                gitDetachedHead: inventory.gitDetachedHead,
-                gitRemoteOriginUrl: inventory.gitRemoteOriginUrl,
-                gitRemoteKey: inventory.gitRemoteKey,
-                gitRemoteHost: inventory.gitRemoteHost,
-                gitRemoteOwner: inventory.gitRemoteOwner,
-                gitRemoteName: inventory.gitRemoteName,
-                gitDirtyStatus: inventory.gitDirtyStatus,
-                gitDirtyFileCount: inventory.gitDirtyFileCount,
-                gitDirtyTruncated: inventory.gitDirtyTruncated,
-                notSeenInLatestScan: inventory.notSeenInLatestScan,
-                inventoryCacheStatus: inventory.inventoryCacheStatus,
-                inventoryFingerprintChanged: inventory.inventoryFingerprintChanged,
-                inventoryLastSeenMillis: inventory.inventoryLastSeenMillis,
-                inventoryLastScanMillis: inventory.inventoryLastScanMillis,
-                cloneGroupCount: inventory.cloneGroupCount,
-                cloneGroupRoots: inventory.cloneGroupRoots,
-                discoveredRoot: inventory.discoveredRoot,
-                hasAgentsMd: inventory.hasAgentsMd,
-                hasClaudeMd: inventory.hasClaudeMd,
-                claudeMdBytes: inventory.claudeMdBytes,
-                claudeMdDelegationMaxBytes: inventory.claudeMdDelegationMaxBytes,
-                claudeMdDelegatesToAgentsMd: inventory.claudeMdDelegatesToAgentsMd,
-                agentReadinessScore: inventory.agentReadinessScore,
-                agentReadinessStatus: inventory.agentReadinessStatus,
-                agentContractMissingCount: inventory.agentContractMissingCount,
-                agentContractCoverage: inventory.agentContractCoverage,
-                agentGuidanceStatus: inventory.agentGuidanceStatus,
-                agentGuidanceIssueCount: inventory.agentGuidanceIssueCount,
-                agentGuidanceIssues: inventory.agentGuidanceIssues,
-                footprint: footprint,
-                items: itemsByRoot[inventory.repoRoot]?.map(\.1) ?? [],
-                violations: violationsByRoot[inventory.repoRoot]?.count ?? 0,
-                report: report
+        summaryCache.summaries(
+            inputsGeneration: state.repositorySummaryInputsGeneration,
+            snapshotSequence: state.snapshotSequence
+        ) {
+            let previousSizeByRoot = Dictionary(
+                uniqueKeysWithValues: (state.previousStorageHygieneReport?.repoFootprints ?? [])
+                    .map { ($0.repoRoot, $0.currentSizeBytes) }
+            )
+            let baselineSizeByRoot = Dictionary(
+                uniqueKeysWithValues: (state.persistedStorageHygieneBaseline?.repoFootprints ?? [])
+                    .map { ($0.repoRoot, $0.currentSizeBytes) }
+            )
+            return RepositorySummaryBuilder.staticSummaries(
+                report: report,
+                scorecardsByRoot: state.repositoryScorecardReportsByRoot,
+                projectForRoot: { state.repositoryProject(forRepoRoot: $0) },
+                previousSizeByRoot: previousSizeByRoot,
+                baselineSizeByRoot: baselineSizeByRoot,
+                hasBaseline: state.persistedStorageHygieneBaseline != nil
+            )
+        } buildLive: { staticSummaries in
+            let live = RepositorySummaryBuilder.liveContexts(
+                roots: staticSummaries.map(\.root),
+                sessions: state.agentContextState.chau7Sessions,
+                entities: state.entitiesState
+            )
+            return RepositorySummaryBuilder.applyingLive(
+                staticSummaries,
+                live: live,
+                aiUsageByRoot: RepositorySummaryBuilder.aiUsage(byRoot: state.agentContextState.aiRepoSummaries)
             )
         }
-    }
-
-    private func repositorySummary(
-        root: String,
-        id: String,
-        name: String,
-        gitBranch: String?,
-        gitHead: String?,
-        gitRef: String?,
-        gitDetachedHead: Bool,
-        gitRemoteOriginUrl: String?,
-        gitRemoteKey: String?,
-        gitRemoteHost: String?,
-        gitRemoteOwner: String?,
-        gitRemoteName: String?,
-        gitDirtyStatus: String,
-        gitDirtyFileCount: UInt64?,
-        gitDirtyTruncated: Bool,
-        notSeenInLatestScan: Bool,
-        inventoryCacheStatus: String,
-        inventoryFingerprintChanged: Bool,
-        inventoryLastSeenMillis: UInt64?,
-        inventoryLastScanMillis: UInt64?,
-        cloneGroupCount: UInt64,
-        cloneGroupRoots: [String],
-        discoveredRoot: String?,
-        hasAgentsMd: Bool,
-        hasClaudeMd: Bool,
-        claudeMdBytes: UInt64?,
-        claudeMdDelegationMaxBytes: UInt64,
-        claudeMdDelegatesToAgentsMd: Bool,
-        agentReadinessScore: UInt8,
-        agentReadinessStatus: String,
-        agentContractMissingCount: UInt64,
-        agentContractCoverage: [StorageAgentContractCoverageModel],
-        agentGuidanceStatus: String,
-        agentGuidanceIssueCount: UInt64,
-        agentGuidanceIssues: [StorageAgentGuidanceIssueModel],
-        footprint: StorageRepoFootprintModel?,
-        items: [StorageHygieneItemModel],
-        violations: Int,
-        report: StorageHygieneReportModel
-    ) -> RepositorySummary {
-        let live = liveContext(for: root)
-        let agent = agentContext(for: root, report: report)
-        let scorecardReport = state.repositoryScorecardReportsByRoot[root]
-        let project = state.repositoryProject(forRepoRoot: root)
-        var baseCaveats = footprint?.caveats ?? [
-            "Indexed from Git repository discovery. No tracked storage artifacts were found in the bounded hygiene scan."
-        ]
-        if notSeenInLatestScan {
-            baseCaveats.append(
-                "Repository was restored from the persistent inventory cache and was not seen in the latest scan."
-            )
-        }
-        return RepositorySummary(
-            id: id,
-            root: root,
-            name: name,
-            hasStorageFootprint: footprint != nil,
-            currentSizeBytes: footprint?.currentSizeBytes ?? 0,
-            artifactBytes: footprint?.artifactBytes ?? 0,
-            itemCount: footprint?.itemCount ?? 0,
-            growthBytes: footprint.flatMap { storageGrowthDelta(for: $0) },
-            growthWindow: footprint.map { storageGrowthWindow(for: $0) } ?? "no storage footprint baseline",
-            estimatedRebuildCost: footprint?.estimatedRebuildCost ?? "None",
-            estimatedRebuildSeconds: footprint?.estimatedRebuildSeconds ?? 0,
-            topArtifactFolders: footprint?.topArtifactFolders ?? [],
-            caveats: repositoryCaveats(
-                base: baseCaveats,
-                scorecardReport: scorecardReport,
-                project: project
-            ),
-            violationCount: violations,
-            reviewItemCount: items.filter { $0.safety != "safe" }.count,
-            safeItemCount: items.filter { $0.safety == "safe" }.count,
-            staleItemCount: items.filter(\.stale).count,
-            liveSessionCount: live.sessionCount,
-            liveEntityCount: live.entityCount,
-            liveMemoryBytes: live.memoryBytes,
-            liveCPUPercent: live.cpuPercent,
-            agentArtifactBytes: agent.artifactBytes,
-            agentCount: agent.agentCount,
-            scorecardReport: scorecardReport,
-            gitDirtyStatus: gitDirtyStatus,
-            gitDirtyFileCount: gitDirtyFileCount,
-            gitDirtyTruncated: gitDirtyTruncated,
-            notSeenInLatestScan: notSeenInLatestScan,
-            gitBranch: gitBranch,
-            gitHead: gitHead,
-            gitRef: gitRef,
-            gitDetachedHead: gitDetachedHead,
-            cloneGroupCount: cloneGroupCount,
-            cloneGroupRoots: cloneGroupRoots,
-            discoveredRoot: discoveredRoot,
-            project: project,
-            gitRemoteOriginUrl: gitRemoteOriginUrl,
-            gitRemoteKey: gitRemoteKey,
-            gitRemoteHost: gitRemoteHost,
-            gitRemoteOwner: gitRemoteOwner,
-            gitRemoteName: gitRemoteName,
-            inventoryCacheStatus: inventoryCacheStatus,
-            inventoryFingerprintChanged: inventoryFingerprintChanged,
-            inventoryLastSeenMillis: inventoryLastSeenMillis,
-            inventoryLastScanMillis: inventoryLastScanMillis,
-            agentReadinessScore: agentReadinessScore,
-            agentReadinessStatus: agentReadinessStatus,
-            agentContractMissingCount: agentContractMissingCount,
-            agentContractCoverage: agentContractCoverage,
-            agentGuidanceStatus: agentGuidanceStatus,
-            agentGuidanceIssueCount: agentGuidanceIssueCount,
-            agentGuidanceIssues: agentGuidanceIssues,
-            hasAgentsMd: hasAgentsMd,
-            hasClaudeMd: hasClaudeMd,
-            claudeMdBytes: claudeMdBytes,
-            claudeMdDelegationMaxBytes: claudeMdDelegationMaxBytes,
-            claudeMdDelegatesToAgentsMd: claudeMdDelegatesToAgentsMd,
-            lastWriterProcess: footprint?.lastWriterProcess,
-            lastWriterPid: footprint?.lastWriterPid,
-            lastBranchTouched: footprint?.lastBranchTouched ?? gitBranch ?? gitHead
-        )
-    }
-
-    private func repositoryCaveats(
-        base: [String],
-        scorecardReport: RepositoryScorecardReportModel?,
-        project: RepositoryProjectModel?
-    ) -> [String] {
-        var caveats = base
-        if let scorecardReport {
-            if scorecardReport.status != "ok" {
-                caveats.append(
-                    "OpenSSF Scorecard is unavailable for this repository (\(scorecardReport.status)); supply-chain attention is unchanged."
-                )
-            } else if scorecardReport.score == nil {
-                caveats.append(
-                    "OpenSSF Scorecard completed without an aggregate score; supply-chain attention is unchanged."
-                )
-            }
-        } else {
-            caveats.append(
-                "OpenSSF Scorecard has not been run for this repository; supply-chain attention is unchanged."
-            )
-        }
-        if project?.githubStatus?.hasAuthCaveat == true {
-            caveats.append(
-                "GitHub project status needs authentication or broader read access; external attention is unchanged."
-            )
-        }
-        if project?.cloudflareStatuses?.contains(where: \.hasAuthCaveat) == true {
-            caveats.append(
-                "Cloudflare project status needs an API token with read access; external attention is unchanged."
-            )
-        }
-        return caveats
-    }
-
-    private func liveContext(for repoRoot: String) -> (sessionCount: Int, entityCount: Int, memoryBytes: UInt64, cpuPercent: Float) {
-        let sessions = state.agentContextState.chau7Sessions.filter { session in
-            session.repoRoot == repoRoot || session.workspacePath == repoRoot
-        }
-        let entities = state.entitiesState.filter { entity in
-            entity.components.contains { component in
-                component.adapterContext?.repoRoot == repoRoot || component.cwd == repoRoot
-            }
-        }
-        let memory = entities.reduce(UInt64(0)) { total, entity in
-            total.addingReportingOverflow(entityEffectiveMemoryBytes(entity)).partialValue
-        }
-        let cpu = entities.reduce(Float(0)) { $0 + $1.metrics.cpuPercent }
-        return (sessions.count, entities.count, memory, cpu)
-    }
-
-    private func agentContext(
-        for repoRoot: String,
-        report: StorageHygieneReportModel
-    ) -> (artifactBytes: UInt64, agentCount: Int) {
-        let agents = report.agentHygiene.agents.filter { agent in
-            agent.topRepositories.contains { $0.repoRoot == repoRoot }
-        }
-        let artifactBytes = agents.reduce(UInt64(0)) { total, agent in
-            let repoBytes = agent.topRepositories
-                .filter { $0.repoRoot == repoRoot }
-                .reduce(UInt64(0)) { subtotal, repo in
-                    subtotal.addingReportingOverflow(repo.artifactBytes).partialValue
-                }
-            return total.addingReportingOverflow(repoBytes).partialValue
-        }
-        return (artifactBytes, agents.count)
     }
 
     private func totalArtifactBytes(_ repositories: [RepositorySummary]) -> UInt64 {
         repositories.reduce(UInt64(0)) { total, repository in
             total.addingReportingOverflow(repository.artifactBytes).partialValue
         }
-    }
-
-    private func storageGrowthDelta(for footprint: StorageRepoFootprintModel) -> Int64? {
-        if let growth = footprint.growthBytes {
-            return growth
-        }
-        if let previous = state.previousStorageHygieneReport?.repoFootprints.first(where: {
-            $0.repoRoot == footprint.repoRoot
-        }) {
-            return Int64(footprint.currentSizeBytes) - Int64(previous.currentSizeBytes)
-        }
-        if let baseline = state.persistedStorageHygieneBaseline?.repoFootprints.first(where: {
-            $0.repoRoot == footprint.repoRoot
-        }) {
-            return Int64(footprint.currentSizeBytes) - Int64(baseline.currentSizeBytes)
-        }
-        return nil
-    }
-
-    private func storageGrowthWindow(for footprint: StorageRepoFootprintModel) -> String {
-        if !footprint.growthWindow.isEmpty {
-            return footprint.growthWindow
-        }
-        return state.persistedStorageHygieneBaseline == nil ? "no baseline yet" : "since saved baseline"
     }
 
     private func growthLabel(_ repository: RepositorySummary) -> String {
@@ -3798,7 +3489,9 @@ public struct RepositoryView: View {
         let failed = report.failedChecks.count
         let unavailable = report.unavailableChecks.count
         if repository.scorecardCriticalFailureCount > 0 {
-            return "\(repository.scorecardCriticalFailureCount) critical failed check\(repository.scorecardCriticalFailureCount == 1 ? "" : "s") · score \(score)"
+            let top = orderedScorecardRecommendations(report.recommendations).first
+            let headline = top.map { " · \($0.title)" } ?? ""
+            return "\(repository.scorecardCriticalFailureCount) critical failed check\(repository.scorecardCriticalFailureCount == 1 ? "" : "s") · score \(score)\(headline)"
         }
         if let numericScore = report.score {
             if numericScore < 5 {
