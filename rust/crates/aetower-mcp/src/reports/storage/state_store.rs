@@ -241,6 +241,15 @@ impl Drop for StorageSizeIndex {
         // End-of-scan / cancellation safety net: whatever is still buffered
         // must reach the database before the connection closes.
         self.flush_pending_rows();
+        // Refresh the query-planner statistics when table sizes changed enough
+        // to matter (SQLite's own growth heuristic); a no-op otherwise. Stale
+        // or missing statistics make the planner fall back to full scans and
+        // per-row b-tree seeks for the report aggregation queries, which is
+        // catastrophic once a deep scan grows the index to hundreds of
+        // thousands of rows.
+        if let Some(connection) = self.connection.as_ref() {
+            let _ = connection.execute_batch("PRAGMA optimize;");
+        }
     }
 }
 
@@ -288,6 +297,12 @@ impl StorageSizeIndex {
         // silently dropping rows. The scan-job state store deliberately keeps
         // the default fail-fast behavior so cancel/pause stay responsive.
         let _ = connection.busy_timeout(Duration::from_millis(2_000));
+        // Best effort (a concurrent writer may hold the lock; the next open
+        // retries): without `sqlite_stat1` the planner picks full-scan and
+        // per-row rowid-seek plans for every report aggregation query, which
+        // turned the instant_cached report path into a multi-minute burn once
+        // the index reached ~350k rows.
+        let _ = Self::ensure_query_planner_statistics(&connection);
         Self::with_status(Some(connection), "ready".to_owned())
     }
 
@@ -514,6 +529,39 @@ impl StorageSizeIndex {
         Self::ensure_repository_inventory_cache_columns(connection)?;
         Self::ensure_storage_file_index_columns(connection)?;
         Self::ensure_storage_file_index_page_indexes(connection)?;
+        Self::ensure_storage_growth_delta_indexes(connection)?;
+        Ok(())
+    }
+
+    /// Additive DDL only (no `schema_version` bump): index-generation lookups
+    /// and the per-flush retention DELETE both key on `scan_millis`, which the
+    /// original schema never indexed — each was a full table scan once the
+    /// growth-delta table grew past a few hundred thousand rows. The covering
+    /// aggregation index serves the growth-insight queries (windowed
+    /// SUM/GROUP BY over scope with a roots predicate on `path`) without
+    /// touching table rows; without it every insight query re-scanned the full
+    /// table per report build.
+    fn ensure_storage_growth_delta_indexes(connection: &Connection) -> rusqlite::Result<()> {
+        connection.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_storage_growth_delta_scan
+                ON storage_growth_delta(scan_millis);
+             CREATE INDEX IF NOT EXISTS idx_storage_growth_delta_agg
+                ON storage_growth_delta(bucket_millis, repo_root, source_root, path, delta_bytes);",
+        )
+    }
+
+    /// Run `ANALYZE` once for databases that have never collected planner
+    /// statistics. Ongoing staleness is handled by `PRAGMA optimize` when the
+    /// index handle drops.
+    fn ensure_query_planner_statistics(connection: &Connection) -> rusqlite::Result<()> {
+        let has_statistics: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_statistics == 0 {
+            connection.execute_batch("ANALYZE;")?;
+        }
         Ok(())
     }
 
@@ -875,6 +923,38 @@ impl StorageSizeIndex {
             }
         }
         let _ = transaction.commit();
+        // The index content changed, so memoized report sections are stale.
+        // The generation key usually changes too; this covers the
+        // same-millisecond and unchanged-stamp cases.
+        super::report::invalidate_index_report_sections_memo();
+    }
+
+    /// Cheap (indexed MAX lookups) fingerprint of the index content used to
+    /// key the per-generation report-section memo: the latest file-index scan
+    /// stamp plus the latest growth-delta scan stamp. Any scan flush bumps at
+    /// least one of them. In-process writes that may not move either stamp
+    /// (row deletion, repository-cache refreshes, same-millisecond flushes)
+    /// invalidate the memo explicitly instead.
+    pub(super) fn index_report_generation(&self) -> Option<(u64, u64)> {
+        let connection = self.connection.as_ref()?;
+        let file_generation: i64 = connection
+            .query_row(
+                "SELECT COALESCE(MAX(last_scan_millis), 0) FROM storage_file_index",
+                [],
+                |row| row.get(0),
+            )
+            .ok()?;
+        let delta_generation: i64 = connection
+            .query_row(
+                "SELECT COALESCE(MAX(scan_millis), 0) FROM storage_growth_delta",
+                [],
+                |row| row.get(0),
+            )
+            .ok()?;
+        Some((
+            file_generation.max(0) as u64,
+            delta_generation.max(0) as u64,
+        ))
     }
 
     pub(super) fn load_candidate_rows(
@@ -1059,6 +1139,9 @@ impl StorageSizeIndex {
                 params_from_iter(paths.iter()),
             )
             .map_err(|error| error.to_string())?;
+        // Deletions do not move the generation stamps, so drop memoized
+        // report sections explicitly.
+        super::report::invalidate_index_report_sections_memo();
         Ok(())
     }
 
@@ -1144,6 +1227,11 @@ impl StorageSizeIndex {
             {
                 metrics.storage_index_writes = metrics.storage_index_writes.saturating_add(1);
             }
+        }
+        if !repositories_by_root.is_empty() {
+            // Repository-cache refreshes do not move the generation stamps,
+            // so drop memoized report sections explicitly.
+            super::report::invalidate_index_report_sections_memo();
         }
     }
 
@@ -1687,6 +1775,23 @@ impl StorageSizeIndex {
     #[cfg(test)]
     pub(super) fn pending_row_count(&self) -> usize {
         self.pending_rows.borrow().len()
+    }
+
+    /// Test-only probe: whether the query-planner statistics table exists.
+    #[cfg(test)]
+    pub(super) fn has_query_planner_statistics(&self) -> bool {
+        let Some(connection) = self.connection.as_ref() else {
+            return false;
+        };
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'sqlite_stat1'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count > 0)
+            .unwrap_or(false)
     }
 
     /// Test-only snapshot of one indexed row's persisted recommendation score.

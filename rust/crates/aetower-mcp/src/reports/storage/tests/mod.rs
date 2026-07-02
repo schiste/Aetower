@@ -3618,6 +3618,182 @@ fn storage_scan_throttle_detects_pressure_cloud_and_network_roots() {
     assert!(reason.contains("network"));
 }
 
+/// Perf regression (live incident, fixed alongside the growth-delta indexes
+/// and the per-generation section memo): after a deep scan grew the
+/// persistent index to hundreds of thousands of rows, every instant_cached
+/// report build re-ran the growth/cold SQL aggregations with no planner
+/// statistics (full scans and per-row b-tree seeks) plus per-repository git
+/// reads, burning minutes at 100% CPU per call. Seed a 100k-row index and
+/// require the report build — and an immediate rebuild — to stay fast even in
+/// debug builds.
+#[test]
+fn indexed_report_build_is_fast_on_large_synthetic_index() {
+    let root = test_root("large-synthetic-index");
+    let target = root.join("project").join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&target) {
+        panic!("create target dir: {error}");
+    }
+    if let Err(error) = fs::write(
+        target.join("blob"),
+        vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+    ) {
+        panic!("write build artifact: {error}");
+    }
+    // A real fast scan seeds genuine candidate rows so the report has items.
+    let _ = build_storage_hygiene_report_for_roots_mode(
+        vec![root.display().to_string()],
+        5,
+        80,
+        "fast_changed_only",
+    );
+
+    // Bulk-seed 100k synthetic indexed-file rows; every new row also records
+    // a growth delta, so the insight aggregations see the same scale.
+    let now_millis = crate::current_unix_millis().unwrap_or_default();
+    let synthetic_root = root.join("synthetic");
+    {
+        let storage_index = StorageSizeIndex::open();
+        let mut metrics = StorageScanMetrics::default();
+        for index in 0..100_000u64 {
+            let path = synthetic_root
+                .join(format!("dir-{:03}", index % 512))
+                .join(format!("file-{index}.bin"));
+            storage_index.store_indexed_row(
+                &StorageIndexedFileRow {
+                    path: path.display().to_string(),
+                    device: 1,
+                    inode: index as i64 + 1,
+                    file_id: format!("1:{index}"),
+                    source_root: root.display().to_string(),
+                    repo_root: None,
+                    kind: "indexed-file".to_owned(),
+                    storage_role: "file".to_owned(),
+                    safety: String::new(),
+                    cleanup_tier: String::new(),
+                    logical_bytes: 4096,
+                    physical_bytes: 4096,
+                    modified_millis: Some(now_millis),
+                    changed_millis: Some(now_millis),
+                    accessed_millis: Some(now_millis),
+                    birth_millis: None,
+                    is_directory: false,
+                    entries: 1,
+                    truncated: false,
+                    last_scan_millis: now_millis,
+                },
+                &mut metrics,
+            );
+        }
+        // Dropping the handle flushes the tail chunk and refreshes planner
+        // statistics via PRAGMA optimize, matching the end-of-scan lifecycle.
+    }
+
+    let build_budget = Duration::from_secs(5);
+    let started = Instant::now();
+    let report = must_ok(
+        build_storage_hygiene_report_from_index(vec![root.display().to_string()], 5, 80),
+        "index report builds on the 100k-row index",
+    );
+    let first_build = started.elapsed();
+    assert!(
+        !report.items.is_empty(),
+        "seeded artifact must survive as a report item"
+    );
+    assert!(
+        first_build < build_budget,
+        "first index report build took {first_build:?} (budget {build_budget:?})"
+    );
+
+    let started = Instant::now();
+    let _ = must_ok(
+        build_storage_hygiene_report_from_index(vec![root.display().to_string()], 5, 80),
+        "index report rebuilds on the 100k-row index",
+    );
+    let second_build = started.elapsed();
+    assert!(
+        second_build < build_budget,
+        "immediate index report rebuild took {second_build:?} (budget {build_budget:?})"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Without `sqlite_stat1` the query planner falls back to full scans and
+/// per-row rowid seeks for every report aggregation query; opening the index
+/// must therefore guarantee statistics exist.
+#[test]
+fn storage_index_open_ensures_query_planner_statistics() {
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    assert!(
+        storage_index.has_query_planner_statistics(),
+        "opening the storage index must create query-planner statistics (ANALYZE)"
+    );
+}
+
+/// The per-generation section memo keys on the index generation stamps;
+/// flushing new rows must advance the generation so memoized sections cannot
+/// outlive the data they were derived from.
+#[test]
+fn index_report_generation_advances_when_rows_flush() {
+    let storage_index = StorageSizeIndex::open();
+    let mut metrics = StorageScanMetrics::default();
+    let before = storage_index
+        .index_report_generation()
+        .unwrap_or_else(|| panic!("generation unavailable: {}", storage_index.status));
+    let bumped_millis = before.0.max(before.1) + 1;
+    // Writes are best effort under contention (tests share the process-scoped
+    // database and a parallel test may hold the writer lock past the busy
+    // timeout), so retry the probe write until the generation advances.
+    let mut advanced = false;
+    for _ in 0..20 {
+        storage_index.store_indexed_row(
+            &StorageIndexedFileRow {
+                path: format!(
+                    "{}/generation-probe.bin",
+                    test_root("generation-probe").display()
+                ),
+                device: 7,
+                inode: 7,
+                file_id: "7:7".to_owned(),
+                source_root: "/tmp".to_owned(),
+                repo_root: None,
+                kind: "indexed-file".to_owned(),
+                storage_role: "file".to_owned(),
+                safety: String::new(),
+                cleanup_tier: String::new(),
+                logical_bytes: 4096,
+                physical_bytes: 4096,
+                modified_millis: Some(bumped_millis),
+                changed_millis: Some(bumped_millis),
+                accessed_millis: Some(bumped_millis),
+                birth_millis: None,
+                is_directory: false,
+                entries: 1,
+                truncated: false,
+                last_scan_millis: bumped_millis,
+            },
+            &mut metrics,
+        );
+        storage_index.flush_pending_rows();
+        let after = storage_index.index_report_generation().unwrap_or_else(|| {
+            panic!(
+                "generation unavailable after flush: {}",
+                storage_index.status
+            )
+        });
+        if after != before && after.0 >= bumped_millis {
+            advanced = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        advanced,
+        "flushing a new row must advance the index generation past {before:?} (stamp {bumped_millis})"
+    );
+}
+
 fn must_ok<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
     match result {
         Ok(value) => value,

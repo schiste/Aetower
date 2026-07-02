@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 #[derive(Clone, Debug)]
 struct RankedStorageItem {
@@ -523,6 +524,140 @@ pub(super) fn per_root_walk_slice(
     share.max(floor)
 }
 
+/// Limit-independent, expensive-to-derive report sections that only change
+/// when the persistent index changes: the per-repository inventory
+/// intelligence (git reads for every cached repository root) and the
+/// growth/cold SQL aggregations. Both are recomputed on every
+/// `build_storage_hygiene_report_from_index` call, so once a deep scan grows
+/// the index to hundreds of thousands of rows the launch repaint's concurrent
+/// overview + indexed builds each burned the same multi-second cost. The memo
+/// below caches them per index generation instead.
+#[derive(Clone)]
+struct IndexReportSections {
+    discovered_repository_count: u64,
+    repository_inventory: Vec<StorageRepositoryInventoryItem>,
+    repository_inventory_coverage: Vec<RepositoryInventoryRootCoverage>,
+    repository_inventory_completeness: RepositoryInventoryCompleteness,
+    growth_insights: Option<StorageGrowthInsights>,
+    cold_data: Option<StorageColdData>,
+}
+
+struct IndexReportSectionsMemo {
+    dirty_stamp: u64,
+    generation: (u64, u64),
+    roots_key: Vec<String>,
+    sections: IndexReportSections,
+}
+
+/// Single-entry memo guarded by one mutex that is intentionally held across
+/// the compute on a miss: when the overview and indexed snapshots are
+/// requested concurrently (the Storage tab launch repaint does exactly this),
+/// the second caller blocks until the first finishes and then serves the
+/// memoized sections instead of duplicating the work.
+static INDEX_REPORT_SECTIONS_MEMO: Mutex<Option<IndexReportSectionsMemo>> = Mutex::new(None);
+
+/// Bumped by the state store whenever index content changes in-process
+/// (flushes, row deletion, repository-cache refreshes); entries memoized under
+/// an older stamp stop matching. A lock-free counter (instead of clearing the
+/// memo under its mutex) so state-store write paths can never deadlock
+/// against a section compute that is holding the memo lock. Cross-process
+/// writers are caught by the generation key instead.
+static INDEX_REPORT_SECTIONS_DIRTY: AtomicU64 = AtomicU64::new(0);
+
+pub(super) fn invalidate_index_report_sections_memo() {
+    INDEX_REPORT_SECTIONS_DIRTY.fetch_add(1, AtomicOrdering::Release);
+}
+
+fn compute_index_report_sections(
+    storage_index: &StorageSizeIndex,
+    requested_roots: &[PathBuf],
+    volume_states: &[StorageVolumeState],
+    started: Instant,
+    now_millis: u64,
+    metrics: &mut StorageScanMetrics,
+) -> IndexReportSections {
+    let cached_repository_entries = storage_index.load_repository_inventory_cache(requested_roots);
+    let repository_roots = repository_inventory_cache_roots(&cached_repository_entries);
+    let repository_inventory_coverage =
+        cached_repository_inventory_coverage(requested_roots, &repository_roots);
+    let completeness = repository_inventory_completeness(&repository_inventory_coverage, false);
+    let not_seen_repository_roots = BTreeSet::new();
+    let latest_repository_roots = BTreeMap::new();
+    let repository_cache_states = repository_inventory_cache_states(
+        &repository_roots,
+        &latest_repository_roots,
+        &cached_repository_entries,
+    );
+    let discovered_repository_count = repository_roots.len().min(u64::MAX as usize) as u64;
+    metrics.discovered_repository_count = discovered_repository_count;
+    let repository_inventory = summarize_repository_inventory(
+        repository_roots,
+        &not_seen_repository_roots,
+        &repository_cache_states,
+        started,
+        StorageScanMode::InstantCached,
+        metrics,
+    );
+    let growth_insights =
+        build_storage_growth_insights(storage_index, requested_roots, volume_states, now_millis);
+    let cold_data = build_storage_cold_data(storage_index, requested_roots, now_millis);
+    IndexReportSections {
+        discovered_repository_count,
+        repository_inventory,
+        repository_inventory_coverage,
+        repository_inventory_completeness: completeness,
+        growth_insights,
+        cold_data,
+    }
+}
+
+/// Serve the limit-independent sections from the per-generation memo, or
+/// compute-and-store them while holding the memo lock. Returns the sections
+/// plus whether they came from the memo (for diagnostics).
+fn index_report_sections(
+    storage_index: &StorageSizeIndex,
+    requested_roots: &[PathBuf],
+    volume_states: &[StorageVolumeState],
+    started: Instant,
+    now_millis: u64,
+    metrics: &mut StorageScanMetrics,
+) -> (IndexReportSections, bool) {
+    let generation = storage_index.index_report_generation();
+    let roots_key = requested_roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>();
+    let mut memo = lock_or_recover(&INDEX_REPORT_SECTIONS_MEMO);
+    let dirty_stamp = INDEX_REPORT_SECTIONS_DIRTY.load(AtomicOrdering::Acquire);
+    if let Some(entry) = memo.as_ref()
+        && entry.dirty_stamp == dirty_stamp
+        && generation.is_some_and(|generation| generation == entry.generation)
+        && entry.roots_key == roots_key
+    {
+        metrics.discovered_repository_count = entry.sections.discovered_repository_count;
+        return (entry.sections.clone(), true);
+    }
+    let sections = compute_index_report_sections(
+        storage_index,
+        requested_roots,
+        volume_states,
+        started,
+        now_millis,
+        metrics,
+    );
+    if let Some(generation) = generation {
+        // Stored under the stamp read before the compute: if a writer bumped
+        // the counter mid-compute, the entry stops matching on its next probe.
+        *memo = Some(IndexReportSectionsMemo {
+            dirty_stamp,
+            generation,
+            roots_key,
+            sections: sections.clone(),
+        });
+    }
+    (sections, false)
+}
+
 pub(super) fn build_storage_hygiene_report_from_index(
     roots: Vec<String>,
     _max_depth: usize,
@@ -538,11 +673,18 @@ pub(super) fn build_storage_hygiene_report_from_index(
     };
     let storage_index = StorageSizeIndex::open();
     metrics.storage_index_status = storage_index.status.clone();
-    let cached_repository_entries = storage_index.load_repository_inventory_cache(&requested_roots);
-    let repository_roots = repository_inventory_cache_roots(&cached_repository_entries);
+    let volume_states = summarize_volume_states(&requested_roots);
+    let (sections, sections_from_memo) = index_report_sections(
+        &storage_index,
+        &requested_roots,
+        &volume_states,
+        started,
+        now_millis,
+        &mut metrics,
+    );
     let limit = limit.clamp(1, MAX_LIMIT);
     let rows = storage_index.load_candidate_rows(&roots, limit, &mut metrics)?;
-    if rows.is_empty() && repository_roots.is_empty() {
+    if rows.is_empty() && sections.discovered_repository_count == 0 {
         return Err("storage index has no candidate rows yet".to_owned());
     }
 
@@ -566,26 +708,14 @@ pub(super) fn build_storage_hygiene_report_from_index(
         item.evidence = storage_item_evidence(item);
         item.next_step = storage_item_next_step(item);
     }
-    metrics.discovered_repository_count = repository_roots.len().min(u64::MAX as usize) as u64;
-    let repository_inventory_coverage =
-        cached_repository_inventory_coverage(&requested_roots, &repository_roots);
-    let repository_inventory_completeness =
-        repository_inventory_completeness(&repository_inventory_coverage, false);
-    let not_seen_repository_roots = BTreeSet::new();
-    let latest_repository_roots = BTreeMap::new();
-    let repository_cache_states = repository_inventory_cache_states(
-        &repository_roots,
-        &latest_repository_roots,
-        &cached_repository_entries,
-    );
-    let repository_inventory = summarize_repository_inventory(
-        repository_roots,
-        &not_seen_repository_roots,
-        &repository_cache_states,
-        started,
-        StorageScanMode::InstantCached,
-        &mut metrics,
-    );
+    let IndexReportSections {
+        discovered_repository_count: _,
+        repository_inventory,
+        repository_inventory_coverage,
+        repository_inventory_completeness,
+        growth_insights,
+        cold_data,
+    } = sections;
 
     let scanned_roots = roots
         .iter()
@@ -618,10 +748,6 @@ pub(super) fn build_storage_hygiene_report_from_index(
     let agent_hygiene = summarize_agent_hygiene(&items);
     let source_coverage =
         summarize_source_coverage(&requested_roots, &scanned_roots, &skipped_roots, &items);
-    let volume_states = summarize_volume_states(&requested_roots);
-    let growth_insights =
-        build_storage_growth_insights(&storage_index, &requested_roots, &volume_states, now_millis);
-    let cold_data = build_storage_cold_data(&storage_index, &requested_roots, now_millis);
     let budget_guardrails = evaluate_budget_guardrails(
         &summary,
         &repo_footprints,
@@ -629,6 +755,11 @@ pub(super) fn build_storage_hygiene_report_from_index(
         &items,
         &growth_deltas,
     );
+    let sections_marker = if sections_from_memo {
+        "+sections_memo"
+    } else {
+        "+sections_fresh"
+    };
     let diagnostics = StorageScanDiagnostics {
         mode: StorageScanMode::InstantCached.as_str().to_owned(),
         root_walk_millis: 0,
@@ -642,7 +773,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         sized_entry_count: metrics.sized_entry_count,
         candidate_seen_count: metrics.candidate_seen_count,
         candidate_retained_count: items.len().min(u64::MAX as usize) as u64,
-        storage_index_status: format!("snapshot:{}", metrics.storage_index_status),
+        storage_index_status: format!("snapshot:{}{sections_marker}", metrics.storage_index_status),
         storage_index_hits: metrics.storage_index_hits,
         storage_index_misses: metrics.storage_index_misses,
         storage_index_writes: 0,
