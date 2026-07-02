@@ -95,6 +95,103 @@ private struct ScorecardWorkflowPreview: Identifiable {
     let contents: String
 }
 
+private enum RepositoryCloudflareLinkKind: String, CaseIterable, Identifiable {
+    case pages
+    case worker
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .pages: return "Pages"
+        case .worker: return "Worker"
+        }
+    }
+}
+
+private enum RepositoryCloudflareEnvironmentPreset: String, CaseIterable, Identifiable {
+    case production
+    case staging
+    case development
+    case custom
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .production: return "Production"
+        case .staging: return "Staging"
+        case .development: return "Development"
+        case .custom: return "Custom"
+        }
+    }
+
+    var defaultName: String {
+        switch self {
+        case .production: return "Production"
+        case .staging: return "Staging"
+        case .development: return "Development"
+        case .custom: return ""
+        }
+    }
+
+    var rank: Int {
+        switch self {
+        case .production: return 100
+        case .staging: return 60
+        case .development: return 20
+        case .custom: return 40
+        }
+    }
+
+    var pagesDeploymentEnvironment: String? {
+        switch self {
+        case .production:
+            return "production"
+        case .staging, .development:
+            return "preview"
+        case .custom:
+            return nil
+        }
+    }
+}
+
+private enum RepositoryCloudflarePagesDeploymentEnvironment: String, CaseIterable, Identifiable {
+    case any
+    case production
+    case preview
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .any: return "Any"
+        case .production: return "Production"
+        case .preview: return "Preview"
+        }
+    }
+
+    var apiValue: String? {
+        switch self {
+        case .any: return nil
+        case .production, .preview: return rawValue
+        }
+    }
+
+    static func selection(for value: String?) -> Self {
+        switch value {
+        case "production": return .production
+        case "preview": return .preview
+        default: return .any
+        }
+    }
+}
+
+private struct RepositoryCloudflareLinkRequest: Identifiable {
+    let id: String
+    let repository: RepositorySummary
+}
+
 private struct RepositorySummary: Identifiable {
     let id: String
     let root: String
@@ -131,6 +228,7 @@ private struct RepositorySummary: Identifiable {
     let cloneGroupCount: UInt64
     let cloneGroupRoots: [String]
     let discoveredRoot: String?
+    let project: RepositoryProjectModel?
     let gitRemoteOriginUrl: String?
     let gitRemoteKey: String?
     let gitRemoteHost: String?
@@ -170,7 +268,25 @@ private struct RepositorySummary: Identifiable {
         let inventoryScore = inventoryNeedsAttention ? 9.0 : 0.0
         let storageScore = artifactScore + growthScore + reviewScore + staleScore
         let runtimeScore = violationScore + liveScore + qualityScore
-        return storageScore + runtimeScore + duplicateScore + dirtyScore + inventoryScore + scorecardAttentionScore
+        return storageScore
+            + runtimeScore
+            + duplicateScore
+            + dirtyScore
+            + inventoryScore
+            + scorecardAttentionScore
+            + githubProviderAttentionScore
+            + cloudflareProviderAttentionScore
+    }
+
+    var githubProviderAttentionScore: Double {
+        guard let status = project?.githubStatus else { return 0 }
+        if status.failedLatestCIOnDefaultBranch {
+            return status.latestCheckState == "failing" ? 10 : 8
+        }
+        if status.staleOpenPullRequestCount() > 0 {
+            return 5
+        }
+        return 0
     }
 
     var scorecardAttentionScore: Double {
@@ -221,6 +337,27 @@ private struct RepositorySummary: Identifiable {
         scorecardAttentionScore >= 5 || scorecardCriticalFailureCount > 0
     }
 
+    var hasGitHubProviderAttention: Bool {
+        githubProviderAttentionScore >= 5
+    }
+
+    var cloudflareProviderAttentionScore: Double {
+        guard let project else { return 0 }
+        let failedRank = project.cloudflareEnvironmentGroups.compactMap { group -> Int? in
+            group.links.contains {
+                project.cloudflareStatus(for: $0)?.hasFailedDeployment == true
+            } ? group.rank : nil
+        }.max() ?? 0
+        if failedRank >= 80 { return 10 }
+        if failedRank >= 50 { return 6 }
+        if failedRank > 0 { return 3 }
+        return 0
+    }
+
+    var hasCloudflareProviderAttention: Bool {
+        cloudflareProviderAttentionScore >= 5
+    }
+
     var requiresAttention: Bool {
         attentionScore >= 8
             || inventoryNeedsAttention
@@ -233,6 +370,8 @@ private struct RepositorySummary: Identifiable {
             || cloneGroupCount > 1
             || gitDirtyStatus == "dirty"
             || hasScorecardAttention
+            || hasGitHubProviderAttention
+            || hasCloudflareProviderAttention
     }
 
     var inventoryNeedsAttention: Bool {
@@ -278,10 +417,14 @@ private struct RepositorySummary: Identifiable {
         if agentReadinessStatus == "weak" { return "Agent weak" }
         if agentGuidanceStatus == "error" { return "Guidance" }
         if scorecardAttentionScore >= 10 { return "Scorecard" }
+        if githubProviderAttentionScore >= 8 { return "CI" }
+        if cloudflareProviderAttentionScore >= 8 { return "Deploy" }
         if cloneGroupCount > 1 { return "Cloned" }
         if (growthBytes ?? 0) > 0 { return "Growing" }
         if gitDirtyStatus == "dirty" { return "Dirty" }
         if scorecardAttentionScore >= 5 { return "Scorecard" }
+        if githubProviderAttentionScore >= 5 { return "GitHub" }
+        if cloudflareProviderAttentionScore >= 5 { return "Cloudflare" }
         if reviewItemCount > 0 { return "Review" }
         if liveSessionCount > 0 || liveEntityCount > 0 { return "Active" }
         if notSeenInLatestScan { return "Cached" }
@@ -297,10 +440,14 @@ private struct RepositorySummary: Identifiable {
         if agentReadinessStatus == "weak" { return AetowerDesign.Status.warning }
         if agentGuidanceStatus == "error" { return AetowerDesign.Status.error }
         if scorecardAttentionScore >= 10 { return AetowerDesign.Status.error }
+        if githubProviderAttentionScore >= 8 { return AetowerDesign.Status.error }
+        if cloudflareProviderAttentionScore >= 8 { return AetowerDesign.Status.error }
         if cloneGroupCount > 1 { return AetowerDesign.Status.warning }
         if (growthBytes ?? 0) > 512 * 1024 * 1024 { return AetowerDesign.Status.warning }
         if gitDirtyStatus == "dirty" { return AetowerDesign.Tone.energy }
         if scorecardAttentionScore >= 5 { return AetowerDesign.Status.warning }
+        if githubProviderAttentionScore >= 5 { return AetowerDesign.Status.warning }
+        if cloudflareProviderAttentionScore >= 5 { return AetowerDesign.Status.warning }
         if reviewItemCount > 0 { return AetowerDesign.Status.warning }
         if liveSessionCount > 0 || liveEntityCount > 0 { return AetowerDesign.Status.ready }
         return AetowerDesign.Status.neutral
@@ -396,6 +543,8 @@ public struct RepositoryView: View {
     @State private var scorecardWorkflowErrorsByRoot: [String: String] = [:]
     @State private var scorecardWorkflowPreview: ScorecardWorkflowPreview?
     @State private var selectedAgentContractByRepository: [String: String] = [:]
+    @State private var expandedProjectSectionRepositoryID: String?
+    @State private var cloudflareLinkRequest: RepositoryCloudflareLinkRequest?
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
@@ -421,6 +570,25 @@ public struct RepositoryView: View {
         }
         .sheet(item: $scorecardWorkflowPreview) { preview in
             scorecardWorkflowPreviewSheet(preview)
+        }
+        .sheet(item: $cloudflareLinkRequest) { request in
+            RepositoryCloudflareLinkSheet(
+                repositoryName: request.repository.name,
+                onCancel: { cloudflareLinkRequest = nil },
+                onSave: { kind, environmentName, rank, accountID, resourceName, deploymentEnvironment, branch in
+                    linkCloudflareProject(
+                        request.repository,
+                        kind: kind,
+                        environmentName: environmentName,
+                        rank: rank,
+                        accountID: accountID,
+                        resourceName: resourceName,
+                        deploymentEnvironment: deploymentEnvironment,
+                        branch: branch
+                    )
+                    cloudflareLinkRequest = nil
+                }
+            )
         }
     }
 
@@ -614,6 +782,9 @@ public struct RepositoryView: View {
     }
 
     private var repositoryScanStatusLabel: String {
+        if state.storageHygieneIsVerifyingCache {
+            return "Verifying"
+        }
         if state.storageHygieneIsLoading {
             guard let job = state.storageScanJob else { return "Scanning" }
             switch job.status {
@@ -633,6 +804,7 @@ public struct RepositoryView: View {
 
     private var repositoryScanStatusIcon: String {
         if let job = state.storageScanJob, job.status == "paused" { return "pause.circle" }
+        if state.storageHygieneIsVerifyingCache { return "arrow.triangle.2.circlepath" }
         if let report = state.storageHygieneReport, !state.storageHygieneIsLoading,
            repositoryInventoryIsIncomplete(report)
         {
@@ -643,6 +815,7 @@ public struct RepositoryView: View {
 
     private var repositoryScanStatusTone: Color {
         if let job = state.storageScanJob, job.status == "paused" { return AetowerDesign.Status.warning }
+        if state.storageHygieneIsVerifyingCache { return AetowerDesign.Tone.cpu }
         if let report = state.storageHygieneReport, !state.storageHygieneIsLoading,
            repositoryInventoryIsIncomplete(report)
         {
@@ -653,6 +826,9 @@ public struct RepositoryView: View {
 
     private var repositoryScanStatusHelp: String {
         guard let job = state.storageScanJob else {
+            if state.storageHygieneIsVerifyingCache {
+                return "Showing cached repository data while refreshing Git-root inventory in the background."
+            }
             if state.storageHygieneIsLoading {
                 return "Preparing repository inventory refresh."
             }
@@ -714,7 +890,7 @@ public struct RepositoryView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 repositoryStatusStrip(report, repositories: repositories)
-                if state.storageHygieneIsLoading {
+                if state.storageHygieneIsLoading || state.storageHygieneIsVerifyingCache {
                     repositoryScanProgressBanner
                 }
 
@@ -887,11 +1063,425 @@ public struct RepositoryView: View {
                     .truncationMode(.tail)
             }
             .buttonStyle(.plain)
-            Text(shortPath(repository.root))
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Text(shortPath(repository.root))
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let project = repositoryProject(for: repository) {
+                    repositoryProjectChip(project)
+                }
+            }
+        }
+    }
+
+    private func repositoryProjectChip(_ project: RepositoryProjectModel) -> some View {
+        Text("Project")
+            .font(AetowerDesign.Typography.metadataStrong)
+            .foregroundStyle(repositoryProjectTone(project))
+            .padding(.horizontal, AetowerDesign.Spacing.xs)
+            .padding(.vertical, 1)
+            .background(repositoryProjectTone(project).opacity(0.08), in: Capsule())
+            .help(project.name)
+    }
+
+    private func repositoryProjectSection(_ repository: RepositorySummary) -> some View {
+        let project = repositoryProject(for: repository)
+        return AetowerSurface(level: .quiet, padding: AetowerDesign.Spacing.md) {
+            DisclosureGroup(isExpanded: projectSectionExpansionBinding(for: repository)) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    if let project {
+                        repositoryProjectLinkedContent(project, repository: repository)
+                    } else {
+                        repositoryProjectUnlinkedContent(repository)
+                    }
+                }
+                .padding(.top, AetowerDesign.Spacing.sm)
+            } label: {
+                HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                    Label("Project", systemImage: "link")
+                        .font(AetowerDesign.Typography.controlLabel)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    Spacer(minLength: AetowerDesign.Spacing.md)
+                    if let project {
+                        Text(project.name)
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        AetowerBadge("Linked", tone: AetowerDesign.Tone.cpu)
+                    } else {
+                        AetowerBadge("Not linked", tone: AetowerDesign.Status.neutral)
+                    }
+                }
+            }
+        }
+    }
+
+    private func repositoryProjectLinkedContent(
+        _ project: RepositoryProjectModel,
+        repository: RepositorySummary
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    Text(project.name)
+                        .font(AetowerDesign.Typography.controlLabel)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    Text(shortPath(project.primaryRepoRoot))
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                repositoryProjectLinkBadges(project)
+            }
+
+            repositoryProjectEnvironmentHealthStrip(project)
+            repositoryProjectGitHubStatus(project, repository: repository)
+            repositoryProjectCloudflareStatuses(project, repository: repository)
+            repositoryProjectActions(repository, project: project)
+        }
+    }
+
+    private func repositoryProjectUnlinkedContent(_ repository: RepositorySummary) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            AetowerBadge("Not linked", tone: AetowerDesign.Status.neutral)
+            repositoryProjectActions(repository, project: nil)
+        }
+    }
+
+    private func repositoryProjectLinkBadges(_ project: RepositoryProjectModel) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.xs) {
+            ForEach(project.links) { link in
+                AetowerBadge(
+                    repositoryProjectLinkLabel(link),
+                    systemImage: repositoryProjectLinkIcon(link),
+                    tone: repositoryProjectLinkTone(link)
+                )
+            }
+            ForEach(project.cloudflareEnvironmentGroups) { group in
+                AetowerBadge(
+                    group.name,
+                    systemImage: "server.rack",
+                    tone: repositoryProjectCloudflareGroupTone(group, project: project)
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func repositoryProjectEnvironmentHealthStrip(_ project: RepositoryProjectModel) -> some View {
+        let groups = project.cloudflareEnvironmentGroups
+        if !groups.isEmpty {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                ForEach(groups) { group in
+                    AetowerBadge(
+                        "\(group.name): \(repositoryProjectCloudflareGroupLabel(group, project: project))",
+                        systemImage: "server.rack",
+                        tone: repositoryProjectCloudflareGroupTone(group, project: project)
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func repositoryProjectGitHubStatus(
+        _ project: RepositoryProjectModel,
+        repository: RepositorySummary
+    ) -> some View {
+        if project.githubRepositoryLink != nil {
+            let status = project.githubStatus
+            let isLoading = state.repositoryProjectGitHubLoadingRoots.contains(repository.root)
+            let error = state.repositoryProjectGitHubErrorsByRoot[repository.root]
+            AetowerSurface(
+                level: repositoryProjectGitHubStatusLevel(status: status, error: error),
+                padding: AetowerDesign.Spacing.sm
+            ) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                        AetowerBadge(
+                            repositoryProjectGitHubStatusLabel(status, isLoading: isLoading, error: error),
+                            systemImage: "chevron.left.forwardslash.chevron.right",
+                            tone: repositoryGitHubProviderTone(status, error: error, isLoading: isLoading)
+                        )
+                        if isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Spacer(minLength: AetowerDesign.Spacing.md)
+                        Text(repositoryProjectGitHubCapturedLabel(status))
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                    }
+
+                    if let status {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 130), spacing: AetowerDesign.Spacing.sm)],
+                            alignment: .leading,
+                            spacing: AetowerDesign.Spacing.sm
+                        ) {
+                            repositoryProjectProviderMetric("Open PRs", "\(status.openPrCount)")
+                            repositoryProjectProviderMetric(
+                                "Workflow",
+                                repositoryProjectWorkflowLabel(status)
+                            )
+                            repositoryProjectProviderMetric(
+                                "Checks",
+                                status.latestCheckState.capitalized
+                            )
+                        }
+
+                        repositoryProjectGitHubLists(status)
+
+                        ForEach(status.warnings.prefix(2), id: \.self) { warning in
+                            Text(warning)
+                                .font(AetowerDesign.Typography.metadata)
+                                .foregroundStyle(AetowerDesign.Status.warning)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } else if let error {
+                        Text(error)
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Status.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Not refreshed")
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func repositoryProjectProviderMetric(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            Text(label.uppercased())
                 .font(AetowerDesign.Typography.metadata)
-                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
+            Text(value)
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+                .foregroundStyle(AetowerDesign.Ink.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+        }
+    }
+
+    @ViewBuilder
+    private func repositoryProjectGitHubLists(_ status: RepositoryGitHubProviderStatusModel) -> some View {
+        let latestPrs = Array(status.latestPrs.prefix(3))
+        let latestRuns = Array(status.latestWorkflowRuns.prefix(2))
+        if !latestPrs.isEmpty || !latestRuns.isEmpty {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                ForEach(latestPrs) { pullRequest in
+                    Text("#\(pullRequest.number) \(pullRequest.title)")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                ForEach(latestRuns) { run in
+                    Text("\(run.name): \(run.conclusion ?? run.status ?? "unknown")")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func repositoryProjectCloudflareStatuses(
+        _ project: RepositoryProjectModel,
+        repository: RepositorySummary
+    ) -> some View {
+        let groups = project.cloudflareEnvironmentGroups
+        if !groups.isEmpty {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                ForEach(groups) { group in
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        HStack(spacing: AetowerDesign.Spacing.xs) {
+                            Text(group.name)
+                                .font(AetowerDesign.Typography.caption.weight(.semibold))
+                                .foregroundStyle(AetowerDesign.Ink.primary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            AetowerBadge(
+                                repositoryProjectCloudflareGroupLabel(group, project: project),
+                                tone: repositoryProjectCloudflareGroupTone(group, project: project)
+                            )
+                        }
+                        ForEach(group.links) { link in
+                            repositoryProjectCloudflareStatus(
+                                link,
+                                project: project,
+                                repository: repository
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func repositoryProjectCloudflareStatus(
+        _ link: RepositoryProjectLinkModel,
+        project: RepositoryProjectModel,
+        repository: RepositorySummary
+    ) -> some View {
+        let status = project.cloudflareStatus(for: link)
+        let loadingKey = state.repositoryCloudflareProviderKey(repoRoot: repository.root, link: link)
+        let isLoading = state.repositoryProjectCloudflareLoadingKeys.contains(loadingKey)
+        let error = state.repositoryProjectCloudflareErrorsByKey[loadingKey]
+        return AetowerSurface(
+            level: repositoryProjectCloudflareStatusLevel(status: status, error: error),
+            padding: AetowerDesign.Spacing.sm
+        ) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                    AetowerBadge(
+                        repositoryProjectCloudflareStatusLabel(status, isLoading: isLoading, error: error),
+                        systemImage: "cloud",
+                        tone: repositoryCloudflareProviderTone(status, error: error, isLoading: isLoading)
+                    )
+                    Text(repositoryProjectCloudflareLinkTitle(link))
+                        .font(AetowerDesign.Typography.caption.weight(.semibold))
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: AetowerDesign.Spacing.md)
+                    Text(repositoryProjectCloudflareCapturedLabel(status))
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+
+                if let status {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 130), spacing: AetowerDesign.Spacing.sm)],
+                        alignment: .leading,
+                        spacing: AetowerDesign.Spacing.sm
+                    ) {
+                        repositoryProjectProviderMetric(
+                            "Deployment",
+                            status.deploymentStatus?.capitalized ?? "Unavailable"
+                        )
+                        repositoryProjectProviderMetric(
+                            "Environment",
+                            status.environment?.capitalized ?? link.deploymentEnvironment?.capitalized ?? "Any"
+                        )
+                        repositoryProjectProviderMetric("Branch", status.branch ?? "Unavailable")
+                        repositoryProjectProviderMetric("Commit", shortCommitLabel(status.commit))
+                    }
+                    if let url = status.url, !url.isEmpty {
+                        Text(url)
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                    ForEach(status.warnings.prefix(2), id: \.self) { warning in
+                        Text(warning)
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Status.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else if let error {
+                    Text(error)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Status.warning)
+                } else {
+                    Text("Not tested")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Button {
+                        state.refreshRepositoryCloudflareStatus(
+                            repoRoot: repository.root,
+                            link: link,
+                            force: true
+                        )
+                    } label: {
+                        Label(isLoading ? "Testing" : "Test connection", systemImage: "checkmark.circle")
+                    }
+                    .disabled(isLoading)
+
+                    Button {
+                        state.refreshRepositoryCloudflareStatus(
+                            repoRoot: repository.root,
+                            link: link,
+                            force: false
+                        )
+                    } label: {
+                        Label(isLoading ? "Refreshing" : "Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(isLoading)
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+
+    private func repositoryProjectActions(
+        _ repository: RepositorySummary,
+        project: RepositoryProjectModel?
+    ) -> some View {
+        let githubLink = githubProjectLink(for: repository)
+        let linkedGithub = project?.githubRepositoryLink != nil
+        let githubIsLoading = state.repositoryProjectGitHubLoadingRoots.contains(repository.root)
+        return HStack(spacing: AetowerDesign.Spacing.sm) {
+            if project == nil {
+                Button {
+                    createProject(from: repository)
+                } label: {
+                    Label("Create project from this repo", systemImage: "plus")
+                }
+            }
+            Button {
+                linkGitHubProject(repository)
+            } label: {
+                Label("Link GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+            }
+            .disabled(githubLink == nil)
+            .help(githubLink == nil ? "No GitHub remote was detected for this repository." : "Link the detected GitHub repository.")
+
+            Button {
+                cloudflareLinkRequest = RepositoryCloudflareLinkRequest(
+                    id: repository.id,
+                    repository: repository
+                )
+            } label: {
+                Label("Link Cloudflare", systemImage: "cloud")
+            }
+
+            Button {
+                state.refreshRepositoryGitHubStatus(
+                    repoRoot: repository.root,
+                    currentBranch: repository.gitBranch,
+                    currentHead: repository.gitHead,
+                    force: false
+                )
+            } label: {
+                Label(githubIsLoading ? "Refreshing" : "Refresh status", systemImage: "arrow.clockwise")
+            }
+            .disabled(!linkedGithub || githubIsLoading)
+            .help(linkedGithub ? "Refresh GitHub project status; cached values are reused briefly." : "Link GitHub before refreshing status.")
+        }
+        .controlSize(.small)
+    }
+
+    private func projectSectionExpansionBinding(for repository: RepositorySummary) -> Binding<Bool> {
+        Binding {
+            expandedProjectSectionRepositoryID == repository.id
+        } set: { isExpanded in
+            expandedProjectSectionRepositoryID = isExpanded ? repository.id : nil
         }
     }
 
@@ -1144,6 +1734,7 @@ public struct RepositoryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
                 repositoryHero(repository)
+                repositoryProjectSection(repository)
                 repositoryDetailTabPicker
                 repositoryDetailTabContent(repository, report: report)
             }
@@ -1312,6 +1903,26 @@ public struct RepositoryView: View {
                 systemImage: "shield.lefthalf.filled",
                 tone: scorecardReadinessTone(repository),
                 level: repository.scorecardAttentionScore >= 10 ? .critical : .warning
+            ))
+        }
+        if repository.hasGitHubProviderAttention {
+            items.append(RepositoryAttentionItem(
+                id: "github-provider",
+                title: "GitHub status",
+                detail: repositoryGitHubProviderDetail(repository),
+                systemImage: "chevron.left.forwardslash.chevron.right",
+                tone: repositoryGitHubProviderTone(repository.project?.githubStatus),
+                level: repository.githubProviderAttentionScore >= 8 ? .critical : .warning
+            ))
+        }
+        if repository.hasCloudflareProviderAttention {
+            items.append(RepositoryAttentionItem(
+                id: "cloudflare-provider",
+                title: "Cloudflare deployment",
+                detail: repositoryCloudflareProviderDetail(repository),
+                systemImage: "cloud",
+                tone: repositoryCloudflareProviderTone(repository),
+                level: repository.cloudflareProviderAttentionScore >= 8 ? .critical : .warning
             ))
         }
         if repository.cloneGroupCount > 1 {
@@ -2975,6 +3586,7 @@ public struct RepositoryView: View {
         let live = liveContext(for: root)
         let agent = agentContext(for: root, report: report)
         let scorecardReport = state.repositoryScorecardReportsByRoot[root]
+        let project = state.repositoryProject(forRepoRoot: root)
         var baseCaveats = footprint?.caveats ?? [
             "Indexed from Git repository discovery. No tracked storage artifacts were found in the bounded hygiene scan."
         ]
@@ -2996,7 +3608,11 @@ public struct RepositoryView: View {
             estimatedRebuildCost: footprint?.estimatedRebuildCost ?? "None",
             estimatedRebuildSeconds: footprint?.estimatedRebuildSeconds ?? 0,
             topArtifactFolders: footprint?.topArtifactFolders ?? [],
-            caveats: repositoryCaveats(base: baseCaveats, scorecardReport: scorecardReport),
+            caveats: repositoryCaveats(
+                base: baseCaveats,
+                scorecardReport: scorecardReport,
+                project: project
+            ),
             violationCount: violations,
             reviewItemCount: items.filter { $0.safety != "safe" }.count,
             safeItemCount: items.filter { $0.safety == "safe" }.count,
@@ -3019,6 +3635,7 @@ public struct RepositoryView: View {
             cloneGroupCount: cloneGroupCount,
             cloneGroupRoots: cloneGroupRoots,
             discoveredRoot: discoveredRoot,
+            project: project,
             gitRemoteOriginUrl: gitRemoteOriginUrl,
             gitRemoteKey: gitRemoteKey,
             gitRemoteHost: gitRemoteHost,
@@ -3048,7 +3665,8 @@ public struct RepositoryView: View {
 
     private func repositoryCaveats(
         base: [String],
-        scorecardReport: RepositoryScorecardReportModel?
+        scorecardReport: RepositoryScorecardReportModel?,
+        project: RepositoryProjectModel?
     ) -> [String] {
         var caveats = base
         if let scorecardReport {
@@ -3064,6 +3682,16 @@ public struct RepositoryView: View {
         } else {
             caveats.append(
                 "OpenSSF Scorecard has not been run for this repository; supply-chain attention is unchanged."
+            )
+        }
+        if project?.githubStatus?.hasAuthCaveat == true {
+            caveats.append(
+                "GitHub project status needs authentication or broader read access; external attention is unchanged."
+            )
+        }
+        if project?.cloudflareStatuses?.contains(where: \.hasAuthCaveat) == true {
+            caveats.append(
+                "Cloudflare project status needs an API token with read access; external attention is unchanged."
             )
         }
         return caveats
@@ -3189,6 +3817,299 @@ public struct RepositoryView: View {
         if repository.scorecardAttentionScore >= 5 { return AetowerDesign.Status.warning }
         if repository.scorecardReport?.status == "ok" { return AetowerDesign.Status.ready }
         return AetowerDesign.Status.neutral
+    }
+
+    private func repositoryGitHubProviderDetail(_ repository: RepositorySummary) -> String {
+        guard let status = repository.project?.githubStatus else {
+            return "GitHub project status has not been refreshed."
+        }
+        if status.failedLatestCIOnDefaultBranch {
+            return "Latest CI is failing on \(status.defaultBranch ?? "the default branch")."
+        }
+        let stalePullRequests = status.staleOpenPullRequestCount()
+        if stalePullRequests > 0 {
+            return "\(stalePullRequests) open PR\(stalePullRequests == 1 ? "" : "s") have not been updated in more than \(RepositoryGitHubProviderStatusModel.stalePullRequestDays) days."
+        }
+        if status.status == "auth_needed" {
+            return "GitHub needs a token with read access; repository attention is unchanged."
+        }
+        if let warning = status.warnings.first {
+            return warning
+        }
+        return "\(status.openPrCount) open PR\(status.openPrCount == 1 ? "" : "s"); checks \(status.latestCheckState)."
+    }
+
+    private func repositoryCloudflareProviderDetail(_ repository: RepositorySummary) -> String {
+        guard let project = repository.project else {
+            return "Cloudflare deployment status has not been refreshed."
+        }
+        if let failed = repositoryProjectFailedCloudflareDeployment(project) {
+            let deploymentStatus = failed.status.deploymentStatus ?? "failing"
+            return "\(failed.environmentName): \(failed.status.resourceName) deployment is \(deploymentStatus)."
+        }
+        let statuses = project.cloudflareLinks.compactMap { project.cloudflareStatus(for: $0) }
+        if let auth = statuses.first(where: { $0.status == "auth_needed" }) {
+            return auth.warnings.first ?? "Cloudflare needs an API token with read access; repository attention is unchanged."
+        }
+        if let warning = statuses.first(where: \.hasRealIssue)?.warnings.first {
+            return warning
+        }
+        return "Cloudflare deployment status has no active issue."
+    }
+
+    private func repositoryProjectTone(_ project: RepositoryProjectModel) -> Color {
+        if project.githubStatus?.failedLatestCIOnDefaultBranch == true
+            || repositoryProjectCloudflareAttentionScore(project) >= 8 {
+            return AetowerDesign.Status.error
+        }
+        if (project.githubStatus?.staleOpenPullRequestCount() ?? 0) > 0
+            || repositoryProjectCloudflareAttentionScore(project) >= 5
+        {
+            return AetowerDesign.Status.warning
+        }
+        return AetowerDesign.Tone.cpu
+    }
+
+    private func repositoryProjectFailedCloudflareDeployment(
+        _ project: RepositoryProjectModel
+    ) -> (environmentName: String, status: RepositoryCloudflareProviderStatusModel)? {
+        for group in project.cloudflareEnvironmentGroups {
+            for link in group.links {
+                if let status = project.cloudflareStatus(for: link), status.hasFailedDeployment {
+                    return (group.name, status)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func repositoryProjectCloudflareAttentionScore(
+        _ project: RepositoryProjectModel
+    ) -> Double {
+        let failedRank = project.cloudflareEnvironmentGroups.compactMap { group -> Int? in
+            group.links.contains {
+                project.cloudflareStatus(for: $0)?.hasFailedDeployment == true
+            } ? group.rank : nil
+        }.max() ?? 0
+        if failedRank >= 80 { return 10 }
+        if failedRank >= 50 { return 6 }
+        if failedRank > 0 { return 3 }
+        return 0
+    }
+
+    private func repositoryProjectCloudflareGroupLabel(
+        _ group: RepositoryProjectCloudflareEnvironmentGroup,
+        project: RepositoryProjectModel
+    ) -> String {
+        let statuses = group.links.compactMap { project.cloudflareStatus(for: $0) }
+        if statuses.isEmpty { return "Not tested" }
+        if statuses.contains(where: \.hasFailedDeployment) { return "Failed" }
+        if statuses.contains(where: { $0.status == "auth_needed" }) { return "Auth" }
+        if statuses.contains(where: { repositoryProjectProviderStatusNeedsReview($0.status) }) {
+            return "Check"
+        }
+        return "OK"
+    }
+
+    private func repositoryProjectCloudflareGroupTone(
+        _ group: RepositoryProjectCloudflareEnvironmentGroup,
+        project: RepositoryProjectModel
+    ) -> Color {
+        let statuses = group.links.compactMap { project.cloudflareStatus(for: $0) }
+        if statuses.contains(where: \.hasFailedDeployment) {
+            return group.rank >= 80 ? AetowerDesign.Status.error : AetowerDesign.Status.warning
+        }
+        if statuses.contains(where: { repositoryProjectProviderStatusNeedsReview($0.status) }) {
+            return AetowerDesign.Status.warning
+        }
+        return statuses.isEmpty ? AetowerDesign.Status.neutral : AetowerDesign.Status.ready
+    }
+
+    private func repositoryProjectProviderStatusNeedsReview(_ status: String) -> Bool {
+        ["auth_needed", "failed", "unavailable", "warning"].contains(status)
+    }
+
+    private func repositoryGitHubProviderTone(
+        _ status: RepositoryGitHubProviderStatusModel?,
+        error: String? = nil,
+        isLoading: Bool = false
+    ) -> Color {
+        if isLoading { return AetowerDesign.Tone.cpu }
+        if error != nil { return AetowerDesign.Status.warning }
+        guard let status else { return AetowerDesign.Tone.cpu }
+        if status.failedLatestCIOnDefaultBranch {
+            return AetowerDesign.Status.error
+        }
+        if status.staleOpenPullRequestCount() > 0 { return AetowerDesign.Status.warning }
+        switch status.status {
+        case "ok":
+            return AetowerDesign.Status.ready
+        case "warning", "auth_needed":
+            return AetowerDesign.Status.warning
+        case "failed":
+            return AetowerDesign.Status.error
+        default:
+            return AetowerDesign.Status.neutral
+        }
+    }
+
+    private func repositoryProjectGitHubStatusLevel(
+        status: RepositoryGitHubProviderStatusModel?,
+        error: String?
+    ) -> AetowerSurfaceLevel {
+        if error != nil { return .warning }
+        guard let status else { return .quiet }
+        if status.failedLatestCIOnDefaultBranch { return .critical }
+        if status.staleOpenPullRequestCount() > 0 { return .warning }
+        switch status.status {
+        case "failed":
+            return .critical
+        case "warning", "auth_needed", "unavailable":
+            return .warning
+        default:
+            return .quiet
+        }
+    }
+
+    private func repositoryProjectGitHubStatusLabel(
+        _ status: RepositoryGitHubProviderStatusModel?,
+        isLoading: Bool,
+        error: String?
+    ) -> String {
+        if isLoading { return "Refreshing" }
+        if error != nil { return "GitHub issue" }
+        guard let status else { return "GitHub not refreshed" }
+        if status.failedLatestCIOnDefaultBranch { return "CI failed" }
+        if status.staleOpenPullRequestCount() > 0 { return "Stale PRs" }
+        switch status.status {
+        case "ok":
+            return "GitHub ok"
+        case "auth_needed":
+            return "Needs auth"
+        case "unavailable":
+            return "Unavailable"
+        case "failed":
+            return "Failed"
+        default:
+            return "Warning"
+        }
+    }
+
+    private func repositoryProjectGitHubCapturedLabel(
+        _ status: RepositoryGitHubProviderStatusModel?
+    ) -> String {
+        guard let status, status.capturedAtMillis > 0 else { return "Never" }
+        let date = Date(timeIntervalSince1970: Double(status.capturedAtMillis) / 1000.0)
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func repositoryProjectWorkflowLabel(
+        _ status: RepositoryGitHubProviderStatusModel
+    ) -> String {
+        if let conclusion = status.latestWorkflowConclusion, !conclusion.isEmpty {
+            return conclusion.capitalized
+        }
+        if let workflowStatus = status.latestWorkflowStatus, !workflowStatus.isEmpty {
+            return workflowStatus.capitalized
+        }
+        return "Unavailable"
+    }
+
+    private func repositoryCloudflareProviderTone(_ repository: RepositorySummary) -> Color {
+        guard let project = repository.project else { return AetowerDesign.Status.neutral }
+        if repository.cloudflareProviderAttentionScore >= 8 {
+            return AetowerDesign.Status.error
+        }
+        if repository.cloudflareProviderAttentionScore >= 5 {
+            return AetowerDesign.Status.warning
+        }
+        let statuses = project.cloudflareLinks.compactMap { project.cloudflareStatus(for: $0) }
+        if statuses.contains(where: \.hasFailedDeployment) {
+            return AetowerDesign.Status.warning
+        }
+        if statuses.contains(where: { repositoryProjectProviderStatusNeedsReview($0.status) }) {
+            return AetowerDesign.Status.warning
+        }
+        return AetowerDesign.Status.ready
+    }
+
+    private func repositoryCloudflareProviderTone(
+        _ status: RepositoryCloudflareProviderStatusModel?,
+        error: String? = nil,
+        isLoading: Bool = false
+    ) -> Color {
+        if isLoading { return AetowerDesign.Tone.network }
+        if error != nil { return AetowerDesign.Status.warning }
+        guard let status else { return AetowerDesign.Tone.network }
+        if status.hasFailedDeployment || status.status == "failed" {
+            return AetowerDesign.Status.error
+        }
+        if ["auth_needed", "unavailable", "warning"].contains(status.status) {
+            return AetowerDesign.Status.warning
+        }
+        return AetowerDesign.Status.ready
+    }
+
+    private func repositoryProjectCloudflareStatusLevel(
+        status: RepositoryCloudflareProviderStatusModel?,
+        error: String?
+    ) -> AetowerSurfaceLevel {
+        if error != nil { return .warning }
+        guard let status else { return .quiet }
+        if status.hasFailedDeployment {
+            return .critical
+        }
+        if ["auth_needed", "failed", "unavailable", "warning"].contains(status.status) {
+            return .warning
+        }
+        return .quiet
+    }
+
+    private func repositoryProjectCloudflareStatusLabel(
+        _ status: RepositoryCloudflareProviderStatusModel?,
+        isLoading: Bool,
+        error: String?
+    ) -> String {
+        if isLoading { return "Cloudflare refreshing" }
+        if error != nil { return "Cloudflare issue" }
+        guard let status else { return "Cloudflare not tested" }
+        switch status.status {
+        case "ok":
+            return "Cloudflare ok"
+        case "auth_needed":
+            return "Needs auth"
+        case "unavailable":
+            return "Unavailable"
+        case "failed":
+            return "Failed"
+        default:
+            return "Warning"
+        }
+    }
+
+    private func repositoryProjectCloudflareCapturedLabel(
+        _ status: RepositoryCloudflareProviderStatusModel?
+    ) -> String {
+        guard let status, status.capturedAtMillis > 0 else { return "Never" }
+        let date = Date(timeIntervalSince1970: Double(status.capturedAtMillis) / 1000.0)
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func repositoryProjectCloudflareLinkTitle(_ link: RepositoryProjectLinkModel) -> String {
+        let resource = link.cloudflareResourceName ?? "resource"
+        switch link.kind {
+        case .pages:
+            return "Pages \(resource)"
+        case .worker:
+            return "Worker \(resource)"
+        default:
+            return resource
+        }
+    }
+
+    private func shortCommitLabel(_ commit: String?) -> String {
+        guard let commit, !commit.isEmpty else { return "Unavailable" }
+        return String(commit.prefix(8))
     }
 
     private func scorecardScoreLabel(_ report: RepositoryScorecardReportModel?) -> String {
@@ -3727,6 +4648,134 @@ public struct RepositoryView: View {
         }
     }
 
+    private func repositoryProject(for repository: RepositorySummary) -> RepositoryProjectModel? {
+        repository.project ?? state.repositoryProject(forRepoRoot: repository.root)
+    }
+
+    private func createProject(from repository: RepositorySummary) {
+        state.upsertRepositoryProject(baseRepositoryProject(for: repository))
+        expandedProjectSectionRepositoryID = repository.id
+    }
+
+    private func linkGitHubProject(_ repository: RepositorySummary) {
+        guard let link = githubProjectLink(for: repository) else { return }
+        upsertRepositoryProject(for: repository, adding: link)
+    }
+
+    private func linkCloudflareProject(
+        _ repository: RepositorySummary,
+        kind: RepositoryCloudflareLinkKind,
+        environmentName: String,
+        rank: Int,
+        accountID: String,
+        resourceName: String,
+        deploymentEnvironment: String?,
+        branch: String?
+    ) {
+        let link: RepositoryProjectLinkModel
+        switch kind {
+        case .pages:
+            link = .cloudflarePages(
+                accountId: accountID,
+                projectName: resourceName,
+                deploymentEnvironment: deploymentEnvironment,
+                branch: branch
+            )
+        case .worker:
+            link = .cloudflareWorker(
+                accountId: accountID,
+                scriptName: resourceName,
+                branch: branch
+            )
+        }
+        upsertRepositoryProject(
+            for: repository,
+            adding: link,
+            environmentName: environmentName,
+            rank: rank
+        )
+    }
+
+    private func upsertRepositoryProject(
+        for repository: RepositorySummary,
+        adding link: RepositoryProjectLinkModel,
+        environmentName: String? = nil,
+        rank: Int = 0
+    ) {
+        var project = repositoryProject(for: repository) ?? baseRepositoryProject(for: repository)
+        if project.repoRemote.isEmpty {
+            project.repoRemote = repositoryRemoteURL(repository)
+        }
+        if link.provider == .cloudflare, let environmentName {
+            project.upsertCloudflareLink(link, environmentName: environmentName, rank: rank)
+        } else if !project.links.contains(where: { $0.identityKey == link.identityKey }) {
+            project.links.append(link)
+        }
+        state.upsertRepositoryProject(project)
+        expandedProjectSectionRepositoryID = repository.id
+    }
+
+    private func baseRepositoryProject(for repository: RepositorySummary) -> RepositoryProjectModel {
+        RepositoryProjectModel(
+            name: repository.name,
+            primaryRepoRoot: repository.root,
+            repoRemote: repositoryRemoteURL(repository)
+        )
+    }
+
+    private func githubProjectLink(for repository: RepositorySummary) -> RepositoryProjectLinkModel? {
+        guard let owner = repository.gitRemoteOwner,
+              let repo = repository.gitRemoteName,
+              !owner.isEmpty,
+              !repo.isEmpty,
+              repositoryRemoteIsGitHub(repository)
+        else {
+            return nil
+        }
+        return .githubRepository(owner: owner, repo: repo)
+    }
+
+    private func repositoryRemoteIsGitHub(_ repository: RepositorySummary) -> Bool {
+        let host = repository.gitRemoteHost?.lowercased() ?? ""
+        let remote = repositoryRemoteURL(repository).lowercased()
+        return host == "github.com" || remote.contains("github.com")
+    }
+
+    private func repositoryRemoteURL(_ repository: RepositorySummary) -> String {
+        repository.gitRemoteOriginUrl ?? repository.gitRemoteKey ?? ""
+    }
+
+    private func repositoryProjectLinkLabel(_ link: RepositoryProjectLinkModel) -> String {
+        switch (link.provider, link.kind) {
+        case (.github, .repository):
+            return "GitHub"
+        case (.cloudflare, .pages):
+            return "Pages"
+        case (.cloudflare, .worker):
+            return "Worker"
+        default:
+            return link.provider.rawValue.capitalized
+        }
+    }
+
+    private func repositoryProjectLinkIcon(_ link: RepositoryProjectLinkModel) -> String {
+        switch link.provider {
+        case .github:
+            return "chevron.left.forwardslash.chevron.right"
+        case .cloudflare:
+            return "cloud"
+        }
+    }
+
+    private func repositoryProjectLinkTone(_ link: RepositoryProjectLinkModel) -> Color {
+        switch link.provider {
+        case .github:
+            return AetowerDesign.Tone.cpu
+        case .cloudflare:
+            return AetowerDesign.Tone.network
+        }
+    }
+
     private func shortPath(_ path: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         if path == home { return "~" }
@@ -3744,5 +4793,142 @@ public struct RepositoryView: View {
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+private struct RepositoryCloudflareLinkSheet: View {
+    typealias SaveHandler = (
+        RepositoryCloudflareLinkKind,
+        String,
+        Int,
+        String,
+        String,
+        String?,
+        String?
+    ) -> Void
+
+    let repositoryName: String
+    let onCancel: () -> Void
+    let onSave: SaveHandler
+
+    @State private var kind: RepositoryCloudflareLinkKind = .pages
+    @State private var preset: RepositoryCloudflareEnvironmentPreset = .production
+    @State private var environmentName = RepositoryCloudflareEnvironmentPreset.production.defaultName
+    @State private var pagesDeploymentEnvironment: RepositoryCloudflarePagesDeploymentEnvironment = .production
+    @State private var accountID = ""
+    @State private var resourceName = ""
+    @State private var branch = ""
+
+    private var canSave: Bool {
+        !environmentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !resourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                Label("Link Cloudflare", systemImage: "cloud")
+                    .font(AetowerDesign.Typography.sectionTitle)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .keyboardShortcut(.cancelAction)
+            }
+
+            Text(repositoryName)
+                .font(AetowerDesign.Typography.caption)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Picker("Environment preset", selection: $preset) {
+                ForEach(RepositoryCloudflareEnvironmentPreset.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: preset) { _, value in
+                applyPreset(value)
+            }
+
+            TextField("Environment name", text: $environmentName)
+                .aetowerUtilityTextInput()
+                .onChange(of: environmentName) { _, value in
+                    if preset != .custom, value != preset.defaultName {
+                        preset = .custom
+                    }
+                }
+
+            Picker("Cloudflare kind", selection: $kind) {
+                ForEach(RepositoryCloudflareLinkKind.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if kind == .pages {
+                Picker("Pages deployment type", selection: $pagesDeploymentEnvironment) {
+                    ForEach(RepositoryCloudflarePagesDeploymentEnvironment.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            TextField("Account ID", text: $accountID)
+                .aetowerUtilityTextInput()
+            TextField(resourceNamePrompt, text: $resourceName)
+                .aetowerUtilityTextInput()
+            TextField("Branch or ref", text: $branch)
+                .aetowerUtilityTextInput()
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                Button("Cancel", role: .cancel, action: onCancel)
+                Button {
+                    onSave(
+                        kind,
+                        environmentName,
+                        preset.rank,
+                        accountID,
+                        resourceName,
+                        kind == .pages ? pagesDeploymentEnvironment.apiValue : nil,
+                        sanitizedOptional(branch)
+                    )
+                } label: {
+                    Label("Link", systemImage: "link")
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSave)
+            }
+            .controlSize(.small)
+        }
+        .padding(AetowerDesign.Spacing.xxl)
+        .frame(width: 420)
+    }
+
+    private func applyPreset(_ preset: RepositoryCloudflareEnvironmentPreset) {
+        guard preset != .custom else { return }
+        environmentName = preset.defaultName
+        pagesDeploymentEnvironment = .selection(for: preset.pagesDeploymentEnvironment)
+    }
+
+    private func sanitizedOptional(_ value: String) -> String? {
+        let sanitized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sanitized.isEmpty ? nil : sanitized
+    }
+
+    private var resourceNamePrompt: String {
+        switch kind {
+        case .pages:
+            return "Pages project name"
+        case .worker:
+            return "Worker script name"
+        }
     }
 }

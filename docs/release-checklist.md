@@ -21,6 +21,34 @@ sh scripts/ci-local.sh --mode full
 
 The full gate should pass before publishing a public artifact.
 
+## 2a. Storage release criteria
+
+Run the automated Storage release gate:
+
+```sh
+sh scripts/verify-storage-release.sh
+```
+
+This proves the release-blocking invariants that can be checked locally:
+
+- reclaim dry-run manifests validate exact byte totals and paths
+- cleanup bundles only stage paths whose default action is Finder Trash
+- risky, protected, tracked, modified, or untracked source-like files are not
+  auto-staged
+- scan cancel responds within the one-second release budget
+- dangerous storage payloads are surfaced through performance-budget diagnostics
+- FileManager Trash works on a disposable local fixture
+
+The Storage release remains blocked until these manual checks are also recorded:
+
+- 2-4 hour soak with scan, History, and MCP enabled
+- clean-machine validation with and without Full Disk Access
+- reclaim dry-run reviewed against visible paths, bytes, blockers, consequences,
+  and undo path
+- Trash operation verified only on disposable fixtures
+- full home scan does not freeze the UI
+- no risky file is auto-staged during manual cleanup review
+
 ## 3. Release environment
 
 Required:
@@ -88,7 +116,7 @@ See [Homebrew Release](homebrew-release.md).
 Run:
 
 ```sh
-sh scripts/verify-public-preview.sh --package --gatekeeper --operator
+sh scripts/verify-public-preview.sh --package --gatekeeper --operator --storage-release
 ```
 
 On a clean Mac or clean user account:

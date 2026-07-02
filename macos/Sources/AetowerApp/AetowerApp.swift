@@ -1276,6 +1276,11 @@ struct AetowerApp: App {
                         Label("Repos", systemImage: "folder.badge.gearshape")
                     }
 
+                ProjectsView(state: state, settings: settings)
+                    .tabItem {
+                        Label("Projects", systemImage: "shippingbox")
+                    }
+
                 AgentsWorkspaceView(state: state)
                     .tabItem {
                         Label("Agents", systemImage: "cpu")

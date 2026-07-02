@@ -753,11 +753,11 @@ private final class MonitorEntitySectionCacheStore: ObservableObject {
         let buildStartedAt = CFAbsoluteTimeGetCurrent()
         let advancedFilteredEntities: [EntitySnapshot]
         if let advancedFilterEntityIds {
-            advancedFilteredEntities = snapshot.entities.filter {
+            advancedFilteredEntities = entities.filter {
                 advancedFilterEntityIds.contains($0.entityId)
             }
         } else {
-            advancedFilteredEntities = snapshot.entities
+            advancedFilteredEntities = entities
         }
 
         let originFilteredEntities: [EntitySnapshot]
@@ -1681,29 +1681,36 @@ public struct MainListView: View {
                 advancedFilterButton
             }
         } badges: {
-            HStack(spacing: AetowerDesign.Spacing.sm) {
-                AetowerToolBadge(
-                    isGroupedMode ? "Groups" : "Entities",
-                    value: "\(visibleEntityIDs.count)",
-                    systemImage: isGroupedMode ? "square.grid.2x2" : "list.bullet",
-                    tone: AetowerDesign.Tone.friction
-                )
-                AetowerToolBadge(
-                    "PIDs",
-                    value: "\(visibleProcessCount)",
-                    systemImage: "number",
-                    tone: AetowerDesign.Tone.cpu
-                )
-                if isGroupedMode && isGrouping {
-                    AetowerToolBadge(
-                        "Grouping",
-                        value: "Running",
-                        systemImage: "arrow.triangle.2.circlepath",
-                        tone: AetowerDesign.Status.warning
-                    )
-                }
-            }
+            AetowerToolBadgeGroup(monitorHeaderBadges, visibleCount: 2)
         }
+    }
+
+    private var monitorHeaderBadges: [AetowerToolBadgeItem] {
+        var items = [
+            AetowerToolBadgeItem(
+                isGroupedMode ? "Groups" : "Entities",
+                value: "\(visibleEntityIDs.count)",
+                systemImage: isGroupedMode ? "square.grid.2x2" : "list.bullet",
+                tone: AetowerDesign.Tone.friction
+            ),
+            AetowerToolBadgeItem(
+                "PIDs",
+                value: "\(visibleProcessCount)",
+                systemImage: "number",
+                tone: AetowerDesign.Tone.cpu
+            ),
+        ]
+        if isGroupedMode && isGrouping {
+            items.append(
+                AetowerToolBadgeItem(
+                    "Grouping",
+                    value: "Running",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    tone: AetowerDesign.Status.warning
+                )
+            )
+        }
+        return items
     }
 
     private var sortMenu: some View {

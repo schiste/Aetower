@@ -48,6 +48,12 @@ struct StorageScanJobResponseModel: Decodable, Sendable {
     let mode: String
     let throttleHint: String
     let volumeKey: String
+    let resumedFromPartial: Bool?
+    let partialStateAvailable: Bool?
+    let persistedAtMillis: UInt64?
+    let recoveredFiles: UInt64?
+    let recoveredDirectories: UInt64?
+    let recoveredBytes: UInt64?
     let progress: StorageScanJobProgressModel
 
     var isActive: Bool {
@@ -71,12 +77,12 @@ struct StorageHygieneReportModel: Decodable, Sendable {
     let cleanupBundles: [StorageCleanupBundleModel]
     let budgetGuardrails: StorageBudgetGuardrailsModel
     let agentHygiene: StorageAgentHygieneSummaryModel
-    let repositoryInventory: [StorageRepositoryInventoryModel]
-    let repositoryInventoryComplete: Bool
-    let repositoryInventoryTruncated: Bool
-    let repositoryInventoryRoots: [String]
-    let repositoryInventoryPartialRoots: [String]
-    let repositoryInventoryCoverage: [StorageRepositoryInventoryCoverageModel]
+    var repositoryInventory: [StorageRepositoryInventoryModel]
+    var repositoryInventoryComplete: Bool
+    var repositoryInventoryTruncated: Bool
+    var repositoryInventoryRoots: [String]
+    var repositoryInventoryPartialRoots: [String]
+    var repositoryInventoryCoverage: [StorageRepositoryInventoryCoverageModel]
     let repoFootprints: [StorageRepoFootprintModel]
     let duplicateGroups: [StorageDuplicateGroupModel]
     let appFootprints: [StorageAppFootprintModel]
@@ -135,8 +141,10 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         investigation =
             try container.decodeIfPresent(StorageInvestigationSummaryModel.self, forKey: .investigation) ?? .empty
         cleanupTiers = try container.decode([StorageCleanupTierModel].self, forKey: .cleanupTiers)
-        cleanupRecipes = try container.decode([StorageCleanupRecipeModel].self, forKey: .cleanupRecipes)
-        cleanupBundles = try container.decode([StorageCleanupBundleModel].self, forKey: .cleanupBundles)
+        cleanupRecipes =
+            try container.decodeIfPresent([StorageCleanupRecipeModel].self, forKey: .cleanupRecipes) ?? []
+        cleanupBundles =
+            try container.decodeIfPresent([StorageCleanupBundleModel].self, forKey: .cleanupBundles) ?? []
         budgetGuardrails = try container.decode(StorageBudgetGuardrailsModel.self, forKey: .budgetGuardrails)
         agentHygiene = try container.decode(StorageAgentHygieneSummaryModel.self, forKey: .agentHygiene)
         let decodedRepositoryInventory =
@@ -166,7 +174,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         repositoryInventoryRoots = decodedRepositoryInventoryRoots
         repositoryInventoryPartialRoots = decodedRepositoryInventoryPartialRoots
         repositoryInventoryComplete = decodedRepositoryInventoryComplete
-        repoFootprints = try container.decode([StorageRepoFootprintModel].self, forKey: .repoFootprints)
+        repoFootprints = try container.decodeIfPresent([StorageRepoFootprintModel].self, forKey: .repoFootprints) ?? []
         duplicateGroups =
             try container.decodeIfPresent([StorageDuplicateGroupModel].self, forKey: .duplicateGroups) ?? []
         appFootprints = try container.decodeIfPresent([StorageAppFootprintModel].self, forKey: .appFootprints) ?? []
@@ -174,15 +182,15 @@ struct StorageHygieneReportModel: Decodable, Sendable {
             try container.decodeIfPresent([StorageSystemDataBucketModel].self, forKey: .systemDataBuckets) ?? []
         treemapRoots = try container.decodeIfPresent([StorageTreemapNodeModel].self, forKey: .treemapRoots) ?? []
         growthDeltas = try container.decodeIfPresent([StorageGrowthDeltaModel].self, forKey: .growthDeltas) ?? []
-        items = try container.decode([StorageHygieneItemModel].self, forKey: .items)
-        roots = try container.decode([String].self, forKey: .roots)
-        skippedRoots = try container.decode([StorageSkippedRootModel].self, forKey: .skippedRoots)
+        items = try container.decodeIfPresent([StorageHygieneItemModel].self, forKey: .items) ?? []
+        roots = try container.decodeIfPresent([String].self, forKey: .roots) ?? []
+        skippedRoots = try container.decodeIfPresent([StorageSkippedRootModel].self, forKey: .skippedRoots) ?? []
         sourceCoverage =
             try container.decodeIfPresent([StorageSourceCoverageModel].self, forKey: .sourceCoverage) ?? []
         volumeStates =
             try container.decodeIfPresent([StorageVolumeStateModel].self, forKey: .volumeStates) ?? []
-        truncated = try container.decode(Bool.self, forKey: .truncated)
-        caveats = try container.decode([String].self, forKey: .caveats)
+        truncated = try container.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
+        caveats = try container.decodeIfPresent([String].self, forKey: .caveats) ?? []
     }
 }
 
@@ -406,13 +414,13 @@ private struct StorageHygieneContractCacheFingerprint: Codable, Equatable {
 enum StorageHygieneReportCacheStore {
     private static let schemaVersion: UInt8 = 4
     private static let fileName = "storage-hygiene-report-cache-v1.json"
-    private static let cacheMaxAgeMillis: UInt64 = 5 * 60 * 1000
+    private static let cacheMaxAgeMillis: UInt64 = 7 * 24 * 60 * 60 * 1000
 
+    /// Loads the last full report when it still matches the requested roots.
+    /// This intentionally avoids live repository/root validation so the UI can
+    /// paint immediately; lightweight inventory verification runs after.
     static func loadIfValid(
-        roots: [String],
-        maxDepth: UInt32,
-        limit: UInt32,
-        mode: String = "fast_changed_only"
+        roots: [String]
     ) -> StorageHygieneReportCacheLoadResult {
         guard let url = cacheURL(createDirectory: false) else {
             return .miss("cache directory unavailable")
@@ -437,32 +445,6 @@ enum StorageHygieneReportCacheStore {
         guard record.requestedRoots == requestedRoots else {
             return .stale("scan roots changed")
         }
-        guard record.maxDepth == maxDepth else {
-            return .stale("scan max depth changed")
-        }
-        guard record.limit == limit else {
-            return .stale("scan result limit changed")
-        }
-        guard record.scanMode == mode else {
-            return .stale("scan mode changed")
-        }
-        if let lastRootChangeMillis = StorageRootChangeJournal.lastChangeMillis(),
-            lastRootChangeMillis > record.savedAtMillis
-        {
-            return .stale("storage roots changed after cache save")
-        }
-        let currentScannedRoots = currentScannableRoots(for: roots)
-        guard Set(record.scannedRoots) == Set(currentScannedRoots) else {
-            return .stale("scannable root set changed")
-        }
-        let currentRepoRoots = currentRepositoryRoots(
-            scanRoots: currentScannedRoots,
-            maxDepth: Int(maxDepth)
-        )
-        let cachedRepoRoots = Set(record.repositories.map(\.repoRoot))
-        guard cachedRepoRoots == currentRepoRoots else {
-            return .stale("repository set changed")
-        }
         guard let reportData = record.reportJson.data(using: .utf8) else {
             return .stale("cached report JSON is invalid")
         }
@@ -474,16 +456,13 @@ enum StorageHygieneReportCacheStore {
         guard record.reportCapturedAtMillis == report.capturedAtMillis else {
             return .stale("cached report metadata mismatch")
         }
-        guard let staleReason = staleReason(for: record.repositories) else {
-            return .hit(
-                StorageHygieneReportCacheHit(
-                    report: report,
-                    savedAtMillis: record.savedAtMillis,
-                    repositoryCount: record.repositories.count
-                )
+        return .hit(
+            StorageHygieneReportCacheHit(
+                report: report,
+                savedAtMillis: record.savedAtMillis,
+                repositoryCount: record.repositories.count
             )
-        }
-        return .stale(staleReason)
+        )
     }
 
     static func save(
@@ -525,83 +504,6 @@ enum StorageHygieneReportCacheStore {
         return normalizedPathSet(Array(selected.prefix(24)))
     }
 
-    private static func currentScannableRoots(for roots: [String]) -> [String] {
-        normalizedRequestedRoots(roots).filter { path in
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
-                isDirectory.boolValue
-            else {
-                return false
-            }
-            let url = URL(fileURLWithPath: path, isDirectory: true)
-            let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
-            return values?.isSymbolicLink != true
-        }
-    }
-
-    private static func currentRepositoryRoots(
-        scanRoots: [String],
-        maxDepth: Int
-    ) -> Set<String> {
-        var repositories = Set<String>()
-        for root in scanRoots {
-            collectRepositoryRoots(
-                at: URL(fileURLWithPath: root, isDirectory: true),
-                depth: 0,
-                maxDepth: maxDepth,
-                repositories: &repositories
-            )
-        }
-        return repositories
-    }
-
-    private static func collectRepositoryRoots(
-        at url: URL,
-        depth: Int,
-        maxDepth: Int,
-        repositories: inout Set<String>
-    ) {
-        guard depth <= maxDepth else { return }
-        let dotGit = url.appendingPathComponent(".git", isDirectory: false)
-        if FileManager.default.fileExists(atPath: dotGit.path) {
-            repositories.insert(normalizedPath(url.path))
-        }
-        guard depth < maxDepth else { return }
-        let contents = (try? FileManager.default.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-            options: []
-        )) ?? []
-        for child in contents {
-            let name = child.lastPathComponent
-            guard !directoryNamesSkippedForRepoDiscovery.contains(name) else { continue }
-            let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            guard values?.isDirectory == true, values?.isSymbolicLink != true else { continue }
-            collectRepositoryRoots(
-                at: child,
-                depth: depth + 1,
-                maxDepth: maxDepth,
-                repositories: &repositories
-            )
-        }
-    }
-
-    private static let directoryNamesSkippedForRepoDiscovery: Set<String> = [
-        ".git",
-        ".build",
-        ".cache",
-        ".gradle",
-        ".next",
-        ".swiftpm",
-        ".venv",
-        "DerivedData",
-        "build",
-        "coverage",
-        "dist",
-        "node_modules",
-        "target",
-    ]
-
     private static func defaultStorageRoots() -> [String] {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         guard !home.isEmpty else { return [] }
@@ -640,151 +542,12 @@ enum StorageHygieneReportCacheStore {
         return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL.path
     }
 
-    private static func staleReason(
-        for repositories: [StorageHygieneRepositoryCacheFingerprint]
-    ) -> String? {
-        for repository in repositories {
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(
-                atPath: repository.repoRoot,
-                isDirectory: &isDirectory
-            ), isDirectory.boolValue else {
-                return "repository no longer exists: \(repository.repoName)"
-            }
-            let currentHead = readGitHeadShortHash(repoRoot: repository.repoRoot)
-            if currentHead != repository.gitHead {
-                let cached = repository.gitHead ?? "unknown"
-                let current = currentHead ?? "unknown"
-                return "repository HEAD changed: \(repository.repoName) \(cached) -> \(current)"
-            }
-            let currentRef = readGitRef(repoRoot: repository.repoRoot)
-            if currentRef.reference != repository.gitRef || currentRef.branch != repository.gitBranch {
-                return "repository ref changed: \(repository.repoName)"
-            }
-            let gitDirectory = gitDirectory(repoRoot: repository.repoRoot)
-            if fileFingerprint(gitDirectory?.appendingPathComponent("config")) != repository.gitConfigFingerprint {
-                return "repository Git config changed: \(repository.repoName)"
-            }
-            if fileFingerprint(gitDirectory?.appendingPathComponent("index")) != repository.gitIndexFingerprint {
-                return "repository Git index changed: \(repository.repoName)"
-            }
-            let currentContracts = agentContractFingerprints(repoRoot: repository.repoRoot)
-            if currentContracts != repository.agentContracts {
-                return "repository agent contracts changed: \(repository.repoName)"
-            }
-        }
-        return nil
-    }
-
-    private static func agentContractFingerprints(repoRoot: String) -> [StorageHygieneContractCacheFingerprint] {
-        storageAgentContractCachePaths.map { relativePath in
-            let url = URL(fileURLWithPath: repoRoot, isDirectory: true)
-                .appendingPathComponent(relativePath, isDirectory: false)
-            return StorageHygieneContractCacheFingerprint(path: relativePath, fileURL: url)
-        }
-    }
-
-    private static func readGitHeadShortHash(repoRoot: String) -> String? {
-        guard let gitDirectory = gitDirectory(repoRoot: repoRoot) else { return nil }
-        let headURL = gitDirectory.appendingPathComponent("HEAD", isDirectory: false)
-        guard let head = try? String(contentsOf: headURL, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !head.isEmpty
-        else {
-            return nil
-        }
-        if let reference = head.stripPrefix("ref: ") {
-            let refURL = gitDirectory.appendingPathComponent(reference, isDirectory: false)
-            if let refHash = try? String(contentsOf: refURL, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-                !refHash.isEmpty {
-                return shortHash(refHash)
-            }
-            return packedRef(reference, gitDirectory: gitDirectory).map(shortHash)
-        }
-        return shortHash(head)
-    }
-
-    private static func readGitRef(repoRoot: String) -> (reference: String?, branch: String?) {
-        guard let gitDirectory = gitDirectory(repoRoot: repoRoot) else { return (nil, nil) }
-        let headURL = gitDirectory.appendingPathComponent("HEAD", isDirectory: false)
-        guard let head = try? String(contentsOf: headURL, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !head.isEmpty
-        else {
-            return (nil, nil)
-        }
-        guard let reference = head.stripPrefix("ref: ") else {
-            return (head, nil)
-        }
-        let branchPrefix = "refs/heads/"
-        let branch = reference.hasPrefix(branchPrefix)
-            ? String(reference.dropFirst(branchPrefix.count))
-            : nil
-        return (reference, branch)
-    }
-
-    private static func gitDirectory(repoRoot: String) -> URL? {
-        let rootURL = URL(fileURLWithPath: repoRoot, isDirectory: true)
-        let dotGitURL = rootURL.appendingPathComponent(".git", isDirectory: false)
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: dotGitURL.path, isDirectory: &isDirectory) {
-            if isDirectory.boolValue {
-                return dotGitURL
-            }
-            guard let content = try? String(contentsOf: dotGitURL, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-                let relativePath = content.stripPrefix("gitdir: "),
-                !relativePath.isEmpty
-            else {
-                return nil
-            }
-            if relativePath.hasPrefix("/") {
-                return URL(fileURLWithPath: relativePath, isDirectory: true)
-            }
-            return rootURL.appendingPathComponent(relativePath, isDirectory: true)
-        }
-        return nil
-    }
-
-    private static func packedRef(_ reference: String, gitDirectory: URL) -> String? {
-        let packedRefsURL = gitDirectory.appendingPathComponent("packed-refs", isDirectory: false)
-        guard let content = try? String(contentsOf: packedRefsURL, encoding: .utf8) else {
-            return nil
-        }
-        for line in content.lines where !line.hasPrefix("#") && !line.hasPrefix("^") {
-            let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
-            if parts.count == 2, parts[1] == reference {
-                return parts[0]
-            }
-        }
-        return nil
-    }
-
-    private static func shortHash(_ value: String) -> String {
-        String(value.prefix(12))
-    }
-
-    private static func fileFingerprint(_ url: URL?) -> String? {
-        guard let url else { return nil }
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
-            return nil
-        }
-        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-        let modifiedMillis = ((attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0) * 1000
-        return "\(size):\(UInt64(modifiedMillis))"
-    }
-
     private static func currentMillis() -> UInt64 {
         UInt64(Date().timeIntervalSince1970 * 1000)
     }
 }
 
 private extension String {
-    var lines: [String] {
-        components(separatedBy: .newlines)
-    }
-
     func stripPrefix(_ prefix: String) -> String? {
         guard hasPrefix(prefix) else { return nil }
         return String(dropFirst(prefix.count))
@@ -824,6 +587,7 @@ struct StorageScanDiagnosticsModel: Decodable, Sendable {
     let fseventsStatus: String
     let lazyGitStatus: Bool
     let topKRetained: Bool
+    let performanceBudget: StoragePerformanceBudgetDiagnosticsModel?
 
     static let empty = StorageScanDiagnosticsModel(
         mode: "unknown",
@@ -845,8 +609,21 @@ struct StorageScanDiagnosticsModel: Decodable, Sendable {
         nativeMetadataStrategy: "unknown",
         fseventsStatus: "unknown",
         lazyGitStatus: false,
-        topKRetained: false
+        topKRetained: false,
+        performanceBudget: nil
     )
+}
+
+struct StoragePerformanceBudgetDiagnosticsModel: Decodable, Sendable {
+    let status: String
+    let scanJobLatencyMillis: UInt64
+    let payloadBytes: UInt64
+    let payloadBudgetBytes: UInt64
+    let tablePageMillis: UInt64
+    let tablePageBudgetMillis: UInt64
+    let renderPublishMillis: UInt64
+    let renderBudgetMillis: UInt64
+    let notes: [String]
 }
 
 struct StorageInvestigationSummaryModel: Decodable, Sendable {
@@ -943,6 +720,8 @@ struct StorageCleanupBundleItemModel: Decodable, Identifiable, Sendable {
     let cleanupCommand: String?
     let rollbackNote: String
     let reason: String
+    let consequence: String
+    let evidence: [String]
     let cleanupAllowed: Bool
     let cleanupBlockers: [String]
     let defaultCleanupAction: String
@@ -961,6 +740,8 @@ struct StorageCleanupBundleItemModel: Decodable, Identifiable, Sendable {
         case cleanupCommand
         case rollbackNote
         case reason
+        case consequence
+        case evidence
         case cleanupAllowed
         case cleanupBlockers
         case defaultCleanupAction
@@ -979,6 +760,8 @@ struct StorageCleanupBundleItemModel: Decodable, Identifiable, Sendable {
         cleanupCommand = try container.decodeIfPresent(String.self, forKey: .cleanupCommand)
         rollbackNote = try container.decode(String.self, forKey: .rollbackNote)
         reason = try container.decode(String.self, forKey: .reason)
+        consequence = try container.decodeIfPresent(String.self, forKey: .consequence) ?? rollbackNote
+        evidence = try container.decodeIfPresent([String].self, forKey: .evidence) ?? []
         cleanupAllowed = try container.decodeIfPresent(Bool.self, forKey: .cleanupAllowed) ?? true
         cleanupBlockers = try container.decodeIfPresent([String].self, forKey: .cleanupBlockers) ?? []
         defaultCleanupAction = try container.decodeIfPresent(String.self, forKey: .defaultCleanupAction) ?? "trash"
@@ -1217,6 +1000,9 @@ struct StorageGrowthDeltaModel: Decodable, Identifiable, Sendable {
     let command: String?
     let processTree: String?
     let aiAgentSession: String?
+    let writerSource: String?
+    let matchedWriterCount: UInt64?
+    let attributionSources: [String]?
     let attributionConfidence: String
     let attributionConfidenceScore: UInt8
     let attributionAmbiguous: Bool
@@ -1393,6 +1179,9 @@ struct StorageRepoFootprintModel: Decodable, Identifiable, Sendable {
     let rebuildablePercent: Double
     let itemCount: Int
     let topArtifactFolders: [StorageRepoArtifactFolderModel]
+    let artifactMix: [StorageRepoArtifactMixModel]
+    let duplicateCloneCount: UInt64
+    let duplicateCloneRoots: [String]
     let lastWriterProcess: String?
     let lastWriterPid: UInt32?
     let lastBranchTouched: String?
@@ -1416,6 +1205,9 @@ struct StorageRepoFootprintModel: Decodable, Identifiable, Sendable {
         case rebuildablePercent
         case itemCount
         case topArtifactFolders
+        case artifactMix
+        case duplicateCloneCount
+        case duplicateCloneRoots
         case lastWriterProcess
         case lastWriterPid
         case lastBranchTouched
@@ -1440,7 +1232,11 @@ struct StorageRepoFootprintModel: Decodable, Identifiable, Sendable {
         riskyBytes = try container.decodeIfPresent(UInt64.self, forKey: .riskyBytes) ?? 0
         rebuildablePercent = try container.decodeIfPresent(Double.self, forKey: .rebuildablePercent) ?? 0
         itemCount = try container.decode(Int.self, forKey: .itemCount)
-        topArtifactFolders = try container.decode([StorageRepoArtifactFolderModel].self, forKey: .topArtifactFolders)
+        topArtifactFolders =
+            try container.decodeIfPresent([StorageRepoArtifactFolderModel].self, forKey: .topArtifactFolders) ?? []
+        artifactMix = try container.decodeIfPresent([StorageRepoArtifactMixModel].self, forKey: .artifactMix) ?? []
+        duplicateCloneCount = try container.decodeIfPresent(UInt64.self, forKey: .duplicateCloneCount) ?? 1
+        duplicateCloneRoots = try container.decodeIfPresent([String].self, forKey: .duplicateCloneRoots) ?? []
         lastWriterProcess = try container.decodeIfPresent(String.self, forKey: .lastWriterProcess)
         lastWriterPid = try container.decodeIfPresent(UInt32.self, forKey: .lastWriterPid)
         lastBranchTouched = try container.decodeIfPresent(String.self, forKey: .lastBranchTouched)
@@ -1465,6 +1261,19 @@ struct StorageRepoArtifactFolderModel: Decodable, Identifiable, Sendable {
     var id: String { path }
 }
 
+struct StorageRepoArtifactMixModel: Decodable, Identifiable, Sendable {
+    let kind: String
+    let label: String
+    let itemCount: Int
+    let bytes: UInt64
+    let cleanupTier: String
+    let rebuildCommand: String?
+    let estimatedRebuildCost: String
+    let estimatedRebuildSeconds: UInt64?
+
+    var id: String { kind }
+}
+
 struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
     let id: String
     let path: String
@@ -1475,6 +1284,14 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
     let safety: String
     let cleanupTier: String
     let sizeBytes: UInt64
+    let logicalBytes: UInt64
+    let physicalBytes: UInt64
+    let byteAccounting: String
+    let sparseOrShared: Bool
+    let hardlinkCount: UInt64
+    let hasHardlinks: Bool
+    let cloudPlaceholder: Bool
+    let protectedPath: Bool
     let sizeTruncated: Bool
     let modifiedMillis: UInt64?
     let ageDays: UInt64?
@@ -1506,6 +1323,14 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
         case safety
         case cleanupTier
         case sizeBytes
+        case logicalBytes
+        case physicalBytes
+        case byteAccounting
+        case sparseOrShared
+        case hardlinkCount
+        case hasHardlinks
+        case cloudPlaceholder
+        case protectedPath
         case sizeTruncated
         case modifiedMillis
         case ageDays
@@ -1537,6 +1362,14 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
         safety = try container.decode(String.self, forKey: .safety)
         cleanupTier = try container.decode(String.self, forKey: .cleanupTier)
         sizeBytes = try container.decode(UInt64.self, forKey: .sizeBytes)
+        logicalBytes = try container.decodeIfPresent(UInt64.self, forKey: .logicalBytes) ?? sizeBytes
+        physicalBytes = try container.decodeIfPresent(UInt64.self, forKey: .physicalBytes) ?? sizeBytes
+        byteAccounting = try container.decodeIfPresent(String.self, forKey: .byteAccounting) ?? "legacy size estimate"
+        sparseOrShared = try container.decodeIfPresent(Bool.self, forKey: .sparseOrShared) ?? false
+        hardlinkCount = try container.decodeIfPresent(UInt64.self, forKey: .hardlinkCount) ?? 1
+        hasHardlinks = try container.decodeIfPresent(Bool.self, forKey: .hasHardlinks) ?? false
+        cloudPlaceholder = try container.decodeIfPresent(Bool.self, forKey: .cloudPlaceholder) ?? false
+        protectedPath = try container.decodeIfPresent(Bool.self, forKey: .protectedPath) ?? false
         sizeTruncated = try container.decode(Bool.self, forKey: .sizeTruncated)
         modifiedMillis = try container.decodeIfPresent(UInt64.self, forKey: .modifiedMillis)
         ageDays = try container.decodeIfPresent(UInt64.self, forKey: .ageDays)
@@ -1579,7 +1412,7 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
             return "environment"
         case "macos-app-bundle":
             return "application"
-        case "app-support-data", "app-container", "app-launch-item":
+        case "app-support-data", "app-container", "app-launch-item", "app-preferences", "app-receipt":
             return "app-data"
         case "ios-backup", "mail-attachments", "message-attachments", "local-snapshot":
             return "system-data"
@@ -1619,13 +1452,72 @@ struct StorageSourceCoverageModel: Decodable, Identifiable, Sendable {
     let path: String
     let status: String
     let permissionState: String
+    let gapKind: String
     let detail: String
     let localBytes: UInt64?
     let logicalBytes: UInt64?
     let reclaimableBytes: UInt64?
     let cloudPlaceholder: Bool
     let network: Bool
+    let protected: Bool
     let scanned: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case kind
+        case path
+        case status
+        case permissionState
+        case gapKind
+        case detail
+        case localBytes
+        case logicalBytes
+        case reclaimableBytes
+        case cloudPlaceholder
+        case network
+        case protected
+        case scanned
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        label = try container.decode(String.self, forKey: .label)
+        kind = try container.decode(String.self, forKey: .kind)
+        path = try container.decode(String.self, forKey: .path)
+        status = try container.decode(String.self, forKey: .status)
+        permissionState = try container.decode(String.self, forKey: .permissionState)
+        gapKind = try container.decodeIfPresent(String.self, forKey: .gapKind)
+            ?? StorageSourceCoverageModel.legacyGapKind(
+                status: status,
+                permissionState: permissionState,
+                kind: kind,
+                cloudPlaceholder: (try container.decodeIfPresent(Bool.self, forKey: .cloudPlaceholder) ?? false)
+            )
+        detail = try container.decode(String.self, forKey: .detail)
+        localBytes = try container.decodeIfPresent(UInt64.self, forKey: .localBytes)
+        logicalBytes = try container.decodeIfPresent(UInt64.self, forKey: .logicalBytes)
+        reclaimableBytes = try container.decodeIfPresent(UInt64.self, forKey: .reclaimableBytes)
+        cloudPlaceholder = try container.decodeIfPresent(Bool.self, forKey: .cloudPlaceholder) ?? false
+        network = try container.decodeIfPresent(Bool.self, forKey: .network) ?? false
+        protected = try container.decodeIfPresent(Bool.self, forKey: .protected) ?? false
+        scanned = try container.decode(Bool.self, forKey: .scanned)
+    }
+
+    private static func legacyGapKind(
+        status: String,
+        permissionState: String,
+        kind: String,
+        cloudPlaceholder: Bool
+    ) -> String {
+        if permissionState == "needs_full_disk_access" { return "permission-denied" }
+        if status == "unavailable" { return "unavailable" }
+        if status == "skipped" { return "skipped" }
+        if kind == "cloud" || cloudPlaceholder { return "cloud-backed" }
+        if status == "partial" { return "partial" }
+        return "covered"
+    }
 }
 
 struct StorageRepositoryInventoryCoverageModel: Decodable, Identifiable, Sendable {

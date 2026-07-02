@@ -33,6 +33,10 @@ public struct SettingsView: View {
         case chau7Endpoint
         case chau7AgentCommand
         case telemetryEndpoint
+        case githubOAuthClientID
+        case githubOAuthScopes
+        case githubToken
+        case cloudflareToken
         case repositoryRoot
     }
 
@@ -970,6 +974,61 @@ public struct SettingsView: View {
                 }
 
                 SettingsSetupCard(
+                    title: "GitHub",
+                    subtitle: "Enables optional project status refresh for linked repositories.",
+                    systemImage: "chevron.left.forwardslash.chevron.right",
+                    badge: "Optional",
+                    color: AetowerDesign.Status.ready
+                ) {
+                    GitHubOAuthConnectorView(
+                        clientID: $integrationDraft.githubOAuthClientID,
+                        scopesText: $integrationDraft.githubOAuthScopes,
+                        onConfigurationApplied: persistGitHubOAuthConfiguration
+                    )
+
+                    SecureField(
+                        "GitHub token",
+                        text: $integrationDraft.githubToken,
+                        prompt: Text("Optional fine-grained token")
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .aetowerUtilityTextInput()
+                    .focused($focusedField, equals: .githubToken)
+                    Text("OAuth device flow requires a GitHub OAuth App client ID with device flow enabled. Manual fine-grained tokens remain available for selected private repositories.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                SettingsSetupCard(
+                    title: "Cloudflare",
+                    subtitle: "Enables optional deployment refresh for manually linked Pages and Workers.",
+                    systemImage: "cloud",
+                    badge: "Optional",
+                    color: AetowerDesign.Tone.network
+                ) {
+                    CloudflareOAuthConnectorView(
+                        accountID: $integrationDraft.cloudflareOAuthAccountID,
+                        clientID: $integrationDraft.cloudflareOAuthClientID,
+                        scopesText: $integrationDraft.cloudflareOAuthScopes,
+                        redirectURI: $integrationDraft.cloudflareOAuthRedirectURI,
+                        apiTokenProvider: { integrationDraft.cloudflareToken },
+                        onConfigurationApplied: persistCloudflareOAuthConfiguration
+                    )
+
+                    SecureField(
+                        "Cloudflare API token",
+                        text: $integrationDraft.cloudflareToken,
+                        prompt: Text("Optional read-only token")
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .aetowerUtilityTextInput()
+                    .focused($focusedField, equals: .cloudflareToken)
+                    Text("Use an API token scoped to the selected account with read access for Cloudflare Pages and Workers Scripts. Global API keys are not needed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                SettingsSetupCard(
                     title: "Binary reputation",
                     subtitle:
                         "Checks unsigned or ad-hoc apps with network activity against VirusTotal.",
@@ -1423,7 +1482,18 @@ public struct SettingsView: View {
                     .foregroundStyle(.secondary)
                 Button("Reset to defaults", role: .destructive) {
                     settings.resetToDefaults()
-                    integrationDraft = SettingsIntegrationDraft(settings: settings, virusTotalKey: "")
+                    integrationDraft = SettingsIntegrationDraft(
+                        settings: settings,
+                        virusTotalKey: "",
+                        githubOAuthClientID: "",
+                        githubOAuthScopes: "",
+                        cloudflareOAuthAccountID: "",
+                        cloudflareOAuthClientID: "",
+                        cloudflareOAuthScopes: SettingsStore.defaultCloudflareOAuthScopes,
+                        cloudflareOAuthRedirectURI: SettingsStore.defaultCloudflareOAuthRedirectURI,
+                        githubToken: "",
+                        cloudflareToken: ""
+                    )
                     hasLoadedIntegrationDraft = true
                     state.applyNotificationSettings(settings)
                     state.applyRuntimeCollectionSettings(settings)
@@ -1498,15 +1568,52 @@ public struct SettingsView: View {
         // Persist the VirusTotal key to the Keychain before applying — an empty
         // draft clears it. applyIntegrationSettings reads it back from there.
         KeychainHelper.store(normalizedDraft.virusTotalKey, account: KeychainHelper.binaryReputationAccount)
+        let credentialStore = ProviderCredentialStore()
+        credentialStore.storeManualToken(normalizedDraft.githubToken, for: .github)
+        credentialStore.storeManualToken(normalizedDraft.cloudflareToken, for: .cloudflare)
         state.applyIntegrationSettings(settings)
         appliedIntegrationSnapshot = currentIntegrationSnapshot
         applyConfirmation = confirmation
         clearApplyConfirmationLater()
     }
 
+    private func persistGitHubOAuthConfiguration(clientID: String, scopesText: String) {
+        integrationDraft.githubOAuthClientID = clientID
+        integrationDraft.githubOAuthScopes = scopesText
+        settings.githubOAuthClientID = clientID
+        settings.githubOAuthScopes = scopesText
+    }
+
+    private func persistCloudflareOAuthConfiguration(
+        accountID: String,
+        clientID: String,
+        scopesText: String,
+        redirectURI: String
+    ) {
+        integrationDraft.cloudflareOAuthAccountID = accountID
+        integrationDraft.cloudflareOAuthClientID = clientID
+        integrationDraft.cloudflareOAuthScopes = scopesText
+        integrationDraft.cloudflareOAuthRedirectURI = redirectURI
+        settings.cloudflareOAuthAccountID = accountID
+        settings.cloudflareOAuthClientID = clientID
+        settings.cloudflareOAuthScopes = scopesText
+        settings.cloudflareOAuthRedirectURI = redirectURI
+    }
+
     private func resetLocalAetowerData() {
         settings.resetToDefaults()
-        integrationDraft = SettingsIntegrationDraft(settings: settings, virusTotalKey: "")
+        integrationDraft = SettingsIntegrationDraft(
+            settings: settings,
+            virusTotalKey: "",
+            githubOAuthClientID: "",
+            githubOAuthScopes: "",
+            cloudflareOAuthAccountID: "",
+            cloudflareOAuthClientID: "",
+            cloudflareOAuthScopes: SettingsStore.defaultCloudflareOAuthScopes,
+            cloudflareOAuthRedirectURI: SettingsStore.defaultCloudflareOAuthRedirectURI,
+            githubToken: "",
+            cloudflareToken: ""
+        )
         hasLoadedIntegrationDraft = true
         state.clearHistory()
         state.clearDiagnostics()
@@ -1524,7 +1631,15 @@ public struct SettingsView: View {
         guard !hasLoadedIntegrationDraft else { return }
         integrationDraft = SettingsIntegrationDraft(
             settings: settings,
-            virusTotalKey: KeychainHelper.retrieve(account: KeychainHelper.binaryReputationAccount) ?? ""
+            virusTotalKey: KeychainHelper.retrieve(account: KeychainHelper.binaryReputationAccount) ?? "",
+            githubOAuthClientID: settings.githubOAuthClientID,
+            githubOAuthScopes: settings.githubOAuthScopes,
+            cloudflareOAuthAccountID: settings.cloudflareOAuthAccountID,
+            cloudflareOAuthClientID: settings.cloudflareOAuthClientID,
+            cloudflareOAuthScopes: settings.cloudflareOAuthScopes,
+            cloudflareOAuthRedirectURI: settings.cloudflareOAuthRedirectURI,
+            githubToken: ProviderCredentialStore().manualToken(for: .github) ?? "",
+            cloudflareToken: ProviderCredentialStore().manualToken(for: .cloudflare) ?? ""
         )
         hasLoadedIntegrationDraft = true
     }
@@ -1668,9 +1783,28 @@ private struct SettingsIntegrationDraft: Equatable {
     var telemetryExportIntervalSeconds = 30.0
     var binaryReputationEnabled = false
     var virusTotalKey = ""
+    var githubOAuthClientID = ""
+    var githubOAuthScopes = ""
+    var cloudflareOAuthAccountID = ""
+    var cloudflareOAuthClientID = ""
+    var cloudflareOAuthScopes = SettingsStore.defaultCloudflareOAuthScopes
+    var cloudflareOAuthRedirectURI = SettingsStore.defaultCloudflareOAuthRedirectURI
+    var githubToken = ""
+    var cloudflareToken = ""
 
     @MainActor
-    init(settings: SettingsStore, virusTotalKey: String) {
+    init(
+        settings: SettingsStore,
+        virusTotalKey: String,
+        githubOAuthClientID: String,
+        githubOAuthScopes: String,
+        cloudflareOAuthAccountID: String,
+        cloudflareOAuthClientID: String,
+        cloudflareOAuthScopes: String,
+        cloudflareOAuthRedirectURI: String,
+        githubToken: String,
+        cloudflareToken: String
+    ) {
         chromiumEndpoint = settings.chromiumEndpoint
         dockerSocketPath = settings.dockerSocketPath
         privilegedHelperEnabled = settings.privilegedHelperEnabled
@@ -1682,6 +1816,14 @@ private struct SettingsIntegrationDraft: Equatable {
         telemetryExportIntervalSeconds = settings.telemetryExportIntervalSeconds
         binaryReputationEnabled = settings.binaryReputationEnabled
         self.virusTotalKey = virusTotalKey
+        self.githubOAuthClientID = githubOAuthClientID
+        self.githubOAuthScopes = githubOAuthScopes
+        self.cloudflareOAuthAccountID = cloudflareOAuthAccountID
+        self.cloudflareOAuthClientID = cloudflareOAuthClientID
+        self.cloudflareOAuthScopes = cloudflareOAuthScopes
+        self.cloudflareOAuthRedirectURI = cloudflareOAuthRedirectURI
+        self.githubToken = githubToken
+        self.cloudflareToken = cloudflareToken
         normalize()
     }
 
@@ -1699,6 +1841,20 @@ private struct SettingsIntegrationDraft: Equatable {
             telemetryExportIntervalSeconds
         )
         virusTotalKey = virusTotalKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        githubOAuthClientID = githubOAuthClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        githubOAuthScopes = SettingsStore.normalizedOAuthScopes(githubOAuthScopes)
+        cloudflareOAuthAccountID = cloudflareOAuthAccountID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        cloudflareOAuthClientID = cloudflareOAuthClientID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        cloudflareOAuthScopes = SettingsStore.normalizedOAuthScopes(cloudflareOAuthScopes)
+        cloudflareOAuthRedirectURI = SettingsStore.normalizedCloudflareOAuthRedirectURI(
+            cloudflareOAuthRedirectURI
+        )
+        githubToken = githubToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        cloudflareToken = cloudflareToken.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     @MainActor
@@ -1713,6 +1869,12 @@ private struct SettingsIntegrationDraft: Equatable {
         settings.telemetryEndpoint = telemetryEndpoint
         settings.telemetryExportIntervalSeconds = telemetryExportIntervalSeconds
         settings.binaryReputationEnabled = binaryReputationEnabled
+        settings.githubOAuthClientID = githubOAuthClientID
+        settings.githubOAuthScopes = githubOAuthScopes
+        settings.cloudflareOAuthAccountID = cloudflareOAuthAccountID
+        settings.cloudflareOAuthClientID = cloudflareOAuthClientID
+        settings.cloudflareOAuthScopes = cloudflareOAuthScopes
+        settings.cloudflareOAuthRedirectURI = cloudflareOAuthRedirectURI
     }
 }
 
@@ -1727,7 +1889,15 @@ private struct SettingsIntegrationSnapshot: Equatable {
     let telemetryEndpoint: String
     let telemetryExportIntervalSeconds: UInt32
     let binaryReputationEnabled: Bool
+    let githubOAuthClientID: String
+    let githubOAuthScopes: String
+    let cloudflareOAuthAccountID: String
+    let cloudflareOAuthClientID: String
+    let cloudflareOAuthScopes: String
+    let cloudflareOAuthRedirectURI: String
     let virusTotalKeySignature: String
+    let githubTokenSignature: String
+    let cloudflareTokenSignature: String
 
     @MainActor
     init(_ settings: SettingsStore, virusTotalKeyDraft: String? = nil) {
@@ -1743,10 +1913,26 @@ private struct SettingsIntegrationSnapshot: Equatable {
             settings.telemetryExportIntervalSeconds
         )
         binaryReputationEnabled = settings.binaryReputationEnabled
+        githubOAuthClientID = settings.githubOAuthClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        githubOAuthScopes = SettingsStore.normalizedOAuthScopes(settings.githubOAuthScopes)
+        cloudflareOAuthAccountID = settings.cloudflareOAuthAccountID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        cloudflareOAuthClientID = settings.cloudflareOAuthClientID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        cloudflareOAuthScopes = SettingsStore.normalizedOAuthScopes(settings.cloudflareOAuthScopes)
+        cloudflareOAuthRedirectURI = SettingsStore.normalizedCloudflareOAuthRedirectURI(
+            settings.cloudflareOAuthRedirectURI
+        )
         let key = virusTotalKeyDraft
             ?? KeychainHelper.retrieve(account: KeychainHelper.binaryReputationAccount)
             ?? ""
         virusTotalKeySignature = Self.redactedKeySignature(key)
+        let githubToken = ProviderCredentialStore().manualToken(for: .github) ?? ""
+        githubTokenSignature = Self.redactedKeySignature(githubToken)
+        let cloudflareToken = ProviderCredentialStore().manualToken(for: .cloudflare) ?? ""
+        cloudflareTokenSignature = Self.redactedKeySignature(cloudflareToken)
     }
 
     init(_ draft: SettingsIntegrationDraft) {
@@ -1762,7 +1948,21 @@ private struct SettingsIntegrationSnapshot: Equatable {
             draft.telemetryExportIntervalSeconds
         )
         binaryReputationEnabled = draft.binaryReputationEnabled
+        githubOAuthClientID = draft.githubOAuthClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        githubOAuthScopes = SettingsStore.normalizedOAuthScopes(draft.githubOAuthScopes)
+        cloudflareOAuthAccountID = draft.cloudflareOAuthAccountID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        cloudflareOAuthClientID = draft.cloudflareOAuthClientID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        cloudflareOAuthScopes = SettingsStore.normalizedOAuthScopes(draft.cloudflareOAuthScopes)
+        cloudflareOAuthRedirectURI = SettingsStore.normalizedCloudflareOAuthRedirectURI(
+            draft.cloudflareOAuthRedirectURI
+        )
         virusTotalKeySignature = Self.redactedKeySignature(draft.virusTotalKey)
+        githubTokenSignature = Self.redactedKeySignature(draft.githubToken)
+        cloudflareTokenSignature = Self.redactedKeySignature(draft.cloudflareToken)
     }
 
     private static func redactedKeySignature(_ value: String) -> String {

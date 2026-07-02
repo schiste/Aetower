@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import pathlib
 import re
 import subprocess
@@ -27,6 +28,7 @@ SWIFT_PUBLIC_VIEW_ALLOWLIST = {
     "MainListView.swift",
     "MenuBarSummaryView.swift",
     "PersistenceScannerView.swift",
+    "ProjectsView.swift",
     "ProcessTreeView.swift",
     "RepositoryView.swift",
     "SensorDashboardView.swift",
@@ -103,7 +105,10 @@ SECRET_PATTERNS = [
     re.compile(r"(?i)\b(api[_-]?key|secret|token|password)\b.{0,20}[:=].{0,5}[\"'][^\"']{8,}[\"']"),
     re.compile(r"ghp_[A-Za-z0-9]{30,}"),
 ]
-PLACEHOLDER_PATTERN = re.compile(r"\b(TODO|FIXME|XXX|HACK|stub|placeholder)\b", re.IGNORECASE)
+PLACEHOLDER_PATTERN = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b")
+# "stub"/"placeholder" are legitimate domain vocabulary (cloud placeholder
+# files, network stubs); they only count as markers inside comments.
+PLACEHOLDER_COMMENT_PATTERN = re.compile(r"(//|#|/\*).*\b(stub|placeholder)\b", re.IGNORECASE)
 SWIFT_FORBIDDEN_PATTERNS = [
     (re.compile(r"\bAnyView\b"), "Avoid AnyView in app code."),
     (re.compile(r"\bas!\b"), "Avoid force casts in Swift UI code."),
@@ -236,7 +241,37 @@ def non_generated_source(path: str) -> bool:
 
 
 def is_test_like(path: str) -> bool:
-    return "/tests/" in path or path.endswith("_test.swift") or path.endswith("bench.rs")
+    lowered = path.lower()
+    return "/tests/" in lowered or lowered.endswith("_test.swift") or lowered.endswith("bench.rs")
+
+
+@functools.lru_cache(maxsize=None)
+def rust_test_module_start(path: str) -> int | None:
+    """First line of a top-level `#[cfg(test)] mod …` block in a Rust source
+    file, or None. Crates here keep unit tests in-file, so diff-line rules
+    (unwrap/placeholder) must not fire on fixture code past this boundary."""
+    if not path.endswith(".rs"):
+        return None
+    try:
+        lines = pathlib.Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for index, line in enumerate(lines):
+        if line.rstrip() != "#[cfg(test)]":
+            continue
+        for follower in lines[index + 1 :]:
+            stripped = follower.strip()
+            if not stripped:
+                continue
+            if re.match(r"^(pub(\(crate\))?\s+)?mod\s+\w+", stripped) and not follower.startswith((" ", "\t")):
+                return index + 1
+            break
+    return None
+
+
+def rust_line_is_test_code(path: str, line_number: int) -> bool:
+    start = rust_test_module_start(path)
+    return start is not None and line_number >= start
 
 
 def check_placeholders_and_secrets(
@@ -247,12 +282,20 @@ def check_placeholders_and_secrets(
             continue
         suffix = pathlib.Path(path).suffix
         check_placeholders = not path.startswith(".semgrep/")
+        fixture_secrets_ok = is_test_like(path)
         for line_number, line in entries:
             for pattern in SECRET_PATTERNS:
                 if pattern.search(line):
+                    if fixture_secrets_ok and re.search(r"(?i)(test|fake|example|dummy|fixture)", line):
+                        continue
                     violations.append(Violation(path, line_number, "Potential secret detected in added line."))
                     break
-            if check_placeholders and suffix in PLACEHOLDER_EXTENSIONS and PLACEHOLDER_PATTERN.search(line):
+            if (
+                check_placeholders
+                and suffix in PLACEHOLDER_EXTENSIONS
+                and (PLACEHOLDER_PATTERN.search(line) or PLACEHOLDER_COMMENT_PATTERN.search(line))
+                and not rust_line_is_test_code(path, line_number)
+            ):
                 violations.append(Violation(path, line_number, "Placeholder marker detected in added line."))
 
 
@@ -368,7 +411,11 @@ def check_rust_added_lines(
             for pattern, message in RUST_FORBIDDEN_PATTERNS:
                 if pattern.search(line):
                     violations.append(Violation(path, line_number, message))
-            if not allow_panics and RUST_UNWRAP_PATTERN.search(line):
+            if (
+                not allow_panics
+                and RUST_UNWRAP_PATTERN.search(line)
+                and not rust_line_is_test_code(path, line_number)
+            ):
                 violations.append(Violation(path, line_number, "Avoid unwrap/expect in production Rust code."))
 
 

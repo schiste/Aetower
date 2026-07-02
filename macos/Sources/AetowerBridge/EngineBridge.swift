@@ -266,6 +266,57 @@ public final class EngineBridge: @unchecked Sendable {
         engine.storageHygieneIndexedJson(roots: roots, maxDepth: maxDepth, limit: limit)
     }
 
+    public func storageHygieneOverviewJSON(
+        roots: [String] = [],
+        maxDepth: UInt32 = 5,
+        mode: String = "instant_cached"
+    ) -> JsonQueryResult {
+        engine.storageHygieneOverviewJson(roots: roots, maxDepth: maxDepth, mode: mode)
+    }
+
+    public func storageHygieneActionsJSON(
+        roots: [String] = [],
+        maxDepth: UInt32 = 5,
+        limit: UInt32 = 80,
+        mode: String = "instant_cached"
+    ) -> JsonQueryResult {
+        engine.storageHygieneActionsJson(roots: roots, maxDepth: maxDepth, limit: limit, mode: mode)
+    }
+
+    public func storageHygieneItemsPageJSON(
+        roots: [String] = [],
+        maxDepth: UInt32 = 5,
+        offset: UInt32 = 0,
+        limit: UInt32 = 80,
+        mode: String = "instant_cached",
+        sortKey: String = "size",
+        sortDescending: Bool = true
+    ) -> JsonQueryResult {
+        engine.storageHygieneItemsPageJson(
+            roots: roots,
+            maxDepth: maxDepth,
+            offset: offset,
+            limit: limit,
+            mode: mode,
+            sortKey: sortKey,
+            sortDescending: sortDescending
+        )
+    }
+
+    public func storageHygieneRepoDetailJSON(
+        repoRoot: String,
+        mode: String = "instant_cached"
+    ) -> JsonQueryResult {
+        engine.storageHygieneRepoDetailJson(repoRoot: repoRoot, mode: mode)
+    }
+
+    public func repositoryInventoryJSON(
+        roots: [String] = [],
+        maxDepth: UInt32 = 5
+    ) -> JsonQueryResult {
+        engine.repositoryInventoryJson(roots: roots, maxDepth: maxDepth)
+    }
+
     public func scorecardJSON(
         repoRoot: String,
         mode: String = "auto",

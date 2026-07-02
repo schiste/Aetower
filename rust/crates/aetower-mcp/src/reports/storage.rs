@@ -47,6 +47,8 @@ const DEEP_SIZE_WALK_MAX_ENTRIES: u64 = SIZE_WALK_MAX_ENTRIES;
 const FORENSIC_SIZE_WALK_MAX_ENTRIES: u64 = 300_000;
 const STORAGE_INDEX_SCHEMA_VERSION: i64 = 2;
 const STORAGE_INDEX_FILE_NAME: &str = "storage-index-v1.sqlite3";
+const STORAGE_SCAN_STATE_MAX_AGE_MILLIS: u64 = 24 * 60 * 60 * 1000;
+const STORAGE_SCAN_PROGRESS_PERSIST_INTERVAL_MILLIS: u64 = 1_000;
 const STORAGE_SCAN_PAUSE_POLL: Duration = Duration::from_millis(80);
 const STORAGE_SCAN_QUEUE_POLL: Duration = Duration::from_millis(120);
 const STORAGE_GROWTH_BUCKET_MILLIS: u64 = 60 * 60 * 1000;
@@ -59,6 +61,14 @@ const STORAGE_WRITER_LEDGER_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const STORAGE_WRITER_LEDGER_TIME_FUZZ_MILLIS: u64 = 10 * 60 * 1000;
 const REPOSITORY_INVENTORY_TIME_BUDGET: Duration = Duration::from_millis(30_000);
 const REPOSITORY_INVENTORY_MAX_DIRECTORIES: u64 = 200_000;
+const STORAGE_SCAN_LATENCY_WARN_MILLIS: u64 = 3_000;
+const STORAGE_SCAN_LATENCY_CRITICAL_MILLIS: u64 = 8_000;
+const STORAGE_PAYLOAD_WARN_BYTES: u64 = 2 * 1024 * 1024;
+const STORAGE_PAYLOAD_CRITICAL_BYTES: u64 = 6 * 1024 * 1024;
+const STORAGE_TABLE_PAGE_WARN_MILLIS: u64 = 80;
+const STORAGE_TABLE_PAGE_CRITICAL_MILLIS: u64 = 250;
+const STORAGE_RENDER_WARN_MILLIS: u64 = 50;
+const STORAGE_RENDER_CRITICAL_MILLIS: u64 = 120;
 const STORAGE_SCAN_PHASE_REPOSITORY_INVENTORY: &str = "repository_inventory";
 const STORAGE_SCAN_PHASE_ARTIFACT_SIZING: &str = "artifact_sizing";
 const STORAGE_SCAN_PHASE_SCORECARD_OVERLAY: &str = "scorecard_overlay";
@@ -150,7 +160,7 @@ impl StorageScanJobStatusKind {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct StorageScanJobProgress {
     phase: String,
     scanned_files: u64,
@@ -193,6 +203,12 @@ pub(crate) struct StorageScanJobResponse {
     mode: String,
     throttle_hint: String,
     volume_key: String,
+    resumed_from_partial: bool,
+    partial_state_available: bool,
+    persisted_at_millis: Option<u64>,
+    recovered_files: u64,
+    recovered_directories: u64,
+    recovered_bytes: u64,
     progress: StorageScanJobProgress,
 }
 
@@ -260,10 +276,21 @@ struct StorageScanJobState {
     started_at_millis: u64,
     updated_at_millis: u64,
     completed_at_millis: Option<u64>,
+    persisted_at_millis: Option<u64>,
+    last_progress_persist_millis: u64,
+    resumed_from_partial: bool,
+    recovered_files: u64,
+    recovered_directories: u64,
+    recovered_bytes: u64,
 }
 
 impl StorageScanJobState {
-    fn new(now_millis: u64, throttle_reason: Option<String>) -> Self {
+    fn new(
+        now_millis: u64,
+        throttle_reason: Option<String>,
+        persisted_state: Option<&StorageScanPersistedState>,
+    ) -> Self {
+        let recovered_progress = persisted_state.map(|state| &state.progress);
         Self {
             status: StorageScanJobStatusKind::Queued,
             progress: StorageScanJobProgress::new(now_millis, throttle_reason),
@@ -272,7 +299,198 @@ impl StorageScanJobState {
             started_at_millis: now_millis,
             updated_at_millis: now_millis,
             completed_at_millis: None,
+            persisted_at_millis: persisted_state.map(|state| state.persisted_at_millis),
+            last_progress_persist_millis: persisted_state
+                .map(|state| state.persisted_at_millis)
+                .unwrap_or_default(),
+            resumed_from_partial: persisted_state.is_some(),
+            recovered_files: recovered_progress
+                .map(|progress| progress.scanned_files)
+                .unwrap_or_default(),
+            recovered_directories: recovered_progress
+                .map(|progress| progress.scanned_directories)
+                .unwrap_or_default(),
+            recovered_bytes: recovered_progress
+                .map(|progress| progress.scanned_bytes)
+                .unwrap_or_default(),
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct StorageScanPersistedState {
+    progress: StorageScanJobProgress,
+    persisted_at_millis: u64,
+}
+
+#[derive(Clone, Debug)]
+struct StorageScanPersistedRecord {
+    job_id: String,
+    signature: String,
+    volume_key: String,
+    roots: Vec<String>,
+    dirty_paths: Vec<String>,
+    max_depth: usize,
+    limit: usize,
+    mode: String,
+    throttle_hint: String,
+    status: String,
+    progress: StorageScanJobProgress,
+    started_at_millis: u64,
+    updated_at_millis: u64,
+    completed_at_millis: Option<u64>,
+    result_available: bool,
+    resume_available: bool,
+}
+
+struct StorageScanStateStore;
+
+impl StorageScanStateStore {
+    fn open_connection() -> Result<Connection, String> {
+        let base_dir = dirs::data_local_dir().ok_or_else(|| "no_data_dir".to_owned())?;
+        let directory = base_dir.join("Aetower");
+        fs::create_dir_all(&directory).map_err(|error| format!("create_dir:{error}"))?;
+        let path = directory.join(STORAGE_INDEX_FILE_NAME);
+        let connection = Connection::open(path).map_err(|error| format!("open_failed:{error}"))?;
+        StorageSizeIndex::prepare_schema(&connection).map_err(|error| format!("schema:{error}"))?;
+        Ok(connection)
+    }
+
+    fn persist(record: StorageScanPersistedRecord) -> Result<u64, String> {
+        let connection = Self::open_connection()?;
+        let progress_json = serde_json::to_string(&record.progress)
+            .map_err(|error| format!("encode_progress:{error}"))?;
+        let roots_json = serde_json::to_string(&record.roots)
+            .map_err(|error| format!("encode_roots:{error}"))?;
+        let dirty_paths_json = serde_json::to_string(&record.dirty_paths)
+            .map_err(|error| format!("encode_dirty_paths:{error}"))?;
+        let persisted_at_millis = storage_now_millis();
+        connection
+            .execute(
+                "INSERT INTO storage_scan_job_state (
+                    job_id,
+                    signature,
+                    volume_key,
+                    roots_json,
+                    dirty_paths_json,
+                    max_depth,
+                    limit_count,
+                    mode,
+                    throttle_hint,
+                    status,
+                    progress_json,
+                    started_at_millis,
+                    updated_at_millis,
+                    completed_at_millis,
+                    result_available,
+                    resume_available,
+                    persisted_at_millis
+                 ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
+                 )
+                 ON CONFLICT(job_id) DO UPDATE SET
+                    signature = excluded.signature,
+                    volume_key = excluded.volume_key,
+                    roots_json = excluded.roots_json,
+                    dirty_paths_json = excluded.dirty_paths_json,
+                    max_depth = excluded.max_depth,
+                    limit_count = excluded.limit_count,
+                    mode = excluded.mode,
+                    throttle_hint = excluded.throttle_hint,
+                    status = excluded.status,
+                    progress_json = excluded.progress_json,
+                    started_at_millis = excluded.started_at_millis,
+                    updated_at_millis = excluded.updated_at_millis,
+                    completed_at_millis = excluded.completed_at_millis,
+                    result_available = excluded.result_available,
+                    resume_available = excluded.resume_available,
+                    persisted_at_millis = excluded.persisted_at_millis",
+                params![
+                    record.job_id,
+                    record.signature,
+                    record.volume_key,
+                    roots_json,
+                    dirty_paths_json,
+                    record.max_depth.min(i64::MAX as usize) as i64,
+                    record.limit.min(i64::MAX as usize) as i64,
+                    record.mode,
+                    record.throttle_hint,
+                    record.status,
+                    progress_json,
+                    record.started_at_millis.min(i64::MAX as u64) as i64,
+                    record.updated_at_millis.min(i64::MAX as u64) as i64,
+                    record
+                        .completed_at_millis
+                        .map(|value| value.min(i64::MAX as u64) as i64),
+                    i64::from(record.result_available),
+                    i64::from(record.resume_available),
+                    persisted_at_millis.min(i64::MAX as u64) as i64,
+                ],
+            )
+            .map_err(|error| format!("persist:{error}"))?;
+        Self::prune_old(&connection, persisted_at_millis);
+        Ok(persisted_at_millis)
+    }
+
+    fn load_resume_candidate(signature: &str) -> Option<StorageScanPersistedState> {
+        let connection = Self::open_connection().ok()?;
+        let min_updated_millis =
+            storage_now_millis().saturating_sub(STORAGE_SCAN_STATE_MAX_AGE_MILLIS);
+        let mut statement = connection
+            .prepare(
+                "SELECT progress_json, persisted_at_millis
+                 FROM storage_scan_job_state
+                 WHERE signature = ?1
+                   AND resume_available = 1
+                   AND status IN ('queued', 'running', 'paused')
+                   AND updated_at_millis >= ?2
+                 ORDER BY updated_at_millis DESC
+                 LIMIT 1",
+            )
+            .ok()?;
+        statement
+            .query_row(
+                params![signature, min_updated_millis.min(i64::MAX as u64) as i64],
+                |row| {
+                    let progress_json: String = row.get(0)?;
+                    let persisted_at_millis: i64 = row.get(1)?;
+                    let progress = serde_json::from_str::<StorageScanJobProgress>(&progress_json)
+                        .map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                    Ok(StorageScanPersistedState {
+                        progress,
+                        persisted_at_millis: persisted_at_millis.max(0) as u64,
+                    })
+                },
+            )
+            .ok()
+    }
+
+    fn prune_old(connection: &Connection, now_millis: u64) {
+        let cutoff = now_millis.saturating_sub(STORAGE_SCAN_STATE_MAX_AGE_MILLIS);
+        let _ = connection.execute(
+            "DELETE FROM storage_scan_job_state
+             WHERE updated_at_millis < ?1
+               AND status NOT IN ('queued', 'running', 'paused')",
+            params![cutoff.min(i64::MAX as u64) as i64],
+        );
+    }
+
+    #[cfg(test)]
+    fn load_status_for_job(job_id: &str) -> Option<String> {
+        let connection = Self::open_connection().ok()?;
+        connection
+            .query_row(
+                "SELECT status FROM storage_scan_job_state WHERE job_id = ?1",
+                params![job_id],
+                |row| row.get(0),
+            )
+            .ok()
     }
 }
 
@@ -337,14 +555,23 @@ impl StorageScanThrottle {
             StorageScanMode::ForensicVerified => 5,
         };
         let mut reasons = Vec::new();
-        if request
+        let has_external_or_network_root = request
             .normalized_roots
             .iter()
-            .any(|root| root.starts_with("/Volumes/"))
-        {
+            .any(|root| is_network_storage_path(Path::new(root)));
+        let has_cloud_root = request
+            .normalized_roots
+            .iter()
+            .any(|root| is_cloud_storage_path(Path::new(root)));
+        if has_external_or_network_root {
             sleep_every_checkpoints = 96;
             sleep_millis = sleep_millis.max(8);
             reasons.push("external-or-secondary-volume");
+        }
+        if has_cloud_root {
+            sleep_every_checkpoints = sleep_every_checkpoints.clamp(64, 128);
+            sleep_millis = sleep_millis.max(10);
+            reasons.push("cloud-root");
         }
         if request.throttle_hint.contains("battery") {
             sleep_every_checkpoints = 96;
@@ -355,6 +582,16 @@ impl StorageScanThrottle {
             sleep_every_checkpoints = 64;
             sleep_millis = sleep_millis.max(12);
             reasons.push("thermal-pressure");
+        }
+        if request.throttle_hint.contains("network") {
+            sleep_every_checkpoints = 64;
+            sleep_millis = sleep_millis.max(12);
+            reasons.push("network");
+        }
+        if request.throttle_hint.contains("cloud") {
+            sleep_every_checkpoints = 64;
+            sleep_millis = sleep_millis.max(12);
+            reasons.push("cloud");
         }
         Self {
             sleep_every_checkpoints,
@@ -463,7 +700,11 @@ struct StorageScanJob {
 }
 
 impl StorageScanJob {
-    fn new(id: String, request: StorageScanJobRequest) -> Arc<Self> {
+    fn new(
+        id: String,
+        request: StorageScanJobRequest,
+        persisted_state: Option<StorageScanPersistedState>,
+    ) -> Arc<Self> {
         let now_millis = storage_now_millis();
         let throttle = StorageScanThrottle::for_request(&request);
         let progress = StorageScanJobProgress::new(now_millis, throttle.reason.clone());
@@ -475,6 +716,7 @@ impl StorageScanJob {
             state: Mutex::new(StorageScanJobState::new(
                 now_millis,
                 throttle.reason.clone(),
+                persisted_state.as_ref(),
             )),
             handle: Mutex::new(None),
         })
@@ -497,7 +739,51 @@ impl StorageScanJob {
             mode: self.request.mode.as_str().to_owned(),
             throttle_hint: self.request.throttle_hint.clone(),
             volume_key: self.request.volume_key.clone(),
+            resumed_from_partial: state.resumed_from_partial,
+            partial_state_available: state.resumed_from_partial
+                || state.persisted_at_millis.is_some(),
+            persisted_at_millis: state.persisted_at_millis,
+            recovered_files: state.recovered_files,
+            recovered_directories: state.recovered_directories,
+            recovered_bytes: state.recovered_bytes,
             progress: state.progress.clone(),
+        }
+    }
+
+    fn persist_state(&self, force: bool) {
+        let now_millis = storage_now_millis();
+        let record = {
+            let state = lock_or_recover(&self.state);
+            if !force
+                && state.last_progress_persist_millis > 0
+                && now_millis.saturating_sub(state.last_progress_persist_millis)
+                    < STORAGE_SCAN_PROGRESS_PERSIST_INTERVAL_MILLIS
+            {
+                return;
+            }
+            StorageScanPersistedRecord {
+                job_id: self.id.clone(),
+                signature: self.request.signature.clone(),
+                volume_key: self.request.volume_key.clone(),
+                roots: self.request.normalized_roots.clone(),
+                dirty_paths: self.request.dirty_paths.clone(),
+                max_depth: self.request.max_depth,
+                limit: self.request.limit,
+                mode: self.request.mode.as_str().to_owned(),
+                throttle_hint: self.request.throttle_hint.clone(),
+                status: state.status.as_str().to_owned(),
+                progress: state.progress.clone(),
+                started_at_millis: state.started_at_millis,
+                updated_at_millis: state.updated_at_millis,
+                completed_at_millis: state.completed_at_millis,
+                result_available: state.result_json.is_some(),
+                resume_available: state.status.is_active(),
+            }
+        };
+        if let Ok(persisted_at_millis) = StorageScanStateStore::persist(record) {
+            let mut state = lock_or_recover(&self.state);
+            state.persisted_at_millis = Some(persisted_at_millis);
+            state.last_progress_persist_millis = persisted_at_millis;
         }
     }
 
@@ -516,6 +802,8 @@ impl StorageScanJob {
         if !status.is_active() {
             state.completed_at_millis = Some(now_millis);
         }
+        drop(state);
+        self.persist_state(true);
     }
 
     fn set_status_preserving_phase(&self, status: StorageScanJobStatusKind) {
@@ -532,6 +820,8 @@ impl StorageScanJob {
         if !status.is_active() {
             state.completed_at_millis = Some(now_millis);
         }
+        drop(state);
+        self.persist_state(true);
     }
 
     fn refresh_progress(&self) {
@@ -540,6 +830,8 @@ impl StorageScanJob {
         let mut state = lock_or_recover(&self.state);
         state.progress = progress_snapshot;
         state.updated_at_millis = now_millis;
+        drop(state);
+        self.persist_state(false);
     }
 
     fn complete(&self, result_json: String) {
@@ -557,6 +849,8 @@ impl StorageScanJob {
         state.updated_at_millis = now_millis;
         state.completed_at_millis = Some(state.updated_at_millis);
         state.progress = progress_snapshot;
+        drop(state);
+        self.persist_state(true);
     }
 
     fn fail(&self, error: String) {
@@ -573,6 +867,8 @@ impl StorageScanJob {
         state.updated_at_millis = now_millis;
         state.completed_at_millis = Some(state.updated_at_millis);
         state.progress = progress_snapshot;
+        drop(state);
+        self.persist_state(true);
     }
 
     fn cancel(&self) {
@@ -623,13 +919,15 @@ impl StorageScanJobManager {
             return existing.response(true);
         }
 
+        let persisted_state = StorageScanStateStore::load_resume_candidate(&request.signature);
         let sequence = self.next_id.fetch_add(1, AtomicOrdering::Relaxed);
         let job_id = format!("storage-scan-{}-{sequence}", storage_now_millis());
-        let job = StorageScanJob::new(job_id.clone(), request);
+        let job = StorageScanJob::new(job_id.clone(), request, persisted_state);
         {
             let mut jobs = lock_or_recover(&self.jobs);
             jobs.insert(job_id, Arc::clone(&job));
         }
+        job.persist_state(true);
 
         let manager = storage_scan_jobs();
         let job_for_thread = Arc::clone(&job);
@@ -757,7 +1055,7 @@ fn run_storage_scan_job(manager: &'static StorageScanJobManager, job: Arc<Storag
                 Arc::clone(&job.progress),
                 throttle,
             );
-            let mut report = build_storage_hygiene_report_with_options(
+            let report = build_storage_hygiene_report_with_options(
                 job.request.roots.clone(),
                 StorageHygieneOptions {
                     max_depth: job.request.max_depth,
@@ -774,11 +1072,7 @@ fn run_storage_scan_job(manager: &'static StorageScanJobManager, job: Arc<Storag
                 StorageScanJobStatusKind::Running,
                 STORAGE_SCAN_PHASE_FINALIZING,
             );
-            let serialize_started = Instant::now();
-            let json = serde_json::to_string(&report).map_err(|error| error.to_string())?;
-            report.diagnostics.serialize_millis = serialize_started.elapsed().as_millis() as u64;
-            report.diagnostics.payload_bytes = json.len().min(u64::MAX as usize) as u64;
-            serde_json::to_string(&report).map_err(|error| error.to_string())
+            finalize_storage_report_json(report)
         }
     });
 
@@ -894,6 +1188,20 @@ struct StorageScanDiagnostics {
     fsevents_status: String,
     lazy_git_status: bool,
     top_k_retained: bool,
+    performance_budget: StoragePerformanceBudgetDiagnostics,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct StoragePerformanceBudgetDiagnostics {
+    status: String,
+    scan_job_latency_millis: u64,
+    payload_bytes: u64,
+    payload_budget_bytes: u64,
+    table_page_millis: u64,
+    table_page_budget_millis: u64,
+    render_publish_millis: u64,
+    render_budget_millis: u64,
+    notes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -919,12 +1227,14 @@ struct StorageSourceCoverage {
     path: String,
     status: String,
     permission_state: String,
+    gap_kind: String,
     detail: String,
     local_bytes: Option<u64>,
     logical_bytes: Option<u64>,
     reclaimable_bytes: Option<u64>,
     cloud_placeholder: bool,
     network: bool,
+    protected: bool,
     scanned: bool,
 }
 
@@ -983,6 +1293,9 @@ struct StorageGrowthDelta {
     command: Option<String>,
     process_tree: Option<String>,
     ai_agent_session: Option<String>,
+    writer_source: Option<String>,
+    matched_writer_count: u64,
+    attribution_sources: Vec<String>,
     attribution_confidence: String,
     attribution_confidence_score: u8,
     attribution_ambiguous: bool,
@@ -1009,11 +1322,25 @@ struct StorageWriterLedgerRecord {
     #[serde(default)]
     git_head: Option<String>,
     #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    working_directory: Option<String>,
+    #[serde(default)]
     command: Option<String>,
     #[serde(default)]
     process_tree: Option<String>,
     #[serde(default)]
     ai_agent_session: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    tab_id: Option<String>,
+    #[serde(default)]
+    tab_name: Option<String>,
+    #[serde(default)]
+    chau7_session_id: Option<String>,
     #[serde(default)]
     source: Option<String>,
 }
@@ -1026,6 +1353,9 @@ struct StorageGrowthAttribution {
     command: Option<String>,
     process_tree: Option<String>,
     ai_agent_session: Option<String>,
+    writer_source: Option<String>,
+    matched_writer_count: u64,
+    sources: Vec<String>,
     confidence: String,
     confidence_score: u8,
     ambiguous: bool,
@@ -1044,6 +1374,14 @@ struct StorageHygieneItem {
     safety: String,
     cleanup_tier: String,
     size_bytes: u64,
+    logical_bytes: u64,
+    physical_bytes: u64,
+    byte_accounting: String,
+    sparse_or_shared: bool,
+    hardlink_count: u64,
+    has_hardlinks: bool,
+    cloud_placeholder: bool,
+    protected_path: bool,
     size_truncated: bool,
     modified_millis: Option<u64>,
     age_days: Option<u64>,
@@ -1190,6 +1528,8 @@ struct StorageCleanupBundleItem {
     cleanup_command: Option<String>,
     rollback_note: String,
     reason: String,
+    consequence: String,
+    evidence: Vec<String>,
     cleanup_allowed: bool,
     cleanup_blockers: Vec<String>,
     default_cleanup_action: String,
@@ -1379,6 +1719,9 @@ struct StorageRepoFootprint {
     rebuildable_percent: f32,
     item_count: usize,
     top_artifact_folders: Vec<StorageRepoArtifactFolder>,
+    artifact_mix: Vec<StorageRepoArtifactMix>,
+    duplicate_clone_count: u64,
+    duplicate_clone_roots: Vec<String>,
     last_writer_process: Option<String>,
     last_writer_pid: Option<u32>,
     last_branch_touched: Option<String>,
@@ -1468,6 +1811,18 @@ struct StorageRepoArtifactFolder {
 }
 
 #[derive(Clone, Debug, Serialize)]
+struct StorageRepoArtifactMix {
+    kind: String,
+    label: String,
+    item_count: usize,
+    bytes: u64,
+    cleanup_tier: String,
+    rebuild_command: Option<String>,
+    estimated_rebuild_cost: String,
+    estimated_rebuild_seconds: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 struct StorageSkippedRoot {
     path: String,
     reason: String,
@@ -1505,6 +1860,10 @@ struct SizeWalkResult {
     allocated_bytes: u64,
     truncated: bool,
     entries: u64,
+    max_hardlink_count: u64,
+    has_hardlinks: bool,
+    sparse_or_shared: bool,
+    cloud_placeholder: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1751,7 +2110,30 @@ impl StorageSizeIndex {
                 last_scan_millis INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_storage_repository_inventory_cache_root
-                ON storage_repository_inventory_cache(discovered_root, last_seen_millis DESC);",
+                ON storage_repository_inventory_cache(discovered_root, last_seen_millis DESC);
+             CREATE TABLE IF NOT EXISTS storage_scan_job_state (
+                job_id TEXT PRIMARY KEY,
+                signature TEXT NOT NULL,
+                volume_key TEXT NOT NULL,
+                roots_json TEXT NOT NULL,
+                dirty_paths_json TEXT NOT NULL,
+                max_depth INTEGER NOT NULL,
+                limit_count INTEGER NOT NULL,
+                mode TEXT NOT NULL,
+                throttle_hint TEXT NOT NULL,
+                status TEXT NOT NULL,
+                progress_json TEXT NOT NULL,
+                started_at_millis INTEGER NOT NULL,
+                updated_at_millis INTEGER NOT NULL,
+                completed_at_millis INTEGER,
+                result_available INTEGER NOT NULL DEFAULT 0,
+                resume_available INTEGER NOT NULL DEFAULT 0,
+                persisted_at_millis INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_scan_job_state_signature
+                ON storage_scan_job_state(signature, updated_at_millis DESC);
+             CREATE INDEX IF NOT EXISTS idx_storage_scan_job_state_status
+                ON storage_scan_job_state(status, updated_at_millis DESC);",
         )?;
         let schema: i64 = connection.query_row(
             "SELECT value FROM storage_index_meta WHERE key = 'schema_version'",
@@ -1834,7 +2216,30 @@ impl StorageSizeIndex {
                     last_scan_millis INTEGER NOT NULL
                  );
                  CREATE INDEX idx_storage_repository_inventory_cache_root
-                    ON storage_repository_inventory_cache(discovered_root, last_seen_millis DESC);",
+                    ON storage_repository_inventory_cache(discovered_root, last_seen_millis DESC);
+                 CREATE TABLE IF NOT EXISTS storage_scan_job_state (
+                    job_id TEXT PRIMARY KEY,
+                    signature TEXT NOT NULL,
+                    volume_key TEXT NOT NULL,
+                    roots_json TEXT NOT NULL,
+                    dirty_paths_json TEXT NOT NULL,
+                    max_depth INTEGER NOT NULL,
+                    limit_count INTEGER NOT NULL,
+                    mode TEXT NOT NULL,
+                    throttle_hint TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    progress_json TEXT NOT NULL,
+                    started_at_millis INTEGER NOT NULL,
+                    updated_at_millis INTEGER NOT NULL,
+                    completed_at_millis INTEGER,
+                    result_available INTEGER NOT NULL DEFAULT 0,
+                    resume_available INTEGER NOT NULL DEFAULT 0,
+                    persisted_at_millis INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_storage_scan_job_state_signature
+                    ON storage_scan_job_state(signature, updated_at_millis DESC);
+                 CREATE INDEX IF NOT EXISTS idx_storage_scan_job_state_status
+                    ON storage_scan_job_state(status, updated_at_millis DESC);",
             )?;
         }
         Self::ensure_repository_inventory_cache_columns(connection)?;
@@ -1898,6 +2303,10 @@ impl StorageSizeIndex {
                         allocated_bytes: allocated_bytes.max(0) as u64,
                         entries: entries.max(0) as u64,
                         truncated: truncated != 0,
+                        max_hardlink_count: 1,
+                        has_hardlinks: false,
+                        sparse_or_shared: allocated_bytes > 0 && allocated_bytes < size_bytes,
+                        cloud_placeholder: size_bytes > 0 && allocated_bytes == 0,
                     })
                 },
             )
@@ -2230,6 +2639,9 @@ impl StorageSizeIndex {
                 command: None,
                 process_tree: None,
                 ai_agent_session: None,
+                writer_source: None,
+                matched_writer_count: 0,
+                attribution_sources: Vec::new(),
                 attribution_confidence: "low".to_owned(),
                 attribution_confidence_score: 0,
                 attribution_ambiguous: false,
@@ -2248,6 +2660,9 @@ impl StorageSizeIndex {
                 delta.command = attribution.command;
                 delta.process_tree = attribution.process_tree;
                 delta.ai_agent_session = attribution.ai_agent_session;
+                delta.writer_source = attribution.writer_source;
+                delta.matched_writer_count = attribution.matched_writer_count;
+                delta.attribution_sources = attribution.sources;
                 delta.attribution_confidence = attribution.confidence;
                 delta.attribution_confidence_score = attribution.confidence_score;
                 delta.attribution_ambiguous = attribution.ambiguous;
@@ -2402,12 +2817,9 @@ pub fn storage_hygiene_mode_json(
     limit: usize,
     mode: &str,
 ) -> Result<String, String> {
-    let mut report = build_storage_hygiene_report_with_mode(roots, max_depth, limit, mode);
-    let serialize_started = Instant::now();
-    let json = serde_json::to_string(&report).map_err(|error| error.to_string())?;
-    report.diagnostics.serialize_millis = serialize_started.elapsed().as_millis() as u64;
-    report.diagnostics.payload_bytes = json.len().min(u64::MAX as usize) as u64;
-    serde_json::to_string(&report).map_err(|error| error.to_string())
+    finalize_storage_report_json(build_storage_hygiene_report_with_mode(
+        roots, max_depth, limit, mode,
+    ))
 }
 
 pub fn storage_hygiene_indexed_json(
@@ -2415,12 +2827,100 @@ pub fn storage_hygiene_indexed_json(
     max_depth: usize,
     limit: usize,
 ) -> Result<String, String> {
-    let mut report = build_storage_hygiene_report_from_index(roots, max_depth, limit)?;
+    finalize_storage_report_json(build_storage_hygiene_report_from_index(
+        roots, max_depth, limit,
+    )?)
+}
+
+fn finalize_storage_report_json(mut report: StorageHygieneReport) -> Result<String, String> {
     let serialize_started = Instant::now();
     let json = serde_json::to_string(&report).map_err(|error| error.to_string())?;
     report.diagnostics.serialize_millis = serialize_started.elapsed().as_millis() as u64;
     report.diagnostics.payload_bytes = json.len().min(u64::MAX as usize) as u64;
+    refresh_storage_performance_budget(&mut report, 0, 0);
     serde_json::to_string(&report).map_err(|error| error.to_string())
+}
+
+fn refresh_storage_performance_budget(
+    report: &mut StorageHygieneReport,
+    table_page_millis: u64,
+    render_publish_millis: u64,
+) {
+    let mut notes = Vec::new();
+    let mut severity = 0u8;
+    if report.scan_duration_millis >= STORAGE_SCAN_LATENCY_CRITICAL_MILLIS {
+        severity = severity.max(2);
+        notes.push(format!(
+            "scan latency exceeded critical budget: {}ms >= {}ms",
+            report.scan_duration_millis, STORAGE_SCAN_LATENCY_CRITICAL_MILLIS
+        ));
+    } else if report.scan_duration_millis >= STORAGE_SCAN_LATENCY_WARN_MILLIS {
+        severity = severity.max(1);
+        notes.push(format!(
+            "scan latency exceeded warning budget: {}ms >= {}ms",
+            report.scan_duration_millis, STORAGE_SCAN_LATENCY_WARN_MILLIS
+        ));
+    }
+    if report.diagnostics.payload_bytes >= STORAGE_PAYLOAD_CRITICAL_BYTES {
+        severity = severity.max(2);
+        notes.push(format!(
+            "payload exceeded critical budget: {} bytes >= {} bytes",
+            report.diagnostics.payload_bytes, STORAGE_PAYLOAD_CRITICAL_BYTES
+        ));
+    } else if report.diagnostics.payload_bytes >= STORAGE_PAYLOAD_WARN_BYTES {
+        severity = severity.max(1);
+        notes.push(format!(
+            "payload exceeded warning budget: {} bytes >= {} bytes",
+            report.diagnostics.payload_bytes, STORAGE_PAYLOAD_WARN_BYTES
+        ));
+    }
+    if table_page_millis >= STORAGE_TABLE_PAGE_CRITICAL_MILLIS {
+        severity = severity.max(2);
+        notes.push(format!(
+            "table page exceeded critical budget: {table_page_millis}ms >= {STORAGE_TABLE_PAGE_CRITICAL_MILLIS}ms"
+        ));
+    } else if table_page_millis >= STORAGE_TABLE_PAGE_WARN_MILLIS {
+        severity = severity.max(1);
+        notes.push(format!(
+            "table page exceeded warning budget: {table_page_millis}ms >= {STORAGE_TABLE_PAGE_WARN_MILLIS}ms"
+        ));
+    }
+    if render_publish_millis >= STORAGE_RENDER_CRITICAL_MILLIS {
+        severity = severity.max(2);
+        notes.push(format!(
+            "render publish exceeded critical budget: {render_publish_millis}ms >= {STORAGE_RENDER_CRITICAL_MILLIS}ms"
+        ));
+    } else if render_publish_millis >= STORAGE_RENDER_WARN_MILLIS {
+        severity = severity.max(1);
+        notes.push(format!(
+            "render publish exceeded warning budget: {render_publish_millis}ms >= {STORAGE_RENDER_WARN_MILLIS}ms"
+        ));
+    }
+    if report.diagnostics.candidate_seen_count >= 1_000_000 {
+        notes.push(format!(
+            "stress fixture scale: {} candidates seen",
+            report.diagnostics.candidate_seen_count
+        ));
+    }
+    if notes.is_empty() {
+        notes.push("storage scan and UI payload stayed within current budgets".to_owned());
+    }
+    report.diagnostics.performance_budget = StoragePerformanceBudgetDiagnostics {
+        status: match severity {
+            0 => "ok",
+            1 => "warn",
+            _ => "critical",
+        }
+        .to_owned(),
+        scan_job_latency_millis: report.scan_duration_millis,
+        payload_bytes: report.diagnostics.payload_bytes,
+        payload_budget_bytes: STORAGE_PAYLOAD_WARN_BYTES,
+        table_page_millis,
+        table_page_budget_millis: STORAGE_TABLE_PAGE_WARN_MILLIS,
+        render_publish_millis,
+        render_budget_millis: STORAGE_RENDER_WARN_MILLIS,
+        notes,
+    };
 }
 
 pub fn storage_scan_start_json(
@@ -2488,6 +2988,8 @@ pub fn storage_hygiene_overview_json(
         summary: report.summary,
         investigation: report.investigation,
         cleanup_tiers: report.cleanup_tiers,
+        cleanup_recipes: report.cleanup_recipes.into_iter().take(8).collect(),
+        cleanup_bundles: report.cleanup_bundles.into_iter().take(4).collect(),
         budget_guardrails: report.budget_guardrails,
         agent_hygiene: report.agent_hygiene,
         repository_inventory_complete: report.repository_inventory_complete,
@@ -2500,6 +3002,7 @@ pub fn storage_hygiene_overview_json(
         app_footprints: report.app_footprints.into_iter().take(6).collect(),
         system_data_buckets: report.system_data_buckets,
         treemap_roots: report.treemap_roots,
+        items: report.items.into_iter().take(12).collect(),
         roots: report.roots,
         skipped_roots: report.skipped_roots,
         source_coverage: report.source_coverage,
@@ -2608,9 +3111,11 @@ pub fn storage_hygiene_items_page_json(
     sort_descending: bool,
 ) -> Result<String, String> {
     let requested_limit = offset.saturating_add(limit).clamp(1, MAX_LIMIT);
-    let report = build_storage_hygiene_projection_report(roots, max_depth, requested_limit, mode);
+    let mut report =
+        build_storage_hygiene_projection_report(roots, max_depth, requested_limit, mode);
+    let table_started = Instant::now();
     let sort_key = StorageItemSortKey::parse(sort_key);
-    let mut report_items = report.items;
+    let mut report_items = std::mem::take(&mut report.items);
     sort_storage_items(&mut report_items, sort_key, sort_descending);
     let total_available = report_items.len();
     let items = report_items
@@ -2618,6 +3123,7 @@ pub fn storage_hygiene_items_page_json(
         .skip(offset)
         .take(limit.min(MAX_LIMIT))
         .collect::<Vec<_>>();
+    refresh_storage_performance_budget(&mut report, table_started.elapsed().as_millis() as u64, 0);
     serde_json::to_string(&StorageHygieneItemsPageResponse {
         captured_at_millis: report.captured_at_millis,
         scan_mode: report.scan_mode,
@@ -2678,6 +3184,8 @@ struct StorageHygieneOverviewResponse {
     summary: StorageHygieneSummary,
     investigation: StorageInvestigationSummary,
     cleanup_tiers: Vec<StorageCleanupTierSummary>,
+    cleanup_recipes: Vec<StorageCleanupRecipe>,
+    cleanup_bundles: Vec<StorageCleanupBundle>,
     budget_guardrails: StorageBudgetGuardrails,
     agent_hygiene: StorageAgentHygieneSummary,
     repository_inventory_complete: bool,
@@ -2690,6 +3198,7 @@ struct StorageHygieneOverviewResponse {
     app_footprints: Vec<StorageAppFootprint>,
     system_data_buckets: Vec<StorageSystemDataBucket>,
     treemap_roots: Vec<StorageTreemapNode>,
+    items: Vec<StorageHygieneItem>,
     roots: Vec<String>,
     skipped_roots: Vec<StorageSkippedRoot>,
     source_coverage: Vec<StorageSourceCoverage>,
@@ -2956,6 +3465,7 @@ fn build_storage_hygiene_report_with_options(
     let treemap_roots = build_storage_treemap_roots(&items, &scanned_roots);
     let growth_deltas = storage_index.load_growth_deltas(40);
     apply_growth_deltas_to_repo_footprints(&mut repo_footprints, &growth_deltas);
+    apply_clone_groups_to_repo_footprints(&mut repo_footprints, &repository_inventory);
     let agent_hygiene = summarize_agent_hygiene(&items);
     let source_coverage =
         summarize_source_coverage(&requested_roots, &scanned_roots, &skipped_roots, &items);
@@ -2988,6 +3498,7 @@ fn build_storage_hygiene_report_with_options(
         fsevents_status: "swift_cache_invalidation".to_owned(),
         lazy_git_status: !options.mode.collect_git_status(),
         top_k_retained: true,
+        performance_budget: StoragePerformanceBudgetDiagnostics::default(),
     };
     StorageHygieneReport {
         captured_at_millis: now_millis,
@@ -3020,7 +3531,7 @@ fn build_storage_hygiene_report_with_options(
         growth_deltas,
         truncated,
         caveats: vec![
-            "Cleanup cockpit: Aetower prepares evidence, reveal targets, verification commands, and candidate cleanup commands."
+            "Cleanup cockpit: Aetower prepares evidence, reveal targets, verification commands, and Trash-first cleanup manifests."
                 .to_owned(),
             "Sizes are bounded estimates and may omit paths that require additional permissions."
                 .to_owned(),
@@ -3127,6 +3638,7 @@ fn build_storage_hygiene_report_from_index(
     metrics.candidate_seen_count = metrics.sized_entry_count;
     let growth_deltas = storage_index.load_growth_deltas(40);
     apply_growth_deltas_to_repo_footprints(&mut repo_footprints, &growth_deltas);
+    apply_clone_groups_to_repo_footprints(&mut repo_footprints, &repository_inventory);
     let agent_hygiene = summarize_agent_hygiene(&items);
     let source_coverage =
         summarize_source_coverage(&requested_roots, &scanned_roots, &skipped_roots, &items);
@@ -3159,6 +3671,7 @@ fn build_storage_hygiene_report_from_index(
         fsevents_status: "dirty_paths_refresh_full_scan".to_owned(),
         lazy_git_status: true,
         top_k_retained: true,
+        performance_budget: StoragePerformanceBudgetDiagnostics::default(),
     };
     Ok(StorageHygieneReport {
         captured_at_millis: now_millis,
@@ -3251,7 +3764,7 @@ fn scan_root(
                 now_millis,
                 options.runtime.as_ref(),
             );
-            if size.bytes >= MIN_ITEM_BYTES {
+            if should_retain_storage_item(rule.kind, size.bytes) {
                 let item = storage_item_for_path(
                     &path,
                     metadata.modified().ok(),
@@ -3289,6 +3802,11 @@ fn scan_root(
     (repositories, scanned_dirs, truncated)
 }
 
+fn should_retain_storage_item(kind: &str, bytes: u64) -> bool {
+    bytes >= MIN_ITEM_BYTES
+        || matches!(kind, "app-preferences" | "app-receipt" | "app-launch-item") && bytes > 0
+}
+
 fn storage_item_for_path(
     path: &Path,
     modified: Option<SystemTime>,
@@ -3320,6 +3838,13 @@ fn storage_item_for_path(
         "outside-git"
     };
     let intelligence = artifact_intelligence(rule.kind, &path_display);
+    let logical_bytes = size.bytes;
+    let physical_bytes = size.allocated_bytes;
+    let reclaimable_bytes = if physical_bytes > 0 {
+        physical_bytes
+    } else {
+        logical_bytes
+    };
     StorageHygieneItem {
         id: path_display.clone(),
         path: path_display.clone(),
@@ -3333,7 +3858,15 @@ fn storage_item_for_path(
         git_status: git_status.to_owned(),
         safety: rule.safety.to_owned(),
         cleanup_tier: rule.cleanup_tier.to_owned(),
-        size_bytes: size.bytes,
+        size_bytes: reclaimable_bytes,
+        logical_bytes,
+        physical_bytes,
+        byte_accounting: storage_byte_accounting_label(logical_bytes, physical_bytes),
+        sparse_or_shared: size.sparse_or_shared,
+        hardlink_count: size.max_hardlink_count,
+        has_hardlinks: size.has_hardlinks,
+        cloud_placeholder: size.cloud_placeholder,
+        protected_path: is_protected_cleanup_path(&path_display),
         size_truncated: size.truncated,
         modified_millis,
         age_days,
@@ -3394,6 +3927,8 @@ fn storage_item_for_indexed_row(row: StorageIndexedFileRow, now_millis: u64) -> 
         .to_owned();
     let path_display = row.path.clone();
     let intelligence = artifact_intelligence(&row.kind, &path_display);
+    let logical_bytes = row.logical_bytes;
+    let physical_bytes = row.physical_bytes;
     let mut item = StorageHygieneItem {
         id: path_display.clone(),
         path: path_display.clone(),
@@ -3407,11 +3942,19 @@ fn storage_item_for_indexed_row(row: StorageIndexedFileRow, now_millis: u64) -> 
         },
         safety: row.safety,
         cleanup_tier: row.cleanup_tier,
-        size_bytes: if row.physical_bytes > 0 {
-            row.physical_bytes
+        size_bytes: if physical_bytes > 0 {
+            physical_bytes
         } else {
-            row.logical_bytes
+            logical_bytes
         },
+        logical_bytes,
+        physical_bytes,
+        byte_accounting: storage_byte_accounting_label(logical_bytes, physical_bytes),
+        sparse_or_shared: physical_bytes > 0 && physical_bytes < logical_bytes,
+        hardlink_count: 1,
+        has_hardlinks: false,
+        cloud_placeholder: logical_bytes > 0 && physical_bytes == 0,
+        protected_path: is_protected_cleanup_path(&path_display),
         size_truncated: row.truncated,
         modified_millis,
         age_days,
@@ -3508,6 +4051,37 @@ fn storage_item_evidence(item: &StorageHygieneItem) -> Vec<String> {
         "Size estimate is {}.",
         human_bytes(item.size_bytes)
     ));
+    if item.logical_bytes != item.physical_bytes {
+        evidence.push(format!(
+            "Logical size is {}; physical reclaim estimate is {} using {}.",
+            human_bytes(item.logical_bytes),
+            human_bytes(item.physical_bytes),
+            item.byte_accounting
+        ));
+    } else {
+        evidence.push(format!("Byte accounting uses {}.", item.byte_accounting));
+    }
+    if item.sparse_or_shared {
+        evidence.push(
+            "Physical bytes are lower than logical bytes; APFS clone, compression, sparse, or cloud materialization may be involved."
+                .to_owned(),
+        );
+    }
+    if item.has_hardlinks {
+        evidence.push(format!(
+            "Hardlink count reached {}; reclaim may be lower while another link remains.",
+            item.hardlink_count
+        ));
+    }
+    if item.cloud_placeholder {
+        evidence.push(
+            "This path looks cloud-backed or dehydrated: logical bytes may not be present locally."
+                .to_owned(),
+        );
+    }
+    if item.protected_path {
+        evidence.push("Path is under a protected system/application root.".to_owned());
+    }
     evidence.push(format!(
         "Estimated rebuild cost is {}{}.",
         item.estimated_rebuild_cost,
@@ -3571,7 +4145,21 @@ fn storage_item_evidence(item: &StorageHygieneItem) -> Vec<String> {
         evidence.push(format!("AI-agent directory evidence: {session}."));
     }
     evidence.extend(item.attribution.notes.iter().take(2).cloned());
-    unique_limited(evidence, 8)
+    unique_limited(evidence, 12)
+}
+
+fn storage_byte_accounting_label(logical_bytes: u64, physical_bytes: u64) -> String {
+    if logical_bytes == 0 && physical_bytes == 0 {
+        "empty path".to_owned()
+    } else if physical_bytes == 0 {
+        "logical fallback or cloud placeholder".to_owned()
+    } else if physical_bytes < logical_bytes {
+        "APFS physical blocks".to_owned()
+    } else if physical_bytes > logical_bytes {
+        "allocated blocks including filesystem overhead".to_owned()
+    } else {
+        "logical and physical bytes match".to_owned()
+    }
 }
 
 fn storage_item_next_step(item: &StorageHygieneItem) -> String {
@@ -3753,7 +4341,8 @@ fn storage_role_for_kind(kind: &str) -> &'static str {
         "node-dependencies" | "xcode-source-packages" => "dependency-tree",
         "python-environment" | "docker-storage" | "xcode-simulator-runtime" => "environment",
         "macos-app-bundle" => "application",
-        "app-support-data" | "app-container" | "app-launch-item" => "app-data",
+        "app-support-data" | "app-container" | "app-launch-item" | "app-preferences"
+        | "app-receipt" => "app-data",
         "ios-backup" | "mail-attachments" | "message-attachments" | "local-snapshot" => {
             "system-data"
         }
@@ -3925,12 +4514,13 @@ fn artifact_intelligence(kind: &str, path: &str) -> ArtifactIntelligence {
                 "Removing an app bundle is an uninstall action; review related support data, containers, launch items, and receipts first."
                     .to_owned(),
         },
-        "app-support-data" | "app-container" | "app-launch-item" => ArtifactIntelligence {
+        "app-support-data" | "app-container" | "app-launch-item" | "app-preferences"
+        | "app-receipt" => ArtifactIntelligence {
             rebuild_command: None,
             estimated_rebuild_cost: "Review first".to_owned(),
             estimated_rebuild_seconds: None,
             cleanup_consequence:
-                "App data can contain settings, databases, launch configuration, or user state; clean it only as part of an intentional uninstall."
+                "App data can contain settings, receipts, databases, launch configuration, or user state; clean it only as part of an intentional uninstall."
                     .to_owned(),
         },
         "ios-backup" => ArtifactIntelligence {
@@ -4062,6 +4652,19 @@ fn is_launch_item_path(path_lower: &str) -> bool {
     is_library_child(path_lower, "launchagents") || path_lower.contains("/library/launchdaemons/")
 }
 
+fn is_app_preferences_path(path_lower: &str, name: &str) -> bool {
+    is_library_child(path_lower, "preferences") && name.to_ascii_lowercase().ends_with(".plist")
+}
+
+fn is_app_receipt_path(path_lower: &str, name: &str) -> bool {
+    let name_lower = name.to_ascii_lowercase();
+    (path_lower.contains("/var/db/receipts/") || path_lower.contains("/library/receipts/"))
+        && (name_lower.ends_with(".plist")
+            || name_lower.ends_with(".bom")
+            || name_lower.ends_with(".pkg")
+            || name_lower.ends_with(".pkg/"))
+}
+
 fn is_ios_backup_path(path_lower: &str) -> bool {
     path_lower.contains("/library/application support/mobilesync/backup/")
 }
@@ -4101,6 +4704,33 @@ fn classify_artifact(
             "safe",
             "Development log file.",
             "Safe to review and rotate when no current task depends on it.",
+        ));
+    }
+    if metadata.is_file() && is_app_preferences_path(&path_lower, name) {
+        return Some(rule(
+            "app-preferences",
+            "review",
+            "risky",
+            "Application preference plist.",
+            "Review only as part of an app uninstall; preferences can hold settings, license state, or account hints.",
+        ));
+    }
+    if metadata.is_file() && is_app_receipt_path(&path_lower, name) {
+        return Some(rule(
+            "app-receipt",
+            "review",
+            "risky",
+            "Application install receipt.",
+            "Review only as part of an app uninstall; receipts help macOS and installers understand what was installed.",
+        ));
+    }
+    if metadata.is_file() && is_launch_item_path(&path_lower) {
+        return Some(rule(
+            "app-launch-item",
+            "review",
+            "risky",
+            "App launch agent or daemon.",
+            "Review launch items alongside their owning app before disabling or deleting anything.",
         ));
     }
     if metadata.is_file() && is_release_artifact_file(name) {
@@ -4268,6 +4898,15 @@ fn classify_artifact(
             "risky",
             "App launch agent or daemon area.",
             "Review launch items alongside their owning app before disabling or deleting anything.",
+        ));
+    }
+    if is_app_receipt_path(&path_lower, name) {
+        return Some(rule(
+            "app-receipt",
+            "review",
+            "risky",
+            "Application install receipt.",
+            "Review only as part of an app uninstall; receipts help macOS and installers understand what was installed.",
         ));
     }
     if is_app_support_path(&path_lower) && !path_lower.contains("/mobilesync") {
@@ -4480,8 +5119,11 @@ fn size_of_path(
     let kind = rule.kind;
     if metadata.is_file() {
         let blocks = metadata.blocks();
+        let hardlink_count = metadata.nlink();
         metrics.sized_entry_count = metrics.sized_entry_count.saturating_add(1);
         let allocated_bytes = blocks.saturating_mul(512);
+        let sparse_or_shared = allocated_bytes > 0 && allocated_bytes < metadata.len();
+        let cloud_placeholder = metadata.len() > 0 && allocated_bytes == 0;
         let repo_root = if mode.use_storage_index() {
             find_git_root(path).map(|root| root.display().to_string())
         } else {
@@ -4501,6 +5143,10 @@ fn size_of_path(
                 allocated_bytes,
                 truncated: true,
                 entries: 1,
+                max_hardlink_count: hardlink_count,
+                has_hardlinks: hardlink_count > 1,
+                sparse_or_shared,
+                cloud_placeholder,
             };
             if mode.use_storage_index() {
                 storage_index.store_indexed_row(
@@ -4529,6 +5175,10 @@ fn size_of_path(
             allocated_bytes,
             truncated: false,
             entries: 1,
+            max_hardlink_count: hardlink_count,
+            has_hardlinks: hardlink_count > 1,
+            sparse_or_shared,
+            cloud_placeholder,
         };
         if mode.use_storage_index() {
             storage_index.store_indexed_row(
@@ -4601,6 +5251,11 @@ fn size_of_path(
                 let physical_bytes = metadata.blocks().saturating_mul(512);
                 result.bytes = result.bytes.saturating_add(logical_bytes);
                 result.allocated_bytes = result.allocated_bytes.saturating_add(physical_bytes);
+                let hardlink_count = metadata.nlink();
+                result.max_hardlink_count = result.max_hardlink_count.max(hardlink_count);
+                result.has_hardlinks |= hardlink_count > 1;
+                result.sparse_or_shared |= physical_bytes > 0 && physical_bytes < logical_bytes;
+                result.cloud_placeholder |= logical_bytes > 0 && physical_bytes == 0;
                 if mode.use_storage_index() {
                     storage_index.store_indexed_row(
                         &indexed_row_for_path(
@@ -4818,6 +5473,7 @@ fn attribute_storage_growth_delta(
     });
     let inferred_agent_session = known_agent_path(Path::new(&delta.path))
         .map(|(_, display_name)| format!("{display_name} local artifacts"));
+    let mut sources = vec!["index_delta".to_owned()];
     let matching_records = writer_ledger
         .iter()
         .filter(|record| storage_writer_record_matches_delta(record, delta))
@@ -4829,37 +5485,48 @@ fn attribute_storage_growth_delta(
 
     if let Some(repo_root) = delta.repo_root.as_deref() {
         evidence.push(format!("Repo matched by indexed path: {repo_root}."));
+        sources.push("repo_path".to_owned());
     }
     if let Some(session) = inferred_agent_session.as_deref() {
         evidence.push(format!("AI-agent directory evidence: {session}."));
+        sources.push("agent_path".to_owned());
     }
 
     if matching_records.len() == 1 {
         let record = matching_records[0];
         let command = first_non_empty(record.command.as_deref(), None);
         let process_tree = first_non_empty(record.process_tree.as_deref(), None);
+        let derived_agent_session = derived_writer_agent_session(record);
         let ai_agent_session = first_non_empty(
             record.ai_agent_session.as_deref(),
+            derived_agent_session.as_deref(),
+        );
+        let ai_agent_session = first_non_empty(
+            ai_agent_session.as_deref(),
             inferred_agent_session.as_deref(),
         );
+        let writer_source = writer_record_source(record);
         if let Some(source) = record.source.as_deref().filter(|value| !value.is_empty()) {
             evidence.push(format!("Writer ledger source: {source}."));
         }
-        if let Some(prefix) = record
-            .path_prefix
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(source) = writer_source.as_deref() {
+            sources.push(source.to_owned());
+        }
+        sources.push("writer_ledger".to_owned());
+        if let Some(prefix) = writer_record_path_prefixes(record).first() {
             evidence.push(format!("Writer ledger path prefix matched: {prefix}."));
         }
         if let Some(command) = command.as_deref() {
             evidence.push(format!("Command matched: {command}."));
+            sources.push("command".to_owned());
         }
         if let Some(process_tree) = process_tree.as_deref() {
             evidence.push(format!("Process tree matched: {process_tree}."));
+            sources.push("process_tree".to_owned());
         }
         if let Some(session) = ai_agent_session.as_deref() {
             evidence.push(format!("AI session matched: {session}."));
+            sources.push("ai_session".to_owned());
         }
 
         return StorageGrowthAttribution {
@@ -4869,6 +5536,9 @@ fn attribute_storage_growth_delta(
             command,
             process_tree,
             ai_agent_session,
+            writer_source,
+            matched_writer_count: 1,
+            sources: unique_limited(sources, 12),
             confidence: "high".to_owned(),
             confidence_score: 92,
             ambiguous: false,
@@ -4897,6 +5567,8 @@ fn attribute_storage_growth_delta(
             matching_records.len(),
             candidate_labels.join(", ")
         ));
+        sources.push("writer_ledger".to_owned());
+        sources.push("ambiguous_writers".to_owned());
         return StorageGrowthAttribution {
             repo_name,
             git_branch: git_head.branch,
@@ -4904,6 +5576,9 @@ fn attribute_storage_growth_delta(
             command: None,
             process_tree: None,
             ai_agent_session: inferred_agent_session,
+            writer_source: None,
+            matched_writer_count: matching_records.len().min(u64::MAX as usize) as u64,
+            sources: unique_limited(sources, 12),
             confidence: "ambiguous".to_owned(),
             confidence_score: 45,
             ambiguous: true,
@@ -4949,6 +5624,9 @@ fn attribute_storage_growth_delta(
         command: None,
         process_tree: None,
         ai_agent_session: inferred_agent_session,
+        writer_source: None,
+        matched_writer_count: 0,
+        sources: unique_limited(sources, 12),
         confidence: confidence.to_owned(),
         confidence_score,
         ambiguous: false,
@@ -4961,13 +5639,9 @@ fn storage_writer_record_matches_delta(
     record: &StorageWriterLedgerRecord,
     delta: &StorageGrowthDelta,
 ) -> bool {
-    let path_matches = record
-        .path_prefix
-        .as_deref()
-        .filter(|prefix| !prefix.trim().is_empty())
-        .is_some_and(|prefix| {
-            delta.path == prefix || delta.path.starts_with(&format!("{prefix}/"))
-        });
+    let path_matches = writer_record_path_prefixes(record)
+        .iter()
+        .any(|prefix| delta.path == *prefix || delta.path.starts_with(&format!("{prefix}/")));
     let repo_matches = record
         .repo_root
         .as_deref()
@@ -4977,6 +5651,58 @@ fn storage_writer_record_matches_delta(
         return false;
     }
     storage_writer_record_time_matches(record, delta.scan_millis, delta.bucket_millis)
+}
+
+fn writer_record_path_prefixes(record: &StorageWriterLedgerRecord) -> Vec<String> {
+    unique_limited(
+        [
+            record.path_prefix.as_deref(),
+            record.working_directory.as_deref(),
+            record.cwd.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(normalized_writer_path_prefix)
+        .collect(),
+        4,
+    )
+}
+
+fn normalized_writer_path_prefix(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.trim_end_matches('/').to_owned())
+}
+
+fn writer_record_source(record: &StorageWriterLedgerRecord) -> Option<String> {
+    first_non_empty(record.source.as_deref(), record.provider.as_deref())
+}
+
+fn derived_writer_agent_session(record: &StorageWriterLedgerRecord) -> Option<String> {
+    first_non_empty(
+        record.ai_agent_session.as_deref(),
+        record
+            .session_id
+            .as_deref()
+            .or(record.chau7_session_id.as_deref())
+            .or(record.tab_id.as_deref())
+            .or(record.tab_name.as_deref()),
+    )
+    .map(|session| {
+        if let Some(provider) = record.provider.as_deref().filter(|value| !value.is_empty()) {
+            format!("{provider} session {session}")
+        } else if record
+            .source
+            .as_deref()
+            .is_some_and(|source| source.eq_ignore_ascii_case("chau7"))
+        {
+            format!("Chau7 session {session}")
+        } else {
+            session
+        }
+    })
 }
 
 fn storage_writer_record_time_matches(
@@ -5296,7 +6022,7 @@ fn summarize_storage_investigation(
         }
         summary
             .recommended_next_steps
-            .push("Use Reveal and copied `du` commands first, then run only the cleanup commands you deliberately approve.".to_owned());
+            .push("Use Reveal and copied `du` commands first, then stage approved targets for Finder Trash cleanup.".to_owned());
     }
     if truncated {
         summary.recommended_next_steps.push(
@@ -5584,7 +6310,7 @@ impl AppFootprintAccumulator {
         let has_state = self.components.iter().any(|component| {
             matches!(
                 component.component.as_str(),
-                "Application Support" | "Container" | "Launch item"
+                "Application Support" | "Container" | "Launch item" | "Preferences" | "Receipt"
             )
         });
         StorageAppFootprint {
@@ -5603,7 +6329,7 @@ impl AppFootprintAccumulator {
                 58
             },
             components: self.components,
-            recommendation: "Treat this as an uninstall footprint: quit the app, review support data and containers, then move selected components to Trash.".to_owned(),
+            recommendation: "Treat this as an uninstall footprint: quit the app, review support data, preferences, receipts, containers, and launch items, then move selected components to Trash.".to_owned(),
         }
     }
 }
@@ -5619,7 +6345,8 @@ fn app_component_identity(item: &StorageHygieneItem) -> Option<AppComponentIdent
                 .to_owned();
             let bundle_identifier = app_bundle_identifier(path);
             let key = bundle_identifier
-                .clone()
+                .as_deref()
+                .map(normalize_app_key)
                 .unwrap_or_else(|| normalize_app_key(&app_name));
             Some(AppComponentIdentity {
                 key,
@@ -5627,20 +6354,69 @@ fn app_component_identity(item: &StorageHygieneItem) -> Option<AppComponentIdent
                 bundle_identifier,
             })
         }
-        "app-cache" | "app-support-data" | "app-container" | "app-launch-item" => {
+        "app-cache" | "app-support-data" | "app-container" | "app-launch-item"
+        | "app-preferences" | "app-receipt" => {
             let component_name = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or(&item.display_name)
                 .to_owned();
+            let bundle_identifier = app_component_bundle_identifier(path, &component_name);
             Some(AppComponentIdentity {
-                key: normalize_app_key(&component_name),
-                app_name: component_name,
-                bundle_identifier: None,
+                key: bundle_identifier
+                    .as_deref()
+                    .map(normalize_app_key)
+                    .unwrap_or_else(|| normalize_app_key(&component_name)),
+                app_name: bundle_identifier
+                    .as_deref()
+                    .map(app_name_from_bundle_identifier)
+                    .unwrap_or(component_name),
+                bundle_identifier,
             })
         }
         _ => None,
     }
+}
+
+fn app_component_bundle_identifier(path: &Path, component_name: &str) -> Option<String> {
+    let path_lower = path.display().to_string().to_ascii_lowercase();
+    if is_app_preferences_path(&path_lower, component_name)
+        || is_app_receipt_path(&path_lower, component_name)
+        || is_app_container_path(&path_lower)
+        || is_app_cache_path(&path_lower)
+        || is_app_support_path(&path_lower)
+        || is_launch_item_path(&path_lower)
+    {
+        return component_filename_bundle_identifier(component_name);
+    }
+    None
+}
+
+fn component_filename_bundle_identifier(component_name: &str) -> Option<String> {
+    let mut value = component_name
+        .trim_end_matches(".lockfile")
+        .trim_end_matches(".plist")
+        .trim_end_matches(".bom")
+        .trim_end_matches(".pkg")
+        .trim()
+        .to_owned();
+    if value.ends_with(".savedState") {
+        value.truncate(value.len().saturating_sub(".savedState".len()));
+    }
+    if value.matches('.').count() >= 2 {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn app_name_from_bundle_identifier(bundle_identifier: &str) -> String {
+    bundle_identifier
+        .rsplit('.')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(bundle_identifier)
+        .to_owned()
 }
 
 fn app_bundle_identifier(app_path: &Path) -> Option<String> {
@@ -5668,6 +6444,8 @@ fn app_component_label(kind: &str) -> String {
         "app-support-data" => "Application Support",
         "app-container" => "Container",
         "app-launch-item" => "Launch item",
+        "app-preferences" => "Preferences",
+        "app-receipt" => "Receipt",
         _ => "Related data",
     }
     .to_owned()
@@ -7270,7 +8048,7 @@ fn build_cleanup_bundles(items: &[StorageHygieneItem]) -> Vec<StorageCleanupBund
     if let Some(bundle) = cleanup_bundle_for_items(
         "safe-reclaim",
         "Reclaim safely",
-        "High-confidence local artifacts. This is still a dry run: review the manifest before running any cleanup command.",
+        "High-confidence local artifacts. Review the manifest, then stage approved paths for Finder Trash cleanup.",
         "safe",
         safe_candidates,
     ) {
@@ -7356,9 +8134,10 @@ fn cleanup_bundle_for_items(
         rollback_notes,
         prerequisites: cleanup_bundle_prerequisites(safety),
         caveats: vec![
-            "Run verification commands first, then execute only the candidate cleanup commands you approve."
+            "Run verification commands first. In-app cleanup moves approved paths to Finder Trash; command references are manual only."
                 .to_owned(),
-            "Verify active builds, tests, terminals, and agents are idle before running cleanup commands.".to_owned(),
+            "Verify active builds, tests, terminals, and agents are idle before moving cleanup targets."
+                .to_owned(),
         ],
     })
 }
@@ -7380,6 +8159,8 @@ fn cleanup_bundle_item(item: &StorageHygieneItem) -> StorageCleanupBundleItem {
         cleanup_command,
         rollback_note: cleanup_item_rollback_note(item),
         reason: item.reason.clone(),
+        consequence: item.cleanup_consequence.clone(),
+        evidence: item.evidence.clone(),
         cleanup_allowed: item.cleanup_allowed,
         cleanup_blockers: item.cleanup_blockers.clone(),
         default_cleanup_action: item.default_cleanup_action.clone(),
@@ -8421,6 +9202,7 @@ fn repo_footprint_for_items(
     });
     top_artifact_folders.truncate(5);
 
+    let artifact_mix = repo_artifact_mix(&items);
     let last_branch_touched = latest_branch_for_items(&items);
     let (estimated_rebuild_cost, estimated_rebuild_seconds) = estimate_rebuild_cost(&items);
     let optimization_summary = repo_optimization_summary(
@@ -8445,6 +9227,9 @@ fn repo_footprint_for_items(
         rebuildable_percent,
         item_count: items.len(),
         top_artifact_folders,
+        artifact_mix,
+        duplicate_clone_count: 1,
+        duplicate_clone_roots: Vec::new(),
         last_writer_process: None,
         last_writer_pid: None,
         last_branch_touched,
@@ -8516,6 +9301,95 @@ fn apply_growth_deltas_to_repo_footprints(
                 );
             }
         }
+    }
+}
+
+fn apply_clone_groups_to_repo_footprints(
+    footprints: &mut [StorageRepoFootprint],
+    repository_inventory: &[StorageRepositoryInventoryItem],
+) {
+    let clone_groups_by_root = repository_inventory
+        .iter()
+        .map(|repository| {
+            (
+                repository.repo_root.as_str(),
+                (
+                    repository.clone_group_count,
+                    repository.clone_group_roots.clone(),
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    for footprint in footprints {
+        if let Some((count, roots)) = clone_groups_by_root.get(footprint.repo_root.as_str()) {
+            footprint.duplicate_clone_count = *count;
+            footprint.duplicate_clone_roots = roots.clone();
+        }
+    }
+}
+
+fn repo_artifact_mix(items: &[&StorageHygieneItem]) -> Vec<StorageRepoArtifactMix> {
+    let mut grouped = BTreeMap::<String, Vec<&StorageHygieneItem>>::new();
+    for item in items {
+        grouped.entry(item.kind.clone()).or_default().push(*item);
+    }
+    let mut mix = grouped
+        .into_iter()
+        .map(|(kind, group)| {
+            let bytes = group
+                .iter()
+                .fold(0u64, |total, item| total.saturating_add(item.size_bytes));
+            let cleanup_tier = highest_cleanup_tier(group.iter().copied());
+            let path = group
+                .first()
+                .map(|item| item.path.as_str())
+                .unwrap_or_default();
+            let intelligence = artifact_intelligence(&kind, path);
+            StorageRepoArtifactMix {
+                kind: kind.clone(),
+                label: artifact_kind_label(&kind).to_owned(),
+                item_count: group.len(),
+                bytes,
+                cleanup_tier,
+                rebuild_command: intelligence.rebuild_command,
+                estimated_rebuild_cost: intelligence.estimated_rebuild_cost,
+                estimated_rebuild_seconds: intelligence.estimated_rebuild_seconds,
+            }
+        })
+        .collect::<Vec<_>>();
+    mix.sort_by(|left, right| {
+        right
+            .bytes
+            .cmp(&left.bytes)
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    mix.truncate(8);
+    mix
+}
+
+fn artifact_kind_label(kind: &str) -> &'static str {
+    match kind {
+        "xcode-derived-data" => "Xcode DerivedData",
+        "swift-build" => "SwiftPM .build",
+        "rust-build" => "Cargo target",
+        "node-dependencies" => "Node dependencies",
+        "npm-cache" => "npm cache",
+        "pnpm-store" => "pnpm store",
+        "yarn-cache" => "Yarn cache",
+        "docker-storage" => "Docker storage",
+        "xcode-simulator-runtime" => "Xcode simulators",
+        "xcode-archives" => "Xcode archives",
+        "release-artifact" => "Release artifacts",
+        "log-file" | "logs" => "Logs",
+        "test-output" => "Test outputs",
+        "coverage-output" => "Coverage outputs",
+        "next-cache" => "Next.js cache",
+        "next-build" => "Next.js build",
+        "frontend-cache" => "Frontend cache",
+        "python-cache" => "Python cache",
+        "python-environment" => "Python environment",
+        "tool-cache" => "Tool cache",
+        _ => "Storage artifact",
     }
 }
 
@@ -9791,6 +10665,8 @@ fn default_storage_roots() -> Vec<String> {
         "Projects",
         "Applications",
         "Library",
+        "Library/Application Support",
+        "Library/Containers",
         ".claude",
         ".codex",
         ".cursor",
@@ -9803,9 +10679,18 @@ fn default_storage_roots() -> Vec<String> {
         "Library/Developer/Xcode/DerivedData",
         "Library/Developer/Xcode/Archives",
         "Library/Developer/CoreSimulator",
+        "Library/Application Support/MobileSync/Backup",
+        "Library/Mail",
+        "Library/Messages/Attachments",
+        "Library/Containers/com.docker.docker",
+        "Library/Group Containers/group.com.docker",
         "Library/Caches/org.swift.swiftpm",
         "Library/Caches/com.apple.dt.Xcode",
         "Library/CloudStorage",
+        "Library/Mobile Documents",
+        "Dropbox",
+        "OneDrive",
+        "Google Drive",
     ]
     .into_iter()
     .map(|relative| home.join(relative).display().to_string())
@@ -9865,6 +10750,7 @@ fn summarize_source_coverage(
             metadata.is_file() && metadata.len() > 0 && metadata.blocks() == 0
         });
         let reclaimable_bytes = source_reclaimable_bytes(&path, items);
+        let protected = is_protected_cleanup_path(&path);
         let (status, permission_state, detail, scanned_flag) = if let Some(reason) =
             skipped.get(&path)
         {
@@ -9921,6 +10807,13 @@ fn summarize_source_coverage(
                 None
             }
         });
+        let gap_kind = storage_source_gap_kind(
+            &status,
+            &permission_state,
+            cloud_root || cloud_placeholder,
+            protected,
+            network,
+        );
         coverage.push(StorageSourceCoverage {
             id: path.clone(),
             label,
@@ -9928,12 +10821,14 @@ fn summarize_source_coverage(
             path,
             status,
             permission_state,
+            gap_kind,
             detail,
             local_bytes,
             logical_bytes,
             reclaimable_bytes: (reclaimable_bytes > 0).then_some(reclaimable_bytes),
             cloud_placeholder,
             network,
+            protected,
             scanned: scanned_flag,
         });
     }
@@ -9944,6 +10839,32 @@ fn summarize_source_coverage(
             .then_with(|| left.label.cmp(&right.label))
     });
     coverage
+}
+
+fn storage_source_gap_kind(
+    status: &str,
+    permission_state: &str,
+    cloud: bool,
+    protected: bool,
+    network: bool,
+) -> String {
+    if permission_state == "needs_full_disk_access" {
+        "permission-denied".to_owned()
+    } else if status == "unavailable" {
+        "unavailable".to_owned()
+    } else if status == "skipped" {
+        "skipped".to_owned()
+    } else if protected {
+        "protected".to_owned()
+    } else if cloud {
+        "cloud-backed".to_owned()
+    } else if network {
+        "external-or-network".to_owned()
+    } else if status == "partial" {
+        "partial".to_owned()
+    } else {
+        "covered".to_owned()
+    }
 }
 
 fn summarize_volume_states(requested_roots: &[PathBuf]) -> Vec<StorageVolumeState> {
@@ -10227,7 +11148,7 @@ pub(crate) fn build_storage_hygiene_report_for_roots_mode(
     limit: usize,
     mode: &str,
 ) -> String {
-    match serde_json::to_string(&build_storage_hygiene_report_with_options(
+    match finalize_storage_report_json(build_storage_hygiene_report_with_options(
         roots,
         StorageHygieneOptions {
             max_depth,
@@ -10245,6 +11166,7 @@ pub(crate) fn build_storage_hygiene_report_for_roots_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn storage_hygiene_detects_reclaimable_build_artifacts() {
@@ -10329,7 +11251,13 @@ mod tests {
             "overview serializes",
         );
         let overview = parse_json_value(&overview, "overview JSON parses");
-        assert!(overview.get("items").is_none());
+        assert!(
+            overview["items"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty() && items.len() <= 12)
+        );
+        assert!(overview.get("cleanup_recipes").is_some());
+        assert!(overview.get("cleanup_bundles").is_some());
         assert!(overview.get("summary").is_some());
         assert!(overview.get("diagnostics").is_some());
         assert!(
@@ -10395,6 +11323,24 @@ mod tests {
         );
         assert!(scan.contains("\"storage_index_writes\""));
 
+        let overview = must_ok(
+            storage_hygiene_overview_json(vec![root.display().to_string()], 5, "instant_cached"),
+            "indexed overview serializes",
+        );
+        let overview = parse_json_value(&overview, "indexed overview JSON parses");
+        assert_eq!(overview["scan_mode"], "instant_cached");
+        assert_eq!(overview["diagnostics"]["root_walk_millis"], 0);
+        assert!(
+            overview["items"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        );
+        assert!(
+            overview["treemap_roots"]
+                .as_array()
+                .is_some_and(|roots| !roots.is_empty())
+        );
+
         let indexed = must_ok(
             storage_hygiene_indexed_json(vec![root.display().to_string()], 5, 80),
             "indexed snapshot serializes",
@@ -10428,12 +11374,13 @@ mod tests {
         ) {
             panic!("write cargo manifest: {error}");
         }
-        if let Err(error) = fs::write(
-            target.join("blob"),
-            vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
-        ) {
+        let artifact = target.join("blob");
+        if let Err(error) = fs::write(&artifact, vec![0u8; (MIN_ITEM_BYTES + 128) as usize]) {
             panic!("write build artifact: {error}");
         }
+        let artifact_metadata = fs::metadata(&artifact).expect("artifact metadata is readable");
+        let expected_logical_bytes = artifact_metadata.len();
+        let expected_physical_bytes = artifact_metadata.blocks().saturating_mul(512);
         mark_tree_old(&project);
 
         let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
@@ -10444,8 +11391,14 @@ mod tests {
         assert!(json.contains("\"attributed_repo_count\":1"));
         assert!(json.contains("\"repo_footprints\""));
         assert!(json.contains("\"repository_inventory\""));
-        assert!(json.contains("\"current_size_bytes\":1048704"));
+        assert!(json.contains(&format!("\"current_size_bytes\":{expected_physical_bytes}")));
+        assert!(json.contains(&format!("\"logical_bytes\":{expected_logical_bytes}")));
+        assert!(json.contains(&format!("\"physical_bytes\":{expected_physical_bytes}")));
         assert!(json.contains("\"top_artifact_folders\""));
+        assert!(json.contains("\"artifact_mix\""));
+        assert!(json.contains("\"label\":\"Cargo target\""));
+        assert!(json.contains("\"rebuild_command\":\"cargo build\""));
+        assert!(json.contains("\"duplicate_clone_count\":1"));
         assert!(json.contains("\"last_branch_touched\":\"master\""));
         assert!(json.contains("\"estimated_rebuild_cost\":\"Low\""));
         assert!(json.contains("\"last_writer_process\":null"));
@@ -10477,6 +11430,53 @@ mod tests {
             budget_violations
                 .iter()
                 .all(|violation| violation["scope"] == "volume-pressure")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_repo_footprint_surfaces_duplicate_clone_groups() {
+        let root = test_root("repo-footprint-clone-groups");
+        let clone_a = root.join("CloneA");
+        let clone_b = root.join("CloneB");
+        create_git_repo(&clone_a, "main");
+        create_git_repo(&clone_b, "main");
+        for repo in [&clone_a, &clone_b] {
+            if let Err(error) = fs::write(
+                repo.join(".git").join("config"),
+                "[remote \"origin\"]\n\turl = git@github.com:example/shared.git\n",
+            ) {
+                panic!("write git remote config: {error}");
+            }
+        }
+        let target = clone_a.join("target").join("debug");
+        if let Err(error) = fs::create_dir_all(&target) {
+            panic!("create target dir: {error}");
+        }
+        if let Err(error) = fs::write(
+            target.join("blob"),
+            vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write build artifact: {error}");
+        }
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let value = parse_json_value(&json, "storage hygiene clone group JSON parses");
+        let footprints = value["repo_footprints"]
+            .as_array()
+            .unwrap_or_else(|| panic!("repo footprints is an array"));
+        let clone_a_root = clone_a.display().to_string();
+        let clone_a_footprint = footprints
+            .iter()
+            .find(|footprint| footprint["repo_root"].as_str() == Some(clone_a_root.as_str()))
+            .unwrap_or_else(|| panic!("clone A footprint is present"));
+
+        assert_eq!(clone_a_footprint["duplicate_clone_count"].as_u64(), Some(2));
+        assert!(
+            clone_a_footprint["duplicate_clone_roots"]
+                .as_array()
+                .is_some_and(|roots| roots.len() == 2)
         );
 
         let _ = fs::remove_dir_all(root);
@@ -11451,12 +12451,12 @@ mod tests {
         if let Err(error) = fs::create_dir_all(&target) {
             panic!("create codex target dir: {error}");
         }
-        if let Err(error) = fs::write(
-            target.join("blob"),
-            vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
-        ) {
+        let artifact = target.join("blob");
+        if let Err(error) = fs::write(&artifact, vec![0u8; (MIN_ITEM_BYTES + 128) as usize]) {
             panic!("write codex build artifact: {error}");
         }
+        let artifact_metadata = fs::metadata(&artifact).expect("artifact metadata is readable");
+        let expected_physical_bytes = artifact_metadata.blocks().saturating_mul(512);
 
         let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
 
@@ -11465,8 +12465,12 @@ mod tests {
         assert!(json.contains("\"provider\":\"codex\""));
         assert!(json.contains("\"display_name\":\"Codex\""));
         assert!(json.contains("\"session_id\":\"Codex local artifacts\""));
-        assert!(json.contains("\"week_agent_artifact_bytes\":1048704"));
-        assert!(json.contains("\"week_rebuildable_agent_bytes\":1048704"));
+        assert!(json.contains(&format!(
+            "\"week_agent_artifact_bytes\":{expected_physical_bytes}"
+        )));
+        assert!(json.contains(&format!(
+            "\"week_rebuildable_agent_bytes\":{expected_physical_bytes}"
+        )));
         assert!(json.contains("\"attribution_sources\":[\"known_agent_directory\"]"));
 
         let _ = fs::remove_dir_all(root);
@@ -11597,6 +12601,9 @@ mod tests {
             .join("Library")
             .join("Application Support")
             .join("Sample");
+        let app_preferences = root.join("Library").join("Preferences");
+        let app_receipts = root.join("private").join("var").join("db").join("receipts");
+        let app_launch_agents = root.join("Library").join("LaunchAgents");
         let ios_backup = root
             .join("Library")
             .join("Application Support")
@@ -11624,6 +12631,9 @@ mod tests {
             &app_cache,
             &app_container,
             &app_support,
+            &app_preferences,
+            &app_receipts,
+            &app_launch_agents,
             &ios_backup,
             &mail_attachments,
             &message_attachments,
@@ -11668,6 +12678,24 @@ mod tests {
         ) {
             panic!("write app payload: {error}");
         }
+        if let Err(error) = fs::write(
+            app_preferences.join("com.example.sample.plist"),
+            "<plist><dict><key>Enabled</key><true/></dict></plist>",
+        ) {
+            panic!("write app preference plist: {error}");
+        }
+        if let Err(error) = fs::write(app_receipts.join("com.example.sample.bom"), "receipt") {
+            panic!("write app receipt bom: {error}");
+        }
+        if let Err(error) = fs::write(app_receipts.join("com.example.sample.plist"), "receipt") {
+            panic!("write app receipt plist: {error}");
+        }
+        if let Err(error) = fs::write(
+            app_launch_agents.join("com.example.sample.plist"),
+            "<plist><dict><key>Label</key><string>com.example.sample</string></dict></plist>",
+        ) {
+            panic!("write app launch agent: {error}");
+        }
         for directory in [
             &app_cache,
             &app_container,
@@ -11704,6 +12732,12 @@ mod tests {
         assert!(json.contains("\"kind\":\"app-cache\""));
         assert!(json.contains("\"kind\":\"app-container\""));
         assert!(json.contains("\"kind\":\"app-support-data\""));
+        assert!(json.contains("\"kind\":\"app-preferences\""));
+        assert!(json.contains("\"kind\":\"app-receipt\""));
+        assert!(json.contains("\"kind\":\"app-launch-item\""));
+        assert!(json.contains("\"component\":\"Preferences\""));
+        assert!(json.contains("\"component\":\"Receipt\""));
+        assert!(json.contains("\"component\":\"Launch item\""));
         assert!(json.contains("\"system_data_buckets\""));
         assert!(json.contains("\"kind\":\"ios-backup\""));
         assert!(json.contains("\"kind\":\"mail-attachments\""));
@@ -11715,6 +12749,246 @@ mod tests {
         assert!(json.contains("\"title\":\"Local snapshots\""));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_resilience_fixture_handles_edge_cases() {
+        let root = test_root("resilience-fixtures");
+        let npm_cache = root.join(".npm").join("_cacache").join("content-v2");
+        let pnpm_store = root.join(".local").join("share").join("pnpm").join("store");
+        let logs = root.join("Library").join("Logs").join("Aetower");
+        let cloud_root = root
+            .join("Library")
+            .join("CloudStorage")
+            .join("iCloud Drive");
+        let denied = root.join("permission-denied");
+        let symlink_target = root.join("target").join("debug");
+        let symlink_path = root.join("target-link");
+        for directory in [
+            &npm_cache,
+            &pnpm_store,
+            &logs,
+            &cloud_root,
+            &denied,
+            &symlink_target,
+        ] {
+            if let Err(error) = fs::create_dir_all(directory) {
+                panic!("create resilience fixture directory: {error}");
+            }
+        }
+        if let Err(error) = fs::write(
+            npm_cache.join("npm-cache.bin"),
+            vec![1u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write npm cache fixture: {error}");
+        }
+        if let Err(error) = fs::write(
+            pnpm_store.join("pnpm-store.bin"),
+            vec![2u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write pnpm store fixture: {error}");
+        }
+        if let Err(error) = fs::write(
+            logs.join("huge.log"),
+            vec![3u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write huge log fixture: {error}");
+        }
+        let sparse_cloud_file = cloud_root.join("dehydrated-placeholder.bin");
+        let file = match fs::File::create(&sparse_cloud_file) {
+            Ok(file) => file,
+            Err(error) => panic!("create sparse cloud placeholder fixture: {error}"),
+        };
+        if let Err(error) = file.set_len(MIN_ITEM_BYTES + 512) {
+            panic!("size sparse cloud placeholder fixture: {error}");
+        }
+        if let Err(error) = fs::write(
+            symlink_target.join("linked-target.bin"),
+            vec![4u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write symlink target fixture: {error}");
+        }
+        if let Err(error) = std::os::unix::fs::symlink(&symlink_target, &symlink_path)
+            && error.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            panic!("create symlink fixture: {error}");
+        }
+        if let Err(error) = fs::set_permissions(&denied, fs::Permissions::from_mode(0o000)) {
+            panic!("restrict permission fixture: {error}");
+        }
+
+        let json = build_storage_hygiene_report_for_roots_mode(
+            vec![root.display().to_string(), cloud_root.display().to_string()],
+            8,
+            120,
+            "forensic_verified",
+        );
+        let value = parse_json_value(&json, "resilience fixture JSON parses");
+        let item_kinds = value["items"]
+            .as_array()
+            .unwrap_or_else(|| panic!("items array exists"))
+            .iter()
+            .filter_map(|item| item["kind"].as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(item_kinds.contains("npm-cache"));
+        assert!(item_kinds.contains("pnpm-store"));
+        assert!(item_kinds.contains("log-file"));
+        assert!(
+            value["source_coverage"]
+                .as_array()
+                .unwrap_or_else(|| panic!("source coverage array exists"))
+                .iter()
+                .any(|source| source["cloud_placeholder"].as_bool() == Some(true)
+                    || source["kind"].as_str() == Some("cloud"))
+        );
+        assert!(
+            value["items"]
+                .as_array()
+                .unwrap_or_else(|| panic!("items array exists"))
+                .iter()
+                .all(|item| item["path"]
+                    .as_str()
+                    .is_none_or(|path| !path.contains("target-link")))
+        );
+        assert!(
+            value["diagnostics"]["performance_budget"]["status"]
+                .as_str()
+                .is_some_and(|status| matches!(status, "ok" | "warn" | "critical"))
+        );
+
+        let _ = fs::set_permissions(&denied, fs::Permissions::from_mode(0o755));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_reclaimable_regression_detects_build_logs_and_caches() {
+        let root = test_root("reclaimable-regression");
+        let target = root.join("project").join("target").join("debug");
+        let logs = root.join("project").join("logs");
+        for directory in [&target, &logs] {
+            if let Err(error) = fs::create_dir_all(directory) {
+                panic!("create reclaimable regression fixture directory: {error}");
+            }
+        }
+        if let Err(error) = fs::write(
+            target.join("artifact"),
+            vec![1u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write build artifact fixture: {error}");
+        }
+        if let Err(error) = fs::write(
+            logs.join("runtime.log"),
+            vec![2u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write log fixture: {error}");
+        }
+        mark_tree_old(&root);
+
+        let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+        let value = parse_json_value(&json, "reclaimable regression JSON parses");
+
+        assert!(
+            value["summary"]["total_reclaimable_bytes"]
+                .as_u64()
+                .is_some_and(|bytes| bytes >= MIN_ITEM_BYTES)
+        );
+        assert!(
+            value["cleanup_bundles"]
+                .as_array()
+                .is_some_and(|bundles| !bundles.is_empty())
+        );
+        assert!(
+            value["diagnostics"]["performance_budget"]["payload_bytes"]
+                .as_u64()
+                .is_some_and(|bytes| bytes > 0)
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_performance_budget_flags_million_file_payload_and_table_pressure() {
+        let root = test_root("million-file-budget-fixture");
+        let target = root.join("project").join("target").join("debug");
+        if let Err(error) = fs::create_dir_all(&target) {
+            panic!("create budget fixture target: {error}");
+        }
+        if let Err(error) = fs::write(
+            target.join("artifact"),
+            vec![1u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write budget fixture artifact: {error}");
+        }
+        let mut report = build_storage_hygiene_report_with_mode(
+            vec![root.display().to_string()],
+            5,
+            80,
+            "fast_changed_only",
+        );
+        report.scan_duration_millis = STORAGE_SCAN_LATENCY_CRITICAL_MILLIS;
+        report.diagnostics.payload_bytes = STORAGE_PAYLOAD_CRITICAL_BYTES;
+        report.diagnostics.candidate_seen_count = 1_000_000;
+
+        refresh_storage_performance_budget(
+            &mut report,
+            STORAGE_TABLE_PAGE_CRITICAL_MILLIS,
+            STORAGE_RENDER_CRITICAL_MILLIS,
+        );
+
+        assert_eq!(report.diagnostics.performance_budget.status, "critical");
+        assert_eq!(
+            report
+                .diagnostics
+                .performance_budget
+                .scan_job_latency_millis,
+            STORAGE_SCAN_LATENCY_CRITICAL_MILLIS
+        );
+        assert_eq!(
+            report.diagnostics.performance_budget.table_page_millis,
+            STORAGE_TABLE_PAGE_CRITICAL_MILLIS
+        );
+        assert_eq!(
+            report.diagnostics.performance_budget.render_publish_millis,
+            STORAGE_RENDER_CRITICAL_MILLIS
+        );
+        assert!(
+            report
+                .diagnostics
+                .performance_budget
+                .notes
+                .iter()
+                .any(|note| note.contains("1000000 candidates seen"))
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn protected_path_classification_blocks_unattended_cleanup() {
+        let now_millis = crate::current_unix_millis().unwrap_or_default();
+        let old_millis = now_millis.saturating_sub(RECENT_CLEANUP_BLOCK_MILLIS + 60_000);
+        let mut items = vec![test_storage_item(
+            "/Applications/Important.app/Contents/MacOS/cache.bin",
+            "app-cache",
+            "cache",
+            "safe",
+            "safe",
+            old_millis,
+        )];
+
+        apply_cleanup_guardrails(&mut items, now_millis);
+
+        assert!(items[0].protected_path);
+        assert_eq!(items[0].cleanup_tier, "risky");
+        assert_eq!(items[0].default_cleanup_action, "manual_review");
+        assert!(!items[0].cleanup_allowed);
+        assert!(
+            items[0]
+                .cleanup_blockers
+                .iter()
+                .any(|blocker| blocker.contains("Protected system/application path"))
+        );
     }
 
     #[test]
@@ -11741,6 +13015,12 @@ mod tests {
         assert_eq!(attribution.confidence, "high");
         assert_eq!(attribution.confidence_score, 92);
         assert!(!attribution.ambiguous);
+        assert_eq!(attribution.writer_source.as_deref(), Some("test-ledger"));
+        assert_eq!(attribution.matched_writer_count, 1);
+        assert!(attribution.sources.contains(&"writer_ledger".to_owned()));
+        assert!(attribution.sources.contains(&"command".to_owned()));
+        assert!(attribution.sources.contains(&"process_tree".to_owned()));
+        assert!(attribution.sources.contains(&"ai_session".to_owned()));
         assert_eq!(attribution.command.as_deref(), Some("cargo build"));
         assert_eq!(
             attribution.ai_agent_session.as_deref(),
@@ -11786,10 +13066,73 @@ mod tests {
         assert_eq!(attribution.confidence, "ambiguous");
         assert!(attribution.ambiguous);
         assert!(attribution.command.is_none());
+        assert_eq!(attribution.matched_writer_count, 2);
+        assert!(attribution.sources.contains(&"writer_ledger".to_owned()));
+        assert!(
+            attribution
+                .sources
+                .contains(&"ambiguous_writers".to_owned())
+        );
         assert!(
             attribution
                 .summary
                 .contains("Multiple writer records overlapped")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_growth_attribution_reports_controlled_build_from_chau7_writer() {
+        let root = test_root("growth-attribution-chau7-controlled-build");
+        let repo = root.join("project");
+        create_git_repo(&repo, "feature/storage-attribution");
+        let artifact_path = repo.join("target").join("release").join("aetower");
+        let delta = test_growth_delta(&artifact_path, Some(&repo), 1_000, 0, 32 * 1024 * 1024);
+        let writer = StorageWriterLedgerRecord {
+            started_at_millis: Some(900),
+            ended_at_millis: Some(1_100),
+            working_directory: Some(repo.display().to_string()),
+            provider: Some("claude".to_owned()),
+            session_id: Some("chau7-tab-a".to_owned()),
+            source: Some("chau7".to_owned()),
+            command: Some("cargo build --workspace --release".to_owned()),
+            process_tree: Some("Chau7 > zsh > cargo build --workspace --release".to_owned()),
+            ..StorageWriterLedgerRecord::default()
+        };
+
+        let attribution = attribute_storage_growth_delta(&delta, &[writer]);
+
+        assert_eq!(attribution.confidence, "high");
+        assert_eq!(attribution.confidence_score, 92);
+        assert!(!attribution.ambiguous);
+        assert_eq!(attribution.writer_source.as_deref(), Some("chau7"));
+        assert_eq!(attribution.matched_writer_count, 1);
+        assert_eq!(
+            attribution.command.as_deref(),
+            Some("cargo build --workspace --release")
+        );
+        assert_eq!(
+            attribution.process_tree.as_deref(),
+            Some("Chau7 > zsh > cargo build --workspace --release")
+        );
+        assert_eq!(
+            attribution.ai_agent_session.as_deref(),
+            Some("claude session chau7-tab-a")
+        );
+        assert_eq!(
+            attribution.git_branch.as_deref(),
+            Some("feature/storage-attribution")
+        );
+        assert!(attribution.sources.contains(&"writer_ledger".to_owned()));
+        assert!(attribution.sources.contains(&"chau7".to_owned()));
+        assert!(attribution.sources.contains(&"command".to_owned()));
+        assert!(attribution.sources.contains(&"process_tree".to_owned()));
+        assert!(attribution.sources.contains(&"ai_session".to_owned()));
+        assert!(
+            attribution
+                .summary
+                .contains("Single writer ledger record matched")
         );
 
         let _ = fs::remove_dir_all(root);
@@ -11891,6 +13234,177 @@ mod tests {
         assert!(!items[1].cleanup_allowed);
         assert_eq!(recipes.len(), 1);
         assert_eq!(recipes[0].affected_path, allowed.path);
+    }
+
+    #[test]
+    fn cleanup_bundle_manifest_carries_policy_and_excludes_blocked_items() {
+        let now_millis = crate::current_unix_millis().unwrap_or_default();
+        let old_millis = now_millis.saturating_sub(RECENT_CLEANUP_BLOCK_MILLIS + 60_000);
+        let mut allowed = test_storage_item(
+            "/tmp/aetower-storage/project/.build/debug/cache.bin",
+            "swift-build",
+            "build-artifact",
+            "safe",
+            "rebuildable",
+            old_millis,
+        );
+        allowed.evidence = vec![
+            "Detected under a SwiftPM .build directory.".to_owned(),
+            "Source-control status: outside Git.".to_owned(),
+        ];
+        let mut blocked = test_storage_item(
+            "/tmp/aetower-storage/project/src/main.swift",
+            "large-file",
+            "large-file",
+            "safe",
+            "safe",
+            old_millis,
+        );
+        blocked.git_status = "tracked".to_owned();
+
+        let mut items = vec![allowed.clone(), blocked];
+        apply_cleanup_guardrails(&mut items, now_millis);
+
+        let bundles = build_cleanup_bundles(&items);
+        let manifest_item = bundles
+            .iter()
+            .flat_map(|bundle| bundle.manifest.iter())
+            .find(|item| item.path == allowed.path)
+            .expect("allowed item is present in cleanup manifest");
+
+        assert_eq!(manifest_item.path, allowed.path);
+        assert_eq!(manifest_item.size_bytes, allowed.size_bytes);
+        assert_eq!(manifest_item.cleanup_tier, "rebuildable");
+        assert_eq!(manifest_item.default_cleanup_action, "trash");
+        assert!(manifest_item.cleanup_allowed);
+        assert!(manifest_item.cleanup_blockers.is_empty());
+        assert_eq!(manifest_item.reason, "test item");
+        assert_eq!(manifest_item.consequence, "test cleanup consequence");
+        assert!(
+            manifest_item
+                .evidence
+                .iter()
+                .any(|entry| entry.contains("SwiftPM"))
+        );
+        assert!(
+            bundles
+                .iter()
+                .flat_map(|bundle| bundle.manifest.iter())
+                .all(|item| !item.path.ends_with("src/main.swift"))
+        );
+    }
+
+    #[test]
+    fn storage_release_criteria_dry_run_manifest_validates_bytes_paths_and_blocks_risky() {
+        let now_millis = crate::current_unix_millis().unwrap_or_default();
+        let old_millis = now_millis.saturating_sub(RECENT_CLEANUP_BLOCK_MILLIS + 60_000);
+        let allowed = test_storage_item(
+            "/tmp/aetower-storage/project/target/debug/cache.bin",
+            "rust-build",
+            "build-artifact",
+            "safe",
+            "rebuildable",
+            old_millis,
+        );
+        let mut source_like = test_storage_item(
+            "/tmp/aetower-storage/project/src/generated.swift",
+            "large-file",
+            "large-file",
+            "safe",
+            "safe",
+            old_millis,
+        );
+        source_like.git_status = "untracked".to_owned();
+
+        let mut items = vec![allowed.clone(), source_like];
+        apply_cleanup_guardrails(&mut items, now_millis);
+
+        let bundles = build_cleanup_bundles(&items);
+        let bundle = bundles
+            .iter()
+            .find(|bundle| bundle.manifest.iter().any(|item| item.path == allowed.path))
+            .expect("dry-run bundle includes only the release-safe artifact");
+        let manifest_bytes = bundle
+            .manifest
+            .iter()
+            .fold(0u64, |total, item| total.saturating_add(item.size_bytes));
+
+        assert!(bundle.dry_run_only);
+        assert_eq!(bundle.estimated_reclaimable_bytes, manifest_bytes);
+        assert_eq!(bundle.item_count, bundle.manifest.len());
+        assert!(bundle.estimated_reclaimable_bytes > 0);
+        assert!(bundle.manifest.iter().all(|item| !item.path.is_empty()));
+        assert!(bundle.manifest.iter().all(|item| item.cleanup_allowed));
+        assert!(
+            bundle
+                .manifest
+                .iter()
+                .all(|item| item.cleanup_blockers.is_empty())
+        );
+        assert!(
+            bundle
+                .manifest
+                .iter()
+                .all(|item| item.default_cleanup_action == "trash")
+        );
+        assert!(
+            bundle
+                .dry_run_commands
+                .iter()
+                .all(|command| command.starts_with("du -sh "))
+        );
+        assert!(
+            bundles
+                .iter()
+                .flat_map(|bundle| bundle.manifest.iter())
+                .all(|item| !item.path.ends_with("src/generated.swift"))
+        );
+        assert!(!items[1].cleanup_allowed);
+        assert_eq!(items[1].default_cleanup_action, "manual_review");
+    }
+
+    #[test]
+    fn storage_release_criteria_scan_cancel_responds_under_one_second() {
+        let root = test_root("release-cancel-budget");
+        let target = root.join("project").join("target").join("debug");
+        if let Err(error) = fs::create_dir_all(&target) {
+            panic!("create release cancel fixture: {error}");
+        }
+        if let Err(error) = fs::write(
+            target.join("artifact"),
+            vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+        ) {
+            panic!("write release cancel artifact: {error}");
+        }
+
+        let start = must_ok(
+            storage_scan_start_json(
+                vec![root.display().to_string()],
+                6,
+                120,
+                "deep_native",
+                "battery,thermal-pressure",
+                Vec::new(),
+            ),
+            "start release cancel scan job",
+        );
+        let start = parse_json_value(&start, "decode release cancel start");
+        let job_id = json_string(&start, "job_id").to_owned();
+
+        let cancel_started = Instant::now();
+        let cancel = must_ok(storage_scan_cancel_json(&job_id), "cancel release scan job");
+        let elapsed = cancel_started.elapsed();
+        let cancel = parse_json_value(&cancel, "decode release cancel response");
+
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "cancel took {:?}, expected under one second",
+            elapsed
+        );
+        assert_eq!(cancel["status"].as_str(), Some("cancelled"));
+        assert!(storage_scan_result_json(&job_id).is_err());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -12030,6 +13544,8 @@ mod tests {
         assert!(json.contains("\"source_coverage\""));
         assert!(json.contains("\"volume_states\""));
         assert!(json.contains("\"permission_state\":\"readable\""));
+        assert!(json.contains("\"gap_kind\":\"covered\""));
+        assert!(json.contains("\"protected\":false"));
         assert!(json.contains("\"free_now_bytes\""));
     }
 
@@ -12060,6 +13576,9 @@ mod tests {
         );
         let start = parse_json_value(&start, "decode start");
         let job_id = json_string(&start, "job_id").to_owned();
+        assert_eq!(start["resumed_from_partial"], false);
+        assert_eq!(start["partial_state_available"], true);
+        assert!(start["persisted_at_millis"].as_u64().is_some());
 
         let mut terminal_status = String::new();
         for _ in 0..80 {
@@ -12073,10 +13592,110 @@ mod tests {
         }
 
         assert_eq!(terminal_status, "complete");
+        assert_eq!(
+            StorageScanStateStore::load_status_for_job(&job_id).as_deref(),
+            Some("complete")
+        );
         let result = must_ok(storage_scan_result_json(&job_id), "scan result");
         assert!(result.contains("\"scan_mode\":\"fast_changed_only\""));
         assert!(result.contains("\"repository_inventory_coverage\""));
         assert!(result.contains("\"rust-build\""));
+    }
+
+    #[test]
+    fn storage_scan_job_recovers_persisted_partial_state() {
+        let root = test_root("scan-job-recovers-partial");
+        if let Err(error) = fs::create_dir_all(&root) {
+            panic!("create root: {error}");
+        }
+        let request = StorageScanJobRequest::new(
+            vec![root.display().to_string()],
+            5,
+            80,
+            "fast_changed_only",
+            "battery",
+            Vec::new(),
+        );
+        let mut progress =
+            StorageScanJobProgress::new(storage_now_millis(), Some("battery".to_owned()));
+        progress.phase = "artifact_sizing".to_owned();
+        progress.scanned_files = 17;
+        progress.scanned_directories = 5;
+        progress.scanned_bytes = 42_000;
+        must_ok(
+            StorageScanStateStore::persist(StorageScanPersistedRecord {
+                job_id: format!("persisted-partial-{}", storage_now_millis()),
+                signature: request.signature.clone(),
+                volume_key: request.volume_key.clone(),
+                roots: request.normalized_roots.clone(),
+                dirty_paths: request.dirty_paths.clone(),
+                max_depth: request.max_depth,
+                limit: request.limit,
+                mode: request.mode.as_str().to_owned(),
+                throttle_hint: request.throttle_hint.clone(),
+                status: "running".to_owned(),
+                progress,
+                started_at_millis: storage_now_millis().saturating_sub(1_000),
+                updated_at_millis: storage_now_millis(),
+                completed_at_millis: None,
+                result_available: false,
+                resume_available: true,
+            }),
+            "persist partial scan state",
+        );
+
+        let start = must_ok(
+            storage_scan_start_json(
+                vec![root.display().to_string()],
+                5,
+                80,
+                "fast_changed_only",
+                "battery",
+                Vec::new(),
+            ),
+            "start resumed scan job",
+        );
+        let start = parse_json_value(&start, "decode resumed start");
+        let job_id = json_string(&start, "job_id").to_owned();
+
+        assert_eq!(start["resumed_from_partial"], true);
+        assert_eq!(start["partial_state_available"], true);
+        assert_eq!(start["recovered_files"].as_u64(), Some(17));
+        assert_eq!(start["recovered_directories"].as_u64(), Some(5));
+        assert_eq!(start["recovered_bytes"].as_u64(), Some(42_000));
+        assert!(
+            start["progress"]["throttle_reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("battery"))
+        );
+
+        let _ = storage_scan_cancel_json(&job_id);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_scan_throttle_detects_pressure_cloud_and_network_roots() {
+        let request = StorageScanJobRequest::new(
+            vec![
+                "/Volumes/SharedBuilds".to_owned(),
+                "~/Library/CloudStorage/Dropbox".to_owned(),
+            ],
+            5,
+            80,
+            "deep_native",
+            "battery,thermal-pressure,network",
+            Vec::new(),
+        );
+        let throttle = StorageScanThrottle::for_request(&request);
+        let reason = throttle.reason.unwrap_or_default();
+
+        assert!(throttle.sleep_every_checkpoints <= 96);
+        assert!(throttle.sleep_millis >= 12);
+        assert!(reason.contains("external-or-secondary-volume"));
+        assert!(reason.contains("cloud-root"));
+        assert!(reason.contains("battery"));
+        assert!(reason.contains("thermal-pressure"));
+        assert!(reason.contains("network"));
     }
 
     fn must_ok<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
@@ -12154,6 +13773,9 @@ mod tests {
             command: None,
             process_tree: None,
             ai_agent_session: None,
+            writer_source: None,
+            matched_writer_count: 0,
+            attribution_sources: Vec::new(),
             attribution_confidence: "low".to_owned(),
             attribution_confidence_score: 0,
             attribution_ambiguous: false,
@@ -12345,6 +13967,14 @@ mod tests {
             safety: safety.to_owned(),
             cleanup_tier: cleanup_tier.to_owned(),
             size_bytes: MIN_ITEM_BYTES + 128,
+            logical_bytes: MIN_ITEM_BYTES + 128,
+            physical_bytes: MIN_ITEM_BYTES + 128,
+            byte_accounting: "test fixture".to_owned(),
+            sparse_or_shared: false,
+            hardlink_count: 1,
+            has_hardlinks: false,
+            cloud_placeholder: false,
+            protected_path: is_protected_cleanup_path(path),
             size_truncated: false,
             modified_millis: Some(modified_millis),
             age_days: None,

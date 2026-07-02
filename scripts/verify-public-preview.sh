@@ -11,6 +11,7 @@ RUN_PACKAGE=0
 RUN_MATRIX=0
 RUN_GATEKEEPER=0
 RUN_OPERATOR=0
+RUN_STORAGE=0
 RUN_SOAK=0
 REBUILD=0
 REQUIRE_DMG=0
@@ -19,7 +20,7 @@ SOAK_SECONDS="${AETOWER_PUBLIC_PREVIEW_SOAK_SECONDS:-7200}"
 
 usage() {
     cat <<EOF
-usage: $0 [--all] [--preflight] [--package] [--matrix] [--require-dmg] [--require-pkg] [--gatekeeper] [--operator] [--soak] [--rebuild]
+usage: $0 [--all] [--preflight] [--package] [--matrix] [--require-dmg] [--require-pkg] [--gatekeeper] [--operator] [--storage-release] [--soak] [--rebuild]
 
 Validate a public Developer Preview candidate.
 
@@ -42,6 +43,7 @@ while [ "$#" -gt 0 ]; do
             RUN_MATRIX=1
             RUN_GATEKEEPER=1
             RUN_OPERATOR=1
+            RUN_STORAGE=1
             RUN_SOAK=1
             REQUIRE_DMG=1
             REQUIRE_PKG=1
@@ -73,6 +75,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --operator)
             RUN_OPERATOR=1
+            shift
+            ;;
+        --storage-release)
+            RUN_STORAGE=1
             shift
             ;;
         --soak)
@@ -140,6 +146,10 @@ if [ "$RUN_OPERATOR" -eq 1 ]; then
     else
         sh "$ROOT/scripts/local-operator-smoke.sh"
     fi
+fi
+
+if [ "$RUN_STORAGE" -eq 1 ]; then
+    sh "$ROOT/scripts/verify-storage-release.sh"
 fi
 
 if [ "$RUN_SOAK" -eq 1 ]; then

@@ -56,6 +56,7 @@ sh scripts/verify-public-preview.sh --package --gatekeeper
 sh scripts/verify-public-preview.sh --matrix
 sh scripts/verify-public-preview.sh --matrix --require-dmg --require-pkg
 sh scripts/verify-public-preview.sh --operator
+sh scripts/verify-public-preview.sh --storage-release
 AETOWER_PUBLIC_PREVIEW_SOAK_SECONDS=7200 sh scripts/verify-public-preview.sh --soak
 ```
 
@@ -65,7 +66,30 @@ feed URL, public EdDSA key, and embedded Sparkle framework.
 Use `sh scripts/verify-sparkle-distribution-matrix.sh --require-dmg --require-pkg`
 for public release candidates.
 
-## 4. Clean-Machine Validation
+## 4. Storage Release Criteria
+
+Run:
+
+```sh
+sh scripts/verify-storage-release.sh
+```
+
+The Storage gate verifies dry-run manifests, byte/path parity, Trash-only
+actionability, risky-file exclusion, scan cancellation response, performance
+budget diagnostics, and a disposable macOS Trash smoke fixture.
+
+The gate intentionally does not fake criteria that require real operator
+evidence. Before sharing a public build, record:
+
+1. 2-4 hour soak with Storage scan, History, and MCP enabled.
+2. Clean-machine validation both without and with Full Disk Access granted.
+3. Manual reclaim dry-run review showing exact bytes, paths, blockers,
+   consequences, and undo path.
+4. Trash operation on disposable fixtures only.
+5. Full home scan remains UI-responsive and scan controls respond.
+6. No risky file is auto-staged.
+
+## 5. Clean-Machine Validation
 
 Use a clean macOS user account or a second Mac.
 
@@ -82,13 +106,14 @@ Use a clean macOS user account or a second Mac.
 9. Quit and relaunch the app, confirming that no duplicate engines or stale MCP
    helpers remain.
 
-## 5. Manual Acceptance Criteria
+## 6. Manual Acceptance Criteria
 
 - `release-preflight` passes.
 - The release package is signed, notarized, and Gatekeeper-accepted.
 - The Sparkle distribution matrix passes for every published acquisition path.
 - Sparkle updates from N-1 to N.
 - A clean user can launch and use Setup without custom terminal commands.
+- The Storage release gate passes.
 - The app remains responsive during the soak.
 - Diagnostics does not show repeated launch, MCP, persistence, or tick-budget
   errors.

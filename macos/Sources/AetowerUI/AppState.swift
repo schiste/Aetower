@@ -41,7 +41,8 @@ enum StorageHygieneDecodePipeline {
         maxDepth: UInt32,
         limit: UInt32,
         mode: String,
-        saveCache: Bool
+        saveCache: Bool,
+        saveBaseline: Bool = true
     ) -> PreparedStorageHygieneResult {
         guard let rawJSON = result.json else {
             return PreparedStorageHygieneResult(
@@ -85,7 +86,9 @@ enum StorageHygieneDecodePipeline {
                 mode: mode
             )
         }
-        StorageHygieneBaselineStore.save(baseline)
+        if saveBaseline {
+            StorageHygieneBaselineStore.save(baseline)
+        }
         let cacheSaveMillis = durationMillis(cacheStarted.duration(to: .now))
 
         return PreparedStorageHygieneResult(
@@ -122,6 +125,21 @@ private final class StorageHygieneMainActorPublisher: @unchecked Sendable {
     @MainActor
     func publishCacheStale(reason: String) {
         state?.publishStorageHygieneCacheStale(reason: reason)
+    }
+
+    @MainActor
+    func publishVerificationStarted() {
+        state?.publishStorageHygieneVerificationStarted()
+    }
+
+    @MainActor
+    func publishInventoryVerification(_ inventory: RepositoryInventoryReportModel) {
+        state?.publishStorageRepositoryInventoryVerification(inventory)
+    }
+
+    @MainActor
+    func publishVerificationFinished(message: String?) {
+        state?.publishStorageHygieneVerificationFinished(message: message)
     }
 
     @MainActor
@@ -164,6 +182,50 @@ private final class RepositoryScorecardMainActorPublisher: @unchecked Sendable {
             runID: runID,
             requestedMode: requestedMode,
             result: result
+        )
+    }
+}
+
+private final class RepositoryGitHubProviderMainActorPublisher: @unchecked Sendable {
+    weak var state: AppState?
+
+    init(_ state: AppState) {
+        self.state = state
+    }
+
+    @MainActor
+    func publishResult(
+        key: String,
+        runID: String,
+        status: RepositoryGitHubProviderStatusModel
+    ) {
+        state?.publishRepositoryGitHubProviderStatus(
+            key: key,
+            runID: runID,
+            status: status
+        )
+    }
+}
+
+private final class RepositoryCloudflareProviderMainActorPublisher: @unchecked Sendable {
+    weak var state: AppState?
+
+    init(_ state: AppState) {
+        self.state = state
+    }
+
+    @MainActor
+    func publishResult(
+        key: String,
+        linkKey: String,
+        runID: String,
+        status: RepositoryCloudflareProviderStatusModel
+    ) {
+        state?.publishRepositoryCloudflareProviderStatus(
+            key: key,
+            linkKey: linkKey,
+            runID: runID,
+            status: status
         )
     }
 }
@@ -323,11 +385,17 @@ public final class AppState {
     private(set) var persistedStorageHygieneBaseline: StorageHygieneBaselineModel? = StorageHygieneBaselineStore.load()
     private(set) var storageScanJob: StorageScanJobResponseModel?
     private(set) var storageHygieneIsLoading = false
+    private(set) var storageHygieneIsVerifyingCache = false
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
     private(set) var repositoryScorecardReportsByRoot: [String: RepositoryScorecardReportModel] = [:]
     private(set) var repositoryScorecardLoadingRoots: Set<String> = []
     private(set) var repositoryScorecardErrorsByRoot: [String: String] = [:]
+    private(set) var repositoryProjects: [RepositoryProjectModel] = RepositoryProjectStore.load()
+    private(set) var repositoryProjectGitHubLoadingRoots: Set<String> = []
+    private(set) var repositoryProjectGitHubErrorsByRoot: [String: String] = [:]
+    private(set) var repositoryProjectCloudflareLoadingKeys: Set<String> = []
+    private(set) var repositoryProjectCloudflareErrorsByKey: [String: String] = [:]
     private(set) var processOpenResources: [UInt32: ProcessOpenResourcesReportModel] = [:]
     /// Result of the most recent reverse resource-holder lookup (which process
     /// holds a given file/port). Not pid-keyed — it's a system-wide query.
@@ -430,6 +498,18 @@ public final class AppState {
     private var repositoryScorecardTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored
     private var repositoryScorecardRunIDs: [String: String] = [:]
+    @ObservationIgnored
+    var repositoryGitHubProviderClient = RepositoryGitHubProviderClient.live
+    @ObservationIgnored
+    private var repositoryGitHubProviderTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored
+    private var repositoryGitHubProviderRunIDs: [String: String] = [:]
+    @ObservationIgnored
+    var repositoryCloudflareProviderClient = RepositoryCloudflareProviderClient.live
+    @ObservationIgnored
+    private var repositoryCloudflareProviderTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored
+    private var repositoryCloudflareProviderRunIDs: [String: String] = [:]
     @ObservationIgnored
     private let storageRootChangeMonitor = StorageRootChangeMonitor()
     @ObservationIgnored
@@ -704,6 +784,7 @@ public final class AppState {
         diagnosticsLoadTask = nil
         storageHygieneTask?.cancel()
         storageHygieneTask = nil
+        storageHygieneIsVerifyingCache = false
         storageScheduledScanTask?.cancel()
         storageScheduledScanTask = nil
         repositoryScorecardTasks.values.forEach { $0.cancel() }
@@ -862,12 +943,9 @@ public final class AppState {
             automationSeeded = true
             return
         }
-        let activeRules = automationRules.filter(\.enabled)
-        if !activeRules.isEmpty {
-            for event in events where !seenAutomationEventIds.contains(event.id) {
-                for rule in activeRules where automationRuleMatches(rule, event, in: snapshot) {
-                    executeAutomationAction(rule, event: event)
-                }
+        for event in events where !seenAutomationEventIds.contains(event.id) {
+            for rule in activeRules where automationRuleMatches(rule, event, in: snapshot) {
+                executeAutomationAction(rule, event: event)
             }
         }
         // Reset to the current (bounded) window so the set never grows without bound.
@@ -895,10 +973,8 @@ public final class AppState {
             notificationsSeeded = true
             return
         }
-        if notificationsEnabled {
-            for event in events where !seenNotificationEventIds.contains(event.id) {
-                considerTimelineNotification(event, in: snapshot)
-            }
+        for event in events where !seenNotificationEventIds.contains(event.id) {
+            considerTimelineNotification(event, in: snapshot)
         }
         seenNotificationEventIds = Set(events.map(\.id))
     }
@@ -2094,36 +2170,58 @@ public final class AppState {
     /// Load the developer storage hygiene report once. The backend scan is
     /// bounded and read-only; explicit refreshes call `runStorageHygieneScan`.
     func ensureStorageHygieneScan(roots: [String] = []) {
-        guard !storageHygieneIsLoading else { return }
+        guard !storageHygieneIsLoading, !storageHygieneIsVerifyingCache else { return }
         if let storageHygieneReport,
            (roots.isEmpty || Self.storageHygieneReportMatchesRequestedRoots(storageHygieneReport, roots: roots))
         {
             return
         }
         storageHygieneTask?.cancel()
-        storageHygieneIsLoading = true
+        storageHygieneIsLoading = storageHygieneReport == nil
+        storageHygieneIsVerifyingCache = false
         storageHygieneError = nil
         let bridge = self.bridge
         let publisher = StorageHygieneMainActorPublisher(self)
         storageHygieneTask = Task.detached(priority: .background) {
             let maxDepth: UInt32 = 5
             let limit: UInt32 = 80
+            var publishedReport = false
             let cacheResult = StorageHygieneReportCacheStore.loadIfValid(
-                roots: roots,
-                maxDepth: maxDepth,
-                limit: limit
+                roots: roots
             )
 
             switch cacheResult {
             case let .hit(cache):
                 guard !Task.isCancelled else { return }
                 await publisher.publishCacheHit(cache)
-                return
+                publishedReport = true
             case let .stale(reason):
                 guard !Task.isCancelled else { return }
                 await publisher.publishCacheStale(reason: reason)
             case .miss:
                 break
+            }
+
+            if !publishedReport {
+                guard !Task.isCancelled else { return }
+                let overview = bridge.storageHygieneOverviewJSON(
+                    roots: roots,
+                    maxDepth: maxDepth,
+                    mode: "instant_cached"
+                )
+                let overviewPrepared = StorageHygieneDecodePipeline.prepare(
+                    overview,
+                    roots: roots,
+                    maxDepth: maxDepth,
+                    limit: limit,
+                    mode: "instant_cached",
+                    saveCache: false,
+                    saveBaseline: false
+                )
+                if overviewPrepared.report != nil {
+                    await publisher.publishPrepared(overviewPrepared)
+                    publishedReport = true
+                }
             }
 
             guard !Task.isCancelled else { return }
@@ -2138,20 +2236,44 @@ public final class AppState {
                 maxDepth: maxDepth,
                 limit: limit,
                 mode: "instant_cached",
-                saveCache: false
+                saveCache: false,
+                saveBaseline: true
             )
             if indexedPrepared.report != nil {
                 await publisher.publishPrepared(indexedPrepared)
+                publishedReport = true
+            } else if !publishedReport {
+                await publisher.publishVerificationFinished(message: indexedPrepared.errorMessage)
             }
 
             guard !Task.isCancelled else { return }
-            await publisher.startScan(
+            guard publishedReport else { return }
+            await publisher.publishVerificationStarted()
+
+            let inventory = bridge.repositoryInventoryJSON(
                 roots: roots,
-                maxDepth: maxDepth,
-                limit: limit,
-                mode: "fast_changed_only"
+                maxDepth: maxDepth
             )
+            guard !Task.isCancelled else { return }
+            if let verifiedInventory = Self.decodeRepositoryInventoryReport(inventory) {
+                await publisher.publishInventoryVerification(verifiedInventory)
+            } else {
+                await publisher.publishVerificationFinished(
+                    message: inventory.errorMessage ?? "Repository inventory verification failed."
+                )
+            }
         }
+    }
+
+    nonisolated private static func decodeRepositoryInventoryReport(
+        _ result: JsonQueryResult
+    ) -> RepositoryInventoryReportModel? {
+        guard let json = result.json, let data = json.data(using: .utf8) else {
+            return nil
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(RepositoryInventoryReportModel.self, from: data)
     }
 
     private static func storageHygieneReportMatchesRequestedRoots(
@@ -2193,10 +2315,30 @@ public final class AppState {
     ) {
         storageHygieneTask?.cancel()
         storageHygieneIsLoading = true
+        storageHygieneIsVerifyingCache = false
         storageHygieneError = nil
         let bridge = self.bridge
         let publisher = StorageHygieneMainActorPublisher(self)
         storageHygieneTask = Task.detached(priority: .background) {
+            let overview = bridge.storageHygieneOverviewJSON(
+                roots: roots,
+                maxDepth: maxDepth,
+                mode: "instant_cached"
+            )
+            let overviewPrepared = StorageHygieneDecodePipeline.prepare(
+                overview,
+                roots: roots,
+                maxDepth: maxDepth,
+                limit: limit,
+                mode: "instant_cached",
+                saveCache: false,
+                saveBaseline: false
+            )
+            if overviewPrepared.report != nil {
+                guard !Task.isCancelled else { return }
+                await publisher.publishPrepared(overviewPrepared)
+            }
+
             let indexed = bridge.storageHygieneIndexedJSON(
                 roots: roots,
                 maxDepth: maxDepth,
@@ -2208,7 +2350,8 @@ public final class AppState {
                 maxDepth: maxDepth,
                 limit: limit,
                 mode: "instant_cached",
-                saveCache: false
+                saveCache: false,
+                saveBaseline: true
             )
             if indexedPrepared.report != nil {
                 guard !Task.isCancelled else { return }
@@ -2268,6 +2411,199 @@ public final class AppState {
             ]
         )
         runStorageHygieneScan(mode: "fast_changed_only")
+    }
+
+    func upsertRepositoryProject(_ project: RepositoryProjectModel) {
+        repositoryProjects = RepositoryProjectStore.upsert(project, into: repositoryProjects)
+        RepositoryProjectStore.save(repositoryProjects)
+    }
+
+    func removeRepositoryProject(id: String) {
+        repositoryProjects = RepositoryProjectStore.remove(id: id, from: repositoryProjects)
+        RepositoryProjectStore.save(repositoryProjects)
+    }
+
+    func repositoryProject(forRepoRoot repoRoot: String) -> RepositoryProjectModel? {
+        RepositoryProjectStore.project(forRepoRoot: repoRoot, in: repositoryProjects)
+    }
+
+    func refreshRepositoryGitHubStatus(
+        repoRoot: String,
+        currentBranch: String? = nil,
+        currentHead: String? = nil,
+        force: Bool = false
+    ) {
+        let key = RepositoryProjectModel.normalizedRepoRoot(repoRoot)
+        guard !key.isEmpty else { return }
+        guard let project = repositoryProject(forRepoRoot: key) else {
+            repositoryProjectGitHubErrorsByRoot[key] = "Create or link a project before refreshing GitHub status."
+            return
+        }
+        guard let link = project.githubRepositoryLink,
+              let owner = link.owner,
+              let repo = link.repo,
+              !owner.isEmpty,
+              !repo.isEmpty
+        else {
+            repositoryProjectGitHubErrorsByRoot[key] = "Link a GitHub repository before refreshing status."
+            return
+        }
+        if !force,
+           let cached = project.githubStatus,
+           cached.isFresh()
+        {
+            repositoryProjectGitHubErrorsByRoot[key] = nil
+            return
+        }
+
+        repositoryGitHubProviderTasks[key]?.cancel()
+        let runID = beginRepositoryGitHubProviderRun(key: key)
+        let client = repositoryGitHubProviderClient
+        let publisher = RepositoryGitHubProviderMainActorPublisher(self)
+        let token = ProviderCredentialStore().resolvedAccessToken(for: .github)
+
+        repositoryGitHubProviderTasks[key] = Task.detached(priority: .utility) { [client, publisher] in
+            let status = await client.fetchStatus(
+                RepositoryGitHubStatusRequest(
+                    owner: owner,
+                    repo: repo,
+                    currentBranch: currentBranch,
+                    currentHead: currentHead,
+                    token: token
+                )
+            )
+            guard !Task.isCancelled else { return }
+            await publisher.publishResult(key: key, runID: runID, status: status)
+        }
+    }
+
+    @discardableResult
+    private func beginRepositoryGitHubProviderRun(key: String) -> String {
+        let runID = UUID().uuidString
+        repositoryGitHubProviderRunIDs[key] = runID
+        repositoryProjectGitHubLoadingRoots.insert(key)
+        repositoryProjectGitHubErrorsByRoot[key] = nil
+        return runID
+    }
+
+    func publishRepositoryGitHubProviderStatus(
+        key: String,
+        runID: String,
+        status: RepositoryGitHubProviderStatusModel
+    ) {
+        guard repositoryGitHubProviderRunIDs[key] == runID else { return }
+        repositoryGitHubProviderRunIDs[key] = nil
+        repositoryGitHubProviderTasks[key] = nil
+        repositoryProjectGitHubLoadingRoots.remove(key)
+        repositoryProjectGitHubErrorsByRoot[key] = nil
+
+        guard var project = repositoryProject(forRepoRoot: key) else {
+            repositoryProjectGitHubErrorsByRoot[key] = "Project was removed before GitHub status finished."
+            return
+        }
+        project.githubStatus = status
+        repositoryProjects = RepositoryProjectStore.upsert(project, into: repositoryProjects)
+        RepositoryProjectStore.save(repositoryProjects)
+    }
+
+    func repositoryCloudflareProviderKey(
+        repoRoot: String,
+        link: RepositoryProjectLinkModel
+    ) -> String {
+        "\(RepositoryProjectModel.normalizedRepoRoot(repoRoot))::\(link.identityKey)"
+    }
+
+    func refreshRepositoryCloudflareStatus(
+        repoRoot: String,
+        link: RepositoryProjectLinkModel,
+        force: Bool = false
+    ) {
+        let key = RepositoryProjectModel.normalizedRepoRoot(repoRoot)
+        let loadingKey = repositoryCloudflareProviderKey(repoRoot: key, link: link)
+        guard !key.isEmpty else { return }
+        guard let project = repositoryProject(forRepoRoot: key) else {
+            repositoryProjectCloudflareErrorsByKey[loadingKey] =
+                "Create or link a project before refreshing Cloudflare status."
+            return
+        }
+        guard project.containsCloudflareLink(link),
+              link.provider == .cloudflare
+        else {
+            repositoryProjectCloudflareErrorsByKey[loadingKey] =
+                "Link Cloudflare before refreshing deployment status."
+            return
+        }
+        guard link.accountId?.isEmpty == false else {
+            repositoryProjectCloudflareErrorsByKey[loadingKey] =
+                "Cloudflare link is missing an account ID."
+            return
+        }
+        if !force,
+           let cached = project.cloudflareStatus(for: link),
+           cached.isFresh()
+        {
+            repositoryProjectCloudflareErrorsByKey[loadingKey] = nil
+            return
+        }
+
+        repositoryCloudflareProviderTasks[loadingKey]?.cancel()
+        let runID = beginRepositoryCloudflareProviderRun(loadingKey: loadingKey)
+        let client = repositoryCloudflareProviderClient
+        let publisher = RepositoryCloudflareProviderMainActorPublisher(self)
+        let token = ProviderCredentialStore().resolvedAccessToken(for: .cloudflare)
+
+        repositoryCloudflareProviderTasks[loadingKey] = Task.detached(priority: .utility) {
+            [client, publisher] in
+            let status = await client.fetchStatus(
+                RepositoryCloudflareStatusRequest(
+                    link: link,
+                    token: token
+                )
+            )
+            guard !Task.isCancelled else { return }
+            await publisher.publishResult(
+                key: key,
+                linkKey: loadingKey,
+                runID: runID,
+                status: status
+            )
+        }
+    }
+
+    @discardableResult
+    private func beginRepositoryCloudflareProviderRun(loadingKey: String) -> String {
+        let runID = UUID().uuidString
+        repositoryCloudflareProviderRunIDs[loadingKey] = runID
+        repositoryProjectCloudflareLoadingKeys.insert(loadingKey)
+        repositoryProjectCloudflareErrorsByKey[loadingKey] = nil
+        return runID
+    }
+
+    func publishRepositoryCloudflareProviderStatus(
+        key: String,
+        linkKey: String,
+        runID: String,
+        status: RepositoryCloudflareProviderStatusModel
+    ) {
+        guard repositoryCloudflareProviderRunIDs[linkKey] == runID else { return }
+        repositoryCloudflareProviderRunIDs[linkKey] = nil
+        repositoryCloudflareProviderTasks[linkKey] = nil
+        repositoryProjectCloudflareLoadingKeys.remove(linkKey)
+        repositoryProjectCloudflareErrorsByKey[linkKey] = nil
+
+        guard var project = repositoryProject(forRepoRoot: key) else {
+            repositoryProjectCloudflareErrorsByKey[linkKey] =
+                "Project was removed before Cloudflare status finished."
+            return
+        }
+        var statuses = project.cloudflareStatuses ?? []
+        statuses.removeAll { $0.linkIdentityKey == status.linkIdentityKey }
+        statuses.append(status)
+        project.cloudflareStatuses = statuses.sorted { left, right in
+            left.resourceName.localizedCaseInsensitiveCompare(right.resourceName) == .orderedAscending
+        }
+        repositoryProjects = RepositoryProjectStore.upsert(project, into: repositoryProjects)
+        RepositoryProjectStore.save(repositoryProjects)
     }
 
     func runRepositoryScorecard(
@@ -2394,6 +2730,7 @@ public final class AppState {
         mode: String
     ) {
         storageHygieneIsLoading = true
+        storageHygieneIsVerifyingCache = false
         storageHygieneError = nil
         storageScanJob = nil
         storageScanController.start(
@@ -2409,6 +2746,7 @@ public final class AppState {
     fileprivate func publishStorageHygieneCacheHit(_ cache: StorageHygieneReportCacheHit) {
         guard !Task.isCancelled else { return }
         storageHygieneIsLoading = false
+        storageScanJob = nil
         storageHygieneReport = cache.report
         storageRootChangeMonitor.startWatching(roots: cache.report.roots)
         storageHygieneCompletedAt =
@@ -2438,7 +2776,99 @@ public final class AppState {
         )
     }
 
+    fileprivate func publishStorageHygieneVerificationStarted() {
+        guard !Task.isCancelled else { return }
+        storageHygieneIsLoading = false
+        storageHygieneIsVerifyingCache = true
+        storageHygieneError = nil
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "storage-hygiene-cache-verification-started",
+            message: "Started lightweight repository inventory verification."
+        )
+    }
+
+    fileprivate func publishStorageRepositoryInventoryVerification(
+        _ inventory: RepositoryInventoryReportModel
+    ) {
+        guard !Task.isCancelled else { return }
+        storageHygieneIsLoading = false
+        storageHygieneIsVerifyingCache = false
+        storageHygieneTask = nil
+        guard var report = storageHygieneReport else {
+            recordLocalDiagnosticsEvent(
+                level: .info,
+                subsystem: .ui,
+                eventType: "storage-hygiene-cache-verification-completed",
+                message: "Repository inventory verification completed without a display report.",
+                fields: [
+                    DiagnosticsField(
+                        key: "repository_inventory_count",
+                        value: String(inventory.repositoryInventory.count)
+                    ),
+                ]
+            )
+            return
+        }
+
+        previousStorageHygieneReport = storageHygieneReport
+        report.repositoryInventory = inventory.repositoryInventory
+        report.repositoryInventoryComplete = inventory.repositoryInventoryComplete
+        report.repositoryInventoryTruncated = inventory.repositoryInventoryTruncated
+        report.repositoryInventoryRoots = inventory.repositoryInventoryRoots
+        report.repositoryInventoryPartialRoots = inventory.repositoryInventoryPartialRoots
+        report.repositoryInventoryCoverage = inventory.repositoryInventoryCoverage
+        storageHygieneReport = report
+        storageRootChangeMonitor.startWatching(roots: report.roots)
+        storageHygieneError = nil
+
+        recordLocalDiagnosticsEvent(
+            level: inventory.repositoryInventoryComplete ? .info : .warn,
+            subsystem: .ui,
+            eventType: "storage-hygiene-cache-verification-completed",
+            message: "Merged lightweight repository inventory verification into cached report.",
+            fields: [
+                DiagnosticsField(
+                    key: "repository_inventory_count",
+                    value: String(inventory.repositoryInventory.count)
+                ),
+                DiagnosticsField(
+                    key: "repository_inventory_complete",
+                    value: inventory.repositoryInventoryComplete ? "true" : "false"
+                ),
+                DiagnosticsField(
+                    key: "repository_walk_millis",
+                    value: String(inventory.diagnostics.repositoryWalkMillis)
+                ),
+            ]
+        )
+    }
+
+    fileprivate func publishStorageHygieneVerificationFinished(message: String?) {
+        guard !Task.isCancelled else { return }
+        storageHygieneIsLoading = false
+        storageHygieneIsVerifyingCache = false
+        storageHygieneTask = nil
+        if let message, storageHygieneReport != nil {
+            recordLocalDiagnosticsEvent(
+                level: .warn,
+                subsystem: .ui,
+                eventType: "storage-hygiene-cache-verification-failed",
+                message: message
+            )
+        } else if let message {
+            recordLocalDiagnosticsEvent(
+                level: .info,
+                subsystem: .ui,
+                eventType: "storage-hygiene-cache-miss",
+                message: message
+            )
+        }
+    }
+
     func publishStorageScanJob(_ job: StorageScanJobResponseModel) {
+        storageHygieneIsVerifyingCache = false
         storageScanJob = job
         storageScanController.setActiveJobId(job.isActive ? job.jobId : nil)
         switch job.status {
@@ -2461,6 +2891,7 @@ public final class AppState {
 
     func publishStorageScanFailure(_ message: String) {
         storageHygieneIsLoading = false
+        storageHygieneIsVerifyingCache = false
         storageHygieneError = message
         recordLocalDiagnosticsEvent(
             level: .warn,
@@ -2475,8 +2906,10 @@ public final class AppState {
     ) {
         guard !Task.isCancelled else { return }
         storageHygieneIsLoading = false
+        storageHygieneIsVerifyingCache = false
         if let report = prepared.report {
             storageScanController.setActiveJobId(nil)
+            let storagePublishStartedAt = CFAbsoluteTimeGetCurrent()
             previousStorageHygieneReport = storageHygieneReport
             storageHygieneReport = report
             persistedStorageHygieneBaseline = prepared.baseline
@@ -2486,6 +2919,9 @@ public final class AppState {
             }
             storageHygieneCompletedAt = Date()
             storageHygieneError = nil
+            let storagePublishMillis = UInt64(
+                max(0, (CFAbsoluteTimeGetCurrent() - storagePublishStartedAt) * 1000)
+            )
             recordLocalDiagnosticsEvent(
                 level: report.truncated ? .warn : .info,
                 subsystem: .ui,
@@ -2513,6 +2949,29 @@ public final class AppState {
                     DiagnosticsField(
                         key: "payload_bytes",
                         value: String(prepared.payloadBytes)
+                    ),
+                    DiagnosticsField(
+                        key: "storage_budget_status",
+                        value: report.diagnostics.performanceBudget?.status ?? "unknown"
+                    ),
+                    DiagnosticsField(
+                        key: "storage_scan_latency_millis",
+                        value: String(
+                            report.diagnostics.performanceBudget?.scanJobLatencyMillis
+                                ?? report.scanDurationMillis
+                        )
+                    ),
+                    DiagnosticsField(
+                        key: "storage_payload_budget_bytes",
+                        value: String(report.diagnostics.performanceBudget?.payloadBudgetBytes ?? 0)
+                    ),
+                    DiagnosticsField(
+                        key: "storage_table_page_millis",
+                        value: String(report.diagnostics.performanceBudget?.tablePageMillis ?? 0)
+                    ),
+                    DiagnosticsField(
+                        key: "storage_render_publish_millis",
+                        value: String(storagePublishMillis)
                     ),
                     DiagnosticsField(
                         key: "decode_millis",

@@ -211,6 +211,17 @@ cat > "$PLIST_DIR/Info.plist" <<PLIST
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
   <string>$VERSION</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>$BUNDLE_ID.oauth</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>aetower</string>
+      </array>
+    </dict>
+  </array>
   <key>CFBundleVersion</key>
   <string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>

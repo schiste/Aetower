@@ -299,6 +299,9 @@ public final class SettingsStore {
     public nonisolated static let minimumEngineTickSeconds = 0.5
     public nonisolated static let minimumGPUSampleIntervalSeconds = 5.0
     public nonisolated static let minimumStorageScheduledScanIntervalHours = 1.0
+    public nonisolated static let defaultCloudflareOAuthScopes = "pages.read workers.scripts.read"
+    public nonisolated static let defaultCloudflareOAuthRedirectURI =
+        "aetower://oauth/cloudflare/callback"
     public nonisolated static let defaultRepositoryRoots = [
         "~/Repositories",
         "~/Downloads/Repositories",
@@ -452,6 +455,30 @@ public final class SettingsStore {
     public var binaryReputationEnabled: Bool {
         didSet { persist() }
     }
+    /// Public GitHub OAuth App client ID. This is metadata, not a secret.
+    public var githubOAuthClientID: String {
+        didSet { persist() }
+    }
+    /// Space-delimited OAuth scopes requested during GitHub device flow.
+    public var githubOAuthScopes: String {
+        didSet { persist() }
+    }
+    /// Public Cloudflare OAuth client ID. This is metadata, not a secret.
+    public var cloudflareOAuthClientID: String {
+        didSet { persist() }
+    }
+    /// Cloudflare account where the OAuth client is registered.
+    public var cloudflareOAuthAccountID: String {
+        didSet { persist() }
+    }
+    /// Space-delimited OAuth scopes requested during Cloudflare PKCE flow.
+    public var cloudflareOAuthScopes: String {
+        didSet { persist() }
+    }
+    /// Redirect URI registered on the Cloudflare OAuth client.
+    public var cloudflareOAuthRedirectURI: String {
+        didSet { persist() }
+    }
     public var exportPrivacyTier: ExportPrivacyTier {
         didSet { persist() }
     }
@@ -516,6 +543,14 @@ public final class SettingsStore {
             defaults.stringArray(forKey: Self.repositoryRootsKey) ?? Self.defaultRepositoryRoots
         )
         self.binaryReputationEnabled = defaults.object(forKey: Self.binaryReputationEnabledKey) as? Bool ?? false
+        self.githubOAuthClientID = defaults.string(forKey: Self.githubOAuthClientIDKey) ?? ""
+        self.githubOAuthScopes = defaults.string(forKey: Self.githubOAuthScopesKey) ?? ""
+        self.cloudflareOAuthClientID = defaults.string(forKey: Self.cloudflareOAuthClientIDKey) ?? ""
+        self.cloudflareOAuthAccountID = defaults.string(forKey: Self.cloudflareOAuthAccountIDKey) ?? ""
+        self.cloudflareOAuthScopes = defaults.string(forKey: Self.cloudflareOAuthScopesKey)
+            ?? Self.defaultCloudflareOAuthScopes
+        self.cloudflareOAuthRedirectURI = defaults.string(forKey: Self.cloudflareOAuthRedirectURIKey)
+            ?? Self.defaultCloudflareOAuthRedirectURI
         let persistedTier = defaults.string(forKey: Self.exportPrivacyTierKey)
         let legacySensitive = defaults.object(forKey: Self.includeSensitiveExportsKey) as? Bool ?? false
         self.exportPrivacyTier = ExportPrivacyTier(rawValue: persistedTier ?? "")
@@ -604,6 +639,12 @@ public final class SettingsStore {
     private static let storageScheduledScanIntervalHoursKey = "settings.storageScheduledScanIntervalHours"
     private static let repositoryRootsKey = "settings.repositoryRoots"
     private static let binaryReputationEnabledKey = "settings.binaryReputationEnabled"
+    private static let githubOAuthClientIDKey = "settings.githubOAuthClientID"
+    private static let githubOAuthScopesKey = "settings.githubOAuthScopes"
+    private static let cloudflareOAuthClientIDKey = "settings.cloudflareOAuthClientID"
+    private static let cloudflareOAuthAccountIDKey = "settings.cloudflareOAuthAccountID"
+    private static let cloudflareOAuthScopesKey = "settings.cloudflareOAuthScopes"
+    private static let cloudflareOAuthRedirectURIKey = "settings.cloudflareOAuthRedirectURI"
     private static let exportPrivacyTierKey = "settings.exportPrivacyTier"
     private static let autoRegisterLocalMcpClientsEnabledKey = "settings.autoRegisterLocalMcpClientsEnabled"
     private static let includeSensitiveExportsKey = "settings.includeSensitiveExports"
@@ -652,6 +693,23 @@ public final class SettingsStore {
             fallback: 24.0,
             minimum: minimumStorageScheduledScanIntervalHours
         )
+    }
+
+    public nonisolated static func normalizedOAuthScopes(_ value: String) -> String {
+        var seen = Set<String>()
+        return value
+            .split(whereSeparator: \.isWhitespace)
+            .compactMap { rawScope -> String? in
+                let scope = String(rawScope).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !scope.isEmpty, seen.insert(scope).inserted else { return nil }
+                return scope
+            }
+            .joined(separator: " ")
+    }
+
+    public nonisolated static func normalizedCloudflareOAuthRedirectURI(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? defaultCloudflareOAuthRedirectURI : trimmed
     }
 
     public nonisolated static func normalizedRepositoryRoots(_ roots: [String]) -> [String] {
@@ -749,6 +807,14 @@ public final class SettingsStore {
             storageScheduledScanIntervalHours
         )
         repositoryRoots = Self.normalizedRepositoryRoots(repositoryRoots)
+        githubOAuthClientID = githubOAuthClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        githubOAuthScopes = Self.normalizedOAuthScopes(githubOAuthScopes)
+        cloudflareOAuthClientID = cloudflareOAuthClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        cloudflareOAuthAccountID = cloudflareOAuthAccountID.trimmingCharacters(in: .whitespacesAndNewlines)
+        cloudflareOAuthScopes = Self.normalizedOAuthScopes(cloudflareOAuthScopes)
+        cloudflareOAuthRedirectURI = Self.normalizedCloudflareOAuthRedirectURI(
+            cloudflareOAuthRedirectURI
+        )
         enforceRuntimeIntervalRelationships()
     }
 
@@ -807,7 +873,14 @@ extension SettingsStore {
         storageScheduledScanIntervalHours = 24.0
         repositoryRoots = Self.defaultRepositoryRoots
         binaryReputationEnabled = false
+        githubOAuthClientID = ""
+        githubOAuthScopes = ""
+        cloudflareOAuthClientID = ""
+        cloudflareOAuthAccountID = ""
+        cloudflareOAuthScopes = Self.defaultCloudflareOAuthScopes
+        cloudflareOAuthRedirectURI = Self.defaultCloudflareOAuthRedirectURI
         KeychainHelper.delete(account: KeychainHelper.binaryReputationAccount)
+        ProviderCredentialStore(defaults: defaults).resetAll()
         exportPrivacyTier = .redacted
         autoRegisterLocalMcpClientsEnabled = false
         if launchAtLoginEnabled {
@@ -858,6 +931,27 @@ extension SettingsStore {
         )
         defaults.set(Self.normalizedRepositoryRoots(repositoryRoots), forKey: Self.repositoryRootsKey)
         defaults.set(binaryReputationEnabled, forKey: Self.binaryReputationEnabledKey)
+        defaults.set(
+            githubOAuthClientID.trimmingCharacters(in: .whitespacesAndNewlines),
+            forKey: Self.githubOAuthClientIDKey
+        )
+        defaults.set(Self.normalizedOAuthScopes(githubOAuthScopes), forKey: Self.githubOAuthScopesKey)
+        defaults.set(
+            cloudflareOAuthClientID.trimmingCharacters(in: .whitespacesAndNewlines),
+            forKey: Self.cloudflareOAuthClientIDKey
+        )
+        defaults.set(
+            cloudflareOAuthAccountID.trimmingCharacters(in: .whitespacesAndNewlines),
+            forKey: Self.cloudflareOAuthAccountIDKey
+        )
+        defaults.set(
+            Self.normalizedOAuthScopes(cloudflareOAuthScopes),
+            forKey: Self.cloudflareOAuthScopesKey
+        )
+        defaults.set(
+            Self.normalizedCloudflareOAuthRedirectURI(cloudflareOAuthRedirectURI),
+            forKey: Self.cloudflareOAuthRedirectURIKey
+        )
         defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
         defaults.set(autoRegisterLocalMcpClientsEnabled, forKey: Self.autoRegisterLocalMcpClientsEnabledKey)
         defaults.set(exportPrivacyTier == .full, forKey: Self.includeSensitiveExportsKey)

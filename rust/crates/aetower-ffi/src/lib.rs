@@ -13,10 +13,11 @@ use aetower_mcp::{
     process_open_resources_json, process_sample_json, profile_entity_json,
     repository_inventory_json, repository_scorecard_json_cached, resource_holders_by_file_json,
     resource_holders_by_port_json, self_memory_attribution_json, start_local_socket_server,
-    storage_hygiene_indexed_json, storage_hygiene_json, storage_hygiene_mode_json,
-    storage_scan_cancel_json, storage_scan_pause_json, storage_scan_result_json,
-    storage_scan_resume_json, storage_scan_start_json, storage_scan_status_json,
-    wakeup_attribution_json,
+    storage_hygiene_actions_json, storage_hygiene_indexed_json, storage_hygiene_items_page_json,
+    storage_hygiene_json, storage_hygiene_mode_json, storage_hygiene_overview_json,
+    storage_hygiene_repo_detail_json, storage_scan_cancel_json, storage_scan_pause_json,
+    storage_scan_result_json, storage_scan_resume_json, storage_scan_start_json,
+    storage_scan_status_json, wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1691,6 +1692,66 @@ impl MonitorEngine {
             max_depth as usize,
             limit as usize,
         ))
+    }
+
+    pub fn storage_hygiene_overview_json(
+        &self,
+        roots: Vec<String>,
+        max_depth: u32,
+        mode: String,
+    ) -> JsonQueryResult {
+        json_query_result(storage_hygiene_overview_json(
+            roots,
+            max_depth as usize,
+            &mode,
+        ))
+    }
+
+    pub fn storage_hygiene_actions_json(
+        &self,
+        roots: Vec<String>,
+        max_depth: u32,
+        limit: u32,
+        mode: String,
+    ) -> JsonQueryResult {
+        json_query_result(storage_hygiene_actions_json(
+            roots,
+            max_depth as usize,
+            limit as usize,
+            &mode,
+        ))
+    }
+
+    // Flat parameter list is the uniffi-exported paging surface; a params record
+    // would force a bindings regeneration for no ABI benefit.
+    #[allow(clippy::too_many_arguments)]
+    pub fn storage_hygiene_items_page_json(
+        &self,
+        roots: Vec<String>,
+        max_depth: u32,
+        offset: u32,
+        limit: u32,
+        mode: String,
+        sort_key: String,
+        sort_descending: bool,
+    ) -> JsonQueryResult {
+        json_query_result(storage_hygiene_items_page_json(
+            roots,
+            max_depth as usize,
+            offset as usize,
+            limit as usize,
+            &mode,
+            &sort_key,
+            sort_descending,
+        ))
+    }
+
+    pub fn storage_hygiene_repo_detail_json(
+        &self,
+        repo_root: String,
+        mode: String,
+    ) -> JsonQueryResult {
+        json_query_result(storage_hygiene_repo_detail_json(repo_root, &mode))
     }
 
     /// Cheap Git-root inventory scan for repository management. Does not size

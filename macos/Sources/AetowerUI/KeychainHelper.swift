@@ -2,13 +2,17 @@ import Foundation
 import Security
 
 /// Minimal wrapper over the macOS Keychain for storing secrets that must never
-/// touch UserDefaults — currently just the VirusTotal API key. Values live as
-/// generic passwords under a fixed service, keyed by account.
+/// touch UserDefaults. Values live as generic passwords under a fixed service,
+/// keyed by account.
 public enum KeychainHelper {
     private static let service = "com.aeptus.aetower"
 
     /// Keychain account under which the VirusTotal API key is stored.
     public static let binaryReputationAccount = "binaryReputation"
+    /// Keychain account under which the optional GitHub project-provider token is stored.
+    public static let githubProviderTokenAccount = "githubProviderToken"
+    /// Keychain account under which the optional Cloudflare project-provider token is stored.
+    public static let cloudflareProviderTokenAccount = "cloudflareProviderToken"
 
     /// Store (or overwrite) a secret for `account`. Passing an empty string
     /// deletes the item. Returns true on success.

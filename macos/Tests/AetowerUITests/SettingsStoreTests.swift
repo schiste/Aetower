@@ -104,6 +104,38 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.repositoryRoots, ["~/Wikimedia", "~/pentagi", "~/Downloads/Aerie"])
     }
 
+    func testGitHubOAuthConfigurationPersistsAndNormalizesScopes() {
+        let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = SettingsStore(defaults: defaults)
+        store.githubOAuthClientID = " client-123 "
+        store.githubOAuthScopes = " repo   read:user repo "
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertEqual(reloaded.githubOAuthClientID, "client-123")
+        XCTAssertEqual(reloaded.githubOAuthScopes, "repo read:user")
+    }
+
+    func testCloudflareOAuthConfigurationPersistsAndNormalizesMetadata() {
+        let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = SettingsStore(defaults: defaults)
+        store.cloudflareOAuthClientID = " cf-client "
+        store.cloudflareOAuthAccountID = " account-123 "
+        store.cloudflareOAuthScopes = " pages.read   workers.scripts.read pages.read "
+        store.cloudflareOAuthRedirectURI = " aetower://oauth/cloudflare/callback "
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertEqual(reloaded.cloudflareOAuthClientID, "cf-client")
+        XCTAssertEqual(reloaded.cloudflareOAuthAccountID, "account-123")
+        XCTAssertEqual(reloaded.cloudflareOAuthScopes, "pages.read workers.scripts.read")
+        XCTAssertEqual(reloaded.cloudflareOAuthRedirectURI, "aetower://oauth/cloudflare/callback")
+    }
+
     func testMetricRingFixedScalingPreferencePersists() {
         let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
