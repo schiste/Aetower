@@ -353,12 +353,12 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
         ),
         ToolDescriptor::with_args(
             "aetower_storage_hygiene_items_page",
-            "Return one page of ranked storage items plus diagnostics.",
+            "Return one page of ranked storage items plus diagnostics. Pages in instant_cached mode are served directly from the persistent index at full depth.",
             vec![
                 string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths."),
                 uint("max_depth", Some(1), Some(12), Some(5)),
-                uint("offset", Some(0), Some(200), Some(0)),
-                uint("limit", Some(1), Some(200), Some(80)),
+                uint("offset", Some(0), Some(1_000_000), Some(0)),
+                uint("limit", Some(1), Some(10_000), Some(80)),
                 string("mode").described("Scan mode. Defaults to fast_changed_only."),
                 string_enum("sort_key", &["size", "path", "modified", "accessed", "tier", "kind"])
                     .described("Server-side sort key for the returned page. Defaults to size."),

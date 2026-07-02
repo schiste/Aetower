@@ -102,11 +102,22 @@ pub fn storage_hygiene_items_page_json(
     sort_key: &str,
     sort_descending: bool,
 ) -> Result<String, String> {
+    let sort_key = StorageItemSortKey::parse(sort_key);
+    if StorageScanMode::parse(mode) == StorageScanMode::InstantCached
+        && let Some(json) = storage_hygiene_items_page_from_index(
+            roots.clone(),
+            offset,
+            limit,
+            sort_key,
+            sort_descending,
+        )
+    {
+        return json;
+    }
     let requested_limit = offset.saturating_add(limit).clamp(1, MAX_LIMIT);
     let mut report =
         build_storage_hygiene_projection_report(roots, max_depth, requested_limit, mode);
     let table_started = Instant::now();
-    let sort_key = StorageItemSortKey::parse(sort_key);
     let mut report_items = std::mem::take(&mut report.items);
     sort_storage_items(&mut report_items, sort_key, sort_descending);
     let total_available = report_items.len();
@@ -127,9 +138,105 @@ pub fn storage_hygiene_items_page_json(
         returned_count: items.len(),
         total_available,
         has_more: offset.saturating_add(items.len()) < total_available,
+        page_source: "report".to_owned(),
         items,
     })
     .map_err(|error| error.to_string())
+}
+
+/// Serve a page of items straight from the persistent index without building
+/// the full projection report. Returns `None` when the index cannot serve the
+/// request (no connection, query failure, or an empty index), which falls the
+/// caller back to the report-building path.
+fn storage_hygiene_items_page_from_index(
+    roots: Vec<String>,
+    offset: usize,
+    limit: usize,
+    sort_key: StorageItemSortKey,
+    sort_descending: bool,
+) -> Option<Result<String, String>> {
+    let started = Instant::now();
+    let now_millis = storage_now_millis();
+    let roots = normalize_roots(roots);
+    let offset = offset.min(MAX_ITEMS_PAGE_OFFSET);
+    let limit = limit.clamp(1, MAX_ITEMS_PAGE_LIMIT);
+    let storage_index = StorageSizeIndex::open();
+    let mut metrics = StorageScanMetrics {
+        storage_index_status: storage_index.status.clone(),
+        ..StorageScanMetrics::default()
+    };
+    let page = storage_index
+        .load_item_rows_page(
+            &roots,
+            sort_key,
+            sort_descending,
+            offset,
+            limit,
+            &mut metrics,
+        )
+        .ok()?;
+    if page.total_available == 0 {
+        return None;
+    }
+    let total_available = page.total_available.min(usize::MAX as u64) as usize;
+    let mut items = page
+        .rows
+        .into_iter()
+        .map(|row| storage_item_for_indexed_row(row, now_millis))
+        .collect::<Vec<_>>();
+    apply_cleanup_guardrails(&mut items, now_millis);
+    for item in &mut items {
+        item.evidence = storage_item_evidence(item);
+        item.next_step = storage_item_next_step(item);
+    }
+    let table_page_millis = started.elapsed().as_millis() as u64;
+    let item_count = items.len().min(u64::MAX as usize) as u64;
+    let diagnostics = StorageScanDiagnostics {
+        mode: StorageScanMode::InstantCached.as_str().to_owned(),
+        root_walk_millis: 0,
+        size_walk_millis: 0,
+        git_millis: 0,
+        serialize_millis: 0,
+        payload_bytes: 0,
+        decode_millis: 0,
+        scanned_directory_count: 0,
+        discovered_repository_count: 0,
+        sized_entry_count: item_count,
+        candidate_seen_count: item_count,
+        candidate_retained_count: item_count,
+        storage_index_status: format!("items_page:{}", metrics.storage_index_status),
+        storage_index_hits: metrics.storage_index_hits,
+        storage_index_misses: metrics.storage_index_misses,
+        storage_index_writes: 0,
+        native_metadata_strategy: "persistent_index".to_owned(),
+        fsevents_status: "dirty_paths_refresh_full_scan".to_owned(),
+        lazy_git_status: true,
+        top_k_retained: false,
+        performance_budget: storage_performance_budget_diagnostics(
+            0,
+            0,
+            item_count,
+            table_page_millis,
+            0,
+        ),
+    };
+    Some(
+        serde_json::to_string(&StorageHygieneItemsPageResponse {
+            captured_at_millis: now_millis,
+            scan_mode: StorageScanMode::InstantCached.as_str().to_owned(),
+            diagnostics,
+            offset,
+            limit,
+            sort_key: sort_key.as_str().to_owned(),
+            sort_descending,
+            returned_count: items.len(),
+            total_available,
+            has_more: offset.saturating_add(items.len()) < total_available,
+            page_source: "index".to_owned(),
+            items,
+        })
+        .map_err(|error| error.to_string()),
+    )
 }
 
 pub fn storage_hygiene_repo_detail_json(repo_root: String, mode: &str) -> Result<String, String> {

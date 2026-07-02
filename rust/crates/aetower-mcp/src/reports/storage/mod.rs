@@ -16,10 +16,12 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 
 const MAX_LIMIT: usize = 200;
+const MAX_ITEMS_PAGE_LIMIT: usize = 10_000;
+const MAX_ITEMS_PAGE_OFFSET: usize = 1_000_000;
 const MAX_ROOTS: usize = 64;
 const MAX_DIRECTORIES: u64 = 25_000;
 const SIZE_WALK_MAX_ENTRIES: u64 = 150_000;
@@ -287,7 +289,7 @@ use report::{
     normalize_dirty_paths, normalize_roots, path_matches_dirty_prefix,
     refresh_storage_performance_budget, skipped_root_permission_state,
     storage_byte_accounting_label, storage_item_evidence, storage_item_next_step,
-    storage_source_kind, storage_source_label,
+    storage_performance_budget_diagnostics, storage_source_kind, storage_source_label,
 };
 #[cfg(test)]
 pub(crate) use report::{

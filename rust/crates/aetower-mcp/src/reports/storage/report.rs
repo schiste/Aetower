@@ -127,32 +127,44 @@ pub(super) fn refresh_storage_performance_budget(
     table_page_millis: u64,
     render_publish_millis: u64,
 ) {
+    report.diagnostics.performance_budget = storage_performance_budget_diagnostics(
+        report.scan_duration_millis,
+        report.diagnostics.payload_bytes,
+        report.diagnostics.candidate_seen_count,
+        table_page_millis,
+        render_publish_millis,
+    );
+}
+
+pub(super) fn storage_performance_budget_diagnostics(
+    scan_duration_millis: u64,
+    payload_bytes: u64,
+    candidate_seen_count: u64,
+    table_page_millis: u64,
+    render_publish_millis: u64,
+) -> StoragePerformanceBudgetDiagnostics {
     let mut notes = Vec::new();
     let mut severity = 0u8;
-    if report.scan_duration_millis >= STORAGE_SCAN_LATENCY_CRITICAL_MILLIS {
+    if scan_duration_millis >= STORAGE_SCAN_LATENCY_CRITICAL_MILLIS {
         severity = severity.max(2);
         notes.push(format!(
-            "scan latency exceeded critical budget: {}ms >= {}ms",
-            report.scan_duration_millis, STORAGE_SCAN_LATENCY_CRITICAL_MILLIS
+            "scan latency exceeded critical budget: {scan_duration_millis}ms >= {STORAGE_SCAN_LATENCY_CRITICAL_MILLIS}ms"
         ));
-    } else if report.scan_duration_millis >= STORAGE_SCAN_LATENCY_WARN_MILLIS {
+    } else if scan_duration_millis >= STORAGE_SCAN_LATENCY_WARN_MILLIS {
         severity = severity.max(1);
         notes.push(format!(
-            "scan latency exceeded warning budget: {}ms >= {}ms",
-            report.scan_duration_millis, STORAGE_SCAN_LATENCY_WARN_MILLIS
+            "scan latency exceeded warning budget: {scan_duration_millis}ms >= {STORAGE_SCAN_LATENCY_WARN_MILLIS}ms"
         ));
     }
-    if report.diagnostics.payload_bytes >= STORAGE_PAYLOAD_CRITICAL_BYTES {
+    if payload_bytes >= STORAGE_PAYLOAD_CRITICAL_BYTES {
         severity = severity.max(2);
         notes.push(format!(
-            "payload exceeded critical budget: {} bytes >= {} bytes",
-            report.diagnostics.payload_bytes, STORAGE_PAYLOAD_CRITICAL_BYTES
+            "payload exceeded critical budget: {payload_bytes} bytes >= {STORAGE_PAYLOAD_CRITICAL_BYTES} bytes"
         ));
-    } else if report.diagnostics.payload_bytes >= STORAGE_PAYLOAD_WARN_BYTES {
+    } else if payload_bytes >= STORAGE_PAYLOAD_WARN_BYTES {
         severity = severity.max(1);
         notes.push(format!(
-            "payload exceeded warning budget: {} bytes >= {} bytes",
-            report.diagnostics.payload_bytes, STORAGE_PAYLOAD_WARN_BYTES
+            "payload exceeded warning budget: {payload_bytes} bytes >= {STORAGE_PAYLOAD_WARN_BYTES} bytes"
         ));
     }
     if table_page_millis >= STORAGE_TABLE_PAGE_CRITICAL_MILLIS {
@@ -177,31 +189,30 @@ pub(super) fn refresh_storage_performance_budget(
             "render publish exceeded warning budget: {render_publish_millis}ms >= {STORAGE_RENDER_WARN_MILLIS}ms"
         ));
     }
-    if report.diagnostics.candidate_seen_count >= 1_000_000 {
+    if candidate_seen_count >= 1_000_000 {
         notes.push(format!(
-            "stress fixture scale: {} candidates seen",
-            report.diagnostics.candidate_seen_count
+            "stress fixture scale: {candidate_seen_count} candidates seen"
         ));
     }
     if notes.is_empty() {
         notes.push("storage scan and UI payload stayed within current budgets".to_owned());
     }
-    report.diagnostics.performance_budget = StoragePerformanceBudgetDiagnostics {
+    StoragePerformanceBudgetDiagnostics {
         status: match severity {
             0 => "ok",
             1 => "warn",
             _ => "critical",
         }
         .to_owned(),
-        scan_job_latency_millis: report.scan_duration_millis,
-        payload_bytes: report.diagnostics.payload_bytes,
+        scan_job_latency_millis: scan_duration_millis,
+        payload_bytes,
         payload_budget_bytes: STORAGE_PAYLOAD_WARN_BYTES,
         table_page_millis,
         table_page_budget_millis: STORAGE_TABLE_PAGE_WARN_MILLIS,
         render_publish_millis,
         render_budget_millis: STORAGE_RENDER_WARN_MILLIS,
         notes,
-    };
+    }
 }
 
 pub fn storage_hygiene_deep_scan_json(

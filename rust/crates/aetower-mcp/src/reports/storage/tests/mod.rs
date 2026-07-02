@@ -188,6 +188,224 @@ fn storage_hygiene_indexed_snapshot_reuses_persistent_rows() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[derive(Clone)]
+struct SeededPageRow {
+    path: String,
+    size_bytes: u64,
+    modified_millis: Option<u64>,
+    accessed_millis: Option<u64>,
+    cleanup_tier: String,
+    safety: String,
+    kind: String,
+}
+
+fn seed_items_page_fixture(root: &Path, count: usize) -> Vec<SeededPageRow> {
+    let dir = root.join("artifacts");
+    if let Err(error) = fs::create_dir_all(&dir) {
+        panic!("create items page fixture dir: {error}");
+    }
+    let now_millis = storage_now_millis();
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+    let tiers = ["rebuildable", "review", "risky"];
+    let safeties = ["safe", "review", "risky"];
+    let kinds = ["rust-build", "node-modules", "generic-cache", "large-file"];
+    let mut seeded = Vec::with_capacity(count);
+    for index in 0..count {
+        let file = dir.join(format!("artifact-{index:04}.bin"));
+        if let Err(error) = fs::write(&file, b"fixture") {
+            panic!("write items page fixture file: {error}");
+        }
+        let physical_bytes = MIN_ITEM_BYTES + ((count - index) as u64) * 4096;
+        let modified_millis =
+            (index % 7 != 3).then(|| now_millis.saturating_sub(index as u64 * 61_000));
+        let accessed_millis =
+            (index % 5 != 2).then(|| now_millis.saturating_sub(index as u64 * 97_000));
+        let row = StorageIndexedFileRow {
+            path: file.display().to_string(),
+            device: 7,
+            inode: index as i64 + 1,
+            file_id: format!("7:{index}"),
+            source_root: root.display().to_string(),
+            repo_root: None,
+            kind: kinds[index % kinds.len()].to_owned(),
+            storage_role: "build-artifact".to_owned(),
+            safety: safeties[index % safeties.len()].to_owned(),
+            cleanup_tier: tiers[index % tiers.len()].to_owned(),
+            logical_bytes: physical_bytes,
+            physical_bytes,
+            modified_millis,
+            changed_millis: Some(now_millis),
+            accessed_millis,
+            birth_millis: Some(now_millis),
+            is_directory: false,
+            entries: 1,
+            truncated: false,
+            last_scan_millis: now_millis,
+        };
+        storage_index.store_indexed_row(&row, &mut metrics);
+        seeded.push(SeededPageRow {
+            path: row.path.clone(),
+            size_bytes: physical_bytes,
+            modified_millis,
+            accessed_millis,
+            cleanup_tier: row.cleanup_tier.clone(),
+            safety: row.safety.clone(),
+            kind: row.kind.clone(),
+        });
+    }
+    drop(storage_index);
+    seeded
+}
+
+fn expected_page_order(seeded: &[SeededPageRow], sort_key: &str, descending: bool) -> Vec<String> {
+    let mut rows = seeded.to_vec();
+    rows.sort_by(|left, right| {
+        let ordering = match sort_key {
+            "path" => left.path.cmp(&right.path),
+            "modified" => left
+                .modified_millis
+                .unwrap_or_default()
+                .cmp(&right.modified_millis.unwrap_or_default()),
+            "accessed" => left
+                .accessed_millis
+                .unwrap_or_default()
+                .cmp(&right.accessed_millis.unwrap_or_default()),
+            "tier" => left
+                .cleanup_tier
+                .cmp(&right.cleanup_tier)
+                .then_with(|| left.safety.cmp(&right.safety)),
+            "kind" => left.kind.cmp(&right.kind),
+            _ => left.size_bytes.cmp(&right.size_bytes),
+        };
+        if ordering == Ordering::Equal {
+            left.path.cmp(&right.path)
+        } else if descending {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    });
+    rows.into_iter().map(|row| row.path).collect()
+}
+
+fn items_page_paths(
+    root: &Path,
+    offset: usize,
+    limit: usize,
+    sort_key: &str,
+    descending: bool,
+) -> (Vec<String>, u64, String) {
+    let page = must_ok(
+        storage_hygiene_items_page_json(
+            vec![root.display().to_string()],
+            5,
+            offset,
+            limit,
+            "instant_cached",
+            sort_key,
+            descending,
+        ),
+        "items page serializes",
+    );
+    let page = parse_json_value(&page, "items page JSON parses");
+    let paths = page["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("items page items is an array"))
+        .iter()
+        .map(|item| {
+            item["path"]
+                .as_str()
+                .unwrap_or_else(|| panic!("item path is a string"))
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    let total_available = page["total_available"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("total_available is a number"));
+    let page_source = page["page_source"]
+        .as_str()
+        .unwrap_or_else(|| panic!("page_source is a string"))
+        .to_owned();
+    (paths, total_available, page_source)
+}
+
+#[test]
+fn storage_hygiene_items_page_serves_beyond_two_hundred_rows_from_index() {
+    let root = test_root("items-page-beyond-200");
+    let seeded = seed_items_page_fixture(&root, 260);
+    let expected = expected_page_order(&seeded, "size", true);
+
+    let (paths, total_available, page_source) = items_page_paths(&root, 250, 20, "size", true);
+    assert_eq!(page_source, "index");
+    assert_eq!(total_available, 260);
+    assert_eq!(paths, expected[250..260].to_vec());
+
+    let (full, total_available, page_source) = items_page_paths(&root, 0, 260, "size", true);
+    assert_eq!(page_source, "index");
+    assert_eq!(total_available, 260);
+    assert_eq!(full.len(), 260, "page limit must exceed the legacy 200 cap");
+    assert_eq!(full, expected);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_hygiene_items_page_offset_is_stable_for_each_sort_key() {
+    let root = test_root("items-page-sort-keys");
+    let seeded = seed_items_page_fixture(&root, 48);
+
+    for sort_key in ["size", "path", "modified", "accessed", "tier", "kind"] {
+        for descending in [true, false] {
+            let expected = expected_page_order(&seeded, sort_key, descending);
+            let (full, total_available, page_source) =
+                items_page_paths(&root, 0, 60, sort_key, descending);
+            assert_eq!(page_source, "index", "sort {sort_key} desc={descending}");
+            assert_eq!(total_available, 48, "sort {sort_key} desc={descending}");
+            assert_eq!(full, expected, "sort {sort_key} desc={descending}");
+
+            let (middle, _, _) = items_page_paths(&root, 13, 17, sort_key, descending);
+            assert_eq!(
+                middle,
+                expected[13..30].to_vec(),
+                "offset page mismatch for sort {sort_key} desc={descending}"
+            );
+        }
+    }
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_hygiene_items_page_evicts_missing_rows_and_refills() {
+    let root = test_root("items-page-stale-eviction");
+    let seeded = seed_items_page_fixture(&root, 10);
+    let expected = expected_page_order(&seeded, "size", true);
+    // The two largest rows land on page one; delete their backing files.
+    for stale_path in &expected[0..2] {
+        if let Err(error) = fs::remove_file(stale_path) {
+            panic!("delete stale fixture file: {error}");
+        }
+    }
+
+    let (paths, total_available, page_source) = items_page_paths(&root, 0, 5, "size", true);
+    assert_eq!(page_source, "index");
+    assert_eq!(total_available, 8, "stale rows are evicted before counting");
+    assert_eq!(
+        paths,
+        expected[2..7].to_vec(),
+        "page refills with the next live rows"
+    );
+
+    // The eviction is persistent: a fresh request must not resurrect the rows.
+    let (paths, total_available, _) = items_page_paths(&root, 0, 10, "size", true);
+    assert_eq!(total_available, 8);
+    assert_eq!(paths, expected[2..10].to_vec());
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn storage_hygiene_attributes_artifacts_to_git_repo_and_branch() {
     let root = test_root("attributes-artifacts");

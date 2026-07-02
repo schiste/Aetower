@@ -26,12 +26,32 @@ pub(super) struct StorageScanPersistedRecord {
     pub(super) resume_available: bool,
 }
 
+/// Directory holding the persistent storage index database. Unit tests get a
+/// process-scoped temporary directory so they neither pollute the user's live
+/// index nor race the running app for the WAL writer lock.
+#[cfg(not(test))]
+fn storage_index_directory() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|base_dir| base_dir.join("Aetower"))
+}
+
+#[cfg(test)]
+fn storage_index_directory() -> Option<PathBuf> {
+    static TEST_DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
+    Some(
+        TEST_DIRECTORY
+            .get_or_init(|| {
+                std::env::temp_dir()
+                    .join(format!("aetower-storage-index-test-{}", std::process::id()))
+            })
+            .clone(),
+    )
+}
+
 pub(super) struct StorageScanStateStore;
 
 impl StorageScanStateStore {
     fn open_connection() -> Result<Connection, String> {
-        let base_dir = dirs::data_local_dir().ok_or_else(|| "no_data_dir".to_owned())?;
-        let directory = base_dir.join("Aetower");
+        let directory = storage_index_directory().ok_or_else(|| "no_data_dir".to_owned())?;
         fs::create_dir_all(&directory).map_err(|error| format!("create_dir:{error}"))?;
         let path = directory.join(STORAGE_INDEX_FILE_NAME);
         let connection = Connection::open(path).map_err(|error| format!("open_failed:{error}"))?;
@@ -201,6 +221,12 @@ pub(super) struct StorageIndexedFileRow {
     pub(super) last_scan_millis: u64,
 }
 
+#[derive(Clone, Debug, Default)]
+pub(super) struct StorageItemRowsPage {
+    pub(super) rows: Vec<StorageIndexedFileRow>,
+    pub(super) total_available: u64,
+}
+
 pub(super) struct StorageSizeIndex {
     connection: Option<Connection>,
     pub(super) status: String,
@@ -225,13 +251,12 @@ pub(super) struct RepositoryInventoryCacheState {
 
 impl StorageSizeIndex {
     pub(super) fn open() -> Self {
-        let Some(base_dir) = dirs::data_local_dir() else {
+        let Some(directory) = storage_index_directory() else {
             return Self {
                 connection: None,
                 status: "unavailable:no_data_dir".to_owned(),
             };
         };
-        let directory = base_dir.join("Aetower");
         if let Err(error) = fs::create_dir_all(&directory) {
             return Self {
                 connection: None,
@@ -251,6 +276,10 @@ impl StorageSizeIndex {
                 status: format!("unavailable:schema:{error}"),
             };
         }
+        // Index reads/writes tolerate short writer contention instead of
+        // silently dropping rows. The scan-job state store deliberately keeps
+        // the default fail-fast behavior so cancel/pause stay responsive.
+        let _ = connection.busy_timeout(Duration::from_millis(2_000));
         Self {
             connection: Some(connection),
             status: "ready".to_owned(),
@@ -477,7 +506,31 @@ impl StorageSizeIndex {
             )?;
         }
         Self::ensure_repository_inventory_cache_columns(connection)?;
+        Self::ensure_storage_file_index_page_indexes(connection)?;
         Ok(())
+    }
+
+    /// Additive DDL only: partial indexes that back `load_item_rows_page` sort
+    /// keys. These deliberately avoid a `schema_version` bump because the
+    /// version-mismatch path drops the user's scan history tables.
+    fn ensure_storage_file_index_page_indexes(connection: &Connection) -> rusqlite::Result<()> {
+        connection.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_storage_file_index_page_size
+                ON storage_file_index(physical_bytes DESC, path)
+                WHERE cleanup_tier <> '';
+             CREATE INDEX IF NOT EXISTS idx_storage_file_index_page_modified
+                ON storage_file_index(modified_millis DESC, path)
+                WHERE cleanup_tier <> '';
+             CREATE INDEX IF NOT EXISTS idx_storage_file_index_page_accessed
+                ON storage_file_index(accessed_millis DESC, path)
+                WHERE cleanup_tier <> '';
+             CREATE INDEX IF NOT EXISTS idx_storage_file_index_page_tier
+                ON storage_file_index(cleanup_tier, safety, path)
+                WHERE cleanup_tier <> '';
+             CREATE INDEX IF NOT EXISTS idx_storage_file_index_page_kind
+                ON storage_file_index(kind, path)
+                WHERE cleanup_tier <> '';",
+        )
     }
 
     fn ensure_repository_inventory_cache_columns(connection: &Connection) -> rusqlite::Result<()> {
@@ -756,6 +809,133 @@ impl StorageSizeIndex {
         Ok(retained)
     }
 
+    /// Serve one page of cleanup-classified rows directly from
+    /// `storage_file_index`, mirroring the candidate predicate used by
+    /// `load_candidate_rows` (`cleanup_tier <> ''` and the minimum item size)
+    /// and the ordering semantics of `sort_storage_items`. Rows whose paths no
+    /// longer exist on disk are evicted from the index in one statement and the
+    /// page is refilled once.
+    pub(super) fn load_item_rows_page(
+        &self,
+        roots: &[PathBuf],
+        sort_key: StorageItemSortKey,
+        sort_descending: bool,
+        offset: usize,
+        limit: usize,
+        metrics: &mut StorageScanMetrics,
+    ) -> Result<StorageItemRowsPage, String> {
+        let mut page =
+            self.query_item_rows_page(roots, sort_key, sort_descending, offset, limit)?;
+        let missing = page
+            .rows
+            .iter()
+            .filter(|row| fs::symlink_metadata(&row.path).is_err())
+            .map(|row| row.path.clone())
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            self.delete_indexed_rows(&missing)?;
+            page = self.query_item_rows_page(roots, sort_key, sort_descending, offset, limit)?;
+        }
+        if page.rows.is_empty() {
+            metrics.storage_index_misses = metrics.storage_index_misses.saturating_add(1);
+        } else {
+            metrics.storage_index_hits = metrics
+                .storage_index_hits
+                .saturating_add(page.rows.len().min(u64::MAX as usize) as u64);
+        }
+        Ok(page)
+    }
+
+    fn query_item_rows_page(
+        &self,
+        roots: &[PathBuf],
+        sort_key: StorageItemSortKey,
+        sort_descending: bool,
+        offset: usize,
+        limit: usize,
+    ) -> Result<StorageItemRowsPage, String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let mut predicate = "cleanup_tier <> '' AND physical_bytes >= ?".to_owned();
+        let mut bindings: Vec<rusqlite::types::Value> =
+            vec![(MIN_ITEM_BYTES.min(i64::MAX as u64) as i64).into()];
+        if !roots.is_empty() {
+            let mut root_clauses = Vec::with_capacity(roots.len());
+            for root in roots.iter().take(MAX_ROOTS) {
+                let root_display = root.display().to_string();
+                root_clauses.push("(path = ? OR path LIKE ? ESCAPE '\\')".to_owned());
+                bindings.push(root_display.clone().into());
+                bindings.push(format!("{}/%", escape_like_pattern(&root_display)).into());
+            }
+            predicate.push_str(&format!(" AND ({})", root_clauses.join(" OR ")));
+        }
+        let total_available: i64 = connection
+            .query_row(
+                &format!("SELECT COUNT(*) FROM storage_file_index WHERE {predicate}"),
+                params_from_iter(bindings.iter()),
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        let direction = if sort_descending { "DESC" } else { "ASC" };
+        let order_by = match sort_key {
+            StorageItemSortKey::Size => format!(
+                "CASE WHEN physical_bytes > 0 THEN physical_bytes ELSE logical_bytes END {direction}, path ASC"
+            ),
+            StorageItemSortKey::Path => format!("path {direction}"),
+            StorageItemSortKey::Modified => {
+                format!("COALESCE(modified_millis, 0) {direction}, path ASC")
+            }
+            StorageItemSortKey::Accessed => {
+                format!("COALESCE(accessed_millis, 0) {direction}, path ASC")
+            }
+            StorageItemSortKey::Tier => {
+                format!("cleanup_tier {direction}, safety {direction}, path ASC")
+            }
+            StorageItemSortKey::Kind => format!("kind {direction}, path ASC"),
+        };
+        let mut statement = connection
+            .prepare(&format!(
+                "SELECT path, device, inode, file_id, source_root, repo_root, kind,
+                        storage_role, safety, cleanup_tier, logical_bytes, physical_bytes,
+                        modified_millis, changed_millis, accessed_millis, birth_millis,
+                        is_directory, entries, truncated, last_scan_millis
+                 FROM storage_file_index
+                 WHERE {predicate}
+                 ORDER BY {order_by}
+                 LIMIT ? OFFSET ?"
+            ))
+            .map_err(|error| error.to_string())?;
+        bindings.push((limit.min(i64::MAX as usize) as i64).into());
+        bindings.push((offset.min(i64::MAX as usize) as i64).into());
+        let rows = statement
+            .query_map(params_from_iter(bindings.iter()), indexed_file_row_from_sql)
+            .map_err(|error| error.to_string())?
+            .flatten()
+            .collect::<Vec<_>>();
+        Ok(StorageItemRowsPage {
+            rows,
+            total_available: total_available.max(0) as u64,
+        })
+    }
+
+    fn delete_indexed_rows(&self, paths: &[String]) -> Result<(), String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let placeholders = vec!["?"; paths.len()].join(", ");
+        connection
+            .execute(
+                &format!("DELETE FROM storage_file_index WHERE path IN ({placeholders})"),
+                params_from_iter(paths.iter()),
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub(super) fn load_repository_inventory_cache(
         &self,
         roots: &[PathBuf],
@@ -910,6 +1090,16 @@ impl StorageSizeIndex {
             })
             .collect()
     }
+}
+
+/// Escape `%`, `_`, and the escape character itself so a filesystem path can be
+/// used as a literal prefix in a `LIKE ... ESCAPE '\'` pattern. This keeps the
+/// SQL root scoping identical to `path_is_under_root`.
+fn escape_like_pattern(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn indexed_file_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<StorageIndexedFileRow> {

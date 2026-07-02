@@ -545,6 +545,11 @@ impl StorageScanJob {
             progress.clone()
         };
         let mut state = lock_or_recover(&self.state);
+        // Cancellation is sticky: the worker thread's queued/running
+        // transitions must not resurrect a job the caller already cancelled.
+        if state.status == StorageScanJobStatusKind::Cancelled && status.is_active() {
+            return;
+        }
         state.status = status;
         state.progress = progress_snapshot;
         state.updated_at_millis = now_millis;
@@ -563,6 +568,9 @@ impl StorageScanJob {
             progress.clone()
         };
         let mut state = lock_or_recover(&self.state);
+        if state.status == StorageScanJobStatusKind::Cancelled && status.is_active() {
+            return;
+        }
         state.status = status;
         state.progress = progress_snapshot;
         state.updated_at_millis = now_millis;

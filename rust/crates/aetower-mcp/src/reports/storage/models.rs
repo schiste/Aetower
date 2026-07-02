@@ -820,6 +820,7 @@ pub(super) struct StorageHygieneItemsPageResponse {
     pub(super) returned_count: usize,
     pub(super) total_available: usize,
     pub(super) has_more: bool,
+    pub(super) page_source: String,
     pub(super) items: Vec<StorageHygieneItem>,
 }
 
