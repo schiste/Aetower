@@ -575,7 +575,6 @@ public struct StorageView: View {
     private func storageReclaimHome(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             storageDiskPressureHeader(report)
-            storageActionPanel(report)
             storageHomeActionsSection(report)
             if let coldData = report.coldData, coldData.bands.contains(where: { $0.itemCount > 0 }) {
                 coldDataLaneSection(coldData)
@@ -700,12 +699,13 @@ public struct StorageView: View {
 
     private func storageHomeActionsSection(_ report: StorageHygieneReportModel) -> some View {
         let actions = storageHomeActions(from: report)
+        let maxBytes = actions.map(\.bytes).max() ?? 0
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                    Text("Storage actions")
+                    Text("Where the space is")
                         .font(.title3.weight(.semibold))
-                    Text("Six decisions first: what is safe, what is rebuildable, what grew, what is old, and what must be reviewed.")
+                    Text("Grouped by what it is and how safe it is to remove. Bars are relative to the largest group.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -728,7 +728,7 @@ public struct StorageView: View {
                 spacing: AetowerDesign.Spacing.md
             ) {
                 ForEach(actions) { action in
-                    storageHomeActionCard(action)
+                    storageHomeActionCard(action, maxBytes: maxBytes)
                 }
             }
         }
@@ -736,7 +736,7 @@ public struct StorageView: View {
         .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    private func storageHomeActionCard(_ action: StorageHomeAction) -> some View {
+    private func storageHomeActionCard(_ action: StorageHomeAction, maxBytes: UInt64) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
                 Image(systemName: action.systemImage)
@@ -763,6 +763,18 @@ public struct StorageView: View {
                     .foregroundStyle(.secondary)
                 }
             }
+
+            // Share bar echoing the disk header: this group's size relative to
+            // the largest group, so the big offenders read at a glance.
+            GeometryReader { geo in
+                let ratio = maxBytes > 0 ? CGFloat(Double(action.bytes) / Double(maxBytes)) : 0
+                ZStack(alignment: .leading) {
+                    Capsule().fill(AetowerDesign.Surface.badgeStrong)
+                    Capsule().fill(action.tone.opacity(0.85))
+                        .frame(width: max(2, geo.size.width * ratio))
+                }
+            }
+            .frame(height: 5)
 
             storageActionMetaChips(action)
 
@@ -1774,57 +1786,84 @@ public struct StorageView: View {
             ?? report.volumeStates.max { $0.totalBytes < $1.totalBytes }
     }
 
-    /// The frame the whole tab was missing: how full is the disk, and how much
-    /// of the used space this scan can give back. Everything below is in
-    /// service of moving the "free" number up.
-    @ViewBuilder
+    /// The hero for the whole tab: how full the disk is, how much this scan can
+    /// give back, and the one button that does it. Absorbs the old separate
+    /// "Reclaim safely" panel so the primary number and CTA appear once.
     private func storageDiskPressureHeader(_ report: StorageHygieneReportModel) -> some View {
-        if let volume = primaryVolume(report), volume.totalBytes > 0 {
-            let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
-            let reclaimable = min(report.summary.totalReclaimableBytes, volume.totalBytes)
-            let freeRatio = Double(free) / Double(volume.totalBytes)
-            let tone: Color = freeRatio < 0.05 ? AetowerDesign.Status.error
-                : freeRatio < 0.12 ? AetowerDesign.Status.warning
-                : AetowerDesign.Status.ready
-            let pressureLabel = freeRatio < 0.05 ? "Critically low space"
-                : freeRatio < 0.12 ? "Low space" : "Healthy"
+        let volume = primaryVolume(report)
+        let reclaimable = report.summary.totalReclaimableBytes
+        let safeBundle = report.cleanupBundles.first
+        let hasCTA = safeBundle.map(cleanupBundleHasActionableCommands) ?? false
 
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            if let volume, volume.totalBytes > 0 {
+                let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
+                let cappedReclaim = min(reclaimable, volume.totalBytes)
+                let freeRatio = Double(free) / Double(volume.totalBytes)
+                let tone: Color = freeRatio < 0.05 ? AetowerDesign.Status.error
+                    : freeRatio < 0.12 ? AetowerDesign.Status.warning
+                    : AetowerDesign.Status.ready
+                let pressureLabel = freeRatio < 0.05 ? "Critically low space"
+                    : freeRatio < 0.12 ? "Low space" : "Healthy"
+
                 HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
-                    Image(systemName: "internaldrive.fill")
-                        .foregroundStyle(tone)
-                    Text(volumeDisplayName(volume))
-                        .font(.headline)
+                    Image(systemName: "internaldrive.fill").foregroundStyle(tone)
+                    Text(volumeDisplayName(volume)).font(.headline)
                     Text(pressureLabel)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(tone)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(tone.opacity(0.14), in: Capsule())
                     Spacer()
                     (Text(formatBytes(free)).font(.system(size: 26, weight: .bold, design: .rounded))
                         + Text("  free").font(.callout).foregroundColor(.secondary))
                 }
 
-                diskCapacityBar(total: volume.totalBytes, free: free, reclaimable: reclaimable, tone: tone)
+                diskCapacityBar(total: volume.totalBytes, free: free, reclaimable: cappedReclaim, tone: tone)
 
                 HStack(spacing: AetowerDesign.Spacing.md) {
                     Text("\(formatBytes(volume.totalBytes - free)) used of \(formatBytes(volume.totalBytes))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if reclaimable > 0 {
-                        Label(
-                            "\(formatBytes(reclaimable)) reclaimable — up to \(formatBytes(free + reclaimable)) free",
-                            systemImage: "arrow.down.circle.fill"
-                        )
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(AetowerDesign.Tone.disk)
+                        .font(.caption).foregroundStyle(.secondary)
+                    if cappedReclaim > 0 {
+                        Text("up to \(formatBytes(free + cappedReclaim)) free after cleanup")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(AetowerDesign.Tone.disk)
                     }
                     Spacer()
                 }
             }
-            .padding(AetowerDesign.Spacing.lg)
-            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            if reclaimable > 0 {
+                Divider().padding(.vertical, AetowerDesign.Spacing.xxs)
+                HStack(spacing: AetowerDesign.Spacing.md) {
+                    if hasCTA, let safeBundle {
+                        Button {
+                            stageCleanupBundle(safeBundle)
+                        } label: {
+                            Label("Reclaim \(formatBytes(safeBundle.estimatedReclaimableBytes)) safely", systemImage: "sparkles")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                    }
+                    heroStat("\(report.summary.safeCandidateCount)", "safe", AetowerDesign.Status.ready)
+                    heroStat("\(report.summary.reviewCandidateCount)", "to review", AetowerDesign.Status.warning)
+                    Spacer()
+                    heroStat(formatBytes(reclaimable), "total reclaimable", AetowerDesign.Tone.disk, trailing: true)
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.lg)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func heroStat(_ value: String, _ label: String, _ tone: Color, trailing: Bool = false) -> some View {
+        VStack(alignment: trailing ? .trailing : .leading, spacing: 1) {
+            Text(value)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(tone)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 
