@@ -413,6 +413,9 @@ pub(super) fn build_storage_hygiene_report_with_options(
     let source_coverage =
         summarize_source_coverage(&requested_roots, &scanned_roots, &skipped_roots, &items);
     let volume_states = summarize_volume_states(&requested_roots);
+    let growth_insights =
+        build_storage_growth_insights(&storage_index, &requested_roots, &volume_states, now_millis);
+    let cold_data = build_storage_cold_data(&storage_index, &requested_roots, now_millis);
     let budget_guardrails = evaluate_budget_guardrails(
         &summary,
         &repo_footprints,
@@ -472,6 +475,8 @@ pub(super) fn build_storage_hygiene_report_with_options(
         source_coverage,
         volume_states,
         growth_deltas,
+        growth_insights,
+        cold_data,
         truncated,
         caveats: vec![
             "Cleanup cockpit: Aetower prepares evidence, reveal targets, verification commands, and Trash-first cleanup manifests."
@@ -586,6 +591,9 @@ pub(super) fn build_storage_hygiene_report_from_index(
     let source_coverage =
         summarize_source_coverage(&requested_roots, &scanned_roots, &skipped_roots, &items);
     let volume_states = summarize_volume_states(&requested_roots);
+    let growth_insights =
+        build_storage_growth_insights(&storage_index, &requested_roots, &volume_states, now_millis);
+    let cold_data = build_storage_cold_data(&storage_index, &requested_roots, now_millis);
     let budget_guardrails = evaluate_budget_guardrails(
         &summary,
         &repo_footprints,
@@ -645,6 +653,8 @@ pub(super) fn build_storage_hygiene_report_from_index(
         source_coverage,
         volume_states,
         growth_deltas,
+        growth_insights,
+        cold_data,
         truncated: false,
         caveats: vec![
             "Loaded from Aetower's persistent storage index for instant display.".to_owned(),
@@ -654,6 +664,79 @@ pub(super) fn build_storage_hygiene_report_from_index(
                 .to_owned(),
         ],
     })
+}
+
+/// Assemble the cold-data reclaim lane from the persistent index: one band for
+/// rows untouched for a year or more and one "cooling" band for 90 days to a
+/// year, both restricted to safe/rebuildable rows at the minimum item size and
+/// hydrated through the same guardrail pass as every other item surface.
+pub(super) fn build_storage_cold_data(
+    storage_index: &StorageSizeIndex,
+    roots: &[PathBuf],
+    now_millis: u64,
+) -> Option<StorageColdData> {
+    let band_definitions = [
+        (
+            "cold-1y",
+            format!("Untouched {COLD_AFTER_DAYS}+ days"),
+            COLD_AFTER_DAYS,
+            None,
+        ),
+        (
+            "cold-90d",
+            format!("Untouched {COLD_COOLING_AFTER_DAYS}-{COLD_AFTER_DAYS} days"),
+            COLD_COOLING_AFTER_DAYS,
+            Some(COLD_AFTER_DAYS),
+        ),
+    ];
+    let mut bands = Vec::with_capacity(band_definitions.len());
+    for (id, label, min_age_days, max_age_days) in band_definitions {
+        let (item_count, total_bytes, rows) = storage_index.load_cold_band(
+            roots,
+            min_age_days,
+            max_age_days,
+            now_millis,
+            STORAGE_COLD_BAND_TOP_ITEMS,
+        )?;
+        let mut top_items = rows
+            .into_iter()
+            .map(|row| storage_item_for_indexed_row(row, now_millis))
+            .collect::<Vec<_>>();
+        apply_cleanup_guardrails(&mut top_items, now_millis);
+        for item in &mut top_items {
+            item.evidence = storage_item_evidence(item);
+            item.next_step = storage_item_next_step(item);
+        }
+        bands.push(StorageColdDataBand {
+            id: id.to_owned(),
+            label,
+            min_age_days,
+            max_age_days,
+            item_count,
+            total_bytes,
+            top_items,
+        });
+    }
+    Some(StorageColdData {
+        bands,
+        caveat: "Age uses max(accessed, modified); macOS last-access timestamps can be coarse or \
+                 lazily updated, so verify before destructive cleanup."
+            .to_owned(),
+    })
+}
+
+fn build_storage_growth_insights(
+    storage_index: &StorageSizeIndex,
+    roots: &[PathBuf],
+    volume_states: &[StorageVolumeState],
+    now_millis: u64,
+) -> Option<StorageGrowthInsights> {
+    storage_index.load_growth_insights(
+        roots,
+        volume_states,
+        now_millis,
+        STORAGE_GROWTH_INSIGHTS_WINDOW_DAYS,
+    )
 }
 
 fn annotate_items_source_control(items: &mut [StorageHygieneItem]) {
@@ -1850,7 +1933,7 @@ fn storage_source_gap_kind(
     }
 }
 
-fn summarize_volume_states(requested_roots: &[PathBuf]) -> Vec<StorageVolumeState> {
+pub(super) fn summarize_volume_states(requested_roots: &[PathBuf]) -> Vec<StorageVolumeState> {
     let mut seen = BTreeSet::<u64>::new();
     let mut volumes = Vec::new();
     for root in requested_roots {

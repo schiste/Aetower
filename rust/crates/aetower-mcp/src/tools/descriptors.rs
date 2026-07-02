@@ -360,12 +360,21 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
                 uint("offset", Some(0), Some(1_000_000), Some(0)),
                 uint("limit", Some(1), Some(10_000), Some(80)),
                 string("mode").described("Scan mode. Defaults to fast_changed_only."),
-                string_enum("sort_key", &["size", "path", "modified", "accessed", "tier", "kind"])
-                    .described("Server-side sort key for the returned page. Defaults to size."),
+                string_enum("sort_key", &["size", "path", "modified", "accessed", "tier", "kind", "score"])
+                    .described("Server-side sort key for the returned page. Defaults to size; score orders by the composite reclaim-recommendation score."),
                 boolean("sort_descending", Some(true))
                     .described("Sort descending when true. Defaults to true for largest-first pages."),
             ],
             AetowerMcpServer::tool_storage_hygiene_items_page,
+        ),
+        ToolDescriptor::with_args(
+            "aetower_storage_growth_insights",
+            "Return growth intelligence straight from the persistent storage index: per-repo and per-root daily growth rates with trend, days-to-disk-full forecasts, and a since-last-scan diff of appeared and tier-changed items. No filesystem walk.",
+            vec![
+                string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths."),
+                uint("window_days", Some(1), Some(365), Some(30)),
+            ],
+            AetowerMcpServer::tool_storage_growth_insights,
         ),
         ToolDescriptor::with_args(
             "aetower_storage_hygiene_repo_detail",

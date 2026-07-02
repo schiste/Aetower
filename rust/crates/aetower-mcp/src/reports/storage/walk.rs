@@ -189,6 +189,13 @@ fn storage_item_for_path(
         cleanup_allowed: true,
         cleanup_blockers: Vec::new(),
         default_cleanup_action: "trash".to_owned(),
+        recommendation_score: storage_recommendation_score(
+            physical_bytes,
+            rule.cleanup_tier,
+            modified_millis,
+            accessed_millis,
+            now_millis,
+        ),
         attribution,
     }
 }
@@ -235,6 +242,16 @@ pub(super) fn storage_item_for_indexed_row(
     let intelligence = artifact_intelligence(&row.kind, &path_display);
     let logical_bytes = row.logical_bytes;
     let physical_bytes = row.physical_bytes;
+    // Recomputed from the same row-local inputs used at flush time (with the
+    // row's own last_scan_millis as the staleness reference) so the displayed
+    // score always matches the persisted column that SQL sorts by.
+    let recommendation_score = storage_recommendation_score(
+        physical_bytes,
+        &row.cleanup_tier,
+        row.modified_millis,
+        row.accessed_millis,
+        row.last_scan_millis,
+    );
     let mut item = StorageHygieneItem {
         id: path_display.clone(),
         path: path_display.clone(),
@@ -282,6 +299,7 @@ pub(super) fn storage_item_for_indexed_row(
         cleanup_allowed: true,
         cleanup_blockers: Vec::new(),
         default_cleanup_action: "trash".to_owned(),
+        recommendation_score,
         attribution,
     };
     item.evidence = storage_item_evidence(&item);

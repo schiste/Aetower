@@ -983,6 +983,14 @@ pub(super) fn artifact_attribution(path: &Path) -> StorageArtifactAttribution {
         command: None,
         process_tree: None,
         ai_agent_session: inferred_agent_session,
+        // Writer identity fields (provider/session/tab/display) are only
+        // populated from the writer ledger on the growth-attribution path;
+        // path-derived item attribution has no ledger evidence.
+        provider: None,
+        session_id: None,
+        tab_name: None,
+        chau7_session_id: None,
+        writer_display: None,
         confidence: confidence.to_owned(),
         notes,
     }

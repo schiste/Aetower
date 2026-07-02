@@ -641,6 +641,531 @@ fn storage_index_growth_delta_retention_prunes_once_per_flush() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[allow(clippy::too_many_arguments)]
+fn seeded_index_row(
+    source_root: &Path,
+    path: &Path,
+    physical_bytes: u64,
+    cleanup_tier: &str,
+    repo_root: Option<&Path>,
+    modified_millis: Option<u64>,
+    accessed_millis: Option<u64>,
+    last_scan_millis: u64,
+) -> StorageIndexedFileRow {
+    StorageIndexedFileRow {
+        path: path.display().to_string(),
+        device: 13,
+        inode: 1,
+        file_id: format!("13:{}", path.display()),
+        source_root: source_root.display().to_string(),
+        repo_root: repo_root.map(|repo| repo.display().to_string()),
+        kind: "rust-build".to_owned(),
+        storage_role: "build-artifact".to_owned(),
+        safety: "safe".to_owned(),
+        cleanup_tier: cleanup_tier.to_owned(),
+        logical_bytes: physical_bytes,
+        physical_bytes,
+        modified_millis,
+        changed_millis: modified_millis,
+        accessed_millis,
+        birth_millis: modified_millis,
+        is_directory: false,
+        entries: 1,
+        truncated: false,
+        last_scan_millis,
+    }
+}
+
+fn test_volume_state(path: &str, free_now_bytes: u64) -> StorageVolumeState {
+    StorageVolumeState {
+        path: path.to_owned(),
+        device_id: 99,
+        filesystem_type: "apfs".to_owned(),
+        total_bytes: free_now_bytes * 4,
+        free_now_bytes,
+        available_bytes: free_now_bytes,
+        purgeable_bytes_estimate: 0,
+        important_usage_available_bytes: None,
+        opportunistic_usage_available_bytes: None,
+        detail: String::new(),
+    }
+}
+
+#[test]
+fn storage_growth_insights_aggregate_rates_trends_and_forecasts() {
+    let root = test_root("growth-insights-rates");
+    let source_a = root.join("roots-a");
+    let source_b = root.join("roots-b");
+    let source_c = root.join("roots-c");
+    let repo_a = source_a.join("RepoA");
+    let now_millis = storage_now_millis();
+    let day = |offset: u64| now_millis - offset * DAY_MILLIS;
+    let mib = MIN_ITEM_BYTES;
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+
+    // Repo scope A: 10 + 10 MiB in the first half, 20 + 40 MiB in the second
+    // half => accelerating, 80 MiB over a 4-day span = 20 MiB/day.
+    for (name, bytes, scan_millis) in [
+        ("a-d3.bin", 10 * mib, day(3)),
+        ("a-d2.bin", 10 * mib, day(2)),
+        ("a-d1.bin", 20 * mib, day(1)),
+        ("a-d0.bin", 40 * mib, day(0)),
+    ] {
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &source_a,
+                &repo_a.join("target").join(name),
+                bytes,
+                "rebuildable",
+                Some(&repo_a),
+                Some(scan_millis),
+                Some(scan_millis),
+                scan_millis,
+            ),
+            &mut metrics,
+        );
+    }
+    // Root B: 30 MiB early, 10 MiB late => slowing.
+    for (name, bytes, scan_millis) in [
+        ("b-d3.bin", 30 * mib, day(3)),
+        ("b-d0.bin", 10 * mib, day(0)),
+    ] {
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &source_b,
+                &source_b.join(name),
+                bytes,
+                "rebuildable",
+                None,
+                Some(scan_millis),
+                Some(scan_millis),
+                scan_millis,
+            ),
+            &mut metrics,
+        );
+    }
+    // Root C: equal halves => steady.
+    for (name, bytes, scan_millis) in [
+        ("c-d1.bin", 10 * mib, day(1)),
+        ("c-d0.bin", 10 * mib, day(0)),
+    ] {
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &source_c,
+                &source_c.join(name),
+                bytes,
+                "rebuildable",
+                None,
+                Some(scan_millis),
+                Some(scan_millis),
+                scan_millis,
+            ),
+            &mut metrics,
+        );
+    }
+    storage_index.flush_pending_rows();
+
+    let volumes = vec![test_volume_state("/", 350 * mib)];
+    let insights = storage_index
+        .load_growth_insights(std::slice::from_ref(&root), &volumes, now_millis, 30)
+        .unwrap_or_else(|| panic!("growth insights load from a ready index"));
+
+    assert_eq!(insights.window_days, 30);
+    assert_eq!(insights.per_repo_rates.len(), 1);
+    let repo_rate = &insights.per_repo_rates[0];
+    assert_eq!(repo_rate.scope, repo_a.display().to_string());
+    assert_eq!(repo_rate.scope_kind, "repo");
+    assert_eq!(repo_rate.repo_name.as_deref(), Some("RepoA"));
+    assert_eq!(repo_rate.total_delta_bytes, (80 * mib) as i64);
+    assert_eq!(repo_rate.daily_rate_bytes, (20 * mib) as i64);
+    assert_eq!(repo_rate.trend, "accelerating");
+    assert_eq!(repo_rate.day_bucket_count, 4);
+
+    let root_rates = &insights.per_root_rates;
+    assert_eq!(root_rates.len(), 3);
+    assert_eq!(root_rates[0].scope, source_a.display().to_string());
+    assert_eq!(root_rates[0].trend, "accelerating");
+    assert_eq!(root_rates[1].scope, source_b.display().to_string());
+    assert_eq!(root_rates[1].trend, "slowing");
+    assert_eq!(root_rates[1].daily_rate_bytes, (10 * mib) as i64);
+    assert_eq!(root_rates[2].scope, source_c.display().to_string());
+    assert_eq!(root_rates[2].trend, "steady");
+
+    assert_eq!(insights.volume_forecasts.len(), 1);
+    let forecast = &insights.volume_forecasts[0];
+    assert_eq!(forecast.volume_path, "/");
+    assert_eq!(forecast.free_now_bytes, 350 * mib);
+    assert_eq!(forecast.daily_rate_bytes, (35 * mib) as i64);
+    assert!((forecast.days_to_full - 10.0).abs() < 0.01);
+    assert_eq!(forecast.confidence, "low");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_growth_insights_forecast_requires_three_day_buckets() {
+    let root = test_root("growth-insights-forecast-gate");
+    let now_millis = storage_now_millis();
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+    for (name, scan_millis) in [
+        ("gate-d1.bin", now_millis - DAY_MILLIS),
+        ("gate-d0.bin", now_millis),
+    ] {
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &root,
+                &root.join(name),
+                8 * MIN_ITEM_BYTES,
+                "rebuildable",
+                None,
+                Some(scan_millis),
+                Some(scan_millis),
+                scan_millis,
+            ),
+            &mut metrics,
+        );
+    }
+    storage_index.flush_pending_rows();
+
+    let volumes = vec![test_volume_state("/", 350 * MIN_ITEM_BYTES)];
+    let insights = storage_index
+        .load_growth_insights(std::slice::from_ref(&root), &volumes, now_millis, 30)
+        .unwrap_or_else(|| panic!("growth insights load from a ready index"));
+
+    assert!(
+        insights.volume_forecasts.is_empty(),
+        "fewer than three distinct day buckets must omit the forecast"
+    );
+    assert!(!insights.per_root_rates.is_empty());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_growth_insights_report_since_last_scan_diff() {
+    let root = test_root("growth-insights-scan-diff");
+    let now_millis = storage_now_millis();
+    let first_scan_millis = now_millis - 2 * 60 * 60 * 1000;
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+
+    // First generation: two rows.
+    for (name, tier) in [("f1.bin", "rebuildable"), ("f2.bin", "safe")] {
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &root,
+                &root.join(name),
+                2 * MIN_ITEM_BYTES,
+                tier,
+                None,
+                Some(first_scan_millis),
+                Some(first_scan_millis),
+                first_scan_millis,
+            ),
+            &mut metrics,
+        );
+    }
+    storage_index.flush_pending_rows();
+
+    // Second generation: f1 grows and changes tier, f2 is unchanged, f3 is new.
+    for (name, bytes, tier) in [
+        ("f1.bin", 4 * MIN_ITEM_BYTES, "review"),
+        ("f2.bin", 2 * MIN_ITEM_BYTES, "safe"),
+        ("f3.bin", 3 * MIN_ITEM_BYTES, "safe"),
+    ] {
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &root,
+                &root.join(name),
+                bytes,
+                tier,
+                None,
+                Some(now_millis),
+                Some(now_millis),
+                now_millis,
+            ),
+            &mut metrics,
+        );
+    }
+    storage_index.flush_pending_rows();
+
+    let insights = storage_index
+        .load_growth_insights(std::slice::from_ref(&root), &[], now_millis, 30)
+        .unwrap_or_else(|| panic!("growth insights load from a ready index"));
+    let diff = &insights.since_last_scan;
+
+    assert_eq!(diff.latest_scan_millis, now_millis);
+    assert_eq!(diff.appeared_count, 1);
+    assert_eq!(diff.appeared_total_bytes, 3 * MIN_ITEM_BYTES);
+    assert_eq!(diff.appeared.len(), 1);
+    assert!(diff.appeared[0].path.ends_with("f3.bin"));
+    assert_eq!(diff.appeared[0].display_name, "f3.bin");
+
+    assert_eq!(diff.tier_changed_count, 1);
+    assert_eq!(diff.tier_changed.len(), 1);
+    assert!(diff.tier_changed[0].path.ends_with("f1.bin"));
+    assert_eq!(diff.tier_changed[0].previous_cleanup_tier, "rebuildable");
+    assert_eq!(diff.tier_changed[0].cleanup_tier, "review");
+    assert_eq!(diff.tier_changed[0].physical_bytes, 4 * MIN_ITEM_BYTES);
+
+    assert!(diff.disappeared.is_empty());
+    assert!(diff.disappeared_note.contains("not cleanly derivable"));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_cold_data_lane_bands_and_exclusions() {
+    let root = test_root("cold-data-lane");
+    let now_millis = storage_now_millis();
+    let age = |days: u64| now_millis - days * DAY_MILLIS;
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+
+    type ColdFixtureRow = (&'static str, u64, &'static str, Option<u64>, Option<u64>);
+    let rows: [ColdFixtureRow; 7] = [
+        (
+            "c1-cold.bin",
+            5 * MIN_ITEM_BYTES,
+            "safe",
+            Some(age(400)),
+            Some(age(400)),
+        ),
+        (
+            "c2-cooling.bin",
+            3 * MIN_ITEM_BYTES,
+            "rebuildable",
+            Some(age(120)),
+            Some(age(200)),
+        ),
+        (
+            "c3-fresh.bin",
+            3 * MIN_ITEM_BYTES,
+            "safe",
+            Some(age(10)),
+            Some(age(10)),
+        ),
+        (
+            "c4-risky.bin",
+            8 * MIN_ITEM_BYTES,
+            "risky",
+            Some(age(400)),
+            Some(age(400)),
+        ),
+        (
+            "c5-small.bin",
+            MIN_ITEM_BYTES / 2,
+            "safe",
+            Some(age(400)),
+            Some(age(400)),
+        ),
+        ("c6-no-times.bin", 3 * MIN_ITEM_BYTES, "safe", None, None),
+        (
+            "c7-recent-mod.bin",
+            3 * MIN_ITEM_BYTES,
+            "safe",
+            Some(age(400)),
+            Some(age(30)),
+        ),
+    ];
+    for (name, bytes, tier, accessed, modified) in rows {
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &root,
+                &root.join(name),
+                bytes,
+                tier,
+                None,
+                modified,
+                accessed,
+                now_millis,
+            ),
+            &mut metrics,
+        );
+    }
+    storage_index.flush_pending_rows();
+
+    let cold_data =
+        build_storage_cold_data(&storage_index, std::slice::from_ref(&root), now_millis)
+            .unwrap_or_else(|| panic!("cold data lane builds from a ready index"));
+
+    assert_eq!(cold_data.bands.len(), 2);
+    let yearly = &cold_data.bands[0];
+    assert_eq!(yearly.min_age_days, COLD_AFTER_DAYS);
+    assert_eq!(yearly.max_age_days, None);
+    assert_eq!(yearly.item_count, 1);
+    assert_eq!(yearly.total_bytes, 5 * MIN_ITEM_BYTES);
+    assert_eq!(yearly.top_items.len(), 1);
+    assert!(yearly.top_items[0].path.ends_with("c1-cold.bin"));
+    assert!(yearly.top_items[0].recommendation_score > 0.0);
+
+    let cooling = &cold_data.bands[1];
+    assert_eq!(cooling.min_age_days, COLD_COOLING_AFTER_DAYS);
+    assert_eq!(cooling.max_age_days, Some(COLD_AFTER_DAYS));
+    assert_eq!(cooling.item_count, 1);
+    assert_eq!(cooling.total_bytes, 3 * MIN_ITEM_BYTES);
+    assert!(cooling.top_items[0].path.ends_with("c2-cooling.bin"));
+
+    assert!(cold_data.caveat.contains("max(accessed, modified)"));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_recommendation_score_formula_weights_size_tier_and_staleness() {
+    let now_millis = storage_now_millis();
+    let fresh = Some(now_millis);
+    let stale = Some(now_millis - 360 * DAY_MILLIS);
+    let score = |bytes: u64, tier: &str, touched: Option<u64>| {
+        storage_recommendation_score(bytes, tier, touched, touched, now_millis)
+    };
+
+    // Size is log2-scaled above 1 MiB.
+    assert!((score(4 * MIN_ITEM_BYTES, "safe", fresh) - 2.0).abs() < 1e-9);
+    assert!((score(8 * MIN_ITEM_BYTES, "safe", fresh) - 3.0).abs() < 1e-9);
+    assert_eq!(score(MIN_ITEM_BYTES / 2, "safe", fresh), 0.0);
+    // Tier weights: safe 1.0, rebuildable 0.8, expensive 0.3, risky 0.1, else 0.
+    assert!((score(4 * MIN_ITEM_BYTES, "rebuildable", fresh) - 1.6).abs() < 1e-9);
+    assert!((score(4 * MIN_ITEM_BYTES, "expensive", fresh) - 0.6).abs() < 1e-9);
+    assert!((score(4 * MIN_ITEM_BYTES, "risky", fresh) - 0.2).abs() < 1e-9);
+    assert_eq!(score(4 * MIN_ITEM_BYTES, "", fresh), 0.0);
+    // Staleness caps at a 2x multiplier past 180 days.
+    assert!((score(4 * MIN_ITEM_BYTES, "safe", stale) - 4.0).abs() < 1e-9);
+    let ninety_days = Some(now_millis - 90 * DAY_MILLIS);
+    assert!((score(4 * MIN_ITEM_BYTES, "safe", ninety_days) - 3.0).abs() < 1e-9);
+    // The newest of modified/accessed drives staleness.
+    assert!(
+        (storage_recommendation_score(4 * MIN_ITEM_BYTES, "safe", stale, fresh, now_millis) - 2.0)
+            .abs()
+            < 1e-9
+    );
+    // No timestamps: no staleness boost rather than a guessed one.
+    assert!(
+        (storage_recommendation_score(4 * MIN_ITEM_BYTES, "safe", None, None, now_millis) - 2.0)
+            .abs()
+            < 1e-9
+    );
+}
+
+#[test]
+fn storage_items_page_sorts_by_persisted_recommendation_score() {
+    let root = test_root("items-page-score-sort");
+    if let Err(error) = fs::create_dir_all(&root) {
+        panic!("create score fixture dir: {error}");
+    }
+    let now_millis = storage_now_millis();
+    let stale_millis = now_millis - 360 * DAY_MILLIS;
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+
+    // Expected scores: s3 6.0, s1 2.0, s2 1.6, s4 1.5, s5 0.5.
+    let rows: [(&str, u64, &str, u64); 5] = [
+        ("s1-safe-fresh.bin", 4 * MIN_ITEM_BYTES, "safe", now_millis),
+        (
+            "s2-rebuildable-fresh.bin",
+            4 * MIN_ITEM_BYTES,
+            "rebuildable",
+            now_millis,
+        ),
+        (
+            "s3-safe-stale.bin",
+            8 * MIN_ITEM_BYTES,
+            "safe",
+            stale_millis,
+        ),
+        (
+            "s4-expensive-fresh.bin",
+            32 * MIN_ITEM_BYTES,
+            "expensive",
+            now_millis,
+        ),
+        (
+            "s5-risky-fresh.bin",
+            32 * MIN_ITEM_BYTES,
+            "risky",
+            now_millis,
+        ),
+    ];
+    for (name, bytes, tier, touched_millis) in rows {
+        let path = root.join(name);
+        if let Err(error) = fs::write(&path, b"fixture") {
+            panic!("write score fixture file: {error}");
+        }
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &root,
+                &path,
+                bytes,
+                tier,
+                None,
+                Some(touched_millis),
+                Some(touched_millis),
+                now_millis,
+            ),
+            &mut metrics,
+        );
+    }
+    storage_index.flush_pending_rows();
+
+    let persisted = storage_index
+        .indexed_row_recommendation_score(&root.join("s3-safe-stale.bin").display().to_string())
+        .unwrap_or_else(|| panic!("persisted score exists"));
+    assert!(
+        (persisted - 6.0).abs() < 1e-9,
+        "persisted score {persisted}"
+    );
+
+    let (paths, total_available, page_source) = items_page_paths(&root, 0, 10, "score", true);
+    assert_eq!(page_source, "index");
+    assert_eq!(total_available, 5);
+    let expected = [
+        "s3-safe-stale.bin",
+        "s1-safe-fresh.bin",
+        "s2-rebuildable-fresh.bin",
+        "s4-expensive-fresh.bin",
+        "s5-risky-fresh.bin",
+    ]
+    .map(|name| root.join(name).display().to_string());
+    assert_eq!(paths, expected.to_vec());
+
+    // Ascending flips the order, and the serialized items carry the score.
+    let (ascending, _, _) = items_page_paths(&root, 0, 10, "score", false);
+    assert_eq!(
+        ascending,
+        expected.iter().rev().cloned().collect::<Vec<_>>()
+    );
+    let page = must_ok(
+        storage_hygiene_items_page_json(
+            vec![root.display().to_string()],
+            5,
+            0,
+            1,
+            "instant_cached",
+            "score",
+            true,
+        ),
+        "score page serializes",
+    );
+    let page = parse_json_value(&page, "score page JSON parses");
+    assert_eq!(page["sort_key"], "score");
+    let top_score = page["items"][0]["recommendation_score"]
+        .as_f64()
+        .unwrap_or_else(|| panic!("recommendation_score serialized"));
+    assert!(
+        (top_score - 6.0).abs() < 1e-9,
+        "serialized score {top_score}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn storage_hygiene_attributes_artifacts_to_git_repo_and_branch() {
     let root = test_root("attributes-artifacts");
@@ -2306,6 +2831,12 @@ fn storage_growth_attribution_uses_single_writer_record() {
         Some("Claude session A")
     );
     assert_eq!(attribution.git_branch.as_deref(), Some("main"));
+    // No provider/session/tab on the record: writer_display falls back to the
+    // ledger source and the identity fields stay absent instead of guessed.
+    assert!(attribution.provider.is_none());
+    assert!(attribution.session_id.is_none());
+    assert!(attribution.tab_name.is_none());
+    assert_eq!(attribution.writer_display.as_deref(), Some("test-ledger"));
     assert!(
         attribution
             .evidence
@@ -2345,6 +2876,13 @@ fn storage_growth_attribution_marks_overlapping_writers_ambiguous() {
     assert_eq!(attribution.confidence, "ambiguous");
     assert!(attribution.ambiguous);
     assert!(attribution.command.is_none());
+    assert!(
+        attribution.provider.is_none()
+            && attribution.session_id.is_none()
+            && attribution.tab_name.is_none()
+            && attribution.writer_display.is_none(),
+        "ambiguous matches must not pick one writer's identity"
+    );
     assert_eq!(attribution.matched_writer_count, 2);
     assert!(attribution.sources.contains(&"writer_ledger".to_owned()));
     assert!(
@@ -2374,6 +2912,8 @@ fn storage_growth_attribution_reports_controlled_build_from_chau7_writer() {
         working_directory: Some(repo.display().to_string()),
         provider: Some("claude".to_owned()),
         session_id: Some("chau7-tab-a".to_owned()),
+        tab_name: Some("aetower-fix".to_owned()),
+        chau7_session_id: Some("chau7-session-9".to_owned()),
         source: Some("chau7".to_owned()),
         command: Some("cargo build --workspace --release".to_owned()),
         process_tree: Some("Chau7 > zsh > cargo build --workspace --release".to_owned()),
@@ -2402,6 +2942,17 @@ fn storage_growth_attribution_reports_controlled_build_from_chau7_writer() {
     assert_eq!(
         attribution.git_branch.as_deref(),
         Some("feature/storage-attribution")
+    );
+    assert_eq!(attribution.provider.as_deref(), Some("claude"));
+    assert_eq!(attribution.session_id.as_deref(), Some("chau7-tab-a"));
+    assert_eq!(attribution.tab_name.as_deref(), Some("aetower-fix"));
+    assert_eq!(
+        attribution.chau7_session_id.as_deref(),
+        Some("chau7-session-9")
+    );
+    assert_eq!(
+        attribution.writer_display.as_deref(),
+        Some("Claude Code session chau7-tab-a in tab 'aetower-fix'")
     );
     assert!(attribution.sources.contains(&"writer_ledger".to_owned()));
     assert!(attribution.sources.contains(&"chau7".to_owned()));
@@ -3052,6 +3603,11 @@ fn test_growth_delta(
         process_tree: None,
         ai_agent_session: None,
         writer_source: None,
+        provider: None,
+        session_id: None,
+        tab_name: None,
+        chau7_session_id: None,
+        writer_display: None,
         matched_writer_count: 0,
         attribution_sources: Vec::new(),
         attribution_confidence: "low".to_owned(),
@@ -3270,6 +3826,7 @@ fn test_storage_item(
         cleanup_allowed: true,
         cleanup_blockers: Vec::new(),
         default_cleanup_action: "trash".to_owned(),
+        recommendation_score: 0.0,
         attribution: StorageArtifactAttribution {
             repo_root: None,
             repo_name: None,
@@ -3278,6 +3835,11 @@ fn test_storage_item(
             command: None,
             process_tree: None,
             ai_agent_session: None,
+            provider: None,
+            session_id: None,
+            tab_name: None,
+            chau7_session_id: None,
+            writer_display: None,
             confidence: "low".to_owned(),
             notes: Vec::new(),
         },

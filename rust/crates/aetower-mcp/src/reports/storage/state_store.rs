@@ -515,22 +515,33 @@ impl StorageSizeIndex {
 
     /// Additive migration (no `schema_version` bump, mirroring
     /// `ensure_repository_inventory_cache_columns`): records the cleanup tier
-    /// a row had before its latest upsert so tier transitions can be surfaced
-    /// without re-touching the batched write path later.
+    /// a row had before its latest upsert so tier transitions can be surfaced,
+    /// and the composite recommendation score computed at flush time. Rows
+    /// written before the migration keep the 0 default until their next scan
+    /// refreshes them.
     fn ensure_storage_file_index_columns(connection: &Connection) -> rusqlite::Result<()> {
-        let exists: i64 = connection.query_row(
-            "SELECT COUNT(*)
-             FROM pragma_table_info('storage_file_index')
-             WHERE name = 'previous_cleanup_tier'",
-            [],
-            |row| row.get(0),
-        )?;
-        if exists == 0 {
-            tolerate_duplicate_column(connection.execute(
+        for (column, ddl) in [
+            (
+                "previous_cleanup_tier",
                 "ALTER TABLE storage_file_index
                  ADD COLUMN previous_cleanup_tier TEXT NOT NULL DEFAULT ''",
-                [],
-            ))?;
+            ),
+            (
+                "recommendation_score",
+                "ALTER TABLE storage_file_index
+                 ADD COLUMN recommendation_score REAL NOT NULL DEFAULT 0",
+            ),
+        ] {
+            let exists: i64 = connection.query_row(
+                "SELECT COUNT(*)
+                 FROM pragma_table_info('storage_file_index')
+                 WHERE name = ?1",
+                params![column],
+                |row| row.get(0),
+            )?;
+            if exists == 0 {
+                tolerate_duplicate_column(connection.execute(ddl, []))?;
+            }
         }
         Ok(())
     }
@@ -554,6 +565,9 @@ impl StorageSizeIndex {
                 WHERE cleanup_tier <> '';
              CREATE INDEX IF NOT EXISTS idx_storage_file_index_page_kind
                 ON storage_file_index(kind, path)
+                WHERE cleanup_tier <> '';
+             CREATE INDEX IF NOT EXISTS idx_storage_file_index_page_score
+                ON storage_file_index(recommendation_score DESC, path)
                 WHERE cleanup_tier <> '';",
         )
     }
@@ -755,10 +769,10 @@ impl StorageSizeIndex {
                     path, device, inode, file_id, source_root, repo_root, kind, storage_role,
                     safety, cleanup_tier, logical_bytes, physical_bytes, modified_millis,
                     changed_millis, accessed_millis, birth_millis, is_directory, entries,
-                    truncated, last_scan_millis, previous_cleanup_tier
+                    truncated, last_scan_millis, previous_cleanup_tier, recommendation_score
                  ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                    ?17, ?18, ?19, ?20, ?21
+                    ?17, ?18, ?19, ?20, ?21, ?22
                  )",
             ) else {
                 return;
@@ -804,6 +818,13 @@ impl StorageSizeIndex {
                         if row.truncated { 1i64 } else { 0i64 },
                         row.last_scan_millis.min(i64::MAX as u64) as i64,
                         previous_tier,
+                        storage_recommendation_score(
+                            row.physical_bytes,
+                            &row.cleanup_tier,
+                            row.modified_millis,
+                            row.accessed_millis,
+                            row.last_scan_millis,
+                        ),
                     ])
                     .is_err()
                 {
@@ -955,16 +976,7 @@ impl StorageSizeIndex {
         let mut predicate = "cleanup_tier <> '' AND physical_bytes >= ?".to_owned();
         let mut bindings: Vec<rusqlite::types::Value> =
             vec![(MIN_ITEM_BYTES.min(i64::MAX as u64) as i64).into()];
-        if !roots.is_empty() {
-            let mut root_clauses = Vec::with_capacity(roots.len());
-            for root in roots.iter().take(MAX_ROOTS) {
-                let root_display = root.display().to_string();
-                root_clauses.push("(path = ? OR path LIKE ? ESCAPE '\\')".to_owned());
-                bindings.push(root_display.clone().into());
-                bindings.push(format!("{}/%", escape_like_pattern(&root_display)).into());
-            }
-            predicate.push_str(&format!(" AND ({})", root_clauses.join(" OR ")));
-        }
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
         let total_available: i64 = connection
             .query_row(
                 &format!("SELECT COUNT(*) FROM storage_file_index WHERE {predicate}"),
@@ -988,6 +1000,9 @@ impl StorageSizeIndex {
                 format!("cleanup_tier {direction}, safety {direction}, path ASC")
             }
             StorageItemSortKey::Kind => format!("kind {direction}, path ASC"),
+            StorageItemSortKey::Score => {
+                format!("recommendation_score {direction}, path ASC")
+            }
         };
         let mut statement = connection
             .prepare(&format!(
@@ -1154,6 +1169,11 @@ impl StorageSizeIndex {
                 process_tree: None,
                 ai_agent_session: None,
                 writer_source: None,
+                provider: None,
+                session_id: None,
+                tab_name: None,
+                chau7_session_id: None,
+                writer_display: None,
                 matched_writer_count: 0,
                 attribution_sources: Vec::new(),
                 attribution_confidence: "low".to_owned(),
@@ -1175,6 +1195,11 @@ impl StorageSizeIndex {
                 delta.process_tree = attribution.process_tree;
                 delta.ai_agent_session = attribution.ai_agent_session;
                 delta.writer_source = attribution.writer_source;
+                delta.provider = attribution.provider;
+                delta.session_id = attribution.session_id;
+                delta.tab_name = attribution.tab_name;
+                delta.chau7_session_id = attribution.chau7_session_id;
+                delta.writer_display = attribution.writer_display;
                 delta.matched_writer_count = attribution.matched_writer_count;
                 delta.attribution_sources = attribution.sources;
                 delta.attribution_confidence = attribution.confidence;
@@ -1187,9 +1212,479 @@ impl StorageSizeIndex {
             .collect()
     }
 
+    /// Aggregate the full retained `storage_growth_delta` series into growth
+    /// intelligence: per-repo and per-source-root daily rates with a
+    /// half-window trend, days-to-disk-full forecasts per volume, and a
+    /// "since last scan" diff lane. Returns `None` when the index is
+    /// unavailable. Scoped to `roots` (matching `path_is_under_root`
+    /// semantics) so reports and tests stay isolated.
+    pub(super) fn load_growth_insights(
+        &self,
+        roots: &[PathBuf],
+        volume_states: &[StorageVolumeState],
+        now_millis: u64,
+        window_days: u64,
+    ) -> Option<StorageGrowthInsights> {
+        self.flush_pending_rows();
+        let connection = self.connection.as_ref()?;
+        let window_days = window_days.clamp(1, 365);
+        let window_start = now_millis.saturating_sub(window_days.saturating_mul(DAY_MILLIS));
+        let per_repo_rates =
+            self.load_growth_rates(connection, roots, window_start, window_days, "repo_root");
+        let per_root_rates =
+            self.load_growth_rates(connection, roots, window_start, window_days, "source_root");
+        let volume_forecasts =
+            self.load_volume_forecasts(connection, roots, volume_states, window_start);
+        let since_last_scan = self.load_since_last_scan_diff(connection, roots);
+        Some(StorageGrowthInsights {
+            window_days,
+            per_repo_rates,
+            per_root_rates,
+            volume_forecasts,
+            since_last_scan,
+        })
+    }
+
+    fn load_growth_rates(
+        &self,
+        connection: &Connection,
+        roots: &[PathBuf],
+        window_start: u64,
+        window_days: u64,
+        scope_column: &str,
+    ) -> Vec<StorageGrowthRate> {
+        let mut predicate =
+            format!("bucket_millis >= ? AND {scope_column} IS NOT NULL AND {scope_column} <> ''");
+        let mut bindings: Vec<rusqlite::types::Value> =
+            vec![(window_start.min(i64::MAX as u64) as i64).into()];
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
+        let Ok(mut statement) = connection.prepare(&format!(
+            "SELECT {scope_column} AS scope,
+                    SUM(delta_bytes) AS total_delta,
+                    COUNT(DISTINCT bucket_millis / {DAY_MILLIS}) AS day_buckets,
+                    MIN(bucket_millis) AS first_bucket,
+                    MAX(bucket_millis) AS last_bucket
+             FROM storage_growth_delta
+             WHERE {predicate}
+             GROUP BY scope
+             ORDER BY total_delta DESC, scope ASC
+             LIMIT {STORAGE_GROWTH_RATE_SCOPE_LIMIT}"
+        )) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(params_from_iter(bindings.iter()), |row| {
+            let scope: String = row.get(0)?;
+            let total_delta: i64 = row.get(1)?;
+            let day_buckets: i64 = row.get(2)?;
+            let first_bucket: i64 = row.get(3)?;
+            let last_bucket: i64 = row.get(4)?;
+            Ok((
+                scope,
+                total_delta,
+                day_buckets.max(0) as u64,
+                first_bucket.max(0) as u64,
+                last_bucket.max(0) as u64,
+            ))
+        }) else {
+            return Vec::new();
+        };
+        let scoped = rows.flatten().collect::<Vec<_>>();
+        scoped
+            .into_iter()
+            .map(
+                |(scope, total_delta, day_buckets, first_bucket, last_bucket)| {
+                    // Bytes/day over the observed span inside the retained
+                    // window (not the full window), so short histories do not
+                    // understate the rate.
+                    let span_days =
+                        (last_bucket.saturating_sub(first_bucket) / DAY_MILLIS).saturating_add(1);
+                    let daily_rate_bytes = total_delta / span_days.max(1) as i64;
+                    let trend = if day_buckets < 2 {
+                        "steady".to_owned()
+                    } else {
+                        let midpoint = first_bucket + (last_bucket - first_bucket) / 2;
+                        let second_half_delta = self.scope_delta_since(
+                            connection,
+                            roots,
+                            window_start,
+                            scope_column,
+                            &scope,
+                            midpoint,
+                        );
+                        growth_trend(total_delta, second_half_delta)
+                    };
+                    let repo_name = Path::new(&scope)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(str::to_owned);
+                    StorageGrowthRate {
+                        scope,
+                        scope_kind: if scope_column == "repo_root" {
+                            "repo".to_owned()
+                        } else {
+                            "source_root".to_owned()
+                        },
+                        repo_name,
+                        window_days,
+                        total_delta_bytes: total_delta,
+                        daily_rate_bytes,
+                        trend,
+                        day_bucket_count: day_buckets,
+                    }
+                },
+            )
+            .collect()
+    }
+
+    /// Sum of deltas strictly after `midpoint_millis` for one scope; feeds the
+    /// half-window trend comparison.
+    fn scope_delta_since(
+        &self,
+        connection: &Connection,
+        roots: &[PathBuf],
+        window_start: u64,
+        scope_column: &str,
+        scope: &str,
+        midpoint_millis: u64,
+    ) -> i64 {
+        let mut predicate =
+            format!("bucket_millis >= ? AND bucket_millis > ? AND {scope_column} = ?");
+        let mut bindings: Vec<rusqlite::types::Value> = vec![
+            (window_start.min(i64::MAX as u64) as i64).into(),
+            (midpoint_millis.min(i64::MAX as u64) as i64).into(),
+            scope.to_owned().into(),
+        ];
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
+        connection
+            .query_row(
+                &format!(
+                    "SELECT COALESCE(SUM(delta_bytes), 0)
+                     FROM storage_growth_delta
+                     WHERE {predicate}"
+                ),
+                params_from_iter(bindings.iter()),
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+    }
+
+    fn load_volume_forecasts(
+        &self,
+        connection: &Connection,
+        roots: &[PathBuf],
+        volume_states: &[StorageVolumeState],
+        window_start: u64,
+    ) -> Vec<StorageGrowthForecast> {
+        let mut predicate = "bucket_millis >= ?".to_owned();
+        let mut bindings: Vec<rusqlite::types::Value> =
+            vec![(window_start.min(i64::MAX as u64) as i64).into()];
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
+        let Ok((total_delta, day_buckets, first_bucket, last_bucket)) = connection.query_row(
+            &format!(
+                "SELECT COALESCE(SUM(delta_bytes), 0),
+                        COUNT(DISTINCT bucket_millis / {DAY_MILLIS}),
+                        COALESCE(MIN(bucket_millis), 0),
+                        COALESCE(MAX(bucket_millis), 0)
+                 FROM storage_growth_delta
+                 WHERE {predicate}"
+            ),
+            params_from_iter(bindings.iter()),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?.max(0) as u64,
+                    row.get::<_, i64>(2)?.max(0) as u64,
+                    row.get::<_, i64>(3)?.max(0) as u64,
+                ))
+            },
+        ) else {
+            return Vec::new();
+        };
+        // Forecast gating: require enough distinct day buckets to avoid
+        // day-one nonsense, and a positive aggregate rate (a flat or shrinking
+        // footprint has no meaningful days-to-full).
+        if day_buckets < STORAGE_GROWTH_FORECAST_MIN_DAY_BUCKETS || total_delta <= 0 {
+            return Vec::new();
+        }
+        let span_days = (last_bucket.saturating_sub(first_bucket) / DAY_MILLIS).saturating_add(1);
+        let daily_rate_bytes = total_delta / span_days.max(1) as i64;
+        if daily_rate_bytes <= 0 {
+            return Vec::new();
+        }
+        let confidence = if day_buckets >= 7 { "medium" } else { "low" };
+        volume_states
+            .iter()
+            .map(|volume| StorageGrowthForecast {
+                volume_path: volume.path.clone(),
+                free_now_bytes: volume.free_now_bytes,
+                daily_rate_bytes,
+                days_to_full: volume.free_now_bytes as f64 / daily_rate_bytes as f64,
+                confidence: confidence.to_owned(),
+            })
+            .collect()
+    }
+
+    fn load_since_last_scan_diff(
+        &self,
+        connection: &Connection,
+        roots: &[PathBuf],
+    ) -> StorageScanDiff {
+        let disappeared_note = "Disappeared items are not cleanly derivable: unchanged \
+                                directories are served from the size cache and keep prior scan \
+                                generations, so a stale generation does not imply deletion."
+            .to_owned();
+        let mut predicate = "1 = 1".to_owned();
+        let mut bindings: Vec<rusqlite::types::Value> = Vec::new();
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
+        let latest_scan_millis = connection
+            .query_row(
+                &format!(
+                    "SELECT COALESCE(MAX(scan_millis), 0)
+                     FROM storage_growth_delta
+                     WHERE {predicate}"
+                ),
+                params_from_iter(bindings.iter()),
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            .max(0) as u64;
+        if latest_scan_millis == 0 {
+            return StorageScanDiff {
+                disappeared_note,
+                ..StorageScanDiff::default()
+            };
+        }
+
+        // Appeared: an insert of a new path always records prev = 0.
+        let mut appeared_predicate =
+            "scan_millis = ? AND previous_physical_bytes = 0 AND delta_bytes > 0".to_owned();
+        let mut appeared_bindings: Vec<rusqlite::types::Value> =
+            vec![(latest_scan_millis.min(i64::MAX as u64) as i64).into()];
+        push_roots_predicate(
+            &mut appeared_predicate,
+            &mut appeared_bindings,
+            roots,
+            "path",
+        );
+        let (appeared_count, appeared_total_bytes) = connection
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*), COALESCE(SUM(delta_bytes), 0)
+                     FROM storage_growth_delta
+                     WHERE {appeared_predicate}"
+                ),
+                params_from_iter(appeared_bindings.iter()),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?.max(0) as u64,
+                        row.get::<_, i64>(1)?.max(0) as u64,
+                    ))
+                },
+            )
+            .unwrap_or((0, 0));
+        let appeared = connection
+            .prepare(&format!(
+                "SELECT path, source_root, repo_root, kind, cleanup_tier,
+                        current_physical_bytes, delta_bytes, scan_millis
+                 FROM storage_growth_delta
+                 WHERE {appeared_predicate}
+                 ORDER BY delta_bytes DESC, path ASC
+                 LIMIT {STORAGE_SCAN_DIFF_ENTRY_LIMIT}"
+            ))
+            .ok()
+            .and_then(|mut statement| {
+                statement
+                    .query_map(params_from_iter(appeared_bindings.iter()), |row| {
+                        let path: String = row.get(0)?;
+                        let physical_bytes: i64 = row.get(5)?;
+                        let scan_millis: i64 = row.get(7)?;
+                        Ok(StorageScanDiffEntry {
+                            display_name: diff_display_name(&path),
+                            path,
+                            source_root: row.get(1)?,
+                            repo_root: row.get(2)?,
+                            kind: row.get(3)?,
+                            cleanup_tier: row.get(4)?,
+                            previous_cleanup_tier: String::new(),
+                            physical_bytes: physical_bytes.max(0) as u64,
+                            delta_bytes: row.get(6)?,
+                            scan_millis: scan_millis.max(0) as u64,
+                        })
+                    })
+                    .map(|rows| rows.flatten().collect::<Vec<_>>())
+                    .ok()
+            })
+            .unwrap_or_default();
+
+        // Tier-changed: rows refreshed in the latest index generation whose
+        // persisted previous tier differs from the current one.
+        let latest_index_generation = {
+            let mut generation_predicate = "1 = 1".to_owned();
+            let mut generation_bindings: Vec<rusqlite::types::Value> = Vec::new();
+            push_roots_predicate(
+                &mut generation_predicate,
+                &mut generation_bindings,
+                roots,
+                "path",
+            );
+            connection
+                .query_row(
+                    &format!(
+                        "SELECT COALESCE(MAX(last_scan_millis), 0)
+                         FROM storage_file_index
+                         WHERE {generation_predicate}"
+                    ),
+                    params_from_iter(generation_bindings.iter()),
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0)
+                .max(0) as u64
+        };
+        let mut tier_predicate = "last_scan_millis = ? AND previous_cleanup_tier <> ''
+             AND cleanup_tier <> '' AND previous_cleanup_tier <> cleanup_tier"
+            .to_owned();
+        let mut tier_bindings: Vec<rusqlite::types::Value> =
+            vec![(latest_index_generation.min(i64::MAX as u64) as i64).into()];
+        push_roots_predicate(&mut tier_predicate, &mut tier_bindings, roots, "path");
+        let tier_changed_count = connection
+            .query_row(
+                &format!("SELECT COUNT(*) FROM storage_file_index WHERE {tier_predicate}"),
+                params_from_iter(tier_bindings.iter()),
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            .max(0) as u64;
+        let tier_changed = connection
+            .prepare(&format!(
+                "SELECT path, source_root, repo_root, kind, cleanup_tier,
+                        previous_cleanup_tier, physical_bytes, last_scan_millis
+                 FROM storage_file_index
+                 WHERE {tier_predicate}
+                 ORDER BY physical_bytes DESC, path ASC
+                 LIMIT {STORAGE_SCAN_DIFF_ENTRY_LIMIT}"
+            ))
+            .ok()
+            .and_then(|mut statement| {
+                statement
+                    .query_map(params_from_iter(tier_bindings.iter()), |row| {
+                        let path: String = row.get(0)?;
+                        let physical_bytes: i64 = row.get(6)?;
+                        let scan_millis: i64 = row.get(7)?;
+                        Ok(StorageScanDiffEntry {
+                            display_name: diff_display_name(&path),
+                            path,
+                            source_root: row.get(1)?,
+                            repo_root: row.get(2)?,
+                            kind: row.get(3)?,
+                            cleanup_tier: row.get(4)?,
+                            previous_cleanup_tier: row.get(5)?,
+                            physical_bytes: physical_bytes.max(0) as u64,
+                            delta_bytes: 0,
+                            scan_millis: scan_millis.max(0) as u64,
+                        })
+                    })
+                    .map(|rows| rows.flatten().collect::<Vec<_>>())
+                    .ok()
+            })
+            .unwrap_or_default();
+
+        StorageScanDiff {
+            latest_scan_millis,
+            appeared_count,
+            appeared_total_bytes,
+            appeared,
+            tier_changed_count,
+            tier_changed,
+            disappeared: Vec::new(),
+            disappeared_note,
+        }
+    }
+
+    /// Aggregate one cold-data band over `max(accessed, modified)` age:
+    /// item count, total bytes, and the largest rows. Restricted to the safe
+    /// and rebuildable tiers and the minimum item size; rows with neither
+    /// timestamp are excluded rather than guessed.
+    pub(super) fn load_cold_band(
+        &self,
+        roots: &[PathBuf],
+        min_age_days: u64,
+        max_age_days: Option<u64>,
+        now_millis: u64,
+        limit: usize,
+    ) -> Option<(u64, u64, Vec<StorageIndexedFileRow>)> {
+        self.flush_pending_rows();
+        let connection = self.connection.as_ref()?;
+        let cold_before = now_millis.saturating_sub(min_age_days.saturating_mul(DAY_MILLIS));
+        let mut predicate = "cleanup_tier IN ('safe', 'rebuildable')
+             AND physical_bytes >= ?
+             AND (accessed_millis IS NOT NULL OR modified_millis IS NOT NULL)
+             AND MAX(COALESCE(accessed_millis, 0), COALESCE(modified_millis, 0)) < ?"
+            .to_owned();
+        let mut bindings: Vec<rusqlite::types::Value> = vec![
+            (MIN_ITEM_BYTES.min(i64::MAX as u64) as i64).into(),
+            (cold_before.min(i64::MAX as u64) as i64).into(),
+        ];
+        if let Some(max_age_days) = max_age_days {
+            let young_bound = now_millis.saturating_sub(max_age_days.saturating_mul(DAY_MILLIS));
+            predicate.push_str(
+                " AND MAX(COALESCE(accessed_millis, 0), COALESCE(modified_millis, 0)) >= ?",
+            );
+            bindings.push((young_bound.min(i64::MAX as u64) as i64).into());
+        }
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
+        let (item_count, total_bytes) = connection
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*), COALESCE(SUM(physical_bytes), 0)
+                     FROM storage_file_index
+                     WHERE {predicate}"
+                ),
+                params_from_iter(bindings.iter()),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?.max(0) as u64,
+                        row.get::<_, i64>(1)?.max(0) as u64,
+                    ))
+                },
+            )
+            .ok()?;
+        let mut statement = connection
+            .prepare(&format!(
+                "SELECT path, device, inode, file_id, source_root, repo_root, kind,
+                        storage_role, safety, cleanup_tier, logical_bytes, physical_bytes,
+                        modified_millis, changed_millis, accessed_millis, birth_millis,
+                        is_directory, entries, truncated, last_scan_millis
+                 FROM storage_file_index
+                 WHERE {predicate}
+                 ORDER BY physical_bytes DESC, path ASC
+                 LIMIT {limit}"
+            ))
+            .ok()?;
+        let rows = statement
+            .query_map(params_from_iter(bindings.iter()), indexed_file_row_from_sql)
+            .ok()?
+            .flatten()
+            .collect::<Vec<_>>();
+        Some((item_count, total_bytes, rows))
+    }
+
     #[cfg(test)]
     pub(super) fn pending_row_count(&self) -> usize {
         self.pending_rows.borrow().len()
+    }
+
+    /// Test-only snapshot of one indexed row's persisted recommendation score.
+    #[cfg(test)]
+    pub(super) fn indexed_row_recommendation_score(&self, path: &str) -> Option<f64> {
+        self.flush_pending_rows();
+        let connection = self.connection.as_ref()?;
+        connection
+            .query_row(
+                "SELECT recommendation_score FROM storage_file_index WHERE path = ?1",
+                params![path],
+                |row| row.get(0),
+            )
+            .ok()
     }
 
     /// Test-only snapshot of one indexed row's byte count, cleanup tier, and
@@ -1278,6 +1773,54 @@ fn tolerate_duplicate_column(result: rusqlite::Result<usize>) -> rusqlite::Resul
         Err(error) if error.to_string().contains("duplicate column name") => Ok(()),
         Err(error) => Err(error),
     }
+}
+
+/// Append the roots-scoping clause used across index queries: a column value
+/// matches when it equals a root or lives strictly under it, mirroring
+/// `path_is_under_root`.
+fn push_roots_predicate(
+    predicate: &mut String,
+    bindings: &mut Vec<rusqlite::types::Value>,
+    roots: &[PathBuf],
+    column: &str,
+) {
+    if roots.is_empty() {
+        return;
+    }
+    let mut clauses = Vec::with_capacity(roots.len().min(MAX_ROOTS));
+    for root in roots.iter().take(MAX_ROOTS) {
+        let root_display = root.display().to_string();
+        clauses.push(format!("({column} = ? OR {column} LIKE ? ESCAPE '\\')"));
+        bindings.push(root_display.clone().into());
+        bindings.push(format!("{}/%", escape_like_pattern(&root_display)).into());
+    }
+    predicate.push_str(&format!(" AND ({})", clauses.join(" OR ")));
+}
+
+/// Half-window trend classification: compare the second half of the observed
+/// span against the first, with a 10%-of-total dead band so near-equal halves
+/// read as steady.
+fn growth_trend(total_delta: i64, second_half_delta: i64) -> String {
+    if total_delta < 0 {
+        return "shrinking".to_owned();
+    }
+    let first_half_delta = total_delta.saturating_sub(second_half_delta);
+    let threshold = (total_delta.saturating_abs() / 10).max(1);
+    if second_half_delta.saturating_sub(first_half_delta) > threshold {
+        "accelerating".to_owned()
+    } else if first_half_delta.saturating_sub(second_half_delta) > threshold {
+        "slowing".to_owned()
+    } else {
+        "steady".to_owned()
+    }
+}
+
+fn diff_display_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("artifact")
+        .to_owned()
 }
 
 /// Escape `%`, `_`, and the escape character itself so a filesystem path can be

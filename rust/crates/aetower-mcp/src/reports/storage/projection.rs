@@ -34,8 +34,36 @@ pub fn storage_hygiene_overview_json(
         source_coverage: report.source_coverage,
         volume_states: report.volume_states,
         growth_deltas: report.growth_deltas,
+        growth_insights: report.growth_insights,
+        cold_data: report.cold_data,
         truncated: report.truncated,
         caveats: report.caveats,
+    })
+    .map_err(|error| error.to_string())
+}
+
+/// Return just the growth-intelligence block (rates, forecasts, and the
+/// since-last-scan diff) straight from the persistent index, without paying
+/// the full overview/report cost.
+pub fn storage_growth_insights_json(
+    roots: Vec<String>,
+    window_days: u64,
+) -> Result<String, String> {
+    let now_millis = storage_now_millis();
+    let roots = normalize_roots(roots);
+    let storage_index = StorageSizeIndex::open();
+    let volume_states = summarize_volume_states(&roots);
+    let insights = storage_index
+        .load_growth_insights(&roots, &volume_states, now_millis, window_days)
+        .ok_or_else(|| format!("storage index unavailable: {}", storage_index.status))?;
+    serde_json::to_string(&StorageGrowthInsightsResponse {
+        captured_at_millis: now_millis,
+        roots: roots
+            .iter()
+            .map(|root| root.display().to_string())
+            .collect(),
+        storage_index_status: storage_index.status.clone(),
+        insights,
     })
     .map_err(|error| error.to_string())
 }
@@ -81,6 +109,9 @@ fn sort_storage_items(
                 .cmp(&right.cleanup_tier)
                 .then_with(|| left.safety.cmp(&right.safety)),
             StorageItemSortKey::Kind => left.kind.cmp(&right.kind),
+            StorageItemSortKey::Score => left
+                .recommendation_score
+                .total_cmp(&right.recommendation_score),
         };
 
         if ordering == Ordering::Equal {

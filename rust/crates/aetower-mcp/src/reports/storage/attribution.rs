@@ -78,6 +78,11 @@ pub(super) fn attribute_storage_growth_delta(
             process_tree,
             ai_agent_session,
             writer_source,
+            provider: first_non_empty(record.provider.as_deref(), None),
+            session_id: first_non_empty(record.session_id.as_deref(), None),
+            tab_name: first_non_empty(record.tab_name.as_deref(), None),
+            chau7_session_id: first_non_empty(record.chau7_session_id.as_deref(), None),
+            writer_display: writer_display_for_record(record),
             matched_writer_count: 1,
             sources: unique_limited(sources, 12),
             confidence: "high".to_owned(),
@@ -118,6 +123,11 @@ pub(super) fn attribute_storage_growth_delta(
             process_tree: None,
             ai_agent_session: inferred_agent_session,
             writer_source: None,
+            provider: None,
+            session_id: None,
+            tab_name: None,
+            chau7_session_id: None,
+            writer_display: None,
             matched_writer_count: matching_records.len().min(u64::MAX as usize) as u64,
             sources: unique_limited(sources, 12),
             confidence: "ambiguous".to_owned(),
@@ -166,6 +176,11 @@ pub(super) fn attribute_storage_growth_delta(
         process_tree: None,
         ai_agent_session: inferred_agent_session,
         writer_source: None,
+        provider: None,
+        session_id: None,
+        tab_name: None,
+        chau7_session_id: None,
+        writer_display: None,
         matched_writer_count: 0,
         sources: unique_limited(sources, 12),
         confidence: confidence.to_owned(),
@@ -219,6 +234,73 @@ fn normalized_writer_path_prefix(value: &str) -> Option<String> {
 
 fn writer_record_source(record: &StorageWriterLedgerRecord) -> Option<String> {
     first_non_empty(record.source.as_deref(), record.provider.as_deref())
+}
+
+/// Human writer line for a single matched ledger record, built gracefully from
+/// whichever identity fields are available, e.g.
+/// "Claude Code session 3f2a in tab 'aetower-fix'".
+fn writer_display_for_record(record: &StorageWriterLedgerRecord) -> Option<String> {
+    let provider_display = record
+        .provider
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            record
+                .source
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .map(writer_provider_display_name);
+    let session = first_non_empty(
+        record.session_id.as_deref(),
+        record.chau7_session_id.as_deref(),
+    )
+    .map(|session| short_writer_session(&session));
+    let tab_name = record
+        .tab_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let mut display = String::new();
+    if let Some(provider) = provider_display {
+        display.push_str(&provider);
+    }
+    if let Some(session) = session {
+        if !display.is_empty() {
+            display.push(' ');
+        }
+        display.push_str(&format!("session {session}"));
+    }
+    if let Some(tab_name) = tab_name {
+        if !display.is_empty() {
+            display.push(' ');
+        }
+        display.push_str(&format!("in tab '{tab_name}'"));
+    }
+    (!display.is_empty()).then_some(display)
+}
+
+fn writer_provider_display_name(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "claude" | "claude-code" => "Claude Code".to_owned(),
+        "codex" => "Codex".to_owned(),
+        "cursor" | "cursor-agent" => "Cursor".to_owned(),
+        "aider" => "Aider".to_owned(),
+        "chau7" => "Chau7".to_owned(),
+        _ => value.trim().to_owned(),
+    }
+}
+
+/// Keep short session identifiers intact, but trim long opaque ids down to a
+/// readable prefix.
+fn short_writer_session(session: &str) -> String {
+    let trimmed = session.trim();
+    if trimmed.chars().count() <= 12 {
+        trimmed.to_owned()
+    } else {
+        trimmed.chars().take(8).collect()
+    }
 }
 
 fn derived_writer_agent_session(record: &StorageWriterLedgerRecord) -> Option<String> {

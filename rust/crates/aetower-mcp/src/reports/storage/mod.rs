@@ -59,6 +59,13 @@ const STORAGE_INDEX_SNAPSHOT_READ_MULTIPLIER: usize = 24;
 const STORAGE_INDEX_FLUSH_CHUNK: usize = 512;
 const STORAGE_INDEX_LOOKUP_BIND_CHUNK: usize = 500;
 const STORAGE_GROWTH_RETENTION_MILLIS: u64 = 30 * 24 * 60 * 60 * 1000;
+const STORAGE_GROWTH_INSIGHTS_WINDOW_DAYS: u64 = 30;
+const STORAGE_GROWTH_RATE_SCOPE_LIMIT: usize = 20;
+const STORAGE_GROWTH_FORECAST_MIN_DAY_BUCKETS: u64 = 3;
+const STORAGE_SCAN_DIFF_ENTRY_LIMIT: usize = 12;
+const COLD_COOLING_AFTER_DAYS: u64 = 90;
+const STORAGE_COLD_BAND_TOP_ITEMS: usize = 10;
+const DAY_MILLIS: u64 = 24 * 60 * 60 * 1000;
 const RECENT_CLEANUP_BLOCK_MILLIS: u64 = 10 * 60 * 1000;
 const STORAGE_TREEMAP_MAX_DEPTH: usize = 4;
 const STORAGE_TREEMAP_MAX_CHILDREN: usize = 14;
@@ -194,6 +201,52 @@ fn human_bytes(bytes: u64) -> String {
     }
 }
 
+/// Composite reclaim-recommendation score, computed from row-local factors
+/// only so it can be persisted at index flush time and recomputed identically
+/// at hydration time:
+///
+/// ```text
+/// score = log2(physical_bytes / 1 MiB)   // size, log-scaled; < 1 MiB => 0
+///       * tier_weight(cleanup_tier)      // safe 1.0, rebuildable 0.8,
+///                                        // expensive 0.3, risky 0.1, else 0
+///       * (1 + min(age_days / 180, 1))   // staleness: untouched rows up to 2x
+/// ```
+///
+/// `age_days` is derived from max(modified, accessed) relative to
+/// `reference_millis` (the row's `last_scan_millis` at flush time). Rows with
+/// no timestamps get no staleness boost rather than a guessed one.
+fn storage_recommendation_score(
+    physical_bytes: u64,
+    cleanup_tier: &str,
+    modified_millis: Option<u64>,
+    accessed_millis: Option<u64>,
+    reference_millis: u64,
+) -> f64 {
+    let tier_weight = match cleanup_tier {
+        "safe" => 1.0,
+        "rebuildable" => 0.8,
+        "expensive" => 0.3,
+        "risky" => 0.1,
+        _ => 0.0,
+    };
+    if tier_weight == 0.0 || physical_bytes == 0 {
+        return 0.0;
+    }
+    let size_factor = (physical_bytes as f64 / MIN_ITEM_BYTES as f64)
+        .log2()
+        .max(0.0);
+    let touched_millis = modified_millis
+        .unwrap_or(0)
+        .max(accessed_millis.unwrap_or(0));
+    let staleness = if touched_millis == 0 {
+        1.0
+    } else {
+        let age_days = reference_millis.saturating_sub(touched_millis) / DAY_MILLIS;
+        1.0 + (age_days as f64 / 180.0).min(1.0)
+    };
+    size_factor * tier_weight * staleness
+}
+
 fn rebuild_seconds_label(seconds: u64) -> String {
     if seconds >= 3_600 {
         let hours = seconds / 3_600;
@@ -260,20 +313,21 @@ use models::{
     StorageAgentRepoSummary, StorageAppFootprint, StorageAppFootprintComponent,
     StorageArtifactAttribution, StorageBudgetGuardrails, StorageBudgetViolation,
     StorageCleanupBundle, StorageCleanupBundleItem, StorageCleanupRecipe,
-    StorageCleanupTierSummary, StorageDuplicateGroup, StorageDuplicateItem,
-    StorageGrowthAttribution, StorageGrowthDelta, StorageHygieneActionsResponse,
-    StorageHygieneItem, StorageHygieneItemsPageResponse, StorageHygieneOptions,
-    StorageHygieneOverviewResponse, StorageHygieneRepoDetailResponse, StorageHygieneSummary,
-    StorageInvestigationFinding, StorageInvestigationSummary, StorageItemSortKey,
-    StoragePerformanceBudgetDiagnostics, StoragePreventionPolicy, StoragePreventionSuggestion,
-    StorageRepoArtifactFolder, StorageRepoArtifactMix, StorageRepoFootprint,
-    StorageRepositoryInventoryItem, StorageScanDiagnostics, StorageScanMetrics, StorageSkippedRoot,
-    StorageSourceCoverage, StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState,
-    StorageWriterLedgerRecord,
+    StorageCleanupTierSummary, StorageColdData, StorageColdDataBand, StorageDuplicateGroup,
+    StorageDuplicateItem, StorageGrowthAttribution, StorageGrowthDelta, StorageGrowthForecast,
+    StorageGrowthInsights, StorageGrowthInsightsResponse, StorageGrowthRate,
+    StorageHygieneActionsResponse, StorageHygieneItem, StorageHygieneItemsPageResponse,
+    StorageHygieneOptions, StorageHygieneOverviewResponse, StorageHygieneRepoDetailResponse,
+    StorageHygieneSummary, StorageInvestigationFinding, StorageInvestigationSummary,
+    StorageItemSortKey, StoragePerformanceBudgetDiagnostics, StoragePreventionPolicy,
+    StoragePreventionSuggestion, StorageRepoArtifactFolder, StorageRepoArtifactMix,
+    StorageRepoFootprint, StorageRepositoryInventoryItem, StorageScanDiagnostics, StorageScanDiff,
+    StorageScanDiffEntry, StorageScanMetrics, StorageSkippedRoot, StorageSourceCoverage,
+    StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
 };
 pub use projection::{
-    storage_hygiene_actions_json, storage_hygiene_items_page_json, storage_hygiene_overview_json,
-    storage_hygiene_repo_detail_json,
+    storage_growth_insights_json, storage_hygiene_actions_json, storage_hygiene_items_page_json,
+    storage_hygiene_overview_json, storage_hygiene_repo_detail_json,
 };
 pub use repo::repository_inventory_json;
 use repo::{
@@ -286,6 +340,8 @@ use repo::{
     repository_inventory_fingerprint, scan_repository_inventory_roots_with_budget,
     summarize_repo_footprints, summarize_repository_inventory,
 };
+#[cfg(test)]
+use report::build_storage_cold_data;
 pub(crate) use report::build_storage_hygiene_report_with_mode;
 use report::{
     StorageCandidateCollector, build_storage_hygiene_report_from_index,
@@ -294,6 +350,7 @@ use report::{
     refresh_storage_performance_budget, skipped_root_permission_state,
     storage_byte_accounting_label, storage_item_evidence, storage_item_next_step,
     storage_performance_budget_diagnostics, storage_source_kind, storage_source_label,
+    summarize_volume_states,
 };
 #[cfg(test)]
 pub(crate) use report::{

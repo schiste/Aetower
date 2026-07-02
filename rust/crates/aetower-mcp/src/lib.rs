@@ -3530,6 +3530,7 @@ mod tests {
             "aetower_storage_hygiene_overview",
             "aetower_storage_hygiene_actions",
             "aetower_storage_hygiene_items_page",
+            "aetower_storage_growth_insights",
             "aetower_storage_hygiene_repo_detail",
             "aetower_storage_hygiene_deep_scan",
             "aetower_memory_breakdown",

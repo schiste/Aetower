@@ -106,6 +106,22 @@ impl AetowerMcpServer {
         parse_tool_json(&json)
     }
 
+    pub(crate) fn tool_storage_growth_insights(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            roots: Vec<String>,
+            #[serde(default = "default_storage_growth_window_days")]
+            window_days: u64,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let json =
+            crate::reports::storage::storage_growth_insights_json(args.roots, args.window_days)
+                .map_err(|error| tool_error(format!("storage_growth_insights_failed: {error}")))?;
+        parse_tool_json(&json)
+    }
+
     pub(crate) fn tool_storage_hygiene_repo_detail(
         &self,
         arguments: Value,
@@ -167,6 +183,10 @@ fn default_storage_scan_mode() -> String {
 
 fn default_storage_item_sort_key() -> String {
     "size".to_owned()
+}
+
+fn default_storage_growth_window_days() -> u64 {
+    30
 }
 
 fn default_storage_item_sort_descending() -> bool {

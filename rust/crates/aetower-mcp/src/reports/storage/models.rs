@@ -30,6 +30,10 @@ pub(crate) struct StorageHygieneReport {
     pub(super) source_coverage: Vec<StorageSourceCoverage>,
     pub(super) volume_states: Vec<StorageVolumeState>,
     pub(super) growth_deltas: Vec<StorageGrowthDelta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) growth_insights: Option<StorageGrowthInsights>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) cold_data: Option<StorageColdData>,
     pub(super) truncated: bool,
     pub(super) caveats: Vec<String>,
 }
@@ -175,6 +179,11 @@ pub(super) struct StorageGrowthDelta {
     pub(super) process_tree: Option<String>,
     pub(super) ai_agent_session: Option<String>,
     pub(super) writer_source: Option<String>,
+    pub(super) provider: Option<String>,
+    pub(super) session_id: Option<String>,
+    pub(super) tab_name: Option<String>,
+    pub(super) chau7_session_id: Option<String>,
+    pub(super) writer_display: Option<String>,
     pub(super) matched_writer_count: u64,
     pub(super) attribution_sources: Vec<String>,
     pub(super) attribution_confidence: String,
@@ -182,6 +191,104 @@ pub(super) struct StorageGrowthDelta {
     pub(super) attribution_ambiguous: bool,
     pub(super) attribution_summary: String,
     pub(super) attribution_evidence: Vec<String>,
+}
+
+/// Daily growth rate for one repository or source root, aggregated from the
+/// full retained `storage_growth_delta` series (not just the recent event
+/// timeline).
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageGrowthRate {
+    pub(super) scope: String,
+    pub(super) scope_kind: String,
+    pub(super) repo_name: Option<String>,
+    pub(super) window_days: u64,
+    pub(super) total_delta_bytes: i64,
+    pub(super) daily_rate_bytes: i64,
+    /// accelerating | steady | slowing | shrinking (half-window comparison).
+    pub(super) trend: String,
+    pub(super) day_bucket_count: u64,
+}
+
+/// Days-to-disk-full forecast for one volume, derived from the aggregate
+/// positive daily growth rate over the scanned roots. Only emitted when at
+/// least three distinct day buckets of growth history exist.
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageGrowthForecast {
+    pub(super) volume_path: String,
+    pub(super) free_now_bytes: u64,
+    pub(super) daily_rate_bytes: i64,
+    pub(super) days_to_full: f64,
+    pub(super) confidence: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageScanDiffEntry {
+    pub(super) path: String,
+    pub(super) display_name: String,
+    pub(super) source_root: String,
+    pub(super) repo_root: Option<String>,
+    pub(super) kind: String,
+    pub(super) cleanup_tier: String,
+    pub(super) previous_cleanup_tier: String,
+    pub(super) physical_bytes: u64,
+    pub(super) delta_bytes: i64,
+    pub(super) scan_millis: u64,
+}
+
+/// "Since last scan" diff lane derived from the latest delta/index scan
+/// generation: newly appeared paths and tier transitions. `disappeared` is
+/// intentionally empty (see `disappeared_note`) because unchanged directories
+/// are served from the directory size cache and keep prior scan generations,
+/// so a stale generation does not imply deletion.
+#[derive(Clone, Debug, Default, Serialize)]
+pub(super) struct StorageScanDiff {
+    pub(super) latest_scan_millis: u64,
+    pub(super) appeared_count: u64,
+    pub(super) appeared_total_bytes: u64,
+    pub(super) appeared: Vec<StorageScanDiffEntry>,
+    pub(super) tier_changed_count: u64,
+    pub(super) tier_changed: Vec<StorageScanDiffEntry>,
+    pub(super) disappeared: Vec<StorageScanDiffEntry>,
+    pub(super) disappeared_note: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageGrowthInsights {
+    pub(super) window_days: u64,
+    pub(super) per_repo_rates: Vec<StorageGrowthRate>,
+    pub(super) per_root_rates: Vec<StorageGrowthRate>,
+    pub(super) volume_forecasts: Vec<StorageGrowthForecast>,
+    pub(super) since_last_scan: StorageScanDiff,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct StorageGrowthInsightsResponse {
+    pub(super) captured_at_millis: u64,
+    pub(super) roots: Vec<String>,
+    pub(super) storage_index_status: String,
+    #[serde(flatten)]
+    pub(super) insights: StorageGrowthInsights,
+}
+
+/// One cold-data reclaim band: rows untouched (max of accessed/modified) for
+/// at least `min_age_days`, restricted to safe/rebuildable tiers and the
+/// minimum item size, with the largest hydrated items on top.
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageColdDataBand {
+    pub(super) id: String,
+    pub(super) label: String,
+    pub(super) min_age_days: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) max_age_days: Option<u64>,
+    pub(super) item_count: u64,
+    pub(super) total_bytes: u64,
+    pub(super) top_items: Vec<StorageHygieneItem>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageColdData {
+    pub(super) bands: Vec<StorageColdDataBand>,
+    pub(super) caveat: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -235,6 +342,11 @@ pub(super) struct StorageGrowthAttribution {
     pub(super) process_tree: Option<String>,
     pub(super) ai_agent_session: Option<String>,
     pub(super) writer_source: Option<String>,
+    pub(super) provider: Option<String>,
+    pub(super) session_id: Option<String>,
+    pub(super) tab_name: Option<String>,
+    pub(super) chau7_session_id: Option<String>,
+    pub(super) writer_display: Option<String>,
     pub(super) matched_writer_count: u64,
     pub(super) sources: Vec<String>,
     pub(super) confidence: String,
@@ -282,6 +394,10 @@ pub(super) struct StorageHygieneItem {
     pub(super) cleanup_allowed: bool,
     pub(super) cleanup_blockers: Vec<String>,
     pub(super) default_cleanup_action: String,
+    /// Composite reclaim-recommendation score (see
+    /// `storage_recommendation_score`); matches the persisted
+    /// `recommendation_score` column used for the "score" sort key.
+    pub(super) recommendation_score: f64,
     pub(super) attribution: StorageArtifactAttribution,
 }
 
@@ -339,6 +455,11 @@ pub(super) struct StorageArtifactAttribution {
     pub(super) command: Option<String>,
     pub(super) process_tree: Option<String>,
     pub(super) ai_agent_session: Option<String>,
+    pub(super) provider: Option<String>,
+    pub(super) session_id: Option<String>,
+    pub(super) tab_name: Option<String>,
+    pub(super) chau7_session_id: Option<String>,
+    pub(super) writer_display: Option<String>,
     pub(super) confidence: String,
     pub(super) notes: Vec<String>,
 }
@@ -714,6 +835,7 @@ pub(super) enum StorageItemSortKey {
     Accessed,
     Tier,
     Kind,
+    Score,
 }
 
 impl StorageItemSortKey {
@@ -724,6 +846,7 @@ impl StorageItemSortKey {
             "accessed" | "atime" | "unused" => Self::Accessed,
             "tier" | "cleanup_tier" | "safety" => Self::Tier,
             "kind" | "type" => Self::Kind,
+            "score" | "recommended" | "recommendation" => Self::Score,
             _ => Self::Size,
         }
     }
@@ -736,6 +859,7 @@ impl StorageItemSortKey {
             Self::Accessed => "accessed",
             Self::Tier => "tier",
             Self::Kind => "kind",
+            Self::Score => "score",
         }
     }
 }
@@ -769,6 +893,10 @@ pub(super) struct StorageHygieneOverviewResponse {
     pub(super) source_coverage: Vec<StorageSourceCoverage>,
     pub(super) volume_states: Vec<StorageVolumeState>,
     pub(super) growth_deltas: Vec<StorageGrowthDelta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) growth_insights: Option<StorageGrowthInsights>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) cold_data: Option<StorageColdData>,
     pub(super) truncated: bool,
     pub(super) caveats: Vec<String>,
 }
