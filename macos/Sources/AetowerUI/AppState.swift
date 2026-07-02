@@ -422,7 +422,19 @@ public final class AppState {
     private(set) var previousStorageHygieneReport: StorageHygieneReportModel?
     private(set) var persistedStorageHygieneBaseline: StorageHygieneBaselineModel? = StorageHygieneBaselineStore.load()
     private(set) var storageScanJob: StorageScanJobResponseModel?
-    private(set) var storageHygieneIsLoading = false
+    private(set) var storageHygieneIsLoading = false {
+        didSet {
+            guard storageHygieneIsLoading != oldValue else { return }
+            restartStorageHygieneLoadWatchdog()
+        }
+    }
+    /// Set by the load watchdog when an in-flight hygiene load has been
+    /// running past its budget (~30s). Re-enables the manual Rescan button so
+    /// an explicit user action can supersede the stuck load —
+    /// `runStorageHygieneScan` cancels the previous task, whose results are
+    /// then dropped at its next cancellation checkpoint.
+    private(set) var storageHygieneLoadExceededBudget = false
+    @ObservationIgnored private var storageHygieneLoadWatchdogTask: Task<Void, Never>?
     private(set) var storageHygieneIsVerifyingCache = false
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
@@ -2396,6 +2408,48 @@ public final class AppState {
             expanded = trimmed
         }
         return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL.path
+    }
+
+    /// Observability for stuck hygiene loads: the FFI report calls have no
+    /// timeout, so if one wedges (e.g. a pathological index query) the
+    /// loading flag would otherwise pin the UI in "Scanning" forever with a
+    /// silently disabled Rescan button. After the budget elapses this records
+    /// a diagnostics event and flips `storageHygieneLoadExceededBudget` so an
+    /// explicit user rescan can supersede the stuck load. It never cancels
+    /// the in-flight FFI call.
+    private static let storageHygieneLoadBudgetSeconds: TimeInterval = 30
+
+    private func restartStorageHygieneLoadWatchdog() {
+        storageHygieneLoadWatchdogTask?.cancel()
+        storageHygieneLoadWatchdogTask = nil
+        storageHygieneLoadExceededBudget = false
+        guard storageHygieneIsLoading else { return }
+        storageHygieneLoadWatchdogTask = Task { [weak self] in
+            try? await Task.sleep(
+                nanoseconds: UInt64(Self.storageHygieneLoadBudgetSeconds * 1_000_000_000)
+            )
+            guard !Task.isCancelled else { return }
+            self?.reportStorageHygieneLoadExceededBudget()
+        }
+    }
+
+    private func reportStorageHygieneLoadExceededBudget() {
+        guard storageHygieneIsLoading, !storageHygieneLoadExceededBudget else { return }
+        storageHygieneLoadExceededBudget = true
+        recordLocalDiagnosticsEvent(
+            level: .warn,
+            subsystem: .ui,
+            eventType: "storage-hygiene-load-slow",
+            message: "Storage hygiene load has been running for over "
+                + "\(Int(Self.storageHygieneLoadBudgetSeconds))s; "
+                + "the Rescan button was re-enabled so a manual rescan can supersede it.",
+            fields: [
+                DiagnosticsField(
+                    key: "budget_seconds",
+                    value: String(Int(Self.storageHygieneLoadBudgetSeconds))
+                )
+            ]
+        )
     }
 
     /// On-demand read-only storage hygiene scan for build artifacts, logs,

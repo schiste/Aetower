@@ -259,7 +259,12 @@ public struct StorageView: View {
         } actions: {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 storageFilterMenu
-                AetowerScanButton(isRunning: state.storageHygieneIsLoading) {
+                // A load that blew its watchdog budget re-enables the button
+                // so an explicit rescan can supersede the stuck load.
+                AetowerScanButton(
+                    isRunning: state.storageHygieneIsLoading
+                        && !state.storageHygieneLoadExceededBudget
+                ) {
                     runScan()
                 }
                 if !cleanupBasket.isEmpty {
