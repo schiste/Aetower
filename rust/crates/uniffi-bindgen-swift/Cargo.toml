@@ -9,4 +9,7 @@ name = "uniffi-bindgen-swift"
 path = "src/main.rs"
 
 [dependencies]
-uniffi.workspace = true
+# The bindgen binary is the only crate that needs uniffi's CLI machinery
+# (clap, cargo_metadata, goblin); keeping "cli" here keeps those out of
+# the shipped aetower-ffi dylib.
+uniffi = { workspace = true, features = ["cli"] }
