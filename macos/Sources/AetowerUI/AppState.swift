@@ -2282,29 +2282,45 @@ public final class AppState {
             return
         }
         storageHygieneTask?.cancel()
+
+        // Read the small JSON cache synchronously first so a hit paints
+        // instantly. The old flow flipped storageHygieneIsLoading true here and
+        // deferred the cache read onto a .background-priority task, so even a
+        // guaranteed hit flashed "Starting storage scan" for the deserialize
+        // window on every launch. Loading is now shown only on a real miss.
+        var paintedFromCache = false
+        if storageHygieneReport == nil {
+            if case let .hit(cache) = StorageHygieneReportCacheStore.loadIfValid(roots: roots) {
+                publishStorageHygieneCacheHit(cache)
+                paintedFromCache = true
+            }
+        }
+
         storageHygieneIsLoading = storageHygieneReport == nil
         storageHygieneIsVerifyingCache = false
         storageHygieneError = nil
         let bridge = self.bridge
         let publisher = StorageHygieneMainActorPublisher(self)
-        storageHygieneTask = Task.detached(priority: .background) {
+        storageHygieneTask = Task.detached(priority: paintedFromCache ? .utility : .background) {
             let maxDepth: UInt32 = 5
             let limit: UInt32 = 200
-            var publishedReport = false
-            let cacheResult = StorageHygieneReportCacheStore.loadIfValid(
-                roots: roots
-            )
+            var publishedReport = paintedFromCache
 
-            switch cacheResult {
-            case let .hit(cache):
-                guard !Task.isCancelled else { return }
-                await publisher.publishCacheHit(cache)
-                publishedReport = true
-            case let .stale(reason):
-                guard !Task.isCancelled else { return }
-                await publisher.publishCacheStale(reason: reason)
-            case .miss:
-                break
+            // Only re-read the cache in the background if we didn't already
+            // paint it synchronously above; either way the index refresh below
+            // still runs to keep the displayed data current.
+            if !paintedFromCache {
+                switch StorageHygieneReportCacheStore.loadIfValid(roots: roots) {
+                case let .hit(cache):
+                    guard !Task.isCancelled else { return }
+                    await publisher.publishCacheHit(cache)
+                    publishedReport = true
+                case let .stale(reason):
+                    guard !Task.isCancelled else { return }
+                    await publisher.publishCacheStale(reason: reason)
+                case .miss:
+                    break
+                }
             }
 
             if !publishedReport {
