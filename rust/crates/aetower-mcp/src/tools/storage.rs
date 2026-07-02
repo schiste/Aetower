@@ -165,8 +165,12 @@ impl AetowerMcpServer {
 }
 
 fn parse_tool_json(json: &str) -> Result<Value, Value> {
-    serde_json::from_str(json)
-        .map_err(|error| tool_error(format!("storage_hygiene_json_failed: {error}")))
+    // Reports are built as JSON strings; re-wrap them in the MCP tool-result
+    // envelope (content + structuredContent). Returning the bare object makes
+    // spec-compliant clients render an empty result.
+    let value: Value = serde_json::from_str(json)
+        .map_err(|error| tool_error(format!("storage_hygiene_json_failed: {error}")))?;
+    tool_json(value)
 }
 
 fn default_storage_scan_depth() -> usize {

@@ -1330,7 +1330,7 @@ impl SnapshotEnvelope {
     }
 }
 
-fn tool_json<T: Serialize>(value: T) -> Result<Value, Value> {
+pub(crate) fn tool_json<T: Serialize>(value: T) -> Result<Value, Value> {
     let structured = serde_json::to_value(&value)
         .map_err(|error| tool_error(format!("serialize structured content: {error}")))?;
     let compact = serde_json::to_vec(&structured)
