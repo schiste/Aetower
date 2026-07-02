@@ -120,7 +120,8 @@ PACKAGE_SWIFT_REMOTE_DEP_PATTERN = re.compile(r"\.package\s*\(\s*url:")
 DEPENDENCY_RISK_PATTERN = re.compile(r"\b(git|branch|rev|tag)\s*=")
 WILDCARD_VERSION_PATTERN = re.compile(r'version\s*=\s*"\*"')
 CARGO_LOCK_NEUTRAL_TOML_LINE = re.compile(
-    r"^\s*(license|license-file|authors|description|homepage|repository|readme|keywords|categories|documentation|edition)\s*="
+    r"^\s*(license|license-file|authors|description|homepage|repository|readme|keywords|categories|documentation|edition"
+    r"|lto|codegen-units|strip|panic|opt-level|incremental|debug-assertions|overflow-checks)\s*="
 )
 
 

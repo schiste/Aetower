@@ -42,3 +42,10 @@ reqwest = { version = "0.12.28", default-features = false, features = ["blocking
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 rhai = { version = "1.19", default-features = false, features = ["std", "sync"] }
 sha2 = "0.10"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+# panic stays "unwind": uniffi converts Rust panics into Swift-visible errors via
+# catch_unwind at the FFI boundary; panic = "abort" would kill the host app instead.
