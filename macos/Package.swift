@@ -39,14 +39,18 @@ let package = Package(
             dependencies: ["aetower_ffiFFI"],
             path: "Sources/AetowerBindings",
             linkerSettings: [
+                // Match the Rust profile to the Swift configuration; listing both
+                // (debug first) made release builds link and load the debug engine.
                 .unsafeFlags([
                     "-L", rustDebugLibraryPath,
-                    "-L", rustReleaseLibraryPath,
                     "-Xlinker", "-rpath",
                     "-Xlinker", rustDebugLibraryPath,
+                ], .when(configuration: .debug)),
+                .unsafeFlags([
+                    "-L", rustReleaseLibraryPath,
                     "-Xlinker", "-rpath",
                     "-Xlinker", rustReleaseLibraryPath,
-                ]),
+                ], .when(configuration: .release)),
                 .linkedLibrary("aetower_ffi")
             ],
             plugins: ["BuildRustBridgePlugin"]
