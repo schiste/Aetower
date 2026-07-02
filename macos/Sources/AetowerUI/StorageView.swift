@@ -193,7 +193,7 @@ public struct StorageView: View {
     @State private var copiedCleanupBundleID: String?
     @State private var copiedCleanupRecipeID: String?
     @State private var candidateCommandPreviewBundle: StorageCleanupBundleModel?
-    @State private var selectedSection: StorageSection = .actions
+    @State private var selectedSection: StorageSection = .reclaim
     @State private var showCleanupRecipes = false
     @State private var showRawArtifacts = false
     @State private var showScannedRoots = false
@@ -496,25 +496,13 @@ public struct StorageView: View {
             return state.storageHygieneIsLoading ? "Scanning" : "No scan"
         }
         switch section {
-        case .actions:
-            return formatBytes(report.summary.totalReclaimableBytes)
         case .reclaim:
-            let actions = report.cleanupBundles.count + report.cleanupRecipes.count
-            return "\(actions) action\(actions == 1 ? "" : "s")"
-        case .growth:
+            return formatBytes(report.summary.totalReclaimableBytes)
+        case .explore:
+            return "\(report.summary.itemCount) item\(report.summary.itemCount == 1 ? "" : "s")"
+        case .insights:
             let growthCount = report.growthDeltas.filter { $0.deltaBytes > 0 }.count
             return "\(growthCount) growth signal\(growthCount == 1 ? "" : "s")"
-        case .explorer:
-            return "\(report.summary.itemCount) item\(report.summary.itemCount == 1 ? "" : "s")"
-        case .inventory:
-            return "\(report.summary.itemCount) item\(report.summary.itemCount == 1 ? "" : "s")"
-        case .sources:
-            return "\(report.volumeStates.count) volume\(report.volumeStates.count == 1 ? "" : "s")"
-        case .policies:
-            let violations = report.budgetGuardrails.violations.count
-            return violations == 0 ? "No violations" : "\(violations) violation\(violations == 1 ? "" : "s")"
-        case .advanced:
-            return report.truncated ? "Partial scan" : "\(report.scanDurationMillis) ms"
         }
     }
 
@@ -527,20 +515,16 @@ public struct StorageView: View {
             return state.storageHygieneIsLoading ? AetowerDesign.Tone.disk : AetowerDesign.Status.neutral
         }
         switch section {
-        case .actions:
-            return report.summary.totalReclaimableBytes > 0 ? AetowerDesign.Tone.disk : AetowerDesign.Status.ready
         case .reclaim:
-            return report.cleanupBundles.isEmpty && report.cleanupRecipes.isEmpty ? AetowerDesign.Status.neutral : AetowerDesign.Status.ready
-        case .growth:
-            return report.growthDeltas.contains { $0.deltaBytes > 0 } ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
-        case .explorer, .inventory:
+            return report.summary.totalReclaimableBytes > 0 ? AetowerDesign.Tone.disk : AetowerDesign.Status.ready
+        case .explore:
             return AetowerDesign.Tone.memory
-        case .sources:
-            return report.skippedRoots.isEmpty ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
-        case .policies:
-            return report.budgetGuardrails.violations.isEmpty ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
-        case .advanced:
-            return report.truncated ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+        case .insights:
+            if !report.budgetGuardrails.violations.isEmpty
+                || report.growthDeltas.contains(where: { $0.deltaBytes > 0 }) {
+                return AetowerDesign.Status.warning
+            }
+            return AetowerDesign.Status.neutral
         }
     }
 
@@ -577,21 +561,60 @@ public struct StorageView: View {
     @ViewBuilder
     private func storageSectionContent(_ report: StorageHygieneReportModel) -> some View {
         switch selectedSection {
-        case .actions:
-            storageActionHome(report)
         case .reclaim:
-            storageReclaimWorkspace(report)
-        case .growth:
-            storageGrowthWorkspace(report)
-        case .explorer:
-            storageExplorerWorkspace(report)
-        case .inventory:
-            storageInventoryWorkspace(report)
-        case .sources:
-            storageSourcesWorkspace(report)
-        case .policies:
-            storagePoliciesWorkspace(report)
-        case .advanced:
+            storageReclaimHome(report)
+        case .explore:
+            storageExploreWorkspace(report)
+        case .insights:
+            storageInsightsWorkspace(report)
+        }
+    }
+
+    /// Primary surface: disk pressure up top (the frame the whole tab needs),
+    /// then the reclaim opportunities and the staged-cleanup workflow.
+    private func storageReclaimHome(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            storageDiskPressureHeader(report)
+            storageActionPanel(report)
+            storageHomeActionsSection(report)
+            if let coldData = report.coldData, coldData.bands.contains(where: { $0.itemCount > 0 }) {
+                coldDataLaneSection(coldData)
+            }
+            cleanupRecipesSection(report)
+            cleanupAuditSection
+            if report.truncated {
+                warningBanner("The scan hit a cap or time budget. Results are partial; open Insights to inspect coverage or narrow the root.")
+            }
+        }
+    }
+
+    /// Hunt-for-space surface: the visual treemap and the full item list.
+    private func storageExploreWorkspace(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            visualExplorationSection(report)
+            wholeComputerOptimizationSection(report)
+            storageInvestigationSection(report)
+            itemSection(report)
+        }
+    }
+
+    /// Analytical surface: everything that explains rather than acts.
+    private func storageInsightsWorkspace(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            if let insights = report.growthInsights {
+                storageGrowthInsightsSection(insights)
+                if let diff = insights.sinceLastScan {
+                    storageSinceLastScanSection(diff)
+                }
+            }
+            storageGrowthTimeline(report)
+            repoFootprintDashboard(report)
+            budgetGuardrailsSection(report)
+            if shouldShowAgentHygieneOverview(report) {
+                agentHygieneSection(report)
+            }
+            storageCoverageOverview(report)
+            summaryGrid(report)
             storageAdvanced(report)
         }
     }
@@ -1744,6 +1767,99 @@ public struct StorageView: View {
         .controlSize(.mini)
     }
 
+    // MARK: - Disk pressure header
+
+    private func primaryVolume(_ report: StorageHygieneReportModel) -> StorageVolumeStateModel? {
+        report.volumeStates.first { $0.path == "/" }
+            ?? report.volumeStates.max { $0.totalBytes < $1.totalBytes }
+    }
+
+    /// The frame the whole tab was missing: how full is the disk, and how much
+    /// of the used space this scan can give back. Everything below is in
+    /// service of moving the "free" number up.
+    @ViewBuilder
+    private func storageDiskPressureHeader(_ report: StorageHygieneReportModel) -> some View {
+        if let volume = primaryVolume(report), volume.totalBytes > 0 {
+            let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
+            let reclaimable = min(report.summary.totalReclaimableBytes, volume.totalBytes)
+            let freeRatio = Double(free) / Double(volume.totalBytes)
+            let tone: Color = freeRatio < 0.05 ? AetowerDesign.Status.error
+                : freeRatio < 0.12 ? AetowerDesign.Status.warning
+                : AetowerDesign.Status.ready
+            let pressureLabel = freeRatio < 0.05 ? "Critically low space"
+                : freeRatio < 0.12 ? "Low space" : "Healthy"
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                    Image(systemName: "internaldrive.fill")
+                        .foregroundStyle(tone)
+                    Text(volumeDisplayName(volume))
+                        .font(.headline)
+                    Text(pressureLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(tone)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(tone.opacity(0.14), in: Capsule())
+                    Spacer()
+                    (Text(formatBytes(free)).font(.system(size: 26, weight: .bold, design: .rounded))
+                        + Text("  free").font(.callout).foregroundColor(.secondary))
+                }
+
+                diskCapacityBar(total: volume.totalBytes, free: free, reclaimable: reclaimable, tone: tone)
+
+                HStack(spacing: AetowerDesign.Spacing.md) {
+                    Text("\(formatBytes(volume.totalBytes - free)) used of \(formatBytes(volume.totalBytes))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if reclaimable > 0 {
+                        Label(
+                            "\(formatBytes(reclaimable)) reclaimable — up to \(formatBytes(free + reclaimable)) free",
+                            systemImage: "arrow.down.circle.fill"
+                        )
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(AetowerDesign.Tone.disk)
+                    }
+                    Spacer()
+                }
+            }
+            .padding(AetowerDesign.Spacing.lg)
+            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
+
+    private func volumeDisplayName(_ volume: StorageVolumeStateModel) -> String {
+        if volume.path == "/" { return "Macintosh HD" }
+        let last = (volume.path as NSString).lastPathComponent
+        return last.isEmpty ? volume.path : last
+    }
+
+    /// Three-segment capacity bar: used (neutral) · reclaimable (disk-tinted,
+    /// the recoverable slice) · free (track). Proportional to total bytes.
+    private func diskCapacityBar(total: UInt64, free: UInt64, reclaimable: UInt64, tone: Color) -> some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let usedBytes = total - free
+            let hardUsed = usedBytes > reclaimable ? usedBytes - reclaimable : 0
+            let hardWidth = width * CGFloat(Double(hardUsed) / Double(total))
+            let reclaimWidth = width * CGFloat(Double(reclaimable) / Double(total))
+            HStack(spacing: 1.5) {
+                Rectangle()
+                    .fill(AetowerDesign.Ink.secondary.opacity(0.55))
+                    .frame(width: max(0, hardWidth))
+                if reclaimWidth > 0 {
+                    Rectangle()
+                        .fill(AetowerDesign.Tone.disk)
+                        .frame(width: max(2, reclaimWidth))
+                }
+                Rectangle()
+                    .fill(AetowerDesign.Surface.badgeStrong)
+            }
+            .clipShape(Capsule())
+        }
+        .frame(height: 12)
+    }
+
     private func storageActionPanel(_ report: StorageHygieneReportModel) -> some View {
         let primaryBundle = report.cleanupBundles.first
         let hasCandidateCommands = primaryBundle.map(cleanupBundleHasActionableCommands) ?? false
@@ -1942,7 +2058,7 @@ public struct StorageView: View {
                 Spacer(minLength: AetowerDesign.Spacing.md)
 
                 Button("Advanced details") {
-                    selectedSection = .advanced
+                    selectedSection = .insights
                     showRawArtifacts = true
                 }
                 .buttonStyle(.bordered)
@@ -2121,7 +2237,7 @@ public struct StorageView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Inspect details") {
-                        selectedSection = .advanced
+                        selectedSection = .insights
                     }
                 }
             } else {
@@ -7181,74 +7297,44 @@ public struct StorageView: View {
 }
 
 private enum StorageSection: String, CaseIterable, Identifiable {
-    case actions
     case reclaim
-    case growth
-    case explorer
-    case inventory
-    case sources
-    case policies
-    case advanced
+    case explore
+    case insights
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .actions: return "Actions"
         case .reclaim: return "Reclaim"
-        case .growth: return "Growth"
-        case .explorer: return "Explorer"
-        case .inventory: return "Inventory"
-        case .sources: return "Sources"
-        case .policies: return "Policies"
-        case .advanced: return "Advanced"
+        case .explore: return "Explore"
+        case .insights: return "Insights"
         }
     }
 
     var role: String {
         switch self {
-        case .actions: return "Start here"
-        case .reclaim: return "Cleanup workflow"
-        case .growth: return "What changed"
-        case .explorer: return "Visual + list"
-        case .inventory: return "Classified data"
-        case .sources: return "Coverage"
-        case .policies: return "Prevention"
-        case .advanced: return "Raw detail"
+        case .reclaim: return "Free up space"
+        case .explore: return "Find what's big"
+        case .insights: return "Trends & coverage"
         }
     }
 
     var summary: String {
         switch self {
-        case .actions:
-            return "Recommended cleanup moves and current pressure."
         case .reclaim:
-            return "Bundles, recipes, staged basket, and audit trail."
-        case .growth:
-            return "Storage jumps, repo footprint, and top offender context."
-        case .explorer:
-            return "Lazy treemap, table view, and filtered artifacts."
-        case .inventory:
-            return "Large files, old data, duplicates, apps, system data, and agent artifacts."
-        case .sources:
-            return "Volumes, roots, permissions, skipped paths, and caveats."
-        case .policies:
-            return "Budgets, guardrails, warning-only policies, and cleanup safety."
-        case .advanced:
-            return "Complete diagnostic composition for power review."
+            return "Disk pressure, safe cleanup opportunities, and the staged basket."
+        case .explore:
+            return "Treemap, full item list, and duplicate groups to hunt down space."
+        case .insights:
+            return "Growth over time, volume coverage, budgets, and raw diagnostics."
         }
     }
 
     var systemImage: String {
         switch self {
-        case .actions: return "bolt.circle"
-        case .reclaim: return "trash.circle"
-        case .growth: return "chart.line.uptrend.xyaxis"
-        case .explorer: return "square.grid.3x3.topleft.filled"
-        case .inventory: return "shippingbox"
-        case .sources: return "externaldrive.connected.to.line.below"
-        case .policies: return "shield.lefthalf.filled"
-        case .advanced: return "slider.horizontal.3"
+        case .reclaim: return "sparkles"
+        case .explore: return "square.grid.3x3.topleft.filled"
+        case .insights: return "chart.line.uptrend.xyaxis"
         }
     }
 }
