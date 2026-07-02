@@ -6721,28 +6721,60 @@ public struct StorageView: View {
     /// Finder performs the empty (one-time Automation consent prompt). The
     /// in-app confirmation dialog runs first — this is the only permanent
     /// deletion in the app.
+    /// Empty the home Trash by deleting its entries directly. Finder's
+    /// AppleScript `empty trash` is all-or-nothing (one locked/root-owned
+    /// item aborts the whole thing with an opaque "operation can't be
+    /// completed") and triggers a one-time Automation consent prompt — a
+    /// wasted click and a fragile dependency. Per-entry FileManager removal
+    /// needs no Apple Events and skips only what it genuinely cannot delete.
     private func emptyTrash() {
         emptyTrashInFlight = true
+        let pending = trashPendingBytes
         Task.detached(priority: .userInitiated) {
-            var errorInfo: NSDictionary?
-            let script = NSAppleScript(source: "tell application \"Finder\" to empty trash")
-            script?.executeAndReturnError(&errorInfo)
-            let failure = (errorInfo?[NSAppleScript.errorBriefMessage] as? String)
-                ?? (errorInfo?[NSAppleScript.errorMessage] as? String)
+            let outcome = Self.emptyHomeTrash()
             await MainActor.run {
                 emptyTrashInFlight = false
+                let succeeded = outcome.failed == 0
                 appendCleanupAudit(
-                    action: failure == nil ? "empty-trash" : "failed-empty-trash",
+                    action: succeeded ? "empty-trash" : "failed-empty-trash",
                     path: "~/.Trash",
-                    detail: failure ?? "Emptied Finder Trash (\(formatBytes(trashPendingBytes)) pending from cleanups).",
-                    bytes: trashPendingBytes,
-                    succeeded: failure == nil
+                    detail: outcome.removed == 0 && outcome.failed == 0
+                        ? "Trash was already empty."
+                        : "Deleted \(outcome.removed) item\(outcome.removed == 1 ? "" : "s") from the Trash"
+                            + (outcome.failed > 0 ? "; \(outcome.failed) could not be removed (\(outcome.firstError ?? "in use or protected"))." : "."),
+                    bytes: pending,
+                    succeeded: succeeded
                 )
-                if failure == nil {
-                    trashPendingBytes = 0
-                }
+                // Everything deletable is gone; clear the pending counter even
+                // on partial success so the bar reflects reality.
+                trashPendingBytes = 0
             }
         }
+    }
+
+    nonisolated private static func emptyHomeTrash() -> (removed: Int, failed: Int, firstError: String?) {
+        let fm = FileManager.default
+        let trash = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".Trash")
+        guard let entries = try? fm.contentsOfDirectory(
+            at: trash,
+            includingPropertiesForKeys: nil,
+            options: []
+        ) else {
+            return (0, 0, nil)
+        }
+        var removed = 0
+        var failed = 0
+        var firstError: String?
+        for entry in entries {
+            do {
+                try fm.removeItem(at: entry)
+                removed += 1
+            } catch {
+                failed += 1
+                if firstError == nil { firstError = error.localizedDescription }
+            }
+        }
+        return (removed, failed, firstError)
     }
 
     private func uniquePaths(_ paths: [String]) -> [String] {
