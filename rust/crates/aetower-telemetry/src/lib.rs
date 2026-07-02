@@ -7,9 +7,8 @@ use aetower_model::{
     EntitySnapshot, RuntimeLagMetrics, SystemSnapshot, ThermalState,
     machine_friction_score as model_machine_friction_score,
 };
-use reqwest::blocking::Client;
-use reqwest::header::CONTENT_TYPE;
 use serde::Serialize;
+use ureq::Agent;
 
 /// Configuration for the OpenTelemetry exporter.
 #[derive(Debug, Clone)]
@@ -71,7 +70,7 @@ pub mod metric_names {
 
 pub struct TelemetryExporter {
     config: OtlpConfig,
-    client: Client,
+    client: Agent,
     diagnostics: Option<DiagnosticsStore>,
 }
 
@@ -79,11 +78,13 @@ impl TelemetryExporter {
     pub fn new(config: OtlpConfig) -> Self {
         Self {
             config,
-            client: Client::builder()
-                .connect_timeout(Duration::from_secs(2))
-                .timeout(Duration::from_secs(4))
+            client: Agent::config_builder()
+                .timeout_connect(Some(Duration::from_secs(2)))
+                .timeout_global(Some(Duration::from_secs(4)))
+                // Non-2xx statuses are handled as data in post_json, not errors.
+                .http_status_as_error(false)
                 .build()
-                .expect("telemetry HTTP client should build"),
+                .new_agent(),
             diagnostics: None,
         }
     }
@@ -693,9 +694,8 @@ impl TelemetryExporter {
         let response = self
             .client
             .post(&self.config.endpoint)
-            .header(CONTENT_TYPE, "application/json")
-            .body(body.to_vec())
-            .send()
+            .header("content-type", "application/json")
+            .send(body)
             .map_err(|error| format!("telemetry request: {error}"))?;
 
         let status = response.status();

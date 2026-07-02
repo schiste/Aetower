@@ -12,7 +12,7 @@ use std::io::Read;
 use std::time::Duration;
 
 use aetower_model::{BinaryReputation, ReputationVerdict};
-use reqwest::blocking::Client;
+use ureq::Agent;
 
 /// Don't hash files larger than this — bounds the cost of the SHA-256 pass and
 /// avoids stalling a refresh tick on a pathologically large binary.
@@ -135,17 +135,19 @@ fn parse_reputation(body: &str, sha256: &str, checked_at_millis: u64) -> Option<
 /// A VirusTotal lookup client. Holds its own blocking HTTP client (same
 /// TLS/timeout profile as the telemetry exporter) and the API key.
 pub struct VtClient {
-    client: Client,
+    client: Agent,
     api_key: String,
 }
 
 impl VtClient {
     pub fn new(api_key: String) -> Self {
-        let client = Client::builder()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
+        let client = Agent::config_builder()
+            .timeout_connect(Some(CONNECT_TIMEOUT))
+            .timeout_global(Some(REQUEST_TIMEOUT))
+            // 404/401/429 are meaningful lookup outcomes, not transport errors.
+            .http_status_as_error(false)
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .new_agent();
         Self { client, api_key }
     }
 
@@ -156,11 +158,11 @@ impl VtClient {
             .client
             .get(&url)
             .header("x-apikey", &self.api_key)
-            .send();
+            .call();
         match response {
-            Ok(response) => {
+            Ok(mut response) => {
                 let status = response.status().as_u16();
-                let body = response.text().unwrap_or_default();
+                let body = response.body_mut().read_to_string().unwrap_or_default();
                 interpret_response(status, &body, sha256, checked_at_millis)
             }
             Err(error) => ReputationOutcome::Error(format!("VirusTotal request failed: {error}")),
