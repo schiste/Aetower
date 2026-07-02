@@ -1554,7 +1554,10 @@ fn cleanup_bundle_for_items(
 
     Some(StorageCleanupBundle {
         id: id.to_owned(),
-        title: format!("{title}: {}", human_bytes(estimated_reclaimable_bytes)),
+        // No embedded size: clients render estimated_reclaimable_bytes with
+        // their own locale-aware formatter; a second pre-formatted copy in the
+        // title inevitably drifts from it.
+        title: title.to_owned(),
         subtitle: subtitle.to_owned(),
         safety: safety.to_owned(),
         confidence_score,

@@ -188,17 +188,21 @@ fn shell_quote(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
 }
 
+// Decimal (1000-based) units to match how the macOS UI reports storage
+// (ByteCountFormatter .file, Finder, Disk Utility). Dividing by 1024 while
+// labelling the result "GB" made server prose disagree with the Swift
+// rendering of the same byte count (e.g. "7.0 GB" vs "7,5 GB").
 fn human_bytes(bytes: u64) -> String {
-    const KIB: f64 = 1024.0;
-    const MIB: f64 = 1024.0 * KIB;
-    const GIB: f64 = 1024.0 * MIB;
+    const KB: f64 = 1000.0;
+    const MB: f64 = 1000.0 * KB;
+    const GB: f64 = 1000.0 * MB;
     let value = bytes as f64;
-    if value >= GIB {
-        format!("{:.1} GB", value / GIB)
-    } else if value >= MIB {
-        format!("{:.1} MB", value / MIB)
-    } else if value >= KIB {
-        format!("{:.1} KB", value / KIB)
+    if value >= GB {
+        format!("{:.1} GB", value / GB)
+    } else if value >= MB {
+        format!("{:.1} MB", value / MB)
+    } else if value >= KB {
+        format!("{:.1} KB", value / KB)
     } else {
         format!("{bytes} B")
     }
