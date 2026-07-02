@@ -730,16 +730,22 @@ public struct StorageView: View {
                 Spacer(minLength: AetowerDesign.Spacing.sm)
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(formatBytes(action.bytes))
-                        .font(.system(size: 18, weight: .semibold, design: .rounded))
-                    Text("\(action.confidence)% confidence")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    Text(
+                        action.itemCount == 0
+                            ? "\(action.confidence)% confidence"
+                            : "\(action.confidence)% · \(action.itemCount) item\(action.itemCount == 1 ? "" : "s")"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 }
             }
 
-            recommendationDecisionGrid(actionRecommendationDecisions(action))
+            storageActionMetaChips(action)
 
             storageHomeActionSamples(action)
+
+            Spacer(minLength: 0)
 
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 if action.hasStageableItems {
@@ -767,8 +773,55 @@ public struct StorageView: View {
             .controlSize(.small)
         }
         .padding(AetowerDesign.Spacing.md)
-        .frame(maxWidth: .infinity, minHeight: 270, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 240, alignment: .topLeading)
         .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    /// Compact one-line replacement for the old six-tile decision grid. The
+    /// header already carries the title, size, and confidence; the sample rows
+    /// below carry per-item detail. This strip keeps only the three signals a
+    /// user actually decides on: is it safe, what does rebuilding cost, and
+    /// how reversible is it.
+    private func storageActionMetaChips(_ action: StorageHomeAction) -> some View {
+        let relevantItems = action.stageItems.isEmpty ? action.sampleItems : action.stageItems
+        return HStack(spacing: AetowerDesign.Spacing.xs) {
+            storageMetaChip(
+                systemImage: action.hasStageableItems ? "checkmark.shield.fill" : "exclamationmark.triangle.fill",
+                text: action.hasStageableItems ? "Trash-ready" : "Needs review",
+                tone: action.hasStageableItems ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+            )
+            if action.hasStageableItems {
+                storageMetaChip(
+                    systemImage: "arrow.uturn.backward",
+                    text: "Undoable",
+                    tone: AetowerDesign.Status.neutral
+                )
+            }
+            let rebuild = rebuildCostSummary(for: relevantItems)
+            if !["n/a", "Unknown", "None expected"].contains(rebuild) {
+                storageMetaChip(
+                    systemImage: "hammer.fill",
+                    text: "Rebuild \(rebuild)",
+                    tone: AetowerDesign.Tone.cpu
+                )
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func storageMetaChip(systemImage: String, text: String, tone: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(tone)
+            Text(text)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(tone.opacity(0.12), in: Capsule())
     }
 
     private func storageHomeActionSamples(_ action: StorageHomeAction) -> some View {
