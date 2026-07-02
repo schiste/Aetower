@@ -176,6 +176,10 @@ remove_tree "$APP_DIR"
 mkdir -p "$BIN_DIR" "$FRAMEWORK_DIR" "$HELPER_DIR" "$PLIST_DIR/Resources"
 
 cp "$SWIFT_BUILD_DIR/release/AetowerApp" "$BIN_DIR/Aetower"
+# Strip the local symbol table before signing (the Rust artifacts are already
+# stripped by the cargo release profile). Keeps dyld exports; drops ~50k local
+# symbols that only bloat the shipped binary.
+strip -rSTx "$BIN_DIR/Aetower" 2>/dev/null || strip -S "$BIN_DIR/Aetower"
 cp "$ROOT/rust/target/release/libaetower_ffi.dylib" "$FRAMEWORK_DIR/"
 cp "$ROOT/rust/target/release/aetower-mcp" "$HELPER_DIR/aetower-mcp"
 sh "$ROOT/scripts/generate-app-icon.sh" >/dev/null

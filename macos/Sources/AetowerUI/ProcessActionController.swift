@@ -131,8 +131,7 @@ final class ProcessActionController {
                 dryRun: true,
                 reason: previewReason
             )
-            let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let decoder = AetowerJSON.snakeCaseDecoder()
 
             guard previewResult.errorMessage == nil,
                   let previewJson = previewResult.json,
@@ -368,9 +367,7 @@ final class ProcessActionController {
     }
 
     private func jsonDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return decoder
+        AetowerJSON.snakeCaseDecoder()
     }
 
     private func decodeJsonQueryResult<T: Decodable>(_ result: JsonQueryResult, as type: T.Type) -> T? {

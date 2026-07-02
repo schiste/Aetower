@@ -181,8 +181,6 @@ final class StorageScanController {
         guard let json = result.json, let data = json.data(using: .utf8) else {
             return nil
         }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try? decoder.decode(StorageScanJobResponseModel.self, from: data)
+        return try? AetowerJSON.snakeCaseDecoder().decode(StorageScanJobResponseModel.self, from: data)
     }
 }
