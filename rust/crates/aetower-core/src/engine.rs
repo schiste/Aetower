@@ -181,7 +181,6 @@ struct EngineState {
     latest_snapshot: Arc<SystemSnapshot>,
     capabilities: BTreeMap<CapabilityKind, CapabilitySnapshot>,
     frontmost_app_state: Option<FrontmostAppState>,
-    history: History,
     runtime_lag_metrics: RuntimeLagMetrics,
     runtime_config: RuntimeCollectionConfig,
     last_runtime_heartbeat_millis: u64,
@@ -270,6 +269,10 @@ impl EngineState {
 
 pub struct Engine {
     state: Arc<Mutex<EngineState>>,
+    // History lives outside `state`: History::update is the tick's biggest
+    // in-memory pass, and holding `state` across it stalled every FFI/UI
+    // read. Only the tick thread and the regression worker touch this.
+    history: Arc<Mutex<History>>,
     adapters: AdapterManager,
     persistence: Arc<Mutex<Option<aetower_persistence::HistoryStore>>>,
     telemetry: Arc<Mutex<TelemetryExporter>>,
@@ -343,11 +346,11 @@ impl Engine {
                 latest_snapshot: Arc::new(snapshot),
                 capabilities,
                 frontmost_app_state: None,
-                history: History::new(),
                 runtime_lag_metrics: RuntimeLagMetrics::default(),
                 runtime_config: RuntimeCollectionConfig::default(),
                 last_runtime_heartbeat_millis: 0,
             })),
+            history: Arc::new(Mutex::new(History::new())),
             adapters,
             persistence: Arc::new(Mutex::new(persistence)),
             telemetry: Arc::new(Mutex::new(telemetry_exporter)),
@@ -372,6 +375,7 @@ impl Engine {
             .store(false, Ordering::SeqCst);
 
         let state = Arc::clone(&self.state);
+        let history = Arc::clone(&self.history);
         let adapters = self.adapters.clone();
         let persistence = Arc::clone(&self.persistence);
         let running = Arc::clone(&self.running);
@@ -621,15 +625,12 @@ impl Engine {
                     }
                 }
 
-                // history_millis used to be a composite of (a) waiting for
-                // `state.lock()` and (b) the actual history.update work, which
-                // meant a slow tick could be 5 s of lock wait OR 5 s of CPU
-                // work and we couldn't tell which from the diagnostic. Split
-                // them so future investigations can attribute correctly —
-                // long waits implicate whoever holds `state` (UI thread
-                // serializing a snapshot, telemetry exporter, adapter worker);
-                // long updates implicate History::update itself (z-score
-                // pass, retention bookkeeping, timeline growth).
+                // History::update runs on its own mutex, outside `state`, so
+                // a slow update (z-score pass, retention bookkeeping,
+                // timeline growth) no longer stalls FFI/UI reads that only
+                // need `state` for an Arc clone. state_lock_wait_millis and
+                // history_update_millis stay separate diagnostics so slow
+                // ticks remain attributable.
                 let mut runtime_lag_metrics = runtime_lag_metrics;
                 runtime_lag_metrics.updated_at_millis = captured_at_millis;
                 runtime_lag_metrics.collect_millis = collect_millis as f32;
@@ -638,14 +639,14 @@ impl Engine {
                 runtime_lag_metrics.friction_millis = pipeline_timings.friction_millis as f32;
                 runtime_lag_metrics.enrich_millis = enrich_millis as f32;
                 let history_started = Instant::now();
-                let mut guard = state.lock();
-                let state_lock_wait_millis = history_started.elapsed().as_secs_f64() * 1000.0;
-                let history_update_started = Instant::now();
                 let (timeline, host_trend, thermal_forecast) =
-                    guard
-                        .history
+                    history
+                        .lock()
                         .update(captured_at_millis, &host, &mut entities);
-                let history_update_millis = history_update_started.elapsed().as_secs_f64() * 1000.0;
+                let history_update_millis = history_started.elapsed().as_secs_f64() * 1000.0;
+                let state_lock_started = Instant::now();
+                let mut guard = state.lock();
+                let state_lock_wait_millis = state_lock_started.elapsed().as_secs_f64() * 1000.0;
                 guard.sequence += 1;
                 let sequence = guard.sequence;
                 drop(guard);
@@ -1295,7 +1296,7 @@ impl Engine {
         // Regression timeline events. Deduped per (bundle, kind) for the
         // session so a standing regression isn't re-announced every cycle.
         let persistence = Arc::clone(&self.persistence);
-        let state = Arc::clone(&self.state);
+        let history = Arc::clone(&self.history);
         let running = Arc::clone(&self.running);
         self.regression_worker = Some(thread::spawn(move || {
             sleep_with_stop(&running, REGRESSION_INITIAL_DELAY);
@@ -1315,7 +1316,7 @@ impl Engine {
                 if !downsampled.is_empty() {
                     let findings = aetower_regression::detect_regressions(&downsampled, now);
                     if !findings.is_empty() {
-                        let mut guard = state.lock();
+                        let mut guard = history.lock();
                         for finding in findings {
                             let (kind_key, kind_title) = match finding.kind {
                                 aetower_regression::RegressionKind::Memory7dCreep => {
@@ -1327,7 +1328,7 @@ impl Engine {
                             };
                             let dedup_key = format!("{}:{kind_key}", finding.bundle_id);
                             if emitted.insert(dedup_key) {
-                                guard.history.record_regression(
+                                guard.record_regression(
                                     now,
                                     &finding.bundle_id,
                                     kind_key,
@@ -2834,7 +2835,6 @@ mod tests {
             latest_snapshot: Arc::new(SystemSnapshot::default()),
             capabilities: std::collections::BTreeMap::new(),
             frontmost_app_state: None,
-            history: History::new(),
             runtime_lag_metrics,
             runtime_config: RuntimeCollectionConfig::default(),
             last_runtime_heartbeat_millis: 0,
