@@ -353,6 +353,7 @@ public final class AppState {
     /// cadence (every `fullSnapshotFloorTicks` refreshes) so automation,
     /// notification, and anomaly evaluators keep running on fresh data.
     @ObservationIgnored private var fullSnapshotDemandTokens: Set<UUID> = []
+    @ObservationIgnored private var frontmostTitleProbeTask: Task<Void, Never>?
     @ObservationIgnored private var ticksSinceFullSnapshot = 0
     @ObservationIgnored private let fullSnapshotFloorTicks = 5
     var processActionPreviewReports: [String: ProcessActionReportModel] {
@@ -3346,22 +3347,60 @@ public final class AppState {
             force
             || baseSignature != lastPublishedFrontmostBaseSignature
             || now.timeIntervalSince(lastWindowTitleProbeDate) >= windowTitleProbeInterval
-        let windowTitle: String?
-        if shouldProbeWindowTitle,
-           permissionCoordinator.canReadFocusedWindowTitle(bundleId: observation.bundleId)
-        {
-            windowTitle = permissionCoordinator.currentFocusedWindowTitle(
-                processIdentifier: observation.processIdentifier,
-                bundleId: observation.bundleId
-            )
-            lastWindowTitleProbeDate = now
-        } else if shouldProbeWindowTitle {
-            windowTitle = nil
-            lastWindowTitleProbeDate = now
-        } else {
-            windowTitle = lastPublishedWindowTitle
-        }
 
+        // Publish immediately with the last-known title (nil when the app
+        // changed) so the base state never waits on AX. The title probe is
+        // synchronous IPC that can stall on an unresponsive target, so it
+        // runs off the main actor and re-publishes when it lands.
+        let staleTitle = baseSignature == lastPublishedFrontmostBaseSignature
+            ? lastPublishedWindowTitle
+            : nil
+        publishFrontmost(
+            observation: observation,
+            baseSignature: baseSignature,
+            windowTitle: staleTitle
+        )
+
+        guard shouldProbeWindowTitle else { return }
+        lastWindowTitleProbeDate = now
+        guard permissionCoordinator.canReadFocusedWindowTitle(bundleId: observation.bundleId)
+        else {
+            publishFrontmost(observation: observation, baseSignature: baseSignature, windowTitle: nil)
+            return
+        }
+        let pid = observation.processIdentifier
+        frontmostTitleProbeTask?.cancel()
+        frontmostTitleProbeTask = Task.detached(priority: .utility) { [weak self] in
+            let title = PermissionCoordinator.probeFocusedWindowTitle(processIdentifier: pid)
+            if Task.isCancelled { return }
+            await self?.finishFrontmostTitleProbe(
+                observation: observation,
+                baseSignature: baseSignature,
+                windowTitle: title
+            )
+        }
+    }
+
+    private func finishFrontmostTitleProbe(
+        observation: FrontmostAppObservation,
+        baseSignature: String,
+        windowTitle: String?
+    ) {
+        // Out-of-order guard: drop the result if the frontmost app moved on
+        // while the probe ran off-main.
+        guard baseSignature == lastPublishedFrontmostBaseSignature else { return }
+        publishFrontmost(
+            observation: observation,
+            baseSignature: baseSignature,
+            windowTitle: windowTitle
+        )
+    }
+
+    private func publishFrontmost(
+        observation: FrontmostAppObservation,
+        baseSignature: String,
+        windowTitle: String?
+    ) {
         let signature = [
             baseSignature,
             windowTitle ?? ""

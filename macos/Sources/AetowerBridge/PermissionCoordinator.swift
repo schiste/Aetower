@@ -2,7 +2,7 @@ import AppKit
 @preconcurrency import ApplicationServices
 import Foundation
 
-public struct FrontmostAppObservation {
+public struct FrontmostAppObservation: Sendable {
     public let processIdentifier: pid_t
     public let appName: String
     public let bundleId: String?
@@ -217,7 +217,17 @@ public final class PermissionCoordinator {
             return nil
         }
 
+        let stringTitle = Self.probeFocusedWindowTitle(processIdentifier: processIdentifier)
+        cachedWindowTitle = (now, processIdentifier, stringTitle)
+        return stringTitle
+    }
+
+    /// Cache-free raw AX probe, safe to call from any thread. The AX
+    /// messaging timeout bounds the worst case so an unresponsive target app
+    /// cannot stall the caller indefinitely (AX reads are synchronous IPC).
+    public static func probeFocusedWindowTitle(processIdentifier: pid_t) -> String? {
         let applicationElement = AXUIElementCreateApplication(processIdentifier)
+        AXUIElementSetMessagingTimeout(applicationElement, 1.0)
         var focusedWindow: CFTypeRef?
         let focusedWindowResult = AXUIElementCopyAttributeValue(
             applicationElement,
@@ -229,7 +239,6 @@ public final class PermissionCoordinator {
         }
 
         guard CFGetTypeID(focusedWindow) == AXUIElementGetTypeID() else {
-            cachedWindowTitle = (now, processIdentifier, nil)
             return nil
         }
         let windowElement = unsafeDowncast(focusedWindow, to: AXUIElement.self)
@@ -240,12 +249,9 @@ public final class PermissionCoordinator {
             &title
         )
         guard titleResult == .success else {
-            cachedWindowTitle = (now, processIdentifier, nil)
             return nil
         }
-        let stringTitle = title as? String
-        cachedWindowTitle = (now, processIdentifier, stringTitle)
-        return stringTitle
+        return title as? String
     }
 
     private func canReadFocusedWindowTitle(bundleId: String?, now: Date) -> Bool {
