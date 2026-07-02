@@ -3912,3 +3912,350 @@ fn forensic_walk_survives_a_slow_pre_walk_phase() {
         "walk must proceed on its own budget (scanned {scanned_dirs} dirs, truncated={truncated})"
     );
 }
+
+#[test]
+fn storage_hygiene_surfaces_unclassified_large_directories() {
+    let root = test_root("large-directory-surfacing");
+    let media = root.join("media");
+    let footage = media.join("footage");
+    let notes = root.join("notes");
+    for directory in [&footage, &notes] {
+        if let Err(error) = fs::create_dir_all(directory) {
+            panic!("create large-directory fixture: {error}");
+        }
+    }
+    // 20 sparse files below the large-file threshold: no per-file rule fires,
+    // so only large-directory surfacing can make this subtree visible.
+    for index in 0..20 {
+        let file = match fs::File::create(footage.join(format!("clip-{index:02}.raw"))) {
+            Ok(file) => file,
+            Err(error) => panic!("create sparse clip: {error}"),
+        };
+        if let Err(error) = file.set_len(60 * 1024 * 1024) {
+            panic!("size sparse clip: {error}");
+        }
+    }
+    if let Err(error) = fs::write(notes.join("todo.txt"), b"small") {
+        panic!("write small fixture: {error}");
+    }
+
+    let json = build_storage_hygiene_report_for_roots_mode(
+        vec![root.display().to_string()],
+        8,
+        120,
+        "deep",
+    );
+    let report = parse_json_value(&json, "large-directory report parses");
+    let items = report["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("items is an array"));
+    let large_dirs: Vec<_> = items
+        .iter()
+        .filter(|item| item["kind"] == "large-directory")
+        .collect();
+    assert_eq!(
+        large_dirs.len(),
+        1,
+        "exactly one large-directory item (nested child deduped by ancestor prefix)"
+    );
+    let item = large_dirs[0];
+    assert_eq!(item["path"], media.display().to_string());
+    assert_eq!(item["cleanup_tier"], "");
+    assert_eq!(item["safety"], "review");
+    assert_eq!(item["cleanup_allowed"], false);
+    assert_eq!(item["default_cleanup_action"], "manual_review");
+    assert!(
+        json_string(item, "recommendation").contains("review what lives here"),
+        "review-only recommendation"
+    );
+    assert!(
+        json_string(item, "reason")
+            .to_ascii_lowercase()
+            .contains("informational"),
+        "reason marks the item informational"
+    );
+    assert!(
+        item["evidence"]
+            .as_array()
+            .is_some_and(|evidence| !evidence.is_empty()),
+        "evidence includes size/age lines"
+    );
+    assert!(
+        item["cleanup_blockers"]
+            .as_array()
+            .is_some_and(|blockers| !blockers.is_empty()),
+        "unclassified tier must carry a cleanup blocker"
+    );
+    assert!(
+        items
+            .iter()
+            .all(|candidate| candidate["path"] != footage.display().to_string()),
+        "nested large directory must not be emitted when its ancestor was"
+    );
+
+    // Tier-less items must never enter cleanup lanes.
+    let media_path = media.display().to_string();
+    let bundles = report["cleanup_bundles"]
+        .as_array()
+        .unwrap_or_else(|| panic!("cleanup_bundles is an array"));
+    for bundle in bundles {
+        let manifest = bundle["manifest"]
+            .as_array()
+            .unwrap_or_else(|| panic!("bundle manifest is an array"));
+        assert!(
+            manifest
+                .iter()
+                .all(|entry| entry["path"] != media_path.as_str()),
+            "large-directory item leaked into a cleanup bundle"
+        );
+    }
+    let recipes = report["cleanup_recipes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("cleanup_recipes is an array"));
+    assert!(
+        recipes
+            .iter()
+            .all(|recipe| recipe["affected_path"] != media_path.as_str()),
+        "large-directory item leaked into cleanup recipes"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn classify_artifact_broadens_cache_and_system_rules() {
+    let base = test_root("broadened-rules");
+    let now_millis = storage_now_millis();
+    let cases: &[(&[&str], &str, &str, &str)] = &[
+        (
+            &["Library", "Caches", "Homebrew"],
+            "homebrew-cache",
+            "safe",
+            "safe",
+        ),
+        (
+            &["Library", "Caches", "pip"],
+            "pip-cache",
+            "rebuildable",
+            "safe",
+        ),
+        (
+            &["Library", "Caches", "go-build"],
+            "go-build-cache",
+            "safe",
+            "safe",
+        ),
+        (
+            &["Library", "Caches", "com.example.tool"],
+            "app-cache",
+            "rebuildable",
+            "safe",
+        ),
+        (
+            &["Library", "Caches", "com.google.Chrome"],
+            "browser-cache",
+            "risky",
+            "review",
+        ),
+        (
+            &["Library", "Caches", "com.apple.Safari"],
+            "browser-cache",
+            "risky",
+            "review",
+        ),
+        (&[".cache", "uv"], "uv-cache", "rebuildable", "safe"),
+        (
+            &[".cache", "huggingface"],
+            "tool-cache",
+            "rebuildable",
+            "safe",
+        ),
+        (
+            &[".gradle", "caches"],
+            "gradle-cache",
+            "rebuildable",
+            "safe",
+        ),
+        (
+            &[".m2", "repository"],
+            "maven-repository",
+            "rebuildable",
+            "review",
+        ),
+        (&[".Trash"], "trash", "safe", "review"),
+        (
+            &["Library", "Containers", "com.docker.docker", "Data", "vms"],
+            "docker-vm",
+            "expensive",
+            "review",
+        ),
+        (
+            &["Library", "Developer", "CoreSimulator", "Caches"],
+            "simulator-cache",
+            "safe",
+            "safe",
+        ),
+        (
+            &[
+                "Library",
+                "Developer",
+                "Xcode",
+                "iOS DeviceSupport",
+                "17.0 (21A329)",
+            ],
+            "xcode-device-support",
+            "rebuildable",
+            "review",
+        ),
+        (
+            &[
+                "Library",
+                "Developer",
+                "Xcode",
+                "DerivedData",
+                "MyApp-abcdef",
+            ],
+            "xcode-derived-data",
+            "safe",
+            "safe",
+        ),
+    ];
+    for (components, expected_kind, expected_tier, expected_safety) in cases {
+        let mut path = base.clone();
+        for component in *components {
+            path = path.join(component);
+        }
+        if let Err(error) = fs::create_dir_all(&path) {
+            panic!("create rule fixture {}: {error}", path.display());
+        }
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) => panic!("stat rule fixture {}: {error}", path.display()),
+        };
+        let rule = classify_artifact(&path, &metadata, now_millis)
+            .unwrap_or_else(|| panic!("no rule matched {}", path.display()));
+        assert_eq!(rule.kind, *expected_kind, "kind for {}", path.display());
+        assert_eq!(
+            rule.cleanup_tier,
+            *expected_tier,
+            "tier for {}",
+            path.display()
+        );
+        assert_eq!(
+            rule.safety,
+            *expected_safety,
+            "safety for {}",
+            path.display()
+        );
+    }
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn storage_hygiene_items_page_admits_large_directory_rows() {
+    let root = test_root("items-page-large-directory");
+    let large_dir = root.join("huge-unclassified");
+    let small_dir = root.join("small-unclassified");
+    let artifact = root.join("artifacts").join("artifact.bin");
+    for directory in [&large_dir, &small_dir] {
+        if let Err(error) = fs::create_dir_all(directory) {
+            panic!("create index fixture dir: {error}");
+        }
+    }
+    if let Some(parent) = artifact.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        panic!("create artifact fixture dir: {error}");
+    }
+    if let Err(error) = fs::write(&artifact, b"fixture") {
+        panic!("write artifact fixture: {error}");
+    }
+    let now_millis = storage_now_millis();
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+    let mut large_row = seeded_index_row(
+        &root,
+        &large_dir,
+        2 * LARGE_DIRECTORY_MIN_BYTES,
+        "",
+        None,
+        Some(now_millis.saturating_sub(DAY_MILLIS)),
+        Some(now_millis.saturating_sub(DAY_MILLIS)),
+        now_millis,
+    );
+    large_row.kind = "large-directory".to_owned();
+    large_row.storage_role = "artifact".to_owned();
+    large_row.safety = "review".to_owned();
+    large_row.is_directory = true;
+    let mut small_row = seeded_index_row(
+        &root,
+        &small_dir,
+        LARGE_DIRECTORY_MIN_BYTES / 2,
+        "",
+        None,
+        Some(now_millis.saturating_sub(DAY_MILLIS)),
+        Some(now_millis.saturating_sub(DAY_MILLIS)),
+        now_millis,
+    );
+    small_row.kind = "large-directory".to_owned();
+    small_row.storage_role = "artifact".to_owned();
+    small_row.safety = "review".to_owned();
+    small_row.is_directory = true;
+    small_row.inode = 2;
+    let mut classified_row = seeded_index_row(
+        &root,
+        &artifact,
+        MIN_ITEM_BYTES * 4,
+        "rebuildable",
+        None,
+        Some(now_millis.saturating_sub(DAY_MILLIS)),
+        Some(now_millis.saturating_sub(DAY_MILLIS)),
+        now_millis,
+    );
+    classified_row.inode = 3;
+    for row in [&large_row, &small_row, &classified_row] {
+        storage_index.store_indexed_row(row, &mut metrics);
+    }
+    storage_index.flush_pending_rows();
+    drop(storage_index);
+
+    let (paths, total_available, page_source) = items_page_paths(&root, 0, 10, "size", true);
+    assert_eq!(page_source, "index");
+    assert_eq!(
+        total_available, 2,
+        "large-directory row above the threshold plus the classified row"
+    );
+    assert_eq!(
+        paths,
+        vec![
+            large_dir.display().to_string(),
+            artifact.display().to_string()
+        ],
+        "page admits the large-directory row and excludes the sub-threshold one"
+    );
+
+    // The hydrated large-directory item stays review-only.
+    let page = must_ok(
+        storage_hygiene_items_page_json(
+            vec![root.display().to_string()],
+            5,
+            0,
+            10,
+            "instant_cached",
+            "size",
+            true,
+        ),
+        "items page serializes",
+    );
+    let page = parse_json_value(&page, "items page JSON parses");
+    let large_item = page["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["kind"] == "large-directory"))
+        .unwrap_or_else(|| panic!("large-directory item present in page"));
+    assert_eq!(large_item["cleanup_tier"], "");
+    assert_eq!(large_item["cleanup_allowed"], false);
+    assert_eq!(large_item["recommendation_score"], 0.0);
+
+    let _ = fs::remove_dir_all(root);
+}

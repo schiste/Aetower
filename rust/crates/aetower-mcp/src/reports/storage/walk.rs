@@ -23,6 +23,7 @@ pub(super) fn scan_root(
 ) -> (BTreeSet<PathBuf>, u64, bool) {
     let mut stack = vec![(root.to_path_buf(), 0usize)];
     let mut repositories = BTreeSet::new();
+    let mut large_directory_candidates: Vec<(usize, PathBuf)> = Vec::new();
     let mut scanned_dirs = 0;
     let mut truncated = false;
 
@@ -85,6 +86,18 @@ pub(super) fn scan_root(
             continue;
         }
 
+        // Reaching here means the directory matched no artifact rule (matched
+        // directories `continue` above). Shallow unclassified directories are
+        // large-directory candidates; repositories are excluded because they
+        // have their own inventory/footprint lanes. Sizing is deferred to a
+        // budgeted pass after the walk so candidate discovery never starves
+        // artifact discovery.
+        if (1..=LARGE_DIRECTORY_MAX_DEPTH).contains(&depth)
+            && !repositories.iter().any(|repo| path.starts_with(repo))
+        {
+            large_directory_candidates.push((depth, path.clone()));
+        }
+
         scanned_dirs += 1;
         if let Some(runtime) = options.runtime.as_ref()
             && !runtime.checkpoint(STORAGE_SCAN_PHASE_ARTIFACT_SIZING, Some(&path), 0, 1, 0)
@@ -100,11 +113,127 @@ pub(super) fn scan_root(
         }
     }
 
+    truncated |= surface_large_directories(
+        root,
+        options,
+        started,
+        now_millis,
+        storage_index,
+        collector,
+        metrics,
+        large_directory_candidates,
+        &repositories,
+    );
+
     // Root boundary (including cancellation/truncation breaks): make buffered
     // index rows durable before the caller moves on or tears down.
     storage_index.flush_pending_rows();
 
     (repositories, scanned_dirs, truncated)
+}
+
+/// Size shallow unclassified directories with the budget left after the main
+/// walk and surface the large ones (>= `LARGE_DIRECTORY_MIN_BYTES`) as
+/// review-only "large-directory" items. Candidates are processed shallowest
+/// first so an emitted ancestor suppresses all of its descendants, and a
+/// fully-sized small ancestor proves its descendants small without walking
+/// them again. Sizing reuses `size_of_path`, so fast modes answer from the
+/// `StorageSizeIndex` when a previous scan already sized the directory.
+/// Returns whether the pass ran out of budget before finishing.
+#[allow(clippy::too_many_arguments)]
+fn surface_large_directories(
+    root: &Path,
+    options: &StorageHygieneOptions,
+    started: Instant,
+    now_millis: u64,
+    storage_index: &StorageSizeIndex,
+    collector: &mut StorageCandidateCollector,
+    metrics: &mut StorageScanMetrics,
+    mut candidates: Vec<(usize, PathBuf)>,
+    repositories: &BTreeSet<PathBuf>,
+) -> bool {
+    if candidates.is_empty() {
+        return false;
+    }
+    candidates.sort();
+    let mut emitted: Vec<StorageHygieneItem> = Vec::new();
+    let mut emitted_prefixes: Vec<PathBuf> = Vec::new();
+    let mut proven_small: Vec<PathBuf> = Vec::new();
+    let mut truncated = false;
+    for (_, path) in candidates {
+        if started.elapsed() >= options.mode.size_walk_time_budget() {
+            truncated = true;
+            break;
+        }
+        if let Some(runtime) = options.runtime.as_ref()
+            && !runtime.checkpoint(STORAGE_SCAN_PHASE_ARTIFACT_SIZING, Some(&path), 0, 0, 0)
+        {
+            truncated = true;
+            break;
+        }
+        // Ancestor already emitted (dedupe by prefix) or fully sized below the
+        // threshold (a child cannot be larger than its non-truncated parent).
+        if emitted_prefixes
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+            || proven_small.iter().any(|prefix| path.starts_with(prefix))
+        {
+            continue;
+        }
+        // Directories that contain repositories are dominated by repository
+        // storage that the inventory/footprint lanes already report.
+        if repositories.iter().any(|repo| repo.starts_with(&path)) {
+            continue;
+        }
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        let size = size_of_path(
+            &path,
+            &metadata,
+            root,
+            LARGE_DIRECTORY_RULE,
+            started,
+            options.mode,
+            storage_index,
+            &options.dirty_paths,
+            metrics,
+            now_millis,
+            options.runtime.as_ref(),
+        );
+        let effective_bytes = if size.allocated_bytes > 0 {
+            size.allocated_bytes
+        } else {
+            size.bytes
+        };
+        if effective_bytes >= LARGE_DIRECTORY_MIN_BYTES {
+            emitted_prefixes.push(path.clone());
+            emitted.push(storage_item_for_path(
+                &path,
+                metadata.modified().ok(),
+                metadata.accessed().ok(),
+                LARGE_DIRECTORY_RULE,
+                size,
+                now_millis,
+            ));
+        } else if !size.truncated {
+            proven_small.push(path.clone());
+        }
+    }
+    emitted.sort_by(|left, right| {
+        right
+            .size_bytes
+            .cmp(&left.size_bytes)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    emitted.truncate(LARGE_DIRECTORY_MAX_PER_ROOT);
+    for item in emitted {
+        collector.push(item);
+    }
+    truncated
 }
 
 fn should_retain_storage_item(kind: &str, bytes: u64) -> bool {

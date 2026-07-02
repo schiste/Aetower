@@ -568,7 +568,10 @@ impl StorageSizeIndex {
                 WHERE cleanup_tier <> '';
              CREATE INDEX IF NOT EXISTS idx_storage_file_index_page_score
                 ON storage_file_index(recommendation_score DESC, path)
-                WHERE cleanup_tier <> '';",
+                WHERE cleanup_tier <> '';
+             CREATE INDEX IF NOT EXISTS idx_storage_file_index_page_large_dir
+                ON storage_file_index(physical_bytes DESC, path)
+                WHERE kind = 'large-directory';",
         )
     }
 
@@ -890,15 +893,17 @@ impl StorageSizeIndex {
                         modified_millis, changed_millis, accessed_millis, birth_millis,
                         is_directory, entries, truncated, last_scan_millis
                  FROM storage_file_index
-                 WHERE cleanup_tier <> ''
-                   AND physical_bytes >= ?1
+                 WHERE (cleanup_tier <> ''
+                        OR (kind = 'large-directory' AND physical_bytes >= ?1))
+                   AND physical_bytes >= ?2
                  ORDER BY physical_bytes DESC, path ASC
-                 LIMIT ?2",
+                 LIMIT ?3",
             )
             .map_err(|error| error.to_string())?;
         let rows = statement
             .query_map(
                 params![
+                    LARGE_DIRECTORY_MIN_BYTES.min(i64::MAX as u64) as i64,
                     MIN_ITEM_BYTES.min(i64::MAX as u64) as i64,
                     read_limit as i64
                 ],
@@ -926,7 +931,9 @@ impl StorageSizeIndex {
 
     /// Serve one page of cleanup-classified rows directly from
     /// `storage_file_index`, mirroring the candidate predicate used by
-    /// `load_candidate_rows` (`cleanup_tier <> ''` and the minimum item size)
+    /// `load_candidate_rows` (`cleanup_tier <> ''` or a review-only
+    /// `large-directory` row at the large-directory threshold, plus the
+    /// minimum item size)
     /// and the ordering semantics of `sort_storage_items`. Rows whose paths no
     /// longer exist on disk are evicted from the index in one statement and the
     /// page is refilled once.
@@ -973,9 +980,14 @@ impl StorageSizeIndex {
         let Some(connection) = self.connection.as_ref() else {
             return Err(self.status.clone());
         };
-        let mut predicate = "cleanup_tier <> '' AND physical_bytes >= ?".to_owned();
-        let mut bindings: Vec<rusqlite::types::Value> =
-            vec![(MIN_ITEM_BYTES.min(i64::MAX as u64) as i64).into()];
+        let mut predicate = "(cleanup_tier <> ''
+                OR (kind = 'large-directory' AND physical_bytes >= ?))
+             AND physical_bytes >= ?"
+            .to_owned();
+        let mut bindings: Vec<rusqlite::types::Value> = vec![
+            (LARGE_DIRECTORY_MIN_BYTES.min(i64::MAX as u64) as i64).into(),
+            (MIN_ITEM_BYTES.min(i64::MAX as u64) as i64).into(),
+        ];
         push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
         let total_available: i64 = connection
             .query_row(

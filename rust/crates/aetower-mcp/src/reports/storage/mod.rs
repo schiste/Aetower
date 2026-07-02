@@ -28,6 +28,9 @@ const MAX_DIRECTORIES: u64 = 25_000;
 const SIZE_WALK_MAX_ENTRIES: u64 = 150_000;
 const MIN_ITEM_BYTES: u64 = 1024 * 1024;
 const LARGE_FILE_BYTES: u64 = 100 * 1024 * 1024;
+const LARGE_DIRECTORY_MIN_BYTES: u64 = 1024 * 1024 * 1024;
+const LARGE_DIRECTORY_MAX_DEPTH: usize = 3;
+const LARGE_DIRECTORY_MAX_PER_ROOT: usize = 15;
 const COLD_AFTER_DAYS: u64 = 365;
 const DUPLICATE_FULL_HASH_MAX_BYTES: u64 = 256 * 1024 * 1024;
 const DUPLICATE_GROUP_LIMIT: usize = 8;
@@ -290,12 +293,12 @@ use attribution::{
     summarize_agent_hygiene,
 };
 use cleanup::{
-    ArtifactRule, apply_cleanup_guardrails, artifact_attribution, artifact_intelligence,
-    block_cleanup, build_cleanup_bundles, build_cleanup_recipes, classify_artifact,
-    cleanup_item_confidence, cleanup_tier_label, cleanup_tier_rank, evaluate_budget_guardrails,
-    git_status_label, is_app_cache_path, is_app_container_path, is_app_preferences_path,
-    is_app_receipt_path, is_app_support_path, is_launch_item_path, is_protected_cleanup_path,
-    storage_role_for_kind, storage_role_label, summarize_cleanup_tiers,
+    ArtifactRule, LARGE_DIRECTORY_RULE, apply_cleanup_guardrails, artifact_attribution,
+    artifact_intelligence, block_cleanup, build_cleanup_bundles, build_cleanup_recipes,
+    classify_artifact, cleanup_item_confidence, cleanup_tier_label, cleanup_tier_rank,
+    evaluate_budget_guardrails, git_status_label, is_app_cache_path, is_app_container_path,
+    is_app_preferences_path, is_app_receipt_path, is_app_support_path, is_launch_item_path,
+    is_protected_cleanup_path, storage_role_for_kind, storage_role_label, summarize_cleanup_tiers,
 };
 pub(crate) use jobs::StorageScanJobProgress;
 #[cfg(test)]

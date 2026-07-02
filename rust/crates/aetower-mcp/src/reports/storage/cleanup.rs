@@ -9,6 +9,18 @@ pub(super) struct ArtifactRule {
     pub(super) recommendation: &'static str,
 }
 
+/// Review-only rule applied to directories that match no artifact rule but
+/// are large enough to matter. The empty cleanup tier keeps the persisted
+/// recommendation score at zero and (via `apply_cleanup_guardrails`) blocks
+/// every cleanup lane: these items are informational, never actionable.
+pub(super) const LARGE_DIRECTORY_RULE: ArtifactRule = ArtifactRule {
+    kind: "large-directory",
+    safety: "review",
+    cleanup_tier: "",
+    reason: "Informational: large directory that matches no known artifact rule.",
+    recommendation: "Large directory outside known artifact rules — review what lives here.",
+};
+
 #[derive(Clone, Debug)]
 pub(super) struct ArtifactIntelligence {
     pub(super) rebuild_command: Option<String>,
@@ -19,6 +31,21 @@ pub(super) struct ArtifactIntelligence {
 
 pub(super) fn apply_cleanup_guardrails(items: &mut [StorageHygieneItem], now_millis: u64) {
     for item in items {
+        if item.cleanup_tier.is_empty() {
+            block_cleanup(
+                item,
+                "Unclassified item has no cleanup tier; it is review-only and never cleanable.",
+            );
+        }
+        if item.kind == "trash" {
+            block_cleanup(item, "Finder owns the Trash; empty it from Finder instead.");
+        }
+        if item.kind == "docker-vm" {
+            block_cleanup(
+                item,
+                "Docker owns this VM storage; reclaim through `docker system prune`, never by deleting files.",
+            );
+        }
         if is_protected_cleanup_path(&item.path) {
             item.cleanup_tier = "risky".to_owned();
             item.safety = "review".to_owned();
@@ -164,10 +191,29 @@ pub(super) fn storage_role_for_kind(kind: &str) -> &'static str {
         | "build-output" | "next-build" | "release-artifact" | "xcode-archives" | "test-output" => {
             "build-artifact"
         }
-        "xcode-module-cache" | "python-cache" | "frontend-cache" | "next-cache" | "tool-cache"
-        | "npm-cache" | "pnpm-store" | "yarn-cache" | "app-cache" => "cache",
-        "node-dependencies" | "xcode-source-packages" => "dependency-tree",
-        "python-environment" | "docker-storage" | "xcode-simulator-runtime" => "environment",
+        "xcode-module-cache"
+        | "python-cache"
+        | "frontend-cache"
+        | "next-cache"
+        | "tool-cache"
+        | "npm-cache"
+        | "pnpm-store"
+        | "yarn-cache"
+        | "app-cache"
+        | "homebrew-cache"
+        | "pip-cache"
+        | "uv-cache"
+        | "gradle-cache"
+        | "go-build-cache"
+        | "simulator-cache"
+        | "xcode-device-support"
+        | "browser-cache" => "cache",
+        "node-dependencies" | "xcode-source-packages" | "maven-repository" => "dependency-tree",
+        "python-environment" | "docker-storage" | "docker-vm" | "xcode-simulator-runtime" => {
+            "environment"
+        }
+        "trash" => "temporary",
+        "large-directory" => "artifact",
         "macos-app-bundle" => "application",
         "app-support-data" | "app-container" | "app-launch-item" | "app-preferences"
         | "app-receipt" => "app-data",
@@ -331,7 +377,103 @@ pub(super) fn artifact_intelligence(kind: &str, path: &str) -> ArtifactIntellige
             estimated_rebuild_cost: "Low".to_owned(),
             estimated_rebuild_seconds: Some(60),
             cleanup_consequence:
-                "App caches are usually recreated by the owning app, but the next launch may be slower."
+                "The owning app rebuilds its cache automatically; the app may relaunch slower once."
+                    .to_owned(),
+        },
+        "homebrew-cache" => ArtifactIntelligence {
+            rebuild_command: Some("brew cleanup".to_owned()),
+            estimated_rebuild_cost: "Low".to_owned(),
+            estimated_rebuild_seconds: Some(60),
+            cleanup_consequence:
+                "Homebrew re-downloads bottles on demand; `brew cleanup` is the supported way to prune this cache."
+                    .to_owned(),
+        },
+        "pip-cache" => ArtifactIntelligence {
+            rebuild_command: Some("pip install".to_owned()),
+            estimated_rebuild_cost: "Low to medium".to_owned(),
+            estimated_rebuild_seconds: Some(300),
+            cleanup_consequence:
+                "pip repopulates its wheel cache on the next install; future installs may need network access."
+                    .to_owned(),
+        },
+        "uv-cache" => ArtifactIntelligence {
+            rebuild_command: Some("uv sync".to_owned()),
+            estimated_rebuild_cost: "Low to medium".to_owned(),
+            estimated_rebuild_seconds: Some(300),
+            cleanup_consequence:
+                "uv repopulates its cache on the next sync/install; future installs may need network access."
+                    .to_owned(),
+        },
+        "gradle-cache" => ArtifactIntelligence {
+            rebuild_command: Some("gradle build".to_owned()),
+            estimated_rebuild_cost: "Medium".to_owned(),
+            estimated_rebuild_seconds: Some(600),
+            cleanup_consequence:
+                "Gradle re-downloads dependencies and rebuilds caches on the next build; expect a slower first build."
+                    .to_owned(),
+        },
+        "maven-repository" => ArtifactIntelligence {
+            rebuild_command: Some("mvn dependency:resolve".to_owned()),
+            estimated_rebuild_cost: "Medium to high".to_owned(),
+            estimated_rebuild_seconds: Some(900),
+            cleanup_consequence:
+                "Maven refetches the local repository from remotes, but locally installed artifacts are lost."
+                    .to_owned(),
+        },
+        "go-build-cache" => ArtifactIntelligence {
+            rebuild_command: Some("go clean -cache".to_owned()),
+            estimated_rebuild_cost: "Low".to_owned(),
+            estimated_rebuild_seconds: Some(180),
+            cleanup_consequence:
+                "Go rebuilds its build cache on the next compile; `go clean -cache` is the supported cleanup command."
+                    .to_owned(),
+        },
+        "simulator-cache" => ArtifactIntelligence {
+            rebuild_command: None,
+            estimated_rebuild_cost: "Low".to_owned(),
+            estimated_rebuild_seconds: Some(120),
+            cleanup_consequence:
+                "CoreSimulator caches are recreated on demand; the next simulator boot may be slower."
+                    .to_owned(),
+        },
+        "xcode-device-support" => ArtifactIntelligence {
+            rebuild_command: None,
+            estimated_rebuild_cost: "Medium".to_owned(),
+            estimated_rebuild_seconds: Some(600),
+            cleanup_consequence:
+                "Xcode regenerates device support symbols the next time the matching device is connected."
+                    .to_owned(),
+        },
+        "browser-cache" => ArtifactIntelligence {
+            rebuild_command: None,
+            estimated_rebuild_cost: "Review first".to_owned(),
+            estimated_rebuild_seconds: None,
+            cleanup_consequence:
+                "Browser cache folders can sit next to session and profile state; clear caches from inside the browser instead of deleting folders."
+                    .to_owned(),
+        },
+        "trash" => ArtifactIntelligence {
+            rebuild_command: None,
+            estimated_rebuild_cost: "None".to_owned(),
+            estimated_rebuild_seconds: Some(0),
+            cleanup_consequence:
+                "Items in the Trash are already staged for deletion; empty the Trash from Finder to reclaim the space."
+                    .to_owned(),
+        },
+        "docker-vm" => ArtifactIntelligence {
+            rebuild_command: Some("docker system prune".to_owned()),
+            estimated_rebuild_cost: "High".to_owned(),
+            estimated_rebuild_seconds: Some(1_800),
+            cleanup_consequence:
+                "Docker VM disk images hold images, containers, and volumes; reclaim only through `docker system prune`, never by deleting files."
+                    .to_owned(),
+        },
+        "large-directory" => ArtifactIntelligence {
+            rebuild_command: None,
+            estimated_rebuild_cost: "Review first".to_owned(),
+            estimated_rebuild_seconds: None,
+            cleanup_consequence:
+                "Informational only: no artifact rule matched, so contents may be personal data or project files. Review manually."
                     .to_owned(),
         },
         "macos-app-bundle" => ArtifactIntelligence {
@@ -493,6 +635,31 @@ pub(super) fn is_app_receipt_path(path_lower: &str, name: &str) -> bool {
             || name_lower.ends_with(".pkg/"))
 }
 
+fn is_browser_cache_path(path_lower: &str) -> bool {
+    let browser_owned = [
+        "com.google.chrome",
+        "com.apple.safari",
+        "org.mozilla.firefox",
+        "company.thebrowser.browser",
+        "/google/chrome/",
+        "/firefox/profiles/",
+        "/application support/arc/",
+    ]
+    .iter()
+    .any(|marker| path_lower.contains(marker));
+    browser_owned
+        && (is_app_cache_path(path_lower)
+            || (is_app_support_path(path_lower) && path_lower.contains("cache")))
+}
+
+fn is_docker_vm_path(path_lower: &str) -> bool {
+    path_lower.contains("/com.docker.docker/data/vms")
+}
+
+fn is_trash_directory(path_lower: &str, name: &str) -> bool {
+    name == ".Trash" || (path_lower.contains("/.trashes/") && name.chars().all(char::is_numeric))
+}
+
 fn is_ios_backup_path(path_lower: &str) -> bool {
     path_lower.contains("/library/application support/mobilesync/backup/")
 }
@@ -626,6 +793,26 @@ pub(super) fn classify_artifact(
         ));
     }
 
+    if is_trash_directory(&path_lower, name) {
+        return Some(rule(
+            "trash",
+            "review",
+            "safe",
+            "macOS Trash contents already staged for deletion.",
+            "Empty the Trash from Finder to reclaim this space; Finder owns Trash lifecycle.",
+        ));
+    }
+
+    if is_docker_vm_path(&path_lower) {
+        return Some(rule(
+            "docker-vm",
+            "review",
+            "expensive",
+            "Docker Desktop VM disk storage (images, containers, volumes).",
+            "Reclaim through Docker (`docker system prune`) after reviewing `docker system df`; never delete VM files directly.",
+        ));
+    }
+
     if is_docker_storage_path(&path_lower, name) {
         return Some(rule(
             "docker-storage",
@@ -633,6 +820,36 @@ pub(super) fn classify_artifact(
             "expensive",
             "Docker image, layer, build cache, container, or volume storage.",
             "Use Docker cleanup tools when containers are idle; refetching images and rebuilding layers can be expensive.",
+        ));
+    }
+
+    if path_lower.contains("/developer/coresimulator/caches") {
+        return Some(rule(
+            "simulator-cache",
+            "safe",
+            "safe",
+            "CoreSimulator cache storage.",
+            "Usually safe to remove when Simulator and Xcode are quit; CoreSimulator recreates caches on demand.",
+        ));
+    }
+
+    if path_lower.contains(" devicesupport/") {
+        return Some(rule(
+            "xcode-device-support",
+            "review",
+            "rebuildable",
+            "Xcode device support symbols for a connected device version.",
+            "Removable when the device/OS version is no longer used; Xcode regenerates symbols on the next device connection.",
+        ));
+    }
+
+    if parent_name == "DerivedData" && !name.ends_with(".noindex") {
+        return Some(rule(
+            "xcode-derived-data",
+            "safe",
+            "safe",
+            "Per-project Xcode DerivedData entry.",
+            "Safe to remove when Xcode builds are idle; xcodebuild re-derives indexes and intermediates.",
         ));
     }
 
@@ -746,13 +963,49 @@ pub(super) fn classify_artifact(
             "Review as part of an app footprint; support data can include databases, settings, and user content.",
         ));
     }
+    if is_browser_cache_path(&path_lower) {
+        return Some(rule(
+            "browser-cache",
+            "review",
+            "risky",
+            "Browser cache storage that can sit next to session/profile state.",
+            "Review only; clear caches from inside the browser rather than deleting profile-adjacent folders.",
+        ));
+    }
+    if is_app_cache_path(&path_lower) && name.eq_ignore_ascii_case("Homebrew") {
+        return Some(rule(
+            "homebrew-cache",
+            "safe",
+            "safe",
+            "Homebrew download and bottle cache.",
+            "Safe to prune with `brew cleanup`; Homebrew re-downloads bottles on demand.",
+        ));
+    }
+    if is_app_cache_path(&path_lower) && name.eq_ignore_ascii_case("pip") {
+        return Some(rule(
+            "pip-cache",
+            "safe",
+            "rebuildable",
+            "pip wheel and HTTP cache.",
+            "Usually safe to remove when no install is running; pip repopulates the cache on the next install.",
+        ));
+    }
+    if is_app_cache_path(&path_lower) && name.eq_ignore_ascii_case("go-build") {
+        return Some(rule(
+            "go-build-cache",
+            "safe",
+            "safe",
+            "Go build cache.",
+            "Safe to clear with `go clean -cache`; Go rebuilds the cache on the next compile.",
+        ));
+    }
     if is_app_cache_path(&path_lower) {
         return Some(rule(
             "app-cache",
             "safe",
-            "safe",
+            "rebuildable",
             "Application cache data.",
-            "Usually safe to remove when the owning app is quit, but cache deletion can slow the next launch.",
+            "Apps rebuild their caches automatically; remove via Trash when the owning app is quit, expecting one slower relaunch.",
         ));
     }
 
@@ -876,6 +1129,34 @@ pub(super) fn classify_artifact(
             "rebuildable",
             "Next.js build cache.",
             "Usually safe to remove when frontend builds/dev servers are idle.",
+        )),
+        "caches" if parent_name == ".gradle" => Some(rule(
+            "gradle-cache",
+            "safe",
+            "rebuildable",
+            "Gradle dependency and build cache.",
+            "Usually safe to remove when Gradle builds are idle; Gradle re-downloads dependencies on the next build.",
+        )),
+        "repository" if parent_name == ".m2" => Some(rule(
+            "maven-repository",
+            "review",
+            "rebuildable",
+            "Maven local artifact repository.",
+            "Review before deleting; Maven refetches remote artifacts but locally installed ones would be lost.",
+        )),
+        "uv" if parent_name == ".cache" => Some(rule(
+            "uv-cache",
+            "safe",
+            "rebuildable",
+            "uv package cache.",
+            "Usually safe to remove when no uv install is running; uv repopulates the cache on the next sync.",
+        )),
+        _ if parent_name == ".cache" => Some(rule(
+            "tool-cache",
+            "safe",
+            "rebuildable",
+            "Per-tool cache directory under ~/.cache.",
+            "Usually safe to remove when the owning tool is idle; XDG-style caches are recreated on demand.",
         )),
         _ => None,
     }
