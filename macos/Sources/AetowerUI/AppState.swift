@@ -348,6 +348,13 @@ public final class AppState {
     /// (operator-state cadence, ~30s apart) before its cached report is dropped.
     private var stalePruneEntityIds: Set<String> = []
     private var stalePrunePids: Set<UInt32> = []
+    /// Live tokens from views that need the full SystemSnapshot decode.
+    /// While empty, the expensive full fetch drops to the evaluator floor
+    /// cadence (every `fullSnapshotFloorTicks` refreshes) so automation,
+    /// notification, and anomaly evaluators keep running on fresh data.
+    @ObservationIgnored private var fullSnapshotDemandTokens: Set<UUID> = []
+    @ObservationIgnored private var ticksSinceFullSnapshot = 0
+    @ObservationIgnored private let fullSnapshotFloorTicks = 5
     var processActionPreviewReports: [String: ProcessActionReportModel] {
         processActionController.processActionPreviewReports
     }
@@ -1545,13 +1552,17 @@ public final class AppState {
         // The per-payload byte-count walk only feeds the Diagnostics tab and
         // telemetry mirror; skip it when neither is watching.
         let collectPayloadDiagnostics = diagnosticsVisible || telemetryEnabled
+        let fetchFullSnapshot = force
+            || !fullSnapshotDemandTokens.isEmpty
+            || ticksSinceFullSnapshot >= fullSnapshotFloorTicks
         let worker = snapshotRefreshWorker
         refreshFetchTask = Task(priority: .utility) { [weak self] in
             do {
                 let result = try await worker.refresh(
                     force: force,
                     includeOperatorState: includeOperatorState,
-                    collectPayloadDiagnostics: collectPayloadDiagnostics
+                    collectPayloadDiagnostics: collectPayloadDiagnostics,
+                    fetchFullSnapshot: fetchFullSnapshot
                 )
                 let wasCancelled = Task.isCancelled
                 await MainActor.run {
@@ -1611,29 +1622,38 @@ public final class AppState {
             }
             let monitorDecodeMillis = (CFAbsoluteTimeGetCurrent() - decodeStartedAt) * 1000.0
             let publishStartedAt = CFAbsoluteTimeGetCurrent()
-            snapshot = payload.snapshot
-            publishSnapshotSlices(payload.snapshot)
-            lastObservedSequence = payload.snapshot.sequence
-            applyLocalFrontmostState(
-                appName: lastPublishedFrontmostAppName,
-                windowTitle: lastPublishedWindowTitle
-            )
+            if let refreshedSnapshot = payload.snapshot {
+                snapshot = refreshedSnapshot
+                publishSnapshotSlices(refreshedSnapshot)
+                lastObservedSequence = refreshedSnapshot.sequence
+                ticksSinceFullSnapshot = 0
+                applyLocalFrontmostState(
+                    appName: lastPublishedFrontmostAppName,
+                    windowTitle: lastPublishedWindowTitle
+                )
+            } else {
+                ticksSinceFullSnapshot += 1
+            }
             runtimeLagMetrics = payload.runtimeLagMetrics
             if let operatorState = payload.operatorState {
                 diagnosticsOverview = operatorState.diagnosticsOverview
                 historyStoreSummary = operatorState.historyStoreSummary
                 lastOperatorStateRefreshDate = Date()
                 localMcpController.refreshHealthSnapshot()
-                pruneOnDemandReportCaches(snapshot: payload.snapshot)
+                if let refreshedSnapshot = payload.snapshot {
+                    pruneOnDemandReportCaches(snapshot: refreshedSnapshot)
+                }
             }
 
-            evaluateAutomationRules(snapshot: payload.snapshot)
-            evaluateAgentBudgetRules(snapshot: payload.snapshot)
-            evaluateTimelineNotifications(snapshot: payload.snapshot)
+            if let refreshedSnapshot = payload.snapshot {
+                evaluateAutomationRules(snapshot: refreshedSnapshot)
+                evaluateAgentBudgetRules(snapshot: refreshedSnapshot)
+                evaluateTimelineNotifications(snapshot: refreshedSnapshot)
+            }
 
-            if lagMonitoringActive {
+            if lagMonitoringActive, let refreshedSnapshot = payload.snapshot {
                 publishUiLagMetrics(
-                    snapshot: payload.snapshot,
+                    snapshot: refreshedSnapshot,
                     bridgeFetchMillis: payload.bridgeFetchMillis,
                     uiRefreshMillis: (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1000.0,
                     refreshStartedAt: refreshStartedAt
@@ -1647,8 +1667,10 @@ public final class AppState {
                     renderPublishMillis: renderPublishMillis
                 )
             }
-            diffAnomalyStates()
-            flushSuppressedAnomalySummaryIfNeeded()
+            if payload.snapshot != nil {
+                diffAnomalyStates()
+                flushSuppressedAnomalySummaryIfNeeded()
+            }
             lastError = nil
             completeSnapshotRefresh()
         }
@@ -1663,6 +1685,23 @@ public final class AppState {
             monitorViewModel.apply(delta: delta)
             return diagnostics
         }
+    }
+
+    /// Register a view's need for the full SystemSnapshot decode. The first
+    /// live token forces an immediate refresh so a newly-shown tab never
+    /// waits out the floor cadence on stale data.
+    public func beginFullSnapshotDemand() -> UUID {
+        let token = UUID()
+        let wasEmpty = fullSnapshotDemandTokens.isEmpty
+        fullSnapshotDemandTokens.insert(token)
+        if wasEmpty {
+            refresh(force: true)
+        }
+        return token
+    }
+
+    public func endFullSnapshotDemand(_ token: UUID) {
+        fullSnapshotDemandTokens.remove(token)
     }
 
     private func completeSnapshotRefresh() {

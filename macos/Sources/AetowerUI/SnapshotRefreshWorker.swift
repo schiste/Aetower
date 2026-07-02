@@ -22,23 +22,28 @@ actor SnapshotRefreshWorker {
         force: Bool,
         includeOperatorState: Bool,
         collectPayloadDiagnostics: Bool = true,
+        fetchFullSnapshot: Bool = true,
         monitorSelectedEntityId: String? = nil,
         monitorProcessLimit: UInt32 = 160,
         monitorTrendPoints: UInt32 = MonitorUiPayloadSizing.graphPointCount
     ) throws -> SnapshotRefreshResult {
         let fetchStartedAt = CFAbsoluteTimeGetCurrent()
-        let refreshedSnapshot: SystemSnapshot
-
-        if let updatedSnapshot = try bridge.latestSnapshotIfNewer(since: lastObservedSequence) {
-            refreshedSnapshot = updatedSnapshot
-        } else if force {
-            refreshedSnapshot = try bridge.latestSnapshot()
-        } else {
-            return .noChange
+        // The full SystemSnapshot is the expensive deep FFI decode (every
+        // entity, component, connection, badge). It is demand-gated: the
+        // compact Monitor payload below is fetched independently every tick.
+        var refreshedSnapshot: SystemSnapshot?
+        if fetchFullSnapshot || force {
+            if let updatedSnapshot = try bridge.latestSnapshotIfNewer(since: lastObservedSequence) {
+                refreshedSnapshot = updatedSnapshot
+            } else if force {
+                refreshedSnapshot = try bridge.latestSnapshot()
+            }
+            if let refreshedSnapshot {
+                lastObservedSequence = refreshedSnapshot.sequence
+            }
         }
 
         let bridgeFetchMillis = (CFAbsoluteTimeGetCurrent() - fetchStartedAt) * 1000.0
-        lastObservedSequence = refreshedSnapshot.sequence
         let monitorPayload = try? fetchMonitorPayload(
             force: force,
             processLimit: monitorProcessLimit,
@@ -47,6 +52,10 @@ actor SnapshotRefreshWorker {
             collectPayloadDiagnostics: collectPayloadDiagnostics
         )
 
+        if refreshedSnapshot == nil, monitorPayload == nil, !includeOperatorState {
+            return .noChange
+        }
+
         let runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
         let operatorState = includeOperatorState
             ? SnapshotOperatorRefreshPayload(
@@ -54,7 +63,7 @@ actor SnapshotRefreshWorker {
                 historyStoreSummary: bridge.historyRangeSummary(
                     startMillis: 0,
                     endMillis: max(
-                        refreshedSnapshot.capturedAtMillis,
+                        refreshedSnapshot?.capturedAtMillis ?? 0,
                         UInt64(Date().timeIntervalSince1970 * 1000)
                     )
                 )
@@ -151,7 +160,9 @@ enum SnapshotRefreshResult: Sendable {
 }
 
 struct SnapshotRefreshPayload: Sendable {
-    let snapshot: SystemSnapshot
+    /// nil when the full snapshot was not demanded this tick (monitor-only
+    /// refresh) or when the engine sequence has not advanced.
+    let snapshot: SystemSnapshot?
     let runtimeLagMetrics: RuntimeLagMetrics
     let operatorState: SnapshotOperatorRefreshPayload?
     let monitorPayload: MonitorUiRefreshPayload?

@@ -218,9 +218,9 @@ private struct AgentsWorkspaceView: View {
         } else {
             switch selectedTab {
             case .chau7:
-                Chau7View(state: state)
+                Chau7View(state: state).demandsFullSnapshot(from: state)
             case .aiAgents:
-                AIAgentsView(state: state)
+                AIAgentsView(state: state).demandsFullSnapshot(from: state)
             }
         }
     }
@@ -501,7 +501,7 @@ private struct ActivityWorkspaceView: View {
         case .history:
             HistoryView(state: state, settings: settings)
         case .timeline:
-            TimelineView(state: state, settings: settings)
+            TimelineView(state: state, settings: settings).demandsFullSnapshot(from: state)
         case .storage:
             storage
         }
@@ -1052,11 +1052,11 @@ private struct SystemWorkspaceView: View {
     private var content: some View {
         switch selectedTab {
         case .sensors:
-            SensorDashboardView(state: state, settings: settings)
+            SensorDashboardView(state: state, settings: settings).demandsFullSnapshot(from: state)
         case .persistence:
-            PersistenceScannerView(state: state, settings: settings)
+            PersistenceScannerView(state: state, settings: settings).demandsFullSnapshot(from: state)
         case .diagnostics:
-            DiagnosticsView(state: state, settings: settings)
+            DiagnosticsView(state: state, settings: settings).demandsFullSnapshot(from: state)
         case .fleet:
             FleetView(state: state)
         }
@@ -1256,7 +1256,7 @@ struct AetowerApp: App {
     var body: some Scene {
         WindowGroup {
             TabView {
-                MainListView(state: state, settings: settings)
+                MainListView(state: state, settings: settings).demandsFullSnapshot(from: state)
                     .tabItem {
                         Label("Monitor", systemImage: "gauge.with.needle")
                     }
@@ -1271,7 +1271,7 @@ struct AetowerApp: App {
                         Label("Storage", systemImage: "externaldrive")
                     }
 
-                RepositoryView(state: state, settings: settings)
+                RepositoryView(state: state, settings: settings).demandsFullSnapshot(from: state)
                     .tabItem {
                         Label("Repos", systemImage: "folder.badge.gearshape")
                     }
@@ -1363,7 +1363,7 @@ struct AetowerApp: App {
             }
         }
         MenuBarExtra(menuBarDisplayTitle, systemImage: "bolt.fill", isInserted: $menuBarExtraInserted) {
-            MenuBarSummaryView(state: state)
+            MenuBarSummaryView(state: state).demandsFullSnapshot(from: state)
         }
         .onChange(of: menuBarExtraInserted) { _, newValue in
             if settings.showMenuBarExtra != newValue {
