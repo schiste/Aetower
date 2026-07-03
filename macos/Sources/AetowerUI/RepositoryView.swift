@@ -2191,9 +2191,7 @@ public struct RepositoryView: View {
                 .frame(width: 280, alignment: .topLeading)
                 .padding(AetowerDesign.Spacing.md)
 
-                Rectangle()
-                    .fill(AetowerDesign.Surface.divider)
-                    .frame(width: AetowerDesign.Stroke.hairline)
+                Divider()
 
                 Group {
                     if let selected = selectedAgentContract(repository) {
@@ -2414,17 +2412,7 @@ public struct RepositoryView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
 
-                if let launchState {
-                    HStack(spacing: AetowerDesign.Spacing.xs) {
-                        Image(systemName: launchState.icon)
-                            .foregroundStyle(AetowerDesign.Ink.secondary)
-                        AetowerBadge(launchState.label, tone: launchState.tone)
-                        Text(launchState.detail)
-                            .font(AetowerDesign.Typography.metadata)
-                            .foregroundStyle(AetowerDesign.Ink.secondary)
-                            .lineLimit(2)
-                    }
-                }
+                chau7LaunchStatusRow(launchState)
             }
         }
     }
@@ -3049,6 +3037,25 @@ public struct RepositoryView: View {
         }
     }
 
+    /// Shared Chau7 launch-status row (was copy-pasted across the contract and
+    /// scorecard remediation panels).
+    @ViewBuilder
+    private func chau7LaunchStatusRow(_ launchState: Chau7ContractLaunchState?) -> some View {
+        if let launchState {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Image(systemName: launchState.icon)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                AetowerBadge(launchState.label, tone: launchState.tone)
+                Text(launchState.detail)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    // Was a hand-rolled duplicate of AetowerMetricTile; delegate to the shared
+    // component so scorecard facts match every other metric tile in the app.
     private func scorecardFact(
         _ label: String,
         value: String,
@@ -3056,25 +3063,7 @@ public struct RepositoryView: View {
         icon: String,
         tone: Color
     ) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-            HStack(spacing: AetowerDesign.Spacing.xs) {
-                Image(systemName: icon)
-                    .foregroundStyle(AetowerDesign.Ink.tertiary)
-                Text(label.uppercased())
-                    .font(AetowerDesign.Typography.metadata)
-                    .foregroundStyle(AetowerDesign.Ink.tertiary)
-            }
-            Text(value)
-                .font(AetowerDesign.Typography.metricValue(size: 20, weight: .semibold))
-                .foregroundStyle(AetowerDesign.Ink.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-            Text(detail)
-                .font(AetowerDesign.Typography.metadata)
-                .foregroundStyle(AetowerDesign.Ink.secondary)
-                .lineLimit(2)
-        }
-        .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
+        AetowerMetricTile(label, value: value, detail: detail, systemImage: icon, tone: tone)
     }
 
     private func scorecardRemediationTools(
@@ -3175,17 +3164,7 @@ public struct RepositoryView: View {
                 }
             }
 
-            if let launchState {
-                HStack(spacing: AetowerDesign.Spacing.xs) {
-                    Image(systemName: launchState.icon)
-                        .foregroundStyle(AetowerDesign.Ink.secondary)
-                    AetowerBadge(launchState.label, tone: launchState.tone)
-                    Text(launchState.detail)
-                        .font(AetowerDesign.Typography.metadata)
-                        .foregroundStyle(AetowerDesign.Ink.secondary)
-                        .lineLimit(2)
-                }
-            }
+            chau7LaunchStatusRow(launchState)
         }
     }
 
