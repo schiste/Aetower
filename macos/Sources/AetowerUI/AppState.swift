@@ -3283,10 +3283,20 @@ public final class AppState {
                 ]
             )
         } else {
-            let message = jsonQueryErrorMessage(
+            // Distinguish a real scan failure (engine returned an error) from a
+            // scan that SUCCEEDED but whose payload could not be decoded — the
+            // latter previously showed a misleading "scan failed".
+            let message: String
+            if let engineError = jsonQueryErrorMessage(
                 result,
                 fallback: "Repository Scorecard scan could not be collected."
-            ) ?? "Repository Scorecard scan failed."
+            ) {
+                message = engineError
+            } else if result.json != nil {
+                message = "Scorecard scan completed but its data could not be read (see diagnostics)."
+            } else {
+                message = "Repository Scorecard scan returned no data."
+            }
             repositoryScorecardErrorsByRoot[key] = message
             recordLocalDiagnosticsEvent(
                 level: .warn,
@@ -4995,7 +5005,44 @@ public final class AppState {
         guard let payload = result.json?.data(using: .utf8) else {
             return nil
         }
-        return try? appStateJSONDecoder().decode(type, from: payload)
+        do {
+            return try appStateJSONDecoder().decode(type, from: payload)
+        } catch {
+            // A silent `try?` here masked real shape drift as an empty result —
+            // and made a *successful* scan look "failed". Surface the exact
+            // offending key so a Rust field rename is diagnosable, not invisible.
+            recordLocalDiagnosticsEvent(
+                level: .warn,
+                subsystem: .ui,
+                eventType: "report-decode-failed",
+                message: "Could not decode \(type): \(Self.decodeErrorSummary(error))",
+                fields: [DiagnosticsField(key: "model", value: "\(type)")]
+            )
+            return nil
+        }
+    }
+
+    /// Extracts the offending coding path from a `DecodingError` so a decode
+    /// failure names the exact field that drifted rather than a generic error.
+    static func decodeErrorSummary(_ error: Error) -> String {
+        guard let decodingError = error as? DecodingError else {
+            return error.localizedDescription
+        }
+        func path(_ context: DecodingError.Context) -> String {
+            context.codingPath.map(\.stringValue).joined(separator: ".")
+        }
+        switch decodingError {
+        case let .keyNotFound(key, context):
+            return "missing key '\(key.stringValue)' at \(path(context))"
+        case let .typeMismatch(_, context):
+            return "type mismatch at \(path(context)): \(context.debugDescription)"
+        case let .valueNotFound(_, context):
+            return "null value at \(path(context))"
+        case let .dataCorrupted(context):
+            return "corrupted at \(path(context)): \(context.debugDescription)"
+        @unknown default:
+            return decodingError.localizedDescription
+        }
     }
 
     private func jsonQueryErrorMessage(_ result: JsonQueryResult, fallback: String?) -> String? {
