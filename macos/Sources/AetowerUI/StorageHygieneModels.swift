@@ -458,8 +458,7 @@ enum StorageHygieneReportCacheStore {
         guard let reportData = record.reportJson.data(using: .utf8) else {
             return .stale("cached report JSON is invalid")
         }
-        let reportDecoder = JSONDecoder()
-        reportDecoder.keyDecodingStrategy = .convertFromSnakeCase
+        let reportDecoder = AetowerJSON.snakeCaseDecoder()
         guard let report = try? reportDecoder.decode(StorageHygieneReportModel.self, from: reportData) else {
             return .stale("cached report no longer matches the app model")
         }

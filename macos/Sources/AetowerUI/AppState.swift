@@ -57,8 +57,7 @@ enum StorageHygieneDecodePipeline {
         }
 
         let decodeStarted = ContinuousClock.now
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let decoder = AetowerJSON.snakeCaseDecoder()
         guard var report = try? decoder.decode(StorageHygieneReportModel.self, from: Data(rawJSON.utf8)) else {
             return PreparedStorageHygieneResult(
                 report: nil,
@@ -2451,8 +2450,7 @@ public final class AppState {
         guard let json = result.json, let data = json.data(using: .utf8) else {
             return nil
         }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let decoder = AetowerJSON.snakeCaseDecoder()
         return try? decoder.decode(RepositoryInventoryReportModel.self, from: data)
     }
 
@@ -4996,9 +4994,7 @@ public final class AppState {
     }
 
     private func appStateJSONDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return decoder
+        return AetowerJSON.snakeCaseDecoder()
     }
 
     private func decodeJsonQueryResult<T: Decodable>(_ result: JsonQueryResult, as type: T.Type) -> T? {
