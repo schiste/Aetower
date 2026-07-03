@@ -1,44 +1,6 @@
+# Website headers only. Release payload headers (immutable caching, archive
+# content-types) live with the payload deployment: infra/releases-pages/_headers.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=()
-
-/releases/*.zip
-  Content-Type: application/zip
-  Cache-Control: public, max-age=31536000, immutable
-
-/releases/Aetower.zip
-  Content-Type: application/zip
-  Cache-Control: public, max-age=120
-
-/releases/*-source.tar.gz
-  Content-Type: application/gzip
-  Cache-Control: public, max-age=31536000, immutable
-
-/releases/Aetower-source.tar.gz
-  Content-Type: application/gzip
-  Cache-Control: public, max-age=120
-
-/releases/*.dmg
-  Content-Type: application/x-apple-diskimage
-  Cache-Control: public, max-age=31536000, immutable
-
-/releases/Aetower.dmg
-  Content-Type: application/x-apple-diskimage
-  Cache-Control: public, max-age=120
-
-/releases/*.pkg
-  Content-Type: application/octet-stream
-  Cache-Control: public, max-age=31536000, immutable
-
-/releases/Aetower.pkg
-  Content-Type: application/octet-stream
-  Cache-Control: public, max-age=120
-
-/releases/appcast.xml
-  Content-Type: application/xml; charset=utf-8
-  Cache-Control: public, max-age=120
-
-/homebrew/Casks/aetower.rb
-  Content-Type: text/plain; charset=utf-8
-  Cache-Control: public, max-age=120
