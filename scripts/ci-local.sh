@@ -586,6 +586,13 @@ run_full_gate() {
     run_workspace_tests
     clean_swift_build_dir
     run "build Rust bridge" sh "$ROOT/scripts/build-rust.sh"
+    # build-rust.sh regenerates the committed uniffi Swift binding from the Rust
+    # structs. If that regeneration changes the committed files, the binding was
+    # stale — a silent field-offset scramble that swift build compiles happily
+    # and never fails on. Gate it: a diff here means "regenerate and commit".
+    run "FFI binding is up to date" git -C "$ROOT" diff --exit-code --stat -- \
+        macos/Sources/AetowerBindings/aetower_ffi.swift \
+        macos/Sources/aetower_ffiFFI/aetower_ffiFFI.h
     run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
     run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
     run "telemetry smoke" sh "$ROOT/scripts/telemetry-smoke.sh"
