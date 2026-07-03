@@ -135,7 +135,10 @@ This runs, in order:
 8. `scripts/verify-sparkle-distribution-matrix.sh --require-dmg --require-pkg`
    — verifies ZIP, appcast, Homebrew cask, DMG, and PKG all resolve to the same
    Sparkle-enabled bundle.
-9. `scripts/prepare-cloudflare-site.sh` — stages the static release payload.
+9. `scripts/prepare-release-payload.sh` — stages the release payload
+   (`dist/releases-payload`), syncing the currently-published history first.
+10. `scripts/prepare-cloudflare-site.sh` — stages the website
+    (`dist/cloudflare-site`), which deploys separately from the payload.
 
 The individual scripts can also be run directly with the same environment.
 
@@ -194,8 +197,9 @@ manually.
 
 ## Publish
 
-Upload the prepared release site (`dist/cloudflare-site/`) or equivalent host
-payload. At minimum, publish the appcast archives (`appcast.xml`,
+Upload the prepared release payload (`dist/releases-payload/`) or equivalent
+host payload; the website (`dist/cloudflare-site/`) deploys separately via
+`scripts/deploy-website.sh`. At minimum, publish the appcast archives (`appcast.xml`,
 `Aetower-<version>-<build>.zip`, and any generated deltas), the latest DMG, the
 latest PKG, source archives, notices, and the generated Homebrew cask so that:
 

@@ -92,14 +92,15 @@ Expected artifacts:
 - `dist/source/Aetower-<version>-<build>-source.tar.gz`
 - `dist/source/Aetower-source.tar.gz`
 - `dist/THIRD-PARTY-NOTICES.md`
-- `dist/cloudflare-site/`
-- `dist/cloudflare-site/homebrew/Casks/aetower.rb`
-- `dist/cloudflare-site/releases/Aetower.dmg`
-- `dist/cloudflare-site/releases/Aetower-<version>-<build>.dmg`
-- `dist/cloudflare-site/releases/Aetower.pkg`
-- `dist/cloudflare-site/releases/Aetower-<version>-<build>.pkg`
-- `dist/cloudflare-site/releases/Aetower-<version>-<build>-source.tar.gz`
-- `dist/cloudflare-site/releases/Aetower-source.tar.gz`
+- `dist/cloudflare-site/` (website only)
+- `dist/releases-payload/`
+- `dist/releases-payload/homebrew/Casks/aetower.rb`
+- `dist/releases-payload/releases/Aetower.dmg`
+- `dist/releases-payload/releases/Aetower-<version>-<build>.dmg`
+- `dist/releases-payload/releases/Aetower.pkg`
+- `dist/releases-payload/releases/Aetower-<version>-<build>.pkg`
+- `dist/releases-payload/releases/Aetower-<version>-<build>-source.tar.gz`
+- `dist/releases-payload/releases/Aetower-source.tar.gz`
 
 The release command runs the Sparkle distribution matrix automatically. To run
 it again:
