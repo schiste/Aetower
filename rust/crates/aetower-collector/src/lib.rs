@@ -45,8 +45,10 @@ pub struct RawProcessSample {
     pub memory_bytes: u64,
     #[serde(default)]
     pub memory_physical_footprint_bytes: u64,
-    pub disk_read_bytes: u64,
-    pub disk_write_bytes: u64,
+    /// Per-second disk throughput (the tick's byte delta divided by the real
+    /// elapsed interval), so aggregation is a plain sum of rates.
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
     #[serde(default)]
     pub wakeups_per_second: f32,
     /// Per-second energy draw in nanojoules (= nanowatts). Derived from
@@ -114,8 +116,8 @@ impl RawProcessSample {
             cpu_percent: 0.0,
             memory_bytes: 0,
             memory_physical_footprint_bytes: 0,
-            disk_read_bytes: 0,
-            disk_write_bytes: 0,
+            disk_read_bps: 0,
+            disk_write_bps: 0,
             wakeups_per_second: 0.0,
             energy_nj_per_s: 0.0,
             cwd: None,
@@ -298,6 +300,11 @@ pub struct Collector {
     /// shows a misleading initial burst and only displays real rates
     /// once the tick cadence has stabilised.
     first_network_tick: bool,
+    /// Wall-clock instant of the previous `collect()`, so per-second rates
+    /// (disk, network) divide byte deltas by the REAL interval instead of a
+    /// nominal `TICK_SECONDS`. The cadence is adaptive (2s active, 5s idle, 8s
+    /// low-power), so dividing by a constant over-reported throughput 2.5-4x.
+    last_collect_at: Option<std::time::Instant>,
     /// Cumulative per-core CPU ticks from the previous sample, used to derive
     /// per-core load deltas. Empty until the first `host_processor_info` call.
     previous_core_ticks: Vec<platform::CoreTicks>,
@@ -333,6 +340,7 @@ impl Collector {
             cached_bluetooth_devices: Vec::new(),
             bluetooth_refresh_tick: 0,
             first_network_tick: true,
+            last_collect_at: None,
             previous_core_ticks: Vec::new(),
             core_perflevels: None,
         }
@@ -373,6 +381,16 @@ impl Collector {
 
     pub fn collect(&mut self) -> RawSnapshot {
         let host_refresh_started = std::time::Instant::now();
+        // Real elapsed since the previous collect, for all per-second rates.
+        // First tick (no baseline) falls back to the nominal tick; a clamp
+        // guards against a zero/negative interval producing an infinite rate.
+        let elapsed_seconds = self
+            .last_collect_at
+            .map(|prev| host_refresh_started.duration_since(prev).as_secs_f64())
+            .filter(|seconds| *seconds > 0.0)
+            .unwrap_or(TICK_SECONDS as f64)
+            .max(0.001);
+        self.last_collect_at = Some(host_refresh_started);
         self.system.refresh_cpu_all();
         self.system.refresh_memory();
         self.networks.refresh(true);
@@ -466,6 +484,7 @@ impl Collector {
             &self.networks,
             &self.cached_network_interfaces,
             self.first_network_tick,
+            elapsed_seconds,
         );
         let network_first_tick = self.first_network_tick;
         self.first_network_tick = false;
@@ -579,12 +598,17 @@ impl Collector {
                     }
                     None => (0.0, 0.0, Some(process_sampling_started)),
                 };
+                // Disk I/O is refreshed every tick, so the delta spans the real
+                // inter-collect interval; divide by it for a true per-second
+                // rate (first tick has no baseline -> 0).
                 let disk_read_delta = previous
                     .map(|prev| disk_read_total.saturating_sub(prev.disk_read_bytes))
                     .unwrap_or(0);
                 let disk_write_delta = previous
                     .map(|prev| disk_write_total.saturating_sub(prev.disk_write_bytes))
                     .unwrap_or(0);
+                let disk_read_bps = (disk_read_delta as f64 / elapsed_seconds) as u64;
+                let disk_write_bps = (disk_write_delta as f64 / elapsed_seconds) as u64;
 
                 next_process_counters.insert(
                     pid,
@@ -652,8 +676,8 @@ impl Collector {
                     cpu_percent: process.cpu_usage(),
                     memory_bytes: process.memory(),
                     memory_physical_footprint_bytes: physical_footprint_bytes,
-                    disk_read_bytes: disk_read_delta,
-                    disk_write_bytes: disk_write_delta,
+                    disk_read_bps,
+                    disk_write_bps,
                     wakeups_per_second,
                     energy_nj_per_s,
                     cwd: if !self.config.defer_expensive_sampling
@@ -704,29 +728,27 @@ impl Collector {
         let self_process = self_processes.into_iter().next();
 
         let post_process_started = std::time::Instant::now();
-        // Per-process `disk_read_bytes` is the bytes moved during the last tick;
-        // divide the host total by the tick length to report a per-second rate.
-        let host_disk_read_bytes = processes.iter().fold(0u64, |total, process| {
-            total.saturating_add(process.disk_read_bytes)
+        // Per-process disk fields are already per-second rates (divided by the
+        // real elapsed interval at the source), so the host rate is a plain sum.
+        let host_disk_read_bps = processes.iter().fold(0u64, |total, process| {
+            total.saturating_add(process.disk_read_bps)
         });
-        let host_disk_write_bytes = processes.iter().fold(0u64, |total, process| {
-            total.saturating_add(process.disk_write_bytes)
+        let host_disk_write_bps = processes.iter().fold(0u64, |total, process| {
+            total.saturating_add(process.disk_write_bps)
         });
-        let host_disk_read_bps = (host_disk_read_bytes as f64 / TICK_SECONDS as f64) as u64;
-        let host_disk_write_bps = (host_disk_write_bytes as f64 / TICK_SECONDS as f64) as u64;
-        // Host network throughput: sum the per-interface byte deltas straight from
-        // `sysinfo` (each is bytes-since-last-refresh = one tick) and convert to
-        // bytes/sec. Computed directly from `self.networks` rather than from the
-        // per-interface snapshots, which stay empty until interface metadata is
-        // first cached. Zero on the first tick, where the elapsed interval is unknown.
+        // Host network throughput: sum the per-interface byte deltas (each is
+        // bytes since the last refresh = one collect interval) and divide by the
+        // REAL elapsed interval, not a nominal tick. Computed directly from
+        // `self.networks` rather than the per-interface snapshots, which stay
+        // empty until interface metadata is first cached. Zero on the first tick.
         let (host_network_receive_bps, host_network_send_bps): (u64, u64) = if network_first_tick {
             (0, 0)
         } else {
             let received: u64 = self.networks.values().map(|data| data.received()).sum();
             let transmitted: u64 = self.networks.values().map(|data| data.transmitted()).sum();
             (
-                (received as f64 / TICK_SECONDS as f64) as u64,
-                (transmitted as f64 / TICK_SECONDS as f64) as u64,
+                (received as f64 / elapsed_seconds) as u64,
+                (transmitted as f64 / elapsed_seconds) as u64,
             )
         };
 
@@ -803,6 +825,7 @@ fn build_network_interface_snapshots(
     networks: &Networks,
     cached_metadata: &[NetworkInterfaceIdentitySample],
     first_tick: bool,
+    elapsed_seconds: f64,
 ) -> Vec<NetworkInterfaceSnapshot> {
     if cached_metadata.is_empty() {
         return Vec::new();
@@ -811,19 +834,18 @@ fn build_network_interface_snapshots(
     // On the first collector tick, `sysinfo`'s `received()` /
     // `transmitted()` return the delta between `Networks::new_with_
     // refreshed_list()` and whatever unknown interval has elapsed
-    // before `collect()` was called. Dividing that by `TICK_SECONDS`
-    // produces an arbitrary rate that is typically wrong by a factor
-    // of two or more. Zero all rates on the first tick so the UI does
-    // not flash a misleading initial burst; subsequent ticks land at
-    // the steady 2 s cadence and the rate conversion is accurate.
+    // before `collect()` was called, so the rate would be arbitrary.
+    // Zero all rates on the first tick so the UI does not flash a
+    // misleading initial burst; subsequent ticks divide by the real
+    // elapsed interval (the cadence is adaptive, not a fixed 2 s).
     let throughput_by_name: HashMap<&str, (u64, u64)> = if first_tick {
         HashMap::new()
     } else {
         networks
             .iter()
             .map(|(name, data)| {
-                let receive_bps = (data.received() as f64 / TICK_SECONDS as f64) as u64;
-                let send_bps = (data.transmitted() as f64 / TICK_SECONDS as f64) as u64;
+                let receive_bps = (data.received() as f64 / elapsed_seconds) as u64;
+                let send_bps = (data.transmitted() as f64 / elapsed_seconds) as u64;
                 (name.as_str(), (receive_bps, send_bps))
             })
             .collect()
@@ -2907,7 +2929,7 @@ mod top_level_tests {
             return;
         }
 
-        let snapshots = build_network_interface_snapshots(&networks, &cached, true);
+        let snapshots = build_network_interface_snapshots(&networks, &cached, true, 2.0);
         assert_eq!(snapshots.len(), 1);
         assert_eq!(
             snapshots[0].receive_bps, 0,
@@ -2936,7 +2958,7 @@ mod top_level_tests {
                 is_up: false,
             })
             .collect();
-        let snapshots = build_network_interface_snapshots(&networks, &cached, false);
+        let snapshots = build_network_interface_snapshots(&networks, &cached, false, 2.0);
         assert_eq!(snapshots.len(), cached.len());
     }
 

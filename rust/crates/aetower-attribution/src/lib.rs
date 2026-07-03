@@ -48,14 +48,18 @@ pub fn build_entities(
             .metrics
             .memory_physical_footprint_bytes
             .saturating_add(process.memory_physical_footprint_bytes);
+        // Per-process disk fields are true per-second rates now, so summing
+        // them yields a correct aggregate rate (previously this summed raw
+        // per-tick byte deltas into a *_bps field — a byte count mislabelled
+        // as a rate).
         entry.metrics.disk_read_bps = entry
             .metrics
             .disk_read_bps
-            .saturating_add(process.disk_read_bytes);
+            .saturating_add(process.disk_read_bps);
         entry.metrics.disk_write_bps = entry
             .metrics
             .disk_write_bps
-            .saturating_add(process.disk_write_bytes);
+            .saturating_add(process.disk_write_bps);
         entry.metrics.wakeups_per_second += process.wakeups_per_second;
         entry.metrics.energy_nj_per_s += process.energy_nj_per_s;
         entry.metrics.process_count += 1;
@@ -544,8 +548,8 @@ mod tests {
                 start_time_millis: 10,
                 cpu_percent: 10.0,
                 memory_bytes: 128,
-                disk_read_bytes: 100,
-                disk_write_bytes: 200,
+                disk_read_bps: 100,
+                disk_write_bps: 200,
                 ..RawProcessSample::synthetic(
                     1,
                     None,
@@ -558,8 +562,8 @@ mod tests {
                 start_time_millis: 20,
                 cpu_percent: 5.0,
                 memory_bytes: 256,
-                disk_read_bytes: 300,
-                disk_write_bytes: 400,
+                disk_read_bps: 300,
+                disk_write_bps: 400,
                 ..RawProcessSample::synthetic(
                     2,
                     Some(1),
