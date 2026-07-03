@@ -356,8 +356,8 @@ use report::{
     normalize_dirty_paths, normalize_roots, path_matches_dirty_prefix,
     refresh_storage_performance_budget, skipped_root_permission_state,
     storage_byte_accounting_label, storage_item_evidence, storage_item_next_step,
-    storage_performance_budget_diagnostics, storage_source_kind, storage_source_label,
-    summarize_volume_states,
+    storage_local_reclaimable_bytes, storage_performance_budget_diagnostics, storage_source_kind,
+    storage_source_label, summarize_volume_states,
 };
 #[cfg(test)]
 use report::{build_storage_cold_data, per_root_walk_slice};

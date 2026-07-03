@@ -87,6 +87,18 @@ pub(super) fn apply_cleanup_guardrails(items: &mut [StorageHygieneItem], now_mil
         if item.size_truncated {
             block_cleanup(item, "Size estimate is partial; confirm before cleanup.");
         }
+        if item.cloud_placeholder {
+            block_cleanup(
+                item,
+                "No local allocated blocks were found; this looks like a cloud/sparse placeholder and offers no proven local reclaim.",
+            );
+        }
+        if item.has_hardlinks {
+            block_cleanup(
+                item,
+                "Hardlinked content may still be referenced elsewhere; verify link ownership before cleanup.",
+            );
+        }
         if !item.cleanup_allowed {
             item.default_cleanup_action = "manual_review".to_owned();
         }

@@ -272,11 +272,8 @@ fn storage_item_for_path(
     let intelligence = artifact_intelligence(rule.kind, &path_display);
     let logical_bytes = size.bytes;
     let physical_bytes = size.allocated_bytes;
-    let reclaimable_bytes = if physical_bytes > 0 {
-        physical_bytes
-    } else {
-        logical_bytes
-    };
+    let reclaimable_bytes =
+        storage_local_reclaimable_bytes(logical_bytes, physical_bytes, size.cloud_placeholder);
     StorageHygieneItem {
         id: path_display.clone(),
         path: path_display.clone(),
@@ -319,7 +316,7 @@ fn storage_item_for_path(
         cleanup_blockers: Vec::new(),
         default_cleanup_action: "trash".to_owned(),
         recommendation_score: storage_recommendation_score(
-            physical_bytes,
+            reclaimable_bytes,
             rule.cleanup_tier,
             modified_millis,
             accessed_millis,
@@ -371,11 +368,14 @@ pub(super) fn storage_item_for_indexed_row(
     let intelligence = artifact_intelligence(&row.kind, &path_display);
     let logical_bytes = row.logical_bytes;
     let physical_bytes = row.physical_bytes;
+    let cloud_placeholder = logical_bytes > 0 && physical_bytes == 0;
+    let reclaimable_bytes =
+        storage_local_reclaimable_bytes(logical_bytes, physical_bytes, cloud_placeholder);
     // Recomputed from the same row-local inputs used at flush time (with the
     // row's own last_scan_millis as the staleness reference) so the displayed
     // score always matches the persisted column that SQL sorts by.
     let recommendation_score = storage_recommendation_score(
-        physical_bytes,
+        reclaimable_bytes,
         &row.cleanup_tier,
         row.modified_millis,
         row.accessed_millis,
@@ -394,18 +394,14 @@ pub(super) fn storage_item_for_indexed_row(
         },
         safety: row.safety,
         cleanup_tier: row.cleanup_tier,
-        size_bytes: if physical_bytes > 0 {
-            physical_bytes
-        } else {
-            logical_bytes
-        },
+        size_bytes: reclaimable_bytes,
         logical_bytes,
         physical_bytes,
         byte_accounting: storage_byte_accounting_label(logical_bytes, physical_bytes),
         sparse_or_shared: physical_bytes > 0 && physical_bytes < logical_bytes,
         hardlink_count: 1,
         has_hardlinks: false,
-        cloud_placeholder: logical_bytes > 0 && physical_bytes == 0,
+        cloud_placeholder,
         protected_path: is_protected_cleanup_path(&path_display),
         size_truncated: row.truncated,
         modified_millis,
@@ -594,6 +590,7 @@ fn size_of_path(
     let repo_root = find_git_root(path).map(|root| root.display().to_string());
     let mut result = SizeWalkResult::default();
     let mut stack = vec![path.to_path_buf()];
+    let mut seen_hardlink_files = BTreeSet::<(u64, u64)>::new();
     while let Some(current) = stack.pop() {
         if Instant::now() >= deadline || result.entries >= mode.size_walk_entry_budget() {
             result.truncated = true;
@@ -622,9 +619,21 @@ fn size_of_path(
             } else {
                 let logical_bytes = metadata.len();
                 let physical_bytes = metadata.blocks().saturating_mul(512);
-                result.bytes = result.bytes.saturating_add(logical_bytes);
-                result.allocated_bytes = result.allocated_bytes.saturating_add(physical_bytes);
                 let hardlink_count = metadata.nlink();
+                let counted_physical_bytes = if hardlink_count > 1 {
+                    let identity = (metadata.dev(), metadata.ino());
+                    if seen_hardlink_files.insert(identity) {
+                        physical_bytes
+                    } else {
+                        0
+                    }
+                } else {
+                    physical_bytes
+                };
+                result.bytes = result.bytes.saturating_add(logical_bytes);
+                result.allocated_bytes = result
+                    .allocated_bytes
+                    .saturating_add(counted_physical_bytes);
                 result.max_hardlink_count = result.max_hardlink_count.max(hardlink_count);
                 result.has_hardlinks |= hardlink_count > 1;
                 result.sparse_or_shared |= physical_bytes > 0 && physical_bytes < logical_bytes;

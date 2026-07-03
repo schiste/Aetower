@@ -498,6 +498,10 @@ pub(super) fn build_storage_hygiene_report_with_options(
                 .to_owned(),
             "Sizes are bounded estimates and may omit paths that require additional permissions."
                 .to_owned(),
+            "Reclaimable bytes use local allocated blocks when available; zero-block cloud/sparse placeholders are counted as 0 local reclaim."
+                .to_owned(),
+            "Hardlinked content is deduplicated inside a sized directory, but external hardlinks and APFS clone sharing can reduce the bytes actually freed."
+                .to_owned(),
             "Review candidates may be rebuildable but can still contain release artifacts or local environments."
                 .to_owned(),
             "Last-access timestamps can be unavailable, coarse, or lazily updated depending on the macOS volume."
@@ -819,6 +823,8 @@ pub(super) fn build_storage_hygiene_report_from_index(
             "Loaded from Aetower's persistent storage index for instant display.".to_owned(),
             "Run a refresh before destructive cleanup when the displayed path changed recently."
                 .to_owned(),
+            "Cached reclaimable bytes use local allocated blocks; refresh for the latest APFS sparse/cloud/hardlink accounting."
+                .to_owned(),
             "Growth attribution is based on indexed size deltas and optional Aetower/Chau7 writer ledger records."
                 .to_owned(),
         ],
@@ -984,13 +990,13 @@ pub(super) fn storage_item_evidence(item: &StorageHygieneItem) -> Vec<String> {
     }
     if item.has_hardlinks {
         evidence.push(format!(
-            "Hardlink count reached {}; reclaim may be lower while another link remains.",
+            "Hardlink count reached {}; Aetower deduplicates repeated links inside a sized directory, but external links can still reduce actual reclaim.",
             item.hardlink_count
         ));
     }
     if item.cloud_placeholder {
         evidence.push(
-            "This path looks cloud-backed or dehydrated: logical bytes may not be present locally."
+            "This path has zero local allocated blocks; Aetower treats its local reclaim estimate as 0 bytes."
                 .to_owned(),
         );
     }
@@ -1063,11 +1069,25 @@ pub(super) fn storage_item_evidence(item: &StorageHygieneItem) -> Vec<String> {
     unique_limited(evidence, 12)
 }
 
+pub(super) fn storage_local_reclaimable_bytes(
+    logical_bytes: u64,
+    physical_bytes: u64,
+    cloud_placeholder: bool,
+) -> u64 {
+    if logical_bytes == 0 || cloud_placeholder {
+        0
+    } else if physical_bytes > 0 {
+        physical_bytes
+    } else {
+        logical_bytes
+    }
+}
+
 pub(super) fn storage_byte_accounting_label(logical_bytes: u64, physical_bytes: u64) -> String {
     if logical_bytes == 0 && physical_bytes == 0 {
         "empty path".to_owned()
     } else if physical_bytes == 0 {
-        "logical fallback or cloud placeholder".to_owned()
+        "zero local allocated blocks".to_owned()
     } else if physical_bytes < logical_bytes {
         "APFS physical blocks".to_owned()
     } else if physical_bytes > logical_bytes {
@@ -1080,6 +1100,12 @@ pub(super) fn storage_byte_accounting_label(logical_bytes: u64, physical_bytes: 
 pub(super) fn storage_item_next_step(item: &StorageHygieneItem) -> String {
     if item.size_truncated {
         return "Reveal the path and run the copied `du` command when the machine is idle to confirm true size.".to_owned();
+    }
+    if item.cloud_placeholder {
+        return "Manual review: reveal in Finder to confirm whether the file is cloud-only or sparse; Aetower will not stage it because no local blocks are proven reclaimable.".to_owned();
+    }
+    if item.has_hardlinks {
+        return "Manual review: reveal the path and inspect hardlink ownership first; Aetower blocks automatic cleanup because another link may retain the blocks.".to_owned();
     }
     if !item.cleanup_consequence.is_empty() {
         return format!(

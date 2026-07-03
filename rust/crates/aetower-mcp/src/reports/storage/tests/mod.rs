@@ -2802,6 +2802,100 @@ fn storage_hygiene_reclaimable_regression_detects_build_logs_and_caches() {
 }
 
 #[test]
+fn storage_hygiene_counts_zero_block_placeholders_as_zero_local_reclaim() {
+    let root = test_root("zero-block-placeholder-reclaim");
+    let target = root.join("project").join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&target) {
+        panic!("create target dir: {error}");
+    }
+    let artifact = target.join("sparse-artifact");
+    let file = match fs::File::create(&artifact) {
+        Ok(file) => file,
+        Err(error) => panic!("create sparse artifact: {error}"),
+    };
+    if let Err(error) = file.set_len(MIN_ITEM_BYTES + 128) {
+        panic!("size sparse artifact: {error}");
+    }
+    let metadata = fs::metadata(&artifact).expect("sparse metadata is readable");
+    if metadata.blocks() > 0 {
+        let _ = fs::remove_dir_all(root);
+        return;
+    }
+    mark_tree_old(&root);
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+    let value = parse_json_value(&json, "zero-block placeholder JSON parses");
+    let item = value["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["kind"] == "rust-build"))
+        .expect("rust build item is present");
+
+    assert_eq!(item["logical_bytes"].as_u64(), Some(MIN_ITEM_BYTES + 128));
+    assert_eq!(item["physical_bytes"].as_u64(), Some(0));
+    assert_eq!(item["size_bytes"].as_u64(), Some(0));
+    assert_eq!(item["cloud_placeholder"].as_bool(), Some(true));
+    assert_eq!(item["cleanup_allowed"].as_bool(), Some(false));
+    assert!(
+        item["cleanup_blockers"]
+            .as_array()
+            .is_some_and(|blockers| blockers.iter().any(|blocker| blocker
+                .as_str()
+                .is_some_and(|value| value.contains("No local allocated blocks"))))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_hygiene_deduplicates_hardlinked_files_in_directory_size() {
+    let root = test_root("hardlink-deduped-reclaim");
+    let target = root.join("project").join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&target) {
+        panic!("create target dir: {error}");
+    }
+    let artifact = target.join("artifact-a");
+    if let Err(error) = fs::write(&artifact, vec![3u8; (MIN_ITEM_BYTES + 128) as usize]) {
+        panic!("write hardlink source: {error}");
+    }
+    let hardlink = target.join("artifact-b");
+    if let Err(error) = fs::hard_link(&artifact, &hardlink) {
+        panic!("create hardlink: {error}");
+    }
+    let metadata = fs::metadata(&artifact).expect("hardlink metadata is readable");
+    let expected_physical_bytes = metadata.blocks().saturating_mul(512);
+    mark_tree_old(&root);
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+    let value = parse_json_value(&json, "hardlink dedupe JSON parses");
+    let item = value["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["kind"] == "rust-build"))
+        .expect("rust build item is present");
+
+    assert_eq!(
+        item["logical_bytes"].as_u64(),
+        Some((MIN_ITEM_BYTES + 128).saturating_mul(2))
+    );
+    assert_eq!(
+        item["physical_bytes"].as_u64(),
+        Some(expected_physical_bytes)
+    );
+    assert_eq!(item["size_bytes"].as_u64(), Some(expected_physical_bytes));
+    assert_eq!(item["has_hardlinks"].as_bool(), Some(true));
+    assert_eq!(item["hardlink_count"].as_u64(), Some(2));
+    assert_eq!(item["cleanup_allowed"].as_bool(), Some(false));
+    assert!(
+        item["cleanup_blockers"]
+            .as_array()
+            .is_some_and(|blockers| blockers.iter().any(|blocker| blocker
+                .as_str()
+                .is_some_and(|value| value.contains("Hardlinked content"))))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_performance_budget_flags_million_file_payload_and_table_pressure() {
     let root = test_root("million-file-budget-fixture");
     let target = root.join("project").join("target").join("debug");
