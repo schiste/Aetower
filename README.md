@@ -65,6 +65,7 @@ For Developer Preview builds:
 4. Open **Settings -> Setup** and complete the readiness checklist.
 
 See [Getting Started](docs/getting-started.md) for the first-run flow.
+See [Feature List](docs/features.md) for a structured technical and non-technical overview of Aetower capabilities.
 See [Download Aetower Developer Preview](docs/download.md) for the public
 download-page copy, privacy summary, update expectations, and support/reset
 guidance.
