@@ -1,13 +1,44 @@
 import CoreServices
 import Foundation
 
+struct StorageRootChangeEventRecord: Codable {
+    let timestampMillis: UInt64
+    let path: String
+    let eventId: UInt64?
+    let flags: UInt64?
+    let source: String
+}
+
 enum StorageRootChangeJournal {
     private static let key = "aetower.storageHygiene.lastRootChangeMillis.v1"
     private static let dirtyPathsKey = "aetower.storageHygiene.dirtyPaths.v1"
     private static let maxDirtyPaths = 256
+    private static let maxEventLedgerBytes: UInt64 = 2 * 1_024 * 1_024
+    private static let maxEventLedgerLines = 2_048
 
     static func recordChange(paths: [String] = []) {
+        let timestampMillis = currentMillis()
+        let events = paths.map {
+            StorageRootChangeEventRecord(
+                timestampMillis: timestampMillis,
+                path: normalizedPath($0),
+                eventId: nil,
+                flags: nil,
+                source: "aetower-fsevents"
+            )
+        }
+        recordEvents(events)
+    }
+
+    static func recordEvents(_ events: [StorageRootChangeEventRecord]) {
+        let normalized = events.filter { !$0.path.isEmpty }
+        guard !normalized.isEmpty else { return }
         UserDefaults.standard.set(currentMillis(), forKey: key)
+        recordDirtyPaths(normalized.map(\.path))
+        appendEventLedger(normalized)
+    }
+
+    private static func recordDirtyPaths(_ paths: [String]) {
         let normalized = paths.map(normalizedPath).filter { !$0.isEmpty }
         guard !normalized.isEmpty else { return }
         var existing = Set(UserDefaults.standard.stringArray(forKey: dirtyPathsKey) ?? [])
@@ -34,6 +65,66 @@ enum StorageRootChangeJournal {
 
     static func clearDirtyPaths() {
         UserDefaults.standard.removeObject(forKey: dirtyPathsKey)
+    }
+
+    private static func appendEventLedger(_ events: [StorageRootChangeEventRecord]) {
+        guard let path = eventLedgerPath() else { return }
+        do {
+            try FileManager.default.createDirectory(
+                at: path.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            let payload = try events
+                .compactMap { event -> Data? in
+                    var data = try encoder.encode(event)
+                    data.append(0x0A)
+                    return data
+                }
+                .reduce(into: Data()) { partial, data in
+                    partial.append(data)
+                }
+            if FileManager.default.fileExists(atPath: path.path) {
+                let handle = try FileHandle(forWritingTo: path)
+                try handle.seekToEnd()
+                try handle.write(contentsOf: payload)
+                try handle.close()
+            } else {
+                try payload.write(to: path, options: .atomic)
+            }
+            trimEventLedgerIfNeeded(path)
+        } catch {
+            // Best effort only: FSEvents should never make Storage unusable.
+        }
+    }
+
+    private static func trimEventLedgerIfNeeded(_ path: URL) {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path.path),
+              let size = attributes[.size] as? NSNumber,
+              size.uint64Value > maxEventLedgerBytes,
+              let data = try? Data(contentsOf: path),
+              let content = String(data: data, encoding: .utf8)
+        else {
+            return
+        }
+        let retained = content
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .suffix(maxEventLedgerLines)
+            .joined(separator: "\n")
+        let output = retained.isEmpty ? "" : retained + "\n"
+        try? output.data(using: .utf8)?.write(to: path, options: .atomic)
+    }
+
+    private static func eventLedgerPath() -> URL? {
+        guard let base = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            return nil
+        }
+        return base.appendingPathComponent("Aetower", isDirectory: true)
+            .appendingPathComponent("storage-fsevents.ndjson")
     }
 
     private static func currentMillis() -> UInt64 {
@@ -75,10 +166,17 @@ final class StorageRootChangeMonitor {
             release: nil,
             copyDescription: nil
         )
-        let callback: FSEventStreamCallback = { _, info, _, eventPaths, _, _ in
+        let callback: FSEventStreamCallback = { _, info, eventCount, eventPaths, eventFlags, eventIds in
             guard let info else { return }
             let monitor = Unmanaged<StorageRootChangeMonitor>.fromOpaque(info).takeUnretainedValue()
-            monitor.recordRootChange(paths: monitor.paths(from: eventPaths))
+            monitor.recordRootChange(
+                events: monitor.events(
+                    from: eventPaths,
+                    flags: eventFlags,
+                    ids: eventIds,
+                    count: eventCount
+                )
+            )
         }
         guard let stream = FSEventStreamCreate(
             kCFAllocatorDefault,
@@ -106,13 +204,28 @@ final class StorageRootChangeMonitor {
         watchedRoots = []
     }
 
-    private func recordRootChange(paths: [String]) {
-        StorageRootChangeJournal.recordChange(paths: paths)
+    private func recordRootChange(events: [StorageRootChangeEventRecord]) {
+        StorageRootChangeJournal.recordEvents(events)
     }
 
-    private func paths(from eventPaths: UnsafeMutableRawPointer) -> [String] {
+    private func events(
+        from eventPaths: UnsafeMutableRawPointer,
+        flags: UnsafePointer<FSEventStreamEventFlags>,
+        ids: UnsafePointer<FSEventStreamEventId>,
+        count: Int
+    ) -> [StorageRootChangeEventRecord] {
         let array = unsafeBitCast(eventPaths, to: CFArray.self) as NSArray
-        return array.compactMap { $0 as? String }
+        let timestampMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        return (0..<min(count, array.count)).compactMap { index in
+            guard let path = array[index] as? String else { return nil }
+            return StorageRootChangeEventRecord(
+                timestampMillis: timestampMillis,
+                path: normalizedPath(path),
+                eventId: UInt64(ids[index]),
+                flags: UInt64(flags[index]),
+                source: "aetower-fsevents"
+            )
+        }
     }
 
     private func normalizedPath(_ path: String) -> String {
