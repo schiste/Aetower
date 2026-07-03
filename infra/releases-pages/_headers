@@ -1,0 +1,57 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  X-Robots-Tag: noindex
+
+# Versioned artifacts are immutable; the latest aliases below detach these
+# headers (Pages joins all matching rules' headers instead of overriding,
+# so without the `!` removals the aliases would carry BOTH cache policies).
+
+/releases/*.zip
+  Content-Type: application/zip
+  Cache-Control: public, max-age=31536000, immutable
+
+/releases/Aetower.zip
+  ! Cache-Control
+  Cache-Control: public, max-age=120
+
+/releases/*.delta
+  Content-Type: application/octet-stream
+  Cache-Control: public, max-age=31536000, immutable
+
+/releases/*-source.tar.gz
+  Content-Type: application/gzip
+  Cache-Control: public, max-age=31536000, immutable
+
+/releases/Aetower-source.tar.gz
+  ! Cache-Control
+  Cache-Control: public, max-age=120
+
+/releases/*.dmg
+  Content-Type: application/x-apple-diskimage
+  Cache-Control: public, max-age=31536000, immutable
+
+/releases/Aetower.dmg
+  ! Cache-Control
+  Cache-Control: public, max-age=120
+
+/releases/*.pkg
+  Content-Type: application/octet-stream
+  Cache-Control: public, max-age=31536000, immutable
+
+/releases/Aetower.pkg
+  ! Cache-Control
+  Cache-Control: public, max-age=120
+
+/releases/appcast.xml
+  Content-Type: application/xml; charset=utf-8
+  Cache-Control: public, max-age=120
+
+/homebrew/Casks/aetower.rb
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=120
+
+/third-party-notices.md
+  Content-Type: text/markdown; charset=utf-8
+  Cache-Control: public, max-age=120

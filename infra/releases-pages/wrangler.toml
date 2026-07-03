@@ -1,0 +1,10 @@
+# Cloudflare Pages project serving ONLY the release payload
+# (/releases/*, /homebrew/*, /third-party-notices.md).
+# The aetower.dev routes are owned by infra/release-router, which proxies
+# to this project's *.pages.dev origin. Deploy via
+# scripts/deploy-release-payload.sh — not by hand — so the live payload is
+# synced down first (Pages deploys are full snapshots; deploying without the
+# sync would delete historical archives and Sparkle deltas).
+name = "aetower-releases"
+pages_build_output_dir = "../../dist/releases-payload"
+compatibility_date = "2026-05-28"

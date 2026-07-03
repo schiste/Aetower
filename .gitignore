@@ -23,3 +23,6 @@ tmp/
 
 # macOS detritus
 .DS_Store
+
+# Wrangler local state
+.wrangler/
