@@ -578,14 +578,36 @@ fn estimate_rebuild_cost(items: &[&StorageHygieneItem]) -> (String, Option<u64>)
         + ((expensive_bytes as f64 / gib) * 120.0)
         + ((safe_bytes as f64 / gib) * 5.0);
     let seconds = estimated.round().clamp(60.0, 3_600.0) as u64;
-    let label = if expensive_bytes >= 2 * 1_024 * 1_024 * 1_024 || seconds >= 1_200 {
+    if let Some(measured_seconds) = measured_repo_rebuild_seconds(items) {
+        let seconds = seconds.max(measured_seconds);
+        return (
+            format!(
+                "Measured {}",
+                rebuild_cost_band(expensive_bytes, seconds).to_ascii_lowercase()
+            ),
+            Some(seconds),
+        );
+    }
+    let label = rebuild_cost_band(expensive_bytes, seconds);
+    (label.to_owned(), Some(seconds))
+}
+
+fn measured_repo_rebuild_seconds(items: &[&StorageHygieneItem]) -> Option<u64> {
+    items
+        .iter()
+        .filter(|item| item.estimated_rebuild_cost.starts_with("Measured "))
+        .filter_map(|item| item.estimated_rebuild_seconds)
+        .max()
+}
+
+fn rebuild_cost_band(expensive_bytes: u64, seconds: u64) -> &'static str {
+    if expensive_bytes >= 2 * 1_024 * 1_024 * 1_024 || seconds >= 1_200 {
         "High"
     } else if expensive_bytes > 0 || seconds >= 300 {
         "Medium"
     } else {
         "Low"
-    };
-    (label.to_owned(), Some(seconds))
+    }
 }
 
 fn repo_optimization_summary(

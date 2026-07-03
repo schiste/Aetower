@@ -2373,6 +2373,109 @@ fn storage_hygiene_reports_agent_aware_artifact_cost() {
 }
 
 #[test]
+fn storage_rebuild_cost_prefers_measured_writer_duration() {
+    let root = test_root("measured-rebuild-cost");
+    let repo = root.join("project");
+    create_git_repo(&repo, "main");
+    let artifact_path = repo.join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&artifact_path) {
+        panic!("create measured artifact path: {error}");
+    }
+
+    let mut item = test_storage_item(
+        &artifact_path.display().to_string(),
+        "rust-build",
+        "build-artifact",
+        "safe",
+        "rebuildable",
+        1_000,
+    );
+    item.rebuild_command = Some("cargo build".to_owned());
+    item.estimated_rebuild_cost = "Low".to_owned();
+    item.estimated_rebuild_seconds = Some(60);
+    item.attribution.repo_root = Some(repo.display().to_string());
+    item.attribution.repo_name = Some("project".to_owned());
+
+    let writer = StorageWriterLedgerRecord {
+        started_at_millis: Some(1_000),
+        ended_at_millis: Some(721_000),
+        repo_root: Some(repo.display().to_string()),
+        working_directory: Some(repo.display().to_string()),
+        command: Some("cargo build --workspace".to_owned()),
+        source: Some("test-ledger".to_owned()),
+        ..StorageWriterLedgerRecord::default()
+    };
+
+    let mut items = vec![item];
+    apply_measured_rebuild_costs(&mut items, &[writer]);
+
+    assert_eq!(items[0].estimated_rebuild_seconds, Some(720));
+    assert_eq!(items[0].estimated_rebuild_cost, "Measured medium");
+    assert!(
+        items[0]
+            .attribution
+            .notes
+            .first()
+            .is_some_and(|note| note.contains("Measured rebuild duration"))
+    );
+
+    let footprints = summarize_repo_footprints(&items);
+    assert_eq!(footprints.len(), 1);
+    assert_eq!(footprints[0].estimated_rebuild_seconds, Some(720));
+    assert_eq!(footprints[0].estimated_rebuild_cost, "Measured medium");
+    assert!(
+        footprints[0]
+            .optimization_summary
+            .contains("estimated rebuild cost 12m")
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_rebuild_cost_ignores_incompatible_writer_command() {
+    let root = test_root("measured-rebuild-cost-incompatible-command");
+    let repo = root.join("project");
+    create_git_repo(&repo, "main");
+    let artifact_path = repo.join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&artifact_path) {
+        panic!("create measured artifact path: {error}");
+    }
+
+    let mut item = test_storage_item(
+        &artifact_path.display().to_string(),
+        "rust-build",
+        "build-artifact",
+        "safe",
+        "rebuildable",
+        1_000,
+    );
+    item.rebuild_command = Some("cargo build".to_owned());
+    item.estimated_rebuild_cost = "Low".to_owned();
+    item.estimated_rebuild_seconds = Some(60);
+    item.attribution.repo_root = Some(repo.display().to_string());
+
+    let writer = StorageWriterLedgerRecord {
+        started_at_millis: Some(1_000),
+        ended_at_millis: Some(721_000),
+        repo_root: Some(repo.display().to_string()),
+        working_directory: Some(repo.display().to_string()),
+        command: Some("npm install".to_owned()),
+        source: Some("test-ledger".to_owned()),
+        ..StorageWriterLedgerRecord::default()
+    };
+
+    let mut items = vec![item];
+    apply_measured_rebuild_costs(&mut items, &[writer]);
+
+    assert_eq!(items[0].estimated_rebuild_seconds, Some(60));
+    assert_eq!(items[0].estimated_rebuild_cost, "Low");
+    assert!(items[0].attribution.notes.is_empty());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_hygiene_generates_reclaim_actions_for_common_dev_artifacts() {
     let root = test_root("reclaim-actions");
     let project = root.join("project");

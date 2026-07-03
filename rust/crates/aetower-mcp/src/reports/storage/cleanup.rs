@@ -29,6 +29,200 @@ pub(super) struct ArtifactIntelligence {
     pub(super) cleanup_consequence: String,
 }
 
+#[derive(Clone, Debug)]
+struct RebuildCostObservation {
+    duration_seconds: u64,
+    completed_at_millis: u64,
+    path_prefixes: Vec<String>,
+    repo_root: Option<String>,
+    command: String,
+    source: Option<String>,
+}
+
+pub(super) fn apply_measured_rebuild_costs(
+    items: &mut [StorageHygieneItem],
+    writer_ledger: &[StorageWriterLedgerRecord],
+) {
+    let observations = writer_ledger
+        .iter()
+        .filter_map(rebuild_cost_observation)
+        .collect::<Vec<_>>();
+    if observations.is_empty() {
+        return;
+    }
+    for item in items {
+        let Some(observation) = observations
+            .iter()
+            .filter(|observation| observation_matches_item(observation, item))
+            .max_by_key(|observation| observation.completed_at_millis)
+        else {
+            continue;
+        };
+        item.estimated_rebuild_seconds = Some(observation.duration_seconds);
+        item.estimated_rebuild_cost = measured_rebuild_cost_label(observation.duration_seconds);
+        let source = observation
+            .source
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("writer ledger");
+        item.attribution.notes.insert(
+            0,
+            format!(
+                "Measured rebuild duration from {source}: `{}` completed in {}.",
+                observation.command,
+                rebuild_seconds_label(observation.duration_seconds)
+            ),
+        );
+    }
+}
+
+fn rebuild_cost_observation(record: &StorageWriterLedgerRecord) -> Option<RebuildCostObservation> {
+    let started = record.started_at_millis?;
+    let ended = record.ended_at_millis?;
+    if ended <= started {
+        return None;
+    }
+    let command = record
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| command_looks_like_build(value))?
+        .to_owned();
+    let duration_seconds = ((ended - started) / 1_000).clamp(1, 12 * 60 * 60);
+    let path_prefixes = writer_record_path_prefixes(record);
+    if path_prefixes.is_empty()
+        && record
+            .repo_root
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+    {
+        return None;
+    }
+    Some(RebuildCostObservation {
+        duration_seconds,
+        completed_at_millis: ended,
+        path_prefixes,
+        repo_root: record
+            .repo_root
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
+        command,
+        source: record
+            .source
+            .as_deref()
+            .or(record.provider.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
+    })
+}
+
+fn observation_matches_item(
+    observation: &RebuildCostObservation,
+    item: &StorageHygieneItem,
+) -> bool {
+    if !command_matches_artifact_kind(&observation.command, &item.kind) {
+        return false;
+    }
+    let repo_matches = observation
+        .repo_root
+        .as_deref()
+        .zip(item.attribution.repo_root.as_deref())
+        .is_some_and(|(observed, item_repo)| observed == item_repo);
+    let path_matches = observation
+        .path_prefixes
+        .iter()
+        .any(|prefix| paths_overlap(prefix, &item.path));
+    repo_matches || path_matches
+}
+
+fn writer_record_path_prefixes(record: &StorageWriterLedgerRecord) -> Vec<String> {
+    unique_limited(
+        [
+            record.path_prefix.as_deref(),
+            record.working_directory.as_deref(),
+            record.cwd.as_deref(),
+            record.repo_root.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(normalized_writer_path_prefix)
+        .collect(),
+        4,
+    )
+}
+
+fn normalized_writer_path_prefix(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.trim_end_matches('/').to_owned())
+}
+
+fn paths_overlap(left: &str, right: &str) -> bool {
+    left == right
+        || left
+            .strip_prefix(right)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+        || right
+            .strip_prefix(left)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn command_matches_artifact_kind(command: &str, kind: &str) -> bool {
+    let command = command.to_ascii_lowercase();
+    match kind {
+        "rust-build" => command.contains("cargo "),
+        "swift-build" => command.contains("swift build") || command.contains("xcodebuild"),
+        "xcode-derived-data" | "xcode-module-cache" | "xcode-source-packages" => {
+            command.contains("xcodebuild") || command.contains("swift build")
+        }
+        "node-dependencies" | "npm-cache" | "pnpm-store" | "yarn-cache" => {
+            command.contains("npm ")
+                || command.contains("pnpm ")
+                || command.contains("yarn ")
+                || command.contains("node ")
+        }
+        "next-cache" | "next-build" | "frontend-cache" => {
+            command.contains("npm ")
+                || command.contains("pnpm ")
+                || command.contains("yarn ")
+                || command.contains("next")
+                || command.contains("vite")
+                || command.contains("turbo")
+        }
+        "python-cache" | "python-environment" | "pip-cache" | "uv-cache" => {
+            command.contains("python")
+                || command.contains("pytest")
+                || command.contains("pip ")
+                || command.contains("uv ")
+        }
+        "docker-storage" | "docker-vm" => command.contains("docker "),
+        "gradle-cache" => command.contains("gradle"),
+        "maven-repository" => command.contains("mvn ") || command.contains("maven"),
+        "go-build-cache" => command.contains("go "),
+        "test-output" | "coverage-output" => {
+            command.contains("test")
+                || command.contains("pytest")
+                || command.contains("vitest")
+                || command.contains("coverage")
+        }
+        "temporary-output" | "tool-cache" => command_looks_like_build(&command),
+        _ => false,
+    }
+}
+
+fn measured_rebuild_cost_label(seconds: u64) -> String {
+    let band = if seconds >= 1_200 {
+        "high"
+    } else if seconds >= 300 {
+        "medium"
+    } else {
+        "low"
+    };
+    format!("Measured {band}")
+}
+
 pub(super) fn apply_cleanup_guardrails(items: &mut [StorageHygieneItem], now_millis: u64) {
     for item in items {
         if item.cleanup_tier.is_empty() {

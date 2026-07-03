@@ -215,6 +215,8 @@ fn storage_hygiene_items_page_from_index(
         .into_iter()
         .map(|row| storage_item_for_indexed_row(row, now_millis))
         .collect::<Vec<_>>();
+    let writer_ledger = load_storage_writer_ledger_records();
+    apply_measured_rebuild_costs(&mut items, &writer_ledger);
     apply_cleanup_guardrails(&mut items, now_millis);
     for item in &mut items {
         item.evidence = storage_item_evidence(item);

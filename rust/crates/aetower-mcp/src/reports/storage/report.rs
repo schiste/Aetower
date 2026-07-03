@@ -383,6 +383,8 @@ pub(super) fn build_storage_hygiene_report_with_options(
             .git_millis
             .saturating_add(git_started.elapsed().as_millis() as u64);
     }
+    let writer_ledger = load_storage_writer_ledger_records();
+    apply_measured_rebuild_costs(&mut items, &writer_ledger);
     apply_cleanup_guardrails(&mut items, now_millis);
     for item in &mut items {
         item.evidence = storage_item_evidence(item);
@@ -707,6 +709,8 @@ pub(super) fn build_storage_hygiene_report_from_index(
     metrics.git_millis = metrics
         .git_millis
         .saturating_add(git_started.elapsed().as_millis() as u64);
+    let writer_ledger = load_storage_writer_ledger_records();
+    apply_measured_rebuild_costs(&mut items, &writer_ledger);
     apply_cleanup_guardrails(&mut items, now_millis);
     for item in &mut items {
         item.evidence = storage_item_evidence(item);
