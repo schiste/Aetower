@@ -1016,7 +1016,7 @@ public struct RepositoryView: View {
                             )
                         }
 
-                        repositoryProjectGitHubLists(status)
+                        repositoryProjectGitHubLists(status, repoRoot: repository.root)
 
                         ForEach(status.warnings.prefix(2), id: \.self) { warning in
                             Text(warning)
@@ -1053,7 +1053,10 @@ public struct RepositoryView: View {
     }
 
     @ViewBuilder
-    private func repositoryProjectGitHubLists(_ status: RepositoryGitHubProviderStatusModel) -> some View {
+    private func repositoryProjectGitHubLists(
+        _ status: RepositoryGitHubProviderStatusModel,
+        repoRoot: String
+    ) -> some View {
         let latestPrs = Array(status.latestPrs.prefix(3))
         let latestRuns = Array(status.latestWorkflowRuns.prefix(2))
         if !latestPrs.isEmpty || !latestRuns.isEmpty {
@@ -1066,14 +1069,34 @@ public struct RepositoryView: View {
                         .truncationMode(.tail)
                 }
                 ForEach(latestRuns) { run in
-                    Text("\(run.name): \(run.conclusion ?? run.status ?? "unknown")")
-                        .font(AetowerDesign.Typography.metadata)
-                        .foregroundStyle(AetowerDesign.Ink.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        Text("\(run.name): \(run.conclusion ?? run.status ?? "unknown")")
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        // Failed runs get a re-run control — the read-only CI
+                        // tile becomes actionable.
+                        if repositoryWorkflowRunIsFailed(run) {
+                            Button {
+                                state.rerunRepositoryWorkflow(repoRoot: repoRoot, runId: run.id)
+                            } label: {
+                                Label("Re-run", systemImage: "arrow.clockwise")
+                                    .labelStyle(.iconOnly)
+                            }
+                            .buttonStyle(.borderless)
+                            .controlSize(.mini)
+                            .help("Re-run this failed workflow on GitHub.")
+                        }
+                    }
                 }
             }
         }
+    }
+
+    private func repositoryWorkflowRunIsFailed(_ run: RepositoryGitHubWorkflowRunModel) -> Bool {
+        ["failure", "timed_out", "cancelled", "action_required", "startup_failure"]
+            .contains(run.conclusion ?? "")
     }
 
     @ViewBuilder

@@ -243,6 +243,11 @@ private final class RepositoryGitHubProviderMainActorPublisher: @unchecked Senda
             status: status
         )
     }
+
+    @MainActor
+    func finishWorkflowRerun(repoRoot: String, error: String?) {
+        state?.applyWorkflowRerunResult(repoRoot: repoRoot, error: error)
+    }
 }
 
 private final class RepositoryCloudflareProviderMainActorPublisher: @unchecked Sendable {
@@ -2667,6 +2672,44 @@ public final class AppState {
 
     func repositoryProject(forRepoRoot repoRoot: String) -> RepositoryProjectModel? {
         RepositoryProjectStore.project(forRepoRoot: repoRoot, in: repositoryProjects)
+    }
+
+    /// Re-run a GitHub Actions workflow from the provider tile, then refresh
+    /// status. Turns the read-only CI readout into a control surface.
+    func rerunRepositoryWorkflow(repoRoot: String, runId: UInt64) {
+        let key = RepositoryProjectModel.normalizedRepoRoot(repoRoot)
+        guard let project = repositoryProject(forRepoRoot: key),
+              let link = project.githubRepositoryLink,
+              let owner = link.owner, let repo = link.repo,
+              !owner.isEmpty, !repo.isEmpty
+        else {
+            repositoryProjectGitHubErrorsByRoot[key] = "Link a GitHub repository before re-running a workflow."
+            return
+        }
+        let client = repositoryGitHubProviderClient
+        let token = ProviderCredentialStore().resolvedAccessToken(for: .github)
+        let publisher = RepositoryGitHubProviderMainActorPublisher(self)
+        Task.detached(priority: .userInitiated) { [client, publisher] in
+            let error = await client.rerunWorkflow(owner: owner, repo: repo, runId: runId, token: token)
+            await publisher.finishWorkflowRerun(repoRoot: key, error: error)
+        }
+    }
+
+    fileprivate func applyWorkflowRerunResult(repoRoot: String, error: String?) {
+        if let error {
+            repositoryProjectGitHubErrorsByRoot[repoRoot] = error
+            recordLocalDiagnosticsEvent(
+                level: .warn,
+                subsystem: .ui,
+                eventType: "repository-workflow-rerun-failed",
+                message: error,
+                fields: [DiagnosticsField(key: "repo_root", value: repoRoot)]
+            )
+            return
+        }
+        repositoryProjectGitHubErrorsByRoot[repoRoot] = nil
+        // Give GitHub a moment to register the queued run, then refresh.
+        refreshRepositoryGitHubStatus(repoRoot: repoRoot, force: true)
     }
 
     func refreshRepositoryGitHubStatus(

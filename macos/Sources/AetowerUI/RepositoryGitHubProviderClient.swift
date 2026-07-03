@@ -26,6 +26,28 @@ struct RepositoryGitHubProviderClient: Sendable {
         self.decoder = JSONDecoder()
     }
 
+    /// Re-run a GitHub Actions workflow run. Turns the read-only CI tile into a
+    /// control surface: the caller already has the run's database id.
+    /// Returns nil on success, or a human-readable error string on failure.
+    func rerunWorkflow(
+        owner: String,
+        repo: String,
+        runId: UInt64,
+        token: String?
+    ) async -> String? {
+        do {
+            try await post(
+                path: ["repos", owner, repo, "actions", "runs", String(runId), "rerun"],
+                token: token?.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            return nil
+        } catch let failure as RepositoryGitHubHTTPFailure {
+            return "Re-run failed: HTTP \(failure.statusCode)\(failure.detailSuffix)."
+        } catch {
+            return "Re-run failed: \(error.localizedDescription)"
+        }
+    }
+
     func fetchStatus(
         _ request: RepositoryGitHubStatusRequest,
         nowMillis: UInt64 = currentMillis()
@@ -257,6 +279,25 @@ struct RepositoryGitHubProviderClient: Sendable {
             throw RepositoryGitHubHTTPFailure(statusCode: response.statusCode, message: message)
         }
         return try decoder.decode(type, from: data)
+    }
+
+    /// POST with no decoded body — for action endpoints (workflow re-run) that
+    /// return 201/204. Shares the auth headers and error mapping with `get`.
+    private func post(path: [String], token: String?) async throws {
+        let url = try url(path: path, queryItems: [])
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Aetower", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        if let token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await transport(request)
+        guard (200..<300).contains(response.statusCode) else {
+            let message = try? decoder.decode(GitHubErrorMessage.self, from: data).message
+            throw RepositoryGitHubHTTPFailure(statusCode: response.statusCode, message: message)
+        }
     }
 
     private func url(path: [String], queryItems: [URLQueryItem]) throws -> URL {
