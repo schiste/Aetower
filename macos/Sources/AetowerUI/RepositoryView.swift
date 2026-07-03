@@ -277,6 +277,7 @@ public struct RepositoryView: View {
     @State private var searchText = ""
     @State private var repositoryPath: [String] = []
     @State private var copiedRepositoryID: String?
+    @State private var pendingArtifactCleanup: RepositorySummary?
     @State private var copiedAgentPromptKey: String?
     @State private var chau7LaunchStatusByKey: [String: Chau7ContractLaunchState] = [:]
     @State private var scorecardWorkflowWritingRoots: Set<String> = []
@@ -331,6 +332,32 @@ public struct RepositoryView: View {
                 }
             )
         }
+        .confirmationDialog(
+            "Move artifacts to Trash?",
+            isPresented: Binding(
+                get: { pendingArtifactCleanup != nil },
+                set: { if !$0 { pendingArtifactCleanup = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingArtifactCleanup
+        ) { repository in
+            let folders = repositoryCleanableFolders(repository)
+            Button("Move \(folders.count) folder\(folders.count == 1 ? "" : "s") to Trash") {
+                state.trashRepositoryArtifacts(repoRoot: repository.root, folders: folders)
+                pendingArtifactCleanup = nil
+            }
+            Button("Cancel", role: .cancel) { pendingArtifactCleanup = nil }
+        } message: { repository in
+            let folders = repositoryCleanableFolders(repository)
+            let bytes = folders.reduce(UInt64(0)) { $0 + $1.sizeBytes }
+            Text("Moves \(folders.count) rebuildable artifact folder\(folders.count == 1 ? "" : "s") (\(formatBytes(bytes))) to the Finder Trash. Reversible with Put Back; nothing is permanently deleted.")
+        }
+    }
+
+    /// Trash-eligible artifact folders for a repo: only safe/rebuildable tiers,
+    /// mirroring the Storage tab's cleanup eligibility.
+    private func repositoryCleanableFolders(_ repository: RepositorySummary) -> [StorageRepoArtifactFolderModel] {
+        repository.topArtifactFolders.filter { ["safe", "rebuildable"].contains($0.cleanupTier) }
     }
 
     private var repositoryToolBand: some View {
@@ -1227,6 +1254,19 @@ public struct RepositoryView: View {
             }
             .disabled(!linkedGithub || githubIsLoading)
             .help(linkedGithub ? "Refresh GitHub project status; cached values are reused briefly." : "Link GitHub before refreshing status.")
+
+            if let project {
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                // Linking was one-way before: removeRepositoryProject existed but
+                // had no call site, so a wrong Cloudflare account or GitHub
+                // remote could never be undone from the page.
+                Button(role: .destructive) {
+                    state.removeRepositoryProject(id: project.id)
+                } label: {
+                    Label("Unlink", systemImage: "link.badge.plus")
+                }
+                .help("Remove this project link. The repository itself is untouched.")
+            }
         }
         .controlSize(.small)
     }
@@ -1383,8 +1423,14 @@ public struct RepositoryView: View {
         case .runScorecard:
             state.runRepositoryScorecard(repoRoot: repository.root, mode: "auto", refresh: false)
         case .reviewCleanup:
-            copy(optimizationBrief(for: repository))
-            copiedRepositoryID = repository.id
+            // If there are trash-eligible artifact folders, offer the real
+            // (reversible) cleanup; otherwise fall back to the copyable brief.
+            if repositoryCleanableFolders(repository).isEmpty {
+                copy(optimizationBrief(for: repository))
+                copiedRepositoryID = repository.id
+            } else {
+                pendingArtifactCleanup = repository
+            }
         case .reviewClones:
             repositoryPath.append(repository.id)
             detailTab = .git
@@ -1488,6 +1534,9 @@ public struct RepositoryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
                 repositoryHero(repository)
+                if let result = state.repositoryCleanupResultByRoot[repository.root] {
+                    repositoryCleanupResultBanner(result, repoRoot: repository.root)
+                }
                 repositoryProjectSection(repository)
                 repositoryDetailTabPicker
                 repositoryDetailTabContent(repository, report: report)
@@ -1496,6 +1545,20 @@ public struct RepositoryView: View {
             .padding(AetowerDesign.Spacing.xxl)
         }
         .navigationTitle(repository.name)
+    }
+
+    private func repositoryCleanupResultBanner(
+        _ result: RepositoryArtifactCleanupResult,
+        repoRoot: String
+    ) -> some View {
+        AetowerInfoBanner(
+            result.succeeded
+                ? "Moved \(result.movedCount) folder\(result.movedCount == 1 ? "" : "s") (\(formatBytes(result.reclaimedBytes))) to the Trash. Empty the Trash to free the space."
+                : "Moved \(result.movedCount) folder\(result.movedCount == 1 ? "" : "s"); \(result.failedCount) could not be removed (\(result.firstError ?? "in use or protected")).",
+            systemImage: result.succeeded ? "checkmark.circle" : "exclamationmark.triangle",
+            tone: result.succeeded ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+        )
+        .onTapGesture { state.clearRepositoryCleanupResult(repoRoot: repoRoot) }
     }
 
     private var repositoryDetailTabPicker: some View {

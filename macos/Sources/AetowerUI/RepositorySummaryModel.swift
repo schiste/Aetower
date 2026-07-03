@@ -8,6 +8,17 @@ import SwiftUI
 // be recomputed 8-10x per body evaluation, each doing an O(repos x entities)
 // live-context filter against the per-tick entities slice.
 
+/// Outcome of moving a repository's artifact folders to the Trash, shown as an
+/// inline result after the user confirms a cleanup.
+struct RepositoryArtifactCleanupResult: Sendable {
+    let movedCount: Int
+    let failedCount: Int
+    let reclaimedBytes: UInt64
+    let firstError: String?
+
+    var succeeded: Bool { failedCount == 0 }
+}
+
 struct RepositorySummary: Identifiable {
     let id: String
     let root: String

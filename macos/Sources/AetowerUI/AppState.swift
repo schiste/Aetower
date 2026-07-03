@@ -458,6 +458,7 @@ public final class AppState {
     private(set) var repositoryDetailLoadingRoots: Set<String> = []
     private(set) var repositoryDetailErrorsByRoot: [String: String] = [:]
     private(set) var repositoryScorecardErrorsByRoot: [String: String] = [:]
+    private(set) var repositoryCleanupResultByRoot: [String: RepositoryArtifactCleanupResult] = [:]
     private(set) var repositoryProjects: [RepositoryProjectModel] = RepositoryProjectStore.load()
     private(set) var repositoryProjectGitHubLoadingRoots: Set<String> = []
     private(set) var repositoryProjectGitHubErrorsByRoot: [String: String] = [:]
@@ -2603,6 +2604,51 @@ public final class AppState {
         repositoryProjects = RepositoryProjectStore.remove(id: id, from: repositoryProjects)
         repositorySummaryInputsGeneration += 1
         persistRepositoryProjects()
+    }
+
+    /// Move a repository's reclaimable artifact folders to the Finder Trash
+    /// through the shared TrashService — the same reversible path the Storage
+    /// tab uses. Only safe/rebuildable tiers are eligible; the caller confirms
+    /// first. Closes the loop on the page's headline reclaimable metric, which
+    /// previously only ever copied a text brief.
+    func trashRepositoryArtifacts(
+        repoRoot: String,
+        folders: [StorageRepoArtifactFolderModel]
+    ) {
+        let eligible = folders.filter { ["safe", "rebuildable"].contains($0.cleanupTier) }
+        guard !eligible.isEmpty else { return }
+        let paths = eligible.map(\.path)
+        let bytesByPath = Dictionary(uniqueKeysWithValues: eligible.map { ($0.path, $0.sizeBytes) })
+
+        let outcome = TrashService.trash(paths: paths)
+        let reclaimed = outcome.movedPaths.reduce(UInt64(0)) { total, path in
+            total.addingReportingOverflow(bytesByPath[path] ?? 0).partialValue
+        }
+        repositoryCleanupResultByRoot[repoRoot] = RepositoryArtifactCleanupResult(
+            movedCount: outcome.movedPaths.count,
+            failedCount: outcome.failedPaths.count,
+            reclaimedBytes: reclaimed,
+            firstError: outcome.failedPaths.values.first
+        )
+        recordLocalDiagnosticsEvent(
+            level: outcome.succeeded ? .info : .warn,
+            subsystem: .ui,
+            eventType: outcome.succeeded ? "repository-artifacts-trashed" : "repository-artifacts-trash-partial",
+            message: "Moved \(outcome.movedPaths.count) repository artifact folder(s) to Trash.",
+            fields: [
+                DiagnosticsField(key: "repo_root", value: repoRoot),
+                DiagnosticsField(key: "moved", value: String(outcome.movedPaths.count)),
+                DiagnosticsField(key: "failed", value: String(outcome.failedPaths.count)),
+                DiagnosticsField(key: "reclaimed_bytes", value: String(reclaimed)),
+            ]
+        )
+        // Nudge a storage-signal refresh so freed space is reflected.
+        repositorySummaryInputsGeneration += 1
+        refreshRepositoryInventorySignalsIfQuiescent()
+    }
+
+    func clearRepositoryCleanupResult(repoRoot: String) {
+        repositoryCleanupResultByRoot[repoRoot] = nil
     }
 
     /// Persist repository project links, surfacing a diagnostics warning on
