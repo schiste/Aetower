@@ -1018,6 +1018,7 @@ struct StorageGrowthDeltaModel: Decodable, Identifiable, Sendable {
     let chau7SessionId: String?
     let writerDisplay: String?
     let matchedWriterCount: UInt64?
+    let matchedFilesystemEventCount: UInt64?
     let attributionSources: [String]?
     let attributionConfidence: String
     let attributionConfidenceScore: UInt8

@@ -19,6 +19,7 @@ private struct StorageGrowthTimelineEvent: Identifiable {
     let writerSource: String?
     let writerDisplay: String?
     let matchedWriterCount: UInt64
+    let matchedFilesystemEventCount: UInt64
     let attributionSources: [String]
     let confidence: String
     let confidenceScore: UInt8
@@ -5800,6 +5801,7 @@ public struct StorageView: View {
                     writerSource: delta.writerSource,
                     writerDisplay: delta.writerDisplay,
                     matchedWriterCount: delta.matchedWriterCount ?? 0,
+                    matchedFilesystemEventCount: delta.matchedFilesystemEventCount ?? 0,
                     attributionSources: delta.attributionSources ?? [],
                     confidence: delta.attributionConfidence,
                     confidenceScore: delta.attributionConfidenceScore,
@@ -5849,6 +5851,7 @@ public struct StorageView: View {
                 writerSource: nil,
                 writerDisplay: item.attribution.writerDisplay,
                 matchedWriterCount: 0,
+                matchedFilesystemEventCount: 0,
                 attributionSources: ["ui_baseline_diff"],
                 confidence: item.attribution.confidence,
                 confidenceScore: storageAttributionConfidenceScore(item.attribution.confidence),
@@ -5896,6 +5899,11 @@ public struct StorageView: View {
             parts.append("\(event.matchedWriterCount) matched writers")
         } else if event.matchedWriterCount == 1 {
             parts.append("1 matched writer")
+        }
+        if event.matchedFilesystemEventCount > 1 {
+            parts.append("\(event.matchedFilesystemEventCount) filesystem events")
+        } else if event.matchedFilesystemEventCount == 1 {
+            parts.append("1 filesystem event")
         }
         if parts.isEmpty {
             parts.append(event.attributionSummary.isEmpty ? "writer unknown: no command/process/session matched" : event.attributionSummary)
