@@ -26,3 +26,7 @@ tmp/
 
 # Wrangler local state
 .wrangler/
+
+# Local capture/tooling detritus (Playwright MCP cache, ad-hoc screenshots)
+.playwright-mcp/
+site-light.png

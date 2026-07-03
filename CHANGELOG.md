@@ -2,6 +2,52 @@
 
 All notable public changes to Aetower should be documented here.
 
+## 0.73 (build 718) - 2026-07-03
+
+Developer Preview feature release.
+
+Release metadata:
+
+- Bundle identifier: `com.aeptus.aetower`
+- Sparkle appcast: `https://aetower.dev/releases/appcast.xml`
+- Release archive prefix: `https://aetower.dev/releases/`
+
+Storage:
+
+- Redesigned the Storage tab around reclaiming space: a disk-pressure header,
+  clearer reclaim opportunities, a nimble cleanup pill, and a reversible
+  Finder-Trash cleanup flow that shows how much space frees when the Trash is
+  emptied.
+- Made storage relaunch paint instantly from a persisted cache and skip the
+  full repository inventory re-walk when nothing changed on disk, removing the
+  long "starting scan" delay after every launch.
+- Added growth, cold-data, and filesystem-event attribution so reclaim cost is
+  learned from writer history.
+
+Repository:
+
+- Reworked the Repository page around repository health: a health-header hero,
+  a navigation rail with live signals, bulk multi-select operations, and real
+  actions — reversible artifact cleanup, project unlinking, and re-running
+  failed GitHub workflows / redeploying Cloudflare Pages from the provider tile.
+- Expired and labelled the OpenSSF Scorecard cache so a cached supply-chain
+  score is never shown as fresh, and banded per-check outcomes so a strong
+  check is no longer reported as "failed".
+
+Metrics & correctness:
+
+- Fixed CPU-wakeups, disk, and network rates to divide by the real elapsed
+  interval (they were previously stuck at zero or over-reported), kept metric
+  rings updating while a visible window is unfocused, carried hardware sensors
+  forward between samples, and summed GPU memory across accelerators.
+
+Reliability & security:
+
+- Hardened token storage to be device-bound, surfaced decode errors instead of
+  failing silently, backed up corrupt local stores instead of discarding them,
+  fenced untrusted external text before it enters agent prompts, and added a CI
+  gate against a stale Rust↔Swift FFI binding.
+
 ## 0.54 (build 497) - 2026-06-04
 
 Developer Preview maintenance release.
