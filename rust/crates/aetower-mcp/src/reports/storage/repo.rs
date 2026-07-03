@@ -860,6 +860,10 @@ fn read_git_dirty_status(repo_root: &Path, scan_started: Instant) -> GitDirtySta
     let Ok(mut child) = Command::new("git")
         .arg("-C")
         .arg(repo_root)
+        // Disable core.quotePath so non-ASCII paths come through as raw UTF-8
+        // rather than octal-escaped; the parser still C-unquotes the remainder.
+        .arg("-c")
+        .arg("core.quotePath=false")
         .arg("status")
         .arg("--porcelain=v1")
         .arg("--untracked-files=normal")
@@ -1010,6 +1014,10 @@ pub(super) fn git_status_path_map(
     let Ok(mut child) = Command::new("git")
         .arg("-C")
         .arg(repo_root)
+        // Disable core.quotePath so non-ASCII paths come through as raw UTF-8
+        // rather than octal-escaped; the parser still C-unquotes the remainder.
+        .arg("-c")
+        .arg("core.quotePath=false")
         .arg("status")
         .arg("--porcelain=v1")
         .arg("--untracked-files=normal")
@@ -1054,6 +1062,52 @@ pub(super) fn git_repository_has_active_changes(repo_root: &Path) -> bool {
     status.status == "dirty"
 }
 
+/// Decode git's C-style path quoting (used for paths with special characters
+/// even when core.quotePath is off): a leading/trailing `"` wraps a body with
+/// `\n \t \r \" \\` and `\ooo` octal escapes over UTF-8 bytes. Unquoted paths
+/// pass through unchanged.
+fn git_unquote_path(raw: &str) -> String {
+    if !(raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2) {
+        return raw.to_owned();
+    }
+    let body = &raw[1..raw.len() - 1];
+    let mut bytes: Vec<u8> = Vec::with_capacity(body.len());
+    let mut iter = body.bytes().peekable();
+    while let Some(byte) = iter.next() {
+        if byte != b'\\' {
+            bytes.push(byte);
+            continue;
+        }
+        match iter.next() {
+            Some(b'n') => bytes.push(b'\n'),
+            Some(b't') => bytes.push(b'\t'),
+            Some(b'r') => bytes.push(b'\r'),
+            Some(b'"') => bytes.push(b'"'),
+            Some(b'\\') => bytes.push(b'\\'),
+            Some(octal @ b'0'..=b'7') => {
+                // Up to three octal digits -> one byte.
+                let mut value = (octal - b'0') as u32;
+                for _ in 0..2 {
+                    match iter.peek() {
+                        Some(&digit @ b'0'..=b'7') => {
+                            value = value * 8 + (digit - b'0') as u32;
+                            iter.next();
+                        }
+                        _ => break,
+                    }
+                }
+                bytes.push(value as u8);
+            }
+            Some(other) => {
+                bytes.push(b'\\');
+                bytes.push(other);
+            }
+            None => bytes.push(b'\\'),
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 fn parse_git_status_porcelain(output: &str) -> BTreeMap<String, String> {
     let mut statuses = BTreeMap::new();
     for line in output.lines() {
@@ -1061,12 +1115,9 @@ fn parse_git_status_porcelain(output: &str) -> BTreeMap<String, String> {
             continue;
         }
         let code = &line[..2];
-        let path = line[3..]
-            .split(" -> ")
-            .last()
-            .unwrap_or_default()
-            .trim()
-            .trim_matches('"');
+        let raw_path = line[3..].split(" -> ").last().unwrap_or_default().trim();
+        let path = git_unquote_path(raw_path);
+        let path = path.as_str();
         if path.is_empty() {
             continue;
         }
@@ -1776,4 +1827,28 @@ pub(super) fn repository_git_file_fingerprint(repo_root: &Path, file_name: &str)
 
 fn short_hash(value: &str) -> String {
     value.chars().take(12).collect()
+}
+
+#[cfg(test)]
+mod git_unquote_tests {
+    use super::git_unquote_path;
+
+    #[test]
+    fn plain_paths_pass_through() {
+        assert_eq!(git_unquote_path("src/main.rs"), "src/main.rs");
+        assert_eq!(git_unquote_path("dir/with space.txt"), "dir/with space.txt");
+    }
+
+    #[test]
+    fn octal_escapes_decode_to_utf8() {
+        // git quotes "café/x" as "caf\303\251/x" (\303\251 = U+00E9 in UTF-8).
+        assert_eq!(git_unquote_path("\"caf\\303\\251/x\""), "café/x");
+    }
+
+    #[test]
+    fn simple_escapes_decode() {
+        assert_eq!(git_unquote_path("\"a\\tb\""), "a\tb");
+        assert_eq!(git_unquote_path("\"quote\\\"here\""), "quote\"here");
+        assert_eq!(git_unquote_path("\"back\\\\slash\""), "back\\slash");
+    }
 }
