@@ -469,6 +469,8 @@ public final class AppState {
     private(set) var repositoryDetailErrorsByRoot: [String: String] = [:]
     private(set) var repositoryScorecardErrorsByRoot: [String: String] = [:]
     private(set) var repositoryCleanupResultByRoot: [String: RepositoryArtifactCleanupResult] = [:]
+    private(set) var repositoryBulkLabel: String?
+    private(set) var repositoryBulkRoots: Set<String> = []
     private(set) var repositoryProjects: [RepositoryProjectModel] = RepositoryProjectStore.load()
     private(set) var repositoryProjectGitHubLoadingRoots: Set<String> = []
     private(set) var repositoryProjectGitHubErrorsByRoot: [String: String] = [:]
@@ -2659,6 +2661,60 @@ public final class AppState {
 
     func clearRepositoryCleanupResult(repoRoot: String) {
         repositoryCleanupResultByRoot[repoRoot] = nil
+    }
+
+    // MARK: - Bulk (fleet-scale) operations
+    //
+    // At ~2800 repos, per-row buttons don't scale. These fan the existing
+    // per-repo async methods across a selection and derive progress from the
+    // per-repo loading sets those methods already maintain — no duplicated
+    // orchestration, no new task bookkeeping.
+
+    private static func normalizedRoots(_ roots: [String]) -> Set<String> {
+        Set(roots.map { RepositoryProjectModel.normalizedRepoRoot($0) }.filter { !$0.isEmpty })
+    }
+
+    func bulkRunScorecard(roots: [String]) {
+        let normalized = Self.normalizedRoots(roots)
+        guard !normalized.isEmpty else { return }
+        repositoryBulkLabel = "Running Scorecard"
+        repositoryBulkRoots = normalized
+        for root in normalized {
+            runRepositoryScorecard(repoRoot: root, mode: "auto", refresh: false)
+        }
+    }
+
+    func bulkRefreshProviders(roots: [String]) {
+        let normalized = Self.normalizedRoots(roots)
+        guard !normalized.isEmpty else { return }
+        repositoryBulkLabel = "Refreshing providers"
+        repositoryBulkRoots = normalized
+        for root in normalized {
+            refreshRepositoryGitHubStatus(repoRoot: root, force: true)
+            if let project = repositoryProject(forRepoRoot: root) {
+                for link in project.cloudflareLinks {
+                    refreshRepositoryCloudflareStatus(repoRoot: root, link: link, force: true)
+                }
+            }
+        }
+    }
+
+    /// (completed, total) derived from the relevant per-repo loading set, or nil
+    /// when idle. Reaching completed == total means the batch has drained.
+    var repositoryBulkProgress: (completed: Int, total: Int)? {
+        guard let label = repositoryBulkLabel, !repositoryBulkRoots.isEmpty else { return nil }
+        let pending: Int
+        if label.contains("Scorecard") {
+            pending = repositoryBulkRoots.intersection(repositoryScorecardLoadingRoots).count
+        } else {
+            pending = repositoryBulkRoots.intersection(repositoryProjectGitHubLoadingRoots).count
+        }
+        return (repositoryBulkRoots.count - pending, repositoryBulkRoots.count)
+    }
+
+    func clearRepositoryBulk() {
+        repositoryBulkLabel = nil
+        repositoryBulkRoots = []
     }
 
     /// Persist repository project links, surfacing a diagnostics warning on

@@ -278,6 +278,7 @@ public struct RepositoryView: View {
     @State private var repositoryPath: [String] = []
     @State private var copiedRepositoryID: String?
     @State private var pendingArtifactCleanup: RepositorySummary?
+    @State private var selectedRepoRoots: Set<String> = []
     @State private var copiedAgentPromptKey: String?
     @State private var chau7LaunchStatusByKey: [String: Chau7ContractLaunchState] = [:]
     @State private var scorecardWorkflowWritingRoots: Set<String> = []
@@ -302,6 +303,11 @@ public struct RepositoryView: View {
             }
             .navigationDestination(for: String.self) { repositoryID in
                 repositoryDestination(repositoryID)
+            }
+            .overlay(alignment: .bottom) {
+                repositoryBulkPill
+                    .padding(.bottom, AetowerDesign.Spacing.xl)
+                    .animation(AetowerDesign.Motion.smooth, value: selectedRepoRoots.count)
             }
         }
         .task {
@@ -730,7 +736,7 @@ public struct RepositoryView: View {
     private func repositoryCockpitList(_ repositories: [RepositorySummary]) -> some View {
         AetowerSurface(level: .card, padding: AetowerDesign.Spacing.none) {
             LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.none) {
-                repositoryListHeader
+                repositoryListHeader(visible: repositories)
                 ForEach(repositories) { repository in
                     Divider()
                     repositoryListRow(repository)
@@ -739,8 +745,10 @@ public struct RepositoryView: View {
         }
     }
 
-    private var repositoryListHeader: some View {
+    private func repositoryListHeader(visible: [RepositorySummary]) -> some View {
         HStack(spacing: AetowerDesign.Spacing.md) {
+            repositorySelectAllToggle(visible: visible)
+                .frame(width: 22)
             tableHeader("Repository", width: 260)
             tableHeader("Status", width: 92)
             tableHeader("Git", width: 120)
@@ -751,6 +759,76 @@ public struct RepositoryView: View {
         }
         .padding(.horizontal, AetowerDesign.Spacing.md)
         .padding(.vertical, AetowerDesign.Spacing.sm)
+    }
+
+    private func repositorySelectionToggle(_ repository: RepositorySummary) -> some View {
+        let isSelected = selectedRepoRoots.contains(repository.root)
+        return Button {
+            if isSelected { selectedRepoRoots.remove(repository.root) }
+            else { selectedRepoRoots.insert(repository.root) }
+        } label: {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(isSelected ? AetowerDesign.Tone.cpu : AetowerDesign.Ink.tertiary)
+        }
+        .buttonStyle(.plain)
+        .help(isSelected ? "Deselect" : "Select for a bulk action")
+    }
+
+    private func repositorySelectAllToggle(visible visibleRepos: [RepositorySummary]) -> some View {
+        let visible = Set(visibleRepos.map(\.root))
+        let allSelected = !visible.isEmpty && visible.isSubset(of: selectedRepoRoots)
+        return Button {
+            if allSelected { selectedRepoRoots.subtract(visible) }
+            else { selectedRepoRoots.formUnion(visible) }
+        } label: {
+            Image(systemName: allSelected ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(allSelected ? AetowerDesign.Tone.cpu : AetowerDesign.Ink.tertiary)
+        }
+        .buttonStyle(.plain)
+        .help(allSelected ? "Deselect all visible" : "Select all visible")
+    }
+
+    /// Floating batch pill — the fleet-scale action surface. Mirrors the
+    /// Storage cleanup pill: content-width, hovers at the bottom, shows the
+    /// selection and the bulk actions, plus live progress while a batch drains.
+    @ViewBuilder
+    private var repositoryBulkPill: some View {
+        if !selectedRepoRoots.isEmpty {
+            let roots = Array(selectedRepoRoots)
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: "checklist").foregroundStyle(AetowerDesign.Tone.cpu)
+                Text("\(selectedRepoRoots.count) selected").font(.callout.weight(.semibold))
+
+                if let progress = state.repositoryBulkProgress, let label = state.repositoryBulkLabel {
+                    Divider().frame(height: 16)
+                    ProgressView().controlSize(.small)
+                    Text("\(label): \(progress.completed)/\(progress.total)")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                Divider().frame(height: 16)
+                Button("Run Scorecard") { state.bulkRunScorecard(roots: roots) }
+                    .buttonStyle(.bordered)
+                Button("Refresh providers") { state.bulkRefreshProviders(roots: roots) }
+                    .buttonStyle(.bordered)
+                Button {
+                    selectedRepoRoots.removeAll()
+                    state.clearRepositoryBulk()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .help("Clear selection")
+            }
+            .controlSize(.small)
+            .padding(.horizontal, AetowerDesign.Spacing.lg)
+            .padding(.vertical, AetowerDesign.Spacing.sm)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(AetowerDesign.Surface.divider, lineWidth: 1))
+            .shadow(color: .black.opacity(0.18), radius: 14, y: 5)
+            .fixedSize()
+        }
     }
 
     private func tableHeader(
@@ -788,6 +866,8 @@ public struct RepositoryView: View {
 
     private func repositoryWideRow(_ repository: RepositorySummary) -> some View {
         HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+            repositorySelectionToggle(repository)
+                .frame(width: 22)
             repositoryNameCell(repository)
                 .frame(width: 260, alignment: .leading)
             AetowerBadge(repository.statusLabel, tone: repository.statusTone)
@@ -807,6 +887,7 @@ public struct RepositoryView: View {
     private func repositoryCompactRow(_ repository: RepositorySummary) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
             HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                repositorySelectionToggle(repository)
                 repositoryNameCell(repository)
                 Spacer(minLength: AetowerDesign.Spacing.sm)
                 AetowerBadge(repository.statusLabel, tone: repository.statusTone)
