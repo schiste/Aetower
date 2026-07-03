@@ -251,11 +251,6 @@ public struct StorageView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            if !cleanupBasket.isEmpty || trashPendingBytes > 0 {
-                Divider()
-                cleanupStickyBar
-            }
         }
         .confirmationDialog(
             "Empty the Trash?",
@@ -268,11 +263,23 @@ public struct StorageView: View {
             Text("This permanently deletes everything in the Trash — including items that did not come from Aetower. This cannot be undone.")
         }
         .overlay(alignment: .bottom) {
-            if let undo = directTrashUndo {
-                directTrashUndoToast(undo)
-                    .padding(.bottom, cleanupBasket.isEmpty ? 24 : 72)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            // Floating stack: transient undo toast above the persistent
+            // cleanup pill. Both hover over content rather than reserving a
+            // full-width bar, so they never push the layout around.
+            VStack(spacing: AetowerDesign.Spacing.sm) {
+                if let undo = directTrashUndo {
+                    directTrashUndoToast(undo)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                if !cleanupBasket.isEmpty || trashPendingBytes > 0 {
+                    cleanupActionPill
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
+            .padding(.bottom, AetowerDesign.Spacing.xl)
+            .animation(AetowerDesign.Motion.smooth, value: cleanupBasket.count)
+            .animation(AetowerDesign.Motion.smooth, value: trashPendingBytes)
+            .animation(AetowerDesign.Motion.quick, value: directTrashUndo == nil)
         }
         .task {
             state.ensureStorageHygieneScan()
@@ -6703,71 +6710,30 @@ public struct StorageView: View {
     /// Persistent bar shown whenever the basket is non-empty: staging is now
     /// silent, so this is the standing affordance for reviewing/executing the
     /// batch (previously the basket sheet popped over the UI on every stage).
-    private var cleanupStickyBar: some View {
-        HStack(spacing: AetowerDesign.Spacing.md) {
+    /// Nimble floating pill (replaces the old full-width bottom bar). Hugs its
+    /// content, hovers over the workspace, and shows only the state and the one
+    /// or two actions that matter for the current step.
+    private var cleanupActionPill: some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
             if !cleanupBasket.isEmpty {
-                Label(
-                    "\(cleanupBasket.count) staged · \(formatBytes(cleanupBasketTotalBytes()))",
-                    systemImage: "tray.full"
-                )
-                .font(.callout.weight(.semibold))
-                if cleanupBasket.contains(where: \.requiresReview) {
-                    Text("includes review items")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                Image(systemName: "tray.full.fill")
+                    .foregroundStyle(AetowerDesign.Tone.disk)
+                Text("\(cleanupBasket.count) staged")
+                    .font(.callout.weight(.semibold))
+                Text(formatBytes(cleanupBasketTotalBytes()))
+                    .font(.callout).foregroundStyle(.secondary)
+
+                Button {
+                    cleanupBasket.removeAll()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
                 }
-            }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .help("Clear the basket")
 
-            if trashPendingBytes > 0 {
-                if !cleanupBasket.isEmpty {
-                    Divider().frame(height: 18)
-                }
-                // Step 2 of the reclaim: nothing is freed until the Trash is
-                // emptied, so the pending amount stays on screen until then.
-                Label(
-                    "\(formatBytes(trashPendingBytes)) in Trash — space frees when emptied",
-                    systemImage: "arrow.down.circle"
-                )
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            }
+                Divider().frame(height: 16)
 
-            Spacer()
-
-            if trashPendingBytes > 0 {
-                Button("Open Trash") { openTrash() }
-                    .buttonStyle(.bordered)
-                // Prominent only when it is the sole next step; a non-empty
-                // basket keeps Move to Trash as the single primary action.
-                if cleanupBasket.isEmpty {
-                    Button {
-                        confirmEmptyTrash = true
-                    } label: {
-                        Label(
-                            emptyTrashInFlight ? "Emptying…" : "Empty Trash…",
-                            systemImage: "trash.slash"
-                        )
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(emptyTrashInFlight)
-                } else {
-                    Button {
-                        confirmEmptyTrash = true
-                    } label: {
-                        Label(
-                            emptyTrashInFlight ? "Emptying…" : "Empty Trash…",
-                            systemImage: "trash.slash"
-                        )
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(emptyTrashInFlight)
-                }
-            }
-
-            if !cleanupBasket.isEmpty {
-                Button("Clear") { cleanupBasket.removeAll() }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
                 Button("Review") { showCleanupBasket = true }
                     .buttonStyle(.bordered)
                 Button {
@@ -6777,11 +6743,46 @@ public struct StorageView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+
+            if trashPendingBytes > 0 {
+                if !cleanupBasket.isEmpty {
+                    Divider().frame(height: 16)
+                }
+                Image(systemName: "arrow.down.circle.fill")
+                    .foregroundStyle(.secondary)
+                Text("\(formatBytes(trashPendingBytes)) in Trash")
+                    .font(.callout).foregroundStyle(.secondary)
+                Button("Open") { openTrash() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AetowerDesign.Status.ready)
+                // Prominent only when emptying is the sole remaining step; a
+                // non-empty basket keeps Move to Trash as the primary action.
+                if cleanupBasket.isEmpty {
+                    Button {
+                        confirmEmptyTrash = true
+                    } label: {
+                        Label(emptyTrashInFlight ? "Emptying…" : "Empty Trash", systemImage: "trash.slash")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(emptyTrashInFlight)
+                } else {
+                    Button {
+                        confirmEmptyTrash = true
+                    } label: {
+                        Label(emptyTrashInFlight ? "Emptying…" : "Empty Trash", systemImage: "trash.slash")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(emptyTrashInFlight)
+                }
+            }
         }
-        .controlSize(.regular)
-        .padding(.horizontal, AetowerDesign.Spacing.xl)
-        .padding(.vertical, AetowerDesign.Spacing.md)
-        .background(.bar)
+        .controlSize(.small)
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
+        .padding(.vertical, AetowerDesign.Spacing.sm)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(AetowerDesign.Surface.divider, lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 5)
+        .fixedSize()
     }
 
     private func directTrashUndoToast(_ undo: StorageDirectTrashUndo) -> some View {
