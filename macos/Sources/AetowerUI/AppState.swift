@@ -542,11 +542,14 @@ public final class AppState {
     private var appBecameActiveTask: Task<Void, Never>?
     @ObservationIgnored
     private var appResignedActiveTask: Task<Void, Never>?
-    /// Whether Aetower is the active application. When it is not, its windows
-    /// are not on screen, so the refresh loop stretches its cadence (see
+    /// Whether any Aetower window is actually on screen (occlusion `.visible`).
+    /// A window that is merely unfocused is still visible and must keep its
+    /// rings updating — so the refresh loop throttles on occlusion, not on
+    /// app-active/frontmost state. Only when every window is minimized, fully
+    /// covered, hidden, or on another Space does the cadence stretch (see
     /// `currentRefreshIntervalNanos`). Internal control state, not UI-bound.
     @ObservationIgnored
-    private var appIsActive = true
+    private var windowsVisible = true
     /// Base refresh cadence in nanoseconds, captured from the configured
     /// foreground interval in `start`. The background cadence is derived from
     /// this so a single source drives both.
@@ -840,12 +843,13 @@ public final class AppState {
         }
     }
 
-    /// Sleep interval for the refresh loop: the foreground cadence when Aetower
-    /// is active, stretched by `backgroundRefreshMultiplier` when it is not.
-    /// Regaining focus forces an immediate refresh (see `observeAppActivation`),
-    /// so the longer background sleep never delays what the user sees on focus.
+    /// Sleep interval for the refresh loop: the foreground cadence whenever any
+    /// window is visible on screen, stretched by `backgroundRefreshMultiplier`
+    /// only when every window is off screen. Becoming visible again forces an
+    /// immediate refresh (see `observeAppActivation`), so the longer off-screen
+    /// sleep never delays what the user sees when a window returns.
     private func currentRefreshIntervalNanos() -> UInt64 {
-        appIsActive
+        windowsVisible
             ? baseRefreshIntervalNanos
             : baseRefreshIntervalNanos * backgroundRefreshMultiplier
     }
@@ -4348,19 +4352,21 @@ public final class AppState {
         }
     }
 
-    /// Tracks whether Aetower itself is the active application so the refresh
-    /// loop can throttle while our windows are occluded. `NSApplication` posts
-    /// these on `NotificationCenter.default`; we seed `appIsActive` from the
-    /// current state in case the app launches in the background.
+    /// Tracks whether any Aetower window is on screen so the refresh loop only
+    /// throttles when nothing is visible. Keyed on window occlusion, NOT app
+    /// activation: an unfocused window is still visible and its rings must keep
+    /// updating. `NSWindow` posts occlusion changes on `NotificationCenter
+    /// .default`; we also re-evaluate on app-activation and miniaturize, which
+    /// do not always emit an occlusion change.
     private func observeAppActivation() {
-        appIsActive = NSApplication.shared.isActive
+        updateWindowsVisible()
         appResignedActiveTask = Task { [weak self] in
             guard let self else { return }
             for await _ in NotificationCenter.default.notifications(
-                named: NSApplication.didResignActiveNotification
+                named: NSWindow.didChangeOcclusionStateNotification
             ) {
                 guard !Task.isCancelled else { break }
-                await MainActor.run { self.appIsActive = false }
+                await MainActor.run { self.updateWindowsVisible() }
             }
         }
         appBecameActiveTask = Task { [weak self] in
@@ -4369,14 +4375,27 @@ public final class AppState {
                 named: NSApplication.didBecomeActiveNotification
             ) {
                 guard !Task.isCancelled else { break }
-                await MainActor.run {
-                    self.appIsActive = true
-                    // Pull immediately so focus shows fresh data rather than
-                    // whatever was last sampled on the slow background cadence.
-                    self.publishFrontmostState(force: true)
-                    self.refresh(force: true)
-                }
+                await MainActor.run { self.updateWindowsVisible(forceRefreshOnAppear: true) }
             }
+        }
+    }
+
+    /// A window counts as visible when AppKit reports it on screen (occlusion
+    /// `.visible`). This stays true for a visible-but-unfocused window and only
+    /// drops when every window is minimized, fully covered, hidden, or on
+    /// another Space. Erring toward "visible" is deliberate: over-updating a
+    /// barely-visible window is cheap; under-updating a visible one is the bug.
+    private func updateWindowsVisible(forceRefreshOnAppear: Bool = false) {
+        let visible = NSApplication.shared.windows.contains {
+            $0.isVisible && $0.occlusionState.contains(.visible)
+        }
+        let becameVisible = visible && !windowsVisible
+        windowsVisible = visible
+        if visible && (becameVisible || forceRefreshOnAppear) {
+            // Pull immediately so a returning window shows fresh data rather
+            // than whatever was last sampled on the slow off-screen cadence.
+            publishFrontmostState(force: true)
+            refresh(force: true)
         }
     }
 
