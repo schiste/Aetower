@@ -2672,6 +2672,15 @@ public struct RepositoryView: View {
                             scorecardStateLabel(report: report, isLoading: isLoading, error: error),
                             tone: scorecardStateTone(report: report, isLoading: isLoading, error: error)
                         )
+                        if let report, let freshness = report.freshnessLabel() {
+                            // Never let a cached supply-chain score read as a
+                            // fresh evaluation: show when it was taken, and warn
+                            // when the engine flagged it past its fresh window.
+                            AetowerBadge(
+                                report.isStale ? "Stale · \(freshness)" : freshness,
+                                tone: report.isStale ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+                            )
+                        }
                         Button {
                             state.runRepositoryScorecard(repoRoot: repository.root, mode: "auto", refresh: false)
                         } label: {

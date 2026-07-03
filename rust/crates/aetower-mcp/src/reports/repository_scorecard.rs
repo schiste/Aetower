@@ -351,9 +351,15 @@ fn build_repository_scorecard_report_with_cache(
     if let Some(cache_dir) = cache_dir {
         base.cache_key = Some(lookup_key.clone());
         if !refresh {
-            match read_scorecard_cache(cache_dir, &lookup_key) {
-                Some(mut cached) => {
-                    cached.cache_status = "hit".to_owned();
+            // A commit's OpenSSF score can change without the commit changing
+            // (e.g. a newly disclosed CVE flips the Vulnerabilities check), so
+            // the cache — keyed only on the commit — must not be served
+            // forever. Beyond the hard max age we re-fetch; within it but past
+            // the fresh window we still serve (no latency surprise) but mark it
+            // stale so the UI can say "as of <time>" and nudge a refresh.
+            match read_scorecard_cache(cache_dir, &lookup_key, current_millis()) {
+                Some((mut cached, is_stale)) => {
+                    cached.cache_status = if is_stale { "stale" } else { "hit" }.to_owned();
                     cached.cache_hit = true;
                     return cached;
                 }
@@ -683,18 +689,36 @@ fn default_scorecard_cache_dir() -> Option<PathBuf> {
     dirs::cache_dir().map(|path| path.join("Aetower").join("repository-scorecard").join("v1"))
 }
 
-fn read_scorecard_cache(cache_dir: &Path, lookup_key: &str) -> Option<RepositoryScorecardReport> {
+/// Serve time after which a cached scorecard is considered stale but is still
+/// returned (flagged), and the hard ceiling past which it is dropped so the
+/// next read re-fetches. Supply-chain posture drifts under a fixed commit, so
+/// neither window can be unbounded.
+const SCORECARD_CACHE_FRESH_MILLIS: u64 = 24 * 60 * 60 * 1000; // 1 day
+const SCORECARD_CACHE_HARD_MAX_MILLIS: u64 = 14 * 24 * 60 * 60 * 1000; // 14 days
+
+/// Returns the cached report and whether it is stale (older than the fresh
+/// window). `None` means no usable cache: absent, wrong schema, or older than
+/// the hard max — all of which should trigger a re-fetch.
+fn read_scorecard_cache(
+    cache_dir: &Path,
+    lookup_key: &str,
+    now_millis: u64,
+) -> Option<(RepositoryScorecardReport, bool)> {
     let path = scorecard_cache_file(cache_dir, lookup_key);
     let content = fs::read_to_string(path).ok()?;
     let record: RepositoryScorecardCacheRecord = serde_json::from_str(&content).ok()?;
     if record.schema_version != 1 {
         return None;
     }
+    let age = now_millis.saturating_sub(record.saved_at_millis);
+    if age > SCORECARD_CACHE_HARD_MAX_MILLIS {
+        return None;
+    }
     let mut report = record.report;
     if report.cached_at_millis.is_none() {
         report.cached_at_millis = Some(record.saved_at_millis);
     }
-    Some(report)
+    Some((report, age > SCORECARD_CACHE_FRESH_MILLIS))
 }
 
 fn write_scorecard_cache(

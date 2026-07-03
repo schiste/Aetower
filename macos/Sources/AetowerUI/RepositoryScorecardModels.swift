@@ -83,6 +83,26 @@ struct RepositoryScorecardReportModel: Decodable, Sendable {
         capturedAtMillis = try container.decodeIfPresent(UInt64.self, forKey: .capturedAtMillis) ?? 0
         warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
     }
+
+    /// The engine flags a cache older than its fresh window as "stale" while
+    /// still serving it. A supply-chain score can drift under a fixed commit,
+    /// so the UI must show freshness rather than imply a fresh evaluation.
+    var isStale: Bool { cacheStatus == "stale" }
+
+    /// Relative "as of" label derived from when the score was cached; nil when
+    /// this is a live (uncached) evaluation.
+    func freshnessLabel(now: Date = Date()) -> String? {
+        guard let cachedAtMillis, cachedAtMillis > 0 else { return nil }
+        let age = now.timeIntervalSince1970 - Double(cachedAtMillis) / 1000.0
+        return "as of \(Self.relativeAge(age))"
+    }
+
+    private static func relativeAge(_ seconds: TimeInterval) -> String {
+        if seconds < 90 { return "just now" }
+        if seconds < 3600 { return "\(Int(seconds / 60)) min ago" }
+        if seconds < 86_400 { return "\(Int(seconds / 3600)) h ago" }
+        return "\(Int(seconds / 86_400)) d ago"
+    }
 }
 
 struct RepositoryScorecardCheckModel: Decodable, Identifiable, Sendable {
