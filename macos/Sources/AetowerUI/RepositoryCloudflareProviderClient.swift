@@ -193,6 +193,28 @@ struct RepositoryCloudflareProviderClient: Sendable {
         )
     }
 
+    /// Retry (redeploy) a Cloudflare Pages deployment. Returns nil on success or
+    /// a human-readable error otherwise — makes the deploy tile actionable.
+    func redeployPages(
+        accountID: String,
+        projectName: String,
+        deploymentId: String,
+        token: String?
+    ) async -> String? {
+        do {
+            try await post(
+                path: ["accounts", accountID, "pages", "projects", projectName,
+                       "deployments", deploymentId, "retry"],
+                token: token?.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            return nil
+        } catch let failure as RepositoryCloudflareHTTPFailure {
+            return "Redeploy failed: HTTP \(failure.statusCode)\(failure.detailSuffix)."
+        } catch {
+            return "Redeploy failed: \(error.localizedDescription)"
+        }
+    }
+
     private func get<T: Decodable>(
         _ type: T.Type,
         path: [String],
@@ -214,6 +236,22 @@ struct RepositoryCloudflareProviderClient: Sendable {
             throw RepositoryCloudflareHTTPFailure(statusCode: response.statusCode, message: message)
         }
         return try decoder.decode(type, from: data)
+    }
+
+    private func post(path: [String], token: String?) async throws {
+        let url = try url(path: path, queryItems: [])
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Aetower", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await transport(request)
+        guard (200..<300).contains(response.statusCode) else {
+            let message = try? decoder.decode(CloudflareErrorResponse.self, from: data).errorMessage
+            throw RepositoryCloudflareHTTPFailure(statusCode: response.statusCode, message: message)
+        }
     }
 
     private func url(path: [String], queryItems: [URLQueryItem]) throws -> URL {

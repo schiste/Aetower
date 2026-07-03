@@ -271,6 +271,11 @@ private final class RepositoryCloudflareProviderMainActorPublisher: @unchecked S
             status: status
         )
     }
+
+    @MainActor
+    func finishRedeploy(repoRoot: String, link: RepositoryProjectLinkModel, error: String?) {
+        state?.applyCloudflareRedeployResult(repoRoot: repoRoot, link: link, error: error)
+    }
 }
 
 @MainActor
@@ -2797,6 +2802,59 @@ public final class AppState {
         link: RepositoryProjectLinkModel
     ) -> String {
         "\(RepositoryProjectModel.normalizedRepoRoot(repoRoot))::\(link.identityKey)"
+    }
+
+    /// Retry a failed Cloudflare Pages deployment from the provider tile, then
+    /// refresh status. Workers use a different deploy mechanism and are not
+    /// retryable this way, so the caller only offers this for pages links.
+    func redeployRepositoryCloudflare(
+        repoRoot: String,
+        link: RepositoryProjectLinkModel,
+        deploymentId: String
+    ) {
+        let key = RepositoryProjectModel.normalizedRepoRoot(repoRoot)
+        let loadingKey = repositoryCloudflareProviderKey(repoRoot: key, link: link)
+        guard link.kind == .pages,
+              let accountID = link.accountId, !accountID.isEmpty,
+              let projectName = link.projectName, !projectName.isEmpty
+        else {
+            repositoryProjectCloudflareErrorsByKey[loadingKey] =
+                "Only linked Cloudflare Pages projects can be redeployed here."
+            return
+        }
+        let client = repositoryCloudflareProviderClient
+        let token = ProviderCredentialStore().resolvedAccessToken(for: .cloudflare)
+        let publisher = RepositoryCloudflareProviderMainActorPublisher(self)
+        Task.detached(priority: .userInitiated) { [client, publisher] in
+            let error = await client.redeployPages(
+                accountID: accountID,
+                projectName: projectName,
+                deploymentId: deploymentId,
+                token: token
+            )
+            await publisher.finishRedeploy(repoRoot: key, link: link, error: error)
+        }
+    }
+
+    fileprivate func applyCloudflareRedeployResult(
+        repoRoot: String,
+        link: RepositoryProjectLinkModel,
+        error: String?
+    ) {
+        let loadingKey = repositoryCloudflareProviderKey(repoRoot: repoRoot, link: link)
+        if let error {
+            repositoryProjectCloudflareErrorsByKey[loadingKey] = error
+            recordLocalDiagnosticsEvent(
+                level: .warn,
+                subsystem: .ui,
+                eventType: "repository-cloudflare-redeploy-failed",
+                message: error,
+                fields: [DiagnosticsField(key: "repo_root", value: repoRoot)]
+            )
+            return
+        }
+        repositoryProjectCloudflareErrorsByKey[loadingKey] = nil
+        refreshRepositoryCloudflareStatus(repoRoot: repoRoot, link: link, force: true)
     }
 
     func refreshRepositoryCloudflareStatus(

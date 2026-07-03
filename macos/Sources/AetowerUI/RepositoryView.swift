@@ -1162,6 +1162,24 @@ public struct RepositoryView: View {
                     Text(repositoryProjectCloudflareCapturedLabel(status))
                         .font(AetowerDesign.Typography.metadata)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
+                    // Pages deployments can be retried in place; the read-only
+                    // deploy tile becomes a control surface.
+                    if link.kind == .pages, let deploymentId = status?.deploymentId, !deploymentId.isEmpty {
+                        Button {
+                            state.redeployRepositoryCloudflare(
+                                repoRoot: repository.root,
+                                link: link,
+                                deploymentId: deploymentId
+                            )
+                        } label: {
+                            Label("Redeploy", systemImage: "arrow.clockwise")
+                                .labelStyle(.iconOnly)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.mini)
+                        .disabled(isLoading)
+                        .help("Retry this Cloudflare Pages deployment.")
+                    }
                 }
 
                 if let status {
