@@ -77,9 +77,14 @@ mod platform {
                 break;
             }
             if let Some(sample) = read_entry_sample(entry) {
+                // Utilisation is the busiest accelerator (summing percentages is
+                // meaningless), but memory is the total in use across all GPUs —
+                // max under-reported VRAM on integrated+discrete Macs.
                 merged.gpu_percent = merged.gpu_percent.max(sample.gpu_percent);
                 merged.ane_percent = merged.ane_percent.max(sample.ane_percent);
-                merged.gpu_memory_bytes = merged.gpu_memory_bytes.max(sample.gpu_memory_bytes);
+                merged.gpu_memory_bytes = merged
+                    .gpu_memory_bytes
+                    .saturating_add(sample.gpu_memory_bytes);
                 if merged.gpu_temperature_celsius.is_none() {
                     merged.gpu_temperature_celsius = sample.gpu_temperature_celsius;
                 }
