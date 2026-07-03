@@ -99,6 +99,198 @@ private struct RepositoryPrimaryAction {
     let kind: RepositoryPrimaryActionKind
 }
 
+/// Precomputed, value-only display data for one cockpit row. The parent builds
+/// this from its existing helpers so the row view stays a pure function of its
+/// inputs — no reach-back into AppState.
+private struct RepositoryRowModel {
+    let id: String
+    let name: String
+    let shortPath: String
+    let statusLabel: String
+    let statusTone: Color
+    let gitOverview: String
+    let gitDetail: String
+    let inventoryLabel: String
+    let inventoryTone: Color
+    let inventoryDetail: String
+    let attentionTitle: String
+    let attentionDetail: String
+    let aiUsageLabel: String?
+    let aiUsageHelp: String
+    let projectTone: Color?
+    let projectName: String?
+    let primaryAction: RepositoryPrimaryAction
+    let inventoryNeedsAttention: Bool
+    let isSelected: Bool
+}
+
+/// One repository row, extracted from the 4,200-line RepositoryView so the
+/// cockpit list is composed of child View structs rather than methods on one
+/// god-object. Renders from a value model and reports interactions through
+/// closures; it never touches AppState directly.
+private struct RepositoryRow: View {
+    let model: RepositoryRowModel
+    let onToggleSelect: () -> Void
+    let onPrimaryAction: () -> Void
+    let onReveal: () -> Void
+    let onCopyPath: () -> Void
+    let onCopyBrief: () -> Void
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            wideRow
+            compactRow
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.md)
+        .padding(.vertical, AetowerDesign.Spacing.sm)
+        .background(model.inventoryNeedsAttention ? AetowerDesign.Status.warning.opacity(0.05) : Color.clear)
+        .contextMenu {
+            Button("Reveal in Finder", action: onReveal)
+            Button("Copy path", action: onCopyPath)
+            Button("Copy optimization brief", action: onCopyBrief)
+        }
+    }
+
+    private var wideRow: some View {
+        HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+            selectionToggle
+                .frame(width: 22)
+            nameCell
+                .frame(width: 260, alignment: .leading)
+            AetowerBadge(model.statusLabel, tone: model.statusTone)
+                .frame(width: 92, alignment: .leading)
+            cellText(model.gitOverview, detail: model.gitDetail)
+                .frame(width: 120, alignment: .leading)
+            inventoryCell
+                .frame(width: 118, alignment: .leading)
+            attentionCell
+                .frame(width: 220, alignment: .leading)
+            Spacer(minLength: AetowerDesign.Spacing.sm)
+            primaryButton
+                .frame(width: 180, alignment: .trailing)
+        }
+    }
+
+    private var compactRow: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                selectionToggle
+                nameCell
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                AetowerBadge(model.statusLabel, tone: model.statusTone)
+            }
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                cellText("Git", detail: model.gitOverview)
+                inventoryCell
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                primaryButton
+            }
+            attentionCell
+        }
+    }
+
+    private var selectionToggle: some View {
+        Button(action: onToggleSelect) {
+            Image(systemName: model.isSelected ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(model.isSelected ? AetowerDesign.Tone.cpu : AetowerDesign.Ink.tertiary)
+        }
+        .buttonStyle(.plain)
+        .help(model.isSelected ? "Deselect" : "Select for a bulk action")
+    }
+
+    private var nameCell: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            NavigationLink(value: model.id) {
+                Text(model.name)
+                    .font(AetowerDesign.Typography.controlLabel)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .buttonStyle(.plain)
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Text(model.shortPath)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let projectTone = model.projectTone {
+                    Text("Project")
+                        .font(AetowerDesign.Typography.metadataStrong)
+                        .foregroundStyle(projectTone)
+                        .padding(.horizontal, AetowerDesign.Spacing.xs)
+                        .padding(.vertical, 1)
+                        .background(projectTone.opacity(0.08), in: Capsule())
+                        .help(model.projectName ?? "")
+                }
+                if let aiUsageLabel = model.aiUsageLabel {
+                    Text(aiUsageLabel)
+                        .font(AetowerDesign.Typography.metadataStrong)
+                        .foregroundStyle(AetowerDesign.Tone.energy)
+                        .padding(.horizontal, AetowerDesign.Spacing.xs)
+                        .padding(.vertical, 1)
+                        .background(AetowerDesign.Tone.energy.opacity(0.08), in: Capsule())
+                        .help(model.aiUsageHelp)
+                }
+            }
+        }
+    }
+
+    private var inventoryCell: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            AetowerBadge(model.inventoryLabel, tone: model.inventoryTone)
+            Text(model.inventoryDetail)
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private var attentionCell: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            Text(model.attentionTitle)
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+                .foregroundStyle(AetowerDesign.Ink.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Text(model.attentionDetail)
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(2)
+                .truncationMode(.tail)
+        }
+    }
+
+    private var primaryButton: some View {
+        Button(action: onPrimaryAction) {
+            Label(model.primaryAction.title, systemImage: model.primaryAction.systemImage)
+                .lineLimit(1)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(model.primaryAction.tone)
+        .help(model.primaryAction.detail)
+    }
+
+    private func cellText(_ value: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            Text(value)
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+                .foregroundStyle(AetowerDesign.Ink.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+    }
+}
+
 private struct ScorecardWorkflowPreview: Identifiable {
     let id: String
     let repositoryName: String
@@ -765,19 +957,6 @@ public struct RepositoryView: View {
         .padding(.vertical, AetowerDesign.Spacing.sm)
     }
 
-    private func repositorySelectionToggle(_ repository: RepositorySummary) -> some View {
-        let isSelected = selectedRepoRoots.contains(repository.root)
-        return Button {
-            if isSelected { selectedRepoRoots.remove(repository.root) }
-            else { selectedRepoRoots.insert(repository.root) }
-        } label: {
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(isSelected ? AetowerDesign.Tone.cpu : AetowerDesign.Ink.tertiary)
-        }
-        .buttonStyle(.plain)
-        .help(isSelected ? "Deselect" : "Select for a bulk action")
-    }
-
     private func repositorySelectAllToggle(visible visibleRepos: [RepositorySummary]) -> some View {
         let visible = Set(visibleRepos.map(\.root))
         let allSelected = !visible.isEmpty && visible.isSubset(of: selectedRepoRoots)
@@ -847,109 +1026,49 @@ public struct RepositoryView: View {
     }
 
     private func repositoryListRow(_ repository: RepositorySummary) -> some View {
-        ViewThatFits(in: .horizontal) {
-            repositoryWideRow(repository)
-            repositoryCompactRow(repository)
-        }
-        .padding(.horizontal, AetowerDesign.Spacing.md)
-        .padding(.vertical, AetowerDesign.Spacing.sm)
-        .background(repository.inventoryNeedsAttention ? AetowerDesign.Status.warning.opacity(0.05) : Color.clear)
-        .contextMenu {
-            Button("Reveal in Finder") {
-                reveal(repository.root)
-            }
-            Button("Copy path") {
-                copy(repository.root)
-            }
-            Button("Copy optimization brief") {
+        let project = repositoryProject(for: repository)
+        let attention = repositoryAttentionItems(repository).first
+        let action = primaryRepositoryAction(repository)
+        let model = RepositoryRowModel(
+            id: repository.id,
+            name: repository.name,
+            shortPath: shortPath(repository.root),
+            statusLabel: repository.statusLabel,
+            statusTone: repository.statusTone,
+            gitOverview: gitOverviewLabel(repository),
+            gitDetail: repository.gitBranch ?? repository.gitHead ?? "",
+            inventoryLabel: inventoryFreshnessLabel(repository),
+            inventoryTone: inventoryFreshnessTone(repository),
+            inventoryDetail: inventoryFreshnessDetail(repository),
+            attentionTitle: attention?.title ?? "Ready",
+            attentionDetail: attention?.detail ?? "No immediate action required.",
+            aiUsageLabel: repository.aiRunCount > 0 ? repositoryAiUsageLabel(repository) : nil,
+            aiUsageHelp: repositoryAiUsageHelp(repository),
+            projectTone: project.map { repositoryProjectTone($0) },
+            projectName: project?.name,
+            primaryAction: action,
+            inventoryNeedsAttention: repository.inventoryNeedsAttention,
+            isSelected: selectedRepoRoots.contains(repository.root)
+        )
+        return RepositoryRow(
+            model: model,
+            onToggleSelect: { toggleRepoSelection(repository.root) },
+            onPrimaryAction: { performPrimaryRepositoryAction(action, repository: repository) },
+            onReveal: { reveal(repository.root) },
+            onCopyPath: { copy(repository.root) },
+            onCopyBrief: {
                 copy(optimizationBrief(for: repository))
                 copiedRepositoryID = repository.id
             }
+        )
+    }
+
+    private func toggleRepoSelection(_ root: String) {
+        if selectedRepoRoots.contains(root) {
+            selectedRepoRoots.remove(root)
+        } else {
+            selectedRepoRoots.insert(root)
         }
-    }
-
-    private func repositoryWideRow(_ repository: RepositorySummary) -> some View {
-        HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
-            repositorySelectionToggle(repository)
-                .frame(width: 22)
-            repositoryNameCell(repository)
-                .frame(width: 260, alignment: .leading)
-            AetowerBadge(repository.statusLabel, tone: repository.statusTone)
-                .frame(width: 92, alignment: .leading)
-            repositoryCellText(gitOverviewLabel(repository), detail: repository.gitBranch ?? repository.gitHead ?? "")
-                .frame(width: 120, alignment: .leading)
-            inventoryFreshnessCell(repository)
-                .frame(width: 118, alignment: .leading)
-            repositoryAttentionReasonCell(repository)
-                .frame(width: 220, alignment: .leading)
-            Spacer(minLength: AetowerDesign.Spacing.sm)
-            repositoryPrimaryActionButton(repository)
-                .frame(width: 180, alignment: .trailing)
-        }
-    }
-
-    private func repositoryCompactRow(_ repository: RepositorySummary) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-            HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
-                repositorySelectionToggle(repository)
-                repositoryNameCell(repository)
-                Spacer(minLength: AetowerDesign.Spacing.sm)
-                AetowerBadge(repository.statusLabel, tone: repository.statusTone)
-            }
-            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
-                repositoryCellText("Git", detail: gitOverviewLabel(repository))
-                inventoryFreshnessCell(repository)
-                Spacer(minLength: AetowerDesign.Spacing.sm)
-                repositoryPrimaryActionButton(repository)
-            }
-            repositoryAttentionReasonCell(repository)
-        }
-    }
-
-    private func repositoryNameCell(_ repository: RepositorySummary) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-            NavigationLink(value: repository.id) {
-                Text(repository.name)
-                    .font(AetowerDesign.Typography.controlLabel)
-                    .foregroundStyle(AetowerDesign.Ink.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .buttonStyle(.plain)
-            HStack(spacing: AetowerDesign.Spacing.xs) {
-                Text(shortPath(repository.root))
-                    .font(AetowerDesign.Typography.metadata)
-                    .foregroundStyle(AetowerDesign.Ink.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if let project = repositoryProject(for: repository) {
-                    repositoryProjectChip(project)
-                }
-                if repository.aiRunCount > 0 {
-                    repositoryAiUsageChip(repository)
-                }
-            }
-        }
-    }
-
-    private func repositoryAiUsageChip(_ repository: RepositorySummary) -> some View {
-        Text(repositoryAiUsageLabel(repository))
-            .font(AetowerDesign.Typography.metadataStrong)
-            .foregroundStyle(AetowerDesign.Tone.energy)
-            .padding(.horizontal, AetowerDesign.Spacing.xs)
-            .padding(.vertical, 1)
-            .background(AetowerDesign.Tone.energy.opacity(0.08), in: Capsule())
-            .help(repositoryAiUsageHelp(repository))
-    }
-
-    private func repositoryProjectChip(_ project: RepositoryProjectModel) -> some View {
-        Text("Project")
-            .font(AetowerDesign.Typography.metadataStrong)
-            .foregroundStyle(repositoryProjectTone(project))
-            .padding(.horizontal, AetowerDesign.Spacing.xs)
-            .padding(.vertical, 1)
-            .background(repositoryProjectTone(project).opacity(0.08), in: Capsule())
-            .help(project.name)
     }
 
     private func repositoryProjectSection(_ repository: RepositorySummary) -> some View {
@@ -1402,50 +1521,6 @@ public struct RepositoryView: View {
             expandedProjectSectionRepositoryID == repository.id
         } set: { isExpanded in
             expandedProjectSectionRepositoryID = isExpanded ? repository.id : nil
-        }
-    }
-
-    private func repositoryCellText(_ value: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-            Text(value)
-                .font(AetowerDesign.Typography.caption.weight(.semibold))
-                .foregroundStyle(AetowerDesign.Ink.primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if !detail.isEmpty {
-                Text(detail)
-                    .font(AetowerDesign.Typography.metadata)
-                    .foregroundStyle(AetowerDesign.Ink.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-        }
-    }
-
-    private func repositoryAttentionReasonCell(_ repository: RepositorySummary) -> some View {
-        let item = repositoryAttentionItems(repository).first
-        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-            Text(item?.title ?? "Ready")
-                .font(AetowerDesign.Typography.caption.weight(.semibold))
-                .foregroundStyle(AetowerDesign.Ink.primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Text(item?.detail ?? "No immediate action required.")
-                .font(AetowerDesign.Typography.metadata)
-                .foregroundStyle(AetowerDesign.Ink.secondary)
-                .lineLimit(2)
-                .truncationMode(.tail)
-        }
-    }
-
-    private func inventoryFreshnessCell(_ repository: RepositorySummary) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-            AetowerBadge(inventoryFreshnessLabel(repository), tone: inventoryFreshnessTone(repository))
-            Text(inventoryFreshnessDetail(repository))
-                .font(AetowerDesign.Typography.metadata)
-                .foregroundStyle(AetowerDesign.Ink.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
         }
     }
 
