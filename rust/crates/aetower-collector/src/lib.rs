@@ -242,6 +242,11 @@ struct NetworkInterfaceIdentitySample {
 const USER_DIRECTORY_INITIAL_REFRESH_TICKS: u8 = 10;
 const USER_DIRECTORY_REFRESH_INTERVAL_TICKS: u8 = 120;
 const PROCESS_DISCOVERY_INTERVAL_TICKS: u8 = 30;
+/// A slower discovery floor that fires even while `defer_expensive_sampling` is
+/// on, so a sustained-pressure host (exactly when processes churn — a build, an
+/// install) still enumerates new PIDs periodically instead of freezing the
+/// process set until pressure abates.
+const PROCESS_DISCOVERY_DEFER_FLOOR_TICKS: u8 = 60;
 const PROCESS_MEMORY_REFRESH_INTERVAL_TICKS: u8 = 5;
 /// Fixed collector cadence in seconds — the engine drives `Collector::collect()`
 /// on this interval, so deltas reported by `sysinfo` can be divided by it to
@@ -404,7 +409,10 @@ impl Collector {
             || (!self.config.defer_expensive_sampling
                 && self
                     .process_metadata_tick
-                    .is_multiple_of(PROCESS_DISCOVERY_INTERVAL_TICKS));
+                    .is_multiple_of(PROCESS_DISCOVERY_INTERVAL_TICKS))
+            || self
+                .process_metadata_tick
+                .is_multiple_of(PROCESS_DISCOVERY_DEFER_FLOOR_TICKS);
         let refresh_memory = full_collection
             || (!self.config.defer_expensive_sampling
                 && (discovery_scan
@@ -529,23 +537,29 @@ impl Collector {
                 let sample_rusage = sample_wakeups
                     || refresh_memory
                     || (previous.is_none() && !self.config.defer_expensive_sampling);
+                // Track whether we actually got a fresh reading this tick, so a
+                // FAILED read (e.g. EPERM on a root process) carries the prior
+                // baseline rather than resetting it — otherwise the next
+                // successful read divides by a short interval and spikes.
+                let mut rusage_read_ok = false;
                 let (wakeups, energy_nj, physical_footprint_bytes) = if sample_rusage {
-                    platform::process_counters(pid)
-                        .map(|counters| {
+                    match platform::process_counters(pid) {
+                        Some(counters) => {
+                            rusage_read_ok = true;
                             (
                                 counters.wakeups,
                                 counters.energy_nj,
                                 counters.physical_footprint_bytes,
                             )
-                        })
-                        .unwrap_or_else(|| {
-                            let prev_wakeups = previous.map(|prev| prev.wakeups).unwrap_or(0);
-                            let prev_energy = previous.map(|prev| prev.energy_nj).unwrap_or(0);
-                            let prev_footprint = previous
+                        }
+                        None => (
+                            previous.map(|prev| prev.wakeups).unwrap_or(0),
+                            previous.map(|prev| prev.energy_nj).unwrap_or(0),
+                            previous
                                 .map(|prev| prev.physical_footprint_bytes)
-                                .unwrap_or(0);
-                            (prev_wakeups, prev_energy, prev_footprint)
-                        })
+                                .unwrap_or(0),
+                        ),
+                    }
                 } else {
                     (
                         previous.map(|prev| prev.wakeups).unwrap_or(0),
@@ -581,7 +595,9 @@ impl Collector {
                     f64,
                     Option<std::time::Instant>,
                 ) = match previous {
-                    Some(prev) if !sample_rusage => (
+                    // No fresh reading this tick (not sampled, or the read
+                    // failed): carry the last rate AND the last baseline time.
+                    Some(prev) if !rusage_read_ok => (
                         prev.wakeups_per_second,
                         prev.energy_nj_per_s,
                         prev.counters_sampled_at,
@@ -596,7 +612,11 @@ impl Collector {
                         let e = energy_nj.saturating_sub(prev.energy_nj) as f64 / elapsed;
                         (w, e, Some(process_sampling_started))
                     }
-                    None => (0.0, 0.0, Some(process_sampling_started)),
+                    // First sighting: only establish a baseline once we have a
+                    // genuine reading, so a new PID whose first read fails does
+                    // not anchor to a zero counter.
+                    None if rusage_read_ok => (0.0, 0.0, Some(process_sampling_started)),
+                    None => (0.0, 0.0, None),
                 };
                 // Disk I/O is refreshed every tick, so the delta spans the real
                 // inter-collect interval; divide by it for a true per-second
