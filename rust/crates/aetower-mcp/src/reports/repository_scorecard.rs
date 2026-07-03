@@ -294,7 +294,14 @@ fn repository_scorecard_report_from_scorecard_json(
         .filter(|check| check.outcome == "unavailable")
         .cloned()
         .collect::<Vec<_>>();
-    let recommendations = recommendations_for_checks(&failed_checks);
+    // Recommend improvements for everything below the "strong" bar (failed and
+    // warning), so banding the outcome doesn't shrink remediation coverage.
+    let improvable_checks = checks
+        .iter()
+        .filter(|check| check.outcome == "failed" || check.outcome == "warning")
+        .cloned()
+        .collect::<Vec<_>>();
+    let recommendations = recommendations_for_checks(&improvable_checks);
 
     Ok(RepositoryScorecardReport {
         repo_root,
@@ -503,11 +510,23 @@ fn empty_report(
 
 fn normalize_scorecard_check(raw: RawScorecardCheck) -> RepositoryScorecardCheck {
     let score = raw.score;
+    // OpenSSF checks are scored 0-10; a perfect 10 is not the only acceptable
+    // state. The old mapping labelled everything below 10 as "failed" (so a
+    // strong 9.0 read as a failure) and everything above 10 as "passed" (so
+    // malformed data read as a pass). Band the score and clamp instead.
     let outcome = match score {
-        Some(value) if value < 0.0 => "unavailable",
-        Some(value) if value >= 10.0 => "passed",
-        Some(_) => "failed",
         None => "unavailable",
+        Some(value) if value < 0.0 => "unavailable",
+        Some(value) => {
+            let clamped = value.min(10.0);
+            if clamped >= 8.0 {
+                "passed"
+            } else if clamped >= 5.0 {
+                "warning"
+            } else {
+                "failed"
+            }
+        }
     }
     .to_owned();
     let documentation = raw.documentation;
