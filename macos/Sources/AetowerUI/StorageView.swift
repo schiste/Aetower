@@ -6854,19 +6854,8 @@ public struct StorageView: View {
     }
 
     nonisolated private static func trashSingleItem(_ path: String) -> (trashURL: URL?, message: String) {
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return (nil, "Empty path") }
-        let url = URL(fileURLWithPath: trimmed)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return (nil, "Path no longer exists")
-        }
-        do {
-            var resultingURL: NSURL?
-            try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
-            return (resultingURL as URL?, "Moved to Trash")
-        } catch {
-            return (nil, error.localizedDescription)
-        }
+        let outcome = TrashService.trash(path)
+        return (outcome.trashURL, outcome.message)
     }
 
     private func presentDirectTrashUndo(_ undo: StorageDirectTrashUndo) {
@@ -6962,28 +6951,8 @@ public struct StorageView: View {
     }
 
     nonisolated private static func emptyHomeTrash() -> (removed: Int, failed: Int, firstError: String?) {
-        let fm = FileManager.default
-        let trash = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".Trash")
-        guard let entries = try? fm.contentsOfDirectory(
-            at: trash,
-            includingPropertiesForKeys: nil,
-            options: []
-        ) else {
-            return (0, 0, nil)
-        }
-        var removed = 0
-        var failed = 0
-        var firstError: String?
-        for entry in entries {
-            do {
-                try fm.removeItem(at: entry)
-                removed += 1
-            } catch {
-                failed += 1
-                if firstError == nil { firstError = error.localizedDescription }
-            }
-        }
-        return (removed, failed, firstError)
+        let outcome = TrashService.emptyHomeTrash()
+        return (outcome.removed, outcome.failed, outcome.firstError)
     }
 
     private func uniquePaths(_ paths: [String]) -> [String] {
@@ -7114,43 +7083,15 @@ public struct StorageView: View {
 
     nonisolated private static func movePathsToTrash(_ paths: [String]) -> StorageCleanupExecutionResult {
         let started = Date()
-        var movedPaths: [String] = []
-        var failedPaths: [String: String] = [:]
-        var output: [String] = []
-        for path in paths {
-            let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            let url = URL(fileURLWithPath: trimmed)
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                failedPaths[trimmed] = "Path no longer exists"
-                output.append("Missing: \(trimmed)")
-                continue
-            }
-            do {
-                var resultingURL: NSURL?
-                try FileManager.default.trashItem(
-                    at: url,
-                    resultingItemURL: &resultingURL
-                )
-                movedPaths.append(trimmed)
-                if let resultingURL {
-                    output.append("Moved: \(trimmed) -> \(resultingURL.path ?? "Trash")")
-                } else {
-                    output.append("Moved: \(trimmed) -> Trash")
-                }
-            } catch {
-                failedPaths[trimmed] = error.localizedDescription
-                output.append("Failed: \(trimmed) - \(error.localizedDescription)")
-            }
-        }
-
-        let summary = "Moved \(movedPaths.count) item\(movedPaths.count == 1 ? "" : "s") to Trash; \(failedPaths.count) issue\(failedPaths.count == 1 ? "" : "s")."
+        let outcome = TrashService.trash(paths: paths)
+        let lines = outcome.movedPaths.map { "Moved: \($0) -> Trash" }
+            + outcome.failedPaths.map { "Failed: \($0.key) - \($0.value)" }
         return StorageCleanupExecutionResult(
-            exitCode: failedPaths.isEmpty ? 0 : 1,
-            output: ([summary] + output).joined(separator: "\n"),
+            exitCode: outcome.succeeded ? 0 : 1,
+            output: ([outcome.summaryLine] + lines).joined(separator: "\n"),
             durationSeconds: Date().timeIntervalSince(started),
-            movedPaths: movedPaths,
-            failedPaths: failedPaths
+            movedPaths: outcome.movedPaths,
+            failedPaths: outcome.failedPaths
         )
     }
 
