@@ -75,6 +75,7 @@ const STORAGE_TREEMAP_MAX_CHILDREN: usize = 14;
 const STORAGE_TREEMAP_MAX_ITEMS: usize = 160;
 const STORAGE_WRITER_LEDGER_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const STORAGE_WRITER_LEDGER_TIME_FUZZ_MILLIS: u64 = 10 * 60 * 1000;
+const STORAGE_FILESYSTEM_EVENT_LEDGER_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const REPOSITORY_INVENTORY_TIME_BUDGET: Duration = Duration::from_millis(30_000);
 const REPOSITORY_INVENTORY_MAX_DIRECTORIES: u64 = 200_000;
 const STORAGE_SCAN_LATENCY_WARN_MILLIS: u64 = 3_000;
@@ -293,8 +294,8 @@ use agent_guidance::{
     local_markdown_paths, markdown_headings,
 };
 use attribution::{
-    attribute_storage_growth_delta, known_agent_path, load_storage_writer_ledger_records,
-    summarize_agent_hygiene,
+    attribute_storage_growth_delta, known_agent_path, load_storage_filesystem_event_records,
+    load_storage_writer_ledger_records, summarize_agent_hygiene,
 };
 use cleanup::{
     ArtifactRule, LARGE_DIRECTORY_RULE, apply_cleanup_guardrails, artifact_attribution,
@@ -321,16 +322,17 @@ use models::{
     StorageArtifactAttribution, StorageBudgetGuardrails, StorageBudgetViolation,
     StorageCleanupBundle, StorageCleanupBundleItem, StorageCleanupRecipe,
     StorageCleanupTierSummary, StorageColdData, StorageColdDataBand, StorageDuplicateGroup,
-    StorageDuplicateItem, StorageGrowthAttribution, StorageGrowthDelta, StorageGrowthForecast,
-    StorageGrowthInsights, StorageGrowthInsightsResponse, StorageGrowthRate,
-    StorageHygieneActionsResponse, StorageHygieneItem, StorageHygieneItemsPageResponse,
-    StorageHygieneOptions, StorageHygieneOverviewResponse, StorageHygieneRepoDetailResponse,
-    StorageHygieneSummary, StorageInvestigationFinding, StorageInvestigationSummary,
-    StorageItemSortKey, StoragePerformanceBudgetDiagnostics, StoragePreventionPolicy,
-    StoragePreventionSuggestion, StorageRepoArtifactFolder, StorageRepoArtifactMix,
-    StorageRepoFootprint, StorageRepositoryInventoryItem, StorageScanDiagnostics, StorageScanDiff,
-    StorageScanDiffEntry, StorageScanMetrics, StorageSkippedRoot, StorageSourceCoverage,
-    StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
+    StorageDuplicateItem, StorageFilesystemEventRecord, StorageGrowthAttribution,
+    StorageGrowthDelta, StorageGrowthForecast, StorageGrowthInsights,
+    StorageGrowthInsightsResponse, StorageGrowthRate, StorageHygieneActionsResponse,
+    StorageHygieneItem, StorageHygieneItemsPageResponse, StorageHygieneOptions,
+    StorageHygieneOverviewResponse, StorageHygieneRepoDetailResponse, StorageHygieneSummary,
+    StorageInvestigationFinding, StorageInvestigationSummary, StorageItemSortKey,
+    StoragePerformanceBudgetDiagnostics, StoragePreventionPolicy, StoragePreventionSuggestion,
+    StorageRepoArtifactFolder, StorageRepoArtifactMix, StorageRepoFootprint,
+    StorageRepositoryInventoryItem, StorageScanDiagnostics, StorageScanDiff, StorageScanDiffEntry,
+    StorageScanMetrics, StorageSkippedRoot, StorageSourceCoverage, StorageSystemDataBucket,
+    StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
 };
 pub use projection::{
     storage_growth_insights_json, storage_hygiene_actions_json, storage_hygiene_items_page_json,

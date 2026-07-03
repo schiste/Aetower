@@ -185,6 +185,7 @@ pub(super) struct StorageGrowthDelta {
     pub(super) chau7_session_id: Option<String>,
     pub(super) writer_display: Option<String>,
     pub(super) matched_writer_count: u64,
+    pub(super) matched_filesystem_event_count: u64,
     pub(super) attribution_sources: Vec<String>,
     pub(super) attribution_confidence: String,
     pub(super) attribution_confidence_score: u8,
@@ -333,6 +334,20 @@ pub(super) struct StorageWriterLedgerRecord {
     pub(super) source: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(super) struct StorageFilesystemEventRecord {
+    #[serde(default, alias = "event_millis")]
+    pub(super) timestamp_millis: Option<u64>,
+    #[serde(default)]
+    pub(super) path: Option<String>,
+    #[serde(default)]
+    pub(super) event_id: Option<u64>,
+    #[serde(default)]
+    pub(super) flags: Option<u64>,
+    #[serde(default)]
+    pub(super) source: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct StorageGrowthAttribution {
     pub(super) repo_name: Option<String>,
@@ -348,6 +363,7 @@ pub(super) struct StorageGrowthAttribution {
     pub(super) chau7_session_id: Option<String>,
     pub(super) writer_display: Option<String>,
     pub(super) matched_writer_count: u64,
+    pub(super) matched_filesystem_event_count: u64,
     pub(super) sources: Vec<String>,
     pub(super) confidence: String,
     pub(super) confidence_score: u8,

@@ -1241,6 +1241,7 @@ impl StorageSizeIndex {
             return Vec::new();
         };
         let writer_ledger = load_storage_writer_ledger_records();
+        let filesystem_events = load_storage_filesystem_event_records();
         let Ok(mut statement) = connection.prepare(
             "SELECT bucket_millis, scan_millis, path, source_root, repo_root, kind, cleanup_tier,
                     previous_physical_bytes, current_physical_bytes, delta_bytes
@@ -1279,6 +1280,7 @@ impl StorageSizeIndex {
                 chau7_session_id: None,
                 writer_display: None,
                 matched_writer_count: 0,
+                matched_filesystem_event_count: 0,
                 attribution_sources: Vec::new(),
                 attribution_confidence: "low".to_owned(),
                 attribution_confidence_score: 0,
@@ -1291,7 +1293,8 @@ impl StorageSizeIndex {
         };
         rows.flatten()
             .map(|mut delta| {
-                let attribution = attribute_storage_growth_delta(&delta, &writer_ledger);
+                let attribution =
+                    attribute_storage_growth_delta(&delta, &writer_ledger, &filesystem_events);
                 delta.repo_name = attribution.repo_name;
                 delta.git_branch = attribution.git_branch;
                 delta.git_head = attribution.git_head;
@@ -1305,6 +1308,7 @@ impl StorageSizeIndex {
                 delta.chau7_session_id = attribution.chau7_session_id;
                 delta.writer_display = attribution.writer_display;
                 delta.matched_writer_count = attribution.matched_writer_count;
+                delta.matched_filesystem_event_count = attribution.matched_filesystem_event_count;
                 delta.attribution_sources = attribution.sources;
                 delta.attribution_confidence = attribution.confidence;
                 delta.attribution_confidence_score = attribution.confidence_score;

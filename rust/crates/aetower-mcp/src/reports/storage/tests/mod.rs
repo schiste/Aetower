@@ -2904,13 +2904,14 @@ fn storage_growth_attribution_uses_single_writer_record() {
         ..StorageWriterLedgerRecord::default()
     };
 
-    let attribution = attribute_storage_growth_delta(&delta, &[writer]);
+    let attribution = attribute_storage_growth_delta(&delta, &[writer], &[]);
 
     assert_eq!(attribution.confidence, "high");
     assert_eq!(attribution.confidence_score, 92);
     assert!(!attribution.ambiguous);
     assert_eq!(attribution.writer_source.as_deref(), Some("test-ledger"));
     assert_eq!(attribution.matched_writer_count, 1);
+    assert_eq!(attribution.matched_filesystem_event_count, 0);
     assert!(attribution.sources.contains(&"writer_ledger".to_owned()));
     assert!(attribution.sources.contains(&"command".to_owned()));
     assert!(attribution.sources.contains(&"process_tree".to_owned()));
@@ -2961,7 +2962,7 @@ fn storage_growth_attribution_marks_overlapping_writers_ambiguous() {
         },
     ];
 
-    let attribution = attribute_storage_growth_delta(&delta, &writers);
+    let attribution = attribute_storage_growth_delta(&delta, &writers, &[]);
 
     assert_eq!(attribution.confidence, "ambiguous");
     assert!(attribution.ambiguous);
@@ -2974,6 +2975,7 @@ fn storage_growth_attribution_marks_overlapping_writers_ambiguous() {
         "ambiguous matches must not pick one writer's identity"
     );
     assert_eq!(attribution.matched_writer_count, 2);
+    assert_eq!(attribution.matched_filesystem_event_count, 0);
     assert!(attribution.sources.contains(&"writer_ledger".to_owned()));
     assert!(
         attribution
@@ -3010,13 +3012,22 @@ fn storage_growth_attribution_reports_controlled_build_from_chau7_writer() {
         ..StorageWriterLedgerRecord::default()
     };
 
-    let attribution = attribute_storage_growth_delta(&delta, &[writer]);
+    let filesystem_event = StorageFilesystemEventRecord {
+        timestamp_millis: Some(1_000),
+        path: Some(artifact_path.display().to_string()),
+        event_id: Some(42),
+        flags: Some(0),
+        source: Some("test-fsevents".to_owned()),
+    };
+
+    let attribution = attribute_storage_growth_delta(&delta, &[writer], &[filesystem_event]);
 
     assert_eq!(attribution.confidence, "high");
-    assert_eq!(attribution.confidence_score, 92);
+    assert_eq!(attribution.confidence_score, 95);
     assert!(!attribution.ambiguous);
     assert_eq!(attribution.writer_source.as_deref(), Some("chau7"));
     assert_eq!(attribution.matched_writer_count, 1);
+    assert_eq!(attribution.matched_filesystem_event_count, 1);
     assert_eq!(
         attribution.command.as_deref(),
         Some("cargo build --workspace --release")
@@ -3045,6 +3056,8 @@ fn storage_growth_attribution_reports_controlled_build_from_chau7_writer() {
         Some("Claude Code session chau7-tab-a in tab 'aetower-fix'")
     );
     assert!(attribution.sources.contains(&"writer_ledger".to_owned()));
+    assert!(attribution.sources.contains(&"fsevents".to_owned()));
+    assert!(attribution.sources.contains(&"test-fsevents".to_owned()));
     assert!(attribution.sources.contains(&"chau7".to_owned()));
     assert!(attribution.sources.contains(&"command".to_owned()));
     assert!(attribution.sources.contains(&"process_tree".to_owned()));
@@ -3052,7 +3065,50 @@ fn storage_growth_attribution_reports_controlled_build_from_chau7_writer() {
     assert!(
         attribution
             .summary
-            .contains("Single writer ledger record matched")
+            .contains("filesystem events confirmed path activity")
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_growth_attribution_uses_filesystem_event_without_guessing_writer() {
+    let root = test_root("growth-attribution-fsevents-only");
+    let repo = root.join("project");
+    create_git_repo(&repo, "main");
+    let artifact_path = repo.join("target").join("debug");
+    let changed_path = artifact_path.join("aetower");
+    let delta = test_growth_delta(&artifact_path, Some(&repo), 2_000, 0, 16 * 1024 * 1024);
+    let filesystem_event = StorageFilesystemEventRecord {
+        timestamp_millis: Some(1_950),
+        path: Some(changed_path.display().to_string()),
+        event_id: Some(99),
+        flags: Some(0),
+        source: Some("test-fsevents".to_owned()),
+    };
+
+    let attribution = attribute_storage_growth_delta(&delta, &[], &[filesystem_event]);
+
+    assert_eq!(attribution.confidence, "medium");
+    assert_eq!(attribution.confidence_score, 72);
+    assert!(!attribution.ambiguous);
+    assert_eq!(attribution.matched_writer_count, 0);
+    assert_eq!(attribution.matched_filesystem_event_count, 1);
+    assert!(attribution.command.is_none());
+    assert!(attribution.process_tree.is_none());
+    assert!(attribution.ai_agent_session.is_none());
+    assert!(attribution.sources.contains(&"fsevents".to_owned()));
+    assert!(attribution.sources.contains(&"test-fsevents".to_owned()));
+    assert!(
+        attribution
+            .summary
+            .contains("Filesystem events confirmed path activity")
+    );
+    assert!(
+        attribution
+            .evidence
+            .iter()
+            .any(|entry| entry.contains("Filesystem event path matched"))
     );
 
     let _ = fs::remove_dir_all(root);
@@ -3875,6 +3931,7 @@ fn test_growth_delta(
         chau7_session_id: None,
         writer_display: None,
         matched_writer_count: 0,
+        matched_filesystem_event_count: 0,
         attribution_sources: Vec::new(),
         attribution_confidence: "low".to_owned(),
         attribution_confidence_score: 0,

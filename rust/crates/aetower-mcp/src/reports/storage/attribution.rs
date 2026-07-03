@@ -3,6 +3,7 @@ use super::*;
 pub(super) fn attribute_storage_growth_delta(
     delta: &StorageGrowthDelta,
     writer_ledger: &[StorageWriterLedgerRecord],
+    filesystem_events: &[StorageFilesystemEventRecord],
 ) -> StorageGrowthAttribution {
     let repo_root = delta.repo_root.as_deref().map(Path::new);
     let git_head = repo_root.map(read_git_head).unwrap_or_default();
@@ -19,6 +20,12 @@ pub(super) fn attribute_storage_growth_delta(
         .iter()
         .filter(|record| storage_writer_record_matches_delta(record, delta))
         .collect::<Vec<_>>();
+    let matching_filesystem_events = filesystem_events
+        .iter()
+        .filter(|record| storage_filesystem_event_matches_delta(record, delta))
+        .collect::<Vec<_>>();
+    let matched_filesystem_event_count =
+        matching_filesystem_events.len().min(u64::MAX as usize) as u64;
     let mut evidence = vec![format!(
         "Indexed growth delta: {} -> {} bytes.",
         delta.previous_physical_bytes, delta.current_physical_bytes
@@ -32,6 +39,7 @@ pub(super) fn attribute_storage_growth_delta(
         evidence.push(format!("AI-agent directory evidence: {session}."));
         sources.push("agent_path".to_owned());
     }
+    append_filesystem_event_evidence(&matching_filesystem_events, &mut sources, &mut evidence);
 
     if matching_records.len() == 1 {
         let record = matching_records[0];
@@ -84,11 +92,20 @@ pub(super) fn attribute_storage_growth_delta(
             chau7_session_id: first_non_empty(record.chau7_session_id.as_deref(), None),
             writer_display: writer_display_for_record(record),
             matched_writer_count: 1,
+            matched_filesystem_event_count,
             sources: unique_limited(sources, 12),
             confidence: "high".to_owned(),
-            confidence_score: 92,
+            confidence_score: if matched_filesystem_event_count > 0 {
+                95
+            } else {
+                92
+            },
             ambiguous: false,
-            summary: "Single writer ledger record matched this growth window.".to_owned(),
+            summary: if matched_filesystem_event_count > 0 {
+                "Single writer ledger record matched this growth window, and filesystem events confirmed path activity.".to_owned()
+            } else {
+                "Single writer ledger record matched this growth window.".to_owned()
+            },
             evidence,
         };
     }
@@ -129,6 +146,7 @@ pub(super) fn attribute_storage_growth_delta(
             chau7_session_id: None,
             writer_display: None,
             matched_writer_count: matching_records.len().min(u64::MAX as usize) as u64,
+            matched_filesystem_event_count,
             sources: unique_limited(sources, 12),
             confidence: "ambiguous".to_owned(),
             confidence_score: 45,
@@ -139,9 +157,35 @@ pub(super) fn attribute_storage_growth_delta(
         };
     }
 
+    let filesystem_event_matched = matched_filesystem_event_count > 0;
     let (confidence, confidence_score, summary) = if delta.repo_root.is_some()
         && inferred_agent_session.is_some()
+        && filesystem_event_matched
     {
+        (
+            "medium",
+            80,
+            "Filesystem events confirmed path activity and repo/AI-agent directory evidence matched, but no command writer record was available.",
+        )
+    } else if delta.repo_root.is_some() && filesystem_event_matched {
+        (
+            "medium",
+            72,
+            "Filesystem events confirmed path activity and repo/branch attribution is available, but command/session writer evidence is missing.",
+        )
+    } else if inferred_agent_session.is_some() && filesystem_event_matched {
+        (
+            "medium",
+            66,
+            "Filesystem events confirmed path activity and AI-agent directory evidence matched, but no command writer record was available.",
+        )
+    } else if filesystem_event_matched {
+        (
+            "medium",
+            56,
+            "Filesystem events confirmed path activity, but no repo, command, process tree, or AI session matched.",
+        )
+    } else if delta.repo_root.is_some() && inferred_agent_session.is_some() {
         (
             "medium",
             74,
@@ -182,6 +226,7 @@ pub(super) fn attribute_storage_growth_delta(
         chau7_session_id: None,
         writer_display: None,
         matched_writer_count: 0,
+        matched_filesystem_event_count,
         sources: unique_limited(sources, 12),
         confidence: confidence.to_owned(),
         confidence_score,
@@ -189,6 +234,80 @@ pub(super) fn attribute_storage_growth_delta(
         summary: summary.to_owned(),
         evidence,
     }
+}
+
+fn append_filesystem_event_evidence(
+    matching_events: &[&StorageFilesystemEventRecord],
+    sources: &mut Vec<String>,
+    evidence: &mut Vec<String>,
+) {
+    if matching_events.is_empty() {
+        return;
+    }
+    sources.push("fsevents".to_owned());
+    evidence.push(format!(
+        "{} filesystem event{} overlapped this growth path/time window.",
+        matching_events.len(),
+        if matching_events.len() == 1 { "" } else { "s" }
+    ));
+    for record in matching_events.iter().take(3) {
+        if let Some(path) = record
+            .path
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            evidence.push(format!("Filesystem event path matched: {path}."));
+        }
+        if let Some(event_id) = record.event_id {
+            evidence.push(format!("Filesystem event id: {event_id}."));
+        }
+        if let Some(flags) = record.flags {
+            evidence.push(format!("Filesystem event flags: {flags}."));
+        }
+        if let Some(source) = record
+            .source
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            sources.push(source.to_owned());
+        }
+    }
+}
+
+fn storage_filesystem_event_matches_delta(
+    record: &StorageFilesystemEventRecord,
+    delta: &StorageGrowthDelta,
+) -> bool {
+    let Some(record_path) = record
+        .path
+        .as_deref()
+        .and_then(normalized_writer_path_prefix)
+    else {
+        return false;
+    };
+    if !paths_overlap(&record_path, &delta.path) {
+        return false;
+    }
+    let Some(timestamp) = record.timestamp_millis else {
+        return true;
+    };
+    let lower = delta
+        .bucket_millis
+        .saturating_sub(STORAGE_WRITER_LEDGER_TIME_FUZZ_MILLIS);
+    let upper = delta
+        .scan_millis
+        .saturating_add(STORAGE_WRITER_LEDGER_TIME_FUZZ_MILLIS);
+    (lower..=upper).contains(&timestamp)
+}
+
+fn paths_overlap(left: &str, right: &str) -> bool {
+    left == right
+        || left
+            .strip_prefix(right)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+        || right
+            .strip_prefix(left)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn storage_writer_record_matches_delta(
@@ -351,6 +470,50 @@ pub(super) fn load_storage_writer_ledger_records() -> Vec<StorageWriterLedgerRec
         .into_iter()
         .flat_map(|path| load_storage_writer_ledger_records_from_path(&path))
         .take(512)
+        .collect()
+}
+
+pub(super) fn load_storage_filesystem_event_records() -> Vec<StorageFilesystemEventRecord> {
+    storage_filesystem_event_ledger_paths()
+        .into_iter()
+        .flat_map(|path| load_storage_filesystem_event_records_from_path(&path))
+        .take(1024)
+        .collect()
+}
+
+fn storage_filesystem_event_ledger_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(path) = std::env::var("AETOWER_STORAGE_FILESYSTEM_EVENT_LEDGER")
+        && !path.trim().is_empty()
+    {
+        paths.push(PathBuf::from(path));
+    }
+    if let Some(base_dir) = dirs::data_local_dir() {
+        paths.push(base_dir.join("Aetower").join("storage-fsevents.ndjson"));
+    }
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join(".aetower").join("storage-fsevents.ndjson"));
+    }
+    paths
+}
+
+fn load_storage_filesystem_event_records_from_path(
+    path: &Path,
+) -> Vec<StorageFilesystemEventRecord> {
+    let Ok(metadata) = fs::metadata(path) else {
+        return Vec::new();
+    };
+    if !metadata.is_file() || metadata.len() > STORAGE_FILESYSTEM_EVENT_LEDGER_MAX_BYTES {
+        return Vec::new();
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    content
+        .lines()
+        .rev()
+        .take(1024)
+        .filter_map(|line| serde_json::from_str::<StorageFilesystemEventRecord>(line).ok())
         .collect()
 }
 
