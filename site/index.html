@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Aetower · local macOS observability</title>
+    <title>Aetower · run your Mac like an operator</title>
     <meta
       name="description"
-      content="Aetower is a local-first macOS observability app for developers, operators, and AI agents. See process pressure, agent consumption, and manage performance from an app, CLI, or MCP. Nothing leaves your Mac."
+      content="Aetower is the operator console for Macs that run AI agents. See friction, energy, money, disk, and repo impact from day one — and grow into budgets, incident playback, MCP, and fleet views. Local-first: nothing leaves your Mac."
     />
     <meta name="color-scheme" content="light dark" />
     <style>
@@ -26,6 +26,12 @@
         --faint: #889490;
         --line: #e8ece9;
         --line-strong: #d8e0db;
+
+        --term-bg: #17141f;
+        --term-panel: #1e1b29;
+        --term-ink: #ecefee;
+        --term-muted: #a3aab4;
+        --term-line: #38345080;
       }
 
       @media (prefers-color-scheme: dark) {
@@ -39,7 +45,6 @@
           --muted: #a3aab4;
           --faint: #6f7787;
           --line: #2a2740;
-          --line-strong: #38335200;
           --line-strong: #393450;
         }
       }
@@ -165,18 +170,25 @@
         background: linear-gradient(135deg, var(--purple), var(--green));
       }
 
+      /* Release version chip; keep the text in sync with CHANGELOG.md
+         (or have the release script rewrite it). */
+      .eyebrow .ver {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        color: var(--ink);
+      }
+
       h1 {
         margin: 0;
-        font-size: clamp(38px, 4.6vw, 60px);
-        line-height: 1.03;
+        font-size: clamp(36px, 4.4vw, 56px);
+        line-height: 1.06;
         letter-spacing: -0.035em;
         font-weight: 680;
       }
 
       .lead {
-        max-width: 54ch;
+        max-width: 56ch;
         margin: 22px 0 0;
-        font-size: 18.5px;
+        font-size: 18px;
         color: var(--muted);
       }
 
@@ -189,7 +201,7 @@
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: 16px;
+        gap: 12px;
         margin-top: 34px;
       }
 
@@ -220,6 +232,29 @@
         width: 16px;
         height: 16px;
         fill: currentColor;
+      }
+
+      a.ghost {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 48px;
+        padding: 0 22px;
+        border-radius: 11px;
+        border: 1px solid var(--line-strong);
+        background: var(--panel);
+        color: var(--ink);
+        font-weight: 600;
+        font-size: 15px;
+        text-decoration: none;
+        transition:
+          border-color 140ms ease,
+          background 140ms ease;
+      }
+
+      a.ghost:hover {
+        border-color: color-mix(in srgb, var(--purple) 45%, transparent);
+        background: color-mix(in srgb, var(--purple) 8%, var(--panel));
       }
 
       .download .note {
@@ -256,7 +291,7 @@
         user-select: none;
       }
 
-      /* ---- Hero product shot ---- */
+      /* ---- Product shots & mock panels ---- */
       .mock {
         margin: 0;
         border: 1px solid var(--line);
@@ -297,61 +332,6 @@
         padding: 14px 16px 18px;
       }
 
-      .mock-head {
-        display: flex;
-        justify-content: space-between;
-        font-size: 11px;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-        color: var(--faint);
-        padding: 0 2px 10px;
-      }
-
-      .row {
-        display: grid;
-        grid-template-columns: 1fr auto;
-        align-items: center;
-        gap: 12px;
-        padding: 9px 2px;
-      }
-
-      .row + .row {
-        border-top: 1px solid var(--line);
-      }
-
-      .row .name {
-        font-size: 13.5px;
-        font-weight: 550;
-      }
-
-      .row .meter {
-        height: 6px;
-        border-radius: 4px;
-        margin-top: 6px;
-        background: color-mix(in srgb, var(--ink) 8%, transparent);
-        overflow: hidden;
-      }
-
-      .row .meter b {
-        display: block;
-        height: 100%;
-        border-radius: 4px;
-      }
-
-      .row .score {
-        font-variant-numeric: tabular-nums;
-        font-weight: 650;
-        font-size: 13px;
-        text-align: right;
-      }
-
-      .row .tag {
-        display: block;
-        font-size: 10.5px;
-        font-weight: 600;
-        color: var(--faint);
-      }
-
       /* ---- Section scaffolding ---- */
       section {
         padding: 40px 0;
@@ -366,7 +346,19 @@
         margin: 0 0 22px;
       }
 
-      /* ---- Three reasons ---- */
+      .section-intro {
+        max-width: 62ch;
+        margin: -8px 0 26px;
+        font-size: 16px;
+        color: var(--muted);
+      }
+
+      .section-intro strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      /* ---- Thesis cards ---- */
       .reasons {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -417,15 +409,412 @@
         font-size: 13px;
       }
 
-      /* ---- Inspect strip ---- */
+      /* ---- The ladder ---- */
+      .tour {
+        display: grid;
+        gap: 22px;
+      }
+
+      .stop {
+        display: grid;
+        grid-template-columns: 0.92fr 1.08fr;
+        gap: 40px;
+        align-items: center;
+        padding: 30px 30px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--panel);
+      }
+
+      .stop:nth-child(even) .stop-copy {
+        order: 2;
+      }
+
+      .stop-copy .kicker {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .stop-copy h3 {
+        margin: 10px 0 10px;
+        font-size: 23px;
+        letter-spacing: -0.02em;
+        font-weight: 650;
+        line-height: 1.2;
+      }
+
+      .stop-copy > p {
+        margin: 0;
+        font-size: 15px;
+        color: var(--muted);
+      }
+
+      .stop-copy > p .mono {
+        color: var(--ink);
+        font-size: 13.5px;
+      }
+
+      .stop-copy ul {
+        margin: 14px 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 7px;
+      }
+
+      .stop-copy li {
+        position: relative;
+        padding-left: 20px;
+        font-size: 13.5px;
+        color: var(--muted);
+      }
+
+      .stop-copy li .mono {
+        color: var(--ink);
+        font-size: 12.5px;
+      }
+
+      .stop-copy li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 7px;
+        width: 10px;
+        height: 3px;
+        border-radius: 2px;
+        background: linear-gradient(90deg, var(--purple), var(--green));
+      }
+
+      /* Mock: metered entity rows (Monitor-style) */
+      .m-head {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--faint);
+        padding: 0 2px 10px;
+      }
+
+      .m-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 12px;
+        padding: 9px 2px;
+      }
+
+      .m-row + .m-row {
+        border-top: 1px solid var(--line);
+      }
+
+      .m-row .name {
+        font-size: 13.5px;
+        font-weight: 550;
+      }
+
+      .m-row .meter {
+        height: 6px;
+        border-radius: 4px;
+        margin-top: 6px;
+        background: color-mix(in srgb, var(--ink) 8%, transparent);
+        overflow: hidden;
+      }
+
+      .m-row .meter b {
+        display: block;
+        height: 100%;
+        border-radius: 4px;
+      }
+
+      .m-row .score {
+        font-variant-numeric: tabular-nums;
+        font-weight: 650;
+        font-size: 13px;
+        text-align: right;
+      }
+
+      .m-row .tag {
+        display: block;
+        font-size: 10.5px;
+        font-weight: 600;
+        color: var(--faint);
+      }
+
+      /* Mock: timeline feed (Activity) */
+      .feed {
+        display: grid;
+        gap: 0;
+      }
+
+      .evt {
+        display: grid;
+        grid-template-columns: 52px 10px 1fr;
+        gap: 10px;
+        align-items: baseline;
+        padding: 8px 2px;
+        font-size: 13px;
+      }
+
+      .evt + .evt {
+        border-top: 1px solid var(--line);
+      }
+
+      .evt time {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 11.5px;
+        color: var(--faint);
+      }
+
+      .evt i {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        transform: translateY(0.5px);
+      }
+
+      .evt.info i { background: #3b82f6; }
+      .evt.warn i { background: #f59e0b; }
+      .evt.crit i { background: #ef4444; }
+      .evt.ai i { background: var(--purple); }
+
+      .evt span {
+        color: var(--muted);
+      }
+
+      .evt span strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      /* Mock: treemap (Storage) */
+      .treemap {
+        display: grid;
+        grid-template-columns: 1.6fr 1fr 0.8fr;
+        grid-template-rows: 88px 64px;
+        gap: 5px;
+      }
+
+      .cell {
+        border-radius: 8px;
+        padding: 9px 11px;
+        font-size: 11.5px;
+        font-weight: 600;
+        color: #fff;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        overflow: hidden;
+      }
+
+      .cell small {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-weight: 500;
+        opacity: 0.85;
+      }
+
+      .reclaim-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: #fff;
+        background: linear-gradient(120deg, var(--purple), var(--green));
+      }
+
+      /* Small status chips */
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 0 2px 12px;
+      }
+
+      .chip {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 4px 9px;
+        border-radius: 999px;
+        border: 1px solid var(--line-strong);
+        color: var(--muted);
+      }
+
+      .chip.hot {
+        border-color: color-mix(in srgb, #f59e0b 60%, transparent);
+        color: #b45309;
+      }
+
+      .chip.ok {
+        border-color: color-mix(in srgb, var(--green) 50%, transparent);
+        color: var(--green-deep);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .chip.hot { color: #fbbf24; }
+        .chip.ok { color: var(--green); }
+      }
+
+      /* Mock: repo rows (Repos) */
+      .repo {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        align-items: center;
+        padding: 9px 2px;
+        font-size: 13px;
+      }
+
+      .repo + .repo {
+        border-top: 1px solid var(--line);
+      }
+
+      .repo .name {
+        font-weight: 550;
+      }
+
+      .repo .badges {
+        display: flex;
+        gap: 5px;
+      }
+
+      .badge {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        padding: 2.5px 7px;
+        border-radius: 5px;
+        border: 1px solid var(--line-strong);
+        color: var(--faint);
+      }
+
+      .badge.ok { color: var(--green-deep); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
+      .badge.warn { color: #b45309; border-color: color-mix(in srgb, #f59e0b 50%, transparent); }
+
+      @media (prefers-color-scheme: dark) {
+        .badge.ok { color: var(--green); }
+        .badge.warn { color: #fbbf24; }
+      }
+
+      .repo .sub {
+        display: block;
+        font-size: 11px;
+        color: var(--faint);
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      }
+
+      /* ---- Agents / MCP ---- */
+      .mcp {
+        border: 1px solid var(--term-line);
+        border-radius: 18px;
+        background: var(--term-bg);
+        color: var(--term-ink);
+        overflow: hidden;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .mcp-copy {
+        padding: 34px 34px 36px;
+      }
+
+      .mcp-copy .kicker {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .mcp-copy h3 {
+        margin: 12px 0 12px;
+        font-size: 26px;
+        letter-spacing: -0.02em;
+        font-weight: 650;
+        line-height: 1.2;
+        color: var(--term-ink);
+      }
+
+      .mcp-copy p {
+        margin: 0 0 12px;
+        font-size: 15px;
+        color: var(--term-muted);
+      }
+
+      .mcp-copy p strong {
+        color: var(--term-ink);
+        font-weight: 600;
+      }
+
+      .tool-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 14px;
+        margin-top: 18px;
+      }
+
+      .tool-grid code {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 12px;
+        color: var(--term-muted);
+        padding: 3px 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .tool-grid code::before {
+        content: "·";
+        margin-right: 8px;
+        color: var(--green);
+      }
+
+      .mcp-term {
+        border-left: 1px solid var(--term-line);
+        background: var(--term-panel);
+        padding: 22px 26px 26px;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 12.5px;
+        line-height: 1.75;
+        overflow-x: auto;
+      }
+
+      .mcp-term .cmt { color: #6f7787; }
+      .mcp-term .k { color: var(--green); }
+      .mcp-term .s { color: #c4b5fd; }
+      .mcp-term .you { color: var(--term-ink); }
+      .mcp-term pre {
+        margin: 0;
+        white-space: pre;
+      }
+
+      .mcp-term hr {
+        border: none;
+        border-top: 1px solid var(--term-line);
+        margin: 16px 0;
+      }
+
+      /* ---- Grid strips (inspect / stack) ---- */
       .inspect {
         display: grid;
-        grid-template-columns: repeat(6, 1fr);
+        grid-template-columns: repeat(4, 1fr);
         gap: 1px;
         background: var(--line);
         border: 1px solid var(--line);
         border-radius: 14px;
         overflow: hidden;
+      }
+
+      .inspect.cols-3 {
+        grid-template-columns: repeat(3, 1fr);
       }
 
       .inspect div {
@@ -455,11 +844,56 @@
         color: var(--muted);
       }
 
-      /* ---- Notes ---- */
+      /* ---- Compare ---- */
+      .compare {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+      }
+
+      .compare-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        background: var(--panel);
+      }
+
+      .compare-row + .compare-row {
+        border-top: 1px solid var(--line);
+      }
+
+      .compare-row > div {
+        padding: 16px 20px;
+        font-size: 14px;
+      }
+
+      .compare-row .them {
+        color: var(--faint);
+        border-right: 1px solid var(--line);
+      }
+
+      .compare-row .them b {
+        display: block;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        margin-bottom: 3px;
+      }
+
+      .compare-row .us {
+        color: var(--muted);
+      }
+
+      .compare-row .us strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      /* ---- Trust notes ---- */
       .notes {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 28px;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 26px;
       }
 
       .notes h3 {
@@ -477,12 +911,76 @@
         stroke: var(--green-deep);
         fill: none;
         stroke-width: 2.2;
+        flex: none;
       }
 
       .notes p {
         margin: 0;
-        font-size: 14px;
+        font-size: 13.5px;
         color: var(--muted);
+      }
+
+      /* ---- Preview invitation ---- */
+      .preview {
+        display: grid;
+        grid-template-columns: 1.25fr 0.75fr;
+        gap: 40px;
+        padding: 32px 32px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--panel);
+      }
+
+      .preview h3 {
+        margin: 0 0 10px;
+        font-size: 23px;
+        letter-spacing: -0.02em;
+        font-weight: 650;
+      }
+
+      .preview p {
+        margin: 0 0 10px;
+        font-size: 15px;
+        color: var(--muted);
+      }
+
+      .preview p strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .preview-links {
+        display: grid;
+        gap: 10px;
+        align-content: center;
+      }
+
+      .preview-links a {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 13px 16px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        text-decoration: none;
+        color: var(--ink);
+        font-weight: 600;
+        font-size: 14px;
+        transition:
+          border-color 140ms ease,
+          background 140ms ease;
+      }
+
+      .preview-links a small {
+        font-weight: 500;
+        font-size: 12px;
+        color: var(--faint);
+      }
+
+      .preview-links a:hover {
+        border-color: color-mix(in srgb, var(--purple) 45%, transparent);
+        background: color-mix(in srgb, var(--purple) 7%, var(--panel));
       }
 
       footer {
@@ -510,12 +1008,41 @@
           gap: 40px;
           padding-top: 36px;
         }
-        .reasons,
-        .notes {
+        .reasons {
           grid-template-columns: 1fr;
         }
-        .inspect {
+        .notes {
           grid-template-columns: repeat(2, 1fr);
+        }
+        .inspect,
+        .inspect.cols-3 {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .stop {
+          grid-template-columns: 1fr;
+          gap: 26px;
+          padding: 24px 22px;
+        }
+        .stop:nth-child(even) .stop-copy {
+          order: 0;
+        }
+        .mcp {
+          grid-template-columns: 1fr;
+        }
+        .mcp-term {
+          border-left: none;
+          border-top: 1px solid var(--term-line);
+        }
+        .compare-row {
+          grid-template-columns: 1fr;
+        }
+        .compare-row .them {
+          border-right: none;
+          border-bottom: 1px dashed var(--line);
+        }
+        .preview {
+          grid-template-columns: 1fr;
+          gap: 22px;
         }
       }
 
@@ -523,7 +1050,14 @@
         .wrap {
           padding: 0 20px;
         }
-        .inspect {
+        .inspect,
+        .inspect.cols-3 {
+          grid-template-columns: 1fr;
+        }
+        .notes {
+          grid-template-columns: 1fr;
+        }
+        .tool-grid {
           grid-template-columns: 1fr;
         }
       }
@@ -579,11 +1113,14 @@
 
       <section class="hero">
         <div>
-          <p class="eyebrow"><span class="dot"></span> Developer Preview · macOS</p>
-          <h1>Local observability for operators and <span class="brand-text">AI agents</span>.</h1>
+          <p class="eyebrow">
+            <span class="dot"></span> Developer Preview · <span class="ver">v0.54</span> · macOS
+          </p>
+          <h1>Your Mac runs agents now.<br /><span class="brand-text">Run it like an operator.</span></h1>
           <p class="lead">
-            See what's actually straining your Mac: process pressure, wakeups, memory, energy,
-            and per-agent impact. Manage it from a native app, a CLI, or an AI agent over MCP.
+            Aetower is the operator console for the machine your agents run on. See friction,
+            energy, money, disk, and repo impact from day one — grow into budgets, incident
+            playback, fleet views, and agents that inspect their own runtime over MCP.
             <strong>Nothing leaves your machine</strong> unless you export it.
           </p>
 
@@ -596,7 +1133,8 @@
               </svg>
               Download for macOS
             </a>
-            <span class="note mono">Aetower.pkg · Apple silicon</span>
+            <a class="ghost" href="#agents">Point your agent at it</a>
+            <span class="note mono">Aetower.pkg · Apple silicon · macOS 14+</span>
           </div>
 
           <div class="secondary">
@@ -629,33 +1167,314 @@
       </section>
 
       <section>
-        <p class="label">Three reasons to use Aetower</p>
+        <p class="label">Why this exists</p>
         <div class="reasons">
           <div class="reason">
             <span class="num brand-text">01</span>
-            <h3>Activity Monitor drives you crazy</h3>
+            <h3>Agents are workloads you didn't schedule</h3>
             <p>
-              A flat wall of processes with no story. Aetower groups by entity and ranks everything
-              with a single friction score, so the thing straining your Mac is at the top, not
-              buried on page three.
+              Coding agents, local models, background inference — they launch processes, spawn
+              helpers, and keep working while you're in a meeting. Your Mac became a small
+              datacenter, and nobody was watching it.
             </p>
           </div>
           <div class="reason">
             <span class="num brand-text">02</span>
-            <h3>See fast what your agents consume</h3>
+            <h3>They spend real resources</h3>
             <p>
-              Per-agent run timelines, CPU and memory impact, and budgets, so you know at a glance
-              whether the coding agent in the background is costing you a fan spin or a flat battery.
+              Battery, watts, dollars, carbon, disk, and thermal headroom. Aetower translates
+              agent activity into those units — per session, per repo, per machine — so the cost
+              of a background run is a number, not a fan noise.
             </p>
           </div>
           <div class="reason">
             <span class="num brand-text">03</span>
-            <h3>Manage performance your way</h3>
+            <h3>The watcher must be local</h3>
             <p>
-              The same friction, wakeup, and signing data is reachable from a native macOS app, a
-              <span class="mono">CLI</span>, and a local <span class="mono">MCP</span> server. Read
-              it and act on it by hand, in a script, or by pointing an AI agent at it.
+              You can't observe your own machine through someone else's cloud. One local engine
+              serves the app, the CLI, and an <span class="mono">MCP</span> server — so you and
+              your agents read the same live truth, and it never leaves the Mac.
             </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p class="label">The operator's ladder</p>
+        <p class="section-intro">
+          Aetower meets you where you are — <strong>from your first agent install to running a
+          small fleet</strong>. Each rung works on day one; none of them requires the previous.
+        </p>
+        <div class="tour">
+          <div class="stop">
+            <div class="stop-copy">
+              <span class="kicker brand-text">01 · Day one</span>
+              <h3>See what's running and what it costs</h3>
+              <p>
+                Every app, daemon, and agent is one entity with one 0–100 friction score. The
+                loudest thing is at the top, and each one comes with a recommendation in plain
+                English. No dashboards to learn, no metrics to configure.
+              </p>
+              <ul>
+                <li>Entity grouping: Chrome plus 47 helpers is one row, not fifty.</li>
+                <li>The AI-tax panel: GPU, VRAM, and energy per agent — with a warning before the VRAM swap cliff.</li>
+                <li>Recommendations that adapt to battery, thermal state, and memory pressure.</li>
+              </ul>
+            </div>
+            <div class="mock">
+              <div class="mock-bar"><i></i><i></i><i></i><span class="mono">Monitor · by friction</span></div>
+              <div class="mock-body">
+                <div class="m-head"><span>Entity</span><span>Friction</span></div>
+                <div class="m-row">
+                  <div>
+                    <div class="name">Chrome <span class="tag">entity · 48 processes</span></div>
+                    <div class="meter"><b style="width: 72%; background: linear-gradient(90deg, #f59e0b, #ef4444)"></b></div>
+                  </div>
+                  <div class="score">72</div>
+                </div>
+                <div class="m-row">
+                  <div>
+                    <div class="name">Ollama <span class="tag">AI runtime · GPU-bound · 8.1 W</span></div>
+                    <div class="meter"><b style="width: 58%; background: linear-gradient(90deg, var(--purple), #f59e0b)"></b></div>
+                  </div>
+                  <div class="score">58</div>
+                </div>
+                <div class="m-row">
+                  <div>
+                    <div class="name">Spotlight <span class="tag">system · indexing burst</span></div>
+                    <div class="meter"><b style="width: 31%; background: var(--green)"></b></div>
+                  </div>
+                  <div class="score">31</div>
+                </div>
+                <div class="m-row">
+                  <div>
+                    <div class="name">Claude Code <span class="tag">agent · repo aetower · 0.2 W</span></div>
+                    <div class="meter"><b style="width: 14%; background: var(--green)"></b></div>
+                  </div>
+                  <div class="score">14</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stop">
+            <div class="stop-copy">
+              <span class="kicker brand-text">02 · First incident</span>
+              <h3>Reconstruct what happened</h3>
+              <p>
+                The first time your Mac locks up mid-demo, you'll want yesterday back. Activity
+                keeps seven days of entity-level playback and a timeline that reads like an
+                incident report — so "what was running at 2 PM" is an answerable question.
+              </p>
+              <ul>
+                <li>Scrub through history: friction, CPU, memory, and disk per entity, at capture cadence.</li>
+                <li>Spikes, thermal escalations, restart loops, and agent session costs on one feed.</li>
+                <li>Reverse pivots: which process holds this file, port, or socket.</li>
+              </ul>
+            </div>
+            <!-- Swap for /assets/aetower-activity.png when captured. -->
+            <div class="mock">
+              <div class="mock-bar"><i></i><i></i><i></i><span class="mono">Activity · Timeline</span></div>
+              <div class="mock-body">
+                <div class="feed">
+                  <div class="evt info"><time>15:12</time><i></i><span><strong>Chrome</strong> friction rose to 65 — WebGL tab is top contributor</span></div>
+                  <div class="evt warn"><time>15:13</time><i></i><span>Thermal state degraded to <strong>Serious</strong></span></div>
+                  <div class="evt crit"><time>15:14</time><i></i><span><strong>helperd</strong> restart loop detected — 4 restarts in 90 s</span></div>
+                  <div class="evt ai"><time>15:21</time><i></i><span><strong>Claude Code</strong> session ended · 412 mWh · 38 mAh</span></div>
+                  <div class="evt info"><time>15:24</time><i></i><span>Memory pressure back to <strong>Normal</strong></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stop">
+            <div class="stop-copy">
+              <span class="kicker brand-text">03 · Steady state</span>
+              <h3>Set budgets, act with guardrails</h3>
+              <p>
+                Once you can see the spend, you'll want limits on it. Per-agent budgets alert when
+                a session runs hot; storage intelligence explains growth and stages safety-tiered
+                cleanup of agent artifacts through the Trash; process actions preview before they
+                touch anything.
+              </p>
+              <ul>
+                <li>Budgets and alerts per agent, with category toggles and snooze.</li>
+                <li>Growth attribution and APFS-aware reclaim — <span class="mono">node_modules</span>, <span class="mono">target/</span>, DerivedData first, never blind.</li>
+                <li>Guarded actions with previews and follow-up verification; persistence and code-signing audits.</li>
+              </ul>
+            </div>
+            <!-- Swap for /assets/aetower-storage.png when captured. -->
+            <div class="mock">
+              <div class="mock-bar"><i></i><i></i><i></i><span class="mono">Activity · Storage</span></div>
+              <div class="mock-body">
+                <div class="chips">
+                  <span class="chip ok">Claude Code · $2/day budget · ok</span>
+                  <span class="chip hot">Ollama · 5 W cap · alerted</span>
+                </div>
+                <div class="treemap">
+                  <div class="cell" style="background: color-mix(in srgb, var(--purple) 82%, #000)">
+                    ~/Library/Caches <small>18.4 GB</small>
+                  </div>
+                  <div class="cell" style="background: color-mix(in srgb, var(--purple) 58%, #000)">
+                    node_modules ×23 <small>11.2 GB</small>
+                  </div>
+                  <div class="cell" style="background: color-mix(in srgb, var(--green-deep) 85%, #000)">
+                    Xcode DerivedData <small>7.9 GB</small>
+                  </div>
+                  <div class="cell" style="background: color-mix(in srgb, var(--green-deep) 60%, #000)">
+                    target/ (Rust) <small>6.3 GB</small>
+                  </div>
+                  <div class="cell" style="background: #3b5bdb">
+                    Docker.raw <small>4.1 GB</small>
+                  </div>
+                  <div class="cell" style="background: #74707f">
+                    Cold data <small>90 d+</small>
+                  </div>
+                </div>
+                <span class="reclaim-pill">↺ 27.8 GB reclaimable · staged via Trash</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="stop">
+            <div class="stop-copy">
+              <span class="kicker brand-text">04 · Scale</span>
+              <h3>Ready your repos, watch every machine</h3>
+              <p>
+                Agents work <em>on</em> repositories and <em>across</em> machines. The Repos tab
+                joins storage pressure, Git state, duplicate clones, per-repo AI spend, and
+                operating-contract readiness; Fleet shows every Mac on your network running
+                Aetower — zero config, no server, no account.
+              </p>
+              <ul>
+                <li>Check <span class="mono">AGENTS.md</span> readiness before pointing an agent at a repo.</li>
+                <li>Provider actions: re-run failed GitHub workflows, redeploy Cloudflare Pages.</li>
+                <li>Bonjour fleet summaries: CPU, memory pressure, thermal state per machine.</li>
+              </ul>
+            </div>
+            <!-- Swap for /assets/aetower-repos.png when captured. -->
+            <div class="mock">
+              <div class="mock-bar"><i></i><i></i><i></i><span class="mono">Repos · Attention</span></div>
+              <div class="mock-body">
+                <div class="repo">
+                  <div>
+                    <span class="name">aetower</span>
+                    <span class="sub">master · clean · $1.30 AI spend / 7 d</span>
+                  </div>
+                  <div class="badges"><span class="badge ok">contracts</span><span class="badge">6.3 GB target/</span></div>
+                </div>
+                <div class="repo">
+                  <div>
+                    <span class="name">client-portal</span>
+                    <span class="sub">feat/auth · dirty · 2 clones detected</span>
+                  </div>
+                  <div class="badges"><span class="badge warn">duplicate</span><span class="badge warn">dirty</span></div>
+                </div>
+                <div class="repo">
+                  <div>
+                    <span class="name">data-pipeline</span>
+                    <span class="sub">main · CI failing · workflow re-run available</span>
+                  </div>
+                  <div class="badges"><span class="badge warn">no contracts</span><span class="badge">1.9 GB venv</span></div>
+                </div>
+                <div class="repo">
+                  <div>
+                    <span class="name">blog</span>
+                    <span class="sub">main · clean · Cloudflare Pages linked</span>
+                  </div>
+                  <div class="badges"><span class="badge ok">contracts</span><span class="badge ok">deployed</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="agents">
+        <p class="label">The top of the ladder</p>
+        <div class="mcp">
+          <div class="mcp-copy">
+            <span class="kicker brand-text">Local MCP</span>
+            <h3>Let your agents operate themselves</h3>
+            <p>
+              The app owns a local MCP server on a Unix socket — <strong>one engine, no second
+              collector</strong>. Your agents query the exact live state you're looking at: 30+
+              read-only tools for snapshots, history, anomaly explanations, memory breakdowns,
+              storage intelligence, and repo inventory.
+            </p>
+            <p>
+              After a freeze or a pressure spike, one call to
+              <strong>aetower_investigation_bundle</strong> hands the agent alerts, findings,
+              recent changes, and history diffs for the window — instead of twenty shell commands.
+            </p>
+            <div class="tool-grid">
+              <code>aetower_investigation_bundle</code>
+              <code>aetower_explain_anomalies</code>
+              <code>aetower_reboot_report</code>
+              <code>aetower_memory_breakdown</code>
+              <code>aetower_ai_runtime_report</code>
+              <code>aetower_wakeup_attribution</code>
+              <code>aetower_diff_snapshots</code>
+              <code>aetower_recommendations</code>
+            </div>
+          </div>
+          <div class="mcp-term" aria-label="Example agent exchange and MCP client configuration">
+            <pre><span class="you">you ›</span> what's straining my Mac right now?
+
+<span class="cmt">agent › calling aetower_top_findings…</span>
+<span class="cmt">agent › Ollama (llama3:70b) leads at friction 58 —</span>
+<span class="cmt">        GPU-bound, 8.1 W. VRAM is at 78%, close to</span>
+<span class="cmt">        the swap cliff. Consider a smaller quant.</span></pre>
+            <hr />
+            <pre><span class="cmt"># Registered automatically for Claude when installed;</span>
+<span class="cmt"># manual config for any MCP client:</span>
+{
+  <span class="k">"mcpServers"</span>: {
+    <span class="k">"aetower"</span>: {
+      <span class="k">"command"</span>:
+        <span class="s">"/Applications/Aetower.app/Contents/Helpers/aetower-mcp"</span>
+    }
+  }
+}
+
+<span class="cmt"># Read-only by default. Exports are privacy-tiered</span>
+<span class="cmt"># and redacted. Auto-registration is opt-in.</span></pre>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p class="label">Plays well with your stack</p>
+        <div class="inspect cols-3">
+          <div>
+            <span class="tick" style="background: var(--green)"></span>
+            <h4>CLI</h4>
+            <p>The same live data in your shell, scripts, and pipelines.</p>
+          </div>
+          <div>
+            <span class="tick" style="background: #f59e0b"></span>
+            <h4>OTLP → Grafana</h4>
+            <p>Optional metrics export with a documented reference and a ready-made dashboard.</p>
+          </div>
+          <div>
+            <span class="tick" style="background: #3b82f6"></span>
+            <h4>Docker</h4>
+            <p>Local container metadata joined to the entities that own it.</p>
+          </div>
+          <div>
+            <span class="tick" style="background: var(--purple)"></span>
+            <h4>Chau7</h4>
+            <p>Agent sessions, per-repo costs, and runtime state when Chau7 runs.</p>
+          </div>
+          <div>
+            <span class="tick" style="background: #ec4899"></span>
+            <h4>Chromium debug</h4>
+            <p>Tab-level attribution through compatible debug endpoints.</p>
+          </div>
+          <div>
+            <span class="tick" style="background: #14b8a6"></span>
+            <h4>Shortcuts &amp; shell hooks</h4>
+            <p>Process events can trigger your own automations.</p>
           </div>
         </div>
       </section>
@@ -679,6 +1498,11 @@
             <p>Footprint &amp; leaks.</p>
           </div>
           <div>
+            <span class="tick" style="background: #0ea5e9"></span>
+            <h4>Storage</h4>
+            <p>Growth, cold data, reclaim.</p>
+          </div>
+          <div>
             <span class="tick" style="background: #f59e0b"></span>
             <h4>Code-signing</h4>
             <p>Unsigned / ad-hoc.</p>
@@ -691,13 +1515,40 @@
           <div>
             <span class="tick" style="background: #14b8a6"></span>
             <h4>Agent impact</h4>
-            <p>Timelines &amp; MCP.</p>
+            <p>Timelines, budgets &amp; MCP.</p>
+          </div>
+          <div>
+            <span class="tick" style="background: #8b5cf6"></span>
+            <h4>Repositories</h4>
+            <p>Clones, contracts, spend.</p>
           </div>
         </div>
       </section>
 
       <section>
-        <p class="label">By default</p>
+        <p class="label">Versus the usual suspects</p>
+        <div class="compare">
+          <div class="compare-row">
+            <div class="them"><b>Activity Monitor</b>A flat process list sorted by CPU, no history, no story.</div>
+            <div class="us"><strong>Aetower</strong> groups processes into entities, ranks them by friction, and keeps seven days of playback.</div>
+          </div>
+          <div class="compare-row">
+            <div class="them"><b>Menu-bar gauges</b>Host-level CPU/RAM numbers with no attribution.</div>
+            <div class="us"><strong>Aetower</strong> tells you <em>which entity</em> owns the pressure, who launched it, and what to do about it.</div>
+          </div>
+          <div class="compare-row">
+            <div class="them"><b>Disk cleaners</b>Folder sizes and a scary "delete" button.</div>
+            <div class="us"><strong>Aetower</strong> explains growth with filesystem evidence and stages safety-tiered cleanup through the Trash.</div>
+          </div>
+          <div class="compare-row">
+            <div class="them"><b>Everything else</b>No concept of AI agents at all.</div>
+            <div class="us"><strong>Aetower</strong> attributes GPU, VRAM, energy, and per-repo spend to each agent — and serves it all to agents over MCP.</div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p class="label">Built like it preaches</p>
         <div class="notes">
           <div>
             <h3>
@@ -722,9 +1573,47 @@
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
-              Installer first
+              Open source
             </h3>
-            <p>The PKG is the supported path; DMG, Homebrew, ZIP, and source are there if you prefer them.</p>
+            <p>AGPL-3.0, with every binary release paired with its exact corresponding source archive.</p>
+          </div>
+          <div>
+            <h3>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              Watches itself
+            </h3>
+            <p>The Diagnostics tab turns Aetower's own pipeline into the same observable surface it gives your apps.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p class="label">Developer Preview</p>
+        <div class="preview">
+          <div>
+            <h3>Join the preview deliberately</h3>
+            <p>
+              Aetower is a <strong>Developer Preview</strong>: signed, notarized, and
+              auto-updating through Sparkle — and moving fast. Surfaces evolve between releases,
+              and feedback steers what hardens first.
+            </p>
+            <p>
+              It's built for technical people who understand macOS permissions and want a say in
+              what an agent-era operator console becomes. If that's you, you're early on purpose.
+            </p>
+          </div>
+          <div class="preview-links">
+            <a href="https://github.com/schiste/Aetower/issues" target="_blank" rel="noopener noreferrer">
+              Report what breaks <small>GitHub issues</small>
+            </a>
+            <a href="https://github.com/schiste/Aetower" target="_blank" rel="noopener noreferrer">
+              Read the source <small>AGPL-3.0 on GitHub</small>
+            </a>
+            <a href="https://schiste.substack.com/" target="_blank" rel="noopener noreferrer">
+              Follow the thinking <small>Substack</small>
+            </a>
           </div>
         </div>
       </section>
