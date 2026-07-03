@@ -37,6 +37,17 @@ private enum RepositoryDetailTab: String, CaseIterable, Identifiable {
         case .live: return "Live"
         }
     }
+
+    var systemImage: String {
+        switch self {
+        case .actions: return "bolt.circle"
+        case .storage: return "internaldrive"
+        case .contracts: return "doc.text"
+        case .scorecard: return "shield.lefthalf.filled"
+        case .git: return "arrow.triangle.branch"
+        case .live: return "waveform.path.ecg"
+        }
+    }
 }
 
 private enum RepositorySort: String, CaseIterable, Identifiable {
@@ -270,11 +281,13 @@ private enum AgentContractLaunchPromptKind: Equatable {
 public struct RepositoryView: View {
     let state: AppState
     let settings: SettingsStore
-    @State private var mode: RepositoryMode = .attention
+    @State private var mode: RepositoryMode = .overview
     @State private var summaryCache = RepositorySummaryCacheStore()
     @State private var sort: RepositorySort = .attention
     @State private var detailTab: RepositoryDetailTab = .actions
     @State private var searchText = ""
+    @State private var debouncedSearchText = ""
+    @State private var searchDebounceTask: Task<Void, Never>?
     @State private var repositoryPath: [String] = []
     @State private var copiedRepositoryID: String?
     @State private var pendingArtifactCleanup: RepositorySummary?
@@ -315,6 +328,16 @@ public struct RepositoryView: View {
         }
         .onChange(of: settings.repositoryRoots) { _, roots in
             state.ensureStorageHygieneScan(roots: roots)
+        }
+        .onChange(of: searchText) { _, newValue in
+            // Debounce so the O(n · fields) localized filter+sort runs once the
+            // user pauses, not on every keystroke.
+            searchDebounceTask?.cancel()
+            searchDebounceTask = Task {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard !Task.isCancelled else { return }
+                debouncedSearchText = newValue
+            }
         }
         .sheet(item: $scorecardWorkflowPreview) { preview in
             scorecardWorkflowPreviewSheet(preview)
@@ -417,34 +440,15 @@ public struct RepositoryView: View {
     }
 
     private var repositoryModeMenu: some View {
-        Menu {
+        // Visible segmented control instead of a grid-icon dropdown: the old
+        // menu hid that the list was filtered to attention-only, so users
+        // expecting "all my repos" silently saw a subset. Default is Overview.
+        Picker("Repository view", selection: $mode) {
             ForEach(RepositoryMode.allCases) { candidate in
-                Button {
-                    mode = candidate
-                } label: {
-                    HStack {
-                        Text(candidate.label)
-                        if mode == candidate {
-                            Spacer()
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
+                Text(candidate.label).tag(candidate)
             }
-        } label: {
-            HStack(spacing: AetowerDesign.Spacing.xs) {
-                Image(systemName: "rectangle.grid.1x2")
-                Text(mode.label)
-                Image(systemName: "chevron.down")
-                    .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
-            }
-            .font(AetowerDesign.Typography.caption.weight(.semibold))
-            .foregroundStyle(AetowerDesign.Ink.secondary)
-            .padding(.horizontal, AetowerDesign.Spacing.sm)
-            .padding(.vertical, AetowerDesign.Spacing.xs)
-            .aetowerControlChrome()
         }
-        .menuStyle(.borderlessButton)
+        .pickerStyle(.segmented)
         .fixedSize()
         .accessibilityLabel("Repository view")
     }
@@ -1660,13 +1664,76 @@ public struct RepositoryView: View {
                     repositoryCleanupResultBanner(result, repoRoot: repository.root)
                 }
                 repositoryProjectSection(repository)
-                repositoryDetailTabPicker
-                repositoryDetailTabContent(repository, report: report)
+                HStack(alignment: .top, spacing: AetowerDesign.Spacing.lg) {
+                    repositoryDetailRail(repository)
+                    Divider()
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                        repositoryDetailTabContent(repository, report: report)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(AetowerDesign.Spacing.xxl)
         }
         .navigationTitle(repository.name)
+    }
+
+    /// Vertical rail replacing the 6-tab segmented picker: each destination
+    /// carries a live signal (score, coverage, dirty/clone count) so the user
+    /// sees which panel matters, mirroring the Storage tab's rail.
+    private func repositoryDetailRail(_ repository: RepositorySummary) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            ForEach(RepositoryDetailTab.allCases) { tab in
+                AetowerRailButton(
+                    title: tab.label,
+                    role: "",
+                    signal: repositoryDetailTabSignal(tab, repository: repository),
+                    systemImage: tab.systemImage,
+                    signalTone: repositoryDetailTabTone(tab, repository: repository),
+                    isSelected: detailTab == tab
+                ) {
+                    detailTab = tab
+                }
+            }
+        }
+        .frame(width: 172)
+    }
+
+    private func repositoryDetailTabSignal(
+        _ tab: RepositoryDetailTab,
+        repository: RepositorySummary
+    ) -> String? {
+        switch tab {
+        case .storage:
+            return repository.hasStorageFootprint ? formatBytes(repository.currentSizeBytes) : nil
+        case .scorecard:
+            guard let report = repository.scorecardReport, let score = report.score else { return nil }
+            return String(format: "%.1f", score)
+        case .contracts:
+            return repository.agentGuidanceIssueCount > 0 ? "\(repository.agentGuidanceIssueCount)" : nil
+        case .git:
+            if repository.gitDirtyStatus == "dirty" { return "dirty" }
+            return repository.cloneGroupCount > 1 ? "\(repository.cloneGroupCount) clones" : nil
+        default:
+            return nil
+        }
+    }
+
+    private func repositoryDetailTabTone(
+        _ tab: RepositoryDetailTab,
+        repository: RepositorySummary
+    ) -> Color {
+        switch tab {
+        case .scorecard:
+            return repository.hasScorecardAttention ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+        case .contracts:
+            return repository.agentGuidanceIssueCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+        case .git:
+            return repository.gitDirtyStatus == "dirty" ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+        default:
+            return AetowerDesign.Status.neutral
+        }
     }
 
     private func repositoryCleanupResultBanner(
@@ -1681,16 +1748,6 @@ public struct RepositoryView: View {
             tone: result.succeeded ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
         )
         .onTapGesture { state.clearRepositoryCleanupResult(repoRoot: repoRoot) }
-    }
-
-    private var repositoryDetailTabPicker: some View {
-        Picker("Repository detail", selection: $detailTab) {
-            ForEach(RepositoryDetailTab.allCases) { tab in
-                Text(tab.label).tag(tab)
-            }
-        }
-        .pickerStyle(.segmented)
-        .frame(maxWidth: 720, alignment: .leading)
     }
 
     @ViewBuilder
@@ -3553,7 +3610,7 @@ public struct RepositoryView: View {
     }
 
     private func filteredRepositories(from report: StorageHygieneReportModel) -> [RepositorySummary] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         var repositories = repositorySummaries(from: report)
 
         switch mode {
