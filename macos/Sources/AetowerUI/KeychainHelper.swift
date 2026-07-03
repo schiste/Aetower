@@ -32,7 +32,10 @@ public enum KeychainHelper {
         SecItemDelete(query as CFDictionary)
         var insert = query
         insert[kSecValueData as String] = data
-        insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        // ThisDeviceOnly keeps provider tokens out of unencrypted local
+        // backups and device-migration transfers; a leaked backup must not
+        // carry the user's GitHub/Cloudflare credentials off the machine.
+        insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
     }
 

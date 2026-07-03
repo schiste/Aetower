@@ -565,6 +565,7 @@ public final class AppState {
     @ObservationIgnored
     private var repositoryScorecardTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var repositoryDetailTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var repositoryInventorySignalTask: Task<Void, Never>?
     @ObservationIgnored private var repositoryDetailRunIDs: [String: String] = [:]
     @ObservationIgnored private var storageItemsPageTask: Task<Void, Never>?
     @ObservationIgnored private var storageItemsPageRunID: String?
@@ -866,6 +867,16 @@ public final class AppState {
         repositoryScorecardTasks.removeAll()
         repositoryScorecardRunIDs.removeAll()
         repositoryScorecardLoadingRoots.removeAll()
+        // Provider and detail fetches outlived teardown before: cancel them all
+        // so no network work leaks past stop().
+        repositoryDetailTasks.values.forEach { $0.cancel() }
+        repositoryDetailTasks.removeAll()
+        repositoryGitHubProviderTasks.values.forEach { $0.cancel() }
+        repositoryGitHubProviderTasks.removeAll()
+        repositoryCloudflareProviderTasks.values.forEach { $0.cancel() }
+        repositoryCloudflareProviderTasks.removeAll()
+        repositoryInventorySignalTask?.cancel()
+        repositoryInventorySignalTask = nil
         storageScanController.stop()
         storageRootChangeMonitor.stop()
         lagMonitor.stop()
@@ -1887,7 +1898,8 @@ public final class AppState {
         let maxDepth: UInt32 = 5
         let bridge = self.bridge
         let publisher = StorageHygieneMainActorPublisher(self)
-        Task.detached(priority: .utility) { [bridge, publisher] in
+        repositoryInventorySignalTask?.cancel()
+        repositoryInventorySignalTask = Task.detached(priority: .utility) { [bridge, publisher] in
             let inventory = bridge.repositoryInventoryJSON(roots: roots, maxDepth: maxDepth)
             guard !Task.isCancelled else { return }
             guard let decoded = Self.decodeRepositoryInventoryReport(inventory) else { return }
@@ -2584,13 +2596,27 @@ public final class AppState {
     func upsertRepositoryProject(_ project: RepositoryProjectModel) {
         repositoryProjects = RepositoryProjectStore.upsert(project, into: repositoryProjects)
         repositorySummaryInputsGeneration += 1
-        RepositoryProjectStore.save(repositoryProjects)
+        persistRepositoryProjects()
     }
 
     func removeRepositoryProject(id: String) {
         repositoryProjects = RepositoryProjectStore.remove(id: id, from: repositoryProjects)
         repositorySummaryInputsGeneration += 1
-        RepositoryProjectStore.save(repositoryProjects)
+        persistRepositoryProjects()
+    }
+
+    /// Persist repository project links, surfacing a diagnostics warning on
+    /// failure. The store also backs up a corrupt file on load, so a failed
+    /// write no longer silently loses every configured link.
+    private func persistRepositoryProjects() {
+        guard !RepositoryProjectStore.save(repositoryProjects) else { return }
+        recordLocalDiagnosticsEvent(
+            level: .warn,
+            subsystem: .ui,
+            eventType: "repository-projects-save-failed",
+            message: "Could not persist repository project links to disk.",
+            fields: [DiagnosticsField(key: "project_count", value: String(repositoryProjects.count))]
+        )
     }
 
     func repositoryProject(forRepoRoot repoRoot: String) -> RepositoryProjectModel? {
@@ -2674,7 +2700,7 @@ public final class AppState {
         project.githubStatus = status
         repositoryProjects = RepositoryProjectStore.upsert(project, into: repositoryProjects)
         repositorySummaryInputsGeneration += 1
-        RepositoryProjectStore.save(repositoryProjects)
+        persistRepositoryProjects()
     }
 
     func repositoryCloudflareProviderKey(
@@ -2775,7 +2801,7 @@ public final class AppState {
         }
         repositoryProjects = RepositoryProjectStore.upsert(project, into: repositoryProjects)
         repositorySummaryInputsGeneration += 1
-        RepositoryProjectStore.save(repositoryProjects)
+        persistRepositoryProjects()
     }
 
     /// On-demand per-repo storage drill-down. instant_cached serves from the

@@ -730,9 +730,9 @@ enum RepositoryProjectStore {
     private static let fileName = "repository-projects-v1.json"
 
     static func load(fileURL: URL? = nil) -> [RepositoryProjectModel] {
-        guard let url = fileURL ?? defaultURL(createDirectory: false),
-              let data = try? Data(contentsOf: url)
-        else {
+        guard let url = fileURL ?? defaultURL(createDirectory: false) else { return [] }
+        guard let data = try? Data(contentsOf: url) else {
+            // No file yet is a legitimate empty state, not corruption.
             return []
         }
         let decoder = JSONDecoder()
@@ -744,24 +744,44 @@ enum RepositoryProjectStore {
         if let projects = try? decoder.decode([RepositoryProjectModel].self, from: data) {
             return sortedProjects(projects)
         }
+        // The file exists but does not decode: it is corrupt, not empty.
+        // Preserve it under a sidecar name so the next save cannot silently
+        // overwrite recoverable data, then start clean.
+        backUpCorruptFile(at: url)
         return []
     }
 
+    /// Persist projects. Returns false on any failure so the caller can surface
+    /// it — the old silent `try?` masked a data-loss path.
+    @discardableResult
     static func save(
         _ projects: [RepositoryProjectModel],
         fileURL: URL? = nil
-    ) {
-        guard let url = fileURL ?? defaultURL(createDirectory: true) else { return }
+    ) -> Bool {
+        guard let url = fileURL ?? defaultURL(createDirectory: true) else { return false }
         let record = RepositoryProjectStoreRecord(
             schemaVersion: schemaVersion,
             projects: sortedProjects(projects)
         )
-        guard let data = try? JSONEncoder().encode(record) else { return }
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try? data.write(to: url, options: [.atomic])
+        do {
+            let data = try JSONEncoder().encode(record)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: [.atomic])
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private static func backUpCorruptFile(at url: URL) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        let backup = url.deletingPathExtension()
+            .appendingPathExtension("corrupt-\(stamp).json")
+        try? FileManager.default.moveItem(at: url, to: backup)
     }
 
     static func upsert(

@@ -54,9 +54,13 @@ public struct ProviderOAuthCredential: Equatable, Sendable {
         self.capturedAtMillis = capturedAtMillis
     }
 
+    /// Treat a token that expires within the skew buffer as already expired, so
+    /// we refresh proactively instead of firing a request that 401s in flight.
+    static let expiryskewBufferMillis: UInt64 = 60_000
+
     public func isExpired(nowMillis: UInt64 = Self.currentMillis()) -> Bool {
         guard let expiresAtMillis else { return false }
-        return nowMillis >= expiresAtMillis
+        return nowMillis + Self.expiryskewBufferMillis >= expiresAtMillis
     }
 
     private static func normalizedOptional(_ value: String?) -> String? {
@@ -264,18 +268,33 @@ public struct ProviderCredentialStore {
     public func resolvedCredential(for provider: ProjectProvider) -> ResolvedProviderCredential? {
         switch credentialSource(for: provider) {
         case .oauth:
-            guard let credential = oauthCredential(for: provider),
-                  !credential.isExpired()
-            else {
-                return nil
+            if let credential = oauthCredential(for: provider), !credential.isExpired() {
+                return ResolvedProviderCredential(source: .oauth, accessToken: credential.accessToken)
             }
-            return ResolvedProviderCredential(source: .oauth, accessToken: credential.accessToken)
+            // OAuth token is expired (or within the skew buffer). Fall back to a
+            // manually-entered token if the user has one so they are not locked
+            // out; otherwise the caller sees nil and prompts a reconnect.
+            if let token = manualToken(for: provider) {
+                return ResolvedProviderCredential(source: .manualToken, accessToken: token)
+            }
+            return nil
         case .manualToken:
             guard let token = manualToken(for: provider) else { return nil }
             return ResolvedProviderCredential(source: .manualToken, accessToken: token)
         case .none:
             return nil
         }
+    }
+
+    /// True when the OAuth token is expired and a stored refresh token exists —
+    /// the signal for the provider client to run a token-refresh exchange.
+    public func credentialNeedsRefresh(for provider: ProjectProvider) -> Bool {
+        guard credentialSource(for: provider) == .oauth,
+              let credential = oauthCredential(for: provider)
+        else {
+            return false
+        }
+        return credential.isExpired() && credential.refreshToken != nil
     }
 
     public func resolvedAccessToken(for provider: ProjectProvider) -> String? {
