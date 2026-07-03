@@ -55,6 +55,13 @@ cask "aetower" do
 
   app "Aetower.app"
 
+  caveats <<~EOS
+    To use the \`aetower\` command line tool from any shell, run once:
+      /Applications/Aetower.app/Contents/Helpers/aetower install
+    (or use "Install Command Line Tool" in Aetower's Settings → AI Clients).
+    The CLI reads live data from a running Aetower, so keep the app open.
+  EOS
+
   zap trash: [
     "~/Library/Application Support/Aetower",
     "~/Library/Caches/com.aeptus.aetower",

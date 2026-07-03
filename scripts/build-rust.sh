@@ -12,6 +12,8 @@ cd "$ROOT/rust"
 
 "$CARGO_BIN" build --locked -p aetower-mcp
 "$CARGO_BIN" build --locked -p aetower-mcp --release
+"$CARGO_BIN" build --locked -p aetower-cli
+"$CARGO_BIN" build --locked -p aetower-cli --release
 "$CARGO_BIN" build --locked -p aetower-ffi
 "$CARGO_BIN" build --locked -p aetower-ffi --release
 

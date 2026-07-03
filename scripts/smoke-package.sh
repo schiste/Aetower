@@ -9,6 +9,7 @@ APP_ICON="$APP_DIR/Contents/Resources/Aetower.icns"
 FFI_LIB="$APP_DIR/Contents/Frameworks/libaetower_ffi.dylib"
 HELPER_BIN="$APP_DIR/Contents/Helpers/aetower-helper"
 MCP_PROXY_BIN="$APP_DIR/Contents/Helpers/aetower-mcp"
+CLI_BIN="$APP_DIR/Contents/Helpers/aetower"
 REBUILD=0
 LAUNCH=0
 
@@ -38,6 +39,10 @@ fi
 [ -f "$APP_ICON" ]
 [ -f "$FFI_LIB" ]
 [ -x "$MCP_PROXY_BIN" ]
+[ -x "$CLI_BIN" ]
+# The operator CLI must at least answer --version without a running app; the
+# socket-backed verbs are exercised by the live smoke below.
+"$CLI_BIN" --version >/dev/null
 /usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$APP_PLIST" | grep -Fx "Aetower" >/dev/null
 # The privileged Endpoint Security helper is optional and excluded by default
 # (package-macos.sh only bundles it when AETOWER_INCLUDE_PRIVILEGED_HELPER=1),
