@@ -1,0 +1,20 @@
+// Worker that serves the release payload paths on aetower.dev by proxying
+// to the aetower-releases Pages project. Unmatched aetower.dev paths fall
+// through to the website Pages project (aetower-dev) as before.
+//
+// Rollback: `npx wrangler@4 delete --config infra/release-router/wrangler.jsonc`
+// removes the worker and its routes; requests fall back to whatever the
+// aetower-dev Pages deployment contains.
+{
+  "name": "aetower-release-router",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-05-28",
+  "workers_dev": true,
+  // These routes intercept in front of the aetower-dev Pages custom domain;
+  // all other aetower.dev paths fall through to the website project.
+  "routes": [
+    { "pattern": "aetower.dev/releases/*", "zone_name": "aetower.dev" },
+    { "pattern": "aetower.dev/homebrew/*", "zone_name": "aetower.dev" },
+    { "pattern": "aetower.dev/third-party-notices.md", "zone_name": "aetower.dev" }
+  ]
+}
