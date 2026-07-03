@@ -216,6 +216,12 @@ struct ProcessCounterSample {
     wakeups_per_second: f32,
     energy_nj_per_s: f64,
     thread_count: u32,
+    /// When `wakeups`/`energy_nj` were last freshly read. The rusage counters
+    /// are sampled on a slow cadence (every `WAKEUPS_SAMPLE_INTERVAL_TICKS`),
+    /// so the rate must divide the delta by the real elapsed time since this
+    /// baseline, not by a single nominal tick — otherwise a 5-tick sample reads
+    /// 5x too high. `None` until the first fresh read.
+    counters_sampled_at: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -465,11 +471,17 @@ impl Collector {
         self.first_network_tick = false;
 
         let metadata_refresh = full_collection || self.process_metadata_tick == 1 || discovery_scan;
+        // The periodic wakeups/energy sample is already throttled to the slow
+        // ~10s cadence (one `proc_pid_rusage` per PID per interval), so it stays
+        // cheap even under pressure. Gating this heartbeat behind
+        // `defer_expensive_sampling` collapsed it to "never" whenever the
+        // collector deferred (which a busy host does routinely), leaving wakeups
+        // and energy stuck at 0. Keep the heartbeat regardless of deferral;
+        // deferral still suppresses the per-tick `full_collection` sampling path.
         let sample_wakeups = full_collection
-            || (!self.config.defer_expensive_sampling
-                && self
-                    .wakeups_sample_tick
-                    .is_multiple_of(WAKEUPS_SAMPLE_INTERVAL_TICKS));
+            || self
+                .wakeups_sample_tick
+                .is_multiple_of(WAKEUPS_SAMPLE_INTERVAL_TICKS);
         self.wakeups_sample_tick = self.wakeups_sample_tick.wrapping_add(1);
         let mut user_directory_refreshed = !self.config.defer_expensive_sampling
             && self.should_refresh_user_directory(discovery_scan);
@@ -540,24 +552,33 @@ impl Collector {
                 let disk_write_total = process.disk_usage().total_written_bytes;
 
                 let tick_seconds = TICK_SECONDS;
-                let wakeups_per_second = previous
-                    .map(|prev| {
-                        if sample_wakeups || prev.wakeups == 0 {
-                            wakeups.saturating_sub(prev.wakeups) as f32 / tick_seconds
-                        } else {
-                            prev.wakeups_per_second
-                        }
-                    })
-                    .unwrap_or(0.0);
-                let energy_nj_per_s = previous
-                    .map(|prev| {
-                        if sample_wakeups || prev.energy_nj == 0 {
-                            energy_nj.saturating_sub(prev.energy_nj) as f64 / tick_seconds as f64
-                        } else {
-                            prev.energy_nj_per_s
-                        }
-                    })
-                    .unwrap_or(0.0);
+                // Wakeups/energy are cumulative counters sampled on a slow
+                // cadence, so their rate is the delta divided by the REAL time
+                // since the last fresh read (`counters_sampled_at`), not by one
+                // nominal tick — a 5-tick sample otherwise reads 5x too high.
+                // On ticks with no fresh read we carry the last computed rate.
+                let (wakeups_per_second, energy_nj_per_s, counters_sampled_at): (
+                    f32,
+                    f64,
+                    Option<std::time::Instant>,
+                ) = match previous {
+                    Some(prev) if !sample_rusage => (
+                        prev.wakeups_per_second,
+                        prev.energy_nj_per_s,
+                        prev.counters_sampled_at,
+                    ),
+                    Some(prev) => {
+                        let elapsed = prev
+                            .counters_sampled_at
+                            .map(|t| process_sampling_started.duration_since(t).as_secs_f64())
+                            .filter(|seconds| *seconds > 0.0)
+                            .unwrap_or(tick_seconds as f64);
+                        let w = (wakeups.saturating_sub(prev.wakeups) as f64 / elapsed) as f32;
+                        let e = energy_nj.saturating_sub(prev.energy_nj) as f64 / elapsed;
+                        (w, e, Some(process_sampling_started))
+                    }
+                    None => (0.0, 0.0, Some(process_sampling_started)),
+                };
                 let disk_read_delta = previous
                     .map(|prev| disk_read_total.saturating_sub(prev.disk_read_bytes))
                     .unwrap_or(0);
@@ -577,6 +598,7 @@ impl Collector {
                         wakeups_per_second,
                         energy_nj_per_s,
                         thread_count,
+                        counters_sampled_at,
                     },
                 );
 
