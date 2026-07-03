@@ -268,10 +268,9 @@ enum StorageHygieneBaselineStore {
     private static let key = "aetower.storageHygiene.baseline.v1"
 
     static func load() -> StorageHygieneBaselineModel? {
-        guard let data = UserDefaults.standard.data(forKey: key) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(StorageHygieneBaselineModel.self, from: data)
+        // Back up corrupt bytes instead of silently discarding: a baseline-shape
+        // change previously nil'd here and reset growth deltas with no signal.
+        decodeUserDefaultsJSON(StorageHygieneBaselineModel.self, key: key)
     }
 
     static func save(_ baseline: StorageHygieneBaselineModel) {

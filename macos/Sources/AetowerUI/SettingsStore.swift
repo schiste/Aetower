@@ -240,14 +240,28 @@ public struct AutomationRule: Codable, Identifiable, Sendable {
     }
 }
 
+/// Decode persisted UserDefaults JSON, distinguishing "no data yet" (nil, a
+/// legitimate empty state) from "data present but undecodable" (shape drift /
+/// corruption). On the latter it preserves the raw bytes under a sidecar key
+/// so the user's data is recoverable, instead of a silent `?? []` fallback
+/// whose next save would overwrite and permanently lose it.
+func decodeUserDefaultsJSON<T: Decodable>(_ type: T.Type, key: String) -> T? {
+    guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+    do {
+        return try JSONDecoder().decode(type, from: data)
+    } catch {
+        UserDefaults.standard.set(data, forKey: key + ".corrupt-backup")
+        return nil
+    }
+}
+
 /// Standalone UserDefaults persistence for automation rules, independent of
 /// `SettingsStore`'s per-property persist machinery.
 public enum AutomationStore {
     private static let key = "aetower.automationRules"
 
     public static func load() -> [AutomationRule] {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
-        return (try? JSONDecoder().decode([AutomationRule].self, from: data)) ?? []
+        decodeUserDefaultsJSON([AutomationRule].self, key: key) ?? []
     }
 
     public static func save(_ rules: [AutomationRule]) {
@@ -279,8 +293,7 @@ public enum NotificationSnoozeStore {
     private static let key = "aetower.notificationSnoozes"
 
     public static func load() -> [NotificationSnooze] {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
-        return (try? JSONDecoder().decode([NotificationSnooze].self, from: data)) ?? []
+        decodeUserDefaultsJSON([NotificationSnooze].self, key: key) ?? []
     }
 
     public static func save(_ snoozes: [NotificationSnooze]) {
