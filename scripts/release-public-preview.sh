@@ -139,10 +139,13 @@ if [ "$RUN_MATRIX" -eq 1 ]; then
     sh "$ROOT/scripts/verify-sparkle-distribution-matrix.sh" $MATRIX_ARGS
 fi
 
-printf '\n=== prepare Cloudflare Pages payload ===\n'
+printf '\n=== prepare release payload (synced with live history) ===\n'
 AETOWER_INCLUDE_DMG_IN_SITE="$WITH_DMG" \
     AETOWER_INCLUDE_PKG_IN_SITE="$WITH_PKG" \
-    sh "$ROOT/scripts/prepare-cloudflare-site.sh"
+    sh "$ROOT/scripts/prepare-release-payload.sh"
+
+printf '\n=== prepare Cloudflare Pages website ===\n'
+sh "$ROOT/scripts/prepare-cloudflare-site.sh"
 
 printf '\n=== public preview release set ready ===\n'
 printf '  macOS app:       %s\n' "$ROOT/dist/Aetower.app"
@@ -157,12 +160,13 @@ printf '  appcast dir:     %s\n' "$ROOT/dist/appcast"
 printf '  homebrew cask:   %s\n' "$ROOT/dist/homebrew/Casks/aetower.rb"
 printf '  source archive:  %s\n' "$ROOT/dist/source/Aetower-${AETOWER_VERSION}-${AETOWER_BUILD_NUMBER}-source.tar.gz"
 printf '  notices:         %s\n' "$ROOT/dist/THIRD-PARTY-NOTICES.md"
+printf '  release payload: %s\n' "${AETOWER_CLOUDFLARE_RELEASES_DIR:-$ROOT/dist/releases-payload}"
 printf '  cloudflare site: %s\n' "$SITE_OUTPUT"
 
 if [ "$DEPLOY_CLOUDFLARE" -eq 1 ]; then
-    printf '\n=== publish Cloudflare Pages ===\n'
+    printf '\n=== publish release payload (aetower-releases) ===\n'
     printf 'Publishing updates %s and makes this build discoverable by Sparkle clients.\n' "${AETOWER_APPCAST_URL:-the configured appcast URL}"
-    npx wrangler pages deploy "$SITE_OUTPUT" --project-name "$CLOUDFLARE_PROJECT"
+    sh "$ROOT/scripts/deploy-release-payload.sh"
     if [ "$VERIFY_PUBLIC" -eq 1 ]; then
         printf '\n=== verify published release ===\n'
         AETOWER_VERIFY_DMG="$WITH_DMG" \
@@ -171,8 +175,12 @@ if [ "$DEPLOY_CLOUDFLARE" -eq 1 ]; then
     else
         printf '\nPublished release verification skipped by --skip-public-verify.\n'
     fi
+    printf '\n=== publish website (%s) ===\n' "$CLOUDFLARE_PROJECT"
+    sh "$ROOT/scripts/deploy-website.sh"
 else
     printf '\nCloudflare publish intentionally skipped.\n'
     printf 'Publish explicitly with:\n'
     printf '  sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare\n'
+    printf 'Website-only changes deploy with:\n'
+    printf '  sh scripts/deploy-website.sh\n'
 fi
