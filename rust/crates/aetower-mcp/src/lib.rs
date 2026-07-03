@@ -22,8 +22,8 @@ use serde_json::{Value, json};
 mod transport;
 
 pub use transport::{
-    LocalMcpServerHandle, default_socket_path, is_socket_listener_reachable, proxy_stdio_to_socket,
-    start_local_socket_server,
+    LocalMcpServerHandle, call_tool, default_socket_path, is_socket_listener_reachable, list_tools,
+    proxy_stdio_to_socket, start_local_socket_server,
 };
 
 mod reports;

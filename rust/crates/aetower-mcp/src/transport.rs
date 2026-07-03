@@ -249,6 +249,117 @@ pub fn proxy_stdio_to_socket(socket_path: impl AsRef<Path>) -> Result<(), String
     proxy_stdio_to_socket_polling(socket_path)
 }
 
+/// How long a one-shot CLI request waits for the app to answer before giving
+/// up. Reports are computed on the app's request thread and a cold storage
+/// scan can take a few seconds, so this is generous; a hung app still fails
+/// rather than blocking the shell forever.
+const CLIENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Send one JSON-RPC request to a running Aetower's socket and return the
+/// top-level `result` value. This is the shared client core for the `aetower`
+/// CLI and any other in-shell consumer: it connects, writes a Content-Length
+/// framed request, reads exactly one framed response with [`read_message`], and
+/// surfaces a protocol-level `error` (e.g. unknown method) as `Err`.
+///
+/// The socket is owned by the running app; if nothing is listening the connect
+/// fails here. Callers that want a friendly "app not running" message should
+/// gate on [`is_socket_listener_reachable`] first.
+fn request_once(
+    socket_path: impl AsRef<Path>,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    let socket_path = socket_path.as_ref();
+    let mut stream = UnixStream::connect(socket_path)
+        .map_err(|error| format!("connect MCP socket {}: {error}", socket_path.display()))?;
+    stream
+        .set_read_timeout(Some(CLIENT_REQUEST_TIMEOUT))
+        .map_err(|error| format!("set MCP socket read timeout: {error}"))?;
+
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    });
+    let body =
+        serde_json::to_vec(&request).map_err(|error| format!("serialize MCP request: {error}"))?;
+    write!(stream, "Content-Length: {}\r\n\r\n", body.len())
+        .and_then(|()| stream.write_all(&body))
+        .and_then(|()| stream.flush())
+        .map_err(|error| format!("write MCP request: {error}"))?;
+
+    let mut framing = None;
+    let response = match read_message(&mut stream, &mut framing)? {
+        ReadMessageOutcome::Message(message) => message,
+        ReadMessageOutcome::EndOfStream => {
+            return Err("MCP socket closed before responding".into());
+        }
+        ReadMessageOutcome::Timeout => {
+            return Err("MCP socket timed out before responding".into());
+        }
+    };
+
+    if let Some(error) = response.get("error") {
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown MCP error");
+        return Err(message.to_string());
+    }
+    response
+        .get("result")
+        .cloned()
+        .ok_or_else(|| "MCP response missing result".to_string())
+}
+
+/// Call a single MCP tool on a running Aetower and return its payload as JSON.
+///
+/// Prefers the tool result's `structuredContent` (always the full data) over
+/// `content[0].text`, which the server truncates to a short summary string for
+/// payloads over its inline-text budget. A tool-level failure (`isError`) is
+/// returned as `Err` carrying the tool's message.
+pub fn call_tool(
+    socket_path: impl AsRef<Path>,
+    name: &str,
+    arguments: Value,
+) -> Result<Value, String> {
+    let result = request_once(
+        socket_path,
+        "tools/call",
+        json!({ "name": name, "arguments": arguments }),
+    )?;
+
+    if result
+        .get("isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let message = result
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .unwrap_or("tool reported an error");
+        return Err(message.to_string());
+    }
+
+    if let Some(structured) = result.get("structuredContent") {
+        return Ok(structured.clone());
+    }
+    if let Some(text) = result.pointer("/content/0/text").and_then(Value::as_str) {
+        return Ok(
+            serde_json::from_str::<Value>(text).unwrap_or_else(|_| Value::String(text.into()))
+        );
+    }
+    Ok(result)
+}
+
+/// List the tools a running Aetower exposes. Returns the `tools/list` result
+/// object (`{ "tools": [ … ] }`) verbatim so callers can read names,
+/// descriptions, and input schemas.
+pub fn list_tools(socket_path: impl AsRef<Path>) -> Result<Value, String> {
+    request_once(socket_path, "tools/list", json!({}))
+}
+
 #[cfg(test)]
 pub(crate) fn proxy_streams_to_socket<R, W>(
     mut input: R,

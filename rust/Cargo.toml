@@ -18,6 +18,7 @@ members = [
   "crates/aetower-core",
   "crates/aetower-ffi",
   "crates/aetower-mcp",
+  "crates/aetower-cli",
   "crates/aetower-helper",
   "crates/aetower-bench",
   "crates/uniffi-bindgen-swift",

@@ -1,0 +1,16 @@
+[package]
+name = "aetower-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aetower"
+path = "src/main.rs"
+
+[dependencies]
+aetower-mcp = { path = "../aetower-mcp" }
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+clap_mangen = "0.2"
