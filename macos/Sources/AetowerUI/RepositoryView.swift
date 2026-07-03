@@ -1720,42 +1720,73 @@ public struct RepositoryView: View {
         }
     }
 
+    /// Health header, modelled on the Storage tab's disk header: a prominent
+    /// status verdict, an attention meter proportional to severity, the one
+    /// recommended action as a prominent CTA (promoted from a tab down), and
+    /// footprint demoted to a small stat rather than the focal number.
     private func repositoryHero(_ repository: RepositorySummary) -> some View {
-        AetowerSurface(padding: AetowerDesign.Spacing.lg) {
-            HStack(alignment: .top, spacing: AetowerDesign.Spacing.lg) {
-                Image(systemName: "folder.badge.gearshape")
-                    .font(AetowerDesign.Typography.metricValue(size: 30, weight: .semibold))
-                    .foregroundStyle(repository.statusTone)
-                    .frame(width: AetowerDesign.Size.iconSlot)
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                    HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
-                        Text(repository.name)
-                            .font(AetowerDesign.Typography.metricValue(size: 26, weight: .semibold))
-                            .foregroundStyle(AetowerDesign.Ink.primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                        AetowerBadge(repository.statusLabel, tone: repository.statusTone)
-                    }
-                    Text(repository.root)
-                        .font(AetowerDesign.Typography.compactData(size: 11))
-                        .foregroundStyle(AetowerDesign.Ink.secondary)
-                        .lineLimit(2)
-                        .textSelection(.enabled)
-                    Text(repositorySummarySentence(repository))
-                        .font(AetowerDesign.Typography.caption)
-                        .foregroundStyle(AetowerDesign.Ink.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: AetowerDesign.Spacing.lg)
-                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
-                    Text(formatBytes(repository.currentSizeBytes))
-                        .font(AetowerDesign.Typography.metricValue(size: 28, weight: .semibold))
+        // attentionScore accumulates unbounded; ~40 is already a heavy repo, so
+        // clamp there for a readable meter.
+        let severity = min(repository.attentionScore / 40.0, 1.0)
+        return AetowerSurface(padding: AetowerDesign.Spacing.lg) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                    Image(systemName: "folder.badge.gearshape")
+                        .foregroundStyle(repository.statusTone)
+                    Text(repository.name)
+                        .font(AetowerDesign.Typography.metricValue(size: 24, weight: .semibold))
                         .foregroundStyle(AetowerDesign.Ink.primary)
-                    Text(repository.hasStorageFootprint ? "current footprint" : "no tracked artifacts")
-                        .font(AetowerDesign.Typography.metadata)
-                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    AetowerBadge(repository.statusLabel, tone: repository.statusTone)
+                    Spacer(minLength: AetowerDesign.Spacing.md)
+                    repositoryPrimaryActionButton(repository)
+                }
+
+                Text(repositorySummarySentence(repository))
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // Attention meter — proportional to severity, tone-matched.
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(AetowerDesign.Surface.badgeStrong)
+                        Capsule().fill(repository.statusTone.opacity(0.85))
+                            .frame(width: max(2, geo.size.width * severity))
+                    }
+                }
+                .frame(height: 6)
+
+                HStack(spacing: AetowerDesign.Spacing.lg) {
+                    repositoryHeroStat(
+                        repository.hasStorageFootprint ? formatBytes(repository.currentSizeBytes) : "—",
+                        "footprint"
+                    )
+                    repositoryHeroStat(gitOverviewLabel(repository), "git")
+                    if repository.reviewItemCount > 0 {
+                        repositoryHeroStat("\(repository.reviewItemCount)", "to review")
+                    }
+                    Spacer()
+                    Text(repository.root)
+                        .font(AetowerDesign.Typography.compactData(size: 10))
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
                 }
             }
+        }
+    }
+
+    private func repositoryHeroStat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value)
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(AetowerDesign.Ink.primary)
+            Text(label)
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
         }
     }
 
