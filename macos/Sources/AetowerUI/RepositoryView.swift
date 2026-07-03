@@ -291,6 +291,203 @@ private struct RepositoryRow: View {
     }
 }
 
+/// Shared provider metric tile (GitHub + Cloudflare cards, scorecard). File
+/// scope so both RepositoryView and the extracted provider cards call it.
+private func repositoryProjectProviderMetric(_ label: String, _ value: String) -> some View {
+    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+        Text(label.uppercased())
+            .font(AetowerDesign.Typography.metadata)
+            .foregroundStyle(AetowerDesign.Ink.tertiary)
+        Text(value)
+            .font(AetowerDesign.Typography.caption.weight(.semibold))
+            .foregroundStyle(AetowerDesign.Ink.primary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+}
+
+/// GitHub provider status tone — pure function of the status/error/loading
+/// state. Shared between the extracted card and RepositoryView's nav rail.
+private func repositoryGitHubProviderTone(
+    _ status: RepositoryGitHubProviderStatusModel?,
+    error: String? = nil,
+    isLoading: Bool = false
+) -> Color {
+    if isLoading { return AetowerDesign.Tone.cpu }
+    if error != nil { return AetowerDesign.Status.warning }
+    guard let status else { return AetowerDesign.Tone.cpu }
+    if status.failedLatestCIOnDefaultBranch {
+        return AetowerDesign.Status.error
+    }
+    if status.staleOpenPullRequestCount() > 0 { return AetowerDesign.Status.warning }
+    switch status.status {
+    case "ok":
+        return AetowerDesign.Status.ready
+    case "warning", "auth_needed":
+        return AetowerDesign.Status.warning
+    case "failed":
+        return AetowerDesign.Status.error
+    default:
+        return AetowerDesign.Status.neutral
+    }
+}
+
+/// GitHub provider status card, extracted from the RepositoryView god-object.
+/// Renders from the status model plus the loading/error flags the parent reads
+/// from AppState, and reports the workflow re-run through a closure — it never
+/// touches AppState directly.
+private struct GitHubProviderCard: View {
+    let status: RepositoryGitHubProviderStatusModel?
+    let isLoading: Bool
+    let error: String?
+    let onRerunWorkflow: (UInt64) -> Void
+
+    var body: some View {
+        AetowerSurface(level: statusLevel, padding: AetowerDesign.Spacing.sm) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                    AetowerBadge(
+                        statusLabel,
+                        systemImage: "chevron.left.forwardslash.chevron.right",
+                        tone: repositoryGitHubProviderTone(status, error: error, isLoading: isLoading)
+                    )
+                    if isLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Spacer(minLength: AetowerDesign.Spacing.md)
+                    Text(capturedLabel)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+
+                if let status {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 130), spacing: AetowerDesign.Spacing.sm)],
+                        alignment: .leading,
+                        spacing: AetowerDesign.Spacing.sm
+                    ) {
+                        repositoryProjectProviderMetric("Open PRs", "\(status.openPrCount)")
+                        repositoryProjectProviderMetric("Workflow", workflowLabel(status))
+                        repositoryProjectProviderMetric("Checks", status.latestCheckState.capitalized)
+                    }
+
+                    lists(status)
+
+                    ForEach(status.warnings.prefix(2), id: \.self) { warning in
+                        Text(warning)
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Status.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else if let error {
+                    Text(error)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Status.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Not refreshed")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+            }
+        }
+    }
+
+    private var statusLevel: AetowerSurfaceLevel {
+        if error != nil { return .warning }
+        guard let status else { return .quiet }
+        if status.failedLatestCIOnDefaultBranch { return .critical }
+        if status.staleOpenPullRequestCount() > 0 { return .warning }
+        switch status.status {
+        case "failed":
+            return .critical
+        case "warning", "auth_needed", "unavailable":
+            return .warning
+        default:
+            return .quiet
+        }
+    }
+
+    private var statusLabel: String {
+        if isLoading { return "Refreshing" }
+        if error != nil { return "GitHub issue" }
+        guard let status else { return "GitHub not refreshed" }
+        if status.failedLatestCIOnDefaultBranch { return "CI failed" }
+        if status.staleOpenPullRequestCount() > 0 { return "Stale PRs" }
+        switch status.status {
+        case "ok":
+            return "GitHub ok"
+        case "auth_needed":
+            return "Needs auth"
+        case "unavailable":
+            return "Unavailable"
+        case "failed":
+            return "Failed"
+        default:
+            return "Warning"
+        }
+    }
+
+    private var capturedLabel: String {
+        guard let status, status.capturedAtMillis > 0 else { return "Never" }
+        let date = Date(timeIntervalSince1970: Double(status.capturedAtMillis) / 1000.0)
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func workflowLabel(_ status: RepositoryGitHubProviderStatusModel) -> String {
+        if let conclusion = status.latestWorkflowConclusion, !conclusion.isEmpty {
+            return conclusion.capitalized
+        }
+        if let workflowStatus = status.latestWorkflowStatus, !workflowStatus.isEmpty {
+            return workflowStatus.capitalized
+        }
+        return "Unavailable"
+    }
+
+    private func workflowRunIsFailed(_ run: RepositoryGitHubWorkflowRunModel) -> Bool {
+        ["failure", "timed_out", "cancelled", "action_required", "startup_failure"]
+            .contains(run.conclusion ?? "")
+    }
+
+    @ViewBuilder
+    private func lists(_ status: RepositoryGitHubProviderStatusModel) -> some View {
+        let latestPrs = Array(status.latestPrs.prefix(3))
+        let latestRuns = Array(status.latestWorkflowRuns.prefix(2))
+        if !latestPrs.isEmpty || !latestRuns.isEmpty {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                ForEach(latestPrs) { pullRequest in
+                    Text("#\(pullRequest.number) \(pullRequest.title)")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                ForEach(latestRuns) { run in
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        Text("\(run.name): \(run.conclusion ?? run.status ?? "unknown")")
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if workflowRunIsFailed(run) {
+                            Button {
+                                onRerunWorkflow(run.id)
+                            } label: {
+                                Label("Re-run", systemImage: "arrow.clockwise")
+                                    .labelStyle(.iconOnly)
+                            }
+                            .buttonStyle(.borderless)
+                            .controlSize(.mini)
+                            .help("Re-run this failed workflow on GitHub.")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct ScorecardWorkflowPreview: Identifiable {
     let id: String
     let repositoryName: String
@@ -1179,128 +1376,15 @@ public struct RepositoryView: View {
         repository: RepositorySummary
     ) -> some View {
         if project.githubRepositoryLink != nil {
-            let status = project.githubStatus
-            let isLoading = state.repositoryProjectGitHubLoadingRoots.contains(repository.root)
-            let error = state.repositoryProjectGitHubErrorsByRoot[repository.root]
-            AetowerSurface(
-                level: repositoryProjectGitHubStatusLevel(status: status, error: error),
-                padding: AetowerDesign.Spacing.sm
-            ) {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                    HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
-                        AetowerBadge(
-                            repositoryProjectGitHubStatusLabel(status, isLoading: isLoading, error: error),
-                            systemImage: "chevron.left.forwardslash.chevron.right",
-                            tone: repositoryGitHubProviderTone(status, error: error, isLoading: isLoading)
-                        )
-                        if isLoading {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                        Spacer(minLength: AetowerDesign.Spacing.md)
-                        Text(repositoryProjectGitHubCapturedLabel(status))
-                            .font(AetowerDesign.Typography.metadata)
-                            .foregroundStyle(AetowerDesign.Ink.secondary)
-                    }
-
-                    if let status {
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 130), spacing: AetowerDesign.Spacing.sm)],
-                            alignment: .leading,
-                            spacing: AetowerDesign.Spacing.sm
-                        ) {
-                            repositoryProjectProviderMetric("Open PRs", "\(status.openPrCount)")
-                            repositoryProjectProviderMetric(
-                                "Workflow",
-                                repositoryProjectWorkflowLabel(status)
-                            )
-                            repositoryProjectProviderMetric(
-                                "Checks",
-                                status.latestCheckState.capitalized
-                            )
-                        }
-
-                        repositoryProjectGitHubLists(status, repoRoot: repository.root)
-
-                        ForEach(status.warnings.prefix(2), id: \.self) { warning in
-                            Text(warning)
-                                .font(AetowerDesign.Typography.metadata)
-                                .foregroundStyle(AetowerDesign.Status.warning)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    } else if let error {
-                        Text(error)
-                            .font(AetowerDesign.Typography.metadata)
-                            .foregroundStyle(AetowerDesign.Status.warning)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        Text("Not refreshed")
-                            .font(AetowerDesign.Typography.metadata)
-                            .foregroundStyle(AetowerDesign.Ink.secondary)
-                    }
+            GitHubProviderCard(
+                status: project.githubStatus,
+                isLoading: state.repositoryProjectGitHubLoadingRoots.contains(repository.root),
+                error: state.repositoryProjectGitHubErrorsByRoot[repository.root],
+                onRerunWorkflow: { runId in
+                    state.rerunRepositoryWorkflow(repoRoot: repository.root, runId: runId)
                 }
-            }
+            )
         }
-    }
-
-    private func repositoryProjectProviderMetric(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-            Text(label.uppercased())
-                .font(AetowerDesign.Typography.metadata)
-                .foregroundStyle(AetowerDesign.Ink.tertiary)
-            Text(value)
-                .font(AetowerDesign.Typography.caption.weight(.semibold))
-                .foregroundStyle(AetowerDesign.Ink.primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-    }
-
-    @ViewBuilder
-    private func repositoryProjectGitHubLists(
-        _ status: RepositoryGitHubProviderStatusModel,
-        repoRoot: String
-    ) -> some View {
-        let latestPrs = Array(status.latestPrs.prefix(3))
-        let latestRuns = Array(status.latestWorkflowRuns.prefix(2))
-        if !latestPrs.isEmpty || !latestRuns.isEmpty {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-                ForEach(latestPrs) { pullRequest in
-                    Text("#\(pullRequest.number) \(pullRequest.title)")
-                        .font(AetowerDesign.Typography.metadata)
-                        .foregroundStyle(AetowerDesign.Ink.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                ForEach(latestRuns) { run in
-                    HStack(spacing: AetowerDesign.Spacing.xs) {
-                        Text("\(run.name): \(run.conclusion ?? run.status ?? "unknown")")
-                            .font(AetowerDesign.Typography.metadata)
-                            .foregroundStyle(AetowerDesign.Ink.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        // Failed runs get a re-run control — the read-only CI
-                        // tile becomes actionable.
-                        if repositoryWorkflowRunIsFailed(run) {
-                            Button {
-                                state.rerunRepositoryWorkflow(repoRoot: repoRoot, runId: run.id)
-                            } label: {
-                                Label("Re-run", systemImage: "arrow.clockwise")
-                                    .labelStyle(.iconOnly)
-                            }
-                            .buttonStyle(.borderless)
-                            .controlSize(.mini)
-                            .help("Re-run this failed workflow on GitHub.")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func repositoryWorkflowRunIsFailed(_ run: RepositoryGitHubWorkflowRunModel) -> Bool {
-        ["failure", "timed_out", "cancelled", "action_required", "startup_failure"]
-            .contains(run.conclusion ?? "")
     }
 
     @ViewBuilder
@@ -3956,92 +4040,6 @@ public struct RepositoryView: View {
 
     private func repositoryProjectProviderStatusNeedsReview(_ status: String) -> Bool {
         ["auth_needed", "failed", "unavailable", "warning"].contains(status)
-    }
-
-    private func repositoryGitHubProviderTone(
-        _ status: RepositoryGitHubProviderStatusModel?,
-        error: String? = nil,
-        isLoading: Bool = false
-    ) -> Color {
-        if isLoading { return AetowerDesign.Tone.cpu }
-        if error != nil { return AetowerDesign.Status.warning }
-        guard let status else { return AetowerDesign.Tone.cpu }
-        if status.failedLatestCIOnDefaultBranch {
-            return AetowerDesign.Status.error
-        }
-        if status.staleOpenPullRequestCount() > 0 { return AetowerDesign.Status.warning }
-        switch status.status {
-        case "ok":
-            return AetowerDesign.Status.ready
-        case "warning", "auth_needed":
-            return AetowerDesign.Status.warning
-        case "failed":
-            return AetowerDesign.Status.error
-        default:
-            return AetowerDesign.Status.neutral
-        }
-    }
-
-    private func repositoryProjectGitHubStatusLevel(
-        status: RepositoryGitHubProviderStatusModel?,
-        error: String?
-    ) -> AetowerSurfaceLevel {
-        if error != nil { return .warning }
-        guard let status else { return .quiet }
-        if status.failedLatestCIOnDefaultBranch { return .critical }
-        if status.staleOpenPullRequestCount() > 0 { return .warning }
-        switch status.status {
-        case "failed":
-            return .critical
-        case "warning", "auth_needed", "unavailable":
-            return .warning
-        default:
-            return .quiet
-        }
-    }
-
-    private func repositoryProjectGitHubStatusLabel(
-        _ status: RepositoryGitHubProviderStatusModel?,
-        isLoading: Bool,
-        error: String?
-    ) -> String {
-        if isLoading { return "Refreshing" }
-        if error != nil { return "GitHub issue" }
-        guard let status else { return "GitHub not refreshed" }
-        if status.failedLatestCIOnDefaultBranch { return "CI failed" }
-        if status.staleOpenPullRequestCount() > 0 { return "Stale PRs" }
-        switch status.status {
-        case "ok":
-            return "GitHub ok"
-        case "auth_needed":
-            return "Needs auth"
-        case "unavailable":
-            return "Unavailable"
-        case "failed":
-            return "Failed"
-        default:
-            return "Warning"
-        }
-    }
-
-    private func repositoryProjectGitHubCapturedLabel(
-        _ status: RepositoryGitHubProviderStatusModel?
-    ) -> String {
-        guard let status, status.capturedAtMillis > 0 else { return "Never" }
-        let date = Date(timeIntervalSince1970: Double(status.capturedAtMillis) / 1000.0)
-        return date.formatted(date: .abbreviated, time: .shortened)
-    }
-
-    private func repositoryProjectWorkflowLabel(
-        _ status: RepositoryGitHubProviderStatusModel
-    ) -> String {
-        if let conclusion = status.latestWorkflowConclusion, !conclusion.isEmpty {
-            return conclusion.capitalized
-        }
-        if let workflowStatus = status.latestWorkflowStatus, !workflowStatus.isEmpty {
-            return workflowStatus.capitalized
-        }
-        return "Unavailable"
     }
 
     private func repositoryCloudflareProviderTone(_ repository: RepositorySummary) -> Color {
