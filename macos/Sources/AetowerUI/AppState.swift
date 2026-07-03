@@ -2314,10 +2314,12 @@ public final class AppState {
         // guaranteed hit flashed "Starting storage scan" for the deserialize
         // window on every launch. Loading is now shown only on a real miss.
         var paintedFromCache = false
+        var cacheSavedAtMillis: UInt64 = 0
         if storageHygieneReport == nil {
             if case let .hit(cache) = StorageHygieneReportCacheStore.loadIfValid(roots: roots) {
                 publishStorageHygieneCacheHit(cache)
                 paintedFromCache = true
+                cacheSavedAtMillis = cache.savedAtMillis
             }
         }
 
@@ -2399,6 +2401,29 @@ public final class AppState {
 
             guard !Task.isCancelled else { return }
             guard publishedReport else { return }
+
+            // The repository inventory walk is a full live re-walk of every repo
+            // (~25-30s). Running it on every launch is the "full scan after every
+            // rebuild" cost. When we painted from a fresh cache and the on-disk
+            // change journal (persisted across launches) shows nothing changed
+            // since that cache was written, the walk would only reproduce what we
+            // already show — so skip it. Any real change (lastChange > cacheSaved,
+            // or no cache paint) still triggers a full verify.
+            //
+            // FSEvents only records while the app runs, so a change made while it
+            // was closed would be missed by the journal; the age bound below
+            // guarantees a periodic re-verify anyway, so staleness is capped at
+            // reverifyIntervalMillis rather than "until the next real event".
+            let reverifyIntervalMillis: UInt64 = 6 * 60 * 60 * 1000 // 6 hours
+            if paintedFromCache {
+                let lastChange = StorageRootChangeJournal.lastChangeMillis() ?? 0
+                let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+                let cacheAge = nowMillis &- cacheSavedAtMillis
+                if lastChange <= cacheSavedAtMillis, cacheAge < reverifyIntervalMillis {
+                    return
+                }
+            }
+
             await publisher.publishVerificationStarted()
 
             let inventory = bridge.repositoryInventoryJSON(
