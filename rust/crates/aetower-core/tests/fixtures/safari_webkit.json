@@ -26,8 +26,8 @@
       "cpu_percent": 0.0,
       "memory_bytes": 0,
       "virtual_memory_bytes": 0,
-      "disk_read_bytes": 0,
-      "disk_write_bytes": 0
+      "disk_read_bps": 0,
+      "disk_write_bps": 0
     },
     {
       "pid": 2,
@@ -39,8 +39,8 @@
       "cpu_percent": 0.0,
       "memory_bytes": 0,
       "virtual_memory_bytes": 0,
-      "disk_read_bytes": 0,
-      "disk_write_bytes": 0
+      "disk_read_bps": 0,
+      "disk_write_bps": 0
     },
     {
       "pid": 100,
@@ -52,8 +52,8 @@
       "cpu_percent": 1.2,
       "memory_bytes": 67108864,
       "virtual_memory_bytes": 134217728,
-      "disk_read_bytes": 0,
-      "disk_write_bytes": 0
+      "disk_read_bps": 0,
+      "disk_write_bps": 0
     },
     {
       "pid": 101,
@@ -65,8 +65,8 @@
       "cpu_percent": 4.0,
       "memory_bytes": 157286400,
       "virtual_memory_bytes": 314572800,
-      "disk_read_bytes": 0,
-      "disk_write_bytes": 0
+      "disk_read_bps": 0,
+      "disk_write_bps": 0
     }
   ],
   "expected_entities": [

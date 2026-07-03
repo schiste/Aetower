@@ -383,6 +383,12 @@ impl Engine {
         self.worker = Some(thread::spawn(move || {
             let mut collector = Collector::new();
             let mut gpu_sample = aetower_gpu::GpuSample::default();
+            // Fans/temps/power are sampled on the slow ~30s cadence but the
+            // snapshot is published every tick; hold the last reading so those
+            // panels don't flatline to empty (and spam availability toggles)
+            // for the ~14 of every 15 ticks between samples, mirroring how
+            // gpu_sample already persists.
+            let mut sensor_sample = aetower_sensors::SensorSample::default();
             let mut last_gpu_sample_started_at = Instant::now()
                 .checked_sub(Duration::from_secs(3600))
                 .unwrap_or_else(Instant::now);
@@ -525,10 +531,10 @@ impl Engine {
                     gpu_percent: gpu_sample.gpu_percent,
                     ane_percent: gpu_sample.ane_percent,
                     gpu_memory_bytes: gpu_sample.gpu_memory_bytes,
-                    gpu_temperature_celsius: None,
-                    fans: Vec::new(),
-                    cpu_temperatures: Vec::new(),
-                    power_readings: Vec::new(),
+                    gpu_temperature_celsius: gpu_sample.gpu_temperature_celsius,
+                    fans: sensor_sample.fans.clone(),
+                    cpu_temperatures: sensor_sample.cpu_temperatures.clone(),
+                    power_readings: sensor_sample.power_readings.clone(),
                     boot_session: raw.host.boot_session.clone(),
                     bluetooth_devices: raw.host.bluetooth_devices.clone(),
                     network_interfaces: raw.host.network_interfaces.clone(),
@@ -562,11 +568,13 @@ impl Engine {
                     host.gpu_memory_bytes = gpu_sample.gpu_memory_bytes;
                     host.gpu_temperature_celsius = gpu_sample.gpu_temperature_celsius;
 
-                    // Sample hardware sensors (fans, temperatures, power) on same interval
-                    if let Some(sensor_sample) = aetower_sensors::sample_sensors() {
-                        host.fans = sensor_sample.fans;
-                        host.cpu_temperatures = sensor_sample.cpu_temperatures;
-                        host.power_readings = sensor_sample.power_readings;
+                    // Sample hardware sensors (fans, temperatures, power) on the
+                    // same interval; persist for the ticks in between.
+                    if let Some(sample) = aetower_sensors::sample_sensors() {
+                        sensor_sample = sample;
+                        host.fans = sensor_sample.fans.clone();
+                        host.cpu_temperatures = sensor_sample.cpu_temperatures.clone();
+                        host.power_readings = sensor_sample.power_readings.clone();
                     }
                 }
 
