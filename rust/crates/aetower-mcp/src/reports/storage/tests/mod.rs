@@ -1215,6 +1215,50 @@ fn storage_cold_data_lane_bands_and_exclusions() {
 }
 
 #[test]
+fn storage_cold_data_blocks_paths_with_active_file_holders() {
+    let path = "/tmp/aetower-cold-active-fixture.log";
+    let mut item = test_storage_item(path, "cold-file", "cold-data", "safe", "safe", 1_000);
+    item.cold = true;
+    item.access_age_days = Some(COLD_AFTER_DAYS + 1);
+
+    let mut holders_by_path = BTreeMap::new();
+    holders_by_path.insert(
+        path.to_owned(),
+        vec![ColdPathHolder {
+            pid: 42,
+            command: "tail".to_owned(),
+            fd: "3r".to_owned(),
+        }],
+    );
+    let mut items = vec![item];
+    apply_active_cold_holders(&mut items, &holders_by_path);
+    items[0].evidence = storage_item_evidence(&items[0]);
+    items[0].next_step = storage_item_next_step(&items[0]);
+
+    assert!(!items[0].cleanup_allowed);
+    assert_eq!(items[0].default_cleanup_action, "manual_review");
+    assert!(
+        items[0]
+            .cleanup_blockers
+            .iter()
+            .any(|blocker| blocker.contains("Active file handle detected"))
+    );
+    assert!(
+        items[0]
+            .attribution
+            .notes
+            .iter()
+            .any(|note| note.contains("tail pid 42 fd 3r"))
+    );
+    assert!(
+        items[0]
+            .evidence
+            .iter()
+            .any(|evidence| evidence.contains("Active file handle detected"))
+    );
+}
+
+#[test]
 fn storage_recommendation_score_formula_weights_size_tier_and_staleness() {
     let now_millis = storage_now_millis();
     let fresh = Some(now_millis);

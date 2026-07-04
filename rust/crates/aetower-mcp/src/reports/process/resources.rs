@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -77,14 +78,7 @@ pub(crate) fn build_resource_holders_by_port(port: u16) -> Result<ResourceHolder
 /// Reverse pivot: every process currently holding the file at `path`.
 pub(crate) fn build_resource_holders_by_file(path: &str) -> Result<ResourceHoldersReport, String> {
     let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return Err("file path must not be empty".to_owned());
-    }
-    // Args are passed to lsof directly (no shell), so injection isn't a concern;
-    // still reject control characters and absurd lengths defensively.
-    if trimmed.len() > 4096 || trimmed.chars().any(char::is_control) {
-        return Err("file path is invalid".to_owned());
-    }
+    validate_lsof_path(trimmed)?;
     let output = run_lsof(&[
         "-nP".to_owned(),
         "-w".to_owned(),
@@ -92,6 +86,62 @@ pub(crate) fn build_resource_holders_by_file(path: &str) -> Result<ResourceHolde
         trimmed.to_owned(),
     ])?;
     Ok(holders_report(trimmed.to_owned(), "file", &output))
+}
+
+pub(crate) fn build_resource_holders_by_files(
+    paths: &[String],
+) -> Result<BTreeMap<String, Vec<ResourceHolder>>, String> {
+    let mut unique_paths = BTreeSet::new();
+    for path in paths {
+        let trimmed = path.trim();
+        validate_lsof_path(trimmed)?;
+        unique_paths.insert(trimmed.to_owned());
+    }
+    if unique_paths.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let mut args = vec!["-nP".to_owned(), "-w".to_owned(), "--".to_owned()];
+    args.extend(unique_paths.iter().cloned());
+    let output = run_lsof(&args)?;
+    let holders = parse_lsof_holders(&output);
+    let mut grouped = BTreeMap::<String, Vec<ResourceHolder>>::new();
+    for holder in holders.into_iter().take(MAX_HOLDERS) {
+        for path in &unique_paths {
+            if lsof_name_matches_path(&holder.name, path) {
+                grouped
+                    .entry(path.clone())
+                    .or_default()
+                    .push(holder.clone());
+            }
+        }
+    }
+    Ok(grouped)
+}
+
+fn validate_lsof_path(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("file path must not be empty".to_owned());
+    }
+    // Args are passed to lsof directly (no shell), so injection isn't a concern;
+    // still reject control characters and absurd lengths defensively.
+    if path.len() > 4096 || path.chars().any(char::is_control) {
+        return Err("file path is invalid".to_owned());
+    }
+    Ok(())
+}
+
+fn lsof_name_matches_path(name: &str, path: &str) -> bool {
+    let name = name
+        .split_once(" (")
+        .map(|(prefix, _)| prefix)
+        .unwrap_or(name)
+        .trim_end_matches('/');
+    let path = path.trim_end_matches('/');
+    name == path
+        || name
+            .strip_prefix(path)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 /// Build a holders report from raw lsof output, capping the list defensively.

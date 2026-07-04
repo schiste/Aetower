@@ -33,7 +33,7 @@ pub(crate) use process_action::{build_process_action_history, build_process_acti
 pub use process_action::{process_action_history_json, process_action_json};
 pub use process_tree::entity_process_tree_json;
 pub(crate) use process_tree::{build_process_tree_report, extract_parent_pid};
-pub(crate) use resources::build_process_open_resources;
+pub(crate) use resources::{build_process_open_resources, build_resource_holders_by_files};
 #[cfg(test)]
 pub(crate) use resources::{
     build_resource_holders_by_file, build_resource_holders_by_port, parse_lsof_holder_line,

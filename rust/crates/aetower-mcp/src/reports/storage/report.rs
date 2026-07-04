@@ -872,6 +872,7 @@ pub(super) fn build_storage_cold_data(
             .map(|row| storage_item_for_indexed_row(row, now_millis))
             .collect::<Vec<_>>();
         apply_cleanup_guardrails(&mut top_items, now_millis);
+        annotate_cold_items_active_holders(&mut top_items);
         for item in &mut top_items {
             item.evidence = storage_item_evidence(item);
             item.next_step = storage_item_next_step(item);
@@ -889,9 +890,92 @@ pub(super) fn build_storage_cold_data(
     Some(StorageColdData {
         bands,
         caveat: "Age uses max(accessed, modified); macOS last-access timestamps can be coarse or \
-                 lazily updated, so verify before destructive cleanup."
+                 lazily updated. Top cold candidates are checked for visible active file holders \
+                 before cleanup, but permissions can still hide processes."
             .to_owned(),
     })
+}
+
+fn annotate_cold_items_active_holders(items: &mut [StorageHygieneItem]) {
+    let paths = items
+        .iter()
+        .filter(|item| item.cleanup_allowed)
+        .map(|item| item.path.clone())
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return;
+    }
+    match build_resource_holders_by_files(&paths) {
+        Ok(holders_by_path) => {
+            let active_holders = holders_by_path
+                .into_iter()
+                .map(|(path, holders)| {
+                    (
+                        path,
+                        holders
+                            .into_iter()
+                            .map(|holder| ColdPathHolder {
+                                pid: holder.pid,
+                                command: holder.command,
+                                fd: holder.fd,
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            apply_active_cold_holders(items, &active_holders);
+        }
+        Err(error) => {
+            let note = format!("Active file-handle check unavailable: {error}.");
+            for item in items {
+                item.attribution.notes.push(note.clone());
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ColdPathHolder {
+    pub(super) pid: u32,
+    pub(super) command: String,
+    pub(super) fd: String,
+}
+
+pub(super) fn apply_active_cold_holders(
+    items: &mut [StorageHygieneItem],
+    holders_by_path: &BTreeMap<String, Vec<ColdPathHolder>>,
+) {
+    for item in items {
+        let Some(holders) = holders_by_path
+            .get(&item.path)
+            .filter(|holders| !holders.is_empty())
+        else {
+            continue;
+        };
+        let summary = summarize_cold_path_holders(holders);
+        block_cleanup(
+            item,
+            &format!("Active file handle detected: {summary} currently holds this path."),
+        );
+        item.default_cleanup_action = "manual_review".to_owned();
+        item.attribution.notes.push(format!(
+            "Active file-handle check matched {} process{}: {summary}. Stop or close the holder, then rescan before staging cleanup.",
+            holders.len(),
+            if holders.len() == 1 { "" } else { "es" }
+        ));
+    }
+}
+
+fn summarize_cold_path_holders(holders: &[ColdPathHolder]) -> String {
+    let mut parts = holders
+        .iter()
+        .take(3)
+        .map(|holder| format!("{} pid {} fd {}", holder.command, holder.pid, holder.fd))
+        .collect::<Vec<_>>();
+    if holders.len() > parts.len() {
+        parts.push(format!("+{} more", holders.len() - parts.len()));
+    }
+    parts.join(", ")
 }
 
 fn build_storage_growth_insights(
