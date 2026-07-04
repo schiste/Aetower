@@ -2658,36 +2658,72 @@ public final class AppState {
         guard !eligible.isEmpty else { return }
         let paths = eligible.map(\.path)
         let bytesByPath = Dictionary(uniqueKeysWithValues: eligible.map { ($0.path, $0.sizeBytes) })
+        let activeWriterProbe = cleanupActiveWriterProbe()
 
-        let outcome = TrashService.trash(paths: paths)
-        let reclaimed = outcome.movedPaths.reduce(UInt64(0)) { total, path in
-            total.addingReportingOverflow(bytesByPath[path] ?? 0).partialValue
+        Task.detached(priority: .utility) { [bytesByPath, paths, activeWriterProbe] in
+            let outcome = TrashService.trash(paths: paths, activeWriterProbe: activeWriterProbe)
+            let reclaimed = outcome.movedPaths.reduce(UInt64(0)) { total, path in
+                total.addingReportingOverflow(bytesByPath[path] ?? 0).partialValue
+            }
+            await MainActor.run {
+                self.repositoryCleanupResultByRoot[repoRoot] = RepositoryArtifactCleanupResult(
+                    movedCount: outcome.movedPaths.count,
+                    failedCount: outcome.failedPaths.count,
+                    reclaimedBytes: reclaimed,
+                    firstError: outcome.failedPaths.values.first
+                )
+                self.recordLocalDiagnosticsEvent(
+                    level: outcome.succeeded ? .info : .warn,
+                    subsystem: .ui,
+                    eventType: outcome.succeeded ? "repository-artifacts-trashed" : "repository-artifacts-trash-partial",
+                    message: "Moved \(outcome.movedPaths.count) repository artifact folder(s) to Trash.",
+                    fields: [
+                        DiagnosticsField(key: "repo_root", value: repoRoot),
+                        DiagnosticsField(key: "moved", value: String(outcome.movedPaths.count)),
+                        DiagnosticsField(key: "failed", value: String(outcome.failedPaths.count)),
+                        DiagnosticsField(key: "reclaimed_bytes", value: String(reclaimed)),
+                    ]
+                )
+                // Nudge a storage-signal refresh so freed space is reflected.
+                self.repositorySummaryInputsGeneration += 1
+                self.refreshRepositoryInventorySignalsIfQuiescent()
+            }
         }
-        repositoryCleanupResultByRoot[repoRoot] = RepositoryArtifactCleanupResult(
-            movedCount: outcome.movedPaths.count,
-            failedCount: outcome.failedPaths.count,
-            reclaimedBytes: reclaimed,
-            firstError: outcome.failedPaths.values.first
-        )
-        recordLocalDiagnosticsEvent(
-            level: outcome.succeeded ? .info : .warn,
-            subsystem: .ui,
-            eventType: outcome.succeeded ? "repository-artifacts-trashed" : "repository-artifacts-trash-partial",
-            message: "Moved \(outcome.movedPaths.count) repository artifact folder(s) to Trash.",
-            fields: [
-                DiagnosticsField(key: "repo_root", value: repoRoot),
-                DiagnosticsField(key: "moved", value: String(outcome.movedPaths.count)),
-                DiagnosticsField(key: "failed", value: String(outcome.failedPaths.count)),
-                DiagnosticsField(key: "reclaimed_bytes", value: String(reclaimed)),
-            ]
-        )
-        // Nudge a storage-signal refresh so freed space is reflected.
-        repositorySummaryInputsGeneration += 1
-        refreshRepositoryInventorySignalsIfQuiescent()
     }
 
     func clearRepositoryCleanupResult(repoRoot: String) {
         repositoryCleanupResultByRoot[repoRoot] = nil
+    }
+
+    func cleanupActiveWriterProbe() -> TrashService.ActiveWriterProbe {
+        let bridge = self.bridge
+        return { path in
+            let result = bridge.resourceHoldersByFileJSON(path: path)
+            if let error = result.errorMessage, !error.isEmpty {
+                return .unavailable(error)
+            }
+            guard let payload = result.json?.data(using: .utf8) else {
+                return .unavailable("resource holder query returned no payload")
+            }
+            do {
+                let report = try AetowerJSON.snakeCaseDecoder().decode(
+                    ResourceHoldersReportModel.self,
+                    from: payload
+                )
+                return .checked(
+                    report.holders.map { holder in
+                        TrashService.ActiveWriterHolder(
+                            pid: holder.pid,
+                            command: holder.command,
+                            fd: holder.fd,
+                            name: holder.name
+                        )
+                    }
+                )
+            } catch {
+                return .unavailable("resource holder query decode failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Bulk (fleet-scale) operations

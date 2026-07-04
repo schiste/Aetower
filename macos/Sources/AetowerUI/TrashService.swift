@@ -9,6 +9,20 @@ import Foundation
 /// reclaim defensible; emptying the Trash is the only permanent step and is
 /// always gated by an explicit confirmation at the call site.
 enum TrashService {
+    struct ActiveWriterHolder: Sendable {
+        let pid: UInt32
+        let command: String
+        let fd: String
+        let name: String
+    }
+
+    enum ActiveWriterProbeResult: Sendable {
+        case checked([ActiveWriterHolder])
+        case unavailable(String)
+    }
+
+    typealias ActiveWriterProbe = @Sendable (String) -> ActiveWriterProbeResult
+
     /// Outcome of trashing a single path. `trashURL` is where Finder placed the
     /// item (used to restore it); nil means the move failed, with `message`
     /// explaining why.
@@ -32,12 +46,15 @@ enum TrashService {
         }
     }
 
-    static func trash(_ path: String) -> SingleOutcome {
+    static func trash(_ path: String, activeWriterProbe: ActiveWriterProbe? = nil) -> SingleOutcome {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return SingleOutcome(trashURL: nil, message: "Empty path") }
         let url = URL(fileURLWithPath: trimmed)
         guard FileManager.default.fileExists(atPath: url.path) else {
             return SingleOutcome(trashURL: nil, message: "Path no longer exists")
+        }
+        if let blocker = activeWriterBlocker(for: trimmed, activeWriterProbe: activeWriterProbe) {
+            return SingleOutcome(trashURL: nil, message: blocker)
         }
         do {
             var resultingURL: NSURL?
@@ -48,13 +65,13 @@ enum TrashService {
         }
     }
 
-    static func trash(paths: [String]) -> BatchOutcome {
+    static func trash(paths: [String], activeWriterProbe: ActiveWriterProbe? = nil) -> BatchOutcome {
         var movedPaths: [String] = []
         var failedPaths: [String: String] = [:]
         for path in paths {
             let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            let outcome = trash(trimmed)
+            let outcome = trash(trimmed, activeWriterProbe: activeWriterProbe)
             if outcome.succeeded {
                 movedPaths.append(trimmed)
             } else {
@@ -62,6 +79,30 @@ enum TrashService {
             }
         }
         return BatchOutcome(movedPaths: movedPaths, failedPaths: failedPaths)
+    }
+
+    private static func activeWriterBlocker(
+        for path: String,
+        activeWriterProbe: ActiveWriterProbe?
+    ) -> String? {
+        guard let activeWriterProbe else { return nil }
+        switch activeWriterProbe(path) {
+        case let .checked(holders):
+            guard !holders.isEmpty else { return nil }
+            return "Active writer protection blocked cleanup: \(activeWriterSummary(holders)) currently holds this path."
+        case let .unavailable(message):
+            return "Active writer protection could not verify this path: \(message)"
+        }
+    }
+
+    private static func activeWriterSummary(_ holders: [ActiveWriterHolder]) -> String {
+        var parts = holders.prefix(3).map { holder in
+            "\(holder.command) pid \(holder.pid) fd \(holder.fd)"
+        }
+        if holders.count > parts.count {
+            parts.append("+\(holders.count - parts.count) more")
+        }
+        return parts.joined(separator: ", ")
     }
 
     /// Restore a previously-trashed item to its original path.

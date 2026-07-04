@@ -6830,8 +6830,9 @@ public struct StorageView: View {
         let bytes = item.sizeBytes
         let tier = item.cleanupTier
         let safety = item.safety
+        let activeWriterProbe = state.cleanupActiveWriterProbe()
         Task.detached(priority: .utility) {
-            let outcome = Self.trashSingleItem(path)
+            let outcome = Self.trashSingleItem(path, activeWriterProbe: activeWriterProbe)
             await MainActor.run {
                 appendCleanupAudit(
                     action: outcome.trashURL != nil ? "trash" : "failed-trash",
@@ -6861,8 +6862,11 @@ public struct StorageView: View {
         }
     }
 
-    nonisolated private static func trashSingleItem(_ path: String) -> (trashURL: URL?, message: String) {
-        let outcome = TrashService.trash(path)
+    nonisolated private static func trashSingleItem(
+        _ path: String,
+        activeWriterProbe: TrashService.ActiveWriterProbe?
+    ) -> (trashURL: URL?, message: String) {
+        let outcome = TrashService.trash(path, activeWriterProbe: activeWriterProbe)
         return (outcome.trashURL, outcome.message)
     }
 
@@ -7013,8 +7017,9 @@ public struct StorageView: View {
         cleanupExecutionIsRunning = true
         cleanupExecutionResult = nil
         let targetPaths = request.targetPaths
+        let activeWriterProbe = state.cleanupActiveWriterProbe()
         Task.detached(priority: .utility) {
-            let result = Self.movePathsToTrash(targetPaths)
+            let result = Self.movePathsToTrash(targetPaths, activeWriterProbe: activeWriterProbe)
             await MainActor.run {
                 cleanupExecutionResult = result
                 cleanupExecutionIsRunning = false
@@ -7089,9 +7094,12 @@ public struct StorageView: View {
         cleanupAuditEvents = StorageCleanupAuditLog.loadRecent()
     }
 
-    nonisolated private static func movePathsToTrash(_ paths: [String]) -> StorageCleanupExecutionResult {
+    nonisolated private static func movePathsToTrash(
+        _ paths: [String],
+        activeWriterProbe: TrashService.ActiveWriterProbe?
+    ) -> StorageCleanupExecutionResult {
         let started = Date()
-        let outcome = TrashService.trash(paths: paths)
+        let outcome = TrashService.trash(paths: paths, activeWriterProbe: activeWriterProbe)
         let lines = outcome.movedPaths.map { "Moved: \($0) -> Trash" }
             + outcome.failedPaths.map { "Failed: \($0.key) - \($0.value)" }
         return StorageCleanupExecutionResult(

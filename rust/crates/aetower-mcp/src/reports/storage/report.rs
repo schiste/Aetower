@@ -386,6 +386,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
     let writer_ledger = load_storage_writer_ledger_records();
     apply_measured_rebuild_costs(&mut items, &writer_ledger);
     apply_cleanup_guardrails(&mut items, now_millis);
+    annotate_cleanup_items_active_holders(&mut items);
     for item in &mut items {
         item.evidence = storage_item_evidence(item);
         item.next_step = storage_item_next_step(item);
@@ -719,6 +720,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
     let writer_ledger = load_storage_writer_ledger_records();
     apply_measured_rebuild_costs(&mut items, &writer_ledger);
     apply_cleanup_guardrails(&mut items, now_millis);
+    annotate_cleanup_items_active_holders(&mut items);
     for item in &mut items {
         item.evidence = storage_item_evidence(item);
         item.next_step = storage_item_next_step(item);
@@ -886,7 +888,7 @@ pub(super) fn build_storage_cold_data(
             .map(|row| storage_item_for_indexed_row(row, now_millis))
             .collect::<Vec<_>>();
         apply_cleanup_guardrails(&mut top_items, now_millis);
-        annotate_cold_items_active_holders(&mut top_items);
+        annotate_cleanup_items_active_holders(&mut top_items);
         for item in &mut top_items {
             item.evidence = storage_item_evidence(item);
             item.next_step = storage_item_next_step(item);
@@ -910,11 +912,12 @@ pub(super) fn build_storage_cold_data(
     })
 }
 
-fn annotate_cold_items_active_holders(items: &mut [StorageHygieneItem]) {
+fn annotate_cleanup_items_active_holders(items: &mut [StorageHygieneItem]) {
     let paths = items
         .iter()
-        .filter(|item| item.cleanup_allowed)
+        .filter(|item| cleanup_item_needs_active_holder_check(item))
         .map(|item| item.path.clone())
+        .take(CLEANUP_ACTIVE_HOLDER_PATH_LIMIT)
         .collect::<Vec<_>>();
     if paths.is_empty() {
         return;
@@ -928,7 +931,7 @@ fn annotate_cold_items_active_holders(items: &mut [StorageHygieneItem]) {
                         path,
                         holders
                             .into_iter()
-                            .map(|holder| ColdPathHolder {
+                            .map(|holder| CleanupPathHolder {
                                 pid: holder.pid,
                                 command: holder.command,
                                 fd: holder.fd,
@@ -937,7 +940,7 @@ fn annotate_cold_items_active_holders(items: &mut [StorageHygieneItem]) {
                     )
                 })
                 .collect::<BTreeMap<_, _>>();
-            apply_active_cold_holders(items, &active_holders);
+            apply_active_cleanup_holders(items, &active_holders);
         }
         Err(error) => {
             let note = format!("Active file-handle check unavailable: {error}.");
@@ -949,15 +952,22 @@ fn annotate_cold_items_active_holders(items: &mut [StorageHygieneItem]) {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct ColdPathHolder {
+pub(super) struct CleanupPathHolder {
     pub(super) pid: u32,
     pub(super) command: String,
     pub(super) fd: String,
 }
 
-pub(super) fn apply_active_cold_holders(
+fn cleanup_item_needs_active_holder_check(item: &StorageHygieneItem) -> bool {
+    item.cleanup_allowed
+        && item.default_cleanup_action == "trash"
+        && item.cleanup_blockers.is_empty()
+        && item.cleanup_tier != "risky"
+}
+
+pub(super) fn apply_active_cleanup_holders(
     items: &mut [StorageHygieneItem],
-    holders_by_path: &BTreeMap<String, Vec<ColdPathHolder>>,
+    holders_by_path: &BTreeMap<String, Vec<CleanupPathHolder>>,
 ) {
     for item in items {
         let Some(holders) = holders_by_path
@@ -966,7 +976,7 @@ pub(super) fn apply_active_cold_holders(
         else {
             continue;
         };
-        let summary = summarize_cold_path_holders(holders);
+        let summary = summarize_cleanup_path_holders(holders);
         block_cleanup(
             item,
             &format!("Active file handle detected: {summary} currently holds this path."),
@@ -980,7 +990,7 @@ pub(super) fn apply_active_cold_holders(
     }
 }
 
-fn summarize_cold_path_holders(holders: &[ColdPathHolder]) -> String {
+fn summarize_cleanup_path_holders(holders: &[CleanupPathHolder]) -> String {
     let mut parts = holders
         .iter()
         .take(3)

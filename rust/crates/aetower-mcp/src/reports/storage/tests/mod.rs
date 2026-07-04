@@ -1224,14 +1224,14 @@ fn storage_cold_data_blocks_paths_with_active_file_holders() {
     let mut holders_by_path = BTreeMap::new();
     holders_by_path.insert(
         path.to_owned(),
-        vec![ColdPathHolder {
+        vec![CleanupPathHolder {
             pid: 42,
             command: "tail".to_owned(),
             fd: "3r".to_owned(),
         }],
     );
     let mut items = vec![item];
-    apply_active_cold_holders(&mut items, &holders_by_path);
+    apply_active_cleanup_holders(&mut items, &holders_by_path);
     items[0].evidence = storage_item_evidence(&items[0]);
     items[0].next_step = storage_item_next_step(&items[0]);
 
@@ -1255,6 +1255,43 @@ fn storage_cold_data_blocks_paths_with_active_file_holders() {
             .evidence
             .iter()
             .any(|evidence| evidence.contains("Active file handle detected"))
+    );
+}
+
+#[test]
+fn active_file_holders_block_general_cleanup_candidates() {
+    let path = "/tmp/aetower-active-cleanup-fixture/target";
+    let old_millis = crate::current_unix_millis()
+        .unwrap_or_default()
+        .saturating_sub(RECENT_CLEANUP_BLOCK_MILLIS + 60_000);
+    let item = test_storage_item(
+        path,
+        "rust-build",
+        "build-artifact",
+        "safe",
+        "rebuildable",
+        old_millis,
+    );
+    let mut holders_by_path = BTreeMap::new();
+    holders_by_path.insert(
+        path.to_owned(),
+        vec![CleanupPathHolder {
+            pid: 99,
+            command: "cargo".to_owned(),
+            fd: "cwd".to_owned(),
+        }],
+    );
+    let mut items = vec![item];
+
+    apply_active_cleanup_holders(&mut items, &holders_by_path);
+
+    assert!(!items[0].cleanup_allowed);
+    assert_eq!(items[0].default_cleanup_action, "manual_review");
+    assert!(
+        items[0]
+            .cleanup_blockers
+            .iter()
+            .any(|blocker| blocker.contains("cargo pid 99 fd cwd"))
     );
 }
 

@@ -35,6 +35,7 @@ const COLD_AFTER_DAYS: u64 = 365;
 const DUPLICATE_FULL_HASH_MAX_BYTES: u64 = 256 * 1024 * 1024;
 const DUPLICATE_GROUP_LIMIT: usize = 8;
 const REDUNDANCY_GROUP_LIMIT: usize = 12;
+const CLEANUP_ACTIVE_HOLDER_PATH_LIMIT: usize = 64;
 const APP_FOOTPRINT_LIMIT: usize = 10;
 const SCAN_TIME_BUDGET: Duration = Duration::from_millis(6_500);
 const GIT_STATUS_TIME_BUDGET: Duration = Duration::from_millis(650);
@@ -361,7 +362,7 @@ use repo::{
 pub(crate) use report::build_storage_hygiene_report_with_mode;
 #[cfg(test)]
 use report::{
-    ColdPathHolder, apply_active_cold_holders, build_storage_cold_data, per_root_walk_slice,
+    CleanupPathHolder, apply_active_cleanup_holders, build_storage_cold_data, per_root_walk_slice,
 };
 use report::{
     StorageCandidateCollector, build_storage_hygiene_report_from_index,
