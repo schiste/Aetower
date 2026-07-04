@@ -1553,6 +1553,7 @@ fn summarize_duplicate_groups(items: &[StorageHygieneItem]) -> Vec<StorageDuplic
             }
         }
     }
+    append_image_similarity_groups(items, &mut groups);
 
     groups.sort_by(|left, right| {
         right
@@ -1563,6 +1564,64 @@ fn summarize_duplicate_groups(items: &[StorageHygieneItem]) -> Vec<StorageDuplic
     });
     groups.truncate(DUPLICATE_GROUP_LIMIT);
     groups
+}
+
+fn append_image_similarity_groups(
+    items: &[StorageHygieneItem],
+    groups: &mut Vec<StorageDuplicateGroup>,
+) {
+    let exact_duplicate_paths = groups
+        .iter()
+        .filter(|group| group.confirmed)
+        .flat_map(|group| group.paths.iter().map(|item| item.path.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut candidates = items
+        .iter()
+        .filter(|item| {
+            let path = Path::new(&item.path);
+            path.is_file()
+                && !exact_duplicate_paths.contains(&item.path)
+                && item.size_bytes >= MIN_ITEM_BYTES
+                && item.size_bytes <= IMAGE_SIMILARITY_HASH_MAX_BYTES
+                && is_similarity_image_path(path)
+        })
+        .filter_map(|item| image_average_hash(Path::new(&item.path)).map(|hash| (hash, item)))
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.1
+            .path
+            .cmp(&right.1.path)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+
+    let mut assigned = BTreeSet::<String>::new();
+    for (hash, item) in &candidates {
+        if assigned.contains(&item.path) {
+            continue;
+        }
+        let mut similar_items = vec![*item];
+        for (candidate_hash, candidate) in &candidates {
+            if candidate.path == item.path || assigned.contains(&candidate.path) {
+                continue;
+            }
+            if image_hash_hamming_distance(*hash, *candidate_hash)
+                <= IMAGE_SIMILARITY_HAMMING_THRESHOLD
+            {
+                similar_items.push(*candidate);
+            }
+        }
+        if similar_items.len() < 2 {
+            continue;
+        }
+        for similar in &similar_items {
+            assigned.insert(similar.path.clone());
+        }
+        groups.push(similar_image_group_from_items(
+            format!("image-ahash|{hash:016x}"),
+            *hash,
+            similar_items,
+        ));
+    }
 }
 
 fn duplicate_group_from_items(
@@ -1617,6 +1676,48 @@ fn duplicate_group_from_items(
                 human_bytes(DUPLICATE_FULL_HASH_MAX_BYTES)
             )
         },
+    }
+}
+
+fn similar_image_group_from_items(
+    id: String,
+    hash: u64,
+    mut items: Vec<&StorageHygieneItem>,
+) -> StorageDuplicateGroup {
+    items.sort_by(|left, right| {
+        right
+            .size_bytes
+            .cmp(&left.size_bytes)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    let total_bytes = items
+        .iter()
+        .fold(0u64, |total, item| total.saturating_add(item.size_bytes));
+    let keep_bytes = items.iter().map(|item| item.size_bytes).max().unwrap_or(0);
+    let paths = items
+        .iter()
+        .take(8)
+        .map(|item| StorageDuplicateItem {
+            path: item.path.clone(),
+            display_name: item.display_name.clone(),
+            size_bytes: item.size_bytes,
+            modified_millis: item.modified_millis,
+            cleanup_tier: item.cleanup_tier.clone(),
+            safety: item.safety.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    StorageDuplicateGroup {
+        id,
+        candidate_key: format!("image-ahash:{hash:016x}:hamming<={IMAGE_SIMILARITY_HAMMING_THRESHOLD}"),
+        confirmed: false,
+        confidence_score: 82,
+        file_count: items.len(),
+        total_bytes,
+        reclaimable_bytes: total_bytes.saturating_sub(keep_bytes),
+        paths,
+        recommendation: "Potentially similar images by perceptual thumbnail hash. Quick Look side by side before staging any cleanup.".to_owned(),
+        caveat: "Image similarity uses an 8x8 average hash from decoded PNG/JPEG thumbnails. It is intentionally review-only and can miss crops, edits, or HEIC-only photos.".to_owned(),
     }
 }
 
@@ -2070,6 +2171,34 @@ fn fnv64_update(hash: &mut u64, bytes: &[u8]) {
         *hash ^= u64::from(*byte);
         *hash = hash.wrapping_mul(0x100000001b3);
     }
+}
+
+fn image_average_hash(path: &Path) -> Option<u64> {
+    let image = image::ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?;
+    let thumbnail = image
+        .resize_exact(8, 8, image::imageops::FilterType::Triangle)
+        .to_luma8();
+    let pixels = thumbnail.as_raw();
+    if pixels.len() != 64 {
+        return None;
+    }
+    let average = pixels.iter().map(|pixel| u64::from(*pixel)).sum::<u64>() / 64;
+    let mut hash = 0u64;
+    for (index, pixel) in pixels.iter().enumerate() {
+        if u64::from(*pixel) >= average {
+            hash |= 1u64 << index;
+        }
+    }
+    Some(hash)
+}
+
+fn image_hash_hamming_distance(left: u64, right: u64) -> u32 {
+    (left ^ right).count_ones()
 }
 
 fn summarize_app_footprints(items: &[StorageHygieneItem]) -> Vec<StorageAppFootprint> {

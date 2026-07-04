@@ -478,6 +478,7 @@ pub(super) fn storage_role_for_kind(kind: &str) -> &'static str {
         }
         "temporary-output" => "temporary",
         "cold-file" => "cold-file",
+        "image-file" => "image-file",
         "large-file" => "large-file",
         _ => "artifact",
     }
@@ -1188,6 +1189,18 @@ pub(super) fn classify_artifact(
             "risky",
             "Potential local release artifact.",
             "Review provenance and whether a newer signed/notarized artifact supersedes it before deleting.",
+        ));
+    }
+    if metadata.is_file()
+        && metadata.len() >= MIN_ITEM_BYTES
+        && is_similarity_image_path(Path::new(name))
+    {
+        return Some(rule(
+            "image-file",
+            "review",
+            "",
+            "Image file retained for visual-similarity review.",
+            "Review similar images side by side; Aetower does not classify image similarity as safe cleanup.",
         ));
     }
     if metadata.is_file()

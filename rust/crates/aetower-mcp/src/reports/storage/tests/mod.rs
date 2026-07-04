@@ -1972,6 +1972,52 @@ fn storage_hygiene_similar_bucket_confirms_only_full_hash_matches() {
 }
 
 #[test]
+fn storage_hygiene_similar_bucket_groups_visually_similar_images() {
+    let root = test_root("similar-bucket-image-ahash");
+    let screenshots = root.join("Screenshots");
+    if let Err(error) = fs::create_dir_all(&screenshots) {
+        panic!("create image similarity fixture directory: {error}");
+    }
+
+    write_similarity_png(&screenshots.join("screenshot-a.png"), 0);
+    write_similarity_png(&screenshots.join("screenshot-b.png"), 1);
+    write_contrast_png(&screenshots.join("unrelated.png"));
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 4, 120);
+    let value = parse_json_value(&json, "image similarity JSON parses");
+    let groups = value["duplicate_groups"]
+        .as_array()
+        .unwrap_or_else(|| panic!("duplicate groups serialize as an array"));
+    let image_group = groups
+        .iter()
+        .find(|group| {
+            group["candidate_key"]
+                .as_str()
+                .is_some_and(|key| key.starts_with("image-ahash:"))
+        })
+        .unwrap_or_else(|| panic!("image perceptual-hash group is present"));
+
+    assert_eq!(image_group["confirmed"].as_bool(), Some(false));
+    assert_eq!(image_group["confidence_score"].as_u64(), Some(82));
+    assert!(
+        image_group["recommendation"]
+            .as_str()
+            .is_some_and(|recommendation| recommendation.contains("Potentially similar images"))
+    );
+    let paths = image_group["paths"]
+        .as_array()
+        .unwrap_or_else(|| panic!("image group paths serialize as an array"))
+        .iter()
+        .filter_map(|item| item["path"].as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.iter().any(|path| path.ends_with("screenshot-a.png")));
+    assert!(paths.iter().any(|path| path.ends_with("screenshot-b.png")));
+    assert!(!paths.iter().any(|path| path.ends_with("unrelated.png")));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn repository_inventory_indexes_git_repositories_without_artifacts() {
     let root = test_root("indexes-clean-repositories");
     let repo_a = root.join("CleanOne");
@@ -4910,6 +4956,54 @@ fn mark_tree_old(path: &Path) {
         Ok(status) if status.success() => {}
         Ok(status) => panic!("set old fixture mtime failed: {status}"),
         Err(error) => panic!("run touch for fixture mtime: {error}"),
+    }
+}
+
+const IMAGE_SIMILARITY_FIXTURE_SIZE: u32 = 1024;
+const IMAGE_SIMILARITY_FIXTURE_BLOCK: u32 = IMAGE_SIMILARITY_FIXTURE_SIZE / 8;
+
+fn write_similarity_png(path: &Path, variant: u8) {
+    let image = image::RgbImage::from_fn(
+        IMAGE_SIMILARITY_FIXTURE_SIZE,
+        IMAGE_SIMILARITY_FIXTURE_SIZE,
+        |x, y| {
+            let block_x = x / IMAGE_SIMILARITY_FIXTURE_BLOCK;
+            let block_y = y / IMAGE_SIMILARITY_FIXTURE_BLOCK;
+            let bright = (block_x + block_y).is_multiple_of(2);
+            let base = if bright { 208u8 } else { 48u8 };
+            let noise =
+                ((x.wrapping_mul(31) ^ y.wrapping_mul(17) ^ u32::from(variant)) & 0x1f) as u8;
+            image::Rgb([
+                base.saturating_add(noise / 2),
+                base.saturating_add(noise / 3),
+                base.saturating_add(noise / 4),
+            ])
+        },
+    );
+    if let Err(error) = image.save(path) {
+        panic!("write similarity png {}: {error}", path.display());
+    }
+}
+
+fn write_contrast_png(path: &Path) {
+    let image = image::RgbImage::from_fn(
+        IMAGE_SIMILARITY_FIXTURE_SIZE,
+        IMAGE_SIMILARITY_FIXTURE_SIZE,
+        |x, y| {
+            let block_x = x / IMAGE_SIMILARITY_FIXTURE_BLOCK;
+            let block_y = y / IMAGE_SIMILARITY_FIXTURE_BLOCK;
+            let bright = !(block_x + block_y).is_multiple_of(2);
+            let base = if bright { 208u8 } else { 48u8 };
+            let noise = ((x.wrapping_mul(7).wrapping_add(y.wrapping_mul(53))) & 0x1f) as u8;
+            image::Rgb([
+                base.saturating_add(noise / 2),
+                base.saturating_add(noise / 3),
+                base.saturating_add(noise / 4),
+            ])
+        },
+    );
+    if let Err(error) = image.save(path) {
+        panic!("write contrast png {}: {error}", path.display());
     }
 }
 

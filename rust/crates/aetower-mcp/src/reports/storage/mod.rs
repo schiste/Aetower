@@ -35,6 +35,8 @@ const LARGE_DIRECTORY_MAX_PER_ROOT: usize = 15;
 const COLD_AFTER_DAYS: u64 = 365;
 const DUPLICATE_PARTIAL_HASH_BYTES: usize = 64 * 1024;
 const DUPLICATE_FULL_HASH_MAX_BYTES: u64 = 256 * 1024 * 1024;
+const IMAGE_SIMILARITY_HASH_MAX_BYTES: u64 = 64 * 1024 * 1024;
+const IMAGE_SIMILARITY_HAMMING_THRESHOLD: u32 = 3;
 const DUPLICATE_GROUP_LIMIT: usize = 8;
 const REDUNDANCY_GROUP_LIMIT: usize = 12;
 const CLEANUP_ACTIVE_HOLDER_PATH_LIMIT: usize = 64;
@@ -99,6 +101,18 @@ const STORAGE_SCAN_PHASE_REPOSITORY_INVENTORY: &str = "repository_inventory";
 const STORAGE_SCAN_PHASE_ARTIFACT_SIZING: &str = "artifact_sizing";
 const STORAGE_SCAN_PHASE_SCORECARD_OVERLAY: &str = "scorecard_overlay";
 const STORAGE_SCAN_PHASE_FINALIZING: &str = "finalizing";
+
+fn is_similarity_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "jpg" | "jpeg" | "png"
+            )
+        })
+        .unwrap_or(false)
+}
 
 fn storage_now_millis() -> u64 {
     crate::current_unix_millis().unwrap_or_default()
