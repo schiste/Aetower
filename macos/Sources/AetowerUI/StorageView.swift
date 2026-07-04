@@ -181,6 +181,84 @@ private enum StorageCleanupAuditLog {
     }
 }
 
+private struct StorageTrackedTrashItem: Codable, Sendable {
+    let originalPath: String
+    let trashPath: String
+    let bytes: UInt64
+    let timestampMillis: UInt64
+}
+
+private enum StorageTrackedTrashStore {
+    private static let fileName = "storage-tracked-trash-v1.json"
+
+    static func loadItems(pruneMissing: Bool = true) -> [String: StorageTrackedTrashItem] {
+        guard let url = storeURL(createDirectory: false),
+            let data = try? Data(contentsOf: url),
+            let decoded = try? JSONDecoder().decode([StorageTrackedTrashItem].self, from: data)
+        else { return [:] }
+        let items = Dictionary(uniqueKeysWithValues: decoded.map { ($0.originalPath, $0) })
+        guard pruneMissing else { return items }
+        let retained = items.filter { FileManager.default.fileExists(atPath: $0.value.trashPath) }
+        if retained.count != items.count {
+            saveItems(retained)
+        }
+        return retained
+    }
+
+    static func loadURLsByOriginalPath() -> [String: URL] {
+        loadItems().mapValues { URL(fileURLWithPath: $0.trashPath) }
+    }
+
+    static func loadPendingBytes() -> UInt64 {
+        loadItems().values.reduce(UInt64(0)) { total, item in
+            let (sum, overflow) = total.addingReportingOverflow(item.bytes)
+            return overflow ? UInt64.max : sum
+        }
+    }
+
+    static func upsert(originalPath: String, trashURL: URL, bytes: UInt64) {
+        var items = loadItems(pruneMissing: false)
+        items[originalPath] = StorageTrackedTrashItem(
+            originalPath: originalPath,
+            trashPath: trashURL.path,
+            bytes: bytes,
+            timestampMillis: UInt64(Date().timeIntervalSince1970 * 1000)
+        )
+        saveItems(items)
+    }
+
+    static func remove(originalPath: String) {
+        var items = loadItems(pruneMissing: false)
+        items.removeValue(forKey: originalPath)
+        saveItems(items)
+    }
+
+    static func clear() {
+        saveItems([:])
+    }
+
+    static func reconcileExisting() -> (urls: [String: URL], pendingBytes: UInt64) {
+        let items = loadItems(pruneMissing: true)
+        let urls = items.mapValues { URL(fileURLWithPath: $0.trashPath) }
+        let pendingBytes = items.values.reduce(UInt64(0)) { total, item in
+            let (sum, overflow) = total.addingReportingOverflow(item.bytes)
+            return overflow ? UInt64.max : sum
+        }
+        return (urls, pendingBytes)
+    }
+
+    private static func saveItems(_ items: [String: StorageTrackedTrashItem]) {
+        guard let url = storeURL(createDirectory: true) else { return }
+        let payload = Array(items.values).sorted { $0.originalPath < $1.originalPath }
+        guard let data = try? JSONEncoder().encode(payload) else { return }
+        try? data.write(to: url, options: [.atomic])
+    }
+
+    private static func storeURL(createDirectory: Bool) -> URL? {
+        storageSupportFileURL(fileName: fileName, createDirectory: createDirectory)
+    }
+}
+
 /// Pending undo for a one-click direct-to-Trash action. `trashURL` is where
 /// Finder placed the item; nil means the trash attempt failed and the toast
 /// is informational only.
@@ -216,11 +294,12 @@ public struct StorageView: View {
     @State private var directTrashUndo: StorageDirectTrashUndo?
     @State private var directTrashUndoDismissTask: Task<Void, Never>?
     @State private var directTrashInFlightPaths: Set<String> = []
-    @State private var trashedItemURLsByOriginalPath: [String: URL] = [:]
+    @State private var trashedItemURLsByOriginalPath = StorageTrackedTrashStore
+        .loadURLsByOriginalPath()
     /// Bytes this session has moved into Finder Trash but not yet freed —
     /// reclaim is a two-step operation (Trash, then empty) and the second
     /// step must stay visible until it happens.
-    @State private var trashPendingBytes: UInt64 = 0
+    @State private var trashPendingBytes = StorageTrackedTrashStore.loadPendingBytes()
     @State private var confirmEmptyTrash = false
     @State private var emptyTrashInFlight = false
     @State private var cleanupAuditEvents = StorageCleanupAuditLog.loadRecent()
@@ -272,7 +351,7 @@ public struct StorageView: View {
             Button("Delete Aetower-tracked items", role: .destructive) { emptyTrash() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently deletes only items Aetower moved to the Trash in this session. Unrelated Finder Trash contents are left alone.")
+            Text("This permanently deletes only items Aetower moved to the Trash and still tracks. Unrelated Finder Trash contents are left alone.")
         }
         .overlay(alignment: .bottom) {
             // Floating stack: transient undo toast above the persistent
@@ -3432,7 +3511,7 @@ public struct StorageView: View {
             Button("Delete Aetower-tracked items", role: .destructive) { emptyTrash() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently deletes only items Aetower moved to the Trash in this session. Unrelated Finder Trash contents are left alone.")
+            Text("This permanently deletes only items Aetower moved to the Trash and still tracks. Unrelated Finder Trash contents are left alone.")
         }
     }
 
@@ -6950,6 +7029,13 @@ public struct StorageView: View {
                     let (sum, overflow) = trashPendingBytes.addingReportingOverflow(bytes)
                     trashPendingBytes = overflow ? UInt64.max : sum
                     trashedItemURLsByOriginalPath[path] = outcome.trashURL
+                    if let trashURL = outcome.trashURL {
+                        StorageTrackedTrashStore.upsert(
+                            originalPath: path,
+                            trashURL: trashURL,
+                            bytes: bytes
+                        )
+                    }
                     state.markStoragePathsMovedToTrash([path])
                 }
                 presentDirectTrashUndo(
@@ -7023,6 +7109,7 @@ public struct StorageView: View {
                         ? trashPendingBytes - undo.bytes
                         : 0
                     trashedItemURLsByOriginalPath.removeValue(forKey: destination)
+                    StorageTrackedTrashStore.remove(originalPath: destination)
                 }
                 dismissDirectTrashUndo()
             }
@@ -7038,6 +7125,7 @@ public struct StorageView: View {
     }
 
     private func requestEmptyTrashConfirmation() {
+        refreshTrackedTrashState()
         guard !trashedItemURLsByOriginalPath.isEmpty else {
             emptyTrash()
             return
@@ -7052,7 +7140,13 @@ public struct StorageView: View {
         confirmEmptyTrash = true
     }
 
-    /// Permanently delete only the Trash items Aetower moved in this session.
+    private func refreshTrackedTrashState() {
+        let snapshot = StorageTrackedTrashStore.reconcileExisting()
+        trashedItemURLsByOriginalPath = snapshot.urls
+        trashPendingBytes = snapshot.pendingBytes
+    }
+
+    /// Permanently delete only the Trash items Aetower moved and still tracks.
     /// This avoids Finder's all-or-nothing "empty trash", avoids deleting the
     /// user's unrelated Trash contents, and works for per-volume Trash URLs.
     private func emptyTrash() {
@@ -7066,6 +7160,7 @@ public struct StorageView: View {
                 succeeded: false
             )
             trashPendingBytes = 0
+            StorageTrackedTrashStore.clear()
             return
         }
         emptyTrashInFlight = true
@@ -7086,6 +7181,7 @@ public struct StorageView: View {
                 if outcome.failed == 0 {
                     trashPendingBytes = 0
                     trashedItemURLsByOriginalPath.removeAll()
+                    StorageTrackedTrashStore.clear()
                 } else if outcome.removed > 0 || outcome.missing > 0 {
                     reconcileTrackedTrashAfterPartialEmpty()
                 }
@@ -7119,11 +7215,7 @@ public struct StorageView: View {
     }
 
     private func reconcileTrackedTrashAfterPartialEmpty() {
-        let remaining = trashedItemURLsByOriginalPath.filter { FileManager.default.fileExists(atPath: $0.value.path) }
-        trashedItemURLsByOriginalPath = remaining
-        if remaining.isEmpty {
-            trashPendingBytes = 0
-        }
+        refreshTrackedTrashState()
     }
 
     private func uniquePaths(_ paths: [String]) -> [String] {
@@ -7207,6 +7299,11 @@ public struct StorageView: View {
         state.markStoragePathsMovedToTrash(result.movedPaths)
         for (path, trashURL) in result.movedTrashURLs {
             trashedItemURLsByOriginalPath[path] = trashURL
+            StorageTrackedTrashStore.upsert(
+                originalPath: path,
+                trashURL: trashURL,
+                bytes: bytesByPath[path] ?? fallbackBytes
+            )
         }
         trashPendingBytes = result.movedPaths.reduce(trashPendingBytes) { acc, path in
             let (sum, overflow) = acc.addingReportingOverflow(bytesByPath[path] ?? fallbackBytes)
