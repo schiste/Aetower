@@ -1,4 +1,5 @@
 use super::*;
+use miniz_oxide::inflate;
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
@@ -1642,7 +1643,7 @@ fn append_text_similarity_groups(
                 && !exact_duplicate_paths.contains(&item.path)
                 && item.size_bytes >= MIN_ITEM_BYTES
                 && item.size_bytes <= TEXT_SIMILARITY_HASH_MAX_BYTES
-                && is_similarity_text_path(path)
+                && (is_similarity_text_path(path) || is_similarity_document_path(path))
         })
         .filter_map(|item| {
             text_simhash(Path::new(&item.path)).map(|(hash, token_count)| TextSimilarityCandidate {
@@ -1780,8 +1781,8 @@ fn similar_text_group_from_items(
             "text-simhash:{hash:016x}:tokens~{token_count}:hamming<={TEXT_SIMILARITY_HAMMING_THRESHOLD}"
         ),
         76,
-        "Potentially similar text/code/log files by normalized SimHash. Diff or Quick Look side by side before staging cleanup.",
-        "Text similarity removes whitespace and punctuation, hashes token shingles, and reads only a bounded prefix. It is review-only and can miss reordered, generated, or appended content.",
+        "Potentially similar text, code, log, PDF, or Office documents by normalized extracted-text SimHash. Diff or Quick Look side by side before staging cleanup.",
+        "Text/document similarity removes formatting, hashes token shingles, and reads only bounded text. It is review-only and can miss reordered, scanned, generated, appended, or image-only content.",
         items,
     )
 }
@@ -2322,14 +2323,7 @@ fn text_similarity_token_counts_compatible(left: usize, right: usize) -> bool {
 }
 
 fn text_simhash(path: &Path) -> Option<(u64, usize)> {
-    let file = fs::File::open(path).ok()?;
-    let mut limited = file.take(TEXT_SIMILARITY_READ_MAX_BYTES);
-    let mut bytes = Vec::new();
-    limited.read_to_end(&mut bytes).ok()?;
-    if bytes.is_empty() || bytes.contains(&0) {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&bytes);
+    let text = similarity_text_for_path(path)?;
     let tokens = normalized_text_tokens(&text);
     if tokens.len() < TEXT_SIMILARITY_MIN_TOKENS {
         return None;
@@ -2354,6 +2348,307 @@ fn text_simhash(path: &Path) -> Option<(u64, usize)> {
         }
     }
     Some((hash, tokens.len()))
+}
+
+fn similarity_text_for_path(path: &Path) -> Option<String> {
+    if is_similarity_document_path(path) {
+        return document_text_for_path(path);
+    }
+    raw_text_for_path(path)
+}
+
+fn raw_text_for_path(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let mut limited = file.take(TEXT_SIMILARITY_READ_MAX_BYTES);
+    let mut bytes = Vec::new();
+    limited.read_to_end(&mut bytes).ok()?;
+    if bytes.is_empty() || bytes.contains(&0) {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn document_text_for_path(path: &Path) -> Option<String> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "pdf" => pdf_text_for_path(path),
+        "docx" | "pptx" | "xlsx" => ooxml_text_for_path(path),
+        _ => None,
+    }
+}
+
+fn pdf_text_for_path(path: &Path) -> Option<String> {
+    let bytes = read_limited_file(path, TEXT_SIMILARITY_HASH_MAX_BYTES as usize)?;
+    if !bytes.starts_with(b"%PDF") {
+        return None;
+    }
+    let mut text = String::new();
+    append_pdf_literal_strings(&bytes, &mut text);
+    append_pdf_flate_stream_text(&bytes, &mut text);
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn append_pdf_flate_stream_text(bytes: &[u8], text: &mut String) {
+    let mut search_start = 0usize;
+    while let Some(relative_stream) = find_bytes(&bytes[search_start..], b"stream") {
+        let stream_marker = search_start + relative_stream;
+        let dictionary_start = stream_marker.saturating_sub(512);
+        let dictionary = &bytes[dictionary_start..stream_marker];
+        if !dictionary
+            .windows(b"FlateDecode".len())
+            .any(|window| window == b"FlateDecode")
+        {
+            search_start = stream_marker.saturating_add(b"stream".len());
+            continue;
+        }
+        let Some(relative_endstream) = find_bytes(&bytes[stream_marker..], b"endstream") else {
+            break;
+        };
+        let mut data_start = stream_marker + b"stream".len();
+        if bytes.get(data_start) == Some(&b'\r') {
+            data_start += 1;
+        }
+        if bytes.get(data_start) == Some(&b'\n') {
+            data_start += 1;
+        }
+        let mut data_end = stream_marker + relative_endstream;
+        while data_end > data_start && matches!(bytes[data_end - 1], b'\n' | b'\r') {
+            data_end -= 1;
+        }
+        if data_end > data_start
+            && let Ok(decompressed) = inflate::decompress_to_vec_zlib_with_limit(
+                &bytes[data_start..data_end],
+                TEXT_SIMILARITY_READ_MAX_BYTES as usize,
+            )
+        {
+            append_pdf_literal_strings(&decompressed, text);
+        }
+        search_start = stream_marker + relative_endstream + b"endstream".len();
+        if text.len() >= TEXT_SIMILARITY_READ_MAX_BYTES as usize {
+            break;
+        }
+    }
+}
+
+fn append_pdf_literal_strings(bytes: &[u8], text: &mut String) {
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'(' {
+            index += 1;
+            continue;
+        }
+        index += 1;
+        let mut depth = 1usize;
+        while index < bytes.len() && depth > 0 {
+            let byte = bytes[index];
+            match byte {
+                b'\\' => {
+                    index += 1;
+                    if let Some(escaped) = bytes.get(index) {
+                        match escaped {
+                            b'n' | b'r' | b't' => text.push(' '),
+                            b'b' | b'f' => {}
+                            b'(' | b')' | b'\\' => text.push(char::from(*escaped)),
+                            value if value.is_ascii_digit() => {
+                                text.push(' ');
+                                while bytes.get(index + 1).is_some_and(u8::is_ascii_digit) {
+                                    index += 1;
+                                }
+                            }
+                            value if value.is_ascii_graphic() || *value == b' ' => {
+                                text.push(char::from(*value));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                b'(' => {
+                    depth += 1;
+                    text.push(' ');
+                }
+                b')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth > 0 {
+                        text.push(' ');
+                    }
+                }
+                value if value.is_ascii_graphic() || value == b' ' => {
+                    text.push(char::from(value));
+                }
+                _ => text.push(' '),
+            }
+            index += 1;
+        }
+        text.push(' ');
+        if text.len() >= TEXT_SIMILARITY_READ_MAX_BYTES as usize {
+            break;
+        }
+    }
+}
+
+fn ooxml_text_for_path(path: &Path) -> Option<String> {
+    let bytes = read_limited_file(path, TEXT_SIMILARITY_HASH_MAX_BYTES as usize)?;
+    let mut text = String::new();
+    for entry in ooxml_xml_entries(&bytes) {
+        append_xml_text(&entry, &mut text);
+        if text.len() >= TEXT_SIMILARITY_READ_MAX_BYTES as usize {
+            break;
+        }
+    }
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn ooxml_xml_entries(bytes: &[u8]) -> Vec<Vec<u8>> {
+    let mut entries = Vec::new();
+    let mut offset = 0usize;
+    while offset + 30 <= bytes.len() {
+        if read_le_u32(bytes, offset) != Some(0x0403_4b50) {
+            offset += 1;
+            continue;
+        }
+        let flags = read_le_u16(bytes, offset + 6).unwrap_or_default();
+        let method = read_le_u16(bytes, offset + 8).unwrap_or_default();
+        let compressed_size = read_le_u32(bytes, offset + 18).unwrap_or_default() as usize;
+        let uncompressed_size = read_le_u32(bytes, offset + 22).unwrap_or_default() as usize;
+        let name_len = read_le_u16(bytes, offset + 26).unwrap_or_default() as usize;
+        let extra_len = read_le_u16(bytes, offset + 28).unwrap_or_default() as usize;
+        let name_start = offset + 30;
+        let data_start = name_start
+            .saturating_add(name_len)
+            .saturating_add(extra_len);
+        let data_end = data_start.saturating_add(compressed_size);
+        if data_start > bytes.len() || data_end > bytes.len() || compressed_size == 0 {
+            break;
+        }
+        let name = std::str::from_utf8(&bytes[name_start..name_start + name_len]).unwrap_or("");
+        if flags & 0x08 == 0 && is_ooxml_text_part(name) {
+            let data = &bytes[data_start..data_end];
+            match method {
+                0 => entries.push(data.to_vec()),
+                8 => {
+                    if let Ok(decompressed) = inflate::decompress_to_vec_with_limit(
+                        data,
+                        uncompressed_size
+                            .max(TEXT_SIMILARITY_MIN_TOKENS)
+                            .min(TEXT_SIMILARITY_READ_MAX_BYTES as usize),
+                    ) {
+                        entries.push(decompressed);
+                    }
+                }
+                _ => {}
+            }
+        }
+        offset = data_end;
+    }
+    entries
+}
+
+fn is_ooxml_text_part(name: &str) -> bool {
+    (name == "word/document.xml")
+        || name.starts_with("word/header")
+        || name.starts_with("word/footer")
+        || matches!(
+            name,
+            "word/footnotes.xml" | "word/endnotes.xml" | "xl/sharedStrings.xml"
+        )
+        || (name.starts_with("ppt/slides/slide") && name.ends_with(".xml"))
+        || (name.starts_with("ppt/notesSlides/notesSlide") && name.ends_with(".xml"))
+        || (name.starts_with("xl/worksheets/sheet") && name.ends_with(".xml"))
+}
+
+fn append_xml_text(bytes: &[u8], text: &mut String) {
+    let xml = String::from_utf8_lossy(bytes);
+    let mut in_tag = false;
+    let mut entity = String::new();
+    let mut in_entity = false;
+    for character in xml.chars() {
+        if in_tag {
+            if character == '>' {
+                in_tag = false;
+                text.push(' ');
+            }
+            continue;
+        }
+        if in_entity {
+            if character == ';' {
+                append_xml_entity(text, &entity);
+                entity.clear();
+                in_entity = false;
+            } else if entity.len() < 16 {
+                entity.push(character);
+            } else {
+                entity.clear();
+                in_entity = false;
+                text.push(' ');
+            }
+            continue;
+        }
+        match character {
+            '<' => in_tag = true,
+            '&' => in_entity = true,
+            _ => text.push(character),
+        }
+        if text.len() >= TEXT_SIMILARITY_READ_MAX_BYTES as usize {
+            break;
+        }
+    }
+}
+
+fn append_xml_entity(text: &mut String, entity: &str) {
+    match entity {
+        "amp" => text.push('&'),
+        "apos" => text.push('\''),
+        "gt" => text.push('>'),
+        "lt" => text.push('<'),
+        "quot" => text.push('"'),
+        value if value.starts_with("#x") => {
+            if let Ok(codepoint) = u32::from_str_radix(&value[2..], 16)
+                && let Some(character) = char::from_u32(codepoint)
+            {
+                text.push(character);
+            }
+        }
+        value if value.starts_with('#') => {
+            if let Ok(codepoint) = value[1..].parse::<u32>()
+                && let Some(character) = char::from_u32(codepoint)
+            {
+                text.push(character);
+            }
+        }
+        _ => text.push(' '),
+    }
+}
+
+fn read_limited_file(path: &Path, max_bytes: usize) -> Option<Vec<u8>> {
+    let file = fs::File::open(path).ok()?;
+    let mut limited = file.take(max_bytes as u64);
+    let mut bytes = Vec::new();
+    limited.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn read_le_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    let slice = bytes.get(offset..offset + 2)?;
+    Some(u16::from_le_bytes([slice[0], slice[1]]))
+}
+
+fn read_le_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let slice = bytes.get(offset..offset + 4)?;
+    Some(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
 fn normalized_text_tokens(text: &str) -> Vec<String> {

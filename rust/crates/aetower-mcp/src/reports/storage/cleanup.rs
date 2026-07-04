@@ -480,6 +480,7 @@ pub(super) fn storage_role_for_kind(kind: &str) -> &'static str {
         "cold-file" => "cold-file",
         "image-file" => "image-file",
         "text-file" => "text-file",
+        "document-file" => "document-file",
         "large-file" => "large-file",
         _ => "artifact",
     }
@@ -1214,6 +1215,18 @@ pub(super) fn classify_artifact(
             "",
             "Text-like file retained for semantic-similarity review.",
             "Review near-identical text, code, markdown, or logs side by side; Aetower does not classify text similarity as safe cleanup.",
+        ));
+    }
+    if metadata.is_file()
+        && metadata.len() >= MIN_ITEM_BYTES
+        && is_similarity_document_path(Path::new(name))
+    {
+        return Some(rule(
+            "document-file",
+            "review",
+            "",
+            "Document retained for extracted-text similarity review.",
+            "Review near-identical PDF or Office documents side by side; Aetower extracts text for comparison and does not classify document similarity as safe cleanup.",
         ));
     }
     if metadata.is_file()

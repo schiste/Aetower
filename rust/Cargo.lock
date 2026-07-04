@@ -149,6 +149,7 @@ dependencies = [
  "dirs",
  "image",
  "libc",
+ "miniz_oxide",
  "rhai",
  "rusqlite",
  "serde",

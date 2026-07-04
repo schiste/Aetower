@@ -182,6 +182,18 @@ fn is_similarity_text_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn is_similarity_document_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "docx" | "pdf" | "pptx" | "xlsx"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn storage_now_millis() -> u64 {
     crate::current_unix_millis().unwrap_or_default()
 }

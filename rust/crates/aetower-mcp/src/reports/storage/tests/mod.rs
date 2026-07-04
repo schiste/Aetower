@@ -2068,6 +2068,73 @@ fn storage_hygiene_similar_bucket_groups_near_identical_text() {
 }
 
 #[test]
+fn storage_hygiene_similar_bucket_groups_extracted_document_text() {
+    let root = test_root("similar-bucket-document-text");
+    let documents = root.join("Documents");
+    if let Err(error) = fs::create_dir_all(&documents) {
+        panic!("create document similarity fixture directory: {error}");
+    }
+
+    write_similarity_pdf(&documents.join("audit-a.pdf"), 0);
+    write_similarity_pdf(&documents.join("audit-b.pdf"), 1);
+    write_similarity_docx(&documents.join("brief-a.docx"), 0);
+    write_similarity_docx(&documents.join("brief-b.docx"), 1);
+    write_unrelated_docx(&documents.join("unrelated.docx"));
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 6, 120);
+    let value = parse_json_value(&json, "document similarity JSON parses");
+    let groups = value["duplicate_groups"]
+        .as_array()
+        .unwrap_or_else(|| panic!("duplicate groups serialize as an array"));
+    let text_groups = groups
+        .iter()
+        .filter(|group| {
+            group["candidate_key"]
+                .as_str()
+                .is_some_and(|key| key.starts_with("text-simhash:"))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        text_groups.len() >= 2,
+        "PDF and DOCX extracted text groups are present"
+    );
+    assert!(
+        text_groups.iter().any(|group| {
+            let paths = group["paths"].as_array().cloned().unwrap_or_default();
+            paths
+                .iter()
+                .filter_map(|item| item["path"].as_str())
+                .any(|path| path.ends_with("audit-a.pdf"))
+                && paths
+                    .iter()
+                    .filter_map(|item| item["path"].as_str())
+                    .any(|path| path.ends_with("audit-b.pdf"))
+        }),
+        "PDF extracted text group is present"
+    );
+    assert!(
+        text_groups.iter().any(|group| {
+            let paths = group["paths"].as_array().cloned().unwrap_or_default();
+            paths
+                .iter()
+                .filter_map(|item| item["path"].as_str())
+                .any(|path| path.ends_with("brief-a.docx"))
+                && paths
+                    .iter()
+                    .filter_map(|item| item["path"].as_str())
+                    .any(|path| path.ends_with("brief-b.docx"))
+                && !paths
+                    .iter()
+                    .filter_map(|item| item["path"].as_str())
+                    .any(|path| path.ends_with("unrelated.docx"))
+        }),
+        "DOCX extracted text group is present without unrelated document"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn repository_inventory_indexes_git_repositories_without_artifacts() {
     let root = test_root("indexes-clean-repositories");
     let repo_a = root.join("CleanOne");
@@ -5108,6 +5175,91 @@ fn write_unrelated_markdown(path: &Path) {
     if let Err(error) = fs::write(path, content) {
         panic!("write unrelated markdown {}: {error}", path.display());
     }
+}
+
+fn write_similarity_pdf(path: &Path, variant: usize) {
+    let mut content = String::from(
+        "%PDF-1.4\n1 0 obj\n<< /Type /Page /Contents 2 0 R >>\nendobj\n2 0 obj\n<< /Length 0 >>\nstream\nBT\n",
+    );
+    for index in 0..12_000 {
+        content.push('(');
+        content.push_str(
+            "Aetower storage audit extracted document text, repository artifacts, generated logs, cache folders, and AI session context before proposing cleanup.",
+        );
+        if variant != 0 && index % 137 == 0 {
+            content.push_str(" Minor revision annotation");
+        }
+        content.push_str(") Tj\n");
+    }
+    content.push_str("ET\nendstream\nendobj\n%%EOF\n");
+    if let Err(error) = fs::write(path, content) {
+        panic!("write similarity pdf {}: {error}", path.display());
+    }
+}
+
+fn write_similarity_docx(path: &Path, variant: usize) {
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>"#,
+    );
+    for index in 0..12_000 {
+        xml.push_str("<w:p><w:r><w:t>");
+        xml.push_str(
+            "Aetower document export reviews storage cleanup evidence, generated artifacts, repository context, branch metadata, and operator-safe reclaim plans.",
+        );
+        if variant != 0 && index % 127 == 0 {
+            xml.push_str(" Small editorial note");
+        }
+        xml.push_str("</w:t></w:r></w:p>");
+    }
+    xml.push_str("</w:body></w:document>");
+    write_stored_docx(path, &xml);
+}
+
+fn write_unrelated_docx(path: &Path) {
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>"#,
+    );
+    for index in 0..12_000 {
+        xml.push_str("<w:p><w:r><w:t>");
+        xml.push_str(
+            "The garden archive compares watercolor pigments, bicycle repair notes, recipes, travel photography, and piano practice schedules.",
+        );
+        if index % 83 == 0 {
+            xml.push_str(" Balcony reminder");
+        }
+        xml.push_str("</w:t></w:r></w:p>");
+    }
+    xml.push_str("</w:body></w:document>");
+    write_stored_docx(path, &xml);
+}
+
+fn write_stored_docx(path: &Path, document_xml: &str) {
+    let mut bytes = Vec::new();
+    append_stored_zip_entry(
+        &mut bytes,
+        "[Content_Types].xml",
+        br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#,
+    );
+    append_stored_zip_entry(&mut bytes, "word/document.xml", document_xml.as_bytes());
+    if let Err(error) = fs::write(path, bytes) {
+        panic!("write stored docx {}: {error}", path.display());
+    }
+}
+
+fn append_stored_zip_entry(target: &mut Vec<u8>, name: &str, data: &[u8]) {
+    target.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+    target.extend_from_slice(&20u16.to_le_bytes());
+    target.extend_from_slice(&0u16.to_le_bytes());
+    target.extend_from_slice(&0u16.to_le_bytes());
+    target.extend_from_slice(&0u16.to_le_bytes());
+    target.extend_from_slice(&0u16.to_le_bytes());
+    target.extend_from_slice(&0u32.to_le_bytes());
+    target.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    target.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    target.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    target.extend_from_slice(&0u16.to_le_bytes());
+    target.extend_from_slice(name.as_bytes());
+    target.extend_from_slice(data);
 }
 
 fn write_git_origin_config(repo: &Path, origin_url: &str) {
