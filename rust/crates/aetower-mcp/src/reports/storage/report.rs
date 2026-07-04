@@ -1557,6 +1557,7 @@ fn summarize_duplicate_groups(items: &[StorageHygieneItem]) -> Vec<StorageDuplic
     append_image_similarity_groups(items, &mut groups);
     append_text_similarity_groups(items, &mut groups);
     append_video_similarity_groups(items, &mut groups);
+    append_binary_similarity_groups(items, &mut groups);
 
     groups.sort_by(|left, right| {
         right
@@ -1794,6 +1795,132 @@ impl VideoSimilaritySignature {
     }
 }
 
+fn append_binary_similarity_groups(
+    items: &[StorageHygieneItem],
+    groups: &mut Vec<StorageDuplicateGroup>,
+) {
+    let exact_duplicate_paths = groups
+        .iter()
+        .filter(|group| group.confirmed)
+        .flat_map(|group| group.paths.iter().map(|item| item.path.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut candidates = items
+        .iter()
+        .filter(|item| {
+            let path = Path::new(&item.path);
+            path.is_file()
+                && !exact_duplicate_paths.contains(&item.path)
+                && item.size_bytes >= MIN_ITEM_BYTES
+                && item.size_bytes <= BINARY_SIMILARITY_HASH_MAX_BYTES
+                && is_similarity_binary_path(path)
+        })
+        .filter_map(|item| {
+            binary_similarity_signature(Path::new(&item.path), item.size_bytes)
+                .map(|signature| BinarySimilarityCandidate { signature, item })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.item.path.cmp(&right.item.path).then_with(|| {
+            left.signature
+                .min_feature()
+                .cmp(&right.signature.min_feature())
+        })
+    });
+
+    let mut assigned = BTreeSet::<String>::new();
+    for candidate in &candidates {
+        if assigned.contains(&candidate.item.path) {
+            continue;
+        }
+        let mut similar_items = vec![candidate.item];
+        let mut best_overlap = BinarySimilarityOverlap::default();
+        for other in &candidates {
+            if other.item.path == candidate.item.path || assigned.contains(&other.item.path) {
+                continue;
+            }
+            let overlap = candidate.signature.overlap_with(&other.signature);
+            if overlap.is_compatible() {
+                best_overlap = best_overlap.max(overlap);
+                similar_items.push(other.item);
+            }
+        }
+        if similar_items.len() < 2 {
+            continue;
+        }
+        for similar in &similar_items {
+            assigned.insert(similar.path.clone());
+        }
+        groups.push(similar_binary_group_from_items(
+            format!(
+                "binary-cdc|{:016x}",
+                candidate.signature.min_feature().unwrap_or_default()
+            ),
+            &candidate.signature,
+            best_overlap,
+            similar_items,
+        ));
+    }
+}
+
+#[derive(Clone)]
+struct BinarySimilarityCandidate<'a> {
+    signature: BinarySimilaritySignature,
+    item: &'a StorageHygieneItem,
+}
+
+#[derive(Clone)]
+struct BinarySimilaritySignature {
+    features: BTreeSet<u64>,
+    size_bytes: u64,
+}
+
+impl BinarySimilaritySignature {
+    fn min_feature(&self) -> Option<u64> {
+        self.features.iter().next().copied()
+    }
+
+    fn overlap_with(&self, other: &Self) -> BinarySimilarityOverlap {
+        if !binary_size_ratio_compatible(self.size_bytes, other.size_bytes) {
+            return BinarySimilarityOverlap::default();
+        }
+        let shared = self.features.intersection(&other.features).count();
+        let union = self.features.union(&other.features).count();
+        let jaccard_percent = if union == 0 {
+            0
+        } else {
+            shared.saturating_mul(100) / union
+        };
+        BinarySimilarityOverlap {
+            shared_features: shared,
+            jaccard_percent,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct BinarySimilarityOverlap {
+    shared_features: usize,
+    jaccard_percent: usize,
+}
+
+impl BinarySimilarityOverlap {
+    fn is_compatible(self) -> bool {
+        self.shared_features >= BINARY_SIMILARITY_MIN_SHARED_FEATURES
+            && self.jaccard_percent >= BINARY_SIMILARITY_MIN_JACCARD_PERCENT as usize
+    }
+
+    fn max(self, other: Self) -> Self {
+        if other.jaccard_percent > self.jaccard_percent
+            || (other.jaccard_percent == self.jaccard_percent
+                && other.shared_features > self.shared_features)
+        {
+            other
+        } else {
+            self
+        }
+    }
+}
+
 fn duplicate_group_from_items(
     id: String,
     candidate_key: String,
@@ -1901,6 +2028,27 @@ fn similar_video_group_from_items(
         70,
         "Potentially similar videos by cheap container metadata and sampled media-byte fingerprints. Open side by side before staging cleanup.",
         "Video similarity compares duration, resolution, codec, size ratio, and bounded media payload samples without decoding full video frames. True sampled-frame perceptual hashes belong in Deep/Forensic mode.",
+        items,
+    )
+}
+
+fn similar_binary_group_from_items(
+    id: String,
+    signature: &BinarySimilaritySignature,
+    overlap: BinarySimilarityOverlap,
+    items: Vec<&StorageHygieneItem>,
+) -> StorageDuplicateGroup {
+    review_similarity_group_from_items(
+        id,
+        format!(
+            "binary-cdc:features~{}:shared>={}:jaccard~{}%",
+            signature.features.len(),
+            overlap.shared_features,
+            overlap.jaccard_percent
+        ),
+        52,
+        "Potentially related binary artifacts by content-defined chunk fingerprints. Compare provenance and tool outputs before staging cleanup.",
+        "Generic binary similarity is lower-confidence than exact, media, or text matching. It samples bounded file regions and compares fuzzy chunk fingerprints, so false positives are possible.",
         items,
     )
 }
@@ -2592,6 +2740,95 @@ fn video_size_ratio_compatible(left: u64, right: u64) -> bool {
     larger == 0
         || smaller.saturating_mul(100)
             >= larger.saturating_mul(100 - VIDEO_SIMILARITY_SIZE_RATIO_PERCENT)
+}
+
+fn binary_similarity_signature(path: &Path, size_bytes: u64) -> Option<BinarySimilaritySignature> {
+    let regions = read_binary_probe_regions(path, size_bytes)?;
+    let mut features = BTreeSet::new();
+    for region in regions {
+        collect_binary_cdc_features(&region, &mut features);
+    }
+    if features.len() < BINARY_SIMILARITY_MIN_FEATURES {
+        return None;
+    }
+    Some(BinarySimilaritySignature {
+        features,
+        size_bytes,
+    })
+}
+
+fn read_binary_probe_regions(path: &Path, size_bytes: u64) -> Option<Vec<Vec<u8>>> {
+    let mut file = fs::File::open(path).ok()?;
+    let mut regions = Vec::new();
+    let first_len = size_bytes.min(BINARY_SIMILARITY_READ_MAX_BYTES as u64) as usize;
+    let mut first = vec![0u8; first_len];
+    let read_first = file.read(&mut first).ok()?;
+    if read_first > 0 {
+        first.truncate(read_first);
+        regions.push(first);
+    }
+    if size_bytes > BINARY_SIMILARITY_READ_MAX_BYTES as u64 * 2 {
+        file.seek(SeekFrom::Start(
+            size_bytes.saturating_sub(BINARY_SIMILARITY_READ_MAX_BYTES as u64),
+        ))
+        .ok()?;
+        let mut last = vec![0u8; BINARY_SIMILARITY_READ_MAX_BYTES];
+        let read_last = file.read(&mut last).ok()?;
+        if read_last > 0 {
+            last.truncate(read_last);
+            regions.push(last);
+        }
+    }
+    if regions.is_empty() {
+        None
+    } else {
+        Some(regions)
+    }
+}
+
+fn collect_binary_cdc_features(region: &[u8], features: &mut BTreeSet<u64>) {
+    let mut chunk_start = 0usize;
+    let mut rolling = 0u64;
+    for (index, byte) in region.iter().enumerate() {
+        rolling = rolling.rotate_left(7) ^ binary_gear_hash(*byte);
+        let chunk_len = index + 1 - chunk_start;
+        if chunk_len >= BINARY_SIMILARITY_CHUNK_MIN_BYTES
+            && ((rolling & BINARY_SIMILARITY_CHUNK_MASK) == 0
+                || chunk_len >= BINARY_SIMILARITY_CHUNK_MAX_BYTES)
+        {
+            push_binary_chunk_feature(&region[chunk_start..=index], features);
+            chunk_start = index + 1;
+            rolling = 0;
+        }
+    }
+    if region.len().saturating_sub(chunk_start) >= BINARY_SIMILARITY_CHUNK_MIN_BYTES {
+        push_binary_chunk_feature(&region[chunk_start..], features);
+    }
+}
+
+fn push_binary_chunk_feature(chunk: &[u8], features: &mut BTreeSet<u64>) {
+    if chunk.is_empty() {
+        return;
+    }
+    let mut hash = 0xcbf29ce484222325u64;
+    fnv64_update(&mut hash, &(chunk.len() as u64).to_le_bytes());
+    fnv64_update(&mut hash, chunk);
+    features.insert(hash);
+}
+
+fn binary_gear_hash(byte: u8) -> u64 {
+    let mut hash = u64::from(byte).wrapping_mul(0x9e37_79b1_85eb_ca87);
+    hash ^= hash >> 29;
+    hash = hash.wrapping_mul(0xc2b2_ae3d_27d4_eb4f);
+    hash ^ (hash >> 32)
+}
+
+fn binary_size_ratio_compatible(left: u64, right: u64) -> bool {
+    let smaller = left.min(right);
+    let larger = left.max(right);
+    larger == 0
+        || smaller.saturating_mul(100)
+            >= larger.saturating_mul(100 - BINARY_SIMILARITY_SIZE_RATIO_PERCENT)
 }
 
 fn text_hash_hamming_distance(left: u64, right: u64) -> u32 {

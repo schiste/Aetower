@@ -2181,6 +2181,52 @@ fn storage_hygiene_similar_bucket_groups_video_signatures() {
 }
 
 #[test]
+fn storage_hygiene_similar_bucket_groups_generic_binaries() {
+    let root = test_root("similar-bucket-binary-cdc");
+    let binaries = root.join("Binaries");
+    if let Err(error) = fs::create_dir_all(&binaries) {
+        panic!("create binary similarity fixture directory: {error}");
+    }
+
+    write_similarity_binary(&binaries.join("artifact-a.bin"), 0);
+    write_similarity_binary(&binaries.join("artifact-b.bin"), 1);
+    write_unrelated_binary(&binaries.join("unrelated.bin"));
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 120);
+    let value = parse_json_value(&json, "binary similarity JSON parses");
+    let groups = value["duplicate_groups"]
+        .as_array()
+        .unwrap_or_else(|| panic!("duplicate groups serialize as an array"));
+    let binary_group = groups
+        .iter()
+        .find(|group| {
+            group["candidate_key"]
+                .as_str()
+                .is_some_and(|key| key.starts_with("binary-cdc:"))
+        })
+        .unwrap_or_else(|| panic!("binary CDC group is present"));
+
+    assert_eq!(binary_group["confirmed"].as_bool(), Some(false));
+    assert_eq!(binary_group["confidence_score"].as_u64(), Some(52));
+    assert!(
+        binary_group["caveat"]
+            .as_str()
+            .is_some_and(|caveat| caveat.contains("lower-confidence"))
+    );
+    let paths = binary_group["paths"]
+        .as_array()
+        .unwrap_or_else(|| panic!("binary group paths serialize as an array"))
+        .iter()
+        .filter_map(|item| item["path"].as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.iter().any(|path| path.ends_with("artifact-a.bin")));
+    assert!(paths.iter().any(|path| path.ends_with("artifact-b.bin")));
+    assert!(!paths.iter().any(|path| path.ends_with("unrelated.bin")));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn repository_inventory_indexes_git_repositories_without_artifacts() {
     let root = test_root("indexes-clean-repositories");
     let repo_a = root.join("CleanOne");
@@ -5377,6 +5423,35 @@ fn append_mp4_box(target: &mut Vec<u8>, box_type: [u8; 4], payload: &[u8]) {
     target.extend_from_slice(&(size as u32).to_be_bytes());
     target.extend_from_slice(&box_type);
     target.extend_from_slice(payload);
+}
+
+fn write_similarity_binary(path: &Path, variant: usize) {
+    let mut data = similarity_binary_bytes(17, (MIN_ITEM_BYTES + 320 * 1024) as usize);
+    if variant != 0 {
+        data.extend_from_slice(&similarity_binary_bytes(91, 24 * 1024));
+    }
+    if let Err(error) = fs::write(path, data) {
+        panic!("write similarity binary {}: {error}", path.display());
+    }
+}
+
+fn write_unrelated_binary(path: &Path) {
+    let data = similarity_binary_bytes(211, (MIN_ITEM_BYTES + 320 * 1024) as usize);
+    if let Err(error) = fs::write(path, data) {
+        panic!("write unrelated binary {}: {error}", path.display());
+    }
+}
+
+fn similarity_binary_bytes(seed: u8, len: usize) -> Vec<u8> {
+    let mut data = Vec::with_capacity(len);
+    for index in 0..len {
+        let mixed = (index as u64)
+            .wrapping_mul(0x9e37_79b1)
+            .wrapping_add(u64::from(seed) * 0x1000_001b3)
+            .rotate_left((index % 17) as u32);
+        data.push((mixed ^ (mixed >> 24) ^ (mixed >> 41)) as u8);
+    }
+    data
 }
 
 fn write_git_origin_config(repo: &Path, origin_url: &str) {

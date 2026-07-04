@@ -47,6 +47,15 @@ const VIDEO_SIMILARITY_SAMPLE_BYTES: usize = 64 * 1024;
 const VIDEO_SIMILARITY_DURATION_TOLERANCE_MS: u64 = 1_000;
 const VIDEO_SIMILARITY_DIMENSION_TOLERANCE_PX: u32 = 2;
 const VIDEO_SIMILARITY_SIZE_RATIO_PERCENT: u64 = 20;
+const BINARY_SIMILARITY_HASH_MAX_BYTES: u64 = 128 * 1024 * 1024;
+const BINARY_SIMILARITY_READ_MAX_BYTES: usize = 8 * 1024 * 1024;
+const BINARY_SIMILARITY_CHUNK_MIN_BYTES: usize = 2 * 1024;
+const BINARY_SIMILARITY_CHUNK_MAX_BYTES: usize = 64 * 1024;
+const BINARY_SIMILARITY_CHUNK_MASK: u64 = 0x1fff;
+const BINARY_SIMILARITY_MIN_FEATURES: usize = 8;
+const BINARY_SIMILARITY_MIN_SHARED_FEATURES: usize = 6;
+const BINARY_SIMILARITY_MIN_JACCARD_PERCENT: u64 = 55;
+const BINARY_SIMILARITY_SIZE_RATIO_PERCENT: u64 = 35;
 const DUPLICATE_GROUP_LIMIT: usize = 8;
 const REDUNDANCY_GROUP_LIMIT: usize = 12;
 const CLEANUP_ACTIVE_HOLDER_PATH_LIMIT: usize = 64;
@@ -206,6 +215,48 @@ fn is_similarity_video_path(path: &Path) -> bool {
             matches!(
                 extension.to_ascii_lowercase().as_str(),
                 "avi" | "m4v" | "mkv" | "mov" | "mp4" | "webm"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn is_similarity_binary_path(path: &Path) -> bool {
+    if is_similarity_image_path(path)
+        || is_similarity_text_path(path)
+        || is_similarity_document_path(path)
+        || is_similarity_video_path(path)
+    {
+        return false;
+    }
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "a" | "bin"
+                    | "class"
+                    | "dat"
+                    | "data"
+                    | "db"
+                    | "dmg"
+                    | "dll"
+                    | "dylib"
+                    | "ear"
+                    | "exe"
+                    | "img"
+                    | "ipa"
+                    | "iso"
+                    | "jar"
+                    | "o"
+                    | "obj"
+                    | "pkg"
+                    | "rlib"
+                    | "so"
+                    | "sqlite"
+                    | "sqlite3"
+                    | "war"
+                    | "wasm"
+                    | "zip"
             )
         })
         .unwrap_or(false)

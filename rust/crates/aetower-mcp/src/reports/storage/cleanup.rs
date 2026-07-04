@@ -482,6 +482,7 @@ pub(super) fn storage_role_for_kind(kind: &str) -> &'static str {
         "text-file" => "text-file",
         "document-file" => "document-file",
         "video-file" => "video-file",
+        "binary-file" => "binary-file",
         "large-file" => "large-file",
         _ => "artifact",
     }
@@ -1261,6 +1262,18 @@ pub(super) fn classify_artifact(
             "risky",
             "Large standalone file.",
             "Reveal and inspect ownership before deleting; Aetower cannot prove whether this is source data, a local export, or a generated artifact.",
+        ));
+    }
+    if metadata.is_file()
+        && metadata.len() >= MIN_ITEM_BYTES
+        && is_similarity_binary_path(Path::new(name))
+    {
+        return Some(rule(
+            "binary-file",
+            "review",
+            "",
+            "Binary retained for fuzzy similarity review.",
+            "Review binary artifacts side by side; fuzzy binary similarity is lower confidence and not safe cleanup proof.",
         ));
     }
 
