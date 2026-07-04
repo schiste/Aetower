@@ -1913,6 +1913,65 @@ fn storage_hygiene_reports_redundancy_beyond_byte_duplicates() {
 }
 
 #[test]
+fn storage_hygiene_similar_bucket_confirms_only_full_hash_matches() {
+    let root = test_root("similar-bucket-full-hash-filter");
+    let downloads = root.join("Downloads");
+    if let Err(error) = fs::create_dir_all(&downloads) {
+        panic!("create similar bucket fixture directory: {error}");
+    }
+
+    let content_len = (MIN_ITEM_BYTES + 512) as usize;
+    let exact = vec![7u8; content_len];
+    let mut edge_match_decoy = exact.clone();
+    edge_match_decoy[DUPLICATE_PARTIAL_HASH_BYTES + 16] = 9;
+    for (path, content) in [
+        (downloads.join("exact-a.pkg"), exact.clone()),
+        (downloads.join("exact-b.pkg"), exact),
+        (downloads.join("edge-match-decoy.pkg"), edge_match_decoy),
+    ] {
+        if let Err(error) = fs::write(path, content) {
+            panic!("write similar bucket candidate: {error}");
+        }
+    }
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 4, 120);
+    let value = parse_json_value(&json, "similar bucket JSON parses");
+    let groups = value["duplicate_groups"]
+        .as_array()
+        .unwrap_or_else(|| panic!("duplicate groups serialize as an array"));
+    let confirmed = groups
+        .iter()
+        .find(|group| group["confirmed"].as_bool() == Some(true))
+        .unwrap_or_else(|| panic!("full-hash confirmed exact match group is present"));
+    assert_eq!(confirmed["file_count"].as_u64(), Some(2));
+    assert!(
+        confirmed["candidate_key"]
+            .as_str()
+            .is_some_and(|key| key.starts_with("sha256:"))
+    );
+    assert!(
+        confirmed["caveat"]
+            .as_str()
+            .is_some_and(|caveat| caveat.contains("same-size and partial-content hashing"))
+    );
+    let paths = confirmed["paths"]
+        .as_array()
+        .unwrap_or_else(|| panic!("confirmed paths serialize as an array"))
+        .iter()
+        .filter_map(|item| item["path"].as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.iter().any(|path| path.ends_with("exact-a.pkg")));
+    assert!(paths.iter().any(|path| path.ends_with("exact-b.pkg")));
+    assert!(
+        !paths
+            .iter()
+            .any(|path| path.ends_with("edge-match-decoy.pkg"))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn repository_inventory_indexes_git_repositories_without_artifacts() {
     let root = test_root("indexes-clean-repositories");
     let repo_a = root.join("CleanOne");

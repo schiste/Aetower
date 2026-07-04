@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 #[derive(Clone, Debug)]
@@ -1487,35 +1488,54 @@ fn push_investigation_finding(
 }
 
 fn summarize_duplicate_groups(items: &[StorageHygieneItem]) -> Vec<StorageDuplicateGroup> {
-    let mut cheap_groups = BTreeMap::<String, Vec<&StorageHygieneItem>>::new();
+    let mut same_size_groups = BTreeMap::<u64, Vec<&StorageHygieneItem>>::new();
     for item in items {
         let path = Path::new(&item.path);
         if !path.is_file() || item.size_bytes < MIN_ITEM_BYTES {
             continue;
         }
-        let extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or("no-extension")
-            .to_ascii_lowercase();
-        cheap_groups
-            .entry(format!("{}|{extension}", item.size_bytes))
+        same_size_groups
+            .entry(item.size_bytes)
             .or_default()
             .push(item);
     }
 
     let mut groups = Vec::new();
-    for (cheap_key, candidates) in cheap_groups {
+    for (size_bytes, candidates) in same_size_groups {
         if candidates.len() < 2 {
             continue;
         }
 
-        let can_hash = candidates
-            .iter()
-            .all(|item| item.size_bytes <= DUPLICATE_FULL_HASH_MAX_BYTES);
-        if can_hash {
+        let mut by_partial_hash = BTreeMap::<String, Vec<&StorageHygieneItem>>::new();
+        for item in candidates {
+            if let Some(partial_hash) =
+                file_partial_content_hash(Path::new(&item.path), item.size_bytes)
+            {
+                by_partial_hash.entry(partial_hash).or_default().push(item);
+            }
+        }
+
+        for (partial_hash, partial_items) in by_partial_hash {
+            if partial_items.len() < 2 {
+                continue;
+            }
+            let partial_key = format!("size:{size_bytes}|partial:{partial_hash}");
+            let can_hash = partial_items
+                .iter()
+                .all(|item| item.size_bytes <= DUPLICATE_FULL_HASH_MAX_BYTES);
+            if !can_hash {
+                groups.push(duplicate_group_from_items(
+                    format!("partial|{partial_key}"),
+                    partial_key,
+                    false,
+                    58,
+                    partial_items,
+                ));
+                continue;
+            }
+
             let mut by_hash = BTreeMap::<String, Vec<&StorageHygieneItem>>::new();
-            for item in candidates {
+            for item in partial_items {
                 if let Some(hash) = file_content_hash(Path::new(&item.path)) {
                     by_hash.entry(hash).or_default().push(item);
                 }
@@ -1531,14 +1551,6 @@ fn summarize_duplicate_groups(items: &[StorageHygieneItem]) -> Vec<StorageDuplic
                     ));
                 }
             }
-        } else {
-            groups.push(duplicate_group_from_items(
-                format!("candidate|{cheap_key}"),
-                cheap_key,
-                false,
-                48,
-                candidates,
-            ));
         }
     }
 
@@ -1595,13 +1607,13 @@ fn duplicate_group_from_items(
         recommendation: if confirmed {
             "Confirmed byte-identical files. Keep the canonical copy, Quick Look samples, then stage only deliberate duplicates.".to_owned()
         } else {
-            "Potential duplicate group by size/type only. Quick Look and hash externally before deleting.".to_owned()
+            "Potentially similar files by same-size and partial-content hash. Quick Look samples and run a deeper check before deleting.".to_owned()
         },
         caveat: if confirmed {
-            "Full content hashing was performed only after cheap size/type grouping identified candidates.".to_owned()
+            "Full content hashing was performed only after same-size and partial-content hashing identified candidates.".to_owned()
         } else {
             format!(
-                "Files exceed the {} per-file hash cap or could not be hashed in this bounded scan.",
+                "Files share size and edge-content fingerprints but exceed the {} per-file full-hash cap, so this is review-only.",
                 human_bytes(DUPLICATE_FULL_HASH_MAX_BYTES)
             )
         },
@@ -2004,19 +2016,60 @@ fn sum_physical_bytes(items: &[&StorageHygieneItem]) -> u64 {
 
 fn file_content_hash(path: &Path) -> Option<String> {
     let mut file = fs::File::open(path).ok()?;
-    let mut hash = 0xcbf29ce484222325u64;
+    let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     loop {
         let count = file.read(&mut buffer).ok()?;
         if count == 0 {
             break;
         }
-        for byte in &buffer[..count] {
-            hash ^= *byte as u64;
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
+        hasher.update(&buffer[..count]);
     }
-    Some(format!("{hash:016x}"))
+    Some(format!("sha256:{:x}", hasher.finalize()))
+}
+
+fn file_partial_content_hash(path: &Path, size_bytes: u64) -> Option<String> {
+    let mut file = fs::File::open(path).ok()?;
+    let mut hash = 0xcbf29ce484222325u64;
+    let first_count = hash_file_region(&mut file, 0, size_bytes, &mut hash)?;
+    if size_bytes > DUPLICATE_PARTIAL_HASH_BYTES as u64 {
+        let tail_offset = size_bytes.saturating_sub(DUPLICATE_PARTIAL_HASH_BYTES as u64);
+        let tail_count = hash_file_region(&mut file, tail_offset, size_bytes, &mut hash)?;
+        Some(format!(
+            "fnv64-edge:{size_bytes}:{first_count}:{tail_offset}:{tail_count}:{hash:016x}"
+        ))
+    } else {
+        Some(format!(
+            "fnv64-edge:{size_bytes}:{first_count}:0:0:{hash:016x}"
+        ))
+    }
+}
+
+fn hash_file_region(
+    file: &mut fs::File,
+    offset: u64,
+    size_bytes: u64,
+    hash: &mut u64,
+) -> Option<usize> {
+    file.seek(SeekFrom::Start(offset)).ok()?;
+    let remaining = size_bytes.saturating_sub(offset);
+    let target = remaining.min(DUPLICATE_PARTIAL_HASH_BYTES as u64) as usize;
+    if target == 0 {
+        return Some(0);
+    }
+    let mut buffer = vec![0u8; target];
+    let count = file.read(&mut buffer).ok()?;
+    fnv64_update(hash, &offset.to_le_bytes());
+    fnv64_update(hash, &(count as u64).to_le_bytes());
+    fnv64_update(hash, &buffer[..count]);
+    Some(count)
+}
+
+fn fnv64_update(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(0x100000001b3);
+    }
 }
 
 fn summarize_app_footprints(items: &[StorageHygieneItem]) -> Vec<StorageAppFootprint> {

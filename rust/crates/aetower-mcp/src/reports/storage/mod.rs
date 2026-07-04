@@ -5,7 +5,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque},
     ffi::CString,
     fs,
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     mem::MaybeUninit,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -33,6 +33,7 @@ const LARGE_DIRECTORY_MIN_BYTES: u64 = 1024 * 1024 * 1024;
 const LARGE_DIRECTORY_MAX_DEPTH: usize = 3;
 const LARGE_DIRECTORY_MAX_PER_ROOT: usize = 15;
 const COLD_AFTER_DAYS: u64 = 365;
+const DUPLICATE_PARTIAL_HASH_BYTES: usize = 64 * 1024;
 const DUPLICATE_FULL_HASH_MAX_BYTES: u64 = 256 * 1024 * 1024;
 const DUPLICATE_GROUP_LIMIT: usize = 8;
 const REDUNDANCY_GROUP_LIMIT: usize = 12;
