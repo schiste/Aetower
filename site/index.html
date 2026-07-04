@@ -1114,7 +1114,7 @@
       <section class="hero">
         <div>
           <p class="eyebrow">
-            <span class="dot"></span> Developer Preview · <span class="ver">v0.73</span> · macOS
+            <span class="dot"></span> Developer Preview · <span class="ver">v0.74</span> · macOS
           </p>
           <h1>Your Mac runs agents now.<br /><span class="brand-text">Run it like an operator.</span></h1>
           <p class="lead">
@@ -1394,8 +1394,8 @@
         <p class="label">The top of the ladder</p>
         <div class="mcp">
           <div class="mcp-copy">
-            <span class="kicker brand-text">Local MCP</span>
-            <h3>Let your agents operate themselves</h3>
+            <span class="kicker brand-text">Local MCP + CLI</span>
+            <h3>One engine — for your agents and your shell</h3>
             <p>
               The app owns a local MCP server on a Unix socket — <strong>one engine, no second
               collector</strong>. Your agents query the exact live state you're looking at: 30+
@@ -1406,6 +1406,14 @@
               After a freeze or a pressure spike, one call to
               <strong>aetower_investigation_bundle</strong> hands the agent alerts, findings,
               recent changes, and history diffs for the window — instead of twenty shell commands.
+            </p>
+            <p>
+              The same socket answers <em>you</em>, too. The bundled <strong>aetower</strong> CLI is
+              a thin client of that engine — <span class="mono">aetower top</span>,
+              <span class="mono">storage</span>, <span class="mono">repos</span>, or
+              <span class="mono">--json</span> into any pipeline — so you read the exact state your
+              agents do, from any terminal. It ships in every download and installs onto your
+              <span class="mono">PATH</span>.
             </p>
             <div class="tool-grid">
               <code>aetower_investigation_bundle</code>
@@ -1418,13 +1426,19 @@
               <code>aetower_recommendations</code>
             </div>
           </div>
-          <div class="mcp-term" aria-label="Example agent exchange and MCP client configuration">
+          <div class="mcp-term" aria-label="Example agent exchange, aetower CLI output, and MCP client configuration">
             <pre><span class="you">you ›</span> what's straining my Mac right now?
 
 <span class="cmt">agent › calling aetower_top_findings…</span>
 <span class="cmt">agent › Ollama (llama3:70b) leads at friction 58 —</span>
 <span class="cmt">        GPU-bound, 8.1 W. VRAM is at 78%, close to</span>
 <span class="cmt">        the swap cliff. Consider a smaller quant.</span></pre>
+            <hr />
+            <pre><span class="you">$</span> aetower top
+ENTITY                  FRICTION  CPU%      MEM
+Chrome · 48 procs             72   139   1.2 GB
+Ollama · GPU 8.1 W            58    12   9.1 GB
+Claude Code · repo x          14     0   340 MB</pre>
             <hr />
             <pre><span class="cmt"># Registered automatically for Claude when installed;</span>
 <span class="cmt"># manual config for any MCP client:</span>
