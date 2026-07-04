@@ -1537,7 +1537,7 @@ public struct StorageView: View {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                     Text("Whole-computer optimization")
                         .font(.headline)
-                    Text("Large files, cold data, duplicates, app footprints, and macOS System Data buckets from the current bounded scan.")
+                    Text("Large files, cold data, potentially similar files, app footprints, and macOS System Data buckets from the current bounded scan.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1556,7 +1556,7 @@ public struct StorageView: View {
             ) {
                 footprintMetric("Large files", value: "\(largeFiles.count)", detail: largeFiles.first.map { formatBytes($0.sizeBytes) } ?? "none")
                 footprintMetric("Old unused", value: "\(oldUnused.count)", detail: oldUnused.first.map { formatBytes($0.sizeBytes) } ?? "none")
-                footprintMetric("Duplicates", value: "\(report.duplicateGroups.count)", detail: formatBytes(report.duplicateGroups.reduce(UInt64(0)) { sumBytes($0, $1.reclaimableBytes) }))
+                footprintMetric("Similar", value: "\(report.duplicateGroups.count)", detail: formatBytes(report.duplicateGroups.reduce(UInt64(0)) { sumBytes($0, $1.reclaimableBytes) }))
                 footprintMetric("Apps", value: "\(report.appFootprints.count)", detail: report.appFootprints.first.map { formatBytes($0.totalBytes) } ?? "none")
                 footprintMetric("System Data", value: formatBytes(systemBytes), detail: "\(report.systemDataBuckets.filter { $0.sizeBytes > 0 }.count) active bucket\(report.systemDataBuckets.filter { $0.sizeBytes > 0 }.count == 1 ? "" : "s")")
             }
@@ -1617,21 +1617,21 @@ public struct StorageView: View {
 
     private func duplicateGroupsCard(_ groups: [StorageDuplicateGroupModel]) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-            Text("Duplicate finder")
+            Text("Potentially similar files")
                 .font(.subheadline.weight(.semibold))
-            Text("Cheap size/type grouping first; full content hashing only for candidate files within the scan hash budget.")
+            Text("Same-size grouping first, partial edge hashing second, full content hashing only for candidate files within the scan hash budget.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if groups.isEmpty {
-                Label("No duplicate candidates in the retained scan set.", systemImage: "checkmark.circle")
+                Label("No potentially similar file groups in the retained scan set.", systemImage: "checkmark.circle")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             } else {
                 ForEach(groups.prefix(3)) { group in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text(group.confirmed ? "Confirmed duplicates" : "Potential duplicates")
+                            Text(group.confirmed ? "Exact content match" : "Potentially similar")
                                 .font(.caption.weight(.semibold))
                             Spacer()
                             Text(formatBytes(group.reclaimableBytes))
