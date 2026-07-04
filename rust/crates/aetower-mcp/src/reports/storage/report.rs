@@ -1573,6 +1573,7 @@ fn file_content_hash(path: &Path) -> Option<String> {
 }
 
 fn summarize_app_footprints(items: &[StorageHygieneItem]) -> Vec<StorageAppFootprint> {
+    let ownership_graph = AppOwnershipGraph::from_items(items);
     let mut grouped = BTreeMap::<String, AppFootprintAccumulator>::new();
     for item in items {
         let Some(identity) = app_component_identity(item) else {
@@ -1586,7 +1587,7 @@ fn summarize_app_footprints(items: &[StorageHygieneItem]) -> Vec<StorageAppFootp
 
     let mut footprints = grouped
         .into_values()
-        .map(AppFootprintAccumulator::finish)
+        .map(|footprint| footprint.finish(&ownership_graph))
         .collect::<Vec<_>>();
     footprints.sort_by(|left, right| {
         right
@@ -1614,6 +1615,69 @@ struct AppFootprintAccumulator {
     safety: String,
     cleanup_tier: String,
     components: Vec<StorageAppFootprintComponent>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct AppOwnershipGraph {
+    installed_bundle_ids: BTreeSet<String>,
+    installed_app_names: BTreeSet<String>,
+    launchservices_bundle_ids: BTreeSet<String>,
+    running_bundle_ids: BTreeSet<String>,
+    running_app_names: BTreeSet<String>,
+}
+
+impl AppOwnershipGraph {
+    fn from_items(items: &[StorageHygieneItem]) -> Self {
+        let mut graph = Self::default();
+        for item in items {
+            if item.kind != "macos-app-bundle" {
+                continue;
+            }
+            let path = Path::new(&item.path);
+            let app_name = path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&item.display_name);
+            graph
+                .installed_app_names
+                .insert(normalize_app_key(app_name));
+            if let Some(bundle_identifier) = app_bundle_identifier(path) {
+                graph
+                    .installed_bundle_ids
+                    .insert(normalize_app_key(&bundle_identifier));
+            }
+        }
+        graph
+    }
+
+    fn installed_match(&self, app_name: &str, bundle_identifier: Option<&str>) -> bool {
+        bundle_identifier
+            .map(normalize_app_key)
+            .is_some_and(|bundle_identifier| {
+                self.installed_bundle_ids.contains(&bundle_identifier)
+                    || self.launchservices_bundle_ids.contains(&bundle_identifier)
+            })
+            || self
+                .installed_app_names
+                .contains(&normalize_app_key(app_name))
+    }
+
+    fn running_match(&self, app_name: &str, bundle_identifier: Option<&str>) -> bool {
+        bundle_identifier
+            .map(normalize_app_key)
+            .is_some_and(|bundle_identifier| self.running_bundle_ids.contains(&bundle_identifier))
+            || self
+                .running_app_names
+                .contains(&normalize_app_key(app_name))
+    }
+
+    fn launchservices_match(&self, bundle_identifier: Option<&str>) -> bool {
+        bundle_identifier
+            .map(normalize_app_key)
+            .is_some_and(|bundle_identifier| {
+                self.launchservices_bundle_ids.contains(&bundle_identifier)
+            })
+    }
 }
 
 impl AppFootprintAccumulator {
@@ -1650,7 +1714,57 @@ impl AppFootprintAccumulator {
         });
     }
 
-    fn finish(mut self) -> StorageAppFootprint {
+    fn finish(mut self, ownership_graph: &AppOwnershipGraph) -> StorageAppFootprint {
+        let component_count = self.components.len();
+        let has_bundle = self
+            .components
+            .iter()
+            .any(|component| component.component == "App bundle");
+        let has_receipt = self
+            .components
+            .iter()
+            .any(|component| component.component == "Receipt");
+        let has_launch_item = self
+            .components
+            .iter()
+            .any(|component| component.component == "Launch item");
+        let has_state = self.components.iter().any(|component| {
+            matches!(
+                component.component.as_str(),
+                "Application Support" | "Caches" | "Container" | "Preferences"
+            )
+        });
+        let bundle_identifier = self.bundle_identifier.as_deref();
+        let installed_match =
+            has_bundle || ownership_graph.installed_match(&self.app_name, bundle_identifier);
+        let running_match = ownership_graph.running_match(&self.app_name, bundle_identifier);
+        let launchservices_match = ownership_graph.launchservices_match(bundle_identifier);
+        let ownership_status = app_ownership_status(
+            installed_match,
+            has_state,
+            has_receipt,
+            has_launch_item,
+            running_match,
+        );
+        let orphan_confidence = app_orphan_confidence(
+            &ownership_status,
+            has_receipt,
+            has_launch_item,
+            running_match,
+            launchservices_match,
+        );
+        let ownership_signals = app_ownership_signals(
+            &self.components,
+            installed_match,
+            has_bundle,
+            has_receipt,
+            has_launch_item,
+            running_match,
+            launchservices_match,
+        );
+        let orphan_recommendation =
+            app_orphan_recommendation(&ownership_status, &orphan_confidence);
+
         self.components.sort_by(|left, right| {
             right
                 .size_bytes
@@ -1658,17 +1772,6 @@ impl AppFootprintAccumulator {
                 .then_with(|| left.path.cmp(&right.path))
         });
         self.components.truncate(8);
-        let component_count = self.components.len();
-        let has_bundle = self
-            .components
-            .iter()
-            .any(|component| component.component == "App bundle");
-        let has_state = self.components.iter().any(|component| {
-            matches!(
-                component.component.as_str(),
-                "Application Support" | "Container" | "Launch item" | "Preferences" | "Receipt"
-            )
-        });
         StorageAppFootprint {
             id: self.key,
             app_name: self.app_name,
@@ -1684,10 +1787,155 @@ impl AppFootprintAccumulator {
             } else {
                 58
             },
+            ownership_status,
+            orphan_confidence,
+            ownership_signals,
+            orphan_recommendation,
             components: self.components,
             recommendation: "Treat this as an uninstall footprint: quit the app, review support data, preferences, receipts, containers, and launch items, then move selected components to Trash.".to_owned(),
         }
     }
+}
+
+fn app_ownership_status(
+    installed_match: bool,
+    has_state: bool,
+    has_receipt: bool,
+    has_launch_item: bool,
+    running_match: bool,
+) -> String {
+    if installed_match {
+        "installed"
+    } else if has_state && !has_receipt && !has_launch_item && !running_match {
+        "orphaned"
+    } else if has_state || has_receipt || has_launch_item || running_match {
+        "partial"
+    } else {
+        "unknown"
+    }
+    .to_owned()
+}
+
+fn app_orphan_confidence(
+    ownership_status: &str,
+    has_receipt: bool,
+    has_launch_item: bool,
+    running_match: bool,
+    launchservices_match: bool,
+) -> String {
+    match ownership_status {
+        "installed" => "none",
+        "orphaned"
+            if !has_receipt && !has_launch_item && !running_match && !launchservices_match =>
+        {
+            "medium"
+        }
+        "orphaned" => "low",
+        "partial" => "low",
+        _ => "low",
+    }
+    .to_owned()
+}
+
+fn app_orphan_recommendation(ownership_status: &str, orphan_confidence: &str) -> String {
+    match ownership_status {
+        "installed" => "Installed app ownership is present. Use the uninstall footprint view to review state, caches, receipts, and launch items before staging anything.".to_owned(),
+        "orphaned" => format!(
+            "No installed app, receipt, launch item, or running-process evidence matched in this scan. Treat as a possible leftover with {orphan_confidence} orphan confidence and review before staging."
+        ),
+        "partial" => "Only partial ownership evidence matched. Verify whether the app was removed or still has login/launch/runtime ownership before cleanup.".to_owned(),
+        _ => "Ownership evidence is incomplete. Inspect the paths before cleanup and prefer Trash over permanent deletion.".to_owned(),
+    }
+}
+
+fn app_ownership_signals(
+    components: &[StorageAppFootprintComponent],
+    installed_match: bool,
+    has_bundle: bool,
+    has_receipt: bool,
+    has_launch_item: bool,
+    running_match: bool,
+    launchservices_match: bool,
+) -> Vec<StorageAppOwnershipSignal> {
+    vec![
+        app_ownership_signal(
+            "app-bundle",
+            if installed_match { "present" } else { "absent" },
+            if has_bundle {
+                "App bundle component found in this footprint."
+            } else if installed_match {
+                "Matching installed app bundle found elsewhere in the scan."
+            } else {
+                "No matching app bundle found in this scan."
+            },
+            component_path(components, &["App bundle"]),
+        ),
+        app_ownership_signal(
+            "receipt",
+            if has_receipt { "present" } else { "absent" },
+            if has_receipt {
+                "Installer receipt matched this footprint."
+            } else {
+                "No installer receipt matched this footprint."
+            },
+            component_path(components, &["Receipt"]),
+        ),
+        app_ownership_signal(
+            "launch-item",
+            if has_launch_item { "present" } else { "absent" },
+            if has_launch_item {
+                "Launch agent or daemon matched this footprint."
+            } else {
+                "No launch agent or daemon matched this footprint."
+            },
+            component_path(components, &["Launch item"]),
+        ),
+        app_ownership_signal(
+            "running-process",
+            if running_match { "present" } else { "unknown" },
+            if running_match {
+                "A running process matched this footprint."
+            } else {
+                "Runtime process ownership is not collected by the bounded storage scan yet."
+            },
+            None,
+        ),
+        app_ownership_signal(
+            "launchservices",
+            if launchservices_match {
+                "present"
+            } else {
+                "unknown"
+            },
+            if launchservices_match {
+                "LaunchServices ownership matched this footprint."
+            } else {
+                "LaunchServices ownership is not collected by the bounded storage scan yet."
+            },
+            None,
+        ),
+    ]
+}
+
+fn app_ownership_signal(
+    source: &str,
+    status: &str,
+    detail: &str,
+    path: Option<String>,
+) -> StorageAppOwnershipSignal {
+    StorageAppOwnershipSignal {
+        source: source.to_owned(),
+        status: status.to_owned(),
+        detail: detail.to_owned(),
+        path,
+    }
+}
+
+fn component_path(components: &[StorageAppFootprintComponent], labels: &[&str]) -> Option<String> {
+    components
+        .iter()
+        .find(|component| labels.contains(&component.component.as_str()))
+        .map(|component| component.path.clone())
 }
 
 fn app_component_identity(item: &StorageHygieneItem) -> Option<AppComponentIdentity> {

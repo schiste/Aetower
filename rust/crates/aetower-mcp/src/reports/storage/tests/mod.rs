@@ -2877,6 +2877,12 @@ fn storage_hygiene_reports_whole_computer_optimization_buckets() {
     assert!(json.contains("\"app_footprints\""));
     assert!(json.contains("\"app_name\":\"Sample\""));
     assert!(json.contains("\"bundle_identifier\":\"com.example.sample\""));
+    assert!(json.contains("\"ownership_status\":\"installed\""));
+    assert!(json.contains("\"orphan_confidence\":\"none\""));
+    assert!(json.contains("\"source\":\"app-bundle\""));
+    assert!(json.contains("\"source\":\"receipt\""));
+    assert!(json.contains("\"source\":\"launch-item\""));
+    assert!(json.contains("\"source\":\"running-process\""));
     assert!(json.contains("\"kind\":\"app-cache\""));
     assert!(json.contains("\"kind\":\"app-container\""));
     assert!(json.contains("\"kind\":\"app-support-data\""));
@@ -2895,6 +2901,37 @@ fn storage_hygiene_reports_whole_computer_optimization_buckets() {
     assert!(json.contains("\"title\":\"Mail attachments\""));
     assert!(json.contains("\"title\":\"Messages attachments\""));
     assert!(json.contains("\"title\":\"Local snapshots\""));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_hygiene_marks_state_only_app_footprints_as_orphan_candidates() {
+    let root = test_root("app-orphan-ownership");
+    let app_support = root
+        .join("Library")
+        .join("Application Support")
+        .join("OrphanTool");
+    if let Err(error) = fs::create_dir_all(&app_support) {
+        panic!("create orphan app support fixture: {error}");
+    }
+    if let Err(error) = fs::write(
+        app_support.join("payload"),
+        vec![9u8; (MIN_ITEM_BYTES + 512) as usize],
+    ) {
+        panic!("write orphan app support payload: {error}");
+    }
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 16, 64);
+
+    assert!(json.contains("\"app_footprints\""));
+    assert!(json.contains("\"app_name\":\"OrphanTool\""));
+    assert!(json.contains("\"ownership_status\":\"orphaned\""));
+    assert!(json.contains("\"orphan_confidence\":\"medium\""));
+    assert!(json.contains("\"source\":\"app-bundle\""));
+    assert!(json.contains("\"status\":\"absent\""));
+    assert!(json.contains("\"source\":\"running-process\""));
+    assert!(json.contains("\"status\":\"unknown\""));
 
     let _ = fs::remove_dir_all(root);
 }

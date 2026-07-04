@@ -709,8 +709,20 @@ pub(super) struct StorageAppFootprint {
     pub(super) cleanup_tier: String,
     pub(super) safety: String,
     pub(super) confidence_score: u8,
+    pub(super) ownership_status: String,
+    pub(super) orphan_confidence: String,
+    pub(super) ownership_signals: Vec<StorageAppOwnershipSignal>,
+    pub(super) orphan_recommendation: String,
     pub(super) components: Vec<StorageAppFootprintComponent>,
     pub(super) recommendation: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageAppOwnershipSignal {
+    pub(super) source: String,
+    pub(super) status: String,
+    pub(super) detail: String,
+    pub(super) path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
