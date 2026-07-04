@@ -925,6 +925,28 @@ fn test_volume_state(path: &str, free_now_bytes: u64) -> StorageVolumeState {
     }
 }
 
+fn test_volume_state_with_capacity(
+    path: &str,
+    free_now_bytes: u64,
+    available_bytes: u64,
+    purgeable_bytes_estimate: u64,
+    important_usage_available_bytes: Option<u64>,
+    opportunistic_usage_available_bytes: Option<u64>,
+) -> StorageVolumeState {
+    StorageVolumeState {
+        path: path.to_owned(),
+        device_id: 100,
+        filesystem_type: "apfs".to_owned(),
+        total_bytes: available_bytes * 4,
+        free_now_bytes,
+        available_bytes,
+        purgeable_bytes_estimate,
+        important_usage_available_bytes,
+        opportunistic_usage_available_bytes,
+        detail: String::new(),
+    }
+}
+
 #[test]
 fn storage_growth_insights_aggregate_rates_trends_and_forecasts() {
     let _index_guard = storage_index_test_guard();
@@ -1032,9 +1054,121 @@ fn storage_growth_insights_aggregate_rates_trends_and_forecasts() {
     let forecast = &insights.volume_forecasts[0];
     assert_eq!(forecast.volume_path, "/");
     assert_eq!(forecast.free_now_bytes, 350 * mib);
+    assert_eq!(forecast.available_bytes, 350 * mib);
     assert_eq!(forecast.daily_rate_bytes, (35 * mib) as i64);
+    assert!(forecast.daily_rate_lower_bytes < forecast.daily_rate_bytes);
+    assert!(forecast.daily_rate_upper_bytes > forecast.daily_rate_bytes);
     assert!((forecast.days_to_full - 10.0).abs() < 0.01);
+    assert!(forecast.days_to_full_lower_bound < forecast.days_to_full);
+    assert!(forecast.days_to_full_upper_bound > forecast.days_to_full);
     assert_eq!(forecast.confidence, "low");
+    assert_eq!(forecast.seasonal_pattern, "insufficient-history");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_growth_forecast_reports_seasonality_purgeable_and_cloud_dynamics() {
+    let _index_guard = storage_index_test_guard();
+    let root = test_root("growth-forecast-dynamics");
+    let source = root.join("RepoA");
+    let cloud_source = root
+        .join("Library")
+        .join("CloudStorage")
+        .join("ExampleDrive");
+    let now_millis = storage_now_millis();
+    let day = |offset: u64| now_millis - offset * DAY_MILLIS;
+    let mib = MIN_ITEM_BYTES;
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+
+    // Two weekly peaks on the same epoch weekday plus lower baseline growth
+    // across the other retained day buckets.
+    for offset in 0..14u64 {
+        let bytes = if offset == 0 || offset == 7 {
+            100 * mib
+        } else {
+            10 * mib
+        };
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &source,
+                &source.join("target").join(format!("day-{offset}.bin")),
+                bytes,
+                "rebuildable",
+                Some(&source),
+                Some(day(offset)),
+                Some(day(offset)),
+                day(offset),
+            ),
+            &mut metrics,
+        );
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &cloud_source,
+                &cloud_source.join(format!("cloud-day-{offset}.bin")),
+                10 * mib,
+                "rebuildable",
+                None,
+                Some(day(offset)),
+                Some(day(offset)),
+                day(offset),
+            ),
+            &mut metrics,
+        );
+    }
+    storage_index.flush_pending_rows();
+
+    let volumes = vec![test_volume_state_with_capacity(
+        "/",
+        1_400 * mib,
+        1_700 * mib,
+        300 * mib,
+        Some(1_600 * mib),
+        Some(1_900 * mib),
+    )];
+    let insights = storage_index
+        .load_growth_insights(std::slice::from_ref(&root), &volumes, now_millis, 30)
+        .unwrap_or_else(|| panic!("growth insights load from a ready index"));
+
+    let forecast = insights
+        .volume_forecasts
+        .first()
+        .unwrap_or_else(|| panic!("forecast emitted with 14 retained buckets"));
+    assert_eq!(forecast.seasonal_pattern, "weekly-peak");
+    assert_eq!(forecast.confidence, "medium");
+    assert!(forecast.volatility_percent > 0);
+    assert_eq!(forecast.cloud_daily_rate_bytes, (10 * mib) as i64);
+    assert!(forecast.cloud_growth_share_percent > 0);
+    assert_eq!(forecast.purgeable_bytes_estimate, 300 * mib);
+    assert!(forecast.purgeable_cushion_days > 0.0);
+    assert!(forecast.days_to_available_full > forecast.days_to_full);
+    assert!(forecast.days_to_effective_full > forecast.days_to_full);
+    assert!(forecast.days_to_full_lower_bound < forecast.days_to_full);
+    assert!(forecast.days_to_full_upper_bound > forecast.days_to_full);
+    assert!(
+        forecast
+            .forecast_notes
+            .iter()
+            .any(|note| note.contains("Purgeable APFS space"))
+    );
+    assert!(
+        forecast
+            .forecast_notes
+            .iter()
+            .any(|note| note.contains("Cloud-backed paths"))
+    );
+
+    let top_root = insights
+        .per_root_rates
+        .iter()
+        .find(|rate| rate.scope == source.display().to_string())
+        .unwrap_or_else(|| panic!("source-root rate emitted"));
+    assert_eq!(top_root.seasonal_pattern, "weekly-peak");
+    assert!(top_root.daily_rate_lower_bytes < top_root.daily_rate_bytes);
+    assert!(top_root.daily_rate_upper_bytes > top_root.daily_rate_bytes);
+    assert_eq!(top_root.confidence, "medium");
 
     let _ = fs::remove_dir_all(root);
 }

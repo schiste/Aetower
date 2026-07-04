@@ -206,8 +206,15 @@ pub(super) struct StorageGrowthRate {
     pub(super) window_days: u64,
     pub(super) total_delta_bytes: i64,
     pub(super) daily_rate_bytes: i64,
+    pub(super) daily_rate_lower_bytes: i64,
+    pub(super) daily_rate_upper_bytes: i64,
     /// accelerating | steady | slowing | shrinking (half-window comparison).
     pub(super) trend: String,
+    /// low | medium | high, based on retained day buckets and volatility.
+    pub(super) confidence: String,
+    pub(super) volatility_percent: u64,
+    pub(super) seasonal_pattern: String,
+    pub(super) seasonal_peak_daily_bytes: i64,
     pub(super) day_bucket_count: u64,
 }
 
@@ -218,9 +225,27 @@ pub(super) struct StorageGrowthRate {
 pub(super) struct StorageGrowthForecast {
     pub(super) volume_path: String,
     pub(super) free_now_bytes: u64,
+    pub(super) available_bytes: u64,
+    pub(super) purgeable_bytes_estimate: u64,
+    pub(super) important_usage_available_bytes: Option<u64>,
+    pub(super) opportunistic_usage_available_bytes: Option<u64>,
+    pub(super) effective_available_bytes: u64,
     pub(super) daily_rate_bytes: i64,
+    pub(super) daily_rate_lower_bytes: i64,
+    pub(super) daily_rate_upper_bytes: i64,
     pub(super) days_to_full: f64,
+    pub(super) days_to_full_lower_bound: f64,
+    pub(super) days_to_full_upper_bound: f64,
+    pub(super) days_to_effective_full: f64,
+    pub(super) days_to_available_full: f64,
+    pub(super) purgeable_cushion_days: f64,
+    pub(super) cloud_daily_rate_bytes: i64,
+    pub(super) cloud_growth_share_percent: u64,
+    pub(super) volatility_percent: u64,
+    pub(super) seasonal_pattern: String,
+    pub(super) seasonal_peak_daily_bytes: i64,
     pub(super) confidence: String,
+    pub(super) forecast_notes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

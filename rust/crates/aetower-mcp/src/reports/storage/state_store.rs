@@ -1424,6 +1424,14 @@ impl StorageSizeIndex {
                         );
                         growth_trend(total_delta, second_half_delta)
                     };
+                    let daily_stats =
+                        growth_forecast_stats_from_daily_totals(&self.load_daily_growth_totals(
+                            connection,
+                            roots,
+                            window_start,
+                            Some((scope_column, &scope)),
+                            None,
+                        ));
                     let repo_name = Path::new(&scope)
                         .file_name()
                         .and_then(|name| name.to_str())
@@ -1439,7 +1447,13 @@ impl StorageSizeIndex {
                         window_days,
                         total_delta_bytes: total_delta,
                         daily_rate_bytes,
+                        daily_rate_lower_bytes: daily_stats.daily_rate_lower_bytes,
+                        daily_rate_upper_bytes: daily_stats.daily_rate_upper_bytes,
                         trend,
+                        confidence: daily_stats.confidence,
+                        volatility_percent: daily_stats.volatility_percent,
+                        seasonal_pattern: daily_stats.seasonal_pattern,
+                        seasonal_peak_daily_bytes: daily_stats.seasonal_peak_daily_bytes,
                         day_bucket_count: day_buckets,
                     }
                 },
@@ -1486,53 +1500,175 @@ impl StorageSizeIndex {
         volume_states: &[StorageVolumeState],
         window_start: u64,
     ) -> Vec<StorageGrowthForecast> {
+        volume_states
+            .iter()
+            .filter_map(|volume| {
+                let daily_totals = self.load_daily_growth_totals(
+                    connection,
+                    roots,
+                    window_start,
+                    None,
+                    Some(&volume.path),
+                );
+                let stats = growth_forecast_stats_from_daily_totals(&daily_totals);
+                // Forecast gating: require enough distinct day buckets to avoid
+                // day-one nonsense, and a positive aggregate rate (a flat or
+                // shrinking footprint has no meaningful days-to-full).
+                if stats.day_bucket_count < STORAGE_GROWTH_FORECAST_MIN_DAY_BUCKETS
+                    || stats.total_delta_bytes <= 0
+                    || stats.daily_rate_bytes <= 0
+                {
+                    return None;
+                }
+                let cloud_stats =
+                    growth_forecast_stats_from_daily_totals(&self.load_cloud_daily_growth_totals(
+                        connection,
+                        roots,
+                        window_start,
+                        Some(&volume.path),
+                    ));
+                let cloud_growth_share_percent = if stats.daily_rate_bytes > 0
+                    && cloud_stats.daily_rate_bytes > 0
+                {
+                    ((cloud_stats.daily_rate_bytes as f64 / stats.daily_rate_bytes as f64) * 100.0)
+                        .round()
+                        .clamp(0.0, 100.0) as u64
+                } else {
+                    0
+                };
+                let effective_available_bytes = volume
+                    .important_usage_available_bytes
+                    .unwrap_or(volume.free_now_bytes);
+                let forecast_daily_rate_lower_bytes = stats.daily_rate_lower_bytes.max(1);
+                let forecast_daily_rate_upper_bytes = stats
+                    .daily_rate_upper_bytes
+                    .max(forecast_daily_rate_lower_bytes);
+                let mut forecast = StorageGrowthForecast {
+                    volume_path: volume.path.clone(),
+                    free_now_bytes: volume.free_now_bytes,
+                    available_bytes: volume.available_bytes,
+                    purgeable_bytes_estimate: volume.purgeable_bytes_estimate,
+                    important_usage_available_bytes: volume.important_usage_available_bytes,
+                    opportunistic_usage_available_bytes: volume.opportunistic_usage_available_bytes,
+                    effective_available_bytes,
+                    daily_rate_bytes: stats.daily_rate_bytes,
+                    daily_rate_lower_bytes: forecast_daily_rate_lower_bytes,
+                    daily_rate_upper_bytes: forecast_daily_rate_upper_bytes,
+                    days_to_full: days_until_capacity_full(
+                        volume.free_now_bytes,
+                        stats.daily_rate_bytes,
+                    ),
+                    days_to_full_lower_bound: days_until_capacity_full(
+                        volume.free_now_bytes,
+                        forecast_daily_rate_upper_bytes,
+                    ),
+                    days_to_full_upper_bound: days_until_capacity_full(
+                        volume.free_now_bytes,
+                        forecast_daily_rate_lower_bytes,
+                    ),
+                    days_to_effective_full: days_until_capacity_full(
+                        effective_available_bytes,
+                        stats.daily_rate_bytes,
+                    ),
+                    days_to_available_full: days_until_capacity_full(
+                        volume.available_bytes,
+                        stats.daily_rate_bytes,
+                    ),
+                    purgeable_cushion_days: days_until_capacity_full(
+                        volume.purgeable_bytes_estimate,
+                        stats.daily_rate_bytes,
+                    ),
+                    cloud_daily_rate_bytes: cloud_stats.daily_rate_bytes.max(0),
+                    cloud_growth_share_percent,
+                    volatility_percent: stats.volatility_percent,
+                    seasonal_pattern: stats.seasonal_pattern,
+                    seasonal_peak_daily_bytes: stats.seasonal_peak_daily_bytes,
+                    confidence: stats.confidence,
+                    forecast_notes: Vec::new(),
+                };
+                forecast.forecast_notes = storage_forecast_notes(&forecast);
+                Some(forecast)
+            })
+            .collect()
+    }
+
+    fn load_daily_growth_totals(
+        &self,
+        connection: &Connection,
+        roots: &[PathBuf],
+        window_start: u64,
+        scope_filter: Option<(&str, &str)>,
+        volume_path: Option<&str>,
+    ) -> Vec<(u64, i64)> {
         let mut predicate = "bucket_millis >= ?".to_owned();
         let mut bindings: Vec<rusqlite::types::Value> =
             vec![(window_start.min(i64::MAX as u64) as i64).into()];
         push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
-        let Ok((total_delta, day_buckets, first_bucket, last_bucket)) = connection.query_row(
-            &format!(
-                "SELECT COALESCE(SUM(delta_bytes), 0),
-                        COUNT(DISTINCT bucket_millis / {DAY_MILLIS}),
-                        COALESCE(MIN(bucket_millis), 0),
-                        COALESCE(MAX(bucket_millis), 0)
-                 FROM storage_growth_delta
-                 WHERE {predicate}"
-            ),
-            params_from_iter(bindings.iter()),
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, i64>(1)?.max(0) as u64,
-                    row.get::<_, i64>(2)?.max(0) as u64,
-                    row.get::<_, i64>(3)?.max(0) as u64,
-                ))
-            },
-        ) else {
+        if let Some((scope_column, scope)) = scope_filter {
+            predicate.push_str(&format!(" AND {scope_column} = ?"));
+            bindings.push(scope.to_owned().into());
+        }
+        push_volume_predicate(&mut predicate, &mut bindings, volume_path, "path");
+        let Ok(mut statement) = connection.prepare(&format!(
+            "SELECT bucket_millis / {DAY_MILLIS} AS day_bucket,
+                    COALESCE(SUM(delta_bytes), 0)
+             FROM storage_growth_delta
+             WHERE {predicate}
+             GROUP BY day_bucket
+             ORDER BY day_bucket ASC"
+        )) else {
             return Vec::new();
         };
-        // Forecast gating: require enough distinct day buckets to avoid
-        // day-one nonsense, and a positive aggregate rate (a flat or shrinking
-        // footprint has no meaningful days-to-full).
-        if day_buckets < STORAGE_GROWTH_FORECAST_MIN_DAY_BUCKETS || total_delta <= 0 {
+        let Ok(rows) = statement.query_map(params_from_iter(bindings.iter()), |row| {
+            let day_bucket: i64 = row.get(0)?;
+            let total_delta: i64 = row.get(1)?;
+            Ok((day_bucket.max(0) as u64, total_delta))
+        }) else {
             return Vec::new();
-        }
-        let span_days = (last_bucket.saturating_sub(first_bucket) / DAY_MILLIS).saturating_add(1);
-        let daily_rate_bytes = total_delta / span_days.max(1) as i64;
-        if daily_rate_bytes <= 0 {
+        };
+        rows.flatten().collect()
+    }
+
+    fn load_cloud_daily_growth_totals(
+        &self,
+        connection: &Connection,
+        roots: &[PathBuf],
+        window_start: u64,
+        volume_path: Option<&str>,
+    ) -> Vec<(u64, i64)> {
+        let mut predicate = "bucket_millis >= ?".to_owned();
+        let mut bindings: Vec<rusqlite::types::Value> =
+            vec![(window_start.min(i64::MAX as u64) as i64).into()];
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
+        push_volume_predicate(&mut predicate, &mut bindings, volume_path, "path");
+        let Ok(mut statement) = connection.prepare(&format!(
+            "SELECT bucket_millis / {DAY_MILLIS} AS day_bucket,
+                    path,
+                    source_root,
+                    COALESCE(SUM(delta_bytes), 0)
+             FROM storage_growth_delta
+             WHERE {predicate}
+             GROUP BY day_bucket, path, source_root
+             ORDER BY day_bucket ASC"
+        )) else {
             return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(params_from_iter(bindings.iter()), |row| {
+            let day_bucket: i64 = row.get(0)?;
+            let path: String = row.get(1)?;
+            let source_root: String = row.get(2)?;
+            let total_delta: i64 = row.get(3)?;
+            Ok((day_bucket.max(0) as u64, path, source_root, total_delta))
+        }) else {
+            return Vec::new();
+        };
+        let mut totals = BTreeMap::<u64, i64>::new();
+        for (day_bucket, path, source_root, total_delta) in rows.flatten() {
+            if storage_path_is_cloud(&path) || storage_path_is_cloud(&source_root) {
+                *totals.entry(day_bucket).or_default() += total_delta;
+            }
         }
-        let confidence = if day_buckets >= 7 { "medium" } else { "low" };
-        volume_states
-            .iter()
-            .map(|volume| StorageGrowthForecast {
-                volume_path: volume.path.clone(),
-                free_now_bytes: volume.free_now_bytes,
-                daily_rate_bytes,
-                days_to_full: volume.free_now_bytes as f64 / daily_rate_bytes as f64,
-                confidence: confidence.to_owned(),
-            })
-            .collect()
+        totals.into_iter().collect()
     }
 
     fn load_growth_anomalies(
@@ -2213,6 +2349,22 @@ fn push_roots_predicate(
     predicate.push_str(&format!(" AND ({})", clauses.join(" OR ")));
 }
 
+fn push_volume_predicate(
+    predicate: &mut String,
+    bindings: &mut Vec<rusqlite::types::Value>,
+    volume_path: Option<&str>,
+    column: &str,
+) {
+    let Some(volume_path) = volume_path else {
+        return;
+    };
+    if volume_path.is_empty() || volume_path == "/" {
+        return;
+    }
+    let volume = PathBuf::from(volume_path);
+    push_roots_predicate(predicate, bindings, &[volume], column);
+}
+
 /// Half-window trend classification: compare the second half of the observed
 /// span against the first, with a 10%-of-total dead band so near-equal halves
 /// read as steady.
@@ -2229,6 +2381,180 @@ fn growth_trend(total_delta: i64, second_half_delta: i64) -> String {
     } else {
         "steady".to_owned()
     }
+}
+
+#[derive(Clone, Debug, Default)]
+struct GrowthForecastStats {
+    total_delta_bytes: i64,
+    day_bucket_count: u64,
+    daily_rate_bytes: i64,
+    daily_rate_lower_bytes: i64,
+    daily_rate_upper_bytes: i64,
+    volatility_percent: u64,
+    seasonal_pattern: String,
+    seasonal_peak_daily_bytes: i64,
+    confidence: String,
+}
+
+fn growth_forecast_stats_from_daily_totals(daily_totals: &[(u64, i64)]) -> GrowthForecastStats {
+    if daily_totals.is_empty() {
+        return GrowthForecastStats {
+            seasonal_pattern: "insufficient-history".to_owned(),
+            confidence: "low".to_owned(),
+            ..GrowthForecastStats::default()
+        };
+    }
+    let mut totals_by_day = BTreeMap::<u64, i64>::new();
+    for (day, delta) in daily_totals {
+        *totals_by_day.entry(*day).or_default() += *delta;
+    }
+    let first_day = totals_by_day.keys().next().copied().unwrap_or_default();
+    let last_day = totals_by_day
+        .keys()
+        .next_back()
+        .copied()
+        .unwrap_or(first_day);
+    let dense = (first_day..=last_day)
+        .map(|day| (day, *totals_by_day.get(&day).unwrap_or(&0)))
+        .collect::<Vec<_>>();
+    let total_delta = dense.iter().map(|(_, delta)| *delta).sum::<i64>();
+    let span_days = dense.len().max(1) as f64;
+    let mean = total_delta as f64 / span_days;
+    let variance = dense
+        .iter()
+        .map(|(_, delta)| {
+            let distance = *delta as f64 - mean;
+            distance * distance
+        })
+        .sum::<f64>()
+        / span_days;
+    let stddev = variance.sqrt();
+    let daily_rate_bytes = mean.round() as i64;
+    let daily_rate_lower_bytes = (mean - stddev).floor() as i64;
+    let daily_rate_upper_bytes = (mean + stddev).ceil() as i64;
+    let volatility_percent = if mean.abs() < 1.0 {
+        0
+    } else {
+        ((stddev / mean.abs()) * 100.0).round().max(0.0) as u64
+    };
+    let day_bucket_count = totals_by_day.len() as u64;
+    let seasonal_pattern = seasonal_pattern_for_daily_totals(&dense, volatility_percent);
+    let seasonal_peak_daily_bytes = dense
+        .iter()
+        .map(|(_, delta)| *delta)
+        .max()
+        .unwrap_or_default();
+    let confidence = growth_forecast_confidence(day_bucket_count, volatility_percent);
+    GrowthForecastStats {
+        total_delta_bytes: total_delta,
+        day_bucket_count,
+        daily_rate_bytes,
+        daily_rate_lower_bytes,
+        daily_rate_upper_bytes,
+        volatility_percent,
+        seasonal_pattern,
+        seasonal_peak_daily_bytes,
+        confidence,
+    }
+}
+
+fn seasonal_pattern_for_daily_totals(dense: &[(u64, i64)], volatility_percent: u64) -> String {
+    if dense.len() < 7 {
+        return "insufficient-history".to_owned();
+    }
+    if dense.len() >= 14 {
+        let mut weekly_totals = [0i64; 7];
+        let mut weekly_counts = [0u64; 7];
+        for (day, delta) in dense {
+            let index = (*day % 7) as usize;
+            weekly_totals[index] += *delta;
+            weekly_counts[index] += 1;
+        }
+        let weekly_averages = weekly_totals
+            .iter()
+            .zip(weekly_counts)
+            .filter_map(|(total, count)| (count > 0).then_some(*total as f64 / count as f64))
+            .collect::<Vec<_>>();
+        if !weekly_averages.is_empty() {
+            let mean = dense.iter().map(|(_, delta)| *delta as f64).sum::<f64>()
+                / dense.len().max(1) as f64;
+            let peak = weekly_averages
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+            let trough = weekly_averages
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, f64::min);
+            if mean > 0.0 && peak >= mean * 1.5 && peak - trough >= mean * 0.5 {
+                return "weekly-peak".to_owned();
+            }
+        }
+    }
+    if volatility_percent >= 100 {
+        "spiky".to_owned()
+    } else if volatility_percent >= 50 {
+        "variable".to_owned()
+    } else {
+        "steady".to_owned()
+    }
+}
+
+fn growth_forecast_confidence(day_bucket_count: u64, volatility_percent: u64) -> String {
+    if day_bucket_count >= 14 && volatility_percent <= 75 {
+        "high".to_owned()
+    } else if day_bucket_count >= 7 {
+        "medium".to_owned()
+    } else {
+        "low".to_owned()
+    }
+}
+
+fn days_until_capacity_full(capacity_bytes: u64, daily_rate_bytes: i64) -> f64 {
+    if capacity_bytes == 0 || daily_rate_bytes <= 0 {
+        return 0.0;
+    }
+    capacity_bytes as f64 / daily_rate_bytes as f64
+}
+
+fn storage_forecast_notes(forecast: &StorageGrowthForecast) -> Vec<String> {
+    let mut notes = Vec::new();
+    if forecast.purgeable_bytes_estimate > 0 {
+        notes.push(format!(
+            "Purgeable APFS space adds about {:.1} day(s) of cushion at the current rate.",
+            forecast.purgeable_cushion_days
+        ));
+    }
+    if forecast.cloud_growth_share_percent >= 20 {
+        notes.push(format!(
+            "Cloud-backed paths account for {}% of observed local growth; placeholder hydration can change quickly.",
+            forecast.cloud_growth_share_percent
+        ));
+    }
+    if forecast.seasonal_pattern != "steady" {
+        notes.push(format!(
+            "Observed daily growth pattern is {}; use the lower/upper forecast bounds instead of a single date.",
+            forecast.seasonal_pattern
+        ));
+    }
+    if forecast.confidence == "low" {
+        notes.push(
+            "Forecast confidence is low until more daily growth buckets are retained.".to_owned(),
+        );
+    }
+    if forecast.important_usage_available_bytes.is_some()
+        || forecast.opportunistic_usage_available_bytes.is_some()
+    {
+        notes.push(
+            "APFS important/opportunistic capacity is available, so free-now and effective capacity can diverge."
+                .to_owned(),
+        );
+    }
+    notes
+}
+
+fn storage_path_is_cloud(path: &str) -> bool {
+    is_cloud_storage_path(Path::new(path))
 }
 
 fn diff_display_name(path: &str) -> String {
