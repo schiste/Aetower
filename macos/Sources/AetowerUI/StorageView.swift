@@ -320,7 +320,7 @@ public struct StorageView: View {
         } filterTools: {
             EmptyView()
         } badges: {
-            AetowerToolBadgeGroup(storageHeaderBadges, visibleCount: 2)
+            AetowerToolBadgeGroup(storageHeaderBadges, visibleCount: 3)
         } actions: {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 storageFilterMenu
@@ -358,7 +358,33 @@ public struct StorageView: View {
                     systemImage: "shippingbox",
                     tone: AetowerDesign.Tone.memory
             ),
+            AetowerToolBadgeItem(
+                    "Estimate",
+                    value: state.storageEstimateStatus.title,
+                    systemImage: storageEstimateSystemImage,
+                    tone: storageEstimateTone
+            ),
         ]
+    }
+
+    private var storageEstimateSystemImage: String {
+        switch state.storageEstimateStatus.confidence {
+        case .verified: return "checkmark.seal"
+        case .estimated: return "waveform.path.ecg"
+        case .stale: return "eye"
+        case .refreshing: return "arrow.triangle.2.circlepath"
+        case .needsFullScan: return "exclamationmark.triangle"
+        }
+    }
+
+    private var storageEstimateTone: Color {
+        switch state.storageEstimateStatus.confidence {
+        case .verified: return AetowerDesign.Status.ready
+        case .estimated: return AetowerDesign.Tone.disk
+        case .stale: return AetowerDesign.Status.warning
+        case .refreshing: return AetowerDesign.Status.ready
+        case .needsFullScan: return AetowerDesign.Status.error
+        }
     }
 
     private var storageFilterMenu: some View {
@@ -472,6 +498,12 @@ public struct StorageView: View {
     private var storageScanLoadingStatus: some View {
         if state.storageHygieneIsLoading {
             Text(storageScanLoadingTitle)
+                .font(AetowerDesign.Typography.caption)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        } else if state.storageEstimateStatus.confidence != .verified {
+            Text(state.storageEstimateStatus.detail)
                 .font(AetowerDesign.Typography.caption)
                 .foregroundStyle(AetowerDesign.Ink.secondary)
                 .lineLimit(1)
