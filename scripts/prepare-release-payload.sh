@@ -14,10 +14,13 @@ RELEASE_ARCHIVE="${AETOWER_RELEASE_ARCHIVE:-$ROOT/dist/Aetower.zip}"
 THIRD_PARTY_NOTICES="${AETOWER_THIRD_PARTY_NOTICES_PATH:-$ROOT/dist/THIRD-PARTY-NOTICES.md}"
 HOMEBREW_CASK="${AETOWER_HOMEBREW_CASK_PATH:-$ROOT/dist/homebrew/Casks/aetower.rb}"
 SOURCE_ARCHIVE_DIR="${AETOWER_SOURCE_ARCHIVE_DIR:-$ROOT/dist/source}"
+# Installers are overlaid onto the site whenever this release actually built
+# them (the file exists in dist/). "auto" is the default; set to 1 to require
+# them (fail if missing) or 0 to force-exclude and keep the mirrored copy.
 DMG_INSTALLER="${AETOWER_DMG_PATH:-$ROOT/dist/Aetower.dmg}"
-INCLUDE_DMG="${AETOWER_INCLUDE_DMG_IN_SITE:-0}"
+INCLUDE_DMG="${AETOWER_INCLUDE_DMG_IN_SITE:-auto}"
 PKG_INSTALLER="${AETOWER_PKG_PATH:-$ROOT/dist/Aetower.pkg}"
-INCLUDE_PKG="${AETOWER_INCLUDE_PKG_IN_SITE:-0}"
+INCLUDE_PKG="${AETOWER_INCLUDE_PKG_IN_SITE:-auto}"
 SKIP_SYNC="${AETOWER_SKIP_PAYLOAD_SYNC:-0}"
 
 if [ ! -d "$APPCAST_DIR" ] || [ ! -f "$APPCAST_DIR/appcast.xml" ]; then
@@ -63,27 +66,35 @@ done
 if [ -f "$HOMEBREW_CASK" ]; then
     cp "$HOMEBREW_CASK" "$OUT/homebrew/Casks/aetower.rb"
 fi
-if [ "$INCLUDE_DMG" = "1" ]; then
-    if [ ! -f "$DMG_INSTALLER" ]; then
+if [ "$INCLUDE_DMG" != "0" ]; then
+    if [ -f "$DMG_INSTALLER" ]; then
+        DMG_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
+        DMG_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
+        cp "$DMG_INSTALLER" "$OUT/releases/Aetower.dmg"
+        cp "$DMG_INSTALLER" "$OUT/releases/Aetower-$DMG_VERSION-$DMG_BUILD.dmg"
+        printf 'overlaid dmg: Aetower.dmg + Aetower-%s-%s.dmg\n' "$DMG_VERSION" "$DMG_BUILD"
+    elif [ "$INCLUDE_DMG" = "1" ]; then
         echo "missing dmg installer: $DMG_INSTALLER" >&2
-        echo "run sh scripts/package-macos-dmg.sh first or omit AETOWER_INCLUDE_DMG_IN_SITE=1" >&2
+        echo "run sh scripts/package-macos-dmg.sh first or set AETOWER_INCLUDE_DMG_IN_SITE=0" >&2
         exit 1
+    else
+        printf 'note: no dmg at %s; keeping the mirrored copy\n' "$DMG_INSTALLER"
     fi
-    DMG_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
-    DMG_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
-    cp "$DMG_INSTALLER" "$OUT/releases/Aetower.dmg"
-    cp "$DMG_INSTALLER" "$OUT/releases/Aetower-$DMG_VERSION-$DMG_BUILD.dmg"
 fi
-if [ "$INCLUDE_PKG" = "1" ]; then
-    if [ ! -f "$PKG_INSTALLER" ]; then
+if [ "$INCLUDE_PKG" != "0" ]; then
+    if [ -f "$PKG_INSTALLER" ]; then
+        PKG_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
+        PKG_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
+        cp "$PKG_INSTALLER" "$OUT/releases/Aetower.pkg"
+        cp "$PKG_INSTALLER" "$OUT/releases/Aetower-$PKG_VERSION-$PKG_BUILD.pkg"
+        printf 'overlaid pkg: Aetower.pkg + Aetower-%s-%s.pkg\n' "$PKG_VERSION" "$PKG_BUILD"
+    elif [ "$INCLUDE_PKG" = "1" ]; then
         echo "missing pkg installer: $PKG_INSTALLER" >&2
-        echo "run sh scripts/package-macos-pkg.sh first or omit AETOWER_INCLUDE_PKG_IN_SITE=1" >&2
+        echo "run sh scripts/package-macos-pkg.sh first or set AETOWER_INCLUDE_PKG_IN_SITE=0" >&2
         exit 1
+    else
+        printf 'note: no pkg at %s; keeping the mirrored copy\n' "$PKG_INSTALLER"
     fi
-    PKG_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
-    PKG_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT/dist/Aetower.app/Contents/Info.plist")"
-    cp "$PKG_INSTALLER" "$OUT/releases/Aetower.pkg"
-    cp "$PKG_INSTALLER" "$OUT/releases/Aetower-$PKG_VERSION-$PKG_BUILD.pkg"
 fi
 
 printf 'prepared release payload: %s\n' "$OUT"
