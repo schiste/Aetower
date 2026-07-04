@@ -911,6 +911,13 @@ pub(super) struct StorageRepoArtifactFolder {
     pub(super) kind: String,
     pub(super) cleanup_tier: String,
     pub(super) size_bytes: u64,
+    pub(super) cleanup_allowed: bool,
+    pub(super) cleanup_blockers: Vec<String>,
+    pub(super) default_cleanup_action: String,
+    pub(super) size_truncated: bool,
+    pub(super) cloud_placeholder: bool,
+    pub(super) has_hardlinks: bool,
+    pub(super) hardlink_count: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]

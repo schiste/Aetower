@@ -2654,7 +2654,7 @@ public final class AppState {
         repoRoot: String,
         folders: [StorageRepoArtifactFolderModel]
     ) {
-        let eligible = folders.filter { ["safe", "rebuildable"].contains($0.cleanupTier) }
+        let eligible = folders.filter(Self.repositoryArtifactFolderIsTrashActionable)
         guard !eligible.isEmpty else { return }
         let paths = eligible.map(\.path)
         let bytesByPath = Dictionary(uniqueKeysWithValues: eligible.map { ($0.path, $0.sizeBytes) })
@@ -2689,6 +2689,18 @@ public final class AppState {
                 self.refreshRepositoryInventorySignalsIfQuiescent()
             }
         }
+    }
+
+    private static func repositoryArtifactFolderIsTrashActionable(
+        _ folder: StorageRepoArtifactFolderModel
+    ) -> Bool {
+        ["safe", "rebuildable"].contains(folder.cleanupTier)
+            && folder.cleanupAllowed
+            && folder.defaultCleanupAction == "trash"
+            && folder.cleanupBlockers.isEmpty
+            && !folder.sizeTruncated
+            && !folder.cloudPlaceholder
+            && !folder.hasHardlinks
     }
 
     func clearRepositoryCleanupResult(repoRoot: String) {

@@ -775,7 +775,17 @@ public struct RepositoryView: View {
     /// Trash-eligible artifact folders for a repo: only safe/rebuildable tiers,
     /// mirroring the Storage tab's cleanup eligibility.
     private func repositoryCleanableFolders(_ repository: RepositorySummary) -> [StorageRepoArtifactFolderModel] {
-        repository.topArtifactFolders.filter { ["safe", "rebuildable"].contains($0.cleanupTier) }
+        repository.topArtifactFolders.filter(repositoryArtifactFolderIsTrashActionable)
+    }
+
+    private func repositoryArtifactFolderIsTrashActionable(_ folder: StorageRepoArtifactFolderModel) -> Bool {
+        ["safe", "rebuildable"].contains(folder.cleanupTier)
+            && folder.cleanupAllowed
+            && folder.defaultCleanupAction == "trash"
+            && folder.cleanupBlockers.isEmpty
+            && !folder.sizeTruncated
+            && !folder.cloudPlaceholder
+            && !folder.hasHardlinks
     }
 
     private var repositoryToolBand: some View {

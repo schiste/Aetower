@@ -341,6 +341,13 @@ fn repo_footprint_for_items(
             kind: item.kind.clone(),
             cleanup_tier: item.cleanup_tier.clone(),
             size_bytes: item.size_bytes,
+            cleanup_allowed: item.cleanup_allowed,
+            cleanup_blockers: item.cleanup_blockers.clone(),
+            default_cleanup_action: item.default_cleanup_action.clone(),
+            size_truncated: item.size_truncated,
+            cloud_placeholder: item.cloud_placeholder,
+            has_hardlinks: item.has_hardlinks,
+            hardlink_count: item.hardlink_count,
         })
         .collect();
     top_artifact_folders.sort_by(|left, right| {

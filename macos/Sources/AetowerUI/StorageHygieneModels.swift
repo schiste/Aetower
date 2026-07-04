@@ -1272,8 +1272,47 @@ struct StorageRepoArtifactFolderModel: Decodable, Identifiable, Sendable {
     let kind: String
     let cleanupTier: String
     let sizeBytes: UInt64
+    let cleanupAllowed: Bool
+    let cleanupBlockers: [String]
+    let defaultCleanupAction: String
+    let sizeTruncated: Bool
+    let cloudPlaceholder: Bool
+    let hasHardlinks: Bool
+    let hardlinkCount: UInt64
 
     var id: String { path }
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case displayName
+        case kind
+        case cleanupTier
+        case sizeBytes
+        case cleanupAllowed
+        case cleanupBlockers
+        case defaultCleanupAction
+        case sizeTruncated
+        case cloudPlaceholder
+        case hasHardlinks
+        case hardlinkCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        path = try container.decode(String.self, forKey: .path)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        kind = try container.decode(String.self, forKey: .kind)
+        cleanupTier = try container.decode(String.self, forKey: .cleanupTier)
+        sizeBytes = try container.decode(UInt64.self, forKey: .sizeBytes)
+        cleanupAllowed = try container.decodeIfPresent(Bool.self, forKey: .cleanupAllowed) ?? false
+        cleanupBlockers = try container.decodeIfPresent([String].self, forKey: .cleanupBlockers)
+            ?? ["Missing cleanup policy in repository artifact projection."]
+        defaultCleanupAction = try container.decodeIfPresent(String.self, forKey: .defaultCleanupAction) ?? "manual_review"
+        sizeTruncated = try container.decodeIfPresent(Bool.self, forKey: .sizeTruncated) ?? true
+        cloudPlaceholder = try container.decodeIfPresent(Bool.self, forKey: .cloudPlaceholder) ?? false
+        hasHardlinks = try container.decodeIfPresent(Bool.self, forKey: .hasHardlinks) ?? false
+        hardlinkCount = try container.decodeIfPresent(UInt64.self, forKey: .hardlinkCount) ?? 1
+    }
 }
 
 struct StorageRepoArtifactMixModel: Decodable, Identifiable, Sendable {
