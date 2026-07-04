@@ -254,11 +254,37 @@ pub(super) struct StorageScanDiff {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageGrowthAnomaly {
+    pub(super) path: String,
+    pub(super) display_name: String,
+    pub(super) source_root: String,
+    pub(super) repo_root: Option<String>,
+    pub(super) repo_name: Option<String>,
+    pub(super) kind: String,
+    pub(super) cleanup_tier: String,
+    pub(super) bucket_millis: u64,
+    pub(super) scan_millis: u64,
+    pub(super) current_delta_bytes: u64,
+    pub(super) baseline_mean_bytes: u64,
+    pub(super) baseline_stddev_bytes: u64,
+    pub(super) baseline_peak_bytes: u64,
+    pub(super) baseline_bucket_count: u64,
+    pub(super) current_to_baseline_ratio: f64,
+    pub(super) z_score: f64,
+    pub(super) severity: String,
+    pub(super) confidence: String,
+    pub(super) anomaly_kind: String,
+    pub(super) summary: String,
+    pub(super) evidence: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(super) struct StorageGrowthInsights {
     pub(super) window_days: u64,
     pub(super) per_repo_rates: Vec<StorageGrowthRate>,
     pub(super) per_root_rates: Vec<StorageGrowthRate>,
     pub(super) volume_forecasts: Vec<StorageGrowthForecast>,
+    pub(super) growth_anomalies: Vec<StorageGrowthAnomaly>,
     pub(super) since_last_scan: StorageScanDiff,
 }
 

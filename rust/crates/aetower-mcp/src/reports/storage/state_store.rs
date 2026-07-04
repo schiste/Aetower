@@ -1343,12 +1343,15 @@ impl StorageSizeIndex {
             self.load_growth_rates(connection, roots, window_start, window_days, "source_root");
         let volume_forecasts =
             self.load_volume_forecasts(connection, roots, volume_states, window_start);
+        let growth_anomalies =
+            self.load_growth_anomalies(connection, roots, window_start, window_days);
         let since_last_scan = self.load_since_last_scan_diff(connection, roots);
         Some(StorageGrowthInsights {
             window_days,
             per_repo_rates,
             per_root_rates,
             volume_forecasts,
+            growth_anomalies,
             since_last_scan,
         })
     }
@@ -1530,6 +1533,133 @@ impl StorageSizeIndex {
                 confidence: confidence.to_owned(),
             })
             .collect()
+    }
+
+    fn load_growth_anomalies(
+        &self,
+        connection: &Connection,
+        roots: &[PathBuf],
+        window_start: u64,
+        window_days: u64,
+    ) -> Vec<StorageGrowthAnomaly> {
+        let latest_scan_millis = self.latest_growth_scan_millis(connection, roots);
+        if latest_scan_millis == 0 {
+            return Vec::new();
+        }
+
+        let mut predicate = "scan_millis = ? AND delta_bytes > 0 AND delta_bytes >= ?".to_owned();
+        let mut bindings: Vec<rusqlite::types::Value> = vec![
+            (latest_scan_millis.min(i64::MAX as u64) as i64).into(),
+            (STORAGE_GROWTH_ANOMALY_MIN_DELTA_BYTES.min(i64::MAX as u64) as i64).into(),
+        ];
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
+        let Ok(mut statement) = connection.prepare(&format!(
+            "SELECT bucket_millis, scan_millis, path, source_root, repo_root, kind,
+                    cleanup_tier, delta_bytes
+             FROM storage_growth_delta
+             WHERE {predicate}
+             ORDER BY delta_bytes DESC, path ASC
+             LIMIT {STORAGE_GROWTH_ANOMALY_CANDIDATE_LIMIT}"
+        )) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(params_from_iter(bindings.iter()), |row| {
+            let bucket_millis: i64 = row.get(0)?;
+            let scan_millis: i64 = row.get(1)?;
+            let delta_bytes: i64 = row.get(7)?;
+            Ok(GrowthAnomalyCandidate {
+                bucket_millis: bucket_millis.max(0) as u64,
+                scan_millis: scan_millis.max(0) as u64,
+                path: row.get(2)?,
+                source_root: row.get(3)?,
+                repo_root: row.get(4)?,
+                kind: row.get(5)?,
+                cleanup_tier: row.get(6)?,
+                delta_bytes: delta_bytes.max(0) as u64,
+            })
+        }) else {
+            return Vec::new();
+        };
+
+        let mut anomalies = rows
+            .flatten()
+            .filter_map(|candidate| {
+                let baseline = self.growth_baseline_for_path(
+                    connection,
+                    &candidate.path,
+                    window_start,
+                    latest_scan_millis,
+                );
+                growth_anomaly_for_candidate(candidate, baseline, window_days)
+            })
+            .collect::<Vec<_>>();
+        anomalies.sort_by(|left, right| {
+            anomaly_rank(&right.severity)
+                .cmp(&anomaly_rank(&left.severity))
+                .then_with(|| right.current_delta_bytes.cmp(&left.current_delta_bytes))
+                .then_with(|| right.z_score.total_cmp(&left.z_score))
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        anomalies.truncate(STORAGE_GROWTH_ANOMALY_LIMIT);
+        anomalies
+    }
+
+    fn latest_growth_scan_millis(&self, connection: &Connection, roots: &[PathBuf]) -> u64 {
+        let mut predicate = "1 = 1".to_owned();
+        let mut bindings: Vec<rusqlite::types::Value> = Vec::new();
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
+        connection
+            .query_row(
+                &format!(
+                    "SELECT COALESCE(MAX(scan_millis), 0)
+                     FROM storage_growth_delta
+                     WHERE {predicate}"
+                ),
+                params_from_iter(bindings.iter()),
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            .max(0) as u64
+    }
+
+    fn growth_baseline_for_path(
+        &self,
+        connection: &Connection,
+        path: &str,
+        window_start: u64,
+        latest_scan_millis: u64,
+    ) -> GrowthBaseline {
+        connection
+            .query_row(
+                "SELECT COUNT(*),
+                        COALESCE(AVG(delta_bytes), 0),
+                        COALESCE(AVG(CAST(delta_bytes AS REAL) * CAST(delta_bytes AS REAL)), 0),
+                        COALESCE(MAX(delta_bytes), 0)
+                 FROM storage_growth_delta
+                 WHERE path = ?1
+                   AND scan_millis < ?2
+                   AND bucket_millis >= ?3
+                   AND delta_bytes > 0",
+                params![
+                    path,
+                    latest_scan_millis.min(i64::MAX as u64) as i64,
+                    window_start.min(i64::MAX as u64) as i64
+                ],
+                |row| {
+                    let count: i64 = row.get(0)?;
+                    let mean: f64 = row.get(1)?;
+                    let mean_square: f64 = row.get(2)?;
+                    let peak: i64 = row.get(3)?;
+                    let variance = (mean_square - mean * mean).max(0.0);
+                    Ok(GrowthBaseline {
+                        count: count.max(0) as u64,
+                        mean,
+                        stddev: variance.sqrt(),
+                        peak: peak.max(0) as u64,
+                    })
+                },
+            )
+            .unwrap_or_default()
     }
 
     fn load_since_last_scan_diff(
@@ -1886,6 +2016,167 @@ impl StorageSizeIndex {
             return Vec::new();
         };
         rows.flatten().collect()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct GrowthAnomalyCandidate {
+    bucket_millis: u64,
+    scan_millis: u64,
+    path: String,
+    source_root: String,
+    repo_root: Option<String>,
+    kind: String,
+    cleanup_tier: String,
+    delta_bytes: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct GrowthBaseline {
+    count: u64,
+    mean: f64,
+    stddev: f64,
+    peak: u64,
+}
+
+fn growth_anomaly_for_candidate(
+    candidate: GrowthAnomalyCandidate,
+    baseline: GrowthBaseline,
+    window_days: u64,
+) -> Option<StorageGrowthAnomaly> {
+    let current = candidate.delta_bytes;
+    let baseline_mean = baseline.mean.max(0.0);
+    let ratio = if baseline_mean >= 1.0 {
+        current as f64 / baseline_mean
+    } else if baseline.peak > 0 {
+        current as f64 / baseline.peak as f64
+    } else {
+        0.0
+    };
+    let z_score = if baseline.stddev >= 1.0 {
+        ((current as f64 - baseline_mean) / baseline.stddev).max(0.0)
+    } else if baseline_mean >= 1.0 {
+        ((current as f64 - baseline_mean) / baseline_mean.max(1.0)).max(0.0)
+    } else {
+        0.0
+    };
+
+    let (anomaly_kind, confidence) = if baseline.count
+        >= STORAGE_GROWTH_ANOMALY_MIN_BASELINE_BUCKETS
+    {
+        let statistical_threshold = baseline_mean
+            + (baseline.stddev * 3.0).max((baseline_mean * 2.0).max(MIN_ITEM_BYTES as f64));
+        let peak_threshold = (baseline.peak as f64 * 2.5).ceil() as u64;
+        let threshold = STORAGE_GROWTH_ANOMALY_MIN_DELTA_BYTES
+            .max(statistical_threshold.ceil() as u64)
+            .max(peak_threshold);
+        if current < threshold {
+            return None;
+        }
+        (
+            "baseline-spike",
+            if baseline.count >= 7 {
+                "high"
+            } else {
+                "medium"
+            },
+        )
+    } else if baseline.count == 0 && current >= STORAGE_GROWTH_ANOMALY_NEW_PATH_BYTES {
+        ("new-large-growth", "low")
+    } else if baseline.count > 0 && current >= STORAGE_GROWTH_ANOMALY_NEW_PATH_BYTES && ratio >= 8.0
+    {
+        ("thin-baseline-spike", "low")
+    } else {
+        return None;
+    };
+
+    let severity = if current >= 1_024 * 1_024 * 1_024 || ratio >= 8.0 || z_score >= 8.0 {
+        "critical"
+    } else {
+        "warning"
+    };
+    let repo_name = candidate.repo_root.as_deref().and_then(|repo| {
+        Path::new(repo)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+    });
+    let baseline_mean_bytes = baseline_mean.round().max(0.0) as u64;
+    let baseline_stddev_bytes = baseline.stddev.round().max(0.0) as u64;
+    let current_to_baseline_ratio = round_one_decimal(ratio);
+    let z_score = round_one_decimal(z_score);
+    let summary = match anomaly_kind {
+        "baseline-spike" => format!(
+            "{} grew by {}, which is {}x its {}-bucket baseline average.",
+            diff_display_name(&candidate.path),
+            human_bytes(current),
+            current_to_baseline_ratio,
+            baseline.count
+        ),
+        "thin-baseline-spike" => format!(
+            "{} grew by {} with only {} prior baseline bucket{}; treat as suspicious but low-confidence.",
+            diff_display_name(&candidate.path),
+            human_bytes(current),
+            baseline.count,
+            if baseline.count == 1 { "" } else { "s" }
+        ),
+        _ => format!(
+            "{} is new or baseline-free and appeared with {} of growth.",
+            diff_display_name(&candidate.path),
+            human_bytes(current)
+        ),
+    };
+    let evidence = vec![
+        format!("Current latest-scan growth: {}.", human_bytes(current)),
+        format!(
+            "Baseline over {window_days}d: {} bucket{}, mean {}, stddev {}, peak {}.",
+            baseline.count,
+            if baseline.count == 1 { "" } else { "s" },
+            human_bytes(baseline_mean_bytes),
+            human_bytes(baseline_stddev_bytes),
+            human_bytes(baseline.peak)
+        ),
+        format!("Anomaly score: ratio {current_to_baseline_ratio}x, z-score {z_score}."),
+    ];
+
+    Some(StorageGrowthAnomaly {
+        path: candidate.path.clone(),
+        display_name: diff_display_name(&candidate.path),
+        source_root: candidate.source_root,
+        repo_root: candidate.repo_root,
+        repo_name,
+        kind: candidate.kind,
+        cleanup_tier: candidate.cleanup_tier,
+        bucket_millis: candidate.bucket_millis,
+        scan_millis: candidate.scan_millis,
+        current_delta_bytes: current,
+        baseline_mean_bytes,
+        baseline_stddev_bytes,
+        baseline_peak_bytes: baseline.peak,
+        baseline_bucket_count: baseline.count,
+        current_to_baseline_ratio,
+        z_score,
+        severity: severity.to_owned(),
+        confidence: confidence.to_owned(),
+        anomaly_kind: anomaly_kind.to_owned(),
+        summary,
+        evidence,
+    })
+}
+
+fn round_one_decimal(value: f64) -> f64 {
+    if value.is_finite() {
+        (value * 10.0).round() / 10.0
+    } else {
+        0.0
+    }
+}
+
+fn anomaly_rank(severity: &str) -> u8 {
+    match severity {
+        "critical" => 2,
+        "warning" => 1,
+        _ => 0,
     }
 }
 

@@ -65,6 +65,11 @@ const STORAGE_GROWTH_RETENTION_MILLIS: u64 = 30 * 24 * 60 * 60 * 1000;
 const STORAGE_GROWTH_INSIGHTS_WINDOW_DAYS: u64 = 30;
 const STORAGE_GROWTH_RATE_SCOPE_LIMIT: usize = 20;
 const STORAGE_GROWTH_FORECAST_MIN_DAY_BUCKETS: u64 = 3;
+const STORAGE_GROWTH_ANOMALY_LIMIT: usize = 12;
+const STORAGE_GROWTH_ANOMALY_CANDIDATE_LIMIT: usize = 100;
+const STORAGE_GROWTH_ANOMALY_MIN_BASELINE_BUCKETS: u64 = 3;
+const STORAGE_GROWTH_ANOMALY_MIN_DELTA_BYTES: u64 = 16 * MIN_ITEM_BYTES;
+const STORAGE_GROWTH_ANOMALY_NEW_PATH_BYTES: u64 = 256 * MIN_ITEM_BYTES;
 const STORAGE_SCAN_DIFF_ENTRY_LIMIT: usize = 12;
 const COLD_COOLING_AFTER_DAYS: u64 = 90;
 const STORAGE_COLD_BAND_TOP_ITEMS: usize = 10;
@@ -323,8 +328,8 @@ use models::{
     StorageArtifactAttribution, StorageBudgetGuardrails, StorageBudgetViolation,
     StorageCleanupBundle, StorageCleanupBundleItem, StorageCleanupRecipe,
     StorageCleanupTierSummary, StorageColdData, StorageColdDataBand, StorageDuplicateGroup,
-    StorageDuplicateItem, StorageFilesystemEventRecord, StorageGrowthAttribution,
-    StorageGrowthDelta, StorageGrowthForecast, StorageGrowthInsights,
+    StorageDuplicateItem, StorageFilesystemEventRecord, StorageGrowthAnomaly,
+    StorageGrowthAttribution, StorageGrowthDelta, StorageGrowthForecast, StorageGrowthInsights,
     StorageGrowthInsightsResponse, StorageGrowthRate, StorageHygieneActionsResponse,
     StorageHygieneItem, StorageHygieneItemsPageResponse, StorageHygieneOptions,
     StorageHygieneOverviewResponse, StorageHygieneRepoDetailResponse, StorageHygieneSummary,

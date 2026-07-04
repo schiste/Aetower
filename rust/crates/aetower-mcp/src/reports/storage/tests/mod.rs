@@ -1,6 +1,11 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 
+fn storage_index_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    lock_or_recover(LOCK.get_or_init(|| Mutex::new(())))
+}
+
 #[test]
 fn storage_hygiene_detects_reclaimable_build_artifacts() {
     let root = test_root("detects-build-artifacts");
@@ -783,6 +788,7 @@ fn test_volume_state(path: &str, free_now_bytes: u64) -> StorageVolumeState {
 
 #[test]
 fn storage_growth_insights_aggregate_rates_trends_and_forecasts() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("growth-insights-rates");
     let source_a = root.join("roots-a");
     let source_b = root.join("roots-b");
@@ -895,7 +901,107 @@ fn storage_growth_insights_aggregate_rates_trends_and_forecasts() {
 }
 
 #[test]
+fn storage_growth_insights_detects_folder_growth_anomalies() {
+    let _index_guard = storage_index_test_guard();
+    let root = test_root("growth-insights-anomalies");
+    let repo = root.join("RepoA");
+    let target = repo.join("target");
+    let steady = repo.join("logs");
+    let now_millis = storage_now_millis();
+    let day = |offset: u64| now_millis - offset * DAY_MILLIS;
+    let mib = MIN_ITEM_BYTES;
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+
+    // Baseline: target grows by only 4 MiB per scan for four retained buckets.
+    for (scan_millis, bytes) in [
+        (day(4), 4 * mib),
+        (day(3), 8 * mib),
+        (day(2), 12 * mib),
+        (day(1), 16 * mib),
+    ] {
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &root,
+                &target,
+                bytes,
+                "rebuildable",
+                Some(&repo),
+                Some(scan_millis),
+                Some(scan_millis),
+                scan_millis,
+            ),
+            &mut metrics,
+        );
+        storage_index.flush_pending_rows();
+    }
+
+    // Control lane: a normal latest growth row below the anomaly threshold.
+    for (scan_millis, bytes) in [(day(1), 4 * mib), (now_millis, 10 * mib)] {
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &root,
+                &steady,
+                bytes,
+                "safe",
+                Some(&repo),
+                Some(scan_millis),
+                Some(scan_millis),
+                scan_millis,
+            ),
+            &mut metrics,
+        );
+        storage_index.flush_pending_rows();
+    }
+
+    // Latest scan: target jumps by 80 MiB versus its quiet baseline.
+    storage_index.store_indexed_row(
+        &seeded_index_row(
+            &root,
+            &target,
+            96 * mib,
+            "rebuildable",
+            Some(&repo),
+            Some(now_millis),
+            Some(now_millis),
+            now_millis,
+        ),
+        &mut metrics,
+    );
+    storage_index.flush_pending_rows();
+
+    let insights = storage_index
+        .load_growth_insights(std::slice::from_ref(&root), &[], now_millis, 30)
+        .unwrap_or_else(|| panic!("growth insights load from a ready index"));
+
+    assert_eq!(insights.growth_anomalies.len(), 1);
+    let anomaly = &insights.growth_anomalies[0];
+    assert_eq!(anomaly.path, target.display().to_string());
+    assert_eq!(anomaly.display_name, "target");
+    assert_eq!(anomaly.repo_name.as_deref(), Some("RepoA"));
+    assert_eq!(anomaly.anomaly_kind, "baseline-spike");
+    assert_eq!(anomaly.severity, "critical");
+    assert_eq!(anomaly.confidence, "medium");
+    assert_eq!(anomaly.current_delta_bytes, 80 * mib);
+    assert_eq!(anomaly.baseline_bucket_count, 4);
+    assert_eq!(anomaly.baseline_mean_bytes, 4 * mib);
+    assert!(anomaly.current_to_baseline_ratio >= 20.0);
+    assert!(anomaly.summary.contains("grew by"));
+    assert!(anomaly.summary.contains("20x"));
+    assert!(
+        anomaly
+            .evidence
+            .iter()
+            .any(|entry| entry.contains("Baseline over 30d"))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_growth_insights_forecast_requires_three_day_buckets() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("growth-insights-forecast-gate");
     let now_millis = storage_now_millis();
     let storage_index = StorageSizeIndex::open();
@@ -937,6 +1043,7 @@ fn storage_growth_insights_forecast_requires_three_day_buckets() {
 
 #[test]
 fn storage_growth_insights_report_since_last_scan_diff() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("growth-insights-scan-diff");
     let now_millis = storage_now_millis();
     let first_scan_millis = now_millis - 2 * 60 * 60 * 1000;
