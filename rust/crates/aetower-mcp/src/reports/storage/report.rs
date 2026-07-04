@@ -1554,6 +1554,7 @@ fn summarize_duplicate_groups(items: &[StorageHygieneItem]) -> Vec<StorageDuplic
         }
     }
     append_image_similarity_groups(items, &mut groups);
+    append_text_similarity_groups(items, &mut groups);
 
     groups.sort_by(|left, right| {
         right
@@ -1624,6 +1625,79 @@ fn append_image_similarity_groups(
     }
 }
 
+fn append_text_similarity_groups(
+    items: &[StorageHygieneItem],
+    groups: &mut Vec<StorageDuplicateGroup>,
+) {
+    let exact_duplicate_paths = groups
+        .iter()
+        .filter(|group| group.confirmed)
+        .flat_map(|group| group.paths.iter().map(|item| item.path.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut candidates = items
+        .iter()
+        .filter(|item| {
+            let path = Path::new(&item.path);
+            path.is_file()
+                && !exact_duplicate_paths.contains(&item.path)
+                && item.size_bytes >= MIN_ITEM_BYTES
+                && item.size_bytes <= TEXT_SIMILARITY_HASH_MAX_BYTES
+                && is_similarity_text_path(path)
+        })
+        .filter_map(|item| {
+            text_simhash(Path::new(&item.path)).map(|(hash, token_count)| TextSimilarityCandidate {
+                hash,
+                token_count,
+                item,
+            })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.item
+            .path
+            .cmp(&right.item.path)
+            .then_with(|| left.hash.cmp(&right.hash))
+    });
+
+    let mut assigned = BTreeSet::<String>::new();
+    for candidate in &candidates {
+        if assigned.contains(&candidate.item.path) {
+            continue;
+        }
+        let mut similar_items = vec![candidate.item];
+        for other in &candidates {
+            if other.item.path == candidate.item.path || assigned.contains(&other.item.path) {
+                continue;
+            }
+            if text_similarity_token_counts_compatible(candidate.token_count, other.token_count)
+                && text_hash_hamming_distance(candidate.hash, other.hash)
+                    <= TEXT_SIMILARITY_HAMMING_THRESHOLD
+            {
+                similar_items.push(other.item);
+            }
+        }
+        if similar_items.len() < 2 {
+            continue;
+        }
+        for similar in &similar_items {
+            assigned.insert(similar.path.clone());
+        }
+        groups.push(similar_text_group_from_items(
+            format!("text-simhash|{:016x}", candidate.hash),
+            candidate.hash,
+            candidate.token_count,
+            similar_items,
+        ));
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TextSimilarityCandidate<'a> {
+    hash: u64,
+    token_count: usize,
+    item: &'a StorageHygieneItem,
+}
+
 fn duplicate_group_from_items(
     id: String,
     candidate_key: String,
@@ -1682,6 +1756,42 @@ fn duplicate_group_from_items(
 fn similar_image_group_from_items(
     id: String,
     hash: u64,
+    items: Vec<&StorageHygieneItem>,
+) -> StorageDuplicateGroup {
+    review_similarity_group_from_items(
+        id,
+        format!("image-ahash:{hash:016x}:hamming<={IMAGE_SIMILARITY_HAMMING_THRESHOLD}"),
+        82,
+        "Potentially similar images by perceptual thumbnail hash. Quick Look side by side before staging any cleanup.",
+        "Image similarity uses an 8x8 average hash from decoded PNG/JPEG thumbnails. It is intentionally review-only and can miss crops, edits, or HEIC-only photos.",
+        items,
+    )
+}
+
+fn similar_text_group_from_items(
+    id: String,
+    hash: u64,
+    token_count: usize,
+    items: Vec<&StorageHygieneItem>,
+) -> StorageDuplicateGroup {
+    review_similarity_group_from_items(
+        id,
+        format!(
+            "text-simhash:{hash:016x}:tokens~{token_count}:hamming<={TEXT_SIMILARITY_HAMMING_THRESHOLD}"
+        ),
+        76,
+        "Potentially similar text/code/log files by normalized SimHash. Diff or Quick Look side by side before staging cleanup.",
+        "Text similarity removes whitespace and punctuation, hashes token shingles, and reads only a bounded prefix. It is review-only and can miss reordered, generated, or appended content.",
+        items,
+    )
+}
+
+fn review_similarity_group_from_items(
+    id: String,
+    candidate_key: String,
+    confidence_score: u8,
+    recommendation: &str,
+    caveat: &str,
     mut items: Vec<&StorageHygieneItem>,
 ) -> StorageDuplicateGroup {
     items.sort_by(|left, right| {
@@ -1709,15 +1819,15 @@ fn similar_image_group_from_items(
 
     StorageDuplicateGroup {
         id,
-        candidate_key: format!("image-ahash:{hash:016x}:hamming<={IMAGE_SIMILARITY_HAMMING_THRESHOLD}"),
+        candidate_key,
         confirmed: false,
-        confidence_score: 82,
+        confidence_score,
         file_count: items.len(),
         total_bytes,
         reclaimable_bytes: total_bytes.saturating_sub(keep_bytes),
         paths,
-        recommendation: "Potentially similar images by perceptual thumbnail hash. Quick Look side by side before staging any cleanup.".to_owned(),
-        caveat: "Image similarity uses an 8x8 average hash from decoded PNG/JPEG thumbnails. It is intentionally review-only and can miss crops, edits, or HEIC-only photos.".to_owned(),
+        recommendation: recommendation.to_owned(),
+        caveat: caveat.to_owned(),
     }
 }
 
@@ -2199,6 +2309,83 @@ fn image_average_hash(path: &Path) -> Option<u64> {
 
 fn image_hash_hamming_distance(left: u64, right: u64) -> u32 {
     (left ^ right).count_ones()
+}
+
+fn text_hash_hamming_distance(left: u64, right: u64) -> u32 {
+    (left ^ right).count_ones()
+}
+
+fn text_similarity_token_counts_compatible(left: usize, right: usize) -> bool {
+    let smaller = left.min(right);
+    let larger = left.max(right);
+    larger == 0 || smaller.saturating_mul(100) >= larger.saturating_mul(60)
+}
+
+fn text_simhash(path: &Path) -> Option<(u64, usize)> {
+    let file = fs::File::open(path).ok()?;
+    let mut limited = file.take(TEXT_SIMILARITY_READ_MAX_BYTES);
+    let mut bytes = Vec::new();
+    limited.read_to_end(&mut bytes).ok()?;
+    if bytes.is_empty() || bytes.contains(&0) {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let tokens = normalized_text_tokens(&text);
+    if tokens.len() < TEXT_SIMILARITY_MIN_TOKENS {
+        return None;
+    }
+
+    let mut weights = [0i32; 64];
+    for shingle in tokens.windows(TEXT_SIMILARITY_SHINGLE_TOKENS) {
+        let hash = text_shingle_hash(shingle);
+        for (bit, weight) in weights.iter_mut().enumerate() {
+            if (hash & (1u64 << bit)) == 0 {
+                *weight -= 1;
+            } else {
+                *weight += 1;
+            }
+        }
+    }
+
+    let mut hash = 0u64;
+    for (bit, weight) in weights.iter().enumerate() {
+        if *weight >= 0 {
+            hash |= 1u64 << bit;
+        }
+    }
+    Some((hash, tokens.len()))
+}
+
+fn normalized_text_tokens(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for character in text.chars() {
+        if character.is_alphanumeric() || character == '_' {
+            for lower in character.to_lowercase() {
+                current.push(lower);
+            }
+            continue;
+        }
+        push_normalized_text_token(&mut tokens, &mut current);
+    }
+    push_normalized_text_token(&mut tokens, &mut current);
+    tokens
+}
+
+fn push_normalized_text_token(tokens: &mut Vec<String>, current: &mut String) {
+    if current.len() >= 2 {
+        tokens.push(current.chars().take(80).collect());
+    }
+    current.clear();
+}
+
+fn text_shingle_hash(shingle: &[String]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for token in shingle {
+        fnv64_update(&mut hash, token.as_bytes());
+        fnv64_update(&mut hash, &[0xff]);
+    }
+    hash
 }
 
 fn summarize_app_footprints(items: &[StorageHygieneItem]) -> Vec<StorageAppFootprint> {

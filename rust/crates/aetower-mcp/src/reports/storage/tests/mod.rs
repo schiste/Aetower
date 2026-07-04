@@ -2018,6 +2018,56 @@ fn storage_hygiene_similar_bucket_groups_visually_similar_images() {
 }
 
 #[test]
+fn storage_hygiene_similar_bucket_groups_near_identical_text() {
+    let root = test_root("similar-bucket-text-simhash");
+    let exports = root.join("Exports");
+    if let Err(error) = fs::create_dir_all(&exports) {
+        panic!("create text similarity fixture directory: {error}");
+    }
+
+    write_similarity_markdown(&exports.join("agent-report-a.md"), 0);
+    write_similarity_markdown(&exports.join("agent-report-b.md"), 1);
+    write_unrelated_markdown(&exports.join("unrelated-report.md"));
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 4, 120);
+    let value = parse_json_value(&json, "text similarity JSON parses");
+    let groups = value["duplicate_groups"]
+        .as_array()
+        .unwrap_or_else(|| panic!("duplicate groups serialize as an array"));
+    let text_group = groups
+        .iter()
+        .find(|group| {
+            group["candidate_key"]
+                .as_str()
+                .is_some_and(|key| key.starts_with("text-simhash:"))
+        })
+        .unwrap_or_else(|| panic!("text SimHash group is present"));
+
+    assert_eq!(text_group["confirmed"].as_bool(), Some(false));
+    assert_eq!(text_group["confidence_score"].as_u64(), Some(76));
+    assert!(
+        text_group["recommendation"]
+            .as_str()
+            .is_some_and(|recommendation| recommendation.contains("Potentially similar text"))
+    );
+    let paths = text_group["paths"]
+        .as_array()
+        .unwrap_or_else(|| panic!("text group paths serialize as an array"))
+        .iter()
+        .filter_map(|item| item["path"].as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.iter().any(|path| path.ends_with("agent-report-a.md")));
+    assert!(paths.iter().any(|path| path.ends_with("agent-report-b.md")));
+    assert!(
+        !paths
+            .iter()
+            .any(|path| path.ends_with("unrelated-report.md"))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn repository_inventory_indexes_git_repositories_without_artifacts() {
     let root = test_root("indexes-clean-repositories");
     let repo_a = root.join("CleanOne");
@@ -5004,6 +5054,59 @@ fn write_contrast_png(path: &Path) {
     );
     if let Err(error) = image.save(path) {
         panic!("write contrast png {}: {error}", path.display());
+    }
+}
+
+fn write_similarity_markdown(path: &Path, variant: usize) {
+    let mut content = String::with_capacity((MIN_ITEM_BYTES + 256 * 1024) as usize);
+    for index in 0..10_000 {
+        content.push_str("## Storage cockpit agent report\n");
+        content.push_str(
+            "Aetower reviewed generated artifacts, repository build output, command logs, \
+             cache folders, branch metadata, and AI session context before recommending \
+             any cleanup action.\n",
+        );
+        content.push_str(
+            "The safe action remains review first, reveal in Finder, compare provenance, \
+             then stage only rebuildable or explicitly disposable files into the collector.\n",
+        );
+        if index % 250 == 0 {
+            content.push_str(
+                "<!-- generator note: whitespace and comments should not dominate similarity -->\n",
+            );
+        }
+        if variant != 0 && index % 111 == 0 {
+            content.push_str(
+                "Revision note: this exported copy includes a small operator annotation \
+                 and a different timestamp but preserves the same operating contract.\n",
+            );
+        }
+    }
+    if let Err(error) = fs::write(path, content) {
+        panic!("write similarity markdown {}: {error}", path.display());
+    }
+}
+
+fn write_unrelated_markdown(path: &Path) {
+    let mut content = String::with_capacity((MIN_ITEM_BYTES + 256 * 1024) as usize);
+    for index in 0..10_000 {
+        content.push_str("## Photo archive gardening playlist\n");
+        content.push_str(
+            "The archive catalog describes travel albums, camera lenses, dinner recipes, \
+             bicycle maintenance notes, watercolor palettes, and weekend itinerary drafts.\n",
+        );
+        content.push_str(
+            "Each paragraph intentionally uses a separate vocabulary so SimHash should not \
+             group it with storage cleanup reports or developer artifact summaries.\n",
+        );
+        if index % 97 == 0 {
+            content.push_str(
+                "Reminder: prune the balcony herbs, label the negatives, and tune the guitar.\n",
+            );
+        }
+    }
+    if let Err(error) = fs::write(path, content) {
+        panic!("write unrelated markdown {}: {error}", path.display());
     }
 }
 

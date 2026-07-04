@@ -37,6 +37,11 @@ const DUPLICATE_PARTIAL_HASH_BYTES: usize = 64 * 1024;
 const DUPLICATE_FULL_HASH_MAX_BYTES: u64 = 256 * 1024 * 1024;
 const IMAGE_SIMILARITY_HASH_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const IMAGE_SIMILARITY_HAMMING_THRESHOLD: u32 = 3;
+const TEXT_SIMILARITY_HASH_MAX_BYTES: u64 = 32 * 1024 * 1024;
+const TEXT_SIMILARITY_READ_MAX_BYTES: u64 = 4 * 1024 * 1024;
+const TEXT_SIMILARITY_MIN_TOKENS: usize = 40;
+const TEXT_SIMILARITY_SHINGLE_TOKENS: usize = 4;
+const TEXT_SIMILARITY_HAMMING_THRESHOLD: u32 = 8;
 const DUPLICATE_GROUP_LIMIT: usize = 8;
 const REDUNDANCY_GROUP_LIMIT: usize = 12;
 const CLEANUP_ACTIVE_HOLDER_PATH_LIMIT: usize = 64;
@@ -109,6 +114,69 @@ fn is_similarity_image_path(path: &Path) -> bool {
             matches!(
                 extension.to_ascii_lowercase().as_str(),
                 "jpg" | "jpeg" | "png"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn is_similarity_text_path(path: &Path) -> bool {
+    if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+        match name.to_ascii_lowercase().as_str() {
+            "dockerfile" | "makefile" | "justfile" | "gemfile" | "rakefile" | "podfile" => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "bash"
+                    | "c"
+                    | "cc"
+                    | "cjs"
+                    | "cpp"
+                    | "cs"
+                    | "css"
+                    | "csv"
+                    | "fish"
+                    | "go"
+                    | "gql"
+                    | "graphql"
+                    | "h"
+                    | "hpp"
+                    | "html"
+                    | "java"
+                    | "js"
+                    | "json"
+                    | "jsonl"
+                    | "jsx"
+                    | "kt"
+                    | "kts"
+                    | "log"
+                    | "m"
+                    | "markdown"
+                    | "md"
+                    | "mjs"
+                    | "mm"
+                    | "php"
+                    | "py"
+                    | "rb"
+                    | "rs"
+                    | "sh"
+                    | "sql"
+                    | "swift"
+                    | "toml"
+                    | "ts"
+                    | "tsx"
+                    | "tsv"
+                    | "txt"
+                    | "xml"
+                    | "yaml"
+                    | "yml"
+                    | "zsh"
             )
         })
         .unwrap_or(false)
