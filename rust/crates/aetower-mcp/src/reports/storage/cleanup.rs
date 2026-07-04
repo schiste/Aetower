@@ -1,25 +1,34 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct ArtifactRule {
-    pub(super) kind: &'static str,
-    pub(super) safety: &'static str,
-    pub(super) cleanup_tier: &'static str,
-    pub(super) reason: &'static str,
-    pub(super) recommendation: &'static str,
+    pub(super) kind: Cow<'static, str>,
+    pub(super) safety: Cow<'static, str>,
+    pub(super) cleanup_tier: Cow<'static, str>,
+    pub(super) reason: Cow<'static, str>,
+    pub(super) recommendation: Cow<'static, str>,
+    pub(super) taxonomy_source: Cow<'static, str>,
+    pub(super) semantic_category: Option<Cow<'static, str>>,
+    pub(super) rebuild_command: Option<Cow<'static, str>>,
+    pub(super) estimated_rebuild_cost: Option<Cow<'static, str>>,
+    pub(super) estimated_rebuild_seconds: Option<u64>,
+    pub(super) cleanup_consequence: Option<Cow<'static, str>>,
+    pub(super) manifest_names: Vec<Cow<'static, str>>,
 }
 
 /// Review-only rule applied to directories that match no artifact rule but
 /// are large enough to matter. The empty cleanup tier keeps the persisted
 /// recommendation score at zero and (via `apply_cleanup_guardrails`) blocks
 /// every cleanup lane: these items are informational, never actionable.
-pub(super) const LARGE_DIRECTORY_RULE: ArtifactRule = ArtifactRule {
-    kind: "large-directory",
-    safety: "review",
-    cleanup_tier: "",
-    reason: "Informational: large directory that matches no known artifact rule.",
-    recommendation: "Large directory outside known artifact rules — review what lives here.",
-};
+pub(super) fn large_directory_rule() -> ArtifactRule {
+    rule(
+        "large-directory",
+        "review",
+        "",
+        "Informational: large directory that matches no known artifact rule.",
+        "Large directory outside known artifact rules — review what lives here.",
+    )
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct ArtifactIntelligence {
@@ -28,6 +37,47 @@ pub(super) struct ArtifactIntelligence {
     pub(super) estimated_rebuild_seconds: Option<u64>,
     pub(super) cleanup_consequence: String,
 }
+
+#[derive(Clone, Debug)]
+pub(super) struct SemanticArtifactIntelligence {
+    pub(super) semantic_category: String,
+    pub(super) taxonomy_source: String,
+    pub(super) rebuildability: String,
+    pub(super) manifest_evidence: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct StorageArtifactTaxonomyConfig {
+    rules: Vec<StorageArtifactTaxonomyRule>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct StorageArtifactTaxonomyRule {
+    id: String,
+    name: Option<String>,
+    path_suffix: Option<String>,
+    path_contains: Option<String>,
+    kind: String,
+    safety: String,
+    cleanup_tier: String,
+    reason: Option<String>,
+    recommendation: Option<String>,
+    semantic_category: Option<String>,
+    rebuild_command: Option<String>,
+    estimated_rebuild_cost: Option<String>,
+    estimated_rebuild_seconds: Option<u64>,
+    cleanup_consequence: Option<String>,
+    manifest_names: Option<Vec<String>>,
+}
+
+type TaxonomyFileFingerprint = Option<(u64, u64)>;
+type TaxonomyRuleCache = BTreeMap<
+    PathBuf,
+    (
+        TaxonomyFileFingerprint,
+        Option<Vec<StorageArtifactTaxonomyRule>>,
+    ),
+>;
 
 #[derive(Clone, Debug)]
 struct RebuildCostObservation {
@@ -742,6 +792,199 @@ pub(super) fn artifact_intelligence(kind: &str, path: &str) -> ArtifactIntellige
     }
 }
 
+pub(super) fn apply_artifact_rule_intelligence(
+    intelligence: &mut ArtifactIntelligence,
+    rule: &ArtifactRule,
+) {
+    if let Some(command) = rule.rebuild_command.as_deref() {
+        intelligence.rebuild_command = Some(command.to_owned());
+    }
+    if let Some(cost) = rule.estimated_rebuild_cost.as_deref() {
+        intelligence.estimated_rebuild_cost = cost.to_owned();
+    }
+    if let Some(seconds) = rule.estimated_rebuild_seconds {
+        intelligence.estimated_rebuild_seconds = Some(seconds);
+    }
+    if let Some(consequence) = rule.cleanup_consequence.as_deref() {
+        intelligence.cleanup_consequence = consequence.to_owned();
+    }
+}
+
+pub(super) fn semantic_artifact_intelligence(
+    kind: &str,
+    path: &str,
+    cleanup_tier: &str,
+    taxonomy_source: &str,
+    semantic_category_override: Option<&str>,
+    manifest_name_overrides: &[Cow<'static, str>],
+) -> SemanticArtifactIntelligence {
+    let manifest_evidence =
+        manifest_evidence_for_artifact(kind, Path::new(path), manifest_name_overrides);
+    let mut taxonomy_source = taxonomy_source.to_owned();
+    let mut rebuildability = if cleanup_tier == "risky" || kind == "large-directory" {
+        "manual_review"
+    } else if artifact_kind_is_rebuildable(kind, cleanup_tier) {
+        "catalog_inferred"
+    } else {
+        "unknown"
+    }
+    .to_owned();
+
+    if !manifest_evidence.is_empty() && artifact_kind_is_rebuildable(kind, cleanup_tier) {
+        rebuildability = "manifest_proven".to_owned();
+        taxonomy_source = format!("{taxonomy_source}+manifest");
+    }
+
+    SemanticArtifactIntelligence {
+        semantic_category: semantic_category_override
+            .map(str::to_owned)
+            .unwrap_or_else(|| semantic_category_for_kind(kind).to_owned()),
+        taxonomy_source,
+        rebuildability,
+        manifest_evidence,
+    }
+}
+
+fn artifact_kind_is_rebuildable(kind: &str, cleanup_tier: &str) -> bool {
+    matches!(cleanup_tier, "safe" | "rebuildable" | "expensive")
+        && !matches!(
+            kind,
+            "large-file"
+                | "cold-file"
+                | "macos-app-bundle"
+                | "app-support-data"
+                | "app-container"
+                | "app-launch-item"
+                | "app-preferences"
+                | "app-receipt"
+                | "ios-backup"
+                | "mail-attachments"
+                | "message-attachments"
+                | "local-snapshot"
+                | "trash"
+        )
+}
+
+fn semantic_category_for_kind(kind: &str) -> &'static str {
+    match storage_role_for_kind(kind) {
+        "build-artifact" => "generated-build-output",
+        "cache" => "cache",
+        "dependency-tree" => "dependency-artifact",
+        "environment" => "runtime-environment",
+        "application" | "app-data" => "app-footprint",
+        "system-data" => "system-data",
+        "temporary" | "log" => "temporary-or-log",
+        "cold-file" => "cold-user-data",
+        "large-file" => "large-user-data",
+        _ => "review-artifact",
+    }
+}
+
+fn manifest_evidence_for_artifact(
+    kind: &str,
+    path: &Path,
+    manifest_name_overrides: &[Cow<'static, str>],
+) -> Vec<String> {
+    let manifest_names = manifest_names_for_kind(kind, manifest_name_overrides);
+    if manifest_names.is_empty() {
+        return Vec::new();
+    }
+
+    let mut evidence = Vec::new();
+    let mut current = path.parent();
+    let mut checked = 0;
+    while let Some(directory) = current {
+        if checked >= 10 {
+            break;
+        }
+        checked += 1;
+        for manifest_name in &manifest_names {
+            let manifest_path = directory.join(manifest_name);
+            if manifest_path.is_file() {
+                evidence.push(manifest_path.display().to_string());
+            }
+        }
+        if !evidence.is_empty() {
+            break;
+        }
+        current = directory.parent();
+    }
+    evidence.sort();
+    evidence.dedup();
+    evidence
+}
+
+fn manifest_names_for_kind(
+    kind: &str,
+    manifest_name_overrides: &[Cow<'static, str>],
+) -> Vec<String> {
+    let mut names = manifest_name_overrides
+        .iter()
+        .map(ToString::to_string)
+        .filter(|name| valid_manifest_name(name))
+        .collect::<Vec<_>>();
+    let builtin_names: &[&str] = match kind {
+        "rust-build" => &["Cargo.toml", "Cargo.lock"],
+        "swift-build" => &["Package.swift"],
+        "xcode-derived-data" | "xcode-module-cache" | "xcode-source-packages" => {
+            &["Package.swift", "project.pbxproj"]
+        }
+        "node-dependencies" | "next-cache" | "next-build" | "frontend-cache" | "npm-cache"
+        | "pnpm-store" | "yarn-cache" => &[
+            "package.json",
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "yarn.lock",
+            "bun.lockb",
+        ],
+        "python-cache" | "python-environment" | "pip-cache" | "uv-cache" => &[
+            "pyproject.toml",
+            "requirements.txt",
+            "uv.lock",
+            "Pipfile",
+            "poetry.lock",
+        ],
+        "gradle-cache" => &["build.gradle", "build.gradle.kts", "settings.gradle"],
+        "maven-repository" => &["pom.xml"],
+        "go-build-cache" => &["go.mod", "go.sum"],
+        "test-output" | "coverage-output" => &[
+            "package.json",
+            "Cargo.toml",
+            "Package.swift",
+            "pyproject.toml",
+        ],
+        _ => &[],
+    };
+    names.extend(builtin_names.iter().copied().map(str::to_owned));
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn valid_manifest_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 120
+        && !value.starts_with('/')
+        && !value.starts_with('~')
+        && !value.contains('\\')
+        && !value
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+}
+
+fn valid_manifest_names(values: &[String]) -> bool {
+    values.iter().all(|value| valid_manifest_name(value))
+}
+
+fn owned_manifest_names(values: Option<Vec<String>>) -> Vec<Cow<'static, str>> {
+    values
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|value| valid_manifest_name(value))
+        .map(Cow::Owned)
+        .collect()
+}
+
 fn is_release_artifact_file(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.ends_with(".pkg")
@@ -897,6 +1140,10 @@ pub(super) fn classify_artifact(
         .unwrap_or_default();
     let path_display = path.display().to_string();
     let path_lower = path_display.to_ascii_lowercase();
+
+    if let Some(rule) = plugin_taxonomy_rule(path, name) {
+        return Some(rule);
+    }
 
     if metadata.is_file() && name.ends_with(".log") {
         return Some(rule(
@@ -2419,10 +2666,162 @@ fn rule(
     recommendation: &'static str,
 ) -> ArtifactRule {
     ArtifactRule {
-        kind,
-        safety,
-        cleanup_tier,
-        reason,
-        recommendation,
+        kind: Cow::Borrowed(kind),
+        safety: Cow::Borrowed(safety),
+        cleanup_tier: Cow::Borrowed(cleanup_tier),
+        reason: Cow::Borrowed(reason),
+        recommendation: Cow::Borrowed(recommendation),
+        taxonomy_source: Cow::Borrowed("builtin"),
+        semantic_category: None,
+        rebuild_command: None,
+        estimated_rebuild_cost: None,
+        estimated_rebuild_seconds: None,
+        cleanup_consequence: None,
+        manifest_names: Vec::new(),
+    }
+}
+
+fn plugin_taxonomy_rule(path: &Path, name: &str) -> Option<ArtifactRule> {
+    taxonomy_rules_for_path(path).into_iter().find_map(|rule| {
+        if taxonomy_rule_matches(&rule, path, name) && valid_taxonomy_rule(&rule) {
+            Some(artifact_rule_from_taxonomy(rule))
+        } else {
+            None
+        }
+    })
+}
+
+fn taxonomy_rules_for_path(path: &Path) -> Vec<StorageArtifactTaxonomyRule> {
+    let mut rules = Vec::new();
+    let mut current = path.parent();
+    let mut checked = 0;
+    while let Some(directory) = current {
+        if checked >= 12 {
+            break;
+        }
+        checked += 1;
+        for file_name in [
+            ".aetower/storage-taxonomy.json",
+            ".aetower/storage-taxonomy-v1.json",
+            ".aetower/storage-artifacts.json",
+        ] {
+            let config_path = directory.join(file_name);
+            if let Some(mut config_rules) = read_taxonomy_rules(&config_path) {
+                rules.append(&mut config_rules);
+            }
+        }
+        current = directory.parent();
+    }
+    rules
+}
+
+fn read_taxonomy_rules(path: &Path) -> Option<Vec<StorageArtifactTaxonomyRule>> {
+    static CACHE: OnceLock<Mutex<TaxonomyRuleCache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let fingerprint = taxonomy_file_fingerprint(path);
+    {
+        let guard = lock_or_recover(cache);
+        if let Some((cached_fingerprint, cached_rules)) = guard.get(path)
+            && cached_fingerprint == &fingerprint
+        {
+            return cached_rules.clone();
+        }
+    }
+
+    let rules = fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<StorageArtifactTaxonomyConfig>(&content).ok())
+        .map(|config| config.rules);
+    let mut guard = lock_or_recover(cache);
+    guard.insert(path.to_path_buf(), (fingerprint, rules.clone()));
+    rules
+}
+
+fn taxonomy_file_fingerprint(path: &Path) -> Option<(u64, u64)> {
+    let metadata = fs::metadata(path).ok()?;
+    let modified_millis = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default();
+    Some((metadata.len(), modified_millis))
+}
+
+fn taxonomy_rule_matches(rule: &StorageArtifactTaxonomyRule, path: &Path, name: &str) -> bool {
+    if rule.name.is_none() && rule.path_suffix.is_none() && rule.path_contains.is_none() {
+        return false;
+    }
+
+    let path_normalized = path
+        .display()
+        .to_string()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    if let Some(expected_name) = rule.name.as_deref()
+        && !name.eq_ignore_ascii_case(expected_name)
+    {
+        return false;
+    }
+    if let Some(suffix) = rule.path_suffix.as_deref()
+        && !path_normalized.ends_with(&suffix.replace('\\', "/").to_ascii_lowercase())
+    {
+        return false;
+    }
+    if let Some(needle) = rule.path_contains.as_deref()
+        && !path_normalized.contains(&needle.replace('\\', "/").to_ascii_lowercase())
+    {
+        return false;
+    }
+    true
+}
+
+fn valid_taxonomy_rule(rule: &StorageArtifactTaxonomyRule) -> bool {
+    let identifier_ok = valid_taxonomy_token(&rule.id)
+        && valid_taxonomy_token(&rule.kind)
+        && rule
+            .semantic_category
+            .as_deref()
+            .is_none_or(valid_taxonomy_token);
+    let manifests_ok = rule
+        .manifest_names
+        .as_deref()
+        .is_none_or(valid_manifest_names);
+    let safety_ok = matches!(rule.safety.as_str(), "safe" | "review");
+    let tier_ok = matches!(
+        rule.cleanup_tier.as_str(),
+        "safe" | "rebuildable" | "expensive" | "risky"
+    );
+    identifier_ok && manifests_ok && safety_ok && tier_ok
+}
+
+fn valid_taxonomy_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+}
+
+fn artifact_rule_from_taxonomy(rule: StorageArtifactTaxonomyRule) -> ArtifactRule {
+    ArtifactRule {
+        kind: Cow::Owned(rule.kind),
+        safety: Cow::Owned(rule.safety),
+        cleanup_tier: Cow::Owned(rule.cleanup_tier),
+        reason: Cow::Owned(
+            rule.reason
+                .unwrap_or_else(|| format!("Matched plugin taxonomy rule {}.", rule.id)),
+        ),
+        recommendation: Cow::Owned(rule.recommendation.unwrap_or_else(|| {
+            "Review the plugin-defined artifact and its documented consequence before cleanup."
+                .to_owned()
+        })),
+        taxonomy_source: Cow::Borrowed("plugin"),
+        semantic_category: rule.semantic_category.map(Cow::Owned),
+        rebuild_command: rule.rebuild_command.map(Cow::Owned),
+        estimated_rebuild_cost: rule.estimated_rebuild_cost.map(Cow::Owned),
+        estimated_rebuild_seconds: rule.estimated_rebuild_seconds,
+        cleanup_consequence: rule.cleanup_consequence.map(Cow::Owned),
+        manifest_names: owned_manifest_names(rule.manifest_names),
     }
 }

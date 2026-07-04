@@ -55,7 +55,7 @@ pub(super) fn scan_root(
                 &path,
                 &metadata,
                 root,
-                rule,
+                rule.clone(),
                 deadline,
                 options.mode,
                 storage_index,
@@ -64,7 +64,7 @@ pub(super) fn scan_root(
                 now_millis,
                 options.runtime.as_ref(),
             );
-            if should_retain_storage_item(rule.kind, size.bytes) {
+            if should_retain_storage_item(rule.kind.as_ref(), size.bytes) {
                 let item = storage_item_for_path(
                     &path,
                     metadata.modified().ok(),
@@ -189,11 +189,12 @@ fn surface_large_directories(
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
             continue;
         }
+        let rule = large_directory_rule();
         let size = size_of_path(
             &path,
             &metadata,
             root,
-            LARGE_DIRECTORY_RULE,
+            rule.clone(),
             deadline,
             options.mode,
             storage_index,
@@ -213,7 +214,7 @@ fn surface_large_directories(
                 &path,
                 metadata.modified().ok(),
                 metadata.accessed().ok(),
-                LARGE_DIRECTORY_RULE,
+                rule,
                 size,
                 now_millis,
             ));
@@ -263,13 +264,22 @@ fn storage_item_for_path(
     let stale = age_days.is_some_and(|days| days >= STALE_AFTER_DAYS);
     let path_display = path.display().to_string();
     let attribution = artifact_attribution(path);
-    let storage_role = storage_role_for_kind(rule.kind);
+    let storage_role = storage_role_for_kind(rule.kind.as_ref());
     let git_status = if attribution.repo_root.is_some() {
         "repo-linked-unchecked"
     } else {
         "outside-git"
     };
-    let intelligence = artifact_intelligence(rule.kind, &path_display);
+    let mut intelligence = artifact_intelligence(rule.kind.as_ref(), &path_display);
+    apply_artifact_rule_intelligence(&mut intelligence, &rule);
+    let semantic = semantic_artifact_intelligence(
+        rule.kind.as_ref(),
+        &path_display,
+        rule.cleanup_tier.as_ref(),
+        rule.taxonomy_source.as_ref(),
+        rule.semantic_category.as_deref(),
+        &rule.manifest_names,
+    );
     let logical_bytes = size.bytes;
     let physical_bytes = size.allocated_bytes;
     let reclaimable_bytes =
@@ -282,11 +292,11 @@ fn storage_item_for_path(
             .and_then(|name| name.to_str())
             .unwrap_or("artifact")
             .to_owned(),
-        kind: rule.kind.to_owned(),
+        kind: rule.kind.to_string(),
         storage_role: storage_role.to_owned(),
         git_status: git_status.to_owned(),
-        safety: rule.safety.to_owned(),
-        cleanup_tier: rule.cleanup_tier.to_owned(),
+        safety: rule.safety.to_string(),
+        cleanup_tier: rule.cleanup_tier.to_string(),
         size_bytes: reclaimable_bytes,
         logical_bytes,
         physical_bytes,
@@ -303,21 +313,25 @@ fn storage_item_for_path(
         access_age_days,
         cold,
         stale,
-        reason: rule.reason.to_owned(),
-        recommendation: rule.recommendation.to_owned(),
+        reason: rule.reason.to_string(),
+        recommendation: rule.recommendation.to_string(),
         next_step: String::new(),
         command_hint: format!("du -sh {}", shell_quote(&path_display)),
         rebuild_command: intelligence.rebuild_command,
         estimated_rebuild_cost: intelligence.estimated_rebuild_cost,
         estimated_rebuild_seconds: intelligence.estimated_rebuild_seconds,
         cleanup_consequence: intelligence.cleanup_consequence,
+        semantic_category: semantic.semantic_category,
+        taxonomy_source: semantic.taxonomy_source,
+        rebuildability: semantic.rebuildability,
+        manifest_evidence: semantic.manifest_evidence,
         evidence: Vec::new(),
         cleanup_allowed: true,
         cleanup_blockers: Vec::new(),
         default_cleanup_action: "trash".to_owned(),
         recommendation_score: storage_recommendation_score(
             reclaimable_bytes,
-            rule.cleanup_tier,
+            rule.cleanup_tier.as_ref(),
             modified_millis,
             accessed_millis,
             now_millis,
@@ -366,6 +380,14 @@ pub(super) fn storage_item_for_indexed_row(
         .to_owned();
     let path_display = row.path.clone();
     let intelligence = artifact_intelligence(&row.kind, &path_display);
+    let semantic = semantic_artifact_intelligence(
+        &row.kind,
+        &path_display,
+        &row.cleanup_tier,
+        "indexed",
+        None,
+        &[],
+    );
     let logical_bytes = row.logical_bytes;
     let physical_bytes = row.physical_bytes;
     let cloud_placeholder = logical_bytes > 0 && physical_bytes == 0;
@@ -420,6 +442,10 @@ pub(super) fn storage_item_for_indexed_row(
         estimated_rebuild_cost: intelligence.estimated_rebuild_cost,
         estimated_rebuild_seconds: intelligence.estimated_rebuild_seconds,
         cleanup_consequence: intelligence.cleanup_consequence,
+        semantic_category: semantic.semantic_category,
+        taxonomy_source: semantic.taxonomy_source,
+        rebuildability: semantic.rebuildability,
+        manifest_evidence: semantic.manifest_evidence,
         evidence: Vec::new(),
         cleanup_allowed: true,
         cleanup_blockers: Vec::new(),
@@ -495,7 +521,7 @@ fn size_of_path(
     if metadata.file_type().is_symlink() {
         return SizeWalkResult::default();
     }
-    let kind = rule.kind;
+    let kind = rule.kind.as_ref();
     if metadata.is_file() {
         let blocks = metadata.blocks();
         let hardlink_count = metadata.nlink();
@@ -529,10 +555,10 @@ fn size_of_path(
                     metadata,
                     source_root,
                     repo_root.as_deref(),
-                    rule.kind,
-                    storage_role_for_kind(rule.kind),
-                    rule.safety,
-                    rule.cleanup_tier,
+                    rule.kind.as_ref(),
+                    storage_role_for_kind(rule.kind.as_ref()),
+                    rule.safety.as_ref(),
+                    rule.cleanup_tier.as_ref(),
                     result.bytes,
                     result.allocated_bytes,
                     result.entries,
@@ -562,10 +588,10 @@ fn size_of_path(
                 metadata,
                 source_root,
                 repo_root.as_deref(),
-                rule.kind,
-                storage_role_for_kind(rule.kind),
-                rule.safety,
-                rule.cleanup_tier,
+                rule.kind.as_ref(),
+                storage_role_for_kind(rule.kind.as_ref()),
+                rule.safety.as_ref(),
+                rule.cleanup_tier.as_ref(),
                 result.bytes,
                 result.allocated_bytes,
                 result.entries,
@@ -690,10 +716,10 @@ fn size_of_path(
             metadata,
             source_root,
             repo_root.as_deref(),
-            rule.kind,
-            storage_role_for_kind(rule.kind),
-            rule.safety,
-            rule.cleanup_tier,
+            rule.kind.as_ref(),
+            storage_role_for_kind(rule.kind.as_ref()),
+            rule.safety.as_ref(),
+            rule.cleanup_tier.as_ref(),
             result.bytes,
             result.allocated_bytes,
             result.entries,

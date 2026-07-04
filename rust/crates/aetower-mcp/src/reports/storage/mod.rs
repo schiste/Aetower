@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
     collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque},
@@ -306,12 +307,13 @@ use attribution::{
     load_storage_writer_ledger_records, summarize_agent_hygiene,
 };
 use cleanup::{
-    ArtifactRule, LARGE_DIRECTORY_RULE, apply_cleanup_guardrails, apply_measured_rebuild_costs,
-    artifact_attribution, artifact_intelligence, block_cleanup, build_cleanup_bundles,
-    build_cleanup_recipes, classify_artifact, cleanup_item_confidence, cleanup_tier_label,
-    cleanup_tier_rank, evaluate_budget_guardrails, git_status_label, is_app_cache_path,
-    is_app_container_path, is_app_preferences_path, is_app_receipt_path, is_app_support_path,
-    is_launch_item_path, is_protected_cleanup_path, storage_role_for_kind, storage_role_label,
+    ArtifactRule, apply_artifact_rule_intelligence, apply_cleanup_guardrails,
+    apply_measured_rebuild_costs, artifact_attribution, artifact_intelligence, block_cleanup,
+    build_cleanup_bundles, build_cleanup_recipes, classify_artifact, cleanup_item_confidence,
+    cleanup_tier_label, cleanup_tier_rank, evaluate_budget_guardrails, git_status_label,
+    is_app_cache_path, is_app_container_path, is_app_preferences_path, is_app_receipt_path,
+    is_app_support_path, is_launch_item_path, is_protected_cleanup_path, large_directory_rule,
+    semantic_artifact_intelligence, storage_role_for_kind, storage_role_label,
     summarize_cleanup_tiers,
 };
 pub(crate) use jobs::StorageScanJobProgress;

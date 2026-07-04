@@ -1322,6 +1322,10 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
     let estimatedRebuildCost: String
     let estimatedRebuildSeconds: UInt64?
     let cleanupConsequence: String
+    let semanticCategory: String
+    let taxonomySource: String
+    let rebuildability: String
+    let manifestEvidence: [String]
     let evidence: [String]
     let cleanupAllowed: Bool
     let cleanupBlockers: [String]
@@ -1364,6 +1368,10 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
         case estimatedRebuildCost
         case estimatedRebuildSeconds
         case cleanupConsequence
+        case semanticCategory
+        case taxonomySource
+        case rebuildability
+        case manifestEvidence
         case evidence
         case cleanupAllowed
         case cleanupBlockers
@@ -1403,6 +1411,11 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
         estimatedRebuildCost = try container.decodeIfPresent(String.self, forKey: .estimatedRebuildCost) ?? "Unknown"
         estimatedRebuildSeconds = try container.decodeIfPresent(UInt64.self, forKey: .estimatedRebuildSeconds)
         cleanupConsequence = try container.decodeIfPresent(String.self, forKey: .cleanupConsequence) ?? recommendation
+        semanticCategory = try container.decodeIfPresent(String.self, forKey: .semanticCategory)
+            ?? StorageHygieneItemModel.legacyStorageRole(kind: kind)
+        taxonomySource = try container.decodeIfPresent(String.self, forKey: .taxonomySource) ?? "legacy"
+        rebuildability = try container.decodeIfPresent(String.self, forKey: .rebuildability) ?? "unknown"
+        manifestEvidence = try container.decodeIfPresent([String].self, forKey: .manifestEvidence) ?? []
         attribution = try container.decode(StorageArtifactAttributionModel.self, forKey: .attribution)
 
         storageRole = try container.decodeIfPresent(String.self, forKey: .storageRole)

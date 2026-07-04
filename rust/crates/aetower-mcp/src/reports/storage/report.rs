@@ -1076,6 +1076,16 @@ pub(super) fn storage_item_evidence(item: &StorageHygieneItem) -> Vec<String> {
         storage_role_label(&item.storage_role)
     ));
     evidence.push(format!(
+        "Semantic category is {}; taxonomy source is {}; rebuildability is {}.",
+        item.semantic_category, item.taxonomy_source, item.rebuildability
+    ));
+    if !item.manifest_evidence.is_empty() {
+        evidence.push(format!(
+            "Manifest-proven rebuildability evidence: {}.",
+            item.manifest_evidence.join(", ")
+        ));
+    }
+    evidence.push(format!(
         "Cleanup tier is {}; confidence score is {}%.",
         cleanup_tier_label(&item.cleanup_tier),
         cleanup_item_confidence(item)

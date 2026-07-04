@@ -32,6 +32,137 @@ fn storage_hygiene_detects_reclaimable_build_artifacts() {
 }
 
 #[test]
+fn storage_hygiene_marks_manifest_proven_rebuildability() {
+    let root = test_root("manifest-proven-rebuildability");
+    let project = root.join("project");
+    let target = project.join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&target) {
+        panic!("create target dir: {error}");
+    }
+    if let Err(error) = fs::write(project.join("Cargo.toml"), "[package]\nname = \"demo\"\n") {
+        panic!("write Cargo manifest: {error}");
+    }
+    if let Err(error) = fs::write(
+        target.join("blob"),
+        vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+    ) {
+        panic!("write build artifact: {error}");
+    }
+    mark_tree_old(&project);
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+    let value = parse_json_value(&json, "storage JSON parses");
+    let rust_build = value["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["kind"] == "rust-build"))
+        .unwrap_or_else(|| panic!("rust-build item exists: {json}"));
+
+    assert_eq!(rust_build["semantic_category"], "generated-build-output");
+    assert_eq!(rust_build["taxonomy_source"], "builtin+manifest");
+    assert_eq!(rust_build["rebuildability"], "manifest_proven");
+    assert!(
+        rust_build["manifest_evidence"]
+            .as_array()
+            .unwrap_or_else(|| panic!("manifest evidence array exists: {rust_build:?}"))
+            .iter()
+            .any(|path| path
+                .as_str()
+                .is_some_and(|path| path.ends_with("Cargo.toml")))
+    );
+    assert!(
+        rust_build["evidence"]
+            .as_array()
+            .unwrap_or_else(|| panic!("evidence array exists: {rust_build:?}"))
+            .iter()
+            .any(|entry| entry
+                .as_str()
+                .is_some_and(|entry| entry.contains("Manifest-proven rebuildability")))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_hygiene_loads_repo_local_artifact_taxonomy() {
+    let root = test_root("repo-local-artifact-taxonomy");
+    let project = root.join("project");
+    let taxonomy_dir = project.join(".aetower");
+    let model_cache = project.join("model-cache");
+    if let Err(error) = fs::create_dir_all(&taxonomy_dir) {
+        panic!("create taxonomy dir: {error}");
+    }
+    if let Err(error) = fs::create_dir_all(&model_cache) {
+        panic!("create model cache: {error}");
+    }
+    if let Err(error) = fs::write(
+        taxonomy_dir.join("storage-taxonomy.json"),
+        r#"{
+          "rules": [
+            {
+              "id": "custom-model-cache",
+              "name": "model-cache",
+              "kind": "llm-model-cache",
+              "safety": "review",
+              "cleanup_tier": "expensive",
+              "reason": "Custom local LLM model cache.",
+              "recommendation": "Review active model servers before cleanup.",
+              "semantic_category": "ai-model-cache",
+              "rebuild_command": "download model artifacts",
+              "estimated_rebuild_cost": "High network cost",
+              "estimated_rebuild_seconds": 2400,
+              "cleanup_consequence": "Model artifacts are re-downloadable but can be large and network-bound.",
+              "manifest_names": ["model-manifest.yaml"]
+            }
+          ]
+        }"#,
+    ) {
+        panic!("write taxonomy: {error}");
+    }
+    if let Err(error) = fs::write(
+        model_cache.join("weights.bin"),
+        vec![4u8; (MIN_ITEM_BYTES + 128) as usize],
+    ) {
+        panic!("write model cache: {error}");
+    }
+    if let Err(error) = fs::write(project.join("model-manifest.yaml"), "models:\n  - local\n") {
+        panic!("write model manifest: {error}");
+    }
+    mark_tree_old(&project);
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+    let value = parse_json_value(&json, "storage JSON parses");
+    let custom_item = value["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["kind"] == "llm-model-cache"))
+        .unwrap_or_else(|| panic!("custom taxonomy item exists: {json}"));
+
+    assert_eq!(custom_item["cleanup_tier"], "expensive");
+    assert_eq!(custom_item["semantic_category"], "ai-model-cache");
+    assert_eq!(custom_item["taxonomy_source"], "plugin+manifest");
+    assert_eq!(custom_item["rebuildability"], "manifest_proven");
+    assert_eq!(custom_item["rebuild_command"], "download model artifacts");
+    assert_eq!(
+        custom_item["estimated_rebuild_seconds"].as_u64(),
+        Some(2400)
+    );
+    assert_eq!(
+        custom_item["cleanup_consequence"],
+        "Model artifacts are re-downloadable but can be large and network-bound."
+    );
+    assert!(
+        custom_item["manifest_evidence"]
+            .as_array()
+            .unwrap_or_else(|| panic!("manifest evidence array exists: {custom_item:?}"))
+            .iter()
+            .any(|path| path
+                .as_str()
+                .is_some_and(|path| path.ends_with("model-manifest.yaml")))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_hygiene_fast_mode_uses_lazy_git_status_and_diagnostics() {
     let root = test_root("fast-mode-diagnostics");
     let project = root.join("Aetower");
@@ -137,6 +268,7 @@ fn storage_hygiene_projection_apis_return_compact_shapes() {
 
 #[test]
 fn storage_hygiene_indexed_snapshot_reuses_persistent_rows() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("indexed-snapshot");
     let target = root.join("project").join("target").join("debug");
     if let Err(error) = fs::create_dir_all(&target) {
@@ -200,6 +332,7 @@ fn storage_hygiene_indexed_snapshot_reuses_persistent_rows() {
 /// instead of replaying only the earlier fast scan's rows.
 #[test]
 fn instant_cached_report_surfaces_rows_from_later_deep_scan() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("deep-scan-freshness");
     let fast_target = root.join("fast-project").join("target").join("debug");
     if let Err(error) = fs::create_dir_all(&fast_target) {
@@ -428,6 +561,7 @@ fn items_page_paths(
 
 #[test]
 fn storage_hygiene_items_page_serves_beyond_two_hundred_rows_from_index() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("items-page-beyond-200");
     let seeded = seed_items_page_fixture(&root, 260);
     let expected = expected_page_order(&seeded, "size", true);
@@ -448,6 +582,7 @@ fn storage_hygiene_items_page_serves_beyond_two_hundred_rows_from_index() {
 
 #[test]
 fn storage_hygiene_items_page_offset_is_stable_for_each_sort_key() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("items-page-sort-keys");
     let seeded = seed_items_page_fixture(&root, 48);
 
@@ -474,6 +609,7 @@ fn storage_hygiene_items_page_offset_is_stable_for_each_sort_key() {
 
 #[test]
 fn storage_hygiene_items_page_evicts_missing_rows_and_refills() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("items-page-stale-eviction");
     let seeded = seed_items_page_fixture(&root, 10);
     let expected = expected_page_order(&seeded, "size", true);
@@ -535,6 +671,7 @@ fn batched_flush_row(
 
 #[test]
 fn storage_index_batched_flush_matches_per_row_growth_semantics() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("batched-flush-parity");
     let prefix = format!("{}/", root.display());
     let now_millis = storage_now_millis();
@@ -655,6 +792,7 @@ fn storage_index_batched_flush_matches_per_row_growth_semantics() {
 
 #[test]
 fn storage_index_buffered_rows_are_visible_to_reads_without_explicit_flush() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("batched-flush-read-your-writes");
     if let Err(error) = fs::create_dir_all(&root) {
         panic!("create read-your-writes fixture dir: {error}");
@@ -699,6 +837,7 @@ fn storage_index_buffered_rows_are_visible_to_reads_without_explicit_flush() {
 
 #[test]
 fn storage_index_growth_delta_retention_prunes_once_per_flush() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("batched-flush-retention");
     let prefix = format!("{}/", root.display());
     let now_millis = storage_now_millis();
@@ -2323,6 +2462,7 @@ fn repository_inventory_cache_marks_repos_not_seen_in_latest_scan() {
 
 #[test]
 fn storage_hygiene_indexed_snapshot_returns_cached_repository_inventory_without_artifacts() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("indexed-cache-inventory-only");
     let repo = root.join("CachedOnlyRepo");
     create_git_repo(&repo, "main");
@@ -2375,6 +2515,7 @@ fn storage_hygiene_indexed_snapshot_returns_cached_repository_inventory_without_
 
 #[test]
 fn repository_inventory_cache_detects_git_metadata_changes() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("repository-inventory-cache-fingerprint");
     let repo = root.join("FingerprintRepo");
     create_git_repo(&repo, "main");
@@ -2435,6 +2576,7 @@ fn repository_inventory_cache_detects_git_metadata_changes() {
 
 #[test]
 fn storage_hygiene_indexed_snapshot_keeps_artifact_rows_as_repository_overlay_only() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("indexed-overlay-only");
     let repo = root.join("OverlayRepo");
     let artifact = repo.join("target").join("debug").join("large.o");
@@ -4273,6 +4415,7 @@ fn indexed_report_build_is_fast_on_large_synthetic_index() {
 /// must therefore guarantee statistics exist.
 #[test]
 fn storage_index_open_ensures_query_planner_statistics() {
+    let _index_guard = storage_index_test_guard();
     let storage_index = StorageSizeIndex::open();
     assert_eq!(storage_index.status, "ready");
     assert!(
@@ -4286,6 +4429,7 @@ fn storage_index_open_ensures_query_planner_statistics() {
 /// outlive the data they were derived from.
 #[test]
 fn index_report_generation_advances_when_rows_flush() {
+    let _index_guard = storage_index_test_guard();
     let storage_index = StorageSizeIndex::open();
     let mut metrics = StorageScanMetrics::default();
     let before = storage_index
@@ -4639,6 +4783,10 @@ fn test_storage_item(
         estimated_rebuild_cost: "Unknown".to_owned(),
         estimated_rebuild_seconds: None,
         cleanup_consequence: "test cleanup consequence".to_owned(),
+        semantic_category: "review-artifact".to_owned(),
+        taxonomy_source: "test".to_owned(),
+        rebuildability: "unknown".to_owned(),
+        manifest_evidence: Vec::new(),
         evidence: Vec::new(),
         cleanup_allowed: true,
         cleanup_blockers: Vec::new(),
@@ -5063,15 +5211,20 @@ fn classify_artifact_broadens_cache_and_system_rules() {
         };
         let rule = classify_artifact(&path, &metadata, now_millis)
             .unwrap_or_else(|| panic!("no rule matched {}", path.display()));
-        assert_eq!(rule.kind, *expected_kind, "kind for {}", path.display());
         assert_eq!(
-            rule.cleanup_tier,
+            rule.kind.as_ref(),
+            *expected_kind,
+            "kind for {}",
+            path.display()
+        );
+        assert_eq!(
+            rule.cleanup_tier.as_ref(),
             *expected_tier,
             "tier for {}",
             path.display()
         );
         assert_eq!(
-            rule.safety,
+            rule.safety.as_ref(),
             *expected_safety,
             "safety for {}",
             path.display()
@@ -5082,6 +5235,7 @@ fn classify_artifact_broadens_cache_and_system_rules() {
 
 #[test]
 fn storage_hygiene_items_page_admits_large_directory_rows() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("items-page-large-directory");
     let large_dir = root.join("huge-unclassified");
     let small_dir = root.join("small-unclassified");
