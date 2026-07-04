@@ -152,35 +152,13 @@ public struct SettingsView: View {
             searchPrompt: "Search settings sections",
             searchWidth: 280
         ) {
-            Menu {
-                ForEach(SettingsSection.allCases) { section in
-                    Button {
-                        selectedSection = section
-                    } label: {
-                        HStack {
-                            Label(section.title, systemImage: section.systemImage)
-                            if selectedSection == section {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: AetowerDesign.Spacing.xs) {
-                    Image(systemName: selectedSection.systemImage)
-                    Text(selectedSection.title)
-                    Image(systemName: "chevron.down")
-                        .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
-                }
-                .font(AetowerDesign.Typography.caption.weight(.semibold))
-                .foregroundStyle(AetowerDesign.Ink.secondary)
-                .padding(.horizontal, AetowerDesign.Spacing.sm)
-                .padding(.vertical, AetowerDesign.Spacing.xs)
-                .aetowerControlChrome()
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+            AetowerSelectionMenu(
+                selection: $selectedSection,
+                options: SettingsSection.allCases,
+                accessibilityLabel: "Settings section",
+                title: { $0.title },
+                systemImage: { $0.systemImage }
+            )
         } badges: {
             AetowerToolBadgeGroup(settingsHeaderBadges, visibleCount: 2)
         }
@@ -1580,8 +1558,7 @@ public struct SettingsView: View {
     private func persistGitHubOAuthConfiguration(clientID: String, scopesText: String) {
         integrationDraft.githubOAuthClientID = clientID
         integrationDraft.githubOAuthScopes = scopesText
-        settings.githubOAuthClientID = clientID
-        settings.githubOAuthScopes = scopesText
+        settings.applyGitHubOAuthConfiguration(clientID: clientID, scopesText: scopesText)
     }
 
     private func persistCloudflareOAuthConfiguration(
@@ -1594,10 +1571,12 @@ public struct SettingsView: View {
         integrationDraft.cloudflareOAuthClientID = clientID
         integrationDraft.cloudflareOAuthScopes = scopesText
         integrationDraft.cloudflareOAuthRedirectURI = redirectURI
-        settings.cloudflareOAuthAccountID = accountID
-        settings.cloudflareOAuthClientID = clientID
-        settings.cloudflareOAuthScopes = scopesText
-        settings.cloudflareOAuthRedirectURI = redirectURI
+        settings.applyCloudflareOAuthConfiguration(
+            accountID: accountID,
+            clientID: clientID,
+            scopesText: scopesText,
+            redirectURI: redirectURI
+        )
     }
 
     private func resetLocalAetowerData() {
