@@ -2135,6 +2135,52 @@ fn storage_hygiene_similar_bucket_groups_extracted_document_text() {
 }
 
 #[test]
+fn storage_hygiene_similar_bucket_groups_video_signatures() {
+    let root = test_root("similar-bucket-video-signature");
+    let videos = root.join("Videos");
+    if let Err(error) = fs::create_dir_all(&videos) {
+        panic!("create video similarity fixture directory: {error}");
+    }
+
+    write_similarity_mov(&videos.join("clip-a.mov"), 0);
+    write_similarity_mov(&videos.join("clip-b.mov"), 1);
+    write_unrelated_mov(&videos.join("unrelated.mov"));
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 120);
+    let value = parse_json_value(&json, "video similarity JSON parses");
+    let groups = value["duplicate_groups"]
+        .as_array()
+        .unwrap_or_else(|| panic!("duplicate groups serialize as an array"));
+    let video_group = groups
+        .iter()
+        .find(|group| {
+            group["candidate_key"]
+                .as_str()
+                .is_some_and(|key| key.starts_with("video-signature:"))
+        })
+        .unwrap_or_else(|| panic!("video signature group is present"));
+
+    assert_eq!(video_group["confirmed"].as_bool(), Some(false));
+    assert_eq!(video_group["confidence_score"].as_u64(), Some(70));
+    assert!(
+        video_group["recommendation"]
+            .as_str()
+            .is_some_and(|recommendation| recommendation.contains("Potentially similar videos"))
+    );
+    let paths = video_group["paths"]
+        .as_array()
+        .unwrap_or_else(|| panic!("video group paths serialize as an array"))
+        .iter()
+        .filter_map(|item| item["path"].as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.iter().any(|path| path.ends_with("clip-a.mov")));
+    assert!(paths.iter().any(|path| path.ends_with("clip-b.mov")));
+    assert!(!paths.iter().any(|path| path.ends_with("unrelated.mov")));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn repository_inventory_indexes_git_repositories_without_artifacts() {
     let root = test_root("indexes-clean-repositories");
     let repo_a = root.join("CleanOne");
@@ -3476,7 +3522,7 @@ fn storage_hygiene_reports_whole_computer_optimization_buckets() {
 
     let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 8, 120);
 
-    assert!(json.contains("\"kind\":\"large-file\""));
+    assert!(json.contains("\"kind\":\"video-file\""));
     assert!(json.contains("\"kind\":\"cold-file\""));
     assert!(json.contains("\"duplicate_groups\""));
     assert!(json.contains("\"confirmed\":true"));
@@ -5260,6 +5306,77 @@ fn append_stored_zip_entry(target: &mut Vec<u8>, name: &str, data: &[u8]) {
     target.extend_from_slice(&0u16.to_le_bytes());
     target.extend_from_slice(name.as_bytes());
     target.extend_from_slice(data);
+}
+
+fn write_similarity_mov(path: &Path, variant: usize) {
+    write_synthetic_mov(
+        path,
+        62_000 + variant as u32 * 400,
+        1_920,
+        1_080,
+        *b"avc1",
+        41,
+        variant as u8,
+    );
+}
+
+fn write_unrelated_mov(path: &Path) {
+    write_synthetic_mov(path, 88_000, 1_280, 720, *b"hvc1", 73, 0);
+}
+
+fn write_synthetic_mov(
+    path: &Path,
+    duration_millis: u32,
+    width: u32,
+    height: u32,
+    codec: [u8; 4],
+    media_seed: u8,
+    metadata_variant: u8,
+) {
+    let mut bytes = Vec::new();
+    append_mp4_box(&mut bytes, *b"ftyp", b"qt  \0\0\0\0qt  mp42");
+
+    let mut mvhd = Vec::new();
+    mvhd.extend_from_slice(&[0, 0, 0, metadata_variant]);
+    mvhd.extend_from_slice(&0u32.to_be_bytes());
+    mvhd.extend_from_slice(&0u32.to_be_bytes());
+    mvhd.extend_from_slice(&1_000u32.to_be_bytes());
+    mvhd.extend_from_slice(&duration_millis.to_be_bytes());
+    mvhd.extend_from_slice(&[0u8; 64]);
+    append_mp4_box(&mut bytes, *b"mvhd", &mvhd);
+
+    let mut tkhd = vec![0u8; 84];
+    tkhd[3] = metadata_variant;
+    let width_fixed = width << 16;
+    let height_fixed = height << 16;
+    tkhd[76..80].copy_from_slice(&width_fixed.to_be_bytes());
+    tkhd[80..84].copy_from_slice(&height_fixed.to_be_bytes());
+    append_mp4_box(&mut bytes, *b"tkhd", &tkhd);
+
+    let mut stsd = Vec::new();
+    stsd.extend_from_slice(&[0, 0, 0, 0]);
+    stsd.extend_from_slice(&1u32.to_be_bytes());
+    stsd.extend_from_slice(&16u32.to_be_bytes());
+    stsd.extend_from_slice(&codec);
+    stsd.extend_from_slice(&[0u8; 8]);
+    append_mp4_box(&mut bytes, *b"stsd", &stsd);
+
+    let mut media = vec![0u8; (MIN_ITEM_BYTES + 96 * 1024) as usize];
+    for (index, byte) in media.iter_mut().enumerate() {
+        *byte = media_seed.wrapping_add((index as u8).rotate_left((index % 7) as u32));
+    }
+    append_mp4_box(&mut bytes, *b"mdat", &media);
+
+    if let Err(error) = fs::write(path, bytes) {
+        panic!("write synthetic mov {}: {error}", path.display());
+    }
+}
+
+fn append_mp4_box(target: &mut Vec<u8>, box_type: [u8; 4], payload: &[u8]) {
+    let size = payload.len().saturating_add(8);
+    target.extend_from_slice(&(size as u32).to_be_bytes());
+    target.extend_from_slice(&box_type);
+    target.extend_from_slice(payload);
 }
 
 fn write_git_origin_config(repo: &Path, origin_url: &str) {

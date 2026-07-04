@@ -42,6 +42,11 @@ const TEXT_SIMILARITY_READ_MAX_BYTES: u64 = 4 * 1024 * 1024;
 const TEXT_SIMILARITY_MIN_TOKENS: usize = 40;
 const TEXT_SIMILARITY_SHINGLE_TOKENS: usize = 4;
 const TEXT_SIMILARITY_HAMMING_THRESHOLD: u32 = 8;
+const VIDEO_SIMILARITY_PROBE_BYTES: usize = 4 * 1024 * 1024;
+const VIDEO_SIMILARITY_SAMPLE_BYTES: usize = 64 * 1024;
+const VIDEO_SIMILARITY_DURATION_TOLERANCE_MS: u64 = 1_000;
+const VIDEO_SIMILARITY_DIMENSION_TOLERANCE_PX: u32 = 2;
+const VIDEO_SIMILARITY_SIZE_RATIO_PERCENT: u64 = 20;
 const DUPLICATE_GROUP_LIMIT: usize = 8;
 const REDUNDANCY_GROUP_LIMIT: usize = 12;
 const CLEANUP_ACTIVE_HOLDER_PATH_LIMIT: usize = 64;
@@ -189,6 +194,18 @@ fn is_similarity_document_path(path: &Path) -> bool {
             matches!(
                 extension.to_ascii_lowercase().as_str(),
                 "docx" | "pdf" | "pptx" | "xlsx"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn is_similarity_video_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "avi" | "m4v" | "mkv" | "mov" | "mp4" | "webm"
             )
         })
         .unwrap_or(false)

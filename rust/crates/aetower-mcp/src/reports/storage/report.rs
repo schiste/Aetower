@@ -1556,6 +1556,7 @@ fn summarize_duplicate_groups(items: &[StorageHygieneItem]) -> Vec<StorageDuplic
     }
     append_image_similarity_groups(items, &mut groups);
     append_text_similarity_groups(items, &mut groups);
+    append_video_similarity_groups(items, &mut groups);
 
     groups.sort_by(|left, right| {
         right
@@ -1699,6 +1700,100 @@ struct TextSimilarityCandidate<'a> {
     item: &'a StorageHygieneItem,
 }
 
+fn append_video_similarity_groups(
+    items: &[StorageHygieneItem],
+    groups: &mut Vec<StorageDuplicateGroup>,
+) {
+    let exact_duplicate_paths = groups
+        .iter()
+        .filter(|group| group.confirmed)
+        .flat_map(|group| group.paths.iter().map(|item| item.path.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut candidates = items
+        .iter()
+        .filter(|item| {
+            let path = Path::new(&item.path);
+            path.is_file()
+                && !exact_duplicate_paths.contains(&item.path)
+                && item.size_bytes >= MIN_ITEM_BYTES
+                && is_similarity_video_path(path)
+        })
+        .filter_map(|item| {
+            video_signature(Path::new(&item.path), item.size_bytes)
+                .map(|signature| VideoSimilarityCandidate { signature, item })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.item
+            .path
+            .cmp(&right.item.path)
+            .then_with(|| left.signature.sample_hash.cmp(&right.signature.sample_hash))
+    });
+
+    let mut assigned = BTreeSet::<String>::new();
+    for candidate in &candidates {
+        if assigned.contains(&candidate.item.path) {
+            continue;
+        }
+        let mut similar_items = vec![candidate.item];
+        for other in &candidates {
+            if other.item.path == candidate.item.path || assigned.contains(&other.item.path) {
+                continue;
+            }
+            if candidate.signature.is_compatible_with(&other.signature) {
+                similar_items.push(other.item);
+            }
+        }
+        if similar_items.len() < 2 {
+            continue;
+        }
+        for similar in &similar_items {
+            assigned.insert(similar.path.clone());
+        }
+        groups.push(similar_video_group_from_items(
+            format!(
+                "video-signature|{}|{:016x}",
+                candidate.signature.codec_string(),
+                candidate.signature.sample_hash
+            ),
+            &candidate.signature,
+            similar_items,
+        ));
+    }
+}
+
+#[derive(Clone, Copy)]
+struct VideoSimilarityCandidate<'a> {
+    signature: VideoSimilaritySignature,
+    item: &'a StorageHygieneItem,
+}
+
+#[derive(Clone, Copy)]
+struct VideoSimilaritySignature {
+    duration_millis: u64,
+    width: u32,
+    height: u32,
+    codec: [u8; 4],
+    sample_hash: u64,
+    size_bytes: u64,
+}
+
+impl VideoSimilaritySignature {
+    fn is_compatible_with(&self, other: &Self) -> bool {
+        self.codec == other.codec
+            && self.sample_hash == other.sample_hash
+            && self.duration_millis.abs_diff(other.duration_millis)
+                <= VIDEO_SIMILARITY_DURATION_TOLERANCE_MS
+            && self.width.abs_diff(other.width) <= VIDEO_SIMILARITY_DIMENSION_TOLERANCE_PX
+            && self.height.abs_diff(other.height) <= VIDEO_SIMILARITY_DIMENSION_TOLERANCE_PX
+            && video_size_ratio_compatible(self.size_bytes, other.size_bytes)
+    }
+
+    fn codec_string(&self) -> String {
+        String::from_utf8_lossy(&self.codec).into_owned()
+    }
+}
+
 fn duplicate_group_from_items(
     id: String,
     candidate_key: String,
@@ -1783,6 +1878,29 @@ fn similar_text_group_from_items(
         76,
         "Potentially similar text, code, log, PDF, or Office documents by normalized extracted-text SimHash. Diff or Quick Look side by side before staging cleanup.",
         "Text/document similarity removes formatting, hashes token shingles, and reads only bounded text. It is review-only and can miss reordered, scanned, generated, appended, or image-only content.",
+        items,
+    )
+}
+
+fn similar_video_group_from_items(
+    id: String,
+    signature: &VideoSimilaritySignature,
+    items: Vec<&StorageHygieneItem>,
+) -> StorageDuplicateGroup {
+    review_similarity_group_from_items(
+        id,
+        format!(
+            "video-signature:{}:{}x{}:duration~{}ms:size±{}%:sample:{:016x}",
+            signature.codec_string(),
+            signature.width,
+            signature.height,
+            signature.duration_millis,
+            VIDEO_SIMILARITY_SIZE_RATIO_PERCENT,
+            signature.sample_hash
+        ),
+        70,
+        "Potentially similar videos by cheap container metadata and sampled media-byte fingerprints. Open side by side before staging cleanup.",
+        "Video similarity compares duration, resolution, codec, size ratio, and bounded media payload samples without decoding full video frames. True sampled-frame perceptual hashes belong in Deep/Forensic mode.",
         items,
     )
 }
@@ -2312,6 +2430,170 @@ fn image_hash_hamming_distance(left: u64, right: u64) -> u32 {
     (left ^ right).count_ones()
 }
 
+fn video_signature(path: &Path, size_bytes: u64) -> Option<VideoSimilaritySignature> {
+    let probe = read_video_probe_bytes(path, size_bytes)?;
+    let duration_millis = mp4_duration_millis(&probe)?;
+    let (width, height) = mp4_dimensions(&probe)?;
+    let codec = mp4_codec(&probe)?;
+    let sample_hash = mp4_mdat_sample_hash(&probe)?;
+    Some(VideoSimilaritySignature {
+        duration_millis,
+        width,
+        height,
+        codec,
+        sample_hash,
+        size_bytes,
+    })
+}
+
+fn read_video_probe_bytes(path: &Path, size_bytes: u64) -> Option<Vec<u8>> {
+    let mut file = fs::File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    let first_len = size_bytes.min(VIDEO_SIMILARITY_PROBE_BYTES as u64) as usize;
+    let mut first = vec![0u8; first_len];
+    let read_first = file.read(&mut first).ok()?;
+    bytes.extend_from_slice(&first[..read_first]);
+    if size_bytes > VIDEO_SIMILARITY_PROBE_BYTES as u64 * 2 {
+        file.seek(SeekFrom::Start(
+            size_bytes.saturating_sub(VIDEO_SIMILARITY_PROBE_BYTES as u64),
+        ))
+        .ok()?;
+        let mut last = vec![0u8; VIDEO_SIMILARITY_PROBE_BYTES];
+        let read_last = file.read(&mut last).ok()?;
+        bytes.extend_from_slice(&last[..read_last]);
+    }
+    if bytes.is_empty() { None } else { Some(bytes) }
+}
+
+fn mp4_duration_millis(bytes: &[u8]) -> Option<u64> {
+    for type_offset in box_type_offsets(bytes, b"mvhd") {
+        let payload = type_offset + 4;
+        let version = *bytes.get(payload)?;
+        let (timescale_offset, duration_offset) = if version == 1 {
+            (payload + 20, payload + 24)
+        } else {
+            (payload + 12, payload + 16)
+        };
+        let timescale = u64::from(read_be_u32(bytes, timescale_offset)?);
+        if timescale == 0 {
+            continue;
+        }
+        let duration = if version == 1 {
+            read_be_u64(bytes, duration_offset)?
+        } else {
+            u64::from(read_be_u32(bytes, duration_offset)?)
+        };
+        return Some(duration.saturating_mul(1_000) / timescale);
+    }
+    None
+}
+
+fn mp4_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    let mut best = None::<(u32, u32)>;
+    for type_offset in box_type_offsets(bytes, b"tkhd") {
+        let box_start = type_offset.checked_sub(4)?;
+        let box_size = read_be_u32(bytes, box_start)? as usize;
+        if box_size < 92 {
+            continue;
+        }
+        let box_end = box_start.saturating_add(box_size);
+        if box_end > bytes.len() {
+            continue;
+        }
+        let width = read_be_u32(bytes, box_end - 8)? >> 16;
+        let height = read_be_u32(bytes, box_end - 4)? >> 16;
+        if width == 0 || height == 0 {
+            continue;
+        }
+        if best.is_none_or(|(best_width, best_height)| {
+            width.saturating_mul(height) > best_width.saturating_mul(best_height)
+        }) {
+            best = Some((width, height));
+        }
+    }
+    best
+}
+
+fn mp4_codec(bytes: &[u8]) -> Option<[u8; 4]> {
+    for type_offset in box_type_offsets(bytes, b"stsd") {
+        let box_start = type_offset.checked_sub(4)?;
+        let box_size = read_be_u32(bytes, box_start)? as usize;
+        let box_end = box_start.saturating_add(box_size).min(bytes.len());
+        let mut entry_offset = type_offset + 12;
+        while entry_offset + 8 <= box_end {
+            let entry_size = read_be_u32(bytes, entry_offset)? as usize;
+            if entry_size < 8 || entry_offset + 8 > bytes.len() {
+                break;
+            }
+            let codec = bytes.get(entry_offset + 4..entry_offset + 8)?;
+            if codec.iter().all(u8::is_ascii_alphanumeric) {
+                return Some([codec[0], codec[1], codec[2], codec[3]]);
+            }
+            entry_offset = entry_offset.saturating_add(entry_size);
+        }
+    }
+    None
+}
+
+fn mp4_mdat_sample_hash(bytes: &[u8]) -> Option<u64> {
+    for type_offset in box_type_offsets(bytes, b"mdat") {
+        let box_start = type_offset.checked_sub(4)?;
+        let box_size = read_be_u32(bytes, box_start)? as usize;
+        if box_size < 16 {
+            continue;
+        }
+        let data_start = type_offset + 4;
+        let data_end = box_start.saturating_add(box_size).min(bytes.len());
+        if data_end <= data_start {
+            continue;
+        }
+        let data = &bytes[data_start..data_end];
+        let mut hash = 0xcbf29ce484222325u64;
+        hash_video_sample_region(&mut hash, data, 0);
+        if data.len() > VIDEO_SIMILARITY_SAMPLE_BYTES * 2 {
+            hash_video_sample_region(&mut hash, data, data.len() / 2);
+        }
+        if data.len() > VIDEO_SIMILARITY_SAMPLE_BYTES {
+            hash_video_sample_region(
+                &mut hash,
+                data,
+                data.len().saturating_sub(VIDEO_SIMILARITY_SAMPLE_BYTES),
+            );
+        }
+        return Some(hash);
+    }
+    None
+}
+
+fn hash_video_sample_region(hash: &mut u64, data: &[u8], offset: usize) {
+    let start = offset.min(data.len());
+    let end = start
+        .saturating_add(VIDEO_SIMILARITY_SAMPLE_BYTES)
+        .min(data.len());
+    fnv64_update(hash, &(start as u64).to_le_bytes());
+    fnv64_update(hash, &((end - start) as u64).to_le_bytes());
+    fnv64_update(hash, &data[start..end]);
+}
+
+fn box_type_offsets<'a>(
+    bytes: &'a [u8],
+    box_type: &'a [u8; 4],
+) -> impl Iterator<Item = usize> + 'a {
+    bytes
+        .windows(4)
+        .enumerate()
+        .filter_map(move |(offset, window)| (window == box_type).then_some(offset))
+        .filter(|offset| *offset >= 4)
+}
+
+fn video_size_ratio_compatible(left: u64, right: u64) -> bool {
+    let smaller = left.min(right);
+    let larger = left.max(right);
+    larger == 0
+        || smaller.saturating_mul(100)
+            >= larger.saturating_mul(100 - VIDEO_SIMILARITY_SIZE_RATIO_PERCENT)
+}
+
 fn text_hash_hamming_distance(left: u64, right: u64) -> u32 {
     (left ^ right).count_ones()
 }
@@ -2649,6 +2931,18 @@ fn read_le_u16(bytes: &[u8], offset: usize) -> Option<u16> {
 fn read_le_u32(bytes: &[u8], offset: usize) -> Option<u32> {
     let slice = bytes.get(offset..offset + 4)?;
     Some(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
+}
+
+fn read_be_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let slice = bytes.get(offset..offset + 4)?;
+    Some(u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]))
+}
+
+fn read_be_u64(bytes: &[u8], offset: usize) -> Option<u64> {
+    let slice = bytes.get(offset..offset + 8)?;
+    Some(u64::from_be_bytes([
+        slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
+    ]))
 }
 
 fn normalized_text_tokens(text: &str) -> Vec<String> {

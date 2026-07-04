@@ -481,6 +481,7 @@ pub(super) fn storage_role_for_kind(kind: &str) -> &'static str {
         "image-file" => "image-file",
         "text-file" => "text-file",
         "document-file" => "document-file",
+        "video-file" => "video-file",
         "large-file" => "large-file",
         _ => "artifact",
     }
@@ -1227,6 +1228,18 @@ pub(super) fn classify_artifact(
             "",
             "Document retained for extracted-text similarity review.",
             "Review near-identical PDF or Office documents side by side; Aetower extracts text for comparison and does not classify document similarity as safe cleanup.",
+        ));
+    }
+    if metadata.is_file()
+        && metadata.len() >= MIN_ITEM_BYTES
+        && is_similarity_video_path(Path::new(name))
+    {
+        return Some(rule(
+            "video-file",
+            "review",
+            "",
+            "Video retained for cheap similarity review.",
+            "Review near-identical videos side by side; Aetower compares container metadata and sampled media bytes without decoding the whole file.",
         ));
     }
     if metadata.is_file()
