@@ -265,14 +265,14 @@ public struct StorageView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .confirmationDialog(
-            "Empty the Trash?",
+            "Delete Aetower-tracked Trash items?",
             isPresented: $confirmEmptyTrash,
             titleVisibility: .visible
         ) {
-            Button("Empty Trash", role: .destructive) { emptyTrash() }
+            Button("Delete Aetower-tracked items", role: .destructive) { emptyTrash() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently deletes everything in the Trash — including items that did not come from Aetower. This cannot be undone.")
+            Text("This permanently deletes only items Aetower moved to the Trash in this session. Unrelated Finder Trash contents are left alone.")
         }
         .overlay(alignment: .bottom) {
             // Floating stack: transient undo toast above the persistent
@@ -3377,7 +3377,7 @@ public struct StorageView: View {
                                     Button("Open Trash") { openTrash() }
                                         .buttonStyle(.bordered)
                                         .controlSize(.small)
-                                    Button("Empty Trash…") { confirmEmptyTrash = true }
+                                    Button("Empty Trash…") { requestEmptyTrashConfirmation() }
                                         .buttonStyle(.borderedProminent)
                                         .controlSize(.small)
                                         .disabled(emptyTrashInFlight)
@@ -3424,6 +3424,16 @@ public struct StorageView: View {
         }
         .padding(AetowerDesign.Spacing.xl)
         .frame(width: 760, height: 620, alignment: .topLeading)
+        .confirmationDialog(
+            "Delete Aetower-tracked Trash items?",
+            isPresented: $confirmEmptyTrash,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Aetower-tracked items", role: .destructive) { emptyTrash() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes only items Aetower moved to the Trash in this session. Unrelated Finder Trash contents are left alone.")
+        }
     }
 
     private func cleanupRecipesSection(_ report: StorageHygieneReportModel) -> some View {
@@ -6856,7 +6866,7 @@ public struct StorageView: View {
                 // non-empty basket keeps Move to Trash as the primary action.
                 if cleanupBasket.isEmpty {
                     Button {
-                        confirmEmptyTrash = true
+                        requestEmptyTrashConfirmation()
                     } label: {
                         Label(emptyTrashInFlight ? "Emptying…" : "Empty Trash", systemImage: "trash.slash")
                     }
@@ -6864,7 +6874,7 @@ public struct StorageView: View {
                     .disabled(emptyTrashInFlight)
                 } else {
                     Button {
-                        confirmEmptyTrash = true
+                        requestEmptyTrashConfirmation()
                     } label: {
                         Label(emptyTrashInFlight ? "Emptying…" : "Empty Trash", systemImage: "trash.slash")
                     }
@@ -7025,6 +7035,21 @@ public struct StorageView: View {
         } else {
             NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory() + "/.Trash"))
         }
+    }
+
+    private func requestEmptyTrashConfirmation() {
+        guard !trashedItemURLsByOriginalPath.isEmpty else {
+            emptyTrash()
+            return
+        }
+        appendCleanupAudit(
+            action: "empty-trash-confirmation-requested",
+            path: "Aetower tracked Trash",
+            detail: "User requested permanent deletion of \(trashedItemURLsByOriginalPath.count) Aetower-tracked Trash item(s).",
+            bytes: trashPendingBytes,
+            succeeded: true
+        )
+        confirmEmptyTrash = true
     }
 
     /// Permanently delete only the Trash items Aetower moved in this session.
