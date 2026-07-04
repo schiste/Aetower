@@ -32,16 +32,22 @@ enum TrashService {
         var succeeded: Bool { trashURL != nil }
     }
 
+    struct MovedItem: Sendable {
+        let originalPath: String
+        let trashURL: URL
+    }
+
     /// Per-path outcome of a batch move. Batch results are per-path so one
     /// root-owned or locked entry never reports the others as failed.
     struct BatchOutcome: Sendable {
-        let movedPaths: [String]
+        let movedItems: [MovedItem]
         let failedPaths: [String: String]
 
+        var movedPaths: [String] { movedItems.map(\.originalPath) }
         var succeeded: Bool { failedPaths.isEmpty }
-        var partiallySucceeded: Bool { !movedPaths.isEmpty && !failedPaths.isEmpty }
+        var partiallySucceeded: Bool { !movedItems.isEmpty && !failedPaths.isEmpty }
         var summaryLine: String {
-            "Moved \(movedPaths.count) item\(movedPaths.count == 1 ? "" : "s") to Trash; "
+            "Moved \(movedItems.count) item\(movedItems.count == 1 ? "" : "s") to Trash; "
                 + "\(failedPaths.count) issue\(failedPaths.count == 1 ? "" : "s")."
         }
     }
@@ -66,19 +72,19 @@ enum TrashService {
     }
 
     static func trash(paths: [String], activeWriterProbe: ActiveWriterProbe? = nil) -> BatchOutcome {
-        var movedPaths: [String] = []
+        var movedItems: [MovedItem] = []
         var failedPaths: [String: String] = [:]
         for path in paths {
             let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
             let outcome = trash(trimmed, activeWriterProbe: activeWriterProbe)
-            if outcome.succeeded {
-                movedPaths.append(trimmed)
+            if let trashURL = outcome.trashURL {
+                movedItems.append(MovedItem(originalPath: trimmed, trashURL: trashURL))
             } else {
                 failedPaths[trimmed] = outcome.message
             }
         }
-        return BatchOutcome(movedPaths: movedPaths, failedPaths: failedPaths)
+        return BatchOutcome(movedItems: movedItems, failedPaths: failedPaths)
     }
 
     private static func activeWriterBlocker(
@@ -116,6 +122,7 @@ enum TrashService {
     /// blocks the rest.
     struct EmptyOutcome: Sendable {
         let removed: Int
+        let missing: Int
         let failed: Int
         let firstError: String?
     }
@@ -128,12 +135,27 @@ enum TrashService {
             includingPropertiesForKeys: nil,
             options: []
         ) else {
-            return EmptyOutcome(removed: 0, failed: 0, firstError: nil)
+            return EmptyOutcome(
+                removed: 0,
+                missing: 0,
+                failed: 1,
+                firstError: "Home Trash is not readable."
+            )
         }
+        return emptyTrashItems(entries)
+    }
+
+    static func emptyTrashItems(_ urls: [URL]) -> EmptyOutcome {
+        let fm = FileManager.default
         var removed = 0
+        var missing = 0
         var failed = 0
         var firstError: String?
-        for entry in entries {
+        for entry in urls {
+            guard fm.fileExists(atPath: entry.path) else {
+                missing += 1
+                continue
+            }
             do {
                 try fm.removeItem(at: entry)
                 removed += 1
@@ -142,6 +164,6 @@ enum TrashService {
                 if firstError == nil { firstError = error.localizedDescription }
             }
         }
-        return EmptyOutcome(removed: removed, failed: failed, firstError: firstError)
+        return EmptyOutcome(removed: removed, missing: missing, failed: failed, firstError: firstError)
     }
 }

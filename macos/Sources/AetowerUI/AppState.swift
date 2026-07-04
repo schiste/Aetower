@@ -430,6 +430,7 @@ public final class AppState {
     private(set) var storageHygieneReport: StorageHygieneReportModel?
     private(set) var previousStorageHygieneReport: StorageHygieneReportModel?
     private(set) var persistedStorageHygieneBaseline: StorageHygieneBaselineModel? = StorageHygieneBaselineStore.load()
+    private(set) var storageCleanupMovedPaths: Set<String> = []
     private(set) var storageScanJob: StorageScanJobResponseModel?
     private(set) var storageHygieneIsLoading = false {
         didSet {
@@ -2588,6 +2589,35 @@ public final class AppState {
         }
     }
 
+    func storagePathWasMovedToTrash(_ path: String) -> Bool {
+        storageCleanupMovedPaths.contains(Self.normalizedStorageCleanupPath(path))
+    }
+
+    func markStoragePathsMovedToTrash(_ paths: [String], refresh: Bool = true) {
+        let normalizedPaths = Set(paths.map(Self.normalizedStorageCleanupPath).filter { !$0.isEmpty })
+        guard !normalizedPaths.isEmpty else { return }
+        storageCleanupMovedPaths.formUnion(normalizedPaths)
+        StorageHygieneReportCacheStore.invalidate()
+        repositorySummaryInputsGeneration += 1
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "storage-cleanup-paths-reconciled",
+            message: "Hid \(normalizedPaths.count) moved storage path(s) pending the next scan refresh.",
+            fields: [
+                DiagnosticsField(key: "moved_path_count", value: String(normalizedPaths.count)),
+            ]
+        )
+        guard refresh, !storageHygieneIsLoading else { return }
+        runStorageHygieneScan(roots: storageHygieneReport?.roots ?? [], mode: "fast_changed_only")
+    }
+
+    private static func normalizedStorageCleanupPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return URL(fileURLWithPath: trimmed).standardizedFileURL.path
+    }
+
     private func storageScheduledScanSleepNanos() -> UInt64 {
         guard storageScheduledScansEnabled else {
             return 900_000_000_000
@@ -2672,6 +2702,7 @@ public final class AppState {
                     reclaimedBytes: reclaimed,
                     firstError: outcome.failedPaths.values.first
                 )
+                self.markStoragePathsMovedToTrash(outcome.movedPaths)
                 self.recordLocalDiagnosticsEvent(
                     level: outcome.succeeded ? .info : .warn,
                     subsystem: .ui,
@@ -2705,6 +2736,43 @@ public final class AppState {
 
     func clearRepositoryCleanupResult(repoRoot: String) {
         repositoryCleanupResultByRoot[repoRoot] = nil
+    }
+
+    func recordStorageCleanupDiagnostics(
+        action: String,
+        path: String,
+        detail: String,
+        bytes: UInt64,
+        cleanupTier: String?,
+        safety: String?,
+        blockerCount: Int,
+        succeeded: Bool?,
+        auditPersisted: Bool
+    ) {
+        var fields = [
+            DiagnosticsField(key: "action", value: action),
+            DiagnosticsField(key: "path", value: path),
+            DiagnosticsField(key: "bytes", value: String(bytes)),
+            DiagnosticsField(key: "blocker_count", value: String(blockerCount)),
+            DiagnosticsField(key: "audit_persisted", value: auditPersisted ? "true" : "false"),
+        ]
+        if let cleanupTier {
+            fields.append(DiagnosticsField(key: "cleanup_tier", value: cleanupTier))
+        }
+        if let safety {
+            fields.append(DiagnosticsField(key: "safety", value: safety))
+        }
+        if let succeeded {
+            fields.append(DiagnosticsField(key: "succeeded", value: succeeded ? "true" : "false"))
+        }
+        recordLocalDiagnosticsEvent(
+            level: succeeded == false || !auditPersisted ? .warn : .info,
+            subsystem: .ui,
+            eventType: "storage-cleanup-\(action)",
+            message: detail,
+            fields: fields,
+            sensitive: true
+        )
     }
 
     func cleanupActiveWriterProbe() -> TrashService.ActiveWriterProbe {
@@ -3574,6 +3642,9 @@ public final class AppState {
             let storagePublishStartedAt = CFAbsoluteTimeGetCurrent()
             previousStorageHygieneReport = storageHygieneReport
             storageHygieneReport = report
+            if report.scanMode != "instant_cached" {
+                storageCleanupMovedPaths.removeAll()
+            }
             repositorySummaryInputsGeneration += 1
             persistedStorageHygieneBaseline = prepared.baseline
             storageRootChangeMonitor.startWatching(roots: report.roots)

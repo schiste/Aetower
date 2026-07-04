@@ -111,6 +111,7 @@ private struct StorageCleanupExecutionResult: Sendable {
     /// Batch outcomes are per-path: one root-owned folder failing must not
     /// report the other 41 successful moves as failures.
     let movedPaths: [String]
+    let movedTrashURLs: [String: URL]
     let failedPaths: [String: String]
 
     var succeeded: Bool { exitCode == 0 }
@@ -133,10 +134,10 @@ private struct StorageCleanupAuditEvent: Codable, Identifiable, Sendable {
 private enum StorageCleanupAuditLog {
     private static let fileName = "storage-cleanup-audit.ndjson"
 
-    static func append(_ event: StorageCleanupAuditEvent) {
+    static func append(_ event: StorageCleanupAuditEvent) -> Bool {
         guard let url = auditURL(createDirectory: true),
             let data = try? JSONEncoder().encode(event)
-        else { return }
+        else { return false }
         var line = data
         line.append(0x0A)
         if FileManager.default.fileExists(atPath: url.path),
@@ -146,11 +147,18 @@ private enum StorageCleanupAuditLog {
                 try handle.seekToEnd()
                 try handle.write(contentsOf: line)
                 try handle.close()
+                return true
             } catch {
                 try? handle.close()
+                return false
             }
         } else {
-            try? line.write(to: url, options: [.atomic])
+            do {
+                try line.write(to: url, options: [.atomic])
+                return true
+            } catch {
+                return false
+            }
         }
     }
 
@@ -162,6 +170,7 @@ private enum StorageCleanupAuditLog {
         return text
             .split(separator: "\n")
             .suffix(limit)
+            .reversed()
             .compactMap { line in
                 try? decoder.decode(StorageCleanupAuditEvent.self, from: Data(line.utf8))
             }
@@ -206,6 +215,8 @@ public struct StorageView: View {
     @State private var showCleanupBasket = false
     @State private var directTrashUndo: StorageDirectTrashUndo?
     @State private var directTrashUndoDismissTask: Task<Void, Never>?
+    @State private var directTrashInFlightPaths: Set<String> = []
+    @State private var trashedItemURLsByOriginalPath: [String: URL] = [:]
     /// Bytes this session has moved into Finder Trash but not yet freed —
     /// reclaim is a two-step operation (Trash, then empty) and the second
     /// step must stay visible until it happens.
@@ -793,9 +804,16 @@ public struct StorageView: View {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 if action.hasStageableItems {
                     Button {
-                        stageStorageHomeAction(action)
+                        if storageHomeActionCanMoveToTrash(action) {
+                            stageStorageHomeAction(action, presentExecution: true)
+                        } else {
+                            stageStorageHomeAction(action)
+                        }
                     } label: {
-                        Label("Stage cleanup", systemImage: "tray.and.arrow.down")
+                        Label(
+                            storageHomeActionCanMoveToTrash(action) ? "Move to Trash" : "Stage cleanup",
+                            systemImage: storageHomeActionCanMoveToTrash(action) ? "trash" : "tray.and.arrow.down"
+                        )
                     }
                     .buttonStyle(.borderedProminent)
                 } else {
@@ -940,12 +958,18 @@ public struct StorageView: View {
     /// undo toast); anything needing review stages silently into the batch bar.
     @ViewBuilder
     private func storageItemPrimaryAction(_ item: StorageHygieneItemModel) -> some View {
+        let directTrashInFlight = directTrashInFlightPaths.contains(item.path)
         if storageItemIsTrashActionable(item) && item.safety == "safe" {
             Button {
                 trashItemDirectly(item)
             } label: {
-                Label("Trash", systemImage: "trash")
+                if directTrashInFlight {
+                    Label("Moving", systemImage: "hourglass")
+                } else {
+                    Label("Trash", systemImage: "trash")
+                }
             }
+            .disabled(directTrashInFlight)
             .help("Move to Finder Trash now (undoable)")
         } else {
             Button {
@@ -963,9 +987,11 @@ public struct StorageView: View {
     }
 
     private func storageItemActionMenu(_ item: StorageHygieneItemModel) -> some View {
-        Menu {
+        let directTrashInFlight = directTrashInFlightPaths.contains(item.path)
+        return Menu {
             if storageItemIsTrashActionable(item) && item.safety == "safe" {
                 Button("Move to Trash now") { trashItemDirectly(item) }
+                    .disabled(directTrashInFlight)
             }
             Button("Stage cleanup") { _ = stageCleanupItem(item) }
                 .disabled(!storageItemIsTrashActionable(item))
@@ -1266,7 +1292,7 @@ public struct StorageView: View {
     }
 
     private func storageHomeActions(from report: StorageHygieneReportModel) -> [StorageHomeAction] {
-        let allItems = report.items.sorted { left, right in
+        let allItems = visibleStorageItems(from: report).sorted { left, right in
             left.sizeBytes == right.sizeBytes ? left.path < right.path : left.sizeBytes > right.sizeBytes
         }
         let stageable = allItems.filter(storageItemIsTrashActionable)
@@ -1519,10 +1545,11 @@ public struct StorageView: View {
     }
 
     private func wholeComputerOptimizationSection(_ report: StorageHygieneReportModel) -> some View {
-        let largeFiles = report.items
+        let items = visibleStorageItems(from: report)
+        let largeFiles = items
             .filter { $0.kind == "large-file" || $0.kind == "release-artifact" }
             .sorted(by: storageItemSizeSort)
-        let oldUnused = report.items
+        let oldUnused = items
             .filter(isOldUnusedStorageItem)
             .sorted(by: storageItemSizeSort)
         let systemBytes = report.systemDataBuckets.reduce(UInt64(0)) { total, bucket in
@@ -4809,7 +4836,7 @@ public struct StorageView: View {
 
                     Spacer()
 
-                    Text("\(visibleItems.count) visible of \(report.items.count)")
+                    Text("\(visibleItems.count) visible of \(visibleStorageItems(from: report).count)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -4830,9 +4857,10 @@ public struct StorageView: View {
             }
             .padding(.top, AetowerDesign.Spacing.sm)
         } label: {
+            let visibleCandidateCount = visibleStorageItems(from: report).count
             advancedSectionLabel(
                 title: "Raw artifacts",
-                detail: "\(visibleItems.count) visible of \(report.items.count) candidate\(report.items.count == 1 ? "" : "s")",
+                detail: "\(visibleItems.count) visible of \(visibleCandidateCount) candidate\(visibleCandidateCount == 1 ? "" : "s")",
                 systemImage: "list.bullet.rectangle"
             )
         }
@@ -5645,12 +5673,16 @@ public struct StorageView: View {
 
     private func filteredItems(from report: StorageHygieneReportModel) -> [StorageHygieneItemModel] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return report.items.filter { item in
+        return visibleStorageItems(from: report).filter { item in
             selectedFilter.matches(item)
                 && artifactScope.matches(item)
                 && (query.isEmpty || storageItemMatchesSearch(item, query: query))
         }
         .sorted(by: artifactSort.areInIncreasingOrder)
+    }
+
+    private func visibleStorageItems(from report: StorageHygieneReportModel) -> [StorageHygieneItemModel] {
+        report.items.filter { !state.storagePathWasMovedToTrash($0.path) }
     }
 
     /// Shared text-search predicate for hygiene items. `query` must already be
@@ -5757,7 +5789,7 @@ public struct StorageView: View {
                     tone: tone(forCleanupTier: growthEvent.cleanupTier)
                 )
             )
-        } else if let item = report.items.max(by: { $0.sizeBytes < $1.sizeBytes }) {
+        } else if let item = visibleStorageItems(from: report).max(by: { $0.sizeBytes < $1.sizeBytes }) {
             offenders.append(
                 StorageTopOffender(
                     id: "folder",
@@ -5842,7 +5874,7 @@ public struct StorageView: View {
             return []
         }
         let minimumDeltaBytes: Int64 = 8 * 1_024 * 1_024
-        return report.items.compactMap { item in
+        return visibleStorageItems(from: report).compactMap { item in
             let previousBytes = previousItemsByID[item.id] ?? 0
             let delta = Int64(clamping: item.sizeBytes) - Int64(clamping: previousBytes)
             guard delta >= minimumDeltaBytes else {
@@ -6506,16 +6538,25 @@ public struct StorageView: View {
         }
     }
 
-    private func stageStorageHomeAction(_ action: StorageHomeAction) {
+    private func stageStorageHomeAction(_ action: StorageHomeAction, presentExecution: Bool = false) {
         var staged = 0
         for item in uniqueStorageItems(action.stageItems).prefix(80) {
             if stageCleanupItem(item, showBasket: false) {
                 staged += 1
             }
         }
-        if staged == 0 {
+        if presentExecution, !cleanupBasket.isEmpty {
+            presentCleanupExecution(basketTrashExecutionRequest())
+        } else if staged == 0 {
             copy(storageHomeActionPlan(action))
         }
+    }
+
+    private func storageHomeActionCanMoveToTrash(_ action: StorageHomeAction) -> Bool {
+        !action.stageItems.isEmpty
+            && action.stageItems.allSatisfy { item in
+                storageItemIsTrashActionable(item) && item.safety == "safe"
+            }
     }
 
     private func stagePreventionSuggestion(
@@ -6523,20 +6564,21 @@ public struct StorageView: View {
         report: StorageHygieneReportModel
     ) {
         let candidates: [StorageHygieneItemModel]
+        let visibleItems = visibleStorageItems(from: report)
         switch suggestion.trigger {
         case "safe-reclaim":
-            candidates = report.items.filter {
+            candidates = visibleItems.filter {
                 $0.cleanupTier == "safe" && storageItemIsTrashActionable($0)
             }
         case "post-build":
             let repoRoot = suggestion.id.replacingOccurrences(of: "post-build-cleanup|", with: "")
-            candidates = report.items.filter {
+            candidates = visibleItems.filter {
                 $0.cleanupTier == "rebuildable"
                     && $0.attribution.repoRoot == repoRoot
                     && storageItemIsTrashActionable($0)
             }
         case "artifact-budget":
-            candidates = report.items.filter {
+            candidates = visibleItems.filter {
                 ($0.cleanupTier == "safe" || $0.cleanupTier == "rebuildable")
                     && storageItemIsTrashActionable($0)
             }
@@ -6760,7 +6802,7 @@ public struct StorageView: View {
                 Button("Review") { showCleanupBasket = true }
                     .buttonStyle(.bordered)
                 Button {
-                    pendingCleanupExecutionRequest = basketTrashExecutionRequest()
+                    presentCleanupExecution(basketTrashExecutionRequest())
                 } label: {
                     Label("Move to Trash", systemImage: "trash")
                 }
@@ -6841,6 +6883,8 @@ public struct StorageView: View {
             return
         }
         let path = item.path
+        guard !directTrashInFlightPaths.contains(path) else { return }
+        directTrashInFlightPaths.insert(path)
         let title = item.displayName
         let bytes = item.sizeBytes
         let tier = item.cleanupTier
@@ -6849,6 +6893,7 @@ public struct StorageView: View {
         Task.detached(priority: .utility) {
             let outcome = Self.trashSingleItem(path, activeWriterProbe: activeWriterProbe)
             await MainActor.run {
+                directTrashInFlightPaths.remove(path)
                 appendCleanupAudit(
                     action: outcome.trashURL != nil ? "trash" : "failed-trash",
                     path: path,
@@ -6862,6 +6907,8 @@ public struct StorageView: View {
                 if outcome.trashURL != nil {
                     let (sum, overflow) = trashPendingBytes.addingReportingOverflow(bytes)
                     trashPendingBytes = overflow ? UInt64.max : sum
+                    trashedItemURLsByOriginalPath[path] = outcome.trashURL
+                    state.markStoragePathsMovedToTrash([path])
                 }
                 presentDirectTrashUndo(
                     StorageDirectTrashUndo(
@@ -6933,6 +6980,7 @@ public struct StorageView: View {
                     trashPendingBytes = trashPendingBytes >= undo.bytes
                         ? trashPendingBytes - undo.bytes
                         : 0
+                    trashedItemURLsByOriginalPath.removeValue(forKey: destination)
                 }
                 dismissDirectTrashUndo()
             }
@@ -6940,46 +6988,85 @@ public struct StorageView: View {
     }
 
     private func openTrash() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory() + "/.Trash"))
+        if let trashURL = trashedItemURLsByOriginalPath.values.first {
+            NSWorkspace.shared.open(trashURL.deletingLastPathComponent())
+        } else {
+            NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory() + "/.Trash"))
+        }
     }
 
-    /// Finder performs the empty (one-time Automation consent prompt). The
-    /// in-app confirmation dialog runs first — this is the only permanent
-    /// deletion in the app.
-    /// Empty the home Trash by deleting its entries directly. Finder's
-    /// AppleScript `empty trash` is all-or-nothing (one locked/root-owned
-    /// item aborts the whole thing with an opaque "operation can't be
-    /// completed") and triggers a one-time Automation consent prompt — a
-    /// wasted click and a fragile dependency. Per-entry FileManager removal
-    /// needs no Apple Events and skips only what it genuinely cannot delete.
+    /// Permanently delete only the Trash items Aetower moved in this session.
+    /// This avoids Finder's all-or-nothing "empty trash", avoids deleting the
+    /// user's unrelated Trash contents, and works for per-volume Trash URLs.
     private func emptyTrash() {
+        let trashURLsByOriginalPath = trashedItemURLsByOriginalPath
+        guard !trashURLsByOriginalPath.isEmpty else {
+            appendCleanupAudit(
+                action: "failed-empty-trash",
+                path: "Aetower tracked Trash",
+                detail: "No Aetower-tracked Trash URLs are available to empty.",
+                bytes: trashPendingBytes,
+                succeeded: false
+            )
+            trashPendingBytes = 0
+            return
+        }
         emptyTrashInFlight = true
         let pending = trashPendingBytes
+        let trashURLs = Array(trashURLsByOriginalPath.values)
         Task.detached(priority: .userInitiated) {
-            let outcome = Self.emptyHomeTrash()
+            let outcome = Self.emptyTrackedTrashItems(trashURLs)
             await MainActor.run {
                 emptyTrashInFlight = false
                 let succeeded = outcome.failed == 0
                 appendCleanupAudit(
                     action: succeeded ? "empty-trash" : "failed-empty-trash",
-                    path: "~/.Trash",
-                    detail: outcome.removed == 0 && outcome.failed == 0
-                        ? "Trash was already empty."
-                        : "Deleted \(outcome.removed) item\(outcome.removed == 1 ? "" : "s") from the Trash"
-                            + (outcome.failed > 0 ? "; \(outcome.failed) could not be removed (\(outcome.firstError ?? "in use or protected"))." : "."),
+                    path: "Aetower tracked Trash",
+                    detail: emptyTrashDetail(outcome),
                     bytes: pending,
                     succeeded: succeeded
                 )
-                // Everything deletable is gone; clear the pending counter even
-                // on partial success so the bar reflects reality.
-                trashPendingBytes = 0
+                if outcome.failed == 0 {
+                    trashPendingBytes = 0
+                    trashedItemURLsByOriginalPath.removeAll()
+                } else if outcome.removed > 0 || outcome.missing > 0 {
+                    reconcileTrackedTrashAfterPartialEmpty()
+                }
             }
         }
     }
 
-    nonisolated private static func emptyHomeTrash() -> (removed: Int, failed: Int, firstError: String?) {
-        let outcome = TrashService.emptyHomeTrash()
-        return (outcome.removed, outcome.failed, outcome.firstError)
+    nonisolated private static func emptyTrackedTrashItems(
+        _ urls: [URL]
+    ) -> (removed: Int, missing: Int, failed: Int, firstError: String?) {
+        let outcome = TrashService.emptyTrashItems(urls)
+        return (outcome.removed, outcome.missing, outcome.failed, outcome.firstError)
+    }
+
+    private func emptyTrashDetail(
+        _ outcome: (removed: Int, missing: Int, failed: Int, firstError: String?)
+    ) -> String {
+        if outcome.removed == 0, outcome.missing == 0, outcome.failed == 0 {
+            return "No Aetower-tracked Trash items were present."
+        }
+        var parts = [
+            "Deleted \(outcome.removed) Aetower-tracked item\(outcome.removed == 1 ? "" : "s") from Trash",
+        ]
+        if outcome.missing > 0 {
+            parts.append("\(outcome.missing) already missing")
+        }
+        if outcome.failed > 0 {
+            parts.append("\(outcome.failed) failed (\(outcome.firstError ?? "in use or protected"))")
+        }
+        return parts.joined(separator: "; ") + "."
+    }
+
+    private func reconcileTrackedTrashAfterPartialEmpty() {
+        let remaining = trashedItemURLsByOriginalPath.filter { FileManager.default.fileExists(atPath: $0.value.path) }
+        trashedItemURLsByOriginalPath = remaining
+        if remaining.isEmpty {
+            trashPendingBytes = 0
+        }
     }
 
     private func uniquePaths(_ paths: [String]) -> [String] {
@@ -7060,6 +7147,10 @@ public struct StorageView: View {
         // them staged for a doomed re-run) because 1 of 42 was root-owned.
         let moved = Set(result.movedPaths)
         cleanupBasket.removeAll { moved.contains($0.path) }
+        state.markStoragePathsMovedToTrash(result.movedPaths)
+        for (path, trashURL) in result.movedTrashURLs {
+            trashedItemURLsByOriginalPath[path] = trashURL
+        }
         trashPendingBytes = result.movedPaths.reduce(trashPendingBytes) { acc, path in
             let (sum, overflow) = acc.addingReportingOverflow(bytesByPath[path] ?? fallbackBytes)
             return overflow ? UInt64.max : sum
@@ -7105,7 +7196,18 @@ public struct StorageView: View {
             blockers: blockers.isEmpty ? nil : blockers,
             succeeded: succeeded
         )
-        StorageCleanupAuditLog.append(event)
+        let auditPersisted = StorageCleanupAuditLog.append(event)
+        state.recordStorageCleanupDiagnostics(
+            action: action,
+            path: path,
+            detail: detail,
+            bytes: bytes,
+            cleanupTier: cleanupTier,
+            safety: safety,
+            blockerCount: blockers.count,
+            succeeded: succeeded,
+            auditPersisted: auditPersisted
+        )
         cleanupAuditEvents = StorageCleanupAuditLog.loadRecent()
     }
 
@@ -7117,11 +7219,15 @@ public struct StorageView: View {
         let outcome = TrashService.trash(paths: paths, activeWriterProbe: activeWriterProbe)
         let lines = outcome.movedPaths.map { "Moved: \($0) -> Trash" }
             + outcome.failedPaths.map { "Failed: \($0.key) - \($0.value)" }
+        let movedTrashURLs = Dictionary(
+            uniqueKeysWithValues: outcome.movedItems.map { ($0.originalPath, $0.trashURL) }
+        )
         return StorageCleanupExecutionResult(
             exitCode: outcome.succeeded ? 0 : 1,
             output: ([outcome.summaryLine] + lines).joined(separator: "\n"),
             durationSeconds: Date().timeIntervalSince(started),
             movedPaths: outcome.movedPaths,
+            movedTrashURLs: movedTrashURLs,
             failedPaths: outcome.failedPaths
         )
     }
