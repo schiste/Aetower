@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import SwiftUI
@@ -1074,6 +1075,7 @@ public struct SettingsView: View {
     @ViewBuilder
     private var aiClientsSection: some View {
         @Bindable var settings = settings
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
         SettingsCard(
             title: "Local AI client MCP access",
             subtitle: "Aetower can register its bundled MCP proxy for supported local agents.",
@@ -1154,6 +1156,8 @@ public struct SettingsView: View {
                     }
                 }
             }
+        }
+            CommandLineToolCard()
         }
     }
 
@@ -2357,6 +2361,98 @@ private struct SettingsChecklistRow: View {
                     .buttonStyle(.bordered)
             }
         }
+    }
+}
+
+/// The "Install Command Line Tool" card: symlinks the bundled `aetower` CLI
+/// onto `$PATH` so it can be run from any shell. Self-contained state so it can
+/// drop into the AI-clients section without threading through AppState.
+private struct CommandLineToolCard: View {
+    @State private var state: CommandLineToolInstaller.State = .notInstalled
+    @State private var message: String?
+    @State private var recoveryCommand: String?
+    @State private var isError = false
+
+    var body: some View {
+        SettingsCard(
+            title: "Command line tool",
+            subtitle: "Run Aetower from any shell: aetower top, storage, repos, or aetower --json … | jq. Requires Aetower to be running."
+        ) {
+            HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                Text(CommandLineToolInstaller.linkPath)
+                    .font(AetowerDesign.Typography.caption.monospaced())
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .textSelection(.enabled)
+                SettingsBadge(statusLabel, color: statusColor)
+                Spacer()
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button(state == .installed ? "Reinstall" : "Install Command Line Tool") {
+                    run(CommandLineToolInstaller.install)
+                }
+                .buttonStyle(.borderedProminent)
+
+                if state == .installed {
+                    Button("Uninstall") {
+                        run(CommandLineToolInstaller.uninstall)
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                if let recoveryCommand {
+                    Button("Copy sudo command") {
+                        copyToPasteboard(recoveryCommand)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            if let message {
+                Text(message)
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(isError ? AetowerDesign.Status.warning : AetowerDesign.Ink.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .onAppear { state = CommandLineToolInstaller.currentState() }
+    }
+
+    private var statusLabel: String {
+        switch state {
+        case .installed: return "Installed"
+        case .notInstalled: return "Not installed"
+        case .conflict: return "Conflict"
+        case .unavailable: return "Unavailable"
+        }
+    }
+
+    private var statusColor: Color {
+        switch state {
+        case .installed: return AetowerDesign.Status.neutral
+        case .notInstalled: return AetowerDesign.Ink.secondary
+        case .conflict, .unavailable: return AetowerDesign.Status.warning
+        }
+    }
+
+    private func run(_ action: () throws -> String) {
+        recoveryCommand = nil
+        do {
+            message = try action()
+            isError = false
+        } catch {
+            isError = true
+            message = error.localizedDescription
+            if let installError = error as? CommandLineToolInstaller.InstallError {
+                recoveryCommand = installError.recoveryCommand
+            }
+        }
+        state = CommandLineToolInstaller.currentState()
+    }
+
+    private func copyToPasteboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
     }
 }
 
