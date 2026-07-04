@@ -2,6 +2,35 @@
 
 All notable public changes to Aetower should be documented here.
 
+## 0.74 (build 723) - 2026-07-04
+
+Developer Preview feature release.
+
+Release metadata:
+
+- Bundle identifier: `com.aeptus.aetower`
+- Sparkle appcast: `https://aetower.dev/releases/appcast.xml`
+- Release archive prefix: `https://aetower.dev/releases/`
+
+Command line tool:
+
+- Added `aetower`, an operator CLI that reads live data from a running
+  Aetower over its local MCP socket: `aetower top`, `host`, `storage`,
+  `repos`, `alerts`, `findings`, and `doctor`, a generic `aetower call`
+  reaching every tool, `--json` on any command for pipelines, `--watch`,
+  scriptable exit codes, shell completions, and a man page.
+- The CLI ships inside the app bundle, so it arrives through every install
+  channel. The signed installer package symlinks it onto your `PATH`
+  automatically; disk-image, ZIP, and Homebrew installs can add it from
+  Settings → AI Clients ("Install Command Line Tool") or with
+  `aetower install`.
+
+Distribution:
+
+- The signed, notarized installer package (`.pkg`) and disk image (`.dmg`)
+  are built and published again as part of every release, so the direct
+  downloads track the current version instead of an older build.
+
 ## 0.73 (build 718) - 2026-07-03
 
 Developer Preview feature release.
