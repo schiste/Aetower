@@ -1806,15 +1806,25 @@ fn repository_path_fingerprint(path: &Path, label: &str) -> String {
     } else {
         "other"
     };
+    let content_fingerprint = if metadata.is_file() && metadata.len() <= 1024 * 1024 {
+        repository_small_file_hash(path)
+            .map(|hash| format!("content:{hash:016x}"))
+            .unwrap_or_else(|| "content:unreadable".to_owned())
+    } else if metadata.is_file() {
+        "content:skipped-large".to_owned()
+    } else {
+        "content:not-file".to_owned()
+    };
     format!(
-        "{}:{}:{}:{}:{}:{}:{}",
+        "{}:{}:{}:{}:{}:{}:{}:{}",
         label,
         kind,
         metadata.dev(),
         metadata.ino(),
         metadata.len(),
         modified_millis,
-        changed_millis
+        changed_millis,
+        content_fingerprint
     )
 }
 
@@ -1823,6 +1833,25 @@ pub(super) fn repository_git_file_fingerprint(repo_root: &Path, file_name: &str)
         return format!("{file_name}:missing-git-dir");
     };
     repository_path_fingerprint(&git_dir.join(file_name), file_name)
+}
+
+fn repository_small_file_hash(path: &Path) -> Option<u64> {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut file = fs::File::open(path).ok()?;
+    let mut hash = FNV_OFFSET;
+    let mut buffer = [0u8; 8192];
+    loop {
+        let read = file.read(&mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        for byte in &buffer[..read] {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+    }
+    Some(hash)
 }
 
 fn short_hash(value: &str) -> String {

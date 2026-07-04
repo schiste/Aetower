@@ -559,6 +559,7 @@ struct IndexReportSections {
 struct IndexReportSectionsMemo {
     dirty_stamp: u64,
     generation: (u64, u64),
+    repository_fingerprint_key: Vec<(String, String)>,
     roots_key: Vec<String>,
     sections: IndexReportSections,
 }
@@ -580,6 +581,20 @@ static INDEX_REPORT_SECTIONS_DIRTY: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn invalidate_index_report_sections_memo() {
     INDEX_REPORT_SECTIONS_DIRTY.fetch_add(1, AtomicOrdering::Release);
+}
+
+fn repository_fingerprint_memo_key(
+    storage_index: &StorageSizeIndex,
+    requested_roots: &[PathBuf],
+) -> Vec<(String, String)> {
+    storage_index
+        .load_repository_inventory_cache(requested_roots)
+        .into_keys()
+        .map(|repo_root| {
+            let fingerprint = repository_inventory_fingerprint(Path::new(&repo_root));
+            (repo_root, fingerprint)
+        })
+        .collect()
 }
 
 fn compute_index_report_sections(
@@ -641,12 +656,15 @@ fn index_report_sections(
         .iter()
         .map(|root| root.display().to_string())
         .collect::<Vec<_>>();
+    let repository_fingerprint_key =
+        repository_fingerprint_memo_key(storage_index, requested_roots);
     let mut memo = lock_or_recover(&INDEX_REPORT_SECTIONS_MEMO);
     let dirty_stamp = INDEX_REPORT_SECTIONS_DIRTY.load(AtomicOrdering::Acquire);
     if let Some(entry) = memo.as_ref()
         && entry.dirty_stamp == dirty_stamp
         && generation.is_some_and(|generation| generation == entry.generation)
         && entry.roots_key == roots_key
+        && entry.repository_fingerprint_key == repository_fingerprint_key
     {
         metrics.discovered_repository_count = entry.sections.discovered_repository_count;
         return (entry.sections.clone(), true);
@@ -665,6 +683,7 @@ fn index_report_sections(
         *memo = Some(IndexReportSectionsMemo {
             dirty_stamp,
             generation,
+            repository_fingerprint_key,
             roots_key,
             sections: sections.clone(),
         });
