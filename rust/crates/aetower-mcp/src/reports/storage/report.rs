@@ -426,6 +426,12 @@ pub(super) fn build_storage_hygiene_report_with_options(
     let growth_deltas = storage_index.load_growth_deltas(40);
     apply_growth_deltas_to_repo_footprints(&mut repo_footprints, &growth_deltas);
     apply_clone_groups_to_repo_footprints(&mut repo_footprints, &repository_inventory);
+    let redundancy_groups = summarize_redundancy_groups(
+        &items,
+        &duplicate_groups,
+        &repo_footprints,
+        &repository_inventory,
+    );
     let agent_hygiene = summarize_agent_hygiene(&items);
     let source_coverage =
         summarize_source_coverage(&requested_roots, &scanned_roots, &skipped_roots, &items);
@@ -483,6 +489,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
         repository_inventory_coverage: repository_inventory_scan.coverage,
         repo_footprints,
         duplicate_groups,
+        redundancy_groups,
         app_footprints,
         system_data_buckets,
         treemap_roots,
@@ -753,6 +760,12 @@ pub(super) fn build_storage_hygiene_report_from_index(
     let growth_deltas = storage_index.load_growth_deltas(40);
     apply_growth_deltas_to_repo_footprints(&mut repo_footprints, &growth_deltas);
     apply_clone_groups_to_repo_footprints(&mut repo_footprints, &repository_inventory);
+    let redundancy_groups = summarize_redundancy_groups(
+        &items,
+        &duplicate_groups,
+        &repo_footprints,
+        &repository_inventory,
+    );
     let agent_hygiene = summarize_agent_hygiene(&items);
     let source_coverage =
         summarize_source_coverage(&requested_roots, &scanned_roots, &skipped_roots, &items);
@@ -811,6 +824,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         repository_inventory_coverage,
         repo_footprints,
         duplicate_groups,
+        redundancy_groups,
         app_footprints,
         system_data_buckets,
         treemap_roots,
@@ -1553,6 +1567,400 @@ fn duplicate_group_from_items(
             )
         },
     }
+}
+
+fn summarize_redundancy_groups(
+    items: &[StorageHygieneItem],
+    duplicate_groups: &[StorageDuplicateGroup],
+    repo_footprints: &[StorageRepoFootprint],
+    repository_inventory: &[StorageRepositoryInventoryItem],
+) -> Vec<StorageRedundancyGroup> {
+    let mut groups = duplicate_groups
+        .iter()
+        .map(redundancy_group_from_duplicate_group)
+        .collect::<Vec<_>>();
+
+    append_shared_block_redundancy(&mut groups, items);
+    append_package_store_redundancy(&mut groups, items);
+    append_generated_output_redundancy(&mut groups, items);
+    append_git_clone_redundancy(&mut groups, repo_footprints, repository_inventory);
+
+    groups.sort_by(|left, right| {
+        right
+            .reclaimable_bytes
+            .cmp(&left.reclaimable_bytes)
+            .then_with(|| right.total_bytes.cmp(&left.total_bytes))
+            .then_with(|| right.confidence_score.cmp(&left.confidence_score))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    groups.truncate(REDUNDANCY_GROUP_LIMIT);
+    groups
+}
+
+fn redundancy_group_from_duplicate_group(group: &StorageDuplicateGroup) -> StorageRedundancyGroup {
+    StorageRedundancyGroup {
+        id: format!("byte-duplicates|{}", group.id),
+        redundancy_class: "byte-duplicates".to_owned(),
+        title: if group.confirmed {
+            "Byte-identical duplicate files".to_owned()
+        } else {
+            "Potential duplicate files".to_owned()
+        },
+        total_bytes: group.total_bytes,
+        reclaimable_bytes: group.reclaimable_bytes,
+        item_count: group.file_count,
+        confidence_score: group.confidence_score,
+        safety: group_safety_from_duplicate_items(&group.paths),
+        recommendation: group.recommendation.clone(),
+        caveat: group.caveat.clone(),
+        evidence: vec![format!("Duplicate candidate key: {}", group.candidate_key)],
+        items: group
+            .paths
+            .iter()
+            .map(|item| StorageRedundancyItem {
+                path: item.path.clone(),
+                display_name: item.display_name.clone(),
+                kind: "duplicate-file".to_owned(),
+                size_bytes: item.size_bytes,
+                logical_bytes: item.size_bytes,
+                physical_bytes: item.size_bytes,
+                cleanup_tier: item.cleanup_tier.clone(),
+                safety: item.safety.clone(),
+                role: "duplicate-candidate".to_owned(),
+            })
+            .collect(),
+    }
+}
+
+fn append_shared_block_redundancy(
+    groups: &mut Vec<StorageRedundancyGroup>,
+    items: &[StorageHygieneItem],
+) {
+    let candidates = items
+        .iter()
+        .filter(|item| {
+            item.sparse_or_shared
+                && !item.cloud_placeholder
+                && item.logical_bytes > item.physical_bytes
+        })
+        .collect::<Vec<_>>();
+    if candidates.len() < 2 {
+        return;
+    }
+
+    let logical_bytes = sum_logical_bytes(&candidates);
+    let physical_bytes = sum_physical_bytes(&candidates);
+    groups.push(StorageRedundancyGroup {
+        id: "shared-block-candidates|apfs".to_owned(),
+        redundancy_class: "shared-block-candidates".to_owned(),
+        title: "APFS clone/sparse shared-block candidates".to_owned(),
+        total_bytes: logical_bytes,
+        reclaimable_bytes: physical_bytes,
+        item_count: candidates.len(),
+        confidence_score: 56,
+        safety: group_safety_from_items(&candidates),
+        recommendation: "Treat these as shared-block candidates: inspect physical bytes before cleanup and do not assume logical size equals reclaimable space.".to_owned(),
+        caveat: "Aetower can see logical bytes exceed allocated blocks, but exact APFS clone lineage still requires a deeper filesystem ownership collector.".to_owned(),
+        evidence: vec![
+            format!("Logical size: {}", human_bytes(logical_bytes)),
+            format!("Allocated local bytes: {}", human_bytes(physical_bytes)),
+            "Physical bytes below logical bytes can mean APFS clones, compression, sparse files, or partial materialization.".to_owned(),
+        ],
+        items: candidates
+            .into_iter()
+            .take(8)
+            .map(|item| redundancy_item_from_storage_item(item, "shared-block-candidate"))
+            .collect(),
+    });
+}
+
+fn append_package_store_redundancy(
+    groups: &mut Vec<StorageRedundancyGroup>,
+    items: &[StorageHygieneItem],
+) {
+    let mut by_kind = BTreeMap::<String, Vec<&StorageHygieneItem>>::new();
+    for item in items {
+        if package_store_label(&item.kind).is_some() {
+            by_kind.entry(item.kind.clone()).or_default().push(item);
+        }
+    }
+
+    for (kind, mut candidates) in by_kind {
+        if candidates.len() < 2 {
+            continue;
+        }
+        candidates.sort_by(|left, right| {
+            right
+                .size_bytes
+                .cmp(&left.size_bytes)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        let total_bytes = sum_size_bytes(&candidates);
+        let label = package_store_label(&kind).unwrap_or("Package store");
+        groups.push(StorageRedundancyGroup {
+            id: format!("package-store-overlap|{kind}"),
+            redundancy_class: "package-store-overlap".to_owned(),
+            title: format!("{label} exists in multiple locations"),
+            total_bytes,
+            reclaimable_bytes: total_bytes,
+            item_count: candidates.len(),
+            confidence_score: 62,
+            safety: group_safety_from_items(&candidates),
+            recommendation: "Review whether these package stores are all needed. Prefer tool-native cache cleanup and keep lockfiles before removing expensive stores.".to_owned(),
+            caveat: "Multiple stores are not proof of duplicate package objects; this flags redundant package-manager storage surfaces for consolidation or targeted cleanup.".to_owned(),
+            evidence: vec![
+                format!("{} package-store paths found.", candidates.len()),
+                format!("Store kind: {kind}"),
+            ],
+            items: candidates
+                .into_iter()
+                .take(8)
+                .map(|item| redundancy_item_from_storage_item(item, "package-store"))
+                .collect(),
+        });
+    }
+}
+
+fn append_generated_output_redundancy(
+    groups: &mut Vec<StorageRedundancyGroup>,
+    items: &[StorageHygieneItem],
+) {
+    let mut by_kind = BTreeMap::<String, Vec<&StorageHygieneItem>>::new();
+    for item in items {
+        if generated_output_label(&item.kind).is_some() {
+            by_kind.entry(item.kind.clone()).or_default().push(item);
+        }
+    }
+
+    for (kind, mut candidates) in by_kind {
+        if candidates.len() < 2 {
+            continue;
+        }
+        candidates.sort_by(|left, right| {
+            right
+                .size_bytes
+                .cmp(&left.size_bytes)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        let total_bytes = sum_size_bytes(&candidates);
+        let label = generated_output_label(&kind).unwrap_or("Generated output");
+        groups.push(StorageRedundancyGroup {
+            id: format!("generated-output-equivalence|{kind}"),
+            redundancy_class: "generated-output-equivalence".to_owned(),
+            title: format!("Equivalent {label} outputs"),
+            total_bytes,
+            reclaimable_bytes: total_bytes,
+            item_count: candidates.len(),
+            confidence_score: generated_output_confidence(&kind),
+            safety: group_safety_from_items(&candidates),
+            recommendation: "These outputs are equivalent by tool/class rather than byte-identical. Clean with the owning tool once builds, tests, and agents are idle.".to_owned(),
+            caveat: "Equivalent generated outputs may come from different repos, branches, or tool versions; Aetower does not treat them as interchangeable source data.".to_owned(),
+            evidence: vec![
+                format!("{} generated-output paths found.", candidates.len()),
+                format!("Generated output kind: {kind}"),
+            ],
+            items: candidates
+                .into_iter()
+                .take(8)
+                .map(|item| redundancy_item_from_storage_item(item, "generated-output"))
+                .collect(),
+        });
+    }
+}
+
+fn append_git_clone_redundancy(
+    groups: &mut Vec<StorageRedundancyGroup>,
+    repo_footprints: &[StorageRepoFootprint],
+    repository_inventory: &[StorageRepositoryInventoryItem],
+) {
+    let footprint_by_root = repo_footprints
+        .iter()
+        .map(|footprint| (footprint.repo_root.as_str(), footprint))
+        .collect::<BTreeMap<_, _>>();
+    let mut by_remote = BTreeMap::<String, Vec<&StorageRepositoryInventoryItem>>::new();
+    for repository in repository_inventory {
+        if let Some(remote_key) = repository.git_remote_key.as_deref() {
+            by_remote
+                .entry(remote_key.to_owned())
+                .or_default()
+                .push(repository);
+        }
+    }
+
+    for (remote_key, mut repositories) in by_remote {
+        if repositories.len() < 2 {
+            continue;
+        }
+        repositories.sort_by(|left, right| left.repo_root.cmp(&right.repo_root));
+        let total_bytes = repositories.iter().fold(0u64, |total, repository| {
+            total.saturating_add(
+                footprint_by_root
+                    .get(repository.repo_root.as_str())
+                    .map(|footprint| footprint.current_size_bytes)
+                    .unwrap_or(0),
+            )
+        });
+        let keep_bytes = repositories
+            .iter()
+            .filter_map(|repository| footprint_by_root.get(repository.repo_root.as_str()))
+            .map(|footprint| footprint.current_size_bytes)
+            .max()
+            .unwrap_or(0);
+        let dirty_count = repositories
+            .iter()
+            .filter(|repository| {
+                !matches!(
+                    repository.git_dirty_status.as_str(),
+                    "clean" | "not_checked_lazy"
+                )
+            })
+            .count();
+        groups.push(StorageRedundancyGroup {
+            id: format!("git-remote-clones|{remote_key}"),
+            redundancy_class: "git-remote-clones".to_owned(),
+            title: "Multiple checkouts of the same Git remote".to_owned(),
+            total_bytes,
+            reclaimable_bytes: total_bytes.saturating_sub(keep_bytes),
+            item_count: repositories.len(),
+            confidence_score: if dirty_count == 0 { 84 } else { 68 },
+            safety: if dirty_count == 0 { "review" } else { "risky" }.to_owned(),
+            recommendation: "Pick a canonical checkout, compare branch/HEAD/dirty state, then archive or Trash stale duplicate clones only after review.".to_owned(),
+            caveat: "Same remote does not mean the working trees are equivalent; branches, unpushed commits, ignored files, and local artifacts can differ.".to_owned(),
+            evidence: vec![
+                format!("Remote key: {remote_key}"),
+                format!("{} checkout roots found.", repositories.len()),
+                format!("{dirty_count} checkout(s) have dirty status that needs review."),
+            ],
+            items: repositories
+                .into_iter()
+                .take(8)
+                .map(|repository| {
+                    let footprint = footprint_by_root.get(repository.repo_root.as_str());
+                    let size_bytes = footprint
+                        .map(|footprint| footprint.current_size_bytes)
+                        .unwrap_or(0);
+                    StorageRedundancyItem {
+                        path: repository.repo_root.clone(),
+                        display_name: repository.repo_name.clone(),
+                        kind: "git-clone".to_owned(),
+                        size_bytes,
+                        logical_bytes: size_bytes,
+                        physical_bytes: size_bytes,
+                        cleanup_tier: "review".to_owned(),
+                        safety: if matches!(
+                            repository.git_dirty_status.as_str(),
+                            "clean" | "not_checked_lazy"
+                        ) {
+                            "review"
+                        } else {
+                            "risky"
+                        }
+                        .to_owned(),
+                        role: "remote-clone".to_owned(),
+                    }
+                })
+                .collect(),
+        });
+    }
+}
+
+fn package_store_label(kind: &str) -> Option<&'static str> {
+    match kind {
+        "npm-cache" => Some("npm cache"),
+        "pnpm-store" => Some("pnpm store"),
+        "yarn-cache" => Some("Yarn cache"),
+        "pip-cache" => Some("pip cache"),
+        "uv-cache" => Some("uv cache"),
+        "homebrew-cache" => Some("Homebrew cache"),
+        "gradle-cache" => Some("Gradle cache"),
+        "maven-repository" => Some("Maven repository"),
+        "go-build-cache" => Some("Go build cache"),
+        "xcode-source-packages" => Some("Xcode SourcePackages cache"),
+        _ => None,
+    }
+}
+
+fn generated_output_label(kind: &str) -> Option<&'static str> {
+    match kind {
+        "rust-build" => Some("Cargo target"),
+        "swift-build" => Some("SwiftPM .build"),
+        "xcode-derived-data" => Some("Xcode DerivedData"),
+        "xcode-module-cache" => Some("Xcode module cache"),
+        "next-build" => Some("Next.js build"),
+        "next-cache" => Some("Next.js cache"),
+        "frontend-cache" => Some("frontend cache"),
+        "python-cache" => Some("Python cache"),
+        "coverage-output" => Some("coverage"),
+        "test-output" => Some("test output"),
+        "temporary-output" => Some("temporary output"),
+        "build-output" => Some("generic build output"),
+        _ => None,
+    }
+}
+
+fn generated_output_confidence(kind: &str) -> u8 {
+    match kind {
+        "build-output" | "temporary-output" => 58,
+        "coverage-output" | "test-output" => 86,
+        _ => 74,
+    }
+}
+
+fn redundancy_item_from_storage_item(
+    item: &StorageHygieneItem,
+    role: &str,
+) -> StorageRedundancyItem {
+    StorageRedundancyItem {
+        path: item.path.clone(),
+        display_name: item.display_name.clone(),
+        kind: item.kind.clone(),
+        size_bytes: item.size_bytes,
+        logical_bytes: item.logical_bytes,
+        physical_bytes: item.physical_bytes,
+        cleanup_tier: item.cleanup_tier.clone(),
+        safety: item.safety.clone(),
+        role: role.to_owned(),
+    }
+}
+
+fn group_safety_from_items(items: &[&StorageHygieneItem]) -> String {
+    if items.iter().any(|item| item.cleanup_tier == "risky") {
+        "risky"
+    } else if items.iter().any(|item| item.safety != "safe") {
+        "review"
+    } else {
+        "safe"
+    }
+    .to_owned()
+}
+
+fn group_safety_from_duplicate_items(items: &[StorageDuplicateItem]) -> String {
+    if items.iter().any(|item| item.cleanup_tier == "risky") {
+        "risky"
+    } else if items.iter().any(|item| item.safety != "safe") {
+        "review"
+    } else {
+        "safe"
+    }
+    .to_owned()
+}
+
+fn sum_size_bytes(items: &[&StorageHygieneItem]) -> u64 {
+    items
+        .iter()
+        .fold(0u64, |total, item| total.saturating_add(item.size_bytes))
+}
+
+fn sum_logical_bytes(items: &[&StorageHygieneItem]) -> u64 {
+    items
+        .iter()
+        .fold(0u64, |total, item| total.saturating_add(item.logical_bytes))
+}
+
+fn sum_physical_bytes(items: &[&StorageHygieneItem]) -> u64 {
+    items.iter().fold(0u64, |total, item| {
+        total.saturating_add(item.physical_bytes)
+    })
 }
 
 fn file_content_hash(path: &Path) -> Option<String> {

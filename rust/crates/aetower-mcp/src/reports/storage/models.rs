@@ -21,6 +21,7 @@ pub(crate) struct StorageHygieneReport {
     pub(super) repository_inventory_coverage: Vec<RepositoryInventoryRootCoverage>,
     pub(super) repo_footprints: Vec<StorageRepoFootprint>,
     pub(super) duplicate_groups: Vec<StorageDuplicateGroup>,
+    pub(super) redundancy_groups: Vec<StorageRedundancyGroup>,
     pub(super) app_footprints: Vec<StorageAppFootprint>,
     pub(super) system_data_buckets: Vec<StorageSystemDataBucket>,
     pub(super) treemap_roots: Vec<StorageTreemapNode>,
@@ -700,6 +701,35 @@ pub(super) struct StorageDuplicateItem {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageRedundancyGroup {
+    pub(super) id: String,
+    pub(super) redundancy_class: String,
+    pub(super) title: String,
+    pub(super) total_bytes: u64,
+    pub(super) reclaimable_bytes: u64,
+    pub(super) item_count: usize,
+    pub(super) confidence_score: u8,
+    pub(super) safety: String,
+    pub(super) recommendation: String,
+    pub(super) caveat: String,
+    pub(super) evidence: Vec<String>,
+    pub(super) items: Vec<StorageRedundancyItem>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageRedundancyItem {
+    pub(super) path: String,
+    pub(super) display_name: String,
+    pub(super) kind: String,
+    pub(super) size_bytes: u64,
+    pub(super) logical_bytes: u64,
+    pub(super) physical_bytes: u64,
+    pub(super) cleanup_tier: String,
+    pub(super) safety: String,
+    pub(super) role: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(super) struct StorageAppFootprint {
     pub(super) id: String,
     pub(super) app_name: String,
@@ -938,6 +968,7 @@ pub(super) struct StorageHygieneOverviewResponse {
     pub(super) repository_inventory_coverage: Vec<RepositoryInventoryRootCoverage>,
     pub(super) repo_footprints: Vec<StorageRepoFootprint>,
     pub(super) duplicate_groups: Vec<StorageDuplicateGroup>,
+    pub(super) redundancy_groups: Vec<StorageRedundancyGroup>,
     pub(super) app_footprints: Vec<StorageAppFootprint>,
     pub(super) system_data_buckets: Vec<StorageSystemDataBucket>,
     pub(super) treemap_roots: Vec<StorageTreemapNode>,

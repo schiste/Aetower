@@ -34,6 +34,7 @@ const LARGE_DIRECTORY_MAX_PER_ROOT: usize = 15;
 const COLD_AFTER_DAYS: u64 = 365;
 const DUPLICATE_FULL_HASH_MAX_BYTES: u64 = 256 * 1024 * 1024;
 const DUPLICATE_GROUP_LIMIT: usize = 8;
+const REDUNDANCY_GROUP_LIMIT: usize = 12;
 const APP_FOOTPRINT_LIMIT: usize = 10;
 const SCAN_TIME_BUDGET: Duration = Duration::from_millis(6_500);
 const GIT_STATUS_TIME_BUDGET: Duration = Duration::from_millis(650);
@@ -336,10 +337,11 @@ use models::{
     StorageHygieneOverviewResponse, StorageHygieneRepoDetailResponse, StorageHygieneSummary,
     StorageInvestigationFinding, StorageInvestigationSummary, StorageItemSortKey,
     StoragePerformanceBudgetDiagnostics, StoragePreventionPolicy, StoragePreventionSuggestion,
-    StorageRepoArtifactFolder, StorageRepoArtifactMix, StorageRepoFootprint,
-    StorageRepositoryInventoryItem, StorageScanDiagnostics, StorageScanDiff, StorageScanDiffEntry,
-    StorageScanMetrics, StorageSkippedRoot, StorageSourceCoverage, StorageSystemDataBucket,
-    StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
+    StorageRedundancyGroup, StorageRedundancyItem, StorageRepoArtifactFolder,
+    StorageRepoArtifactMix, StorageRepoFootprint, StorageRepositoryInventoryItem,
+    StorageScanDiagnostics, StorageScanDiff, StorageScanDiffEntry, StorageScanMetrics,
+    StorageSkippedRoot, StorageSourceCoverage, StorageSystemDataBucket, StorageTreemapNode,
+    StorageVolumeState, StorageWriterLedgerRecord,
 };
 pub use projection::{
     storage_growth_insights_json, storage_hygiene_actions_json, storage_hygiene_items_page_json,

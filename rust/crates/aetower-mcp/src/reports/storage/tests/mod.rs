@@ -1531,6 +1531,78 @@ fn storage_repo_footprint_surfaces_duplicate_clone_groups() {
 }
 
 #[test]
+fn storage_hygiene_reports_redundancy_beyond_byte_duplicates() {
+    let root = test_root("redundancy-beyond-duplicates");
+    let rust_a = root.join("RepoA").join("target").join("debug");
+    let rust_b = root.join("RepoB").join("target").join("debug");
+    let npm_a = root.join("CacheA").join(".npm").join("_cacache");
+    let npm_b = root.join("CacheB").join(".npm").join("_cacache");
+    let downloads = root.join("Downloads");
+    for directory in [&rust_a, &rust_b, &npm_a, &npm_b, &downloads] {
+        if let Err(error) = fs::create_dir_all(directory) {
+            panic!("create redundancy fixture directory: {error}");
+        }
+    }
+    for path in [
+        rust_a.join("artifact"),
+        rust_b.join("artifact"),
+        npm_a.join("blob"),
+        npm_b.join("blob"),
+    ] {
+        if let Err(error) = fs::write(path, vec![7u8; (MIN_ITEM_BYTES + 256) as usize]) {
+            panic!("write redundancy fixture artifact: {error}");
+        }
+    }
+
+    let sparse_a = downloads.join("clone-candidate-a.bin");
+    let sparse_b = downloads.join("clone-candidate-b.bin");
+    for (path, marker) in [(&sparse_a, 1u8), (&sparse_b, 2u8)] {
+        let mut file = fs::File::create(path).unwrap_or_else(|error| {
+            panic!(
+                "create sparse redundancy fixture file {}: {error}",
+                path.display()
+            )
+        });
+        if let Err(error) = file.write_all(&[marker]) {
+            panic!("write sparse redundancy fixture marker: {error}");
+        }
+        if let Err(error) = file.set_len(LARGE_FILE_BYTES + MIN_ITEM_BYTES) {
+            panic!("size sparse redundancy fixture file: {error}");
+        }
+    }
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 6, 120);
+    let value = parse_json_value(&json, "redundancy JSON parses");
+    let groups = value["redundancy_groups"]
+        .as_array()
+        .unwrap_or_else(|| panic!("redundancy groups serialize as an array"));
+    let classes = groups
+        .iter()
+        .filter_map(|group| group["redundancy_class"].as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert!(classes.contains("generated-output-equivalence"));
+    assert!(classes.contains("package-store-overlap"));
+    assert!(classes.contains("shared-block-candidates"));
+
+    let shared = groups
+        .iter()
+        .find(|group| group["redundancy_class"] == "shared-block-candidates")
+        .unwrap_or_else(|| panic!("shared-block redundancy group is present"));
+    assert!(
+        shared["total_bytes"].as_u64().unwrap_or_default()
+            > shared["reclaimable_bytes"].as_u64().unwrap_or_default()
+    );
+    assert!(
+        shared["caveat"]
+            .as_str()
+            .is_some_and(|caveat| caveat.contains("exact APFS clone lineage"))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn repository_inventory_indexes_git_repositories_without_artifacts() {
     let root = test_root("indexes-clean-repositories");
     let repo_a = root.join("CleanOne");

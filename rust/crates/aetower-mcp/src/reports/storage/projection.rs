@@ -25,6 +25,7 @@ pub fn storage_hygiene_overview_json(
         repository_inventory_coverage: report.repository_inventory_coverage,
         repo_footprints: report.repo_footprints.into_iter().take(8).collect(),
         duplicate_groups: report.duplicate_groups.into_iter().take(6).collect(),
+        redundancy_groups: report.redundancy_groups.into_iter().take(8).collect(),
         app_footprints: report.app_footprints.into_iter().take(6).collect(),
         system_data_buckets: report.system_data_buckets,
         treemap_roots: report.treemap_roots,
