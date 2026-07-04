@@ -3816,9 +3816,8 @@ public struct StorageView: View {
                 AetowerMetricTile(
                     "Disk-full forecast",
                     value: forecast.map { "~\(Int($0.daysToFull.rounded())) days" } ?? "Pending",
-                    detail: forecast.map {
-                        "\($0.volumePath) at \(storageSignedBytes($0.dailyRateBytes))/day · \($0.confidence) confidence"
-                    } ?? "needs 3+ days of growth history and a positive rate",
+                    detail: forecast.map(storageForecastDetail(_:))
+                        ?? "needs 3+ days of growth history and a positive rate",
                     systemImage: "externaldrive.badge.exclamationmark",
                     tone: forecast.map { $0.daysToFull < 30 ? AetowerDesign.Status.warning : AetowerDesign.Tone.disk }
                         ?? AetowerDesign.Status.neutral
@@ -3933,6 +3932,22 @@ public struct StorageView: View {
         case "shrinking": return AetowerDesign.Status.ready
         default: return AetowerDesign.Tone.disk
         }
+    }
+
+    private func storageForecastDetail(_ forecast: StorageGrowthForecastModel) -> String {
+        var parts = [
+            "\(forecast.volumePath) \(Int(forecast.daysToFullLowerBound.rounded()))-\(Int(forecast.daysToFullUpperBound.rounded()))d",
+            "\(storageSignedBytes(forecast.dailyRateBytes))/day",
+            forecast.seasonalPattern,
+            forecast.confidence,
+        ]
+        if forecast.cloudGrowthSharePercent > 0 {
+            parts.append("cloud \(forecast.cloudGrowthSharePercent)%")
+        }
+        if forecast.purgeableBytesEstimate > 0 {
+            parts.append("purgeable \(formatBytes(forecast.purgeableBytesEstimate))")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func coldDataLaneSection(_ coldData: StorageColdDataModel) -> some View {

@@ -113,7 +113,13 @@ final class StorageHygieneModelsTests: XCTestCase {
               "window_days": 30,
               "total_delta_bytes": 83886080,
               "daily_rate_bytes": 20971520,
+              "daily_rate_lower_bytes": 10485760,
+              "daily_rate_upper_bytes": 31457280,
               "trend": "accelerating",
+              "confidence": "medium",
+              "volatility_percent": 40,
+              "seasonal_pattern": "variable",
+              "seasonal_peak_daily_bytes": 41943040,
               "day_bucket_count": 4
             }
           ],
@@ -131,9 +137,27 @@ final class StorageHygieneModelsTests: XCTestCase {
             {
               "volume_path": "/",
               "free_now_bytes": 367001600,
+              "available_bytes": 471859200,
+              "purgeable_bytes_estimate": 104857600,
+              "important_usage_available_bytes": 419430400,
+              "opportunistic_usage_available_bytes": 524288000,
+              "effective_available_bytes": 419430400,
               "daily_rate_bytes": 36700160,
+              "daily_rate_lower_bytes": 26214400,
+              "daily_rate_upper_bytes": 47185920,
               "days_to_full": 10.0,
-              "confidence": "low"
+              "days_to_full_lower_bound": 7.8,
+              "days_to_full_upper_bound": 14.0,
+              "days_to_effective_full": 11.4,
+              "days_to_available_full": 12.9,
+              "purgeable_cushion_days": 2.8,
+              "cloud_daily_rate_bytes": 10485760,
+              "cloud_growth_share_percent": 29,
+              "volatility_percent": 55,
+              "seasonal_pattern": "weekly-peak",
+              "seasonal_peak_daily_bytes": 83886080,
+              "confidence": "medium",
+              "forecast_notes": ["Cloud-backed paths account for 29% of observed local growth."]
             }
           ],
           "since_last_scan": {
@@ -182,11 +206,32 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertEqual(insights.perRepoRates.count, 1)
         XCTAssertEqual(insights.perRepoRates.first?.repoName, "Aetower")
         XCTAssertEqual(insights.perRepoRates.first?.dailyRateBytes, 20_971_520)
+        XCTAssertEqual(insights.perRepoRates.first?.dailyRateLowerBytes, 10_485_760)
+        XCTAssertEqual(insights.perRepoRates.first?.dailyRateUpperBytes, 31_457_280)
         XCTAssertEqual(insights.perRepoRates.first?.trend, "accelerating")
+        XCTAssertEqual(insights.perRepoRates.first?.confidence, "medium")
+        XCTAssertEqual(insights.perRepoRates.first?.seasonalPattern, "variable")
+        XCTAssertEqual(insights.perRepoRates.first?.volatilityPercent, 40)
         XCTAssertEqual(insights.perRootRates.first?.trend, "shrinking")
         XCTAssertEqual(insights.perRootRates.first?.totalDeltaBytes, -1_024)
         XCTAssertEqual(insights.volumeForecasts.first?.volumePath, "/")
         XCTAssertEqual(insights.volumeForecasts.first?.daysToFull ?? 0, 10.0, accuracy: 0.001)
+        XCTAssertEqual(insights.volumeForecasts.first?.availableBytes, 471_859_200)
+        XCTAssertEqual(insights.volumeForecasts.first?.purgeableBytesEstimate, 104_857_600)
+        XCTAssertEqual(insights.volumeForecasts.first?.importantUsageAvailableBytes, 419_430_400)
+        XCTAssertEqual(insights.volumeForecasts.first?.opportunisticUsageAvailableBytes, 524_288_000)
+        XCTAssertEqual(insights.volumeForecasts.first?.effectiveAvailableBytes, 419_430_400)
+        XCTAssertEqual(insights.volumeForecasts.first?.dailyRateLowerBytes, 26_214_400)
+        XCTAssertEqual(insights.volumeForecasts.first?.dailyRateUpperBytes, 47_185_920)
+        XCTAssertEqual(insights.volumeForecasts.first?.daysToFullLowerBound ?? 0, 7.8, accuracy: 0.001)
+        XCTAssertEqual(insights.volumeForecasts.first?.daysToFullUpperBound ?? 0, 14.0, accuracy: 0.001)
+        XCTAssertEqual(insights.volumeForecasts.first?.daysToEffectiveFull ?? 0, 11.4, accuracy: 0.001)
+        XCTAssertEqual(insights.volumeForecasts.first?.daysToAvailableFull ?? 0, 12.9, accuracy: 0.001)
+        XCTAssertEqual(insights.volumeForecasts.first?.purgeableCushionDays ?? 0, 2.8, accuracy: 0.001)
+        XCTAssertEqual(insights.volumeForecasts.first?.cloudDailyRateBytes, 10_485_760)
+        XCTAssertEqual(insights.volumeForecasts.first?.cloudGrowthSharePercent, 29)
+        XCTAssertEqual(insights.volumeForecasts.first?.seasonalPattern, "weekly-peak")
+        XCTAssertEqual(insights.volumeForecasts.first?.forecastNotes.count, 1)
         let diff = try XCTUnwrap(insights.sinceLastScan)
         XCTAssertEqual(diff.appearedCount, 1)
         XCTAssertEqual(diff.appeared.first?.displayName, "f3.bin")

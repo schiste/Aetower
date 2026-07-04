@@ -1596,7 +1596,13 @@ struct StorageGrowthRateModel: Decodable, Identifiable, Sendable {
     let windowDays: UInt64
     let totalDeltaBytes: Int64
     let dailyRateBytes: Int64
+    let dailyRateLowerBytes: Int64
+    let dailyRateUpperBytes: Int64
     let trend: String
+    let confidence: String
+    let volatilityPercent: UInt64
+    let seasonalPattern: String
+    let seasonalPeakDailyBytes: Int64
     let dayBucketCount: UInt64
 
     var id: String { "\(scopeKind)|\(scope)" }
@@ -1608,7 +1614,13 @@ struct StorageGrowthRateModel: Decodable, Identifiable, Sendable {
         case windowDays
         case totalDeltaBytes
         case dailyRateBytes
+        case dailyRateLowerBytes
+        case dailyRateUpperBytes
         case trend
+        case confidence
+        case volatilityPercent
+        case seasonalPattern
+        case seasonalPeakDailyBytes
         case dayBucketCount
     }
 
@@ -1620,7 +1632,13 @@ struct StorageGrowthRateModel: Decodable, Identifiable, Sendable {
         windowDays = try container.decodeIfPresent(UInt64.self, forKey: .windowDays) ?? 30
         totalDeltaBytes = try container.decodeIfPresent(Int64.self, forKey: .totalDeltaBytes) ?? 0
         dailyRateBytes = try container.decodeIfPresent(Int64.self, forKey: .dailyRateBytes) ?? 0
+        dailyRateLowerBytes = try container.decodeIfPresent(Int64.self, forKey: .dailyRateLowerBytes) ?? dailyRateBytes
+        dailyRateUpperBytes = try container.decodeIfPresent(Int64.self, forKey: .dailyRateUpperBytes) ?? dailyRateBytes
         trend = try container.decodeIfPresent(String.self, forKey: .trend) ?? "steady"
+        confidence = try container.decodeIfPresent(String.self, forKey: .confidence) ?? "low"
+        volatilityPercent = try container.decodeIfPresent(UInt64.self, forKey: .volatilityPercent) ?? 0
+        seasonalPattern = try container.decodeIfPresent(String.self, forKey: .seasonalPattern) ?? "unknown"
+        seasonalPeakDailyBytes = try container.decodeIfPresent(Int64.self, forKey: .seasonalPeakDailyBytes) ?? dailyRateBytes
         dayBucketCount = try container.decodeIfPresent(UInt64.self, forKey: .dayBucketCount) ?? 0
     }
 }
@@ -1628,27 +1646,85 @@ struct StorageGrowthRateModel: Decodable, Identifiable, Sendable {
 struct StorageGrowthForecastModel: Decodable, Identifiable, Sendable {
     let volumePath: String
     let freeNowBytes: UInt64
+    let availableBytes: UInt64
+    let purgeableBytesEstimate: UInt64
+    let importantUsageAvailableBytes: UInt64?
+    let opportunisticUsageAvailableBytes: UInt64?
+    let effectiveAvailableBytes: UInt64
     let dailyRateBytes: Int64
+    let dailyRateLowerBytes: Int64
+    let dailyRateUpperBytes: Int64
     let daysToFull: Double
+    let daysToFullLowerBound: Double
+    let daysToFullUpperBound: Double
+    let daysToEffectiveFull: Double
+    let daysToAvailableFull: Double
+    let purgeableCushionDays: Double
+    let cloudDailyRateBytes: Int64
+    let cloudGrowthSharePercent: UInt64
+    let volatilityPercent: UInt64
+    let seasonalPattern: String
+    let seasonalPeakDailyBytes: Int64
     let confidence: String
+    let forecastNotes: [String]
 
     var id: String { volumePath }
 
     private enum CodingKeys: String, CodingKey {
         case volumePath
         case freeNowBytes
+        case availableBytes
+        case purgeableBytesEstimate
+        case importantUsageAvailableBytes
+        case opportunisticUsageAvailableBytes
+        case effectiveAvailableBytes
         case dailyRateBytes
+        case dailyRateLowerBytes
+        case dailyRateUpperBytes
         case daysToFull
+        case daysToFullLowerBound
+        case daysToFullUpperBound
+        case daysToEffectiveFull
+        case daysToAvailableFull
+        case purgeableCushionDays
+        case cloudDailyRateBytes
+        case cloudGrowthSharePercent
+        case volatilityPercent
+        case seasonalPattern
+        case seasonalPeakDailyBytes
         case confidence
+        case forecastNotes
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         volumePath = try container.decodeIfPresent(String.self, forKey: .volumePath) ?? ""
         freeNowBytes = try container.decodeIfPresent(UInt64.self, forKey: .freeNowBytes) ?? 0
+        availableBytes = try container.decodeIfPresent(UInt64.self, forKey: .availableBytes) ?? freeNowBytes
+        purgeableBytesEstimate = try container.decodeIfPresent(UInt64.self, forKey: .purgeableBytesEstimate) ?? 0
+        importantUsageAvailableBytes = try container.decodeIfPresent(UInt64.self, forKey: .importantUsageAvailableBytes)
+        opportunisticUsageAvailableBytes =
+            try container.decodeIfPresent(UInt64.self, forKey: .opportunisticUsageAvailableBytes)
+        effectiveAvailableBytes =
+            try container.decodeIfPresent(UInt64.self, forKey: .effectiveAvailableBytes)
+                ?? importantUsageAvailableBytes ?? freeNowBytes
         dailyRateBytes = try container.decodeIfPresent(Int64.self, forKey: .dailyRateBytes) ?? 0
+        dailyRateLowerBytes = try container.decodeIfPresent(Int64.self, forKey: .dailyRateLowerBytes) ?? dailyRateBytes
+        dailyRateUpperBytes = try container.decodeIfPresent(Int64.self, forKey: .dailyRateUpperBytes) ?? dailyRateBytes
         daysToFull = try container.decodeIfPresent(Double.self, forKey: .daysToFull) ?? 0
+        daysToFullLowerBound = try container.decodeIfPresent(Double.self, forKey: .daysToFullLowerBound) ?? daysToFull
+        daysToFullUpperBound = try container.decodeIfPresent(Double.self, forKey: .daysToFullUpperBound) ?? daysToFull
+        daysToEffectiveFull = try container.decodeIfPresent(Double.self, forKey: .daysToEffectiveFull) ?? daysToFull
+        daysToAvailableFull = try container.decodeIfPresent(Double.self, forKey: .daysToAvailableFull) ?? daysToFull
+        purgeableCushionDays = try container.decodeIfPresent(Double.self, forKey: .purgeableCushionDays) ?? 0
+        cloudDailyRateBytes = try container.decodeIfPresent(Int64.self, forKey: .cloudDailyRateBytes) ?? 0
+        cloudGrowthSharePercent = try container.decodeIfPresent(UInt64.self, forKey: .cloudGrowthSharePercent) ?? 0
+        volatilityPercent = try container.decodeIfPresent(UInt64.self, forKey: .volatilityPercent) ?? 0
+        seasonalPattern = try container.decodeIfPresent(String.self, forKey: .seasonalPattern) ?? "unknown"
+        seasonalPeakDailyBytes =
+            try container.decodeIfPresent(Int64.self, forKey: .seasonalPeakDailyBytes) ?? dailyRateBytes
         confidence = try container.decodeIfPresent(String.self, forKey: .confidence) ?? "low"
+        forecastNotes = try container.decodeIfPresent([String].self, forKey: .forecastNotes) ?? []
     }
 }
 
