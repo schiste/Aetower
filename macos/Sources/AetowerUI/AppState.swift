@@ -34,6 +34,32 @@ struct PreparedStorageHygieneResult: Sendable {
     let cacheSaveMillis: UInt64
 }
 
+enum StorageEstimateConfidence: String, Sendable {
+    case verified
+    case estimated
+    case stale
+    case refreshing
+    case needsFullScan
+}
+
+struct StorageEstimateStatus: Sendable {
+    let confidence: StorageEstimateConfidence
+    let title: String
+    let detail: String
+    let dirtyPathCount: Int
+    let lastChangeMillis: UInt64?
+    let lastRefreshMillis: UInt64?
+
+    static let verified = StorageEstimateStatus(
+        confidence: .verified,
+        title: "Verified",
+        detail: "Latest storage totals come from a completed scan.",
+        dirtyPathCount: 0,
+        lastChangeMillis: nil,
+        lastRefreshMillis: nil
+    )
+}
+
 enum StorageHygieneDecodePipeline {
     static func prepare(
         _ result: JsonQueryResult,
@@ -432,6 +458,7 @@ public final class AppState {
     private(set) var persistedStorageHygieneBaseline: StorageHygieneBaselineModel? = StorageHygieneBaselineStore.load()
     private(set) var storageCleanupMovedPaths: Set<String> = []
     private(set) var storageScanJob: StorageScanJobResponseModel?
+    private(set) var storageEstimateStatus = StorageEstimateStatus.verified
     private(set) var storageHygieneIsLoading = false {
         didSet {
             guard storageHygieneIsLoading != oldValue else { return }
@@ -503,6 +530,8 @@ public final class AppState {
     @ObservationIgnored private var fullSnapshotDemandTokens: Set<UUID> = []
     @ObservationIgnored private var frontmostTitleProbeTask: Task<Void, Never>?
     @ObservationIgnored private var lastInventorySignalRefreshMillis: UInt64 = 0
+    @ObservationIgnored private var lastStorageEstimateRefreshMillis: UInt64 = 0
+    @ObservationIgnored private var lastStorageEstimateDecisionMillis: UInt64 = 0
     @ObservationIgnored private var ticksSinceFullSnapshot = 0
     @ObservationIgnored private let fullSnapshotFloorTicks = 5
     var processActionPreviewReports: [String: ProcessActionReportModel] {
@@ -1821,6 +1850,7 @@ public final class AppState {
                 lastOperatorStateRefreshDate = Date()
                 localMcpController.refreshHealthSnapshot()
                 refreshRepositoryInventorySignalsIfQuiescent()
+                refreshStorageEstimateIfQuiescent()
                 if let refreshedSnapshot = payload.snapshot {
                     pruneOnDemandReportCaches(snapshot: refreshedSnapshot)
                 }
@@ -1922,6 +1952,144 @@ public final class AppState {
             guard let decoded = Self.decodeRepositoryInventoryReport(inventory) else { return }
             await publisher.publishInventoryVerification(decoded, signalOnly: true)
         }
+    }
+
+    private static let storageEstimateQuietMillis: UInt64 = 45_000
+    private static let storageEstimateRefreshCooldownMillis: UInt64 = 120_000
+    private static let storageEstimateFullScanDirtyPathThreshold = 220
+
+    /// Low-impact storage freshness loop. FSEvents only marks roots dirty; this
+    /// waits for quiescence and starts the existing changed-only Rust scan job.
+    /// That keeps totals fresh after cleanup/build activity without rescanning
+    /// on every write burst or blocking the visible Storage report.
+    private func refreshStorageEstimateIfQuiescent() {
+        guard let report = storageHygieneReport else { return }
+        updateStorageEstimateStatus(report: report)
+        guard !storageHygieneIsLoading, !storageHygieneIsVerifyingCache, storageScanJob == nil else { return }
+
+        let summary = StorageRootChangeJournal.summary(sampleLimit: 4)
+        guard summary.hasChanges, let lastChange = summary.lastChangeMillis else { return }
+        guard lastChange > report.capturedAtMillis else { return }
+
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        guard nowMillis >= lastChange + Self.storageEstimateQuietMillis else { return }
+        guard nowMillis >= lastStorageEstimateDecisionMillis + Self.storageEstimateRefreshCooldownMillis else { return }
+        lastStorageEstimateDecisionMillis = nowMillis
+
+        guard summary.dirtyPathCount < Self.storageEstimateFullScanDirtyPathThreshold else {
+            storageEstimateStatus = StorageEstimateStatus(
+                confidence: .needsFullScan,
+                title: "Full Scan Needed",
+                detail: "\(summary.dirtyPathCount) changed paths recorded; run a full scan to avoid underestimating broad filesystem churn.",
+                dirtyPathCount: summary.dirtyPathCount,
+                lastChangeMillis: lastChange,
+                lastRefreshMillis: lastStorageEstimateRefreshMillis == 0
+                    ? report.capturedAtMillis
+                    : lastStorageEstimateRefreshMillis
+            )
+            recordLocalDiagnosticsEvent(
+                level: .info,
+                subsystem: .ui,
+                eventType: "storage-estimate-refresh-deferred",
+                message: "Deferred automatic storage re-estimation because too many paths changed.",
+                fields: [
+                    DiagnosticsField(key: "dirty_path_count", value: String(summary.dirtyPathCount)),
+                    DiagnosticsField(
+                        key: "dirty_path_threshold",
+                        value: String(Self.storageEstimateFullScanDirtyPathThreshold)
+                    ),
+                    DiagnosticsField(key: "sample_paths", value: summary.samplePaths.joined(separator: " | ")),
+                ]
+            )
+            return
+        }
+
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "storage-estimate-refresh-started",
+            message: "Started changed-only storage re-estimation after filesystem quiescence.",
+            fields: [
+                DiagnosticsField(key: "dirty_path_count", value: String(summary.dirtyPathCount)),
+                DiagnosticsField(key: "root_count", value: String(report.roots.count)),
+                DiagnosticsField(key: "mode", value: "fast_changed_only"),
+                DiagnosticsField(key: "sample_paths", value: summary.samplePaths.joined(separator: " | ")),
+            ]
+        )
+        startStorageScanJob(
+            roots: report.roots,
+            maxDepth: 5,
+            limit: 200,
+            mode: "fast_changed_only"
+        )
+    }
+
+    private func updateStorageEstimateStatus(report: StorageHygieneReportModel? = nil) {
+        if let job = storageScanJob, job.isActive {
+            storageEstimateStatus = StorageEstimateStatus(
+                confidence: .refreshing,
+                title: "Refreshing",
+                detail: "\(job.progress.phase) · \(job.progress.currentPathHint ?? "checking changed storage paths")",
+                dirtyPathCount: StorageRootChangeJournal.summary().dirtyPathCount,
+                lastChangeMillis: StorageRootChangeJournal.lastChangeMillis(),
+                lastRefreshMillis: lastStorageEstimateRefreshMillis == 0 ? nil : lastStorageEstimateRefreshMillis
+            )
+            return
+        }
+
+        let currentReport = report ?? storageHygieneReport
+        let summary = StorageRootChangeJournal.summary(sampleLimit: 3)
+        let lastRefresh = currentReport?.capturedAtMillis
+            ?? (lastStorageEstimateRefreshMillis == 0 ? nil : lastStorageEstimateRefreshMillis)
+
+        guard summary.hasChanges, let lastChange = summary.lastChangeMillis else {
+            storageEstimateStatus = StorageEstimateStatus(
+                confidence: .verified,
+                title: "Verified",
+                detail: "Latest storage totals come from a completed scan.",
+                dirtyPathCount: 0,
+                lastChangeMillis: nil,
+                lastRefreshMillis: lastRefresh
+            )
+            return
+        }
+
+        if let currentReport, lastChange <= currentReport.capturedAtMillis {
+            storageEstimateStatus = StorageEstimateStatus(
+                confidence: .verified,
+                title: "Verified",
+                detail: "Latest storage totals include the recorded filesystem changes.",
+                dirtyPathCount: 0,
+                lastChangeMillis: lastChange,
+                lastRefreshMillis: currentReport.capturedAtMillis
+            )
+            return
+        }
+
+        if summary.dirtyPathCount >= Self.storageEstimateFullScanDirtyPathThreshold {
+            storageEstimateStatus = StorageEstimateStatus(
+                confidence: .needsFullScan,
+                title: "Full Scan Needed",
+                detail: "\(summary.dirtyPathCount) changed paths are queued; this is too broad for a cheap estimate.",
+                dirtyPathCount: summary.dirtyPathCount,
+                lastChangeMillis: lastChange,
+                lastRefreshMillis: lastRefresh
+            )
+            return
+        }
+
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        let isQuiet = nowMillis >= lastChange + Self.storageEstimateQuietMillis
+        storageEstimateStatus = StorageEstimateStatus(
+            confidence: isQuiet ? .estimated : .stale,
+            title: isQuiet ? "Estimating" : "Watching",
+            detail: isQuiet
+                ? "\(summary.dirtyPathCount) changed paths are ready for a changed-only refresh."
+                : "\(summary.dirtyPathCount) changed paths recorded; waiting for filesystem activity to quiet.",
+            dirtyPathCount: summary.dirtyPathCount,
+            lastChangeMillis: lastChange,
+            lastRefreshMillis: lastRefresh
+        )
     }
 
     /// Drop cached on-demand reports whose entity/pid has left the live
@@ -3450,6 +3618,7 @@ public final class AppState {
         storageHygieneIsLoading = false
         storageScanJob = nil
         storageHygieneReport = cache.report
+        updateStorageEstimateStatus(report: cache.report)
         repositorySummaryInputsGeneration += 1
         storageRootChangeMonitor.startWatching(roots: cache.report.roots)
         storageHygieneCompletedAt =
@@ -3605,17 +3774,28 @@ public final class AppState {
         case "queued", "running", "paused":
             storageHygieneIsLoading = true
             storageHygieneError = nil
+            storageEstimateStatus = StorageEstimateStatus(
+                confidence: .refreshing,
+                title: "Refreshing",
+                detail: "\(job.progress.phase) · \(job.progress.currentPathHint ?? "checking changed storage paths")",
+                dirtyPathCount: StorageRootChangeJournal.summary().dirtyPathCount,
+                lastChangeMillis: StorageRootChangeJournal.lastChangeMillis(),
+                lastRefreshMillis: lastStorageEstimateRefreshMillis == 0 ? nil : lastStorageEstimateRefreshMillis
+            )
         case "complete":
             storageHygieneIsLoading = true
             storageHygieneError = nil
         case "cancelled":
             storageHygieneIsLoading = false
             storageHygieneError = "Storage scan cancelled."
+            updateStorageEstimateStatus()
         case "failed":
             storageHygieneIsLoading = false
             storageHygieneError = job.errorMessage ?? "Storage scan failed."
+            updateStorageEstimateStatus()
         default:
             storageHygieneIsLoading = false
+            updateStorageEstimateStatus()
         }
     }
 
@@ -3623,6 +3803,9 @@ public final class AppState {
         storageHygieneIsLoading = false
         storageHygieneIsVerifyingCache = false
         storageHygieneError = message
+        storageScanJob = nil
+        storageScanController.setActiveJobId(nil)
+        updateStorageEstimateStatus()
         recordLocalDiagnosticsEvent(
             level: .warn,
             subsystem: .ui,
@@ -3645,6 +3828,8 @@ public final class AppState {
             if report.scanMode != "instant_cached" {
                 storageCleanupMovedPaths.removeAll()
             }
+            lastStorageEstimateRefreshMillis = report.capturedAtMillis
+            updateStorageEstimateStatus(report: report)
             repositorySummaryInputsGeneration += 1
             persistedStorageHygieneBaseline = prepared.baseline
             storageRootChangeMonitor.startWatching(roots: report.roots)

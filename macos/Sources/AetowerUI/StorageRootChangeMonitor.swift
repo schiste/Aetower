@@ -9,6 +9,16 @@ struct StorageRootChangeEventRecord: Codable {
     let source: String
 }
 
+struct StorageDirtyPathSummary: Sendable {
+    let lastChangeMillis: UInt64?
+    let dirtyPathCount: Int
+    let samplePaths: [String]
+
+    var hasChanges: Bool {
+        lastChangeMillis != nil && dirtyPathCount > 0
+    }
+}
+
 enum StorageRootChangeJournal {
     private static let key = "aetower.storageHygiene.lastRootChangeMillis.v1"
     private static let dirtyPathsKey = "aetower.storageHygiene.dirtyPaths.v1"
@@ -57,6 +67,15 @@ enum StorageRootChangeJournal {
             return number.uint64Value
         }
         return nil
+    }
+
+    static func summary(sampleLimit: Int = 3) -> StorageDirtyPathSummary {
+        let paths = dirtyPaths()
+        return StorageDirtyPathSummary(
+            lastChangeMillis: lastChangeMillis(),
+            dirtyPathCount: paths.count,
+            samplePaths: Array(paths.prefix(max(0, sampleLimit)))
+        )
     }
 
     static func dirtyPaths() -> [String] {
