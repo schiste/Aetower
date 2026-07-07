@@ -57,6 +57,25 @@ private struct StorageHomeAction: Identifiable {
     }
 }
 
+private struct StorageReclaimFolderRow: Identifiable {
+    let id: String
+    let path: String
+    let displayName: String
+    let kind: String
+    let cleanupTier: String
+    let safety: String
+    let sizeBytes: UInt64
+    let itemCount: Int
+    let cleanupAllowed: Bool
+    let cleanupBlockers: [String]
+    let defaultCleanupAction: String
+    let sizeTruncated: Bool
+    let cloudPlaceholder: Bool
+    let hasHardlinks: Bool
+    let source: String
+    let stageItems: [StorageHygieneItemModel]
+}
+
 private struct StorageClassificationExplanation: Identifiable {
     let id: String
     let title: String
@@ -852,6 +871,7 @@ public struct StorageView: View {
 
     private func storageReclaimTableSection(_ report: StorageHygieneReportModel) -> some View {
         let visibleItems = filteredItems(from: report)
+        let visibleFolders = storageReclaimFolderRows(report: report, visibleItems: visibleItems)
         return AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md, cornerRadius: 16) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 HStack(spacing: AetowerDesign.Spacing.sm) {
@@ -890,7 +910,9 @@ public struct StorageView: View {
                     Spacer()
 
                     AetowerBadge(
-                        "\(visibleItems.count) file candidate\(visibleItems.count == 1 ? "" : "s")",
+                        reclaimListMode == .files
+                            ? "\(visibleItems.count) file candidate\(visibleItems.count == 1 ? "" : "s")"
+                            : "\(visibleFolders.count) folder candidate\(visibleFolders.count == 1 ? "" : "s")",
                         systemImage: "list.bullet.rectangle",
                         tone: AetowerDesign.Tone.disk
                     )
@@ -909,7 +931,7 @@ public struct StorageView: View {
                 case .files:
                     storageReclaimFilesTable(visibleItems)
                 case .folders:
-                    storageReclaimFoldersPlaceholder
+                    storageReclaimFoldersTable(visibleFolders)
                 }
             }
         }
@@ -940,12 +962,276 @@ public struct StorageView: View {
         }
     }
 
-    private var storageReclaimFoldersPlaceholder: some View {
-        ContentUnavailableView(
-            "Folder view coming next",
-            systemImage: "folder.badge.gearshape",
-            description: Text("The folder switch is wired; the next slice adds policy-aware folder rows.")
+    private func storageReclaimFoldersTable(_ folders: [StorageReclaimFolderRow]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            if folders.isEmpty {
+                ContentUnavailableView(
+                    "No matching folders",
+                    systemImage: "folder.badge.questionmark",
+                    description: Text("Change the filters or run a deeper scan to surface folder-level cleanup candidates.")
+                )
+            } else {
+                storageReclaimFolderTableHeader
+                ForEach(folders.prefix(80)) { folder in
+                    storageReclaimFolderTableRow(folder)
+                }
+                if folders.count > 80 {
+                    AetowerInfoBanner(
+                        "Showing the first 80 matching folders. Narrow the filters to focus the cleanup plan.",
+                        systemImage: "line.3.horizontal.decrease.circle",
+                        tone: AetowerDesign.Status.neutral,
+                        level: .card
+                    )
+                }
+            }
+        }
+    }
+
+    private var storageReclaimFolderTableHeader: some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            Text("Folder")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("Tier")
+                .frame(width: 88, alignment: .center)
+            Text("Source")
+                .frame(width: 92, alignment: .center)
+            Text("Items")
+                .frame(width: 52, alignment: .trailing)
+            Text("Size")
+                .frame(width: 80, alignment: .trailing)
+            Text("Actions")
+                .frame(width: 84, alignment: .trailing)
+        }
+        .font(AetowerDesign.Typography.metadataStrong)
+        .foregroundStyle(AetowerDesign.Ink.secondary)
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+    }
+
+    private func storageReclaimFolderTableRow(_ folder: StorageReclaimFolderRow) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(folder.displayName)
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(folder.path)
+                    .font(AetowerDesign.Typography.compactData(size: 10))
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if !folder.cleanupBlockers.isEmpty {
+                    Text(folder.cleanupBlockers.prefix(2).joined(separator: "; "))
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Status.error)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            AetowerBadge(
+                cleanupTierLabel(folder.cleanupTier),
+                tone: tone(forCleanupTier: folder.cleanupTier)
+            )
+            .frame(width: 88)
+
+            Text(folder.source)
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
+                .frame(width: 92)
+
+            Text("\(folder.itemCount)")
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+                .frame(width: 52, alignment: .trailing)
+
+            Text(formatBytes(folder.sizeBytes))
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+                .frame(width: 80, alignment: .trailing)
+
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Button {
+                    stageReclaimFolder(folder)
+                } label: {
+                    Label("Stage", systemImage: "tray.and.arrow.down")
+                }
+                .disabled(!storageReclaimFolderHasStageableContent(folder))
+
+                Menu {
+                    Button("Reveal in Finder") { reveal(path: folder.path) }
+                    Button("Quick Look") { quickLook(path: folder.path) }
+                    Button("Copy cleanup plan") { copy(storageReclaimFolderPlan(folder)) }
+                    Button("Copy path") { copy(folder.path) }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(AetowerDesign.Typography.caption.weight(.semibold))
+                }
+                .menuStyle(.borderlessButton)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+            .frame(width: 84, alignment: .trailing)
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+        .padding(.vertical, AetowerDesign.Spacing.xs)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func storageReclaimFolderRows(
+        report: StorageHygieneReportModel,
+        visibleItems: [StorageHygieneItemModel]
+    ) -> [StorageReclaimFolderRow] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var rowsByPath: [String: StorageReclaimFolderRow] = [:]
+
+        for footprint in report.repoFootprints {
+            for folder in footprint.topArtifactFolders where !state.storagePathWasMovedToTrash(folder.path) {
+                let row = storageReclaimFolderRow(from: folder, repoName: footprint.repoName)
+                guard storageReclaimFolderMatches(row, query: query),
+                      storageReclaimFolderMatchesFilters(row)
+                else { continue }
+                rowsByPath[row.path] = row
+            }
+        }
+
+        let groupedItems = Dictionary(grouping: visibleItems, by: storageReclaimParentFolderPath)
+        for (path, items) in groupedItems where !path.isEmpty && rowsByPath[path] == nil {
+            let row = storageReclaimFolderRow(path: path, items: items)
+            guard storageReclaimFolderMatches(row, query: query) else { continue }
+            rowsByPath[path] = row
+        }
+
+        return rowsByPath.values.sorted(by: storageReclaimFolderSort)
+    }
+
+    private func storageReclaimFolderRow(
+        from folder: StorageRepoArtifactFolderModel,
+        repoName: String
+    ) -> StorageReclaimFolderRow {
+        StorageReclaimFolderRow(
+            id: "repo-folder|\(folder.path)",
+            path: folder.path,
+            displayName: folder.displayName,
+            kind: folder.kind,
+            cleanupTier: folder.cleanupTier,
+            safety: folder.cleanupAllowed ? "safe" : "review",
+            sizeBytes: folder.sizeBytes,
+            itemCount: 1,
+            cleanupAllowed: folder.cleanupAllowed,
+            cleanupBlockers: folder.cleanupBlockers,
+            defaultCleanupAction: folder.defaultCleanupAction,
+            sizeTruncated: folder.sizeTruncated,
+            cloudPlaceholder: folder.cloudPlaceholder,
+            hasHardlinks: folder.hasHardlinks,
+            source: repoName,
+            stageItems: []
         )
+    }
+
+    private func storageReclaimFolderRow(
+        path: String,
+        items: [StorageHygieneItemModel]
+    ) -> StorageReclaimFolderRow {
+        let sortedItems = items.sorted(by: storageItemSizeSort)
+        let actionableItems = sortedItems.filter(storageItemIsTrashActionable)
+        let cleanupTier = strongestCleanupTier(in: sortedItems)
+        let blockers = sortedItems.flatMap(\.cleanupBlockers)
+        return StorageReclaimFolderRow(
+            id: "aggregate-folder|\(path)",
+            path: path,
+            displayName: URL(fileURLWithPath: path).lastPathComponent.isEmpty ? path : URL(fileURLWithPath: path).lastPathComponent,
+            kind: "folder",
+            cleanupTier: cleanupTier,
+            safety: actionableItems.isEmpty ? "review" : "safe",
+            sizeBytes: sumItemBytes(sortedItems),
+            itemCount: sortedItems.count,
+            cleanupAllowed: !actionableItems.isEmpty,
+            cleanupBlockers: blockers.isEmpty && !actionableItems.isEmpty
+                ? []
+                : blockers.isEmpty ? ["Folder aggregate stages safe child items only."] : Array(Set(blockers)).sorted(),
+            defaultCleanupAction: "stage_children",
+            sizeTruncated: sortedItems.contains { $0.sizeTruncated },
+            cloudPlaceholder: sortedItems.contains { $0.cloudPlaceholder },
+            hasHardlinks: sortedItems.contains { $0.hasHardlinks },
+            source: "items",
+            stageItems: actionableItems
+        )
+    }
+
+    private func storageReclaimParentFolderPath(_ item: StorageHygieneItemModel) -> String {
+        let url = URL(fileURLWithPath: item.path).standardizedFileURL
+        let parent = url.deletingLastPathComponent().path
+        return parent == "." ? "" : parent
+    }
+
+    private func strongestCleanupTier(in items: [StorageHygieneItemModel]) -> String {
+        let tiers = Set(items.map(\.cleanupTier))
+        if tiers.contains("risky") { return "risky" }
+        if tiers.contains("expensive") { return "expensive" }
+        if tiers.contains("rebuildable") { return "rebuildable" }
+        if tiers.contains("safe") { return "safe" }
+        return items.first?.cleanupTier ?? "review"
+    }
+
+    private func storageReclaimFolderMatches(_ folder: StorageReclaimFolderRow, query: String) -> Bool {
+        query.isEmpty
+            || folder.displayName.lowercased().contains(query)
+            || folder.path.lowercased().contains(query)
+            || folder.kind.lowercased().contains(query)
+            || folder.cleanupTier.lowercased().contains(query)
+            || folder.source.lowercased().contains(query)
+    }
+
+    private func storageReclaimFolderMatchesFilters(_ folder: StorageReclaimFolderRow) -> Bool {
+        switch selectedFilter {
+        case .attention:
+            return folder.cleanupTier == "risky"
+                || folder.cleanupTier == "expensive"
+                || folder.safety != "safe"
+                || folder.sizeTruncated
+                || folder.sizeBytes >= 100 * 1024 * 1024
+        case .safe:
+            return folder.cleanupTier == "safe"
+        case .rebuildable:
+            return folder.cleanupTier == "rebuildable"
+        case .expensive:
+            return folder.cleanupTier == "expensive"
+        case .risky:
+            return folder.cleanupTier == "risky"
+        case .all:
+            return true
+        }
+    }
+
+    private func storageReclaimFolderSort(
+        _ left: StorageReclaimFolderRow,
+        _ right: StorageReclaimFolderRow
+    ) -> Bool {
+        switch artifactSort {
+        case .smallest:
+            return left.sizeBytes == right.sizeBytes ? left.path < right.path : left.sizeBytes < right.sizeBytes
+        case .path:
+            return left.path.localizedStandardCompare(right.path) == .orderedAscending
+        case .tier:
+            let leftKey = "\(left.cleanupTier)|\(left.safety)|\(left.path)"
+            let rightKey = "\(right.cleanupTier)|\(right.safety)|\(right.path)"
+            return leftKey < rightKey
+        case .recommended, .largest, .newest, .oldest:
+            return left.sizeBytes == right.sizeBytes ? left.path < right.path : left.sizeBytes > right.sizeBytes
+        }
+    }
+
+    private func storageReclaimFolderIsTrashActionable(_ folder: StorageReclaimFolderRow) -> Bool {
+        folder.cleanupAllowed
+            && folder.defaultCleanupAction == "trash"
+            && folder.cleanupBlockers.isEmpty
+            && folder.cleanupTier != "risky"
+            && !folder.sizeTruncated
+            && !folder.cloudPlaceholder
+            && storageCleanupPathExists(folder.path)
+            && storagePrivilegedCleanupBlocker(for: folder.path) == nil
+    }
+
+    private func storageReclaimFolderHasStageableContent(_ folder: StorageReclaimFolderRow) -> Bool {
+        storageReclaimFolderIsTrashActionable(folder) || !folder.stageItems.isEmpty
     }
 
     private func storageReclaimSupportingData(_ report: StorageHygieneReportModel) -> some View {
@@ -8333,6 +8619,41 @@ public struct StorageView: View {
         }
     }
 
+    private func stageReclaimFolder(_ folder: StorageReclaimFolderRow) {
+        if storageReclaimFolderIsTrashActionable(folder) {
+            let item = StorageCleanupBasketItem(
+                id: "folder|\(folder.path)",
+                title: folder.displayName,
+                path: folder.path,
+                source: folder.source,
+                cleanupTier: folder.cleanupTier,
+                safety: folder.safety,
+                estimatedBytes: folder.sizeBytes,
+                reason: "Folder-level cleanup candidate from \(folder.source).",
+                consequence: "Moves the folder to Finder Trash. Restore from Trash if needed; rebuildable contents may be regenerated by their tools.",
+                evidence: [
+                    "Folder contains \(folder.itemCount) known cleanup candidate\(folder.itemCount == 1 ? "" : "s").",
+                    "Policy action: \(folder.defaultCleanupAction).",
+                ],
+                requiresReview: folder.safety != "safe",
+                blockers: folder.cleanupBlockers,
+                prerequisites: []
+            )
+            if !stageBasketItem(item) {
+                copy(storageReclaimFolderPlan(folder))
+            }
+            return
+        }
+
+        var staged = 0
+        for item in uniqueStorageItems(folder.stageItems).prefix(80) where stageCleanupItem(item, showBasket: false) {
+            staged += 1
+        }
+        if staged == 0 {
+            copy(storageReclaimFolderPlan(folder))
+        }
+    }
+
     private func storageHomeActionCanMoveToTrash(_ action: StorageHomeAction) -> Bool {
         if let bundle = action.cleanupBundle {
             return bundle.safety == "safe"
@@ -8452,6 +8773,38 @@ public struct StorageView: View {
             for event in action.growthEvents.prefix(12) {
                 lines.append("- +\(formatBytes(UInt64(event.deltaBytes))) | \(event.path)")
                 lines.append("  - \(storageGrowthCorrelationDetail(event))")
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func storageReclaimFolderPlan(_ folder: StorageReclaimFolderRow) -> String {
+        var lines = [
+            "# Aetower folder cleanup plan",
+            "",
+            "- Folder: \(folder.path)",
+            "- Source: \(folder.source)",
+            "- Estimated bytes: \(formatBytes(folder.sizeBytes))",
+            "- Known candidates: \(folder.itemCount)",
+            "- Cleanup tier: \(cleanupTierLabel(folder.cleanupTier))",
+            "- Direct Trash allowed: \(storageReclaimFolderIsTrashActionable(folder) ? "yes" : "no")",
+            "",
+            "## Recommended path",
+            storageReclaimFolderIsTrashActionable(folder)
+                ? "Stage this folder, review the basket once, then move it to Finder Trash."
+                : "Stage the safe child items or review the folder manually in Finder. Aetower will not delete the whole folder unattended.",
+        ]
+
+        if !folder.cleanupBlockers.isEmpty {
+            lines.append(contentsOf: ["", "## Blockers"])
+            lines.append(contentsOf: folder.cleanupBlockers.map { "- \($0)" })
+        }
+
+        if !folder.stageItems.isEmpty {
+            lines.append(contentsOf: ["", "## Stageable child items"])
+            for item in folder.stageItems.prefix(16) {
+                lines.append("- \(formatBytes(item.sizeBytes)) | \(item.cleanupTier) | \(item.path)")
             }
         }
 
