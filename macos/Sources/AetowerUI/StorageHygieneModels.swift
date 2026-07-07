@@ -85,6 +85,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
     var repositoryInventoryCoverage: [StorageRepositoryInventoryCoverageModel]
     let repoFootprints: [StorageRepoFootprintModel]
     let duplicateGroups: [StorageDuplicateGroupModel]
+    let redundancyGroups: [StorageRedundancyGroupModel]
     let appFootprints: [StorageAppFootprintModel]
     let systemDataBuckets: [StorageSystemDataBucketModel]
     let treemapRoots: [StorageTreemapNodeModel]
@@ -119,6 +120,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         case repositoryInventoryCoverage
         case repoFootprints
         case duplicateGroups
+        case redundancyGroups
         case appFootprints
         case systemDataBuckets
         case treemapRoots
@@ -181,6 +183,8 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         repoFootprints = try container.decodeIfPresent([StorageRepoFootprintModel].self, forKey: .repoFootprints) ?? []
         duplicateGroups =
             try container.decodeIfPresent([StorageDuplicateGroupModel].self, forKey: .duplicateGroups) ?? []
+        redundancyGroups =
+            try container.decodeIfPresent([StorageRedundancyGroupModel].self, forKey: .redundancyGroups) ?? []
         appFootprints = try container.decodeIfPresent([StorageAppFootprintModel].self, forKey: .appFootprints) ?? []
         systemDataBuckets =
             try container.decodeIfPresent([StorageSystemDataBucketModel].self, forKey: .systemDataBuckets) ?? []
@@ -931,6 +935,7 @@ struct StorageDuplicateGroupModel: Decodable, Identifiable, Sendable {
     let paths: [StorageDuplicateItemModel]
     let recommendation: String
     let caveat: String
+    let actions: StorageSimilarityActionProjectionModel
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -946,6 +951,7 @@ struct StorageDuplicateGroupModel: Decodable, Identifiable, Sendable {
         case paths
         case recommendation
         case caveat
+        case actions
     }
 
     init(from decoder: Decoder) throws {
@@ -969,6 +975,46 @@ struct StorageDuplicateGroupModel: Decodable, Identifiable, Sendable {
         paths = try container.decodeIfPresent([StorageDuplicateItemModel].self, forKey: .paths) ?? []
         recommendation = try container.decodeIfPresent(String.self, forKey: .recommendation) ?? ""
         caveat = try container.decodeIfPresent(String.self, forKey: .caveat) ?? ""
+        actions =
+            try container.decodeIfPresent(StorageSimilarityActionProjectionModel.self, forKey: .actions)
+            ?? StorageSimilarityActionProjectionModel.defaultForDuplicate(
+                actionability: actionability,
+                itemCount: paths.count
+            )
+    }
+}
+
+struct StorageSimilarityActionProjectionModel: Decodable, Equatable, Sendable {
+    let canReveal: Bool
+    let canQuickLook: Bool
+    let canStageCleanup: Bool
+    let requiresManualReview: Bool
+    let blockReason: String?
+
+    static func defaultForDuplicate(
+        actionability: StorageDuplicateActionabilityModel,
+        itemCount: Int
+    ) -> StorageSimilarityActionProjectionModel {
+        let canStageCleanup = actionability == .cleanableExact && itemCount >= 2
+        return StorageSimilarityActionProjectionModel(
+            canReveal: itemCount > 0,
+            canQuickLook: itemCount > 0,
+            canStageCleanup: canStageCleanup,
+            requiresManualReview: true,
+            blockReason: canStageCleanup
+                ? nil
+                : "Similarity detector output is review-only; automatic cleanup staging is disabled."
+        )
+    }
+
+    static func defaultForRedundancy(itemCount: Int) -> StorageSimilarityActionProjectionModel {
+        StorageSimilarityActionProjectionModel(
+            canReveal: itemCount > 0,
+            canQuickLook: itemCount > 0,
+            canStageCleanup: false,
+            requiresManualReview: true,
+            blockReason: "Redundancy groups require manual review before cleanup."
+        )
     }
 }
 
@@ -1037,6 +1083,71 @@ struct StorageDuplicateItemModel: Decodable, Identifiable, Sendable {
     let safety: String
 
     var id: String { path }
+}
+
+struct StorageRedundancyGroupModel: Decodable, Identifiable, Sendable {
+    let id: String
+    let redundancyClass: String
+    let title: String
+    let totalBytes: UInt64
+    let reclaimableBytes: UInt64
+    let itemCount: Int
+    let confidenceScore: UInt8
+    let safety: String
+    let recommendation: String
+    let caveat: String
+    let evidence: [String]
+    let actions: StorageSimilarityActionProjectionModel
+    let items: [StorageRedundancyItemModel]
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case redundancyClass
+        case title
+        case totalBytes
+        case reclaimableBytes
+        case itemCount
+        case confidenceScore
+        case safety
+        case recommendation
+        case caveat
+        case evidence
+        case actions
+        case items
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        redundancyClass = try container.decode(String.self, forKey: .redundancyClass)
+        title = try container.decode(String.self, forKey: .title)
+        totalBytes = try container.decode(UInt64.self, forKey: .totalBytes)
+        reclaimableBytes = try container.decode(UInt64.self, forKey: .reclaimableBytes)
+        itemCount = try container.decode(Int.self, forKey: .itemCount)
+        confidenceScore = try container.decode(UInt8.self, forKey: .confidenceScore)
+        safety = try container.decode(String.self, forKey: .safety)
+        recommendation = try container.decodeIfPresent(String.self, forKey: .recommendation) ?? ""
+        caveat = try container.decodeIfPresent(String.self, forKey: .caveat) ?? ""
+        evidence = try container.decodeIfPresent([String].self, forKey: .evidence) ?? []
+        items = try container.decodeIfPresent([StorageRedundancyItemModel].self, forKey: .items) ?? []
+        actions =
+            try container.decodeIfPresent(StorageSimilarityActionProjectionModel.self, forKey: .actions)
+            ?? StorageSimilarityActionProjectionModel.defaultForRedundancy(itemCount: items.count)
+    }
+}
+
+struct StorageRedundancyItemModel: Decodable, Identifiable, Sendable {
+    let path: String
+    let displayName: String
+    let kind: String
+    let sizeBytes: UInt64
+    let logicalBytes: UInt64
+    let physicalBytes: UInt64
+    let cleanupTier: String
+    let safety: String
+    let role: String
+
+    var id: String { "\(role)|\(path)" }
 }
 
 struct StorageAppFootprintModel: Decodable, Identifiable, Sendable {

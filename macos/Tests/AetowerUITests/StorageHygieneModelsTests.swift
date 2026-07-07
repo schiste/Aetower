@@ -352,6 +352,191 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertEqual(delta.deltaBytes, 33_554_432)
     }
 
+    func testStorageReportDecodesDuplicateAndRedundancyGroups() throws {
+        let json = """
+        {
+          "captured_at_millis": 1782860000000,
+          "scan_duration_millis": 42,
+          "scan_mode": "deep",
+          "summary": {
+            "item_count": 2,
+            "total_reclaimable_bytes": 4096,
+            "safe_candidate_count": 0,
+            "review_candidate_count": 2,
+            "stale_candidate_count": 0,
+            "scanned_directory_count": 3,
+            "largest_item_path": "/Users/example/Pictures/photo-a.png",
+            "largest_item_bytes": 2048,
+            "attributed_repo_count": 0
+          },
+          "cleanup_tiers": [],
+          "budget_guardrails": {
+            "repo_growth_budget_bytes_per_day": 1048576,
+            "repo_artifact_budget_bytes": 10485760,
+            "total_artifact_budget_bytes": 20971520,
+            "free_space_floor_bytes": 1073741824,
+            "volume_pressure_floor_percent": 10,
+            "warning_only_by_default": true,
+            "auto_trash_safe_tier_enabled": false,
+            "scheduled_scan_recommended": false,
+            "scheduled_scan_interval_hours": 24,
+            "status": "ok",
+            "violations": [],
+            "policies": [],
+            "prevention_suggestions": []
+          },
+          "agent_hygiene": {
+            "total_agent_artifact_bytes": 0,
+            "week_agent_artifact_bytes": 0,
+            "rebuildable_agent_bytes": 0,
+            "rebuildable_agent_percent": 0,
+            "week_rebuildable_agent_bytes": 0,
+            "week_rebuildable_agent_percent": 0,
+            "attributed_item_count": 0,
+            "agent_count": 0,
+            "agents": [],
+            "caveats": []
+          },
+          "duplicate_groups": [
+            {
+              "id": "image-ahash|abc",
+              "candidate_key": "image-ahash:0000000000000abc:hamming<=4",
+              "detector_kind": "image_similarity",
+              "actionability": "review_only",
+              "confidence_band": "high",
+              "confirmed": false,
+              "confidence_score": 82,
+              "file_count": 2,
+              "total_bytes": 4096,
+              "reclaimable_bytes": 2048,
+              "recommendation": "Quick Look side by side before cleanup.",
+              "caveat": "PNG/JPEG thumbnail hash only.",
+              "actions": {
+                "can_reveal": true,
+                "can_quick_look": true,
+                "can_stage_cleanup": false,
+                "requires_manual_review": true,
+                "block_reason": "Similarity detector output is review-only; automatic cleanup staging is disabled."
+              },
+              "paths": [
+                {
+                  "path": "/Users/example/Pictures/photo-a.png",
+                  "display_name": "photo-a.png",
+                  "size_bytes": 2048,
+                  "modified_millis": 1782860000001,
+                  "cleanup_tier": "",
+                  "safety": "review"
+                },
+                {
+                  "path": "/Users/example/Pictures/photo-b.png",
+                  "display_name": "photo-b.png",
+                  "size_bytes": 2048,
+                  "modified_millis": 1782860000002,
+                  "cleanup_tier": "",
+                  "safety": "review"
+                }
+              ]
+            }
+          ],
+          "redundancy_groups": [
+            {
+              "id": "byte-duplicates|image-ahash|abc",
+              "redundancy_class": "byte-duplicates",
+              "title": "Potential duplicate files",
+              "total_bytes": 4096,
+              "reclaimable_bytes": 2048,
+              "item_count": 2,
+              "confidence_score": 82,
+              "safety": "review",
+              "recommendation": "Keep the canonical copy.",
+              "caveat": "Review-only duplicate candidate.",
+              "evidence": ["Duplicate candidate key: image-ahash:0000000000000abc:hamming<=4"],
+              "actions": {
+                "can_reveal": true,
+                "can_quick_look": true,
+                "can_stage_cleanup": false,
+                "requires_manual_review": true,
+                "block_reason": "Similarity detector output is review-only; automatic cleanup staging is disabled."
+              },
+              "items": [
+                {
+                  "path": "/Users/example/Pictures/photo-a.png",
+                  "display_name": "photo-a.png",
+                  "kind": "duplicate-file",
+                  "size_bytes": 2048,
+                  "logical_bytes": 2048,
+                  "physical_bytes": 2048,
+                  "cleanup_tier": "",
+                  "safety": "review",
+                  "role": "duplicate-candidate"
+                },
+                {
+                  "path": "/Users/example/Pictures/photo-b.png",
+                  "display_name": "photo-b.png",
+                  "kind": "duplicate-file",
+                  "size_bytes": 2048,
+                  "logical_bytes": 2048,
+                  "physical_bytes": 2048,
+                  "cleanup_tier": "",
+                  "safety": "review",
+                  "role": "duplicate-candidate"
+                }
+              ]
+            }
+          ],
+          "roots": ["/Users/example/Pictures"],
+          "truncated": false,
+          "caveats": []
+        }
+        """
+
+        let report = try AetowerJSON.snakeCaseDecoder().decode(
+            StorageHygieneReportModel.self,
+            from: Data(json.utf8)
+        )
+
+        XCTAssertEqual(report.duplicateGroups.count, 1)
+        let duplicateGroup = try XCTUnwrap(report.duplicateGroups.first)
+        XCTAssertEqual(duplicateGroup.detectorKind.rawValue, "image_similarity")
+        XCTAssertEqual(duplicateGroup.actionability.rawValue, "review_only")
+        XCTAssertEqual(duplicateGroup.confidenceBand.rawValue, "high")
+        XCTAssertEqual(duplicateGroup.confidenceScore, 82)
+        XCTAssertEqual(duplicateGroup.recommendation, "Quick Look side by side before cleanup.")
+        XCTAssertEqual(duplicateGroup.caveat, "PNG/JPEG thumbnail hash only.")
+        XCTAssertTrue(duplicateGroup.actions.canReveal)
+        XCTAssertTrue(duplicateGroup.actions.canQuickLook)
+        XCTAssertFalse(duplicateGroup.actions.canStageCleanup)
+        XCTAssertTrue(duplicateGroup.actions.requiresManualReview)
+        XCTAssertEqual(
+            duplicateGroup.actions.blockReason,
+            "Similarity detector output is review-only; automatic cleanup staging is disabled."
+        )
+        XCTAssertEqual(duplicateGroup.paths.count, 2)
+        XCTAssertEqual(duplicateGroup.paths.first?.displayName, "photo-a.png")
+        XCTAssertEqual(duplicateGroup.paths.last?.modifiedMillis, 1_782_860_000_002)
+
+        XCTAssertEqual(report.redundancyGroups.count, 1)
+        let redundancyGroup = try XCTUnwrap(report.redundancyGroups.first)
+        XCTAssertEqual(redundancyGroup.redundancyClass, "byte-duplicates")
+        XCTAssertEqual(redundancyGroup.title, "Potential duplicate files")
+        XCTAssertEqual(redundancyGroup.confidenceScore, 82)
+        XCTAssertEqual(redundancyGroup.recommendation, "Keep the canonical copy.")
+        XCTAssertEqual(redundancyGroup.caveat, "Review-only duplicate candidate.")
+        XCTAssertEqual(redundancyGroup.evidence.count, 1)
+        XCTAssertTrue(redundancyGroup.actions.canReveal)
+        XCTAssertTrue(redundancyGroup.actions.canQuickLook)
+        XCTAssertFalse(redundancyGroup.actions.canStageCleanup)
+        XCTAssertTrue(redundancyGroup.actions.requiresManualReview)
+        XCTAssertEqual(
+            redundancyGroup.actions.blockReason,
+            "Similarity detector output is review-only; automatic cleanup staging is disabled."
+        )
+        XCTAssertEqual(redundancyGroup.items.count, 2)
+        XCTAssertEqual(redundancyGroup.items.first?.kind, "duplicate-file")
+        XCTAssertEqual(redundancyGroup.items.first?.logicalBytes, 2_048)
+        XCTAssertEqual(redundancyGroup.items.last?.role, "duplicate-candidate")
+    }
+
     func testItemDecodesRecommendationScoreAndDefaultsToZero() throws {
         let scoredJSON = """
         {
