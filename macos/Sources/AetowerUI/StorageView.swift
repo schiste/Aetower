@@ -309,6 +309,7 @@ public struct StorageView: View {
     @State private var showStorageTreemap = false
     @State private var selectedTreemapNodeID: String?
     @State private var storageExplorerPage = 0
+    @State private var reclaimListMode: StorageReclaimListMode = .files
     @State private var coldDataSort: StorageColdDataSort = .recommended
     @State private var selectedSimilarityFilter: StorageSimilarityFilter = .exactDuplicates
     @State private var reviewedSimilarityGroupIDs: Set<String> = []
@@ -850,7 +851,101 @@ public struct StorageView: View {
     }
 
     private func storageReclaimTableSection(_ report: StorageHygieneReportModel) -> some View {
-        itemSection(report)
+        let visibleItems = filteredItems(from: report)
+        return AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md, cornerRadius: 16) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Picker("Reclaim list", selection: $reclaimListMode) {
+                        ForEach(StorageReclaimListMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 190)
+
+                    Picker("Tier", selection: $selectedFilter) {
+                        ForEach(StorageFilter.allCases) { filter in
+                            Text(filter.label).tag(filter)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 150)
+
+                    Picker("Scope", selection: $artifactScope) {
+                        ForEach(StorageArtifactScope.allCases) { scope in
+                            Text(scope.label).tag(scope)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 160)
+
+                    Picker("Sort", selection: $artifactSort) {
+                        ForEach(StorageArtifactSort.allCases) { sort in
+                            Text(sort.label).tag(sort)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 180)
+
+                    Spacer()
+
+                    AetowerBadge(
+                        "\(visibleItems.count) file candidate\(visibleItems.count == 1 ? "" : "s")",
+                        systemImage: "list.bullet.rectangle",
+                        tone: AetowerDesign.Tone.disk
+                    )
+                    if !cleanupBasket.isEmpty {
+                        Button {
+                            showCleanupBasket = true
+                        } label: {
+                            Label(basketSummaryLabel, systemImage: "tray.full")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+
+                switch reclaimListMode {
+                case .files:
+                    storageReclaimFilesTable(visibleItems)
+                case .folders:
+                    storageReclaimFoldersPlaceholder
+                }
+            }
+        }
+    }
+
+    private func storageReclaimFilesTable(_ visibleItems: [StorageHygieneItemModel]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            if visibleItems.isEmpty {
+                ContentUnavailableView(
+                    "No matching files",
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text("Change the tier, scope, sort, search text, or run a fresh scan.")
+                )
+            } else {
+                storageExplorerTableHeader
+                ForEach(visibleItems.prefix(80)) { item in
+                    storageExplorerTableRow(item)
+                }
+                if visibleItems.count > 80 {
+                    AetowerInfoBanner(
+                        "Showing the first 80 matching files. Narrow the filter or use Explore for paged server-side browsing.",
+                        systemImage: "line.3.horizontal.decrease.circle",
+                        tone: AetowerDesign.Status.neutral,
+                        level: .card
+                    )
+                }
+            }
+        }
+    }
+
+    private var storageReclaimFoldersPlaceholder: some View {
+        ContentUnavailableView(
+            "Folder view coming next",
+            systemImage: "folder.badge.gearshape",
+            description: Text("The folder switch is wired; the next slice adds policy-aware folder rows.")
+        )
     }
 
     private func storageReclaimSupportingData(_ report: StorageHygieneReportModel) -> some View {
@@ -9486,6 +9581,20 @@ private enum StorageArtifactScope: String, CaseIterable, Identifiable {
             return item.attribution.aiAgentSession != nil
         case .partial:
             return item.sizeTruncated
+        }
+    }
+}
+
+private enum StorageReclaimListMode: String, CaseIterable, Identifiable {
+    case files
+    case folders
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .files: return "Files"
+        case .folders: return "Folders"
         }
     }
 }
