@@ -6417,6 +6417,8 @@ public struct StorageView: View {
             && item.cleanupBlockers.isEmpty
             && item.cleanupTier != "risky"
             && !item.sizeTruncated
+            && storageCleanupPathExists(item.path)
+            && storagePrivilegedCleanupBlocker(for: item.path) == nil
     }
 
     private var basketSummaryLabel: String {
@@ -6786,8 +6788,58 @@ public struct StorageView: View {
         return result
     }
 
+    private func storageCleanupPathExists(_ path: String) -> Bool {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        return FileManager.default.fileExists(atPath: normalized)
+    }
+
+    private func storagePrivilegedCleanupBlocker(for path: String) -> String? {
+        TrashService.privilegedCleanupBlocker(for: path)
+    }
+
+    private func recordAlreadyReclaimedPath(
+        _ path: String,
+        bytes: UInt64,
+        cleanupTier: String?,
+        safety: String?
+    ) {
+        appendCleanupAudit(
+            action: "already-reclaimed",
+            path: path,
+            detail: "Path no longer exists; treating it as already reclaimed and refreshing storage estimates.",
+            bytes: bytes,
+            cleanupTier: cleanupTier,
+            safety: safety,
+            succeeded: true
+        )
+        cleanupBasket.removeAll { $0.path == path }
+        state.markStoragePathsMovedToTrash([path])
+    }
+
     @discardableResult
     private func stageCleanupItem(_ item: StorageHygieneItemModel, showBasket: Bool = false) -> Bool {
+        guard storageCleanupPathExists(item.path) else {
+            recordAlreadyReclaimedPath(
+                item.path,
+                bytes: item.sizeBytes,
+                cleanupTier: item.cleanupTier,
+                safety: item.safety
+            )
+            return false
+        }
+        if let blocker = storagePrivilegedCleanupBlocker(for: item.path) {
+            appendCleanupAudit(
+                action: "policy-blocked",
+                path: item.path,
+                detail: blocker,
+                bytes: item.sizeBytes,
+                cleanupTier: item.cleanupTier,
+                safety: item.safety,
+                blockers: [blocker],
+                succeeded: false
+            )
+            return false
+        }
         guard storageItemIsTrashActionable(item) else {
             appendCleanupAudit(
                 action: "policy-blocked",
@@ -6849,6 +6901,28 @@ public struct StorageView: View {
 
     @discardableResult
     private func stageBasketItem(_ item: StorageCleanupBasketItem) -> Bool {
+        guard storageCleanupPathExists(item.path) else {
+            recordAlreadyReclaimedPath(
+                item.path,
+                bytes: item.estimatedBytes,
+                cleanupTier: item.cleanupTier,
+                safety: item.safety
+            )
+            return false
+        }
+        if let blocker = storagePrivilegedCleanupBlocker(for: item.path) {
+            appendCleanupAudit(
+                action: "policy-blocked",
+                path: item.path,
+                detail: blocker,
+                bytes: item.estimatedBytes,
+                cleanupTier: item.cleanupTier,
+                safety: item.safety,
+                blockers: [blocker],
+                succeeded: false
+            )
+            return false
+        }
         guard item.blockers.isEmpty else {
             appendCleanupAudit(
                 action: "policy-blocked",
@@ -7295,8 +7369,12 @@ public struct StorageView: View {
         // The old batch-level bookkeeping marked all 42 paths failed (and kept
         // them staged for a doomed re-run) because 1 of 42 was root-owned.
         let moved = Set(result.movedPaths)
-        cleanupBasket.removeAll { moved.contains($0.path) }
-        state.markStoragePathsMovedToTrash(result.movedPaths)
+        let alreadyReclaimed = Set(result.failedPaths.compactMap { path, reason in
+            reason == "Path no longer exists" ? path : nil
+        })
+        let resolved = moved.union(alreadyReclaimed)
+        cleanupBasket.removeAll { resolved.contains($0.path) }
+        state.markStoragePathsMovedToTrash(Array(resolved))
         for (path, trashURL) in result.movedTrashURLs {
             trashedItemURLsByOriginalPath[path] = trashURL
             StorageTrackedTrashStore.upsert(
@@ -7313,17 +7391,19 @@ public struct StorageView: View {
         for path in request.targetPaths {
             let metadata = metadataByPath[path]
             let pathSucceeded = moved.contains(path)
+            let pathAlreadyReclaimed = alreadyReclaimed.contains(path)
             appendCleanupAudit(
-                action: pathSucceeded ? "trash" : "failed-trash",
+                action: pathSucceeded ? "trash" : pathAlreadyReclaimed ? "already-reclaimed" : "failed-trash",
                 path: path,
-                detail: pathSucceeded
-                    ? "Moved to Finder Trash."
-                    : (result.failedPaths[path] ?? "Not attempted."),
+                detail: pathSucceeded ? "Moved to Finder Trash."
+                    : pathAlreadyReclaimed
+                        ? "Path no longer exists; treating it as already reclaimed."
+                        : (result.failedPaths[path] ?? "Not attempted."),
                 bytes: bytesByPath[path] ?? fallbackBytes,
                 cleanupTier: metadata?.cleanupTier,
                 safety: metadata?.safety,
                 blockers: metadata?.blockers ?? [],
-                succeeded: pathSucceeded
+                succeeded: pathSucceeded || pathAlreadyReclaimed
             )
         }
     }

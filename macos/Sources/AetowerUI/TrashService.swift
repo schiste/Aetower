@@ -56,6 +56,9 @@ enum TrashService {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return SingleOutcome(trashURL: nil, message: "Empty path") }
         let url = URL(fileURLWithPath: trimmed)
+        if let blocker = privilegedCleanupBlocker(for: url.path) {
+            return SingleOutcome(trashURL: nil, message: blocker)
+        }
         guard FileManager.default.fileExists(atPath: url.path) else {
             return SingleOutcome(trashURL: nil, message: "Path no longer exists")
         }
@@ -85,6 +88,14 @@ enum TrashService {
             }
         }
         return BatchOutcome(movedItems: movedItems, failedPaths: failedPaths)
+    }
+
+    static func privilegedCleanupBlocker(for path: String) -> String? {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path.lowercased()
+        guard normalized == "/library/developer"
+            || normalized.hasPrefix("/library/developer/")
+        else { return nil }
+        return "System-level Developer cache requires administrator permission; Aetower direct Trash cleanup is disabled."
     }
 
     private static func activeWriterBlocker(
