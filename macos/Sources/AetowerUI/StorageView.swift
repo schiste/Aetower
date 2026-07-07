@@ -50,9 +50,10 @@ private struct StorageHomeAction: Identifiable {
     let sampleItems: [StorageHygieneItemModel]
     let stageItems: [StorageHygieneItemModel]
     let growthEvents: [StorageGrowthTimelineEvent]
+    let cleanupBundle: StorageCleanupBundleModel?
 
     var hasStageableItems: Bool {
-        !stageItems.isEmpty
+        cleanupBundle != nil || !stageItems.isEmpty
     }
 }
 
@@ -733,80 +734,80 @@ public struct StorageView: View {
         let riskyBytes = actions.first { $0.id == "risky-review" }?.bytes ?? 0
         let volume = primaryVolume(report)
 
-        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-            if let volume, volume.totalBytes > 0 {
-                let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
-                HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
-                    Label(volumeDisplayName(volume), systemImage: "internaldrive.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AetowerDesign.Ink.secondary)
-                    Spacer()
-                    Text("\(formatBytes(free)) free")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AetowerDesign.Tone.disk)
-                    Text("of \(formatBytes(volume.totalBytes))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+        return AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md, cornerRadius: 16) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                if let volume, volume.totalBytes > 0 {
+                    let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
+                    HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                        Label(volumeDisplayName(volume), systemImage: "internaldrive.fill")
+                            .font(AetowerDesign.Typography.caption.weight(.semibold))
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                        Spacer()
+                        Text("\(formatBytes(free)) free")
+                            .font(AetowerDesign.Typography.caption.weight(.semibold))
+                            .foregroundStyle(AetowerDesign.Tone.disk)
+                        Text("of \(formatBytes(volume.totalBytes))")
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                    }
+                    diskCapacityBar(
+                        total: volume.totalBytes,
+                        free: free,
+                        reclaimable: min(report.summary.totalReclaimableBytes, volume.totalBytes),
+                        tone: AetowerDesign.Tone.disk
+                    )
                 }
-                diskCapacityBar(
-                    total: volume.totalBytes,
-                    free: free,
-                    reclaimable: min(report.summary.totalReclaimableBytes, volume.totalBytes),
-                    tone: AetowerDesign.Tone.disk
-                )
-            }
 
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 132), spacing: AetowerDesign.Spacing.sm)],
-                alignment: .leading,
-                spacing: AetowerDesign.Spacing.sm
-            ) {
-                storageReclaimMetric(
-                    "Reclaimable",
-                    value: formatBytes(report.summary.totalReclaimableBytes),
-                    detail: "bounded estimate",
-                    systemImage: "externaldrive.badge.minus",
-                    tone: AetowerDesign.Tone.disk
-                )
-                storageReclaimMetric(
-                    "Safe",
-                    value: formatBytes(safeBytes),
-                    detail: "\(report.summary.safeCandidateCount) candidate\(report.summary.safeCandidateCount == 1 ? "" : "s")",
-                    systemImage: "checkmark.shield",
-                    tone: AetowerDesign.Status.ready
-                )
-                storageReclaimMetric(
-                    "Dev Artifacts",
-                    value: formatBytes(developerBytes),
-                    detail: "builds, caches, deps",
-                    systemImage: "hammer",
-                    tone: AetowerDesign.Tone.cpu
-                )
-                storageReclaimMetric(
-                    "Review",
-                    value: formatBytes(riskyBytes),
-                    detail: "\(report.summary.reviewCandidateCount) blocked/manual",
-                    systemImage: "exclamationmark.triangle",
-                    tone: AetowerDesign.Status.warning
-                )
-                storageReclaimMetric(
-                    "Tracked Trash",
-                    value: formatBytes(trashPendingBytes),
-                    detail: emptyTrashInFlight ? "emptying" : "pending delete",
-                    systemImage: "trash",
-                    tone: trashPendingBytes > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
-                )
-                storageReclaimMetric(
-                    "Scan",
-                    value: storageScanFreshnessLabel(report),
-                    detail: "\(report.scanDurationMillis) ms",
-                    systemImage: "clock.arrow.circlepath",
-                    tone: AetowerDesign.Status.neutral
-                )
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 132), spacing: AetowerDesign.Spacing.sm)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.sm
+                ) {
+                    storageReclaimMetric(
+                        "Reclaimable",
+                        value: formatBytes(report.summary.totalReclaimableBytes),
+                        detail: "bounded estimate",
+                        systemImage: "externaldrive.badge.minus",
+                        tone: AetowerDesign.Tone.disk
+                    )
+                    storageReclaimMetric(
+                        "Safe",
+                        value: formatBytes(safeBytes),
+                        detail: "\(report.summary.safeCandidateCount) candidate\(report.summary.safeCandidateCount == 1 ? "" : "s")",
+                        systemImage: "checkmark.shield",
+                        tone: AetowerDesign.Status.ready
+                    )
+                    storageReclaimMetric(
+                        "Dev Artifacts",
+                        value: formatBytes(developerBytes),
+                        detail: "builds, caches, deps",
+                        systemImage: "hammer",
+                        tone: AetowerDesign.Tone.cpu
+                    )
+                    storageReclaimMetric(
+                        "Review",
+                        value: formatBytes(riskyBytes),
+                        detail: "\(report.summary.reviewCandidateCount) blocked/manual",
+                        systemImage: "exclamationmark.triangle",
+                        tone: AetowerDesign.Status.warning
+                    )
+                    storageReclaimMetric(
+                        "Tracked Trash",
+                        value: formatBytes(trashPendingBytes),
+                        detail: emptyTrashInFlight ? "emptying" : "pending delete",
+                        systemImage: "trash",
+                        tone: trashPendingBytes > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+                    )
+                    storageReclaimMetric(
+                        "Scan",
+                        value: storageScanFreshnessLabel(report),
+                        detail: "\(report.scanDurationMillis) ms",
+                        systemImage: "clock.arrow.circlepath",
+                        tone: AetowerDesign.Status.neutral
+                    )
+                }
             }
         }
-        .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func storageReclaimMetric(
@@ -1059,6 +1060,12 @@ public struct StorageView: View {
             storageActionMetaChips(action)
 
             storageHomeActionSamples(action)
+            if let bundle = action.cleanupBundle {
+                Text("Manifest: \(bundle.title) · \(bundle.itemCount) item\(bundle.itemCount == 1 ? "" : "s") · \(bundle.confidenceScore)% confidence")
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .lineLimit(1)
+            }
 
             Spacer(minLength: 0)
 
@@ -1114,9 +1121,9 @@ public struct StorageView: View {
             )
             if action.hasStageableItems {
                 storageMetaChip(
-                    systemImage: "arrow.uturn.backward",
-                    text: "Undoable",
-                    tone: AetowerDesign.Status.neutral
+                    systemImage: action.cleanupBundle == nil ? "arrow.uturn.backward" : "shippingbox.fill",
+                    text: action.cleanupBundle == nil ? "Undoable" : "Manifest",
+                    tone: action.cleanupBundle == nil ? AetowerDesign.Status.neutral : AetowerDesign.Tone.disk
                 )
             }
             let rebuild = rebuildCostSummary(for: relevantItems)
@@ -1567,6 +1574,7 @@ public struct StorageView: View {
         let risky = allItems.filter {
             $0.cleanupTier == "risky" || $0.safety != "safe" || !$0.cleanupAllowed || !$0.cleanupBlockers.isEmpty
         }
+        let primaryCleanupBundle = report.cleanupBundles.first(where: cleanupBundleHasActionableCommands)
 
         return [
             StorageHomeAction(
@@ -1576,12 +1584,13 @@ public struct StorageView: View {
                 consequence: "Moves eligible local artifacts to Finder Trash. Reversal is normally possible from Trash or by rebuilding.",
                 systemImage: "checkmark.shield",
                 tone: AetowerDesign.Status.ready,
-                bytes: sumItemBytes(safe),
-                itemCount: safe.count,
-                confidence: safe.isEmpty ? 0 : 94,
+                bytes: primaryCleanupBundle?.estimatedReclaimableBytes ?? sumItemBytes(safe),
+                itemCount: primaryCleanupBundle?.itemCount ?? safe.count,
+                confidence: primaryCleanupBundle?.confidenceScore ?? (safe.isEmpty ? 0 : 94),
                 sampleItems: Array(safe.prefix(4)),
                 stageItems: safe,
-                growthEvents: []
+                growthEvents: [],
+                cleanupBundle: primaryCleanupBundle
             ),
             StorageHomeAction(
                 id: "developer-artifacts",
@@ -1595,7 +1604,8 @@ public struct StorageView: View {
                 confidence: developer.isEmpty ? 0 : 86,
                 sampleItems: Array(developer.prefix(4)),
                 stageItems: developer,
-                growthEvents: []
+                growthEvents: [],
+                cleanupBundle: nil
             ),
             StorageHomeAction(
                 id: "largest-offenders",
@@ -1609,7 +1619,8 @@ public struct StorageView: View {
                 confidence: largest.isEmpty ? 0 : 58,
                 sampleItems: Array(largest.prefix(4)),
                 stageItems: largest.filter(storageItemIsTrashActionable),
-                growthEvents: []
+                growthEvents: [],
+                cleanupBundle: nil
             ),
             StorageHomeAction(
                 id: "recently-grew",
@@ -1623,7 +1634,8 @@ public struct StorageView: View {
                 confidence: recentlyGrew.isEmpty ? 0 : 72,
                 sampleItems: itemsMatchingGrowthEvents(recentlyGrew, in: allItems),
                 stageItems: itemsMatchingGrowthEvents(recentlyGrew, in: stageable),
-                growthEvents: recentlyGrew
+                growthEvents: recentlyGrew,
+                cleanupBundle: nil
             ),
             StorageHomeAction(
                 id: "old-unused",
@@ -1637,7 +1649,8 @@ public struct StorageView: View {
                 confidence: oldUnused.isEmpty ? 0 : 52,
                 sampleItems: Array(oldUnused.prefix(4)),
                 stageItems: oldUnused.filter(storageItemIsTrashActionable),
-                growthEvents: []
+                growthEvents: [],
+                cleanupBundle: nil
             ),
             StorageHomeAction(
                 id: "risky-review",
@@ -1651,7 +1664,8 @@ public struct StorageView: View {
                 confidence: risky.isEmpty ? 0 : 30,
                 sampleItems: Array(risky.prefix(4)),
                 stageItems: [],
-                growthEvents: []
+                growthEvents: [],
+                cleanupBundle: nil
             ),
         ]
     }
@@ -8200,6 +8214,17 @@ public struct StorageView: View {
     }
 
     private func stageStorageHomeAction(_ action: StorageHomeAction, presentExecution: Bool = false) {
+        if let bundle = action.cleanupBundle {
+            let stagedBefore = cleanupBasket.count
+            stageCleanupBundle(bundle)
+            if presentExecution, cleanupBasket.count > stagedBefore {
+                presentCleanupExecution(basketTrashExecutionRequest())
+            } else if cleanupBasket.count == stagedBefore {
+                copy(storageHomeActionPlan(action))
+            }
+            return
+        }
+
         var staged = 0
         for item in uniqueStorageItems(action.stageItems).prefix(80) {
             if stageCleanupItem(item, showBasket: false) {
@@ -8214,7 +8239,12 @@ public struct StorageView: View {
     }
 
     private func storageHomeActionCanMoveToTrash(_ action: StorageHomeAction) -> Bool {
-        !action.stageItems.isEmpty
+        if let bundle = action.cleanupBundle {
+            return bundle.safety == "safe"
+                && bundle.confidenceScore >= 90
+                && cleanupBundleHasActionableCommands(bundle)
+        }
+        return !action.stageItems.isEmpty
             && action.stageItems.allSatisfy { item in
                 storageItemIsTrashActionable(item) && item.safety == "safe"
             }
@@ -8298,6 +8328,22 @@ public struct StorageView: View {
         if !action.sampleItems.isEmpty {
             lines.append(contentsOf: ["", "## Sample items"])
             for item in action.sampleItems.prefix(12) {
+                lines.append("- \(formatBytes(item.sizeBytes)) | \(item.cleanupTier) | \(item.path)")
+                if !item.cleanupBlockers.isEmpty {
+                    lines.append("  - Blocked: \(item.cleanupBlockers.joined(separator: "; "))")
+                }
+                lines.append("  - Why: \(item.reason)")
+            }
+        }
+
+        if let bundle = action.cleanupBundle {
+            lines.append(contentsOf: ["", "## Engine cleanup bundle"])
+            lines.append("- Bundle: \(bundle.title)")
+            lines.append("- Manifest bytes: \(formatBytes(bundle.estimatedReclaimableBytes))")
+            lines.append("- Manifest items: \(bundle.itemCount)")
+            lines.append("- Confidence: \(bundle.confidenceScore)%")
+            lines.append(contentsOf: ["", "## Bundle manifest"])
+            for item in bundle.manifest.prefix(16) {
                 lines.append("- \(formatBytes(item.sizeBytes)) | \(item.cleanupTier) | \(item.path)")
                 if !item.cleanupBlockers.isEmpty {
                     lines.append("  - Blocked: \(item.cleanupBlockers.joined(separator: "; "))")
