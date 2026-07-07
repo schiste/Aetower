@@ -2943,6 +2943,42 @@ public final class AppState {
         )
     }
 
+    func recordStorageSimilarityActionDiagnostics(
+        action: String,
+        groupKind: String,
+        groupFingerprint: String,
+        detectorKind: String,
+        actionability: String,
+        confidenceBand: String,
+        confidenceScore: UInt8,
+        itemCount: Int,
+        totalBytes: UInt64,
+        reclaimableBytes: UInt64,
+        extraFields: [(key: String, value: String)] = [],
+        warning: Bool = false
+    ) {
+        var fields = [
+            DiagnosticsField(key: "action", value: action),
+            DiagnosticsField(key: "group_kind", value: groupKind),
+            DiagnosticsField(key: "group_fingerprint", value: groupFingerprint),
+            DiagnosticsField(key: "detector_kind", value: detectorKind),
+            DiagnosticsField(key: "actionability", value: actionability),
+            DiagnosticsField(key: "confidence_band", value: confidenceBand),
+            DiagnosticsField(key: "confidence_score", value: String(confidenceScore)),
+            DiagnosticsField(key: "item_count", value: String(itemCount)),
+            DiagnosticsField(key: "total_bytes", value: String(totalBytes)),
+            DiagnosticsField(key: "reclaimable_bytes", value: String(reclaimableBytes)),
+        ]
+        fields.append(contentsOf: extraFields.map { DiagnosticsField(key: $0.key, value: $0.value) })
+        recordLocalDiagnosticsEvent(
+            level: warning ? .warn : .info,
+            subsystem: .ui,
+            eventType: "storage-similarity-\(action)",
+            message: "Storage similarity group \(action).",
+            fields: fields
+        )
+    }
+
     func cleanupActiveWriterProbe() -> TrashService.ActiveWriterProbe {
         let bridge = self.bridge
         return { path in
