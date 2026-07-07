@@ -295,6 +295,13 @@ pub(super) fn apply_cleanup_guardrails(items: &mut [StorageHygieneItem], now_mil
             item.safety = "review".to_owned();
             block_cleanup(item, "Protected system/application path.");
         }
+        if is_privileged_system_cleanup_path(&item.path) {
+            item.safety = "review".to_owned();
+            block_cleanup(
+                item,
+                "System-level cache requires administrator permission; Aetower direct Trash cleanup is disabled.",
+            );
+        }
         if item.cleanup_tier == "risky" {
             block_cleanup(
                 item,
@@ -438,6 +445,11 @@ pub(super) fn is_protected_cleanup_path(path: &str) -> bool {
                 .strip_prefix(root)
                 .is_some_and(|suffix| suffix.starts_with('/'))
     })
+}
+
+fn is_privileged_system_cleanup_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower == "/library/developer" || lower.starts_with("/library/developer/")
 }
 
 pub(super) fn storage_role_for_kind(kind: &str) -> &'static str {

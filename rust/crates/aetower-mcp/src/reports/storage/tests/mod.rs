@@ -4228,6 +4228,32 @@ fn cleanup_guardrails_block_untracked_source_like_files() {
 }
 
 #[test]
+fn cleanup_guardrails_block_system_developer_cache_trash_actions() {
+    let now_millis = crate::current_unix_millis().unwrap_or_default();
+    let mut items = vec![test_storage_item(
+        "/Library/Developer/CoreSimulator/Caches",
+        "simulator-cache",
+        "cache",
+        "safe",
+        "safe",
+        now_millis.saturating_sub(RECENT_CLEANUP_BLOCK_MILLIS + 60_000),
+    )];
+
+    apply_cleanup_guardrails(&mut items, now_millis);
+
+    assert!(!items[0].cleanup_allowed);
+    assert_eq!(items[0].safety, "review");
+    assert_eq!(items[0].default_cleanup_action, "manual_review");
+    assert!(
+        items[0]
+            .cleanup_blockers
+            .iter()
+            .any(|reason| reason.contains("administrator permission"))
+    );
+    assert!(build_cleanup_bundles(&items).is_empty());
+}
+
+#[test]
 fn cleanup_guardrails_block_tracked_modified_and_protected_paths() {
     let now_millis = crate::current_unix_millis().unwrap_or_default();
     let old_millis = now_millis.saturating_sub(RECENT_CLEANUP_BLOCK_MILLIS + 60_000);
