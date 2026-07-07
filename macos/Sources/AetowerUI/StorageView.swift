@@ -309,6 +309,14 @@ public struct StorageView: View {
     @State private var selectedTreemapNodeID: String?
     @State private var storageExplorerPage = 0
     @State private var coldDataSort: StorageColdDataSort = .recommended
+    @State private var selectedSimilarityFilter: StorageSimilarityFilter = .exactDuplicates
+    @State private var reviewedSimilarityGroupIDs: Set<String> = []
+    @State private var ignoredSimilarityGroupIDs: Set<String> = []
+    @State private var showIgnoredSimilarityGroups = false
+    @State private var duplicateCanonicalPathByGroupID: [String: String] = [:]
+    @State private var collapsedSimilarityGroupKeys: Set<String> = []
+    @State private var similarityTelemetryViewedGroupKeys: Set<String> = []
+    @State private var similarityTelemetryViewedSurfaceKeys: Set<String> = []
 
     public init(state: AppState) {
         self.state = state
@@ -629,6 +637,10 @@ public struct StorageView: View {
         case .reclaim:
             return formatBytes(report.summary.totalReclaimableBytes)
         case .explore:
+            let similaritySummary = similarityReviewSummary(for: report)
+            if similaritySummary.groupCount > 0 {
+                return "\(similaritySummary.groupCount) groups - \(formatBytes(similaritySummary.reviewableBytes))"
+            }
             return "\(report.summary.itemCount) item\(report.summary.itemCount == 1 ? "" : "s")"
         case .insights:
             let growthCount = report.growthDeltas.filter { $0.deltaBytes > 0 }.count
@@ -648,6 +660,9 @@ public struct StorageView: View {
         case .reclaim:
             return report.summary.totalReclaimableBytes > 0 ? AetowerDesign.Tone.disk : AetowerDesign.Status.ready
         case .explore:
+            if similarityReviewSummary(for: report).groupCount > 0 {
+                return AetowerDesign.Status.warning
+            }
             return AetowerDesign.Tone.memory
         case .insights:
             if !report.budgetGuardrails.violations.isEmpty
@@ -706,6 +721,7 @@ public struct StorageView: View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             storageDiskPressureHeader(report)
             storageHomeActionsSection(report)
+            similarFilesOverviewSection(report)
             if let coldData = report.coldData, coldData.bands.contains(where: { $0.itemCount > 0 }) {
                 coldDataLaneSection(coldData)
             }
@@ -722,6 +738,7 @@ public struct StorageView: View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             visualExplorationSection(report)
             wholeComputerOptimizationSection(report)
+            similarFilesReviewSection(report)
             storageInvestigationSection(report)
             itemSection(report)
         }
@@ -1518,6 +1535,663 @@ public struct StorageView: View {
         return sum.overflow ? UInt64.max : sum.partialValue
     }
 
+    private func similarityReviewSummary(
+        for report: StorageHygieneReportModel
+    ) -> StorageSimilarityReviewSummary {
+        let otherRedundancyGroups = otherRedundancyGroups(from: report)
+        let activeDuplicateGroups = report.duplicateGroups.filter {
+            !ignoredSimilarityGroupIDs.contains(duplicateGroupActionKey($0))
+        }
+        let exactGroups = duplicateGroups(for: .exactDuplicates, in: report)
+        let fuzzyGroups = activeDuplicateGroups.filter { !$0.confirmed && $0.detectorKind != .exact }
+        let duplicateBytes = sumDuplicateGroupBytes(activeDuplicateGroups)
+        let otherRedundancyBytes = sumRedundancyGroupBytes(otherRedundancyGroups)
+        return StorageSimilarityReviewSummary(
+            duplicateGroupCount: activeDuplicateGroups.count,
+            otherRedundancyGroupCount: otherRedundancyGroups.count,
+            exactGroupCount: exactGroups.count,
+            fuzzyGroupCount: fuzzyGroups.count,
+            exactBytes: sumDuplicateGroupBytes(exactGroups),
+            otherRedundancyBytes: otherRedundancyBytes,
+            reviewableBytes: sumBytes(duplicateBytes, otherRedundancyBytes)
+        )
+    }
+
+    private func duplicateGroups(
+        for filter: StorageSimilarityFilter,
+        in report: StorageHygieneReportModel,
+        includeIgnored: Bool = false
+    ) -> [StorageDuplicateGroupModel] {
+        let groups = report.duplicateGroups.filter { group in
+            includeIgnored || !ignoredSimilarityGroupIDs.contains(duplicateGroupActionKey(group))
+        }
+        switch filter {
+        case .exactDuplicates:
+            return groups.filter { $0.confirmed || $0.detectorKind == .exact }
+        case .similarImages:
+            return groups.filter { $0.detectorKind == .imageSimilarity }
+        case .similarDocumentsText:
+            return groups.filter {
+                $0.detectorKind == .documentSimilarity || $0.detectorKind == .textSimilarity
+            }
+        case .similarVideos:
+            return groups.filter { $0.detectorKind == .videoSimilarity }
+        case .similarBinaries:
+            return groups.filter { $0.detectorKind == .binarySimilarity }
+        case .otherRedundancy:
+            return []
+        }
+    }
+
+    private func otherRedundancyGroups(
+        from report: StorageHygieneReportModel,
+        includeIgnored: Bool = false
+    ) -> [StorageRedundancyGroupModel] {
+        report.redundancyGroups.filter { group in
+            group.redundancyClass != "byte-duplicates"
+                && !group.id.hasPrefix("byte-duplicates|")
+                && (includeIgnored || !ignoredSimilarityGroupIDs.contains(redundancyGroupActionKey(group)))
+        }
+    }
+
+    private func sortedDuplicateGroups(
+        _ groups: [StorageDuplicateGroupModel]
+    ) -> [StorageDuplicateGroupModel] {
+        groups.sorted { left, right in
+            if left.reclaimableBytes != right.reclaimableBytes {
+                return left.reclaimableBytes > right.reclaimableBytes
+            }
+            if left.totalBytes != right.totalBytes {
+                return left.totalBytes > right.totalBytes
+            }
+            if left.confidenceScore != right.confidenceScore {
+                return left.confidenceScore > right.confidenceScore
+            }
+            return left.id < right.id
+        }
+    }
+
+    private func sortedRedundancyGroups(
+        _ groups: [StorageRedundancyGroupModel]
+    ) -> [StorageRedundancyGroupModel] {
+        groups.sorted { left, right in
+            if left.reclaimableBytes != right.reclaimableBytes {
+                return left.reclaimableBytes > right.reclaimableBytes
+            }
+            if left.totalBytes != right.totalBytes {
+                return left.totalBytes > right.totalBytes
+            }
+            if left.confidenceScore != right.confidenceScore {
+                return left.confidenceScore > right.confidenceScore
+            }
+            return left.id < right.id
+        }
+    }
+
+    private func similarityFilterCount(
+        _ filter: StorageSimilarityFilter,
+        in report: StorageHygieneReportModel
+    ) -> Int {
+        if filter == .otherRedundancy {
+            return otherRedundancyGroups(from: report).count
+        }
+        return duplicateGroups(for: filter, in: report).count
+    }
+
+    private func similarityFilterBytes(
+        _ filter: StorageSimilarityFilter,
+        in report: StorageHygieneReportModel
+    ) -> UInt64 {
+        if filter == .otherRedundancy {
+            return sumRedundancyGroupBytes(otherRedundancyGroups(from: report))
+        }
+        return sumDuplicateGroupBytes(duplicateGroups(for: filter, in: report))
+    }
+
+    private func preferredSimilarityFilter(
+        for report: StorageHygieneReportModel
+    ) -> StorageSimilarityFilter {
+        StorageSimilarityFilter.allCases.first { filter in
+            similarityFilterCount(filter, in: report) > 0
+        } ?? .exactDuplicates
+    }
+
+    private func sumDuplicateGroupBytes(_ groups: [StorageDuplicateGroupModel]) -> UInt64 {
+        groups.reduce(UInt64(0)) { total, group in
+            sumBytes(total, group.reclaimableBytes)
+        }
+    }
+
+    private func sumRedundancyGroupBytes(_ groups: [StorageRedundancyGroupModel]) -> UInt64 {
+        groups.reduce(UInt64(0)) { total, group in
+            sumBytes(total, group.reclaimableBytes)
+        }
+    }
+
+    private func duplicateGroupTitle(_ group: StorageDuplicateGroupModel) -> String {
+        switch group.detectorKind {
+        case .exact:
+            return "Exact duplicates"
+        case .imageSimilarity:
+            return "Similar images"
+        case .textSimilarity:
+            return "Similar text files"
+        case .documentSimilarity:
+            return "Similar documents"
+        case .videoSimilarity:
+            return "Similar videos"
+        case .binarySimilarity:
+            return group.confirmed ? "Exact duplicates" : "Similar binaries"
+        case .unknown:
+            return group.confirmed ? "Exact duplicates" : "Similar files"
+        }
+    }
+
+    private func duplicateDetectorLabel(_ detectorKind: StorageDuplicateDetectorKindModel) -> String {
+        switch detectorKind {
+        case .exact:
+            return "Exact"
+        case .imageSimilarity:
+            return "Image"
+        case .textSimilarity:
+            return "Text"
+        case .documentSimilarity:
+            return "Document"
+        case .videoSimilarity:
+            return "Video"
+        case .binarySimilarity:
+            return "Binary"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+
+    private func duplicateDetectorIcon(_ detectorKind: StorageDuplicateDetectorKindModel) -> String {
+        switch detectorKind {
+        case .exact:
+            return "equal.square"
+        case .imageSimilarity:
+            return "photo.on.rectangle"
+        case .textSimilarity:
+            return "doc.text"
+        case .documentSimilarity:
+            return "doc.richtext"
+        case .videoSimilarity:
+            return "film"
+        case .binarySimilarity:
+            return "shippingbox"
+        case .unknown:
+            return "questionmark.square"
+        }
+    }
+
+    private func duplicateGroupIcon(_ group: StorageDuplicateGroupModel) -> String {
+        duplicateDetectorIcon(group.detectorKind)
+    }
+
+    private func duplicateGroupTone(_ group: StorageDuplicateGroupModel) -> Color {
+        if group.actionability == .cleanableExact || group.confirmed {
+            return AetowerDesign.Status.ready
+        }
+        switch group.confidenceBand {
+        case .high:
+            return AetowerDesign.Status.warning
+        case .medium:
+            return AetowerDesign.Tone.energy
+        case .low:
+            return AetowerDesign.Status.error
+        case .confirmed:
+            return AetowerDesign.Status.ready
+        case .unknown:
+            return AetowerDesign.Status.neutral
+        }
+    }
+
+    private func redundancyGroupTone(_ group: StorageRedundancyGroupModel) -> Color {
+        switch group.safety.lowercased() {
+        case "safe":
+            return AetowerDesign.Status.ready
+        case "review":
+            return AetowerDesign.Status.warning
+        case "risky":
+            return AetowerDesign.Status.error
+        default:
+            return group.confidenceScore >= 80 ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+        }
+    }
+
+    private func duplicateConfidenceLabel(
+        _ confidenceBand: StorageDuplicateConfidenceBandModel
+    ) -> String {
+        switch confidenceBand {
+        case .confirmed:
+            return "Confirmed"
+        case .high:
+            return "High confidence"
+        case .medium:
+            return "Medium confidence"
+        case .low:
+            return "Low confidence"
+        case .unknown:
+            return "Unknown confidence"
+        }
+    }
+
+    private func duplicateGroupReviewWarning(_ group: StorageDuplicateGroupModel) -> String? {
+        switch group.detectorKind {
+        case .videoSimilarity:
+            return "Lower-confidence video match: metadata and sampled bytes are not decoded-frame proof."
+        case .binarySimilarity:
+            if group.confirmed {
+                return nil
+            }
+            return "Lower-confidence binary match: fuzzy chunk fingerprints can produce false positives."
+        default:
+            if group.confidenceBand == .low {
+                return "Low-confidence match. Confirm the files manually before cleanup."
+            }
+            return nil
+        }
+    }
+
+    private func duplicateGroupHasTextDocumentAffordances(_ group: StorageDuplicateGroupModel) -> Bool {
+        group.detectorKind == .textSimilarity || group.detectorKind == .documentSimilarity
+    }
+
+    private func duplicateGroupActionKey(_ group: StorageDuplicateGroupModel) -> String {
+        "duplicate|\(group.id)"
+    }
+
+    private func redundancyGroupActionKey(_ group: StorageRedundancyGroupModel) -> String {
+        "redundancy|\(group.id)"
+    }
+
+    private func recordDuplicateGroupImpression(_ group: StorageDuplicateGroupModel) {
+        let key = duplicateGroupActionKey(group)
+        if similarityTelemetryViewedGroupKeys.insert(key).inserted {
+            recordSimilarityAction("group-viewed", duplicateGroup: group)
+        }
+    }
+
+    private func recordRedundancyGroupImpression(_ group: StorageRedundancyGroupModel) {
+        let key = redundancyGroupActionKey(group)
+        if similarityTelemetryViewedGroupKeys.insert(key).inserted {
+            recordSimilarityAction("group-viewed", redundancyGroup: group)
+        }
+    }
+
+    private func similarityGroupIsExpanded(_ key: String) -> Bool {
+        !collapsedSimilarityGroupKeys.contains(key)
+    }
+
+    private func toggleDuplicateGroupExpansion(_ group: StorageDuplicateGroupModel) {
+        let key = duplicateGroupActionKey(group)
+        if collapsedSimilarityGroupKeys.contains(key) {
+            collapsedSimilarityGroupKeys.remove(key)
+            recordSimilarityAction("group-expanded", duplicateGroup: group)
+        } else {
+            collapsedSimilarityGroupKeys.insert(key)
+        }
+    }
+
+    private func toggleRedundancyGroupExpansion(_ group: StorageRedundancyGroupModel) {
+        let key = redundancyGroupActionKey(group)
+        if collapsedSimilarityGroupKeys.contains(key) {
+            collapsedSimilarityGroupKeys.remove(key)
+            recordSimilarityAction("group-expanded", redundancyGroup: group)
+        } else {
+            collapsedSimilarityGroupKeys.insert(key)
+        }
+    }
+
+    private func recordSimilarityOverviewImpression(
+        _ report: StorageHygieneReportModel,
+        summary: StorageSimilarityReviewSummary
+    ) {
+        let key = "overview|\(report.capturedAtMillis)"
+        if similarityTelemetryViewedSurfaceKeys.insert(key).inserted {
+            recordSimilaritySurfaceAction("overview-viewed", summary: summary)
+        }
+    }
+
+    private func recordSimilarityReviewSectionImpression(
+        _ report: StorageHygieneReportModel,
+        summary: StorageSimilarityReviewSummary
+    ) {
+        let key = "review|\(report.capturedAtMillis)"
+        if similarityTelemetryViewedSurfaceKeys.insert(key).inserted {
+            recordSimilaritySurfaceAction(
+                "review-section-viewed",
+                summary: summary,
+                extraFields: [(key: "selected_filter", value: selectedSimilarityFilter.rawValue)]
+            )
+        }
+    }
+
+    private func recordSimilaritySurfaceAction(
+        _ action: String,
+        summary: StorageSimilarityReviewSummary,
+        extraFields: [(key: String, value: String)] = []
+    ) {
+        state.recordStorageSimilarityActionDiagnostics(
+            action: action,
+            groupKind: "surface",
+            groupFingerprint: similarityTelemetryFingerprint(
+                "surface|\(summary.groupCount)|\(summary.reviewableBytes)"
+            ),
+            detectorKind: "mixed",
+            actionability: summary.exactGroupCount > 0 ? "mixed" : "review_only",
+            confidenceBand: "mixed",
+            confidenceScore: 0,
+            itemCount: summary.groupCount,
+            totalBytes: summary.reviewableBytes,
+            reclaimableBytes: summary.reviewableBytes,
+            extraFields: [
+                (key: "exact_group_count", value: String(summary.exactGroupCount)),
+                (key: "fuzzy_group_count", value: String(summary.fuzzyGroupCount)),
+                (key: "redundancy_group_count", value: String(summary.otherRedundancyGroupCount)),
+            ] + extraFields
+        )
+    }
+
+    private func recordSimilarityAction(
+        _ action: String,
+        duplicateGroup group: StorageDuplicateGroupModel,
+        extraFields: [(key: String, value: String)] = [],
+        warning: Bool = false
+    ) {
+        state.recordStorageSimilarityActionDiagnostics(
+            action: action,
+            groupKind: "duplicate",
+            groupFingerprint: similarityTelemetryFingerprint(duplicateGroupActionKey(group)),
+            detectorKind: group.detectorKind.rawValue,
+            actionability: group.actionability.rawValue,
+            confidenceBand: group.confidenceBand.rawValue,
+            confidenceScore: group.confidenceScore,
+            itemCount: group.fileCount,
+            totalBytes: group.totalBytes,
+            reclaimableBytes: group.reclaimableBytes,
+            extraFields: extraFields,
+            warning: warning
+        )
+    }
+
+    private func recordSimilarityAction(
+        _ action: String,
+        redundancyGroup group: StorageRedundancyGroupModel,
+        extraFields: [(key: String, value: String)] = [],
+        warning: Bool = false
+    ) {
+        state.recordStorageSimilarityActionDiagnostics(
+            action: action,
+            groupKind: "redundancy",
+            groupFingerprint: similarityTelemetryFingerprint(redundancyGroupActionKey(group)),
+            detectorKind: "other_redundancy:\(similarityTelemetryToken(group.redundancyClass))",
+            actionability: "review_only",
+            confidenceBand: similarityConfidenceBand(score: group.confidenceScore),
+            confidenceScore: group.confidenceScore,
+            itemCount: group.itemCount,
+            totalBytes: group.totalBytes,
+            reclaimableBytes: group.reclaimableBytes,
+            extraFields: extraFields,
+            warning: warning
+        )
+    }
+
+    private func similarityConfidenceBand(score: UInt8) -> String {
+        if score >= 80 {
+            return "high"
+        }
+        if score >= 60 {
+            return "medium"
+        }
+        return "low"
+    }
+
+    private func similarityTelemetryToken(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return "unknown" }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))
+        return trimmed.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? String(scalar) : "_"
+        }.joined()
+    }
+
+    private func similarityTelemetryFingerprint(_ value: String) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1_099_511_628_211
+        }
+        return String(format: "%016llx", CUnsignedLongLong(hash))
+    }
+
+    private func markSimilarityGroupReviewed(_ key: String) {
+        reviewedSimilarityGroupIDs.insert(key)
+    }
+
+    private func unmarkSimilarityGroupReviewed(_ key: String) {
+        reviewedSimilarityGroupIDs.remove(key)
+    }
+
+    private func ignoreSimilarityGroup(_ key: String) {
+        ignoredSimilarityGroupIDs.insert(key)
+    }
+
+    private func restoreSimilarityGroup(_ key: String) {
+        ignoredSimilarityGroupIDs.remove(key)
+    }
+
+    private func copyPaths(_ paths: [String]) {
+        copy(paths.joined(separator: "\n"))
+    }
+
+    private func reveal(paths: [String]) {
+        let urls = paths.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) }
+        guard !urls.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
+    private func duplicateGroupCanStageExactCleanup(_ group: StorageDuplicateGroupModel) -> Bool {
+        group.actions.canStageCleanup
+            && group.paths.count >= 2
+            && group.confirmed
+            && group.detectorKind == .exact
+            && group.actionability == .cleanableExact
+    }
+
+    private func duplicateGroupCanonicalItem(_ group: StorageDuplicateGroupModel) -> StorageDuplicateItemModel? {
+        if let path = duplicateCanonicalPathByGroupID[group.id],
+           let item = group.paths.first(where: { $0.path == path }) {
+            return item
+        }
+        return group.paths.first
+    }
+
+    private func duplicateCanonicalSelection(
+        for group: StorageDuplicateGroupModel
+    ) -> Binding<String> {
+        Binding(
+            get: {
+                duplicateCanonicalPathByGroupID[group.id] ?? group.paths.first?.path ?? ""
+            },
+            set: { newValue in
+                duplicateCanonicalPathByGroupID[group.id] = newValue
+            }
+        )
+    }
+
+    private func duplicateGroupStageableItems(
+        _ group: StorageDuplicateGroupModel,
+        canonical: StorageDuplicateItemModel
+    ) -> [StorageDuplicateItemModel] {
+        group.paths.filter { $0.path != canonical.path }
+    }
+
+    private func duplicateGroupReviewOnlyReason(_ group: StorageDuplicateGroupModel) -> String {
+        if !group.actions.canStageCleanup,
+           let blockReason = group.actions.blockReason,
+           !blockReason.isEmpty {
+            return "Review-only: \(blockReason)"
+        }
+        switch group.detectorKind {
+        case .imageSimilarity:
+            return "Review-only: perceptual image hashes can group edited, cropped, or different originals."
+        case .textSimilarity, .documentSimilarity:
+            return "Review-only: text similarity ignores formatting and may miss important appended, reordered, or scanned content."
+        case .videoSimilarity:
+            return "Review-only: video matching uses metadata and sampled bytes, not decoded-frame equivalence."
+        case .binarySimilarity:
+            return "Review-only: binary similarity uses fuzzy chunk fingerprints and can produce false positives."
+        case .exact:
+            return "Exact cleanup is unavailable until at least one canonical and one duplicate path are present."
+        case .unknown:
+            return "Review-only: detector type is unknown, so Aetower will not stage cleanup automatically."
+        }
+    }
+
+    private func stageExactDuplicateGroup(
+        _ group: StorageDuplicateGroupModel,
+        canonical: StorageDuplicateItemModel
+    ) {
+        guard duplicateGroupCanStageExactCleanup(group) else {
+            recordSimilarityAction(
+                "deletion-blocked",
+                duplicateGroup: group,
+                extraFields: [(key: "blocked_reason", value: "not-cleanable-exact")],
+                warning: true
+            )
+            return
+        }
+        var staged = 0
+        let stageableItems = duplicateGroupStageableItems(group, canonical: canonical)
+        guard !stageableItems.isEmpty else {
+            recordSimilarityAction(
+                "deletion-blocked",
+                duplicateGroup: group,
+                extraFields: [(key: "blocked_reason", value: "no-non-canonical-copy")],
+                warning: true
+            )
+            return
+        }
+        for item in stageableItems {
+            let basketItem = StorageCleanupBasketItem(
+                id: "exact-duplicate|\(group.id)|\(item.path)",
+                title: item.displayName,
+                path: item.path,
+                source: "exact duplicate",
+                cleanupTier: normalizedDuplicateCleanupTier(item.cleanupTier),
+                safety: normalizedDuplicateSafety(item.safety),
+                estimatedBytes: item.sizeBytes,
+                reason: "Confirmed byte-identical duplicate. Canonical retained: \(canonical.path)",
+                consequence: "Aetower will move only the non-canonical duplicate to Finder Trash. The retained canonical path is not staged.",
+                evidence: [
+                    "Detector: \(duplicateDetectorLabel(group.detectorKind))",
+                    "Candidate key: \(group.candidateKey)",
+                    "Confidence: \(group.confidenceScore)%",
+                    "Canonical retained: \(canonical.path)",
+                    "Duplicate staged: \(item.path)",
+                ],
+                requiresReview: true,
+                blockers: [],
+                prerequisites: [
+                    "Quick Look the canonical file and each staged duplicate before moving the basket to Trash.",
+                    "Confirm no application or workflow depends on the duplicate path."
+                ]
+            )
+            if stageBasketItem(basketItem) {
+                staged += 1
+            }
+        }
+        if staged > 0 {
+            recordSimilarityAction(
+                "exact-duplicate-staged",
+                duplicateGroup: group,
+                extraFields: [
+                    (key: "stage_attempted_count", value: String(stageableItems.count)),
+                    (key: "stage_count", value: String(staged)),
+                    (key: "canonical_selected", value: "true"),
+                ]
+            )
+        }
+        let blocked = stageableItems.count - staged
+        if blocked > 0 {
+            recordSimilarityAction(
+                "deletion-blocked",
+                duplicateGroup: group,
+                extraFields: [
+                    (key: "blocked_reason", value: "stage-rejected"),
+                    (key: "blocked_count", value: String(blocked)),
+                    (key: "stage_attempted_count", value: String(stageableItems.count)),
+                    (key: "stage_count", value: String(staged)),
+                ],
+                warning: true
+            )
+        }
+        if staged > 0 {
+            presentCleanupExecution(basketTrashExecutionRequest())
+        }
+    }
+
+    private func normalizedDuplicateCleanupTier(_ cleanupTier: String) -> String {
+        cleanupTier.isEmpty ? "review" : cleanupTier
+    }
+
+    private func normalizedDuplicateSafety(_ safety: String) -> String {
+        safety.isEmpty ? "review" : safety
+    }
+
+    private func similarDuplicateItemMetadata(_ item: StorageDuplicateItemModel) -> String {
+        [
+            fileKindLabel(item.path),
+            modifiedDateLabel(item.modifiedMillis),
+            cleanupTierLabel(item.cleanupTier),
+        ]
+        .filter { !$0.isEmpty }
+        .joined(separator: " - ")
+    }
+
+    private func similarRedundancyItemMetadata(_ item: StorageRedundancyItemModel) -> String {
+        [
+            item.kind.replacingOccurrences(of: "-", with: " "),
+            item.role.replacingOccurrences(of: "-", with: " "),
+            cleanupTierLabel(item.cleanupTier),
+            item.safety,
+        ]
+        .filter { !$0.isEmpty }
+        .joined(separator: " - ")
+    }
+
+    private func fileKindLabel(_ path: String) -> String {
+        let ext = URL(fileURLWithPath: path).pathExtension
+        return ext.isEmpty ? "no extension" : ext.uppercased()
+    }
+
+    private func modifiedDateLabel(_ modifiedMillis: UInt64?) -> String {
+        guard let modifiedMillis else {
+            return "modified unknown"
+        }
+        let date = Date(timeIntervalSince1970: Double(modifiedMillis) / 1000.0)
+        return "modified \(date.formatted(date: .abbreviated, time: .omitted))"
+    }
+
+    private func openDuplicateGroupFirstPair(_ group: StorageDuplicateGroupModel) {
+        for item in group.paths.prefix(2) {
+            openPath(path: item.path)
+        }
+    }
+
+    private func compareDuplicateGroupFirstPair(_ group: StorageDuplicateGroupModel) {
+        comparePaths(Array(group.paths.prefix(2)).map(\.path))
+    }
+
+    private func diffCommand(for paths: [String]) -> String {
+        guard paths.count >= 2 else {
+            return ""
+        }
+        return "diff -u \(shellQuotedPath(paths[0])) \(shellQuotedPath(paths[1]))"
+    }
+
     private func sumGrowthBytes(_ events: [StorageGrowthTimelineEvent]) -> UInt64 {
         events.reduce(UInt64(0)) { total, event in
             let sum = total.addingReportingOverflow(UInt64(max(0, event.deltaBytes)))
@@ -1666,6 +2340,7 @@ public struct StorageView: View {
         let systemBytes = report.systemDataBuckets.reduce(UInt64(0)) { total, bucket in
             sumBytes(total, bucket.sizeBytes)
         }
+        let similaritySummary = similarityReviewSummary(for: report)
 
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
@@ -1682,7 +2357,7 @@ public struct StorageView: View {
                 }
                 Spacer(minLength: AetowerDesign.Spacing.md)
                 AetowerBadge(
-                    "\(largeFiles.count + oldUnused.count + report.duplicateGroups.count + report.appFootprints.count) leads",
+                    "\(largeFiles.count + oldUnused.count + similaritySummary.groupCount + report.appFootprints.count) leads",
                     tone: AetowerDesign.Tone.disk
                 )
             }
@@ -1694,7 +2369,7 @@ public struct StorageView: View {
             ) {
                 footprintMetric("Large files", value: "\(largeFiles.count)", detail: largeFiles.first.map { formatBytes($0.sizeBytes) } ?? "none")
                 footprintMetric("Old unused", value: "\(oldUnused.count)", detail: oldUnused.first.map { formatBytes($0.sizeBytes) } ?? "none")
-                footprintMetric("Similar", value: "\(report.duplicateGroups.count)", detail: formatBytes(report.duplicateGroups.reduce(UInt64(0)) { sumBytes($0, $1.reclaimableBytes) }))
+                footprintMetric("Similar", value: "\(similaritySummary.groupCount)", detail: formatBytes(similaritySummary.reviewableBytes))
                 footprintMetric("Apps", value: "\(report.appFootprints.count)", detail: report.appFootprints.first.map { formatBytes($0.totalBytes) } ?? "none")
                 footprintMetric("System Data", value: formatBytes(systemBytes), detail: "\(report.systemDataBuckets.filter { $0.sizeBytes > 0 }.count) active bucket\(report.systemDataBuckets.filter { $0.sizeBytes > 0 }.count == 1 ? "" : "s")")
             }
@@ -1716,7 +2391,6 @@ public struct StorageView: View {
                     empty: "No cold files in the retained scan candidates.",
                     items: Array(oldUnused.prefix(4))
                 )
-                duplicateGroupsCard(report.duplicateGroups)
                 appFootprintsCard(report.appFootprints)
                 systemDataBucketsCard(report.systemDataBuckets)
             }
@@ -1753,52 +2427,775 @@ public struct StorageView: View {
         .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func duplicateGroupsCard(_ groups: [StorageDuplicateGroupModel]) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-            Text("Potentially similar files")
-                .font(.subheadline.weight(.semibold))
-            Text("Same-size grouping first, partial edge hashing second, full content hashing only for candidate files within the scan hash budget.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if groups.isEmpty {
-                Label("No potentially similar file groups in the retained scan set.", systemImage: "checkmark.circle")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            } else {
-                ForEach(groups.prefix(3)) { group in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(group.confirmed ? "Exact content match" : "Potentially similar")
-                                .font(.caption.weight(.semibold))
-                            Spacer()
-                            Text(formatBytes(group.reclaimableBytes))
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(group.confirmed ? AetowerDesign.Status.ready : AetowerDesign.Status.warning)
-                        }
-                        Text("\(group.fileCount) file\(group.fileCount == 1 ? "" : "s") · \(group.confidenceScore)% confidence")
-                            .font(.caption2)
+    @ViewBuilder
+    private func similarFilesOverviewSection(_ report: StorageHygieneReportModel) -> some View {
+        let summary = similarityReviewSummary(for: report)
+        if summary.groupCount > 0 {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                    Image(systemName: "doc.on.doc")
+                        .foregroundStyle(AetowerDesign.Status.warning)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        Text("Similar files review")
+                            .font(.headline)
+                        Text("Detector and redundancy groups need a human decision before cleanup.")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                        ForEach(group.paths.prefix(2)) { item in
-                            HStack(spacing: AetowerDesign.Spacing.xs) {
-                                Text(item.displayName)
-                                    .font(.caption2.weight(.semibold))
-                                    .lineLimit(1)
-                                Spacer()
-                                Button("Quick Look") { quickLook(path: item.path) }
-                                Button("Reveal") { reveal(path: item.path) }
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-                        }
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.vertical, 4)
+                    Spacer(minLength: AetowerDesign.Spacing.md)
+                    AetowerBadge(
+                        "\(summary.groupCount) group\(summary.groupCount == 1 ? "" : "s")",
+                        tone: AetowerDesign.Status.warning
+                    )
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 145), spacing: AetowerDesign.Spacing.sm)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.sm
+                ) {
+                    footprintMetric("Reviewable", value: formatBytes(summary.reviewableBytes), detail: "across all groups")
+                    footprintMetric("Exact", value: "\(summary.exactGroupCount)", detail: formatBytes(summary.exactBytes))
+                    footprintMetric("Fuzzy", value: "\(summary.fuzzyGroupCount)", detail: "detector groups")
+                    footprintMetric("Redundancy", value: "\(summary.otherRedundancyGroupCount)", detail: formatBytes(summary.otherRedundancyBytes))
+                }
+
+                HStack {
+                    Button {
+                        recordSimilaritySurfaceAction(
+                            "overview-review-clicked",
+                            summary: summary,
+                            extraFields: [
+                                (
+                                    key: "next_filter",
+                                    value: preferredSimilarityFilter(for: report).rawValue
+                                ),
+                            ]
+                        )
+                        selectedSimilarityFilter = preferredSimilarityFilter(for: report)
+                        selectedSection = .explore
+                    } label: {
+                        Label("Review groups", systemImage: "magnifyingglass")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Spacer()
+                }
+            }
+            .padding(AetowerDesign.Spacing.lg)
+            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .onAppear {
+                recordSimilarityOverviewImpression(report, summary: summary)
+            }
+        }
+    }
+
+    private func similarFilesReviewSection(_ report: StorageHygieneReportModel) -> some View {
+        let summary = similarityReviewSummary(for: report)
+        let selectedCount = similarityFilterCount(selectedSimilarityFilter, in: report)
+        let selectedBytes = similarityFilterBytes(selectedSimilarityFilter, in: report)
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "rectangle.stack.badge.person.crop")
+                    .foregroundStyle(AetowerDesign.Status.warning)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("Similar files review")
+                        .font(.title3.weight(.semibold))
+                    Text("Exact duplicates, fuzzy media/document matches, and non-duplicate redundancy findings separated by detector.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                VStack(alignment: .trailing, spacing: 4) {
+                    AetowerBadge(
+                        "\(summary.groupCount) group\(summary.groupCount == 1 ? "" : "s")",
+                        tone: summary.groupCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+                    )
+                    Text(formatBytes(summary.reviewableBytes))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 145), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                footprintMetric("Shown", value: "\(selectedCount)", detail: selectedSimilarityFilter.label)
+                footprintMetric("Reviewable", value: formatBytes(selectedBytes), detail: "selected tab")
+                footprintMetric("Exact groups", value: "\(summary.exactGroupCount)", detail: formatBytes(summary.exactBytes))
+                footprintMetric("Other redundancy", value: "\(summary.otherRedundancyGroupCount)", detail: formatBytes(summary.otherRedundancyBytes))
+            }
+
+            Picker("Similar files", selection: $selectedSimilarityFilter) {
+                ForEach(StorageSimilarityFilter.allCases) { filter in
+                    Text(filter.label).tag(filter)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Toggle("Show ignored", isOn: $showIgnoredSimilarityGroups)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                if !ignoredSimilarityGroupIDs.isEmpty {
+                    AetowerBadge(
+                        "\(ignoredSimilarityGroupIDs.count) ignored",
+                        tone: AetowerDesign.Status.neutral
+                    )
+                }
+                Spacer()
+            }
+
+            similarFilesFilteredContent(report, filter: selectedSimilarityFilter)
+        }
+        .padding(AetowerDesign.Spacing.lg)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .onAppear {
+            recordSimilarityReviewSectionImpression(report, summary: summary)
+        }
+    }
+
+    @ViewBuilder
+    private func similarFilesFilteredContent(
+        _ report: StorageHygieneReportModel,
+        filter: StorageSimilarityFilter
+    ) -> some View {
+        if filter == .otherRedundancy {
+            let groups = sortedRedundancyGroups(
+                otherRedundancyGroups(from: report, includeIgnored: showIgnoredSimilarityGroups)
+            )
+            if groups.isEmpty {
+                similarFilesEmptyState(filter)
+            } else {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(groups) { group in
+                        similarRedundancyGroupRow(group)
+                    }
+                }
+            }
+        } else {
+            let groups = sortedDuplicateGroups(
+                duplicateGroups(for: filter, in: report, includeIgnored: showIgnoredSimilarityGroups)
+            )
+            if groups.isEmpty {
+                similarFilesEmptyState(filter)
+            } else {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(groups) { group in
+                        similarDuplicateGroupRow(group)
+                    }
+                }
+            }
+        }
+    }
+
+    private func similarDuplicateGroupRow(_ group: StorageDuplicateGroupModel) -> some View {
+        let tone = duplicateGroupTone(group)
+        let groupKey = duplicateGroupActionKey(group)
+        let isExpanded = similarityGroupIsExpanded(groupKey)
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: duplicateGroupIcon(group))
+                    .foregroundStyle(tone)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(duplicateGroupTitle(group))
+                        .font(.subheadline.weight(.semibold))
+                    Text("\(group.fileCount) file\(group.fileCount == 1 ? "" : "s") - \(group.confidenceScore)% confidence")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(formatBytes(group.reclaimableBytes))
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    Text("reclaimable estimate")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(formatBytes(group.totalBytes))
+                        .font(.caption.weight(.semibold))
+                    Text("total bytes")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                AetowerBadge(duplicateDetectorLabel(group.detectorKind), systemImage: duplicateDetectorIcon(group.detectorKind), tone: tone)
+                AetowerBadge(duplicateConfidenceLabel(group.confidenceBand), tone: tone)
+                AetowerBadge(group.actionability == .cleanableExact ? "Cleanable exact" : "Review-only", tone: tone)
+                if group.confirmed {
+                    AetowerBadge("Confirmed", tone: AetowerDesign.Status.ready)
+                }
+                if reviewedSimilarityGroupIDs.contains(groupKey) {
+                    AetowerBadge("Reviewed", tone: AetowerDesign.Status.ready)
+                }
+                if ignoredSimilarityGroupIDs.contains(groupKey) {
+                    AetowerBadge("Ignored", tone: AetowerDesign.Status.neutral)
+                }
+                Spacer(minLength: 0)
+            }
+
+            similarDuplicateGroupActions(group)
+
+            if isExpanded {
+                if !group.recommendation.isEmpty {
+                    Text(group.recommendation)
+                        .font(.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if !group.caveat.isEmpty {
+                    Text(group.caveat)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let warning = duplicateGroupReviewWarning(group) {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(duplicateGroupTone(group))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if group.detectorKind == .imageSimilarity {
+                    similarImageContactSheet(group)
+                }
+
+                if duplicateGroupHasTextDocumentAffordances(group) {
+                    similarTextDocumentActions(group)
+                }
+
+                similarDuplicateCleanupControls(group)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(group.paths) { item in
+                        similarDuplicateItemRow(item, group: group)
+                    }
                 }
             }
         }
         .padding(AetowerDesign.Spacing.md)
-        .frame(maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onAppear {
+            recordDuplicateGroupImpression(group)
+        }
+    }
+
+    private func similarRedundancyGroupRow(_ group: StorageRedundancyGroupModel) -> some View {
+        let tone = redundancyGroupTone(group)
+        let groupKey = redundancyGroupActionKey(group)
+        let isExpanded = similarityGroupIsExpanded(groupKey)
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: "square.stack.3d.up")
+                    .foregroundStyle(tone)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(group.title)
+                        .font(.subheadline.weight(.semibold))
+                    Text("\(group.itemCount) item\(group.itemCount == 1 ? "" : "s") - \(group.confidenceScore)% confidence")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(formatBytes(group.reclaimableBytes))
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    Text("reclaimable estimate")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(formatBytes(group.totalBytes))
+                        .font(.caption.weight(.semibold))
+                    Text("total bytes")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                AetowerBadge(group.redundancyClass.replacingOccurrences(of: "-", with: " "), tone: tone)
+                AetowerBadge("Other redundancy", tone: AetowerDesign.Tone.memory)
+                if reviewedSimilarityGroupIDs.contains(groupKey) {
+                    AetowerBadge("Reviewed", tone: AetowerDesign.Status.ready)
+                }
+                if ignoredSimilarityGroupIDs.contains(groupKey) {
+                    AetowerBadge("Ignored", tone: AetowerDesign.Status.neutral)
+                }
+                Spacer(minLength: 0)
+            }
+
+            similarRedundancyGroupActions(group)
+
+            if isExpanded {
+                if !group.recommendation.isEmpty {
+                    Text(group.recommendation)
+                        .font(.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if !group.caveat.isEmpty {
+                    Text(group.caveat)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if !group.evidence.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(group.evidence.prefix(3), id: \.self) { evidence in
+                            Label(evidence, systemImage: "checkmark.seal")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(group.items) { item in
+                        similarRedundancyItemRow(item, group: group)
+                    }
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onAppear {
+            recordRedundancyGroupImpression(group)
+        }
+    }
+
+    private func similarImageContactSheet(_ group: StorageDuplicateGroupModel) -> some View {
+        let items = group.paths
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .foregroundStyle(AetowerDesign.Status.warning)
+                Text("Image contact sheet")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text("\(items.count) image\(items.count == 1 ? "" : "s")")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 112), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                ForEach(items) { item in
+                    StorageSimilarityImageThumbnail(item: item)
+                        .onTapGesture {
+                            recordSimilarityAction(
+                                "quick-look-used",
+                                duplicateGroup: group,
+                                extraFields: [(key: "target_scope", value: "thumbnail")]
+                            )
+                            quickLook(path: item.path)
+                        }
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.sm)
+        .background(AetowerDesign.Surface.badge, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func similarTextDocumentActions(_ group: StorageDuplicateGroupModel) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            Button {
+                openDuplicateGroupFirstPair(group)
+            } label: {
+                Label("Open pair", systemImage: "rectangle.split.2x1")
+            }
+            Button {
+                compareDuplicateGroupFirstPair(group)
+            } label: {
+                Label("Compare", systemImage: "arrow.left.arrow.right")
+            }
+            Button {
+                copy(diffCommand(for: Array(group.paths.prefix(2)).map(\.path)))
+            } label: {
+                Label("Copy diff command", systemImage: "doc.on.doc")
+            }
+            Spacer()
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(group.paths.count < 2)
+    }
+
+    private func similarDuplicateGroupActions(_ group: StorageDuplicateGroupModel) -> some View {
+        let groupKey = duplicateGroupActionKey(group)
+        let paths = group.paths.map(\.path)
+        return HStack(spacing: AetowerDesign.Spacing.sm) {
+            Button {
+                recordSimilarityAction(
+                    "quick-look-used",
+                    duplicateGroup: group,
+                    extraFields: [(key: "target_scope", value: "selected")]
+                )
+                quickLook(path: duplicateGroupCanonicalItem(group)?.path ?? group.paths.first?.path ?? "")
+            } label: {
+                Label("Quick Look selected", systemImage: "eye")
+            }
+            .disabled(!group.actions.canQuickLook || group.paths.isEmpty)
+
+            Button {
+                recordSimilarityAction(
+                    "reveal-used",
+                    duplicateGroup: group,
+                    extraFields: [
+                        (key: "target_scope", value: "group"),
+                        (key: "revealed_count", value: String(paths.count)),
+                    ]
+                )
+                reveal(paths: paths)
+            } label: {
+                Label("Reveal all", systemImage: "arrow.up.forward.square")
+            }
+            .disabled(!group.actions.canReveal || paths.isEmpty)
+
+            Button {
+                recordSimilarityAction(
+                    "open-comparison-used",
+                    duplicateGroup: group,
+                    extraFields: [(key: "compared_count", value: String(min(paths.count, 2)))]
+                )
+                comparePaths(Array(paths.prefix(2)))
+            } label: {
+                Label("Open comparison", systemImage: "arrow.left.arrow.right")
+            }
+            .disabled(paths.count < 2)
+
+            Button {
+                toggleDuplicateGroupExpansion(group)
+            } label: {
+                Label(
+                    similarityGroupIsExpanded(groupKey) ? "Collapse details" : "Expand details",
+                    systemImage: similarityGroupIsExpanded(groupKey) ? "chevron.up.circle" : "chevron.down.circle"
+                )
+            }
+
+            Menu {
+                Button("Copy paths") {
+                    recordSimilarityAction(
+                        "copy-paths-used",
+                        duplicateGroup: group,
+                        extraFields: [(key: "path_count", value: String(paths.count))]
+                    )
+                    copyPaths(paths)
+                }
+                .disabled(paths.isEmpty)
+                if reviewedSimilarityGroupIDs.contains(groupKey) {
+                    Button("Mark unreviewed") {
+                        unmarkSimilarityGroupReviewed(groupKey)
+                    }
+                } else {
+                    Button("Mark reviewed") {
+                        markSimilarityGroupReviewed(groupKey)
+                        recordSimilarityAction("marked-reviewed", duplicateGroup: group)
+                    }
+                }
+                if ignoredSimilarityGroupIDs.contains(groupKey) {
+                    Button("Restore group") {
+                        restoreSimilarityGroup(groupKey)
+                    }
+                } else {
+                    Button("Ignore group") {
+                        ignoreSimilarityGroup(groupKey)
+                        recordSimilarityAction("ignored", duplicateGroup: group)
+                    }
+                }
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            Spacer()
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+
+    private func similarRedundancyGroupActions(_ group: StorageRedundancyGroupModel) -> some View {
+        let groupKey = redundancyGroupActionKey(group)
+        let paths = group.items.map(\.path)
+        return HStack(spacing: AetowerDesign.Spacing.sm) {
+            Button {
+                recordSimilarityAction(
+                    "quick-look-used",
+                    redundancyGroup: group,
+                    extraFields: [(key: "target_scope", value: "selected")]
+                )
+                quickLook(path: paths.first ?? "")
+            } label: {
+                Label("Quick Look selected", systemImage: "eye")
+            }
+            .disabled(!group.actions.canQuickLook || paths.isEmpty)
+
+            Button {
+                recordSimilarityAction(
+                    "reveal-used",
+                    redundancyGroup: group,
+                    extraFields: [
+                        (key: "target_scope", value: "group"),
+                        (key: "revealed_count", value: String(paths.count)),
+                    ]
+                )
+                reveal(paths: paths)
+            } label: {
+                Label("Reveal all", systemImage: "arrow.up.forward.square")
+            }
+            .disabled(!group.actions.canReveal || paths.isEmpty)
+
+            Button {
+                recordSimilarityAction(
+                    "open-comparison-used",
+                    redundancyGroup: group,
+                    extraFields: [(key: "compared_count", value: String(min(paths.count, 2)))]
+                )
+                comparePaths(Array(paths.prefix(2)))
+            } label: {
+                Label("Open comparison", systemImage: "arrow.left.arrow.right")
+            }
+            .disabled(paths.count < 2)
+
+            Button {
+                toggleRedundancyGroupExpansion(group)
+            } label: {
+                Label(
+                    similarityGroupIsExpanded(groupKey) ? "Collapse details" : "Expand details",
+                    systemImage: similarityGroupIsExpanded(groupKey) ? "chevron.up.circle" : "chevron.down.circle"
+                )
+            }
+
+            Menu {
+                Button("Copy paths") {
+                    recordSimilarityAction(
+                        "copy-paths-used",
+                        redundancyGroup: group,
+                        extraFields: [(key: "path_count", value: String(paths.count))]
+                    )
+                    copyPaths(paths)
+                }
+                .disabled(paths.isEmpty)
+                if reviewedSimilarityGroupIDs.contains(groupKey) {
+                    Button("Mark unreviewed") {
+                        unmarkSimilarityGroupReviewed(groupKey)
+                    }
+                } else {
+                    Button("Mark reviewed") {
+                        markSimilarityGroupReviewed(groupKey)
+                        recordSimilarityAction("marked-reviewed", redundancyGroup: group)
+                    }
+                }
+                if ignoredSimilarityGroupIDs.contains(groupKey) {
+                    Button("Restore group") {
+                        restoreSimilarityGroup(groupKey)
+                    }
+                } else {
+                    Button("Ignore group") {
+                        ignoreSimilarityGroup(groupKey)
+                        recordSimilarityAction("ignored", redundancyGroup: group)
+                    }
+                }
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            Spacer()
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+
+    @ViewBuilder
+    private func similarDuplicateCleanupControls(_ group: StorageDuplicateGroupModel) -> some View {
+        if duplicateGroupCanStageExactCleanup(group), let canonical = duplicateGroupCanonicalItem(group) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+                    Label("Canonical kept", systemImage: "checkmark.seal")
+                        .font(.caption2)
+                        .foregroundStyle(AetowerDesign.Status.ready)
+                    Picker("Canonical", selection: duplicateCanonicalSelection(for: group)) {
+                        ForEach(group.paths) { item in
+                            Text(item.displayName).tag(item.path)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 240)
+                    Spacer(minLength: AetowerDesign.Spacing.sm)
+                    Button {
+                        stageExactDuplicateGroup(group, canonical: canonical)
+                    } label: {
+                        Label(
+                            "Stage duplicates except canonical",
+                            systemImage: "tray.and.arrow.down"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(duplicateGroupStageableItems(group, canonical: canonical).isEmpty)
+                }
+                Text("Preflight opens before anything moves to Trash. Only non-canonical copies are staged.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(AetowerDesign.Spacing.sm)
+            .background(AetowerDesign.Status.ready.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        } else {
+            Label(
+                duplicateGroupReviewOnlyReason(group),
+                systemImage: "hand.raised"
+            )
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(AetowerDesign.Status.warning)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(AetowerDesign.Spacing.sm)
+            .background(AetowerDesign.Status.warning.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private func similarDuplicateItemRow(
+        _ item: StorageDuplicateItemModel,
+        group: StorageDuplicateGroupModel
+    ) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.displayName)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(item.path)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(similarDuplicateItemMetadata(item))
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: AetowerDesign.Spacing.sm)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(formatBytes(item.sizeBytes))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(item.safety)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
+            Button {
+                openPath(path: item.path)
+            } label: {
+                Image(systemName: "arrow.up.right.square")
+            }
+            .help("Open")
+            Button {
+                recordSimilarityAction(
+                    "quick-look-used",
+                    duplicateGroup: group,
+                    extraFields: [(key: "target_scope", value: "item")]
+                )
+                quickLook(path: item.path)
+            } label: {
+                Image(systemName: "eye")
+            }
+            .help("Quick Look")
+            Button {
+                recordSimilarityAction(
+                    "reveal-used",
+                    duplicateGroup: group,
+                    extraFields: [(key: "target_scope", value: "item")]
+                )
+                reveal(path: item.path)
+            } label: {
+                Image(systemName: "arrow.up.forward.square")
+            }
+            .help("Reveal in Finder")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
+        .padding(.vertical, 4)
+    }
+
+    private func similarRedundancyItemRow(
+        _ item: StorageRedundancyItemModel,
+        group: StorageRedundancyGroupModel
+    ) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.displayName)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(item.path)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(similarRedundancyItemMetadata(item))
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: AetowerDesign.Spacing.sm)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(formatBytes(item.physicalBytes))
+                    .font(.caption2.weight(.semibold))
+                Text("\(formatBytes(item.logicalBytes)) logical")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
+            Button {
+                openPath(path: item.path)
+            } label: {
+                Image(systemName: "arrow.up.right.square")
+            }
+            .help("Open")
+            Button {
+                recordSimilarityAction(
+                    "quick-look-used",
+                    redundancyGroup: group,
+                    extraFields: [(key: "target_scope", value: "item")]
+                )
+                quickLook(path: item.path)
+            } label: {
+                Image(systemName: "eye")
+            }
+            .help("Quick Look")
+            Button {
+                recordSimilarityAction(
+                    "reveal-used",
+                    redundancyGroup: group,
+                    extraFields: [(key: "target_scope", value: "item")]
+                )
+                reveal(path: item.path)
+            } label: {
+                Image(systemName: "arrow.up.forward.square")
+            }
+            .help("Reveal in Finder")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
+        .padding(.vertical, 4)
+    }
+
+    private func similarFilesEmptyState(_ filter: StorageSimilarityFilter) -> some View {
+        Label("No \(filter.emptyStateLabel) in the current scan.", systemImage: "checkmark.circle")
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+            .padding(.vertical, AetowerDesign.Spacing.sm)
     }
 
     private func appFootprintsCard(_ footprints: [StorageAppFootprintModel]) -> some View {
@@ -2562,7 +3959,8 @@ public struct StorageView: View {
     }
 
     private func summaryGrid(_ report: StorageHygieneReportModel) -> some View {
-        LazyVGrid(
+        let similaritySummary = similarityReviewSummary(for: report)
+        return LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 170), spacing: AetowerDesign.Spacing.md)],
             alignment: .leading,
             spacing: AetowerDesign.Spacing.md
@@ -2587,6 +3985,13 @@ public struct StorageView: View {
                 detail: "needs operator decision",
                 systemImage: "eye",
                 tone: report.summary.reviewCandidateCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+            )
+            summaryCard(
+                "Similar",
+                value: "\(similaritySummary.groupCount)",
+                detail: formatBytes(similaritySummary.reviewableBytes),
+                systemImage: "doc.on.doc",
+                tone: similaritySummary.groupCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
             )
             summaryCard(
                 "Stale",
@@ -7626,6 +9031,31 @@ public struct StorageView: View {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 
+    private func openPath(path: String) {
+        let expanded = NSString(string: path).expandingTildeInPath
+        NSWorkspace.shared.open(URL(fileURLWithPath: expanded))
+    }
+
+    private func comparePaths(_ paths: [String]) {
+        guard paths.count >= 2 else { return }
+        let left = NSString(string: paths[0]).expandingTildeInPath
+        let right = NSString(string: paths[1]).expandingTildeInPath
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/opendiff")
+        process.arguments = [left, right]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            copy(diffCommand(for: [left, right]))
+        }
+    }
+
+    private func shellQuotedPath(_ path: String) -> String {
+        "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
     private func quickLook(path: String) {
         let expanded = NSString(string: path).expandingTildeInPath
         let url = URL(fileURLWithPath: expanded)
@@ -7645,6 +9075,106 @@ public struct StorageView: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+}
+
+private struct StorageSimilarityImageThumbnail: View {
+    let item: StorageDuplicateItemModel
+
+    private var image: NSImage? {
+        let expanded = NSString(string: item.path).expandingTildeInPath
+        return NSImage(contentsOfFile: expanded)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(AetowerDesign.Surface.rowIdle)
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity, minHeight: 76, maxHeight: 76)
+                        .clipped()
+                } else {
+                    Image(systemName: "photo")
+                        .font(.title3)
+                        .foregroundStyle(AetowerDesign.Status.neutral)
+                }
+            }
+            .frame(height: 76)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            Text(item.displayName)
+                .font(.system(size: 10, weight: .semibold))
+                .lineLimit(1)
+            Text(ByteCountFormatter.string(fromByteCount: Int64(item.sizeBytes), countStyle: .file))
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+private enum StorageSimilarityFilter: String, CaseIterable, Identifiable {
+    case exactDuplicates
+    case similarImages
+    case similarDocumentsText
+    case similarVideos
+    case similarBinaries
+    case otherRedundancy
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .exactDuplicates:
+            return "Exact duplicates"
+        case .similarImages:
+            return "Images"
+        case .similarDocumentsText:
+            return "Docs/Text"
+        case .similarVideos:
+            return "Videos"
+        case .similarBinaries:
+            return "Binaries"
+        case .otherRedundancy:
+            return "Other"
+        }
+    }
+
+    var emptyStateLabel: String {
+        switch self {
+        case .exactDuplicates:
+            return "exact duplicate groups"
+        case .similarImages:
+            return "similar image groups"
+        case .similarDocumentsText:
+            return "similar document or text groups"
+        case .similarVideos:
+            return "similar video groups"
+        case .similarBinaries:
+            return "similar binary groups"
+        case .otherRedundancy:
+            return "other redundancy groups"
+        }
+    }
+}
+
+private struct StorageSimilarityReviewSummary {
+    let duplicateGroupCount: Int
+    let otherRedundancyGroupCount: Int
+    let exactGroupCount: Int
+    let fuzzyGroupCount: Int
+    let exactBytes: UInt64
+    let otherRedundancyBytes: UInt64
+    let reviewableBytes: UInt64
+
+    var groupCount: Int {
+        duplicateGroupCount + otherRedundancyGroupCount
     }
 }
 
@@ -7676,7 +9206,7 @@ private enum StorageSection: String, CaseIterable, Identifiable {
         case .reclaim:
             return "Disk pressure, safe cleanup opportunities, and the staged basket."
         case .explore:
-            return "Treemap, full item list, and duplicate groups to hunt down space."
+            return "Treemap, similar files review, and the full item list."
         case .insights:
             return "Growth over time, volume coverage, budgets, and raw diagnostics."
         }
