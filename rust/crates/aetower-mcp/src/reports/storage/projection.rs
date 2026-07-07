@@ -83,6 +83,8 @@ pub fn storage_hygiene_actions_json(
         cleanup_tiers: report.cleanup_tiers,
         cleanup_recipes: report.cleanup_recipes,
         cleanup_bundles: report.cleanup_bundles,
+        duplicate_groups: report.duplicate_groups,
+        redundancy_groups: report.redundancy_groups,
         budget_guardrails: report.budget_guardrails,
     })
     .map_err(|error| error.to_string())

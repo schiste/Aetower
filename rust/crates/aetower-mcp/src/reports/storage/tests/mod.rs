@@ -242,6 +242,8 @@ fn storage_hygiene_projection_apis_return_compact_shapes() {
     let actions = parse_json_value(&actions, "actions JSON parses");
     assert!(actions.get("items").is_none());
     assert!(actions.get("cleanup_bundles").is_some());
+    assert!(actions["duplicate_groups"].as_array().is_some());
+    assert!(actions["redundancy_groups"].as_array().is_some());
 
     let page = storage_hygiene_items_page_json(
         vec![root.display().to_string()],
@@ -1908,6 +1910,21 @@ fn storage_hygiene_reports_redundancy_beyond_byte_duplicates() {
             .as_str()
             .is_some_and(|caveat| caveat.contains("exact APFS clone lineage"))
     );
+    assert_eq!(shared["actions"]["can_reveal"].as_bool(), Some(true));
+    assert_eq!(shared["actions"]["can_quick_look"].as_bool(), Some(true));
+    assert_eq!(
+        shared["actions"]["can_stage_cleanup"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        shared["actions"]["requires_manual_review"].as_bool(),
+        Some(true)
+    );
+    assert!(
+        shared["actions"]["block_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("manual filesystem review"))
+    );
 
     let _ = fs::remove_dir_all(root);
 }
@@ -1944,6 +1961,20 @@ fn storage_hygiene_similar_bucket_confirms_only_full_hash_matches() {
         .find(|group| group["confirmed"].as_bool() == Some(true))
         .unwrap_or_else(|| panic!("full-hash confirmed exact match group is present"));
     assert_eq!(confirmed["file_count"].as_u64(), Some(2));
+    assert_eq!(confirmed["detector_kind"].as_str(), Some("exact"));
+    assert_eq!(confirmed["actionability"].as_str(), Some("cleanable_exact"));
+    assert_eq!(confirmed["confidence_band"].as_str(), Some("confirmed"));
+    assert_eq!(confirmed["actions"]["can_reveal"].as_bool(), Some(true));
+    assert_eq!(confirmed["actions"]["can_quick_look"].as_bool(), Some(true));
+    assert_eq!(
+        confirmed["actions"]["can_stage_cleanup"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        confirmed["actions"]["requires_manual_review"].as_bool(),
+        Some(true)
+    );
+    assert!(confirmed["actions"].get("block_reason").is_none());
     assert!(
         confirmed["candidate_key"]
             .as_str()
@@ -1966,6 +1997,38 @@ fn storage_hygiene_similar_bucket_confirms_only_full_hash_matches() {
         !paths
             .iter()
             .any(|path| path.ends_with("edge-match-decoy.pkg"))
+    );
+
+    let actions_json = must_ok(
+        storage_hygiene_actions_json(
+            vec![root.display().to_string()],
+            4,
+            120,
+            "fast_changed_only",
+        ),
+        "actions endpoint serializes duplicate groups",
+    );
+    let actions = parse_json_value(&actions_json, "actions endpoint JSON parses");
+    let action_duplicate_groups = actions["duplicate_groups"]
+        .as_array()
+        .unwrap_or_else(|| panic!("actions endpoint projects duplicate groups"));
+    let exact_action_group = action_duplicate_groups
+        .iter()
+        .find(|group| group["detector_kind"].as_str() == Some("exact"))
+        .unwrap_or_else(|| panic!("actions endpoint includes exact duplicate group"));
+    assert_eq!(
+        exact_action_group["actions"]["can_stage_cleanup"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        exact_action_group["actions"]["requires_manual_review"].as_bool(),
+        Some(true)
+    );
+    assert!(exact_action_group["actions"].get("block_reason").is_none());
+    assert!(
+        actions["redundancy_groups"]
+            .as_array()
+            .is_some_and(|groups| !groups.is_empty())
     );
 
     let _ = fs::remove_dir_all(root);
@@ -1998,7 +2061,31 @@ fn storage_hygiene_similar_bucket_groups_visually_similar_images() {
         .unwrap_or_else(|| panic!("image perceptual-hash group is present"));
 
     assert_eq!(image_group["confirmed"].as_bool(), Some(false));
+    assert_eq!(
+        image_group["detector_kind"].as_str(),
+        Some("image_similarity")
+    );
+    assert_eq!(image_group["actionability"].as_str(), Some("review_only"));
+    assert_eq!(image_group["confidence_band"].as_str(), Some("high"));
     assert_eq!(image_group["confidence_score"].as_u64(), Some(82));
+    assert_eq!(image_group["actions"]["can_reveal"].as_bool(), Some(true));
+    assert_eq!(
+        image_group["actions"]["can_quick_look"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        image_group["actions"]["can_stage_cleanup"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        image_group["actions"]["requires_manual_review"].as_bool(),
+        Some(true)
+    );
+    assert!(
+        image_group["actions"]["block_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("review-only"))
+    );
     assert!(
         image_group["recommendation"]
             .as_str()
@@ -2044,6 +2131,12 @@ fn storage_hygiene_similar_bucket_groups_near_identical_text() {
         .unwrap_or_else(|| panic!("text SimHash group is present"));
 
     assert_eq!(text_group["confirmed"].as_bool(), Some(false));
+    assert_eq!(
+        text_group["detector_kind"].as_str(),
+        Some("text_similarity")
+    );
+    assert_eq!(text_group["actionability"].as_str(), Some("review_only"));
+    assert_eq!(text_group["confidence_band"].as_str(), Some("medium"));
     assert_eq!(text_group["confidence_score"].as_u64(), Some(76));
     assert!(
         text_group["recommendation"]
@@ -2097,6 +2190,18 @@ fn storage_hygiene_similar_bucket_groups_extracted_document_text() {
     assert!(
         text_groups.len() >= 2,
         "PDF and DOCX extracted text groups are present"
+    );
+    assert!(
+        text_groups
+            .iter()
+            .all(|group| group["detector_kind"].as_str() == Some("document_similarity")),
+        "document-backed text groups expose document detector kind"
+    );
+    assert!(
+        text_groups
+            .iter()
+            .all(|group| group["actionability"].as_str() == Some("review_only")),
+        "document-backed text groups are review-only"
     );
     assert!(
         text_groups.iter().any(|group| {
@@ -2161,6 +2266,12 @@ fn storage_hygiene_similar_bucket_groups_video_signatures() {
         .unwrap_or_else(|| panic!("video signature group is present"));
 
     assert_eq!(video_group["confirmed"].as_bool(), Some(false));
+    assert_eq!(
+        video_group["detector_kind"].as_str(),
+        Some("video_similarity")
+    );
+    assert_eq!(video_group["actionability"].as_str(), Some("review_only"));
+    assert_eq!(video_group["confidence_band"].as_str(), Some("medium"));
     assert_eq!(video_group["confidence_score"].as_u64(), Some(70));
     assert!(
         video_group["recommendation"]
@@ -2207,6 +2318,12 @@ fn storage_hygiene_similar_bucket_groups_generic_binaries() {
         .unwrap_or_else(|| panic!("binary CDC group is present"));
 
     assert_eq!(binary_group["confirmed"].as_bool(), Some(false));
+    assert_eq!(
+        binary_group["detector_kind"].as_str(),
+        Some("binary_similarity")
+    );
+    assert_eq!(binary_group["actionability"].as_str(), Some("review_only"));
+    assert_eq!(binary_group["confidence_band"].as_str(), Some("low"));
     assert_eq!(binary_group["confidence_score"].as_u64(), Some(52));
     assert!(
         binary_group["caveat"]

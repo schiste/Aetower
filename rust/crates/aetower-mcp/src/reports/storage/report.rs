@@ -1950,6 +1950,11 @@ fn duplicate_group_from_items(
             safety: item.safety.clone(),
         })
         .collect::<Vec<_>>();
+    let actionability = if confirmed {
+        StorageDuplicateActionability::CleanableExact
+    } else {
+        StorageDuplicateActionability::ReviewOnly
+    };
 
     StorageDuplicateGroup {
         id,
@@ -1959,16 +1964,13 @@ fn duplicate_group_from_items(
         } else {
             StorageDuplicateDetectorKind::BinarySimilarity
         },
-        actionability: if confirmed {
-            StorageDuplicateActionability::CleanableExact
-        } else {
-            StorageDuplicateActionability::ReviewOnly
-        },
+        actionability,
         confidence_band: if confirmed {
             StorageDuplicateConfidenceBand::Confirmed
         } else {
             confidence_band_for_similarity_score(confidence_score)
         },
+        actions: duplicate_group_action_projection(actionability, paths.len()),
         confirmed,
         confidence_score,
         file_count: items.len(),
@@ -2118,6 +2120,10 @@ fn review_similarity_group_from_items(
         detector_kind,
         actionability: StorageDuplicateActionability::ReviewOnly,
         confidence_band: confidence_band_for_similarity_score(confidence_score),
+        actions: duplicate_group_action_projection(
+            StorageDuplicateActionability::ReviewOnly,
+            paths.len(),
+        ),
         confirmed: false,
         confidence_score,
         file_count: items.len(),
@@ -2126,6 +2132,44 @@ fn review_similarity_group_from_items(
         paths,
         recommendation: recommendation.to_owned(),
         caveat: caveat.to_owned(),
+    }
+}
+
+fn duplicate_group_action_projection(
+    actionability: StorageDuplicateActionability,
+    item_count: usize,
+) -> StorageSimilarityActionProjection {
+    let can_stage_cleanup =
+        actionability == StorageDuplicateActionability::CleanableExact && item_count >= 2;
+    let block_reason = if can_stage_cleanup {
+        None
+    } else if item_count < 2 {
+        Some("Cleanup staging requires at least two files in the group.".to_owned())
+    } else {
+        Some(
+            "Similarity detector output is review-only; automatic cleanup staging is disabled."
+                .to_owned(),
+        )
+    };
+    StorageSimilarityActionProjection {
+        can_reveal: item_count > 0,
+        can_quick_look: item_count > 0,
+        can_stage_cleanup,
+        requires_manual_review: true,
+        block_reason,
+    }
+}
+
+fn redundancy_group_action_projection(
+    item_count: usize,
+    block_reason: impl Into<String>,
+) -> StorageSimilarityActionProjection {
+    StorageSimilarityActionProjection {
+        can_reveal: item_count > 0,
+        can_quick_look: item_count > 0,
+        can_stage_cleanup: false,
+        requires_manual_review: true,
+        block_reason: Some(block_reason.into()),
     }
 }
 
@@ -2195,6 +2239,7 @@ fn redundancy_group_from_duplicate_group(group: &StorageDuplicateGroup) -> Stora
         recommendation: group.recommendation.clone(),
         caveat: group.caveat.clone(),
         evidence: vec![format!("Duplicate candidate key: {}", group.candidate_key)],
+        actions: group.actions.clone(),
         items: group
             .paths
             .iter()
@@ -2231,13 +2276,14 @@ fn append_shared_block_redundancy(
 
     let logical_bytes = sum_logical_bytes(&candidates);
     let physical_bytes = sum_physical_bytes(&candidates);
+    let item_count = candidates.len();
     groups.push(StorageRedundancyGroup {
         id: "shared-block-candidates|apfs".to_owned(),
         redundancy_class: "shared-block-candidates".to_owned(),
         title: "APFS clone/sparse shared-block candidates".to_owned(),
         total_bytes: logical_bytes,
         reclaimable_bytes: physical_bytes,
-        item_count: candidates.len(),
+        item_count,
         confidence_score: 56,
         safety: group_safety_from_items(&candidates),
         recommendation: "Treat these as shared-block candidates: inspect physical bytes before cleanup and do not assume logical size equals reclaimable space.".to_owned(),
@@ -2247,6 +2293,10 @@ fn append_shared_block_redundancy(
             format!("Allocated local bytes: {}", human_bytes(physical_bytes)),
             "Physical bytes below logical bytes can mean APFS clones, compression, sparse files, or partial materialization.".to_owned(),
         ],
+        actions: redundancy_group_action_projection(
+            item_count,
+            "Shared-block and sparse allocation candidates require manual filesystem review before cleanup.",
+        ),
         items: candidates
             .into_iter()
             .take(8)
@@ -2278,21 +2328,26 @@ fn append_package_store_redundancy(
         });
         let total_bytes = sum_size_bytes(&candidates);
         let label = package_store_label(&kind).unwrap_or("Package store");
+        let item_count = candidates.len();
         groups.push(StorageRedundancyGroup {
             id: format!("package-store-overlap|{kind}"),
             redundancy_class: "package-store-overlap".to_owned(),
             title: format!("{label} exists in multiple locations"),
             total_bytes,
             reclaimable_bytes: total_bytes,
-            item_count: candidates.len(),
+            item_count,
             confidence_score: 62,
             safety: group_safety_from_items(&candidates),
             recommendation: "Review whether these package stores are all needed. Prefer tool-native cache cleanup and keep lockfiles before removing expensive stores.".to_owned(),
             caveat: "Multiple stores are not proof of duplicate package objects; this flags redundant package-manager storage surfaces for consolidation or targeted cleanup.".to_owned(),
             evidence: vec![
-                format!("{} package-store paths found.", candidates.len()),
+                format!("{item_count} package-store paths found."),
                 format!("Store kind: {kind}"),
             ],
+            actions: redundancy_group_action_projection(
+                item_count,
+                "Package-store overlap is review-only; use tool-native cleanup after confirming ownership.",
+            ),
             items: candidates
                 .into_iter()
                 .take(8)
@@ -2325,21 +2380,26 @@ fn append_generated_output_redundancy(
         });
         let total_bytes = sum_size_bytes(&candidates);
         let label = generated_output_label(&kind).unwrap_or("Generated output");
+        let item_count = candidates.len();
         groups.push(StorageRedundancyGroup {
             id: format!("generated-output-equivalence|{kind}"),
             redundancy_class: "generated-output-equivalence".to_owned(),
             title: format!("Equivalent {label} outputs"),
             total_bytes,
             reclaimable_bytes: total_bytes,
-            item_count: candidates.len(),
+            item_count,
             confidence_score: generated_output_confidence(&kind),
             safety: group_safety_from_items(&candidates),
             recommendation: "These outputs are equivalent by tool/class rather than byte-identical. Clean with the owning tool once builds, tests, and agents are idle.".to_owned(),
             caveat: "Equivalent generated outputs may come from different repos, branches, or tool versions; Aetower does not treat them as interchangeable source data.".to_owned(),
             evidence: vec![
-                format!("{} generated-output paths found.", candidates.len()),
+                format!("{item_count} generated-output paths found."),
                 format!("Generated output kind: {kind}"),
             ],
+            actions: redundancy_group_action_projection(
+                item_count,
+                "Generated outputs are equivalent by class, not file identity; review the owning workflow first.",
+            ),
             items: candidates
                 .into_iter()
                 .take(8)
@@ -2396,22 +2456,27 @@ fn append_git_clone_redundancy(
                 )
             })
             .count();
+        let item_count = repositories.len();
         groups.push(StorageRedundancyGroup {
             id: format!("git-remote-clones|{remote_key}"),
             redundancy_class: "git-remote-clones".to_owned(),
             title: "Multiple checkouts of the same Git remote".to_owned(),
             total_bytes,
             reclaimable_bytes: total_bytes.saturating_sub(keep_bytes),
-            item_count: repositories.len(),
+            item_count,
             confidence_score: if dirty_count == 0 { 84 } else { 68 },
             safety: if dirty_count == 0 { "review" } else { "risky" }.to_owned(),
             recommendation: "Pick a canonical checkout, compare branch/HEAD/dirty state, then archive or Trash stale duplicate clones only after review.".to_owned(),
             caveat: "Same remote does not mean the working trees are equivalent; branches, unpushed commits, ignored files, and local artifacts can differ.".to_owned(),
             evidence: vec![
                 format!("Remote key: {remote_key}"),
-                format!("{} checkout roots found.", repositories.len()),
+                format!("{item_count} checkout roots found."),
                 format!("{dirty_count} checkout(s) have dirty status that needs review."),
             ],
+            actions: redundancy_group_action_projection(
+                item_count,
+                "Git checkouts can differ by branch, commit, dirty state, and ignored files; choose a canonical checkout manually.",
+            ),
             items: repositories
                 .into_iter()
                 .take(8)

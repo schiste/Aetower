@@ -507,8 +507,8 @@ use models::{
     StorageRedundancyGroup, StorageRedundancyItem, StorageRepoArtifactFolder,
     StorageRepoArtifactMix, StorageRepoFootprint, StorageRepositoryInventoryItem,
     StorageScanDiagnostics, StorageScanDiff, StorageScanDiffEntry, StorageScanMetrics,
-    StorageSkippedRoot, StorageSourceCoverage, StorageSystemDataBucket, StorageTreemapNode,
-    StorageVolumeState, StorageWriterLedgerRecord,
+    StorageSimilarityActionProjection, StorageSkippedRoot, StorageSourceCoverage,
+    StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
 };
 pub use projection::{
     storage_growth_insights_json, storage_hygiene_actions_json, storage_hygiene_items_page_json,

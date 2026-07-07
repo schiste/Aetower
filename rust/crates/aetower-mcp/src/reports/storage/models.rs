@@ -712,6 +712,7 @@ pub(super) struct StorageDuplicateGroup {
     pub(super) detector_kind: StorageDuplicateDetectorKind,
     pub(super) actionability: StorageDuplicateActionability,
     pub(super) confidence_band: StorageDuplicateConfidenceBand,
+    pub(super) actions: StorageSimilarityActionProjection,
     pub(super) confirmed: bool,
     pub(super) confidence_score: u8,
     pub(super) file_count: usize,
@@ -734,7 +735,7 @@ pub(super) enum StorageDuplicateDetectorKind {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum StorageDuplicateActionability {
     CleanableExact,
@@ -774,7 +775,18 @@ pub(super) struct StorageRedundancyGroup {
     pub(super) recommendation: String,
     pub(super) caveat: String,
     pub(super) evidence: Vec<String>,
+    pub(super) actions: StorageSimilarityActionProjection,
     pub(super) items: Vec<StorageRedundancyItem>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageSimilarityActionProjection {
+    pub(super) can_reveal: bool,
+    pub(super) can_quick_look: bool,
+    pub(super) can_stage_cleanup: bool,
+    pub(super) requires_manual_review: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) block_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1086,6 +1098,8 @@ pub(super) struct StorageHygieneActionsResponse {
     pub(super) cleanup_tiers: Vec<StorageCleanupTierSummary>,
     pub(super) cleanup_recipes: Vec<StorageCleanupRecipe>,
     pub(super) cleanup_bundles: Vec<StorageCleanupBundle>,
+    pub(super) duplicate_groups: Vec<StorageDuplicateGroup>,
+    pub(super) redundancy_groups: Vec<StorageRedundancyGroup>,
     pub(super) budget_guardrails: StorageBudgetGuardrails,
 }
 
