@@ -727,7 +727,121 @@ public struct StorageView: View {
     }
 
     private func storageReclaimSummaryBand(_ report: StorageHygieneReportModel) -> some View {
-        storageDiskPressureHeader(report)
+        let actions = storageHomeActions(from: report)
+        let safeBytes = actions.first { $0.id == "safe-reclaim" }?.bytes ?? 0
+        let developerBytes = actions.first { $0.id == "developer-artifacts" }?.bytes ?? 0
+        let riskyBytes = actions.first { $0.id == "risky-review" }?.bytes ?? 0
+        let volume = primaryVolume(report)
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            if let volume, volume.totalBytes > 0 {
+                let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
+                HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                    Label(volumeDisplayName(volume), systemImage: "internaldrive.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                    Spacer()
+                    Text("\(formatBytes(free)) free")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AetowerDesign.Tone.disk)
+                    Text("of \(formatBytes(volume.totalBytes))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                diskCapacityBar(
+                    total: volume.totalBytes,
+                    free: free,
+                    reclaimable: min(report.summary.totalReclaimableBytes, volume.totalBytes),
+                    tone: AetowerDesign.Tone.disk
+                )
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 132), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                storageReclaimMetric(
+                    "Reclaimable",
+                    value: formatBytes(report.summary.totalReclaimableBytes),
+                    detail: "bounded estimate",
+                    systemImage: "externaldrive.badge.minus",
+                    tone: AetowerDesign.Tone.disk
+                )
+                storageReclaimMetric(
+                    "Safe",
+                    value: formatBytes(safeBytes),
+                    detail: "\(report.summary.safeCandidateCount) candidate\(report.summary.safeCandidateCount == 1 ? "" : "s")",
+                    systemImage: "checkmark.shield",
+                    tone: AetowerDesign.Status.ready
+                )
+                storageReclaimMetric(
+                    "Dev Artifacts",
+                    value: formatBytes(developerBytes),
+                    detail: "builds, caches, deps",
+                    systemImage: "hammer",
+                    tone: AetowerDesign.Tone.cpu
+                )
+                storageReclaimMetric(
+                    "Review",
+                    value: formatBytes(riskyBytes),
+                    detail: "\(report.summary.reviewCandidateCount) blocked/manual",
+                    systemImage: "exclamationmark.triangle",
+                    tone: AetowerDesign.Status.warning
+                )
+                storageReclaimMetric(
+                    "Tracked Trash",
+                    value: formatBytes(trashPendingBytes),
+                    detail: emptyTrashInFlight ? "emptying" : "pending delete",
+                    systemImage: "trash",
+                    tone: trashPendingBytes > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+                )
+                storageReclaimMetric(
+                    "Scan",
+                    value: storageScanFreshnessLabel(report),
+                    detail: "\(report.scanDurationMillis) ms",
+                    systemImage: "clock.arrow.circlepath",
+                    tone: AetowerDesign.Status.neutral
+                )
+            }
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func storageReclaimMetric(
+        _ title: String,
+        value: String,
+        detail: String,
+        systemImage: String,
+        tone: Color
+    ) -> some View {
+        AetowerMetricTile(
+            title,
+            value: value,
+            detail: detail,
+            systemImage: systemImage,
+            tone: tone,
+            minHeight: 72,
+            valueSize: 15
+        )
+    }
+
+    private func storageScanFreshnessLabel(_ report: StorageHygieneReportModel) -> String {
+        let capturedAt = Date(timeIntervalSince1970: Double(report.capturedAtMillis) / 1_000)
+        let seconds = max(0, Int(Date().timeIntervalSince(capturedAt)))
+        if seconds < 60 {
+            return "\(seconds)s ago"
+        }
+        let minutes = seconds / 60
+        if minutes < 60 {
+            return "\(minutes)m ago"
+        }
+        let hours = minutes / 60
+        if hours < 48 {
+            return "\(hours)h ago"
+        }
+        return capturedAt.formatted(date: .abbreviated, time: .omitted)
     }
 
     private func storageReclaimActionsSection(_ report: StorageHygieneReportModel) -> some View {
