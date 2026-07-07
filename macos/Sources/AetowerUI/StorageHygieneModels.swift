@@ -920,6 +920,9 @@ struct StorageAgentItemSummaryModel: Decodable, Identifiable, Sendable {
 struct StorageDuplicateGroupModel: Decodable, Identifiable, Sendable {
     let id: String
     let candidateKey: String
+    let detectorKind: StorageDuplicateDetectorKindModel
+    let actionability: StorageDuplicateActionabilityModel
+    let confidenceBand: StorageDuplicateConfidenceBandModel
     let confirmed: Bool
     let confidenceScore: UInt8
     let fileCount: Int
@@ -928,6 +931,101 @@ struct StorageDuplicateGroupModel: Decodable, Identifiable, Sendable {
     let paths: [StorageDuplicateItemModel]
     let recommendation: String
     let caveat: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case candidateKey
+        case detectorKind
+        case actionability
+        case confidenceBand
+        case confirmed
+        case confidenceScore
+        case fileCount
+        case totalBytes
+        case reclaimableBytes
+        case paths
+        case recommendation
+        case caveat
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        candidateKey = try container.decode(String.self, forKey: .candidateKey)
+        confirmed = try container.decode(Bool.self, forKey: .confirmed)
+        confidenceScore = try container.decode(UInt8.self, forKey: .confidenceScore)
+        detectorKind =
+            try container.decodeIfPresent(StorageDuplicateDetectorKindModel.self, forKey: .detectorKind)
+            ?? (confirmed ? .exact : .binarySimilarity)
+        actionability =
+            try container.decodeIfPresent(StorageDuplicateActionabilityModel.self, forKey: .actionability)
+            ?? (confirmed ? .cleanableExact : .reviewOnly)
+        confidenceBand =
+            try container.decodeIfPresent(StorageDuplicateConfidenceBandModel.self, forKey: .confidenceBand)
+            ?? StorageDuplicateConfidenceBandModel.band(confirmed: confirmed, score: confidenceScore)
+        fileCount = try container.decode(Int.self, forKey: .fileCount)
+        totalBytes = try container.decode(UInt64.self, forKey: .totalBytes)
+        reclaimableBytes = try container.decode(UInt64.self, forKey: .reclaimableBytes)
+        paths = try container.decodeIfPresent([StorageDuplicateItemModel].self, forKey: .paths) ?? []
+        recommendation = try container.decodeIfPresent(String.self, forKey: .recommendation) ?? ""
+        caveat = try container.decodeIfPresent(String.self, forKey: .caveat) ?? ""
+    }
+}
+
+enum StorageDuplicateDetectorKindModel: String, Decodable, Sendable {
+    case exact
+    case imageSimilarity = "image_similarity"
+    case textSimilarity = "text_similarity"
+    case documentSimilarity = "document_similarity"
+    case videoSimilarity = "video_similarity"
+    case binarySimilarity = "binary_similarity"
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = StorageDuplicateDetectorKindModel(rawValue: rawValue) ?? .unknown
+    }
+}
+
+enum StorageDuplicateActionabilityModel: String, Decodable, Sendable {
+    case cleanableExact = "cleanable_exact"
+    case reviewOnly = "review_only"
+    case informational
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = StorageDuplicateActionabilityModel(rawValue: rawValue) ?? .unknown
+    }
+}
+
+enum StorageDuplicateConfidenceBandModel: String, Decodable, Sendable {
+    case confirmed
+    case high
+    case medium
+    case low
+    case unknown
+
+    static func band(confirmed: Bool, score: UInt8) -> StorageDuplicateConfidenceBandModel {
+        if confirmed {
+            return .confirmed
+        }
+        if score >= 80 {
+            return .high
+        }
+        if score >= 60 {
+            return .medium
+        }
+        return .low
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = StorageDuplicateConfidenceBandModel(rawValue: rawValue) ?? .unknown
+    }
 }
 
 struct StorageDuplicateItemModel: Decodable, Identifiable, Sendable {

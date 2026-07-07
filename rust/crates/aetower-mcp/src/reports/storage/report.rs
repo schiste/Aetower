@@ -1954,7 +1954,11 @@ fn duplicate_group_from_items(
     StorageDuplicateGroup {
         id,
         candidate_key,
-        detector_kind: StorageDuplicateDetectorKind::Exact,
+        detector_kind: if confirmed {
+            StorageDuplicateDetectorKind::Exact
+        } else {
+            StorageDuplicateDetectorKind::BinarySimilarity
+        },
         actionability: if confirmed {
             StorageDuplicateActionability::CleanableExact
         } else {
