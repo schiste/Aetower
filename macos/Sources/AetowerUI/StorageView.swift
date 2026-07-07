@@ -1604,16 +1604,17 @@ public struct StorageView: View {
 
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 if action.hasStageableItems {
+                    let decision = storageReclaimActionDecision(for: action)
                     Button {
-                        if storageHomeActionCanMoveToTrash(action) {
+                        if decision == .moveToTrash {
                             stageStorageHomeAction(action, presentExecution: true)
                         } else {
                             stageStorageHomeAction(action)
                         }
                     } label: {
                         Label(
-                            storageHomeActionCanMoveToTrash(action) ? "Move to Trash" : "Stage cleanup",
-                            systemImage: storageHomeActionCanMoveToTrash(action) ? "trash" : "tray.and.arrow.down"
+                            decision.title,
+                            systemImage: decision.systemImage
                         )
                     }
                     .buttonStyle(.borderedProminent)
@@ -8818,6 +8819,13 @@ public struct StorageView: View {
             }
     }
 
+    private func storageReclaimActionDecision(for action: StorageHomeAction) -> StorageReclaimActionDecision {
+        StorageReclaimPolicy.primaryActionDecision(
+            hasStageableContent: action.hasStageableItems,
+            canMoveToTrash: storageHomeActionCanMoveToTrash(action)
+        )
+    }
+
     private func stagePreventionSuggestion(
         _ suggestion: StoragePreventionSuggestionModel,
         report: StorageHygieneReportModel
@@ -10086,20 +10094,6 @@ private enum StorageArtifactScope: String, CaseIterable, Identifiable {
             return item.attribution.aiAgentSession != nil
         case .partial:
             return item.sizeTruncated
-        }
-    }
-}
-
-private enum StorageReclaimListMode: String, CaseIterable, Identifiable {
-    case files
-    case folders
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .files: return "Files"
-        case .folders: return "Folders"
         }
     }
 }

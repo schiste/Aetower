@@ -3,6 +3,20 @@ import XCTest
 @testable import AetowerUI
 
 final class TrashServiceTests: XCTestCase {
+    func testPrivilegedDeveloperCachePathIsBlockedBeforeTrash() {
+        let blocker = TrashService.privilegedCleanupBlocker(
+            for: "/Library/Developer/CoreSimulator/Caches"
+        )
+
+        XCTAssertNotNil(blocker)
+        XCTAssertTrue(blocker?.contains("administrator permission") == true)
+        XCTAssertNil(
+            TrashService.privilegedCleanupBlocker(
+                for: "/tmp/Library/Developer/CoreSimulator/Caches"
+            )
+        )
+    }
+
     func testTrashBlocksPathWithActiveWriterHolder() throws {
         let url = try makeTemporaryTrashFixture(name: "active-holder")
         let outcome = TrashService.trash(url.path) { _ in
