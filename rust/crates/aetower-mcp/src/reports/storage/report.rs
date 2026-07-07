@@ -1954,6 +1954,17 @@ fn duplicate_group_from_items(
     StorageDuplicateGroup {
         id,
         candidate_key,
+        detector_kind: StorageDuplicateDetectorKind::Exact,
+        actionability: if confirmed {
+            StorageDuplicateActionability::CleanableExact
+        } else {
+            StorageDuplicateActionability::ReviewOnly
+        },
+        confidence_band: if confirmed {
+            StorageDuplicateConfidenceBand::Confirmed
+        } else {
+            confidence_band_for_similarity_score(confidence_score)
+        },
         confirmed,
         confidence_score,
         file_count: items.len(),
@@ -1984,6 +1995,7 @@ fn similar_image_group_from_items(
     review_similarity_group_from_items(
         id,
         format!("image-ahash:{hash:016x}:hamming<={IMAGE_SIMILARITY_HAMMING_THRESHOLD}"),
+        StorageDuplicateDetectorKind::ImageSimilarity,
         82,
         "Potentially similar images by perceptual thumbnail hash. Quick Look side by side before staging any cleanup.",
         "Image similarity uses an 8x8 average hash from decoded PNG/JPEG thumbnails. It is intentionally review-only and can miss crops, edits, or HEIC-only photos.",
@@ -1997,11 +2009,20 @@ fn similar_text_group_from_items(
     token_count: usize,
     items: Vec<&StorageHygieneItem>,
 ) -> StorageDuplicateGroup {
+    let detector_kind = if items
+        .iter()
+        .any(|item| is_document_similarity_path(&item.path))
+    {
+        StorageDuplicateDetectorKind::DocumentSimilarity
+    } else {
+        StorageDuplicateDetectorKind::TextSimilarity
+    };
     review_similarity_group_from_items(
         id,
         format!(
             "text-simhash:{hash:016x}:tokens~{token_count}:hamming<={TEXT_SIMILARITY_HAMMING_THRESHOLD}"
         ),
+        detector_kind,
         76,
         "Potentially similar text, code, log, PDF, or Office documents by normalized extracted-text SimHash. Diff or Quick Look side by side before staging cleanup.",
         "Text/document similarity removes formatting, hashes token shingles, and reads only bounded text. It is review-only and can miss reordered, scanned, generated, appended, or image-only content.",
@@ -2025,6 +2046,7 @@ fn similar_video_group_from_items(
             VIDEO_SIMILARITY_SIZE_RATIO_PERCENT,
             signature.sample_hash
         ),
+        StorageDuplicateDetectorKind::VideoSimilarity,
         70,
         "Potentially similar videos by cheap container metadata and sampled media-byte fingerprints. Open side by side before staging cleanup.",
         "Video similarity compares duration, resolution, codec, size ratio, and bounded media payload samples without decoding full video frames. True sampled-frame perceptual hashes belong in Deep/Forensic mode.",
@@ -2046,6 +2068,7 @@ fn similar_binary_group_from_items(
             overlap.shared_features,
             overlap.jaccard_percent
         ),
+        StorageDuplicateDetectorKind::BinarySimilarity,
         52,
         "Potentially related binary artifacts by content-defined chunk fingerprints. Compare provenance and tool outputs before staging cleanup.",
         "Generic binary similarity is lower-confidence than exact, media, or text matching. It samples bounded file regions and compares fuzzy chunk fingerprints, so false positives are possible.",
@@ -2056,6 +2079,7 @@ fn similar_binary_group_from_items(
 fn review_similarity_group_from_items(
     id: String,
     candidate_key: String,
+    detector_kind: StorageDuplicateDetectorKind,
     confidence_score: u8,
     recommendation: &str,
     caveat: &str,
@@ -2087,6 +2111,9 @@ fn review_similarity_group_from_items(
     StorageDuplicateGroup {
         id,
         candidate_key,
+        detector_kind,
+        actionability: StorageDuplicateActionability::ReviewOnly,
+        confidence_band: confidence_band_for_similarity_score(confidence_score),
         confirmed: false,
         confidence_score,
         file_count: items.len(),
@@ -2096,6 +2123,27 @@ fn review_similarity_group_from_items(
         recommendation: recommendation.to_owned(),
         caveat: caveat.to_owned(),
     }
+}
+
+fn confidence_band_for_similarity_score(score: u8) -> StorageDuplicateConfidenceBand {
+    if score >= 80 {
+        StorageDuplicateConfidenceBand::High
+    } else if score >= 60 {
+        StorageDuplicateConfidenceBand::Medium
+    } else {
+        StorageDuplicateConfidenceBand::Low
+    }
+}
+
+fn is_document_similarity_path(path: &str) -> bool {
+    matches!(
+        Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some("pdf" | "doc" | "docx" | "ppt" | "pptx" | "xls" | "xlsx" | "rtf" | "odt")
+    )
 }
 
 fn summarize_redundancy_groups(

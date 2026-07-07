@@ -709,6 +709,9 @@ pub(super) struct StorageAgentItemSummary {
 pub(super) struct StorageDuplicateGroup {
     pub(super) id: String,
     pub(super) candidate_key: String,
+    pub(super) detector_kind: StorageDuplicateDetectorKind,
+    pub(super) actionability: StorageDuplicateActionability,
+    pub(super) confidence_band: StorageDuplicateConfidenceBand,
     pub(super) confirmed: bool,
     pub(super) confidence_score: u8,
     pub(super) file_count: usize,
@@ -717,6 +720,35 @@ pub(super) struct StorageDuplicateGroup {
     pub(super) paths: Vec<StorageDuplicateItem>,
     pub(super) recommendation: String,
     pub(super) caveat: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum StorageDuplicateDetectorKind {
+    Exact,
+    ImageSimilarity,
+    TextSimilarity,
+    DocumentSimilarity,
+    VideoSimilarity,
+    BinarySimilarity,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum StorageDuplicateActionability {
+    CleanableExact,
+    ReviewOnly,
+    Informational,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum StorageDuplicateConfidenceBand {
+    Confirmed,
+    High,
+    Medium,
+    Low,
 }
 
 #[derive(Clone, Debug, Serialize)]
