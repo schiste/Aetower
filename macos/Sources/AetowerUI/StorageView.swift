@@ -719,8 +719,27 @@ public struct StorageView: View {
     /// then the reclaim opportunities and the staged-cleanup workflow.
     private func storageReclaimHome(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-            storageDiskPressureHeader(report)
-            storageHomeActionsSection(report)
+            storageReclaimSummaryBand(report)
+            storageReclaimActionsSection(report)
+            storageReclaimTableSection(report)
+            storageReclaimSupportingData(report)
+        }
+    }
+
+    private func storageReclaimSummaryBand(_ report: StorageHygieneReportModel) -> some View {
+        storageDiskPressureHeader(report)
+    }
+
+    private func storageReclaimActionsSection(_ report: StorageHygieneReportModel) -> some View {
+        storageHomeActionsSection(report)
+    }
+
+    private func storageReclaimTableSection(_ report: StorageHygieneReportModel) -> some View {
+        itemSection(report)
+    }
+
+    private func storageReclaimSupportingData(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             similarFilesOverviewSection(report)
             if let coldData = report.coldData, coldData.bands.contains(where: { $0.itemCount > 0 }) {
                 coldDataLaneSection(coldData)
