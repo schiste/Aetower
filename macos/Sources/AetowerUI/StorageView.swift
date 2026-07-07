@@ -329,6 +329,8 @@ public struct StorageView: View {
     @State private var selectedTreemapNodeID: String?
     @State private var storageExplorerPage = 0
     @State private var reclaimListMode: StorageReclaimListMode = .files
+    @State private var selectedReclaimFilePath: String?
+    @State private var selectedReclaimFolderPath: String?
     @State private var coldDataSort: StorageColdDataSort = .recommended
     @State private var selectedSimilarityFilter: StorageSimilarityFilter = .exactDuplicates
     @State private var reviewedSimilarityGroupIDs: Set<String> = []
@@ -933,6 +935,11 @@ public struct StorageView: View {
                 case .folders:
                     storageReclaimFoldersTable(visibleFolders)
                 }
+
+                storageReclaimSelectionInspector(
+                    visibleItems: visibleItems,
+                    visibleFolders: visibleFolders
+                )
             }
         }
     }
@@ -949,6 +956,11 @@ public struct StorageView: View {
                 storageExplorerTableHeader
                 ForEach(visibleItems.prefix(80)) { item in
                     storageExplorerTableRow(item)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            selectedReclaimFilePath = item.path
+                            selectedReclaimFolderPath = nil
+                        }
                 }
                 if visibleItems.count > 80 {
                     AetowerInfoBanner(
@@ -974,6 +986,11 @@ public struct StorageView: View {
                 storageReclaimFolderTableHeader
                 ForEach(folders.prefix(80)) { folder in
                     storageReclaimFolderTableRow(folder)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            selectedReclaimFolderPath = folder.path
+                            selectedReclaimFilePath = nil
+                        }
                 }
                 if folders.count > 80 {
                     AetowerInfoBanner(
@@ -983,6 +1000,140 @@ public struct StorageView: View {
                         level: .card
                     )
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func storageReclaimSelectionInspector(
+        visibleItems: [StorageHygieneItemModel],
+        visibleFolders: [StorageReclaimFolderRow]
+    ) -> some View {
+        if let selectedReclaimFilePath,
+           let item = visibleItems.first(where: { $0.path == selectedReclaimFilePath }) {
+            storageReclaimFileInspector(item)
+        } else if let selectedReclaimFolderPath,
+                  let folder = visibleFolders.first(where: { $0.path == selectedReclaimFolderPath }) {
+            storageReclaimFolderInspector(folder)
+        }
+    }
+
+    private func storageReclaimFileInspector(_ item: StorageHygieneItemModel) -> some View {
+        AetowerSurface(level: .selected, padding: AetowerDesign.Spacing.md, cornerRadius: AetowerDesign.Radius.lg) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                    Label(item.displayName, systemImage: icon(for: item))
+                        .font(AetowerDesign.Typography.controlLabel)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(1)
+                    Spacer()
+                    storageItemPrimaryAction(item)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    Button("Reveal") { reveal(path: item.path) }
+                    Button("Quick Look") { quickLook(path: item.path) }
+                    Button("Explain") { classificationExplanation = explanation(for: item) }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    AetowerBadge(cleanupTierLabel(item.cleanupTier), tone: tone(forCleanupTier: item.cleanupTier))
+                    AetowerBadge(
+                        storageItemIsTrashActionable(item) ? "Trash-ready" : "Review required",
+                        systemImage: storageItemIsTrashActionable(item) ? "checkmark.shield" : "exclamationmark.triangle",
+                        tone: storageItemIsTrashActionable(item) ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+                    )
+                    AetowerBadge(formatBytes(item.sizeBytes), systemImage: "externaldrive", tone: AetowerDesign.Tone.disk)
+                    if item.sizeTruncated {
+                        AetowerBadge("Partial size", systemImage: "scalemass", tone: AetowerDesign.Status.warning)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                Text(item.path)
+                    .font(AetowerDesign.Typography.compactData(size: 10))
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+
+                Text(item.cleanupConsequence.isEmpty ? item.recommendation : item.cleanupConsequence)
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !item.cleanupBlockers.isEmpty {
+                    storageReclaimBlockerText(item.cleanupBlockers)
+                }
+            }
+        }
+    }
+
+    private func storageReclaimFolderInspector(_ folder: StorageReclaimFolderRow) -> some View {
+        AetowerSurface(level: .selected, padding: AetowerDesign.Spacing.md, cornerRadius: AetowerDesign.Radius.lg) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                    Label(folder.displayName, systemImage: "folder")
+                        .font(AetowerDesign.Typography.controlLabel)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(1)
+                    Spacer()
+                    Button {
+                        stageReclaimFolder(folder)
+                    } label: {
+                        Label("Stage", systemImage: "tray.and.arrow.down")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!storageReclaimFolderHasStageableContent(folder))
+                    Button("Reveal") { reveal(path: folder.path) }
+                    Button("Quick Look") { quickLook(path: folder.path) }
+                    Button("Copy Plan") { copy(storageReclaimFolderPlan(folder)) }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    AetowerBadge(cleanupTierLabel(folder.cleanupTier), tone: tone(forCleanupTier: folder.cleanupTier))
+                    AetowerBadge(
+                        storageReclaimFolderIsTrashActionable(folder) ? "Folder Trash-ready" : "Stages child items",
+                        systemImage: storageReclaimFolderIsTrashActionable(folder) ? "checkmark.shield" : "tray",
+                        tone: storageReclaimFolderIsTrashActionable(folder) ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+                    )
+                    AetowerBadge(formatBytes(folder.sizeBytes), systemImage: "externaldrive", tone: AetowerDesign.Tone.disk)
+                    AetowerBadge("\(folder.itemCount) item\(folder.itemCount == 1 ? "" : "s")", systemImage: "number", tone: AetowerDesign.Status.neutral)
+                    AetowerBadge(folder.source, systemImage: "link", tone: AetowerDesign.Tone.memory)
+                    Spacer(minLength: 0)
+                }
+
+                Text(folder.path)
+                    .font(AetowerDesign.Typography.compactData(size: 10))
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+
+                Text(storageReclaimFolderIsTrashActionable(folder)
+                    ? "Aetower can stage this folder as one Trash target because the folder projection and current preflight agree."
+                    : "Aetower will not delete this folder as a unit. It can stage known safe child items or produce a manual cleanup plan.")
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !folder.cleanupBlockers.isEmpty {
+                    storageReclaimBlockerText(folder.cleanupBlockers)
+                }
+            }
+        }
+    }
+
+    private func storageReclaimBlockerText(_ blockers: [String]) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+            ForEach(Array(blockers.prefix(4)), id: \.self) { blocker in
+                Label(blocker, systemImage: "exclamationmark.triangle")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Status.error)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -1008,71 +1159,72 @@ public struct StorageView: View {
     }
 
     private func storageReclaimFolderTableRow(_ folder: StorageReclaimFolderRow) -> some View {
-        HStack(spacing: AetowerDesign.Spacing.sm) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(folder.displayName)
-                    .font(AetowerDesign.Typography.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text(folder.path)
-                    .font(AetowerDesign.Typography.compactData(size: 10))
+        AetowerSurface(level: .card, padding: 0, cornerRadius: AetowerDesign.Radius.md) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    Text(folder.displayName)
+                        .font(AetowerDesign.Typography.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text(folder.path)
+                        .font(AetowerDesign.Typography.compactData(size: 10))
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if !folder.cleanupBlockers.isEmpty {
+                        Text(folder.cleanupBlockers.prefix(2).joined(separator: "; "))
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Status.error)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                AetowerBadge(
+                    cleanupTierLabel(folder.cleanupTier),
+                    tone: tone(forCleanupTier: folder.cleanupTier)
+                )
+                .frame(width: 88)
+
+                Text(folder.source)
+                    .font(AetowerDesign.Typography.metadata)
                     .foregroundStyle(AetowerDesign.Ink.secondary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-                if !folder.cleanupBlockers.isEmpty {
-                    Text(folder.cleanupBlockers.prefix(2).joined(separator: "; "))
-                        .font(AetowerDesign.Typography.metadata)
-                        .foregroundStyle(AetowerDesign.Status.error)
-                        .lineLimit(1)
+                    .frame(width: 92)
+
+                Text("\(folder.itemCount)")
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .frame(width: 52, alignment: .trailing)
+
+                Text(formatBytes(folder.sizeBytes))
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .frame(width: 80, alignment: .trailing)
+
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    Button {
+                        stageReclaimFolder(folder)
+                    } label: {
+                        Label("Stage", systemImage: "tray.and.arrow.down")
+                    }
+                    .disabled(!storageReclaimFolderHasStageableContent(folder))
+
+                    Menu {
+                        Button("Reveal in Finder") { reveal(path: folder.path) }
+                        Button("Quick Look") { quickLook(path: folder.path) }
+                        Button("Copy cleanup plan") { copy(storageReclaimFolderPlan(folder)) }
+                        Button("Copy path") { copy(folder.path) }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    }
+                    .menuStyle(.borderlessButton)
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .frame(width: 84, alignment: .trailing)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            AetowerBadge(
-                cleanupTierLabel(folder.cleanupTier),
-                tone: tone(forCleanupTier: folder.cleanupTier)
-            )
-            .frame(width: 88)
-
-            Text(folder.source)
-                .font(AetowerDesign.Typography.metadata)
-                .foregroundStyle(AetowerDesign.Ink.secondary)
-                .lineLimit(1)
-                .frame(width: 92)
-
-            Text("\(folder.itemCount)")
-                .font(AetowerDesign.Typography.caption.weight(.semibold))
-                .frame(width: 52, alignment: .trailing)
-
-            Text(formatBytes(folder.sizeBytes))
-                .font(AetowerDesign.Typography.caption.weight(.semibold))
-                .frame(width: 80, alignment: .trailing)
-
-            HStack(spacing: AetowerDesign.Spacing.xs) {
-                Button {
-                    stageReclaimFolder(folder)
-                } label: {
-                    Label("Stage", systemImage: "tray.and.arrow.down")
-                }
-                .disabled(!storageReclaimFolderHasStageableContent(folder))
-
-                Menu {
-                    Button("Reveal in Finder") { reveal(path: folder.path) }
-                    Button("Quick Look") { quickLook(path: folder.path) }
-                    Button("Copy cleanup plan") { copy(storageReclaimFolderPlan(folder)) }
-                    Button("Copy path") { copy(folder.path) }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(AetowerDesign.Typography.caption.weight(.semibold))
-                }
-                .menuStyle(.borderlessButton)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.mini)
-            .frame(width: 84, alignment: .trailing)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, AetowerDesign.Spacing.xs)
         }
-        .padding(.horizontal, AetowerDesign.Spacing.sm)
-        .padding(.vertical, AetowerDesign.Spacing.xs)
-        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func storageReclaimFolderRows(
