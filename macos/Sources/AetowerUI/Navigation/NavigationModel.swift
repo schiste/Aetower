@@ -328,13 +328,20 @@ public final class NavigationModel {
     }
 
     private func applySubtab(_ slug: String, in workspace: WorkspaceTab) {
+        // handleURL lowercases path segments, so camelCase raw values like
+        // AgentsWorkspaceTab.aiAgents ("aiAgents") can never match through
+        // init(rawValue:) — resolve case-insensitively instead.
+        func match<Tab: RawRepresentable & CaseIterable>(_ type: Tab.Type) -> Tab?
+        where Tab.RawValue == String {
+            type.allCases.first { $0.rawValue.lowercased() == slug }
+        }
         switch workspace {
         case .activity:
-            if let tab = ActivityWorkspaceTab(rawValue: slug) { activity = tab }
+            if let tab = match(ActivityWorkspaceTab.self) { activity = tab }
         case .agents:
-            if let tab = AgentsWorkspaceTab(rawValue: slug) { agents = tab }
+            if let tab = match(AgentsWorkspaceTab.self) { agents = tab }
         case .system:
-            if let tab = SystemWorkspaceTab(rawValue: slug) { system = tab }
+            if let tab = match(SystemWorkspaceTab.self) { system = tab }
         default:
             break
         }

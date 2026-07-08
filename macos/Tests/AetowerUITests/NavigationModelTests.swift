@@ -58,6 +58,16 @@ final class NavigationModelTests: XCTestCase {
         XCTAssertEqual(nav.activity, .timeline)
     }
 
+    func testRoutesCamelCaseSubtabSlug() {
+        // aiAgents is the only sub-tab whose rawValue is not already
+        // lowercase; handleURL lowercases segments, so this only routes if
+        // applySubtab matches case-insensitively.
+        let nav = NavigationModel(defaults: makeDefaults())
+        XCTAssertTrue(nav.handleURL(URL(string: "aetower://tab/agents/aiAgents")!))
+        XCTAssertEqual(nav.workspace, .agents)
+        XCTAssertEqual(nav.agents, .aiAgents)
+    }
+
     func testRoutesSystemSubtabCaseInsensitively() {
         let nav = NavigationModel(defaults: makeDefaults())
         XCTAssertTrue(nav.handleURL(URL(string: "aetower://tab/System/Diagnostics")!))
