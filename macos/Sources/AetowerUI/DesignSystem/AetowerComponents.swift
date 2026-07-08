@@ -617,6 +617,8 @@ public struct AetowerSelectionMenu<Item: Identifiable & Hashable>: View {
     let options: [Item]
     let fallbackSystemImage: String
     let accessibilityLabel: String
+    let accessibilityIdentifier: String?
+    let optionAccessibilityIdentifier: (Item) -> String?
     let title: (Item) -> String
     let systemImage: (Item) -> String?
 
@@ -625,6 +627,8 @@ public struct AetowerSelectionMenu<Item: Identifiable & Hashable>: View {
         options: [Item],
         fallbackSystemImage: String = "rectangle.grid.1x2",
         accessibilityLabel: String,
+        accessibilityIdentifier: String? = nil,
+        optionAccessibilityIdentifier: @escaping (Item) -> String? = { _ in nil },
         title: @escaping (Item) -> String,
         systemImage: @escaping (Item) -> String? = { _ in nil }
     ) {
@@ -632,6 +636,8 @@ public struct AetowerSelectionMenu<Item: Identifiable & Hashable>: View {
         self.options = options
         self.fallbackSystemImage = fallbackSystemImage
         self.accessibilityLabel = accessibilityLabel
+        self.accessibilityIdentifier = accessibilityIdentifier
+        self.optionAccessibilityIdentifier = optionAccessibilityIdentifier
         self.title = title
         self.systemImage = systemImage
     }
@@ -650,6 +656,8 @@ public struct AetowerSelectionMenu<Item: Identifiable & Hashable>: View {
                         }
                     }
                 }
+                .accessibilityIdentifier(optionAccessibilityIdentifier(option) ?? "")
+                .accessibilityAddTraits(selection.wrappedValue == option ? .isSelected : [])
             }
         } label: {
             HStack(spacing: AetowerDesign.Spacing.xs) {
@@ -667,6 +675,7 @@ public struct AetowerSelectionMenu<Item: Identifiable & Hashable>: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(accessibilityIdentifier ?? "")
     }
 }
 
@@ -767,6 +776,7 @@ public struct AetowerRailButton: View {
     let systemImage: String
     let signalTone: Color
     let isSelected: Bool
+    let accessibilityIdentifier: String?
     let action: () -> Void
 
     public init(
@@ -777,6 +787,7 @@ public struct AetowerRailButton: View {
         systemImage: String,
         signalTone: Color = AetowerDesign.Status.neutral,
         isSelected: Bool,
+        accessibilityIdentifier: String? = nil,
         action: @escaping () -> Void
     ) {
         self.title = title
@@ -786,6 +797,7 @@ public struct AetowerRailButton: View {
         self.systemImage = systemImage
         self.signalTone = signalTone
         self.isSelected = isSelected
+        self.accessibilityIdentifier = accessibilityIdentifier
         self.action = action
     }
 
@@ -840,6 +852,10 @@ public struct AetowerRailButton: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(accessibilityIdentifier ?? "")
+        .accessibilityLabel(title)
+        .accessibilityHint(role)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
 
