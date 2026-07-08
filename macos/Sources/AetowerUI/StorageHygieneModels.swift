@@ -310,6 +310,30 @@ private struct StorageHygieneReportCacheRecord: Codable {
     let repositories: [StorageHygieneRepositoryCacheFingerprint]
 }
 
+struct StorageHygieneRepositoryFingerprintAudit: Sendable {
+    let checkedRepositoryCount: Int
+    let changedRepositoryRoots: [String]
+    let missingRepositoryRoots: [String]
+    let savedAtMillis: UInt64?
+    let unavailableReason: String?
+
+    var changedRepositoryCount: Int {
+        changedRepositoryRoots.count
+    }
+
+    var missingRepositoryCount: Int {
+        missingRepositoryRoots.count
+    }
+
+    var hasChangedRepositories: Bool {
+        changedRepositoryCount > 0 || missingRepositoryCount > 0
+    }
+
+    var sampleRoots: [String] {
+        Array((changedRepositoryRoots + missingRepositoryRoots).prefix(3))
+    }
+}
+
 private let storageAgentContractCachePaths = [
     "AGENTS.md",
     ".agents/manifest.yaml",
@@ -323,9 +347,12 @@ private let storageAgentContractCachePaths = [
     ".agents/references.yaml",
 ]
 
-private struct StorageHygieneRepositoryCacheFingerprint: Codable {
+private struct StorageHygieneRepositoryCacheFingerprint: Codable, Equatable {
     let repoRoot: String
     let repoName: String
+    let repoRootFingerprint: String?
+    let gitMarkerFingerprint: String?
+    let gitDirectoryFingerprint: String?
     let gitHead: String?
     let gitRef: String?
     let gitBranch: String?
@@ -335,6 +362,9 @@ private struct StorageHygieneRepositoryCacheFingerprint: Codable {
     let gitDirtyTruncated: Bool
     let gitConfigFingerprint: String?
     let gitIndexFingerprint: String?
+    let gitHeadFingerprint: String?
+    let gitHeadRefFingerprint: String?
+    let gitPackedRefsFingerprint: String?
     let agentReadinessScore: UInt8
     let agentReadinessStatus: String
     let agentGuidanceIssueCount: UInt64
@@ -343,6 +373,7 @@ private struct StorageHygieneRepositoryCacheFingerprint: Codable {
     init(repository: StorageRepositoryInventoryModel) {
         repoRoot = repository.repoRoot
         repoName = repository.repoName
+        let rootURL = URL(fileURLWithPath: repository.repoRoot, isDirectory: true)
         gitHead = repository.gitHead
         gitRef = repository.gitRef
         gitBranch = repository.gitBranch
@@ -351,12 +382,56 @@ private struct StorageHygieneRepositoryCacheFingerprint: Codable {
         gitDirtyFileCount = repository.gitDirtyFileCount
         gitDirtyTruncated = repository.gitDirtyTruncated
         let gitDirectory = Self.gitDirectory(repoRoot: repository.repoRoot)
+        repoRootFingerprint = Self.fileFingerprint(rootURL)
+        gitMarkerFingerprint = Self.fileFingerprint(rootURL.appendingPathComponent(".git", isDirectory: false))
+        gitDirectoryFingerprint = Self.fileFingerprint(gitDirectory)
         gitConfigFingerprint = Self.fileFingerprint(gitDirectory?.appendingPathComponent("config"))
         gitIndexFingerprint = Self.fileFingerprint(gitDirectory?.appendingPathComponent("index"))
+        gitHeadFingerprint = Self.fileFingerprint(gitDirectory?.appendingPathComponent("HEAD"))
+        gitHeadRefFingerprint = Self.gitHeadRefFingerprint(repoRoot: repository.repoRoot, gitDirectory: gitDirectory)
+        gitPackedRefsFingerprint = Self.fileFingerprint(gitDirectory?.appendingPathComponent("packed-refs"))
         agentReadinessScore = repository.agentReadinessScore
         agentReadinessStatus = repository.agentReadinessStatus
         agentGuidanceIssueCount = repository.agentGuidanceIssueCount
         agentContracts = Self.agentContractFingerprints(repoRoot: repository.repoRoot)
+    }
+
+    func matchesCurrent(_ current: StorageHygieneRepositoryCacheFingerprint) -> Bool {
+        guard repoRoot == current.repoRoot,
+              repoName == current.repoName,
+              gitHead == current.gitHead,
+              gitRef == current.gitRef,
+              gitBranch == current.gitBranch,
+              gitRemoteKey == current.gitRemoteKey,
+              gitDirtyStatus == current.gitDirtyStatus,
+              gitDirtyFileCount == current.gitDirtyFileCount,
+              gitDirtyTruncated == current.gitDirtyTruncated,
+              agentReadinessScore == current.agentReadinessScore,
+              agentReadinessStatus == current.agentReadinessStatus,
+              agentGuidanceIssueCount == current.agentGuidanceIssueCount,
+              agentContracts == current.agentContracts
+        else {
+            return false
+        }
+
+        return Self.optionalFingerprintMatches(repoRootFingerprint, current.repoRootFingerprint)
+            && Self.optionalFingerprintMatches(gitMarkerFingerprint, current.gitMarkerFingerprint)
+            && Self.optionalFingerprintMatches(gitDirectoryFingerprint, current.gitDirectoryFingerprint)
+            && Self.optionalFingerprintMatches(gitConfigFingerprint, current.gitConfigFingerprint)
+            && Self.optionalFingerprintMatches(gitIndexFingerprint, current.gitIndexFingerprint)
+            && Self.optionalFingerprintMatches(gitHeadFingerprint, current.gitHeadFingerprint)
+            && Self.optionalFingerprintMatches(gitHeadRefFingerprint, current.gitHeadRefFingerprint)
+            && Self.optionalFingerprintMatches(gitPackedRefsFingerprint, current.gitPackedRefsFingerprint)
+    }
+
+    private static func optionalFingerprintMatches(_ cached: String?, _ current: String?) -> Bool {
+        guard let cached else {
+            // Older cache records do not contain every cheap filesystem
+            // fingerprint. Treat those fields as unknown so a version upgrade
+            // does not force reparsing every repository before the next save.
+            return true
+        }
+        return cached == current
     }
 
     private static func agentContractFingerprints(repoRoot: String) -> [StorageHygieneContractCacheFingerprint] {
@@ -398,6 +473,23 @@ private struct StorageHygieneRepositoryCacheFingerprint: Codable {
         let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
         let modifiedMillis = ((attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0) * 1000
         return "\(size):\(UInt64(modifiedMillis))"
+    }
+
+    private static func gitHeadRefFingerprint(repoRoot: String, gitDirectory: URL?) -> String? {
+        guard let gitDirectory else { return nil }
+        let rootURL = URL(fileURLWithPath: repoRoot, isDirectory: true)
+        let headURL = gitDirectory.appendingPathComponent("HEAD", isDirectory: false)
+        guard let content = try? String(contentsOf: headURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            let ref = content.stripPrefix("ref: "),
+            !ref.isEmpty
+        else {
+            return nil
+        }
+        let refURL = ref.hasPrefix("/")
+            ? URL(fileURLWithPath: ref, isDirectory: false)
+            : gitDirectory.appendingPathComponent(ref, isDirectory: false)
+        return fileFingerprint(refURL) ?? fileFingerprint(rootURL.appendingPathComponent(ref, isDirectory: false))
     }
 }
 
@@ -478,6 +570,48 @@ enum StorageHygieneReportCacheStore {
         )
     }
 
+    static func auditRepositoryFingerprints(
+        report: StorageHygieneReportModel,
+        roots: [String]
+    ) -> StorageHygieneRepositoryFingerprintAudit {
+        guard let record = loadRecordForAudit(roots: roots) else {
+            return StorageHygieneRepositoryFingerprintAudit(
+                checkedRepositoryCount: 0,
+                changedRepositoryRoots: [],
+                missingRepositoryRoots: [],
+                savedAtMillis: nil,
+                unavailableReason: "cache record unavailable"
+            )
+        }
+
+        let cachedByRoot = Dictionary(uniqueKeysWithValues: record.repositories.map { ($0.repoRoot, $0) })
+        var changedRoots: [String] = []
+        var missingRoots: [String] = []
+
+        for repository in report.repositoryInventory {
+            if !FileManager.default.fileExists(atPath: repository.repoRoot) {
+                missingRoots.append(repository.repoRoot)
+                continue
+            }
+            guard let cached = cachedByRoot[repository.repoRoot] else {
+                changedRoots.append(repository.repoRoot)
+                continue
+            }
+            let current = StorageHygieneRepositoryCacheFingerprint(repository: repository)
+            if !cached.matchesCurrent(current) {
+                changedRoots.append(repository.repoRoot)
+            }
+        }
+
+        return StorageHygieneRepositoryFingerprintAudit(
+            checkedRepositoryCount: report.repositoryInventory.count,
+            changedRepositoryRoots: changedRoots,
+            missingRepositoryRoots: missingRoots,
+            savedAtMillis: record.savedAtMillis,
+            unavailableReason: nil
+        )
+    }
+
     static func save(
         report: StorageHygieneReportModel,
         rawJSON: String,
@@ -506,6 +640,18 @@ enum StorageHygieneReportCacheStore {
     static func invalidate() {
         guard let url = cacheURL(createDirectory: false) else { return }
         try? FileManager.default.removeItem(at: url)
+    }
+
+    private static func loadRecordForAudit(roots: [String]) -> StorageHygieneReportCacheRecord? {
+        guard let url = cacheURL(createDirectory: false),
+              let data = try? Data(contentsOf: url),
+              let record = try? JSONDecoder().decode(StorageHygieneReportCacheRecord.self, from: data)
+        else {
+            return nil
+        }
+        guard record.schemaVersion == schemaVersion else { return nil }
+        guard record.requestedRoots == normalizedRequestedRoots(roots) else { return nil }
+        return record
     }
 
     private static func cacheURL(createDirectory: Bool) -> URL? {

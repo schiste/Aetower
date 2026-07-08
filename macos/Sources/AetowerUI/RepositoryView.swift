@@ -697,16 +697,24 @@ public struct RepositoryView: View {
                 repositoryDestination(repositoryID)
             }
             .overlay(alignment: .bottom) {
-                repositoryBulkPill
-                    .padding(.bottom, AetowerDesign.Spacing.xl)
-                    .animation(AetowerDesign.Motion.smooth, value: selectedRepoRoots.count)
+                VStack(spacing: AetowerDesign.Spacing.sm) {
+                    if let refreshState = state.repositoryInventoryRefreshState {
+                        repositoryInventoryRefreshToast(refreshState)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    repositoryBulkPill
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                .padding(.bottom, AetowerDesign.Spacing.xl)
+                .animation(AetowerDesign.Motion.smooth, value: selectedRepoRoots.count)
+                .animation(AetowerDesign.Motion.quick, value: state.repositoryInventoryRefreshState)
             }
         }
         .task {
-            state.ensureStorageHygieneScan(roots: repositoryScanRoots)
+            state.ensureRepositoryInventoryResponsiveLoad(roots: repositoryScanRoots)
         }
         .onChange(of: settings.repositoryRoots) { _, roots in
-            state.ensureStorageHygieneScan(roots: roots)
+            state.ensureRepositoryInventoryResponsiveLoad(roots: roots)
         }
         .onChange(of: searchText) { _, newValue in
             // Debounce so the O(n · fields) localized filter+sort runs once the
@@ -1057,7 +1065,7 @@ public struct RepositoryView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 repositoryStatusStrip(report, repositories: repositories)
-                if state.storageHygieneIsLoading || state.storageHygieneIsVerifyingCache {
+                if state.storageHygieneIsLoading {
                     repositoryScanProgressBanner
                 }
 
@@ -1209,6 +1217,30 @@ public struct RepositoryView: View {
             .shadow(color: .black.opacity(0.18), radius: 14, y: 5)
             .fixedSize()
         }
+    }
+
+    private func repositoryInventoryRefreshToast(_ refreshState: RepositoryInventoryRefreshState) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            ProgressView()
+                .controlSize(.small)
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                Text(refreshState.title)
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                    .lineLimit(1)
+                Text(refreshState.detail)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .padding(.horizontal, AetowerDesign.Spacing.lg)
+        .padding(.vertical, AetowerDesign.Spacing.sm)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(AetowerDesign.Surface.divider, lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func tableHeader(

@@ -60,6 +60,53 @@ struct StorageEstimateStatus: Sendable {
     )
 }
 
+struct RepositoryInventoryRefreshState: Equatable, Sendable {
+    enum Phase: String, Sendable {
+        case checkingFingerprints
+        case refreshingChangedRepositories
+        case scanningForNewRepositories
+    }
+
+    let phase: Phase
+    let checkedRepositoryCount: Int
+    let changedRepositoryCount: Int
+    let missingRepositoryCount: Int
+    let sampleRoots: [String]
+
+    var title: String {
+        switch phase {
+        case .checkingFingerprints:
+            return "Checking repo fingerprints"
+        case .refreshingChangedRepositories:
+            return "Refreshing changed repos"
+        case .scanningForNewRepositories:
+            return "Scanning for new repos"
+        }
+    }
+
+    var detail: String {
+        switch phase {
+        case .checkingFingerprints:
+            return "Using cached inventory while comparing \(checkedRepositoryCount) saved fingerprint\(checkedRepositoryCount == 1 ? "" : "s")."
+        case .refreshingChangedRepositories:
+            let changed = changedRepositoryCount + missingRepositoryCount
+            let sample = sampleRoots.map(Self.shortPath).joined(separator: ", ")
+            return "\(changed) repository fingerprint\(changed == 1 ? "" : "s") changed\(sample.isEmpty ? "." : ": \(sample).")"
+        case .scanningForNewRepositories:
+            return "Cached repositories are visible; a background root walk is looking for newly added clones."
+        }
+    }
+
+    private static func shortPath(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path == home { return "~" }
+        if path.hasPrefix(home + "/") {
+            return "~" + path.dropFirst(home.count)
+        }
+        return path
+    }
+}
+
 enum StorageHygieneDecodePipeline {
     static func prepare(
         _ result: JsonQueryResult,
@@ -163,6 +210,11 @@ private final class StorageHygieneMainActorPublisher: @unchecked Sendable {
         signalOnly: Bool = false
     ) {
         state?.publishStorageRepositoryInventoryVerification(inventory, signalOnly: signalOnly)
+    }
+
+    @MainActor
+    func publishRepositoryInventoryRefreshState(_ refreshState: RepositoryInventoryRefreshState?) {
+        state?.publishRepositoryInventoryRefreshState(refreshState)
     }
 
     @MainActor
@@ -475,6 +527,7 @@ public final class AppState {
     private(set) var storageHygieneIsVerifyingCache = false
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
+    private(set) var repositoryInventoryRefreshState: RepositoryInventoryRefreshState?
     /// Server-paged Storage Explorer table state. The page is fetched on
     /// demand from `storage_hygiene_items_page_json` (index-backed, sorted
     /// server-side); the offset/sort properties record the most recent
@@ -530,6 +583,7 @@ public final class AppState {
     @ObservationIgnored private var fullSnapshotDemandTokens: Set<UUID> = []
     @ObservationIgnored private var frontmostTitleProbeTask: Task<Void, Never>?
     @ObservationIgnored private var lastInventorySignalRefreshMillis: UInt64 = 0
+    @ObservationIgnored private var lastRepositoryInventoryFingerprintAuditMillis: UInt64 = 0
     @ObservationIgnored private var lastStorageEstimateRefreshMillis: UInt64 = 0
     @ObservationIgnored private var lastStorageEstimateDecisionMillis: UInt64 = 0
     @ObservationIgnored private var ticksSinceFullSnapshot = 0
@@ -923,6 +977,7 @@ public final class AppState {
         repositoryCloudflareProviderTasks.removeAll()
         repositoryInventorySignalTask?.cancel()
         repositoryInventorySignalTask = nil
+        repositoryInventoryRefreshState = nil
         storageScanController.stop()
         storageRootChangeMonitor.stop()
         lagMonitor.stop()
@@ -1947,10 +2002,23 @@ public final class AppState {
         let publisher = StorageHygieneMainActorPublisher(self)
         repositoryInventorySignalTask?.cancel()
         repositoryInventorySignalTask = Task.detached(priority: .utility) { [bridge, publisher] in
+            await publisher.publishRepositoryInventoryRefreshState(
+                RepositoryInventoryRefreshState(
+                    phase: .refreshingChangedRepositories,
+                    checkedRepositoryCount: 0,
+                    changedRepositoryCount: 0,
+                    missingRepositoryCount: 0,
+                    sampleRoots: []
+                )
+            )
             let inventory = bridge.repositoryInventoryJSON(roots: roots, maxDepth: maxDepth)
             guard !Task.isCancelled else { return }
-            guard let decoded = Self.decodeRepositoryInventoryReport(inventory) else { return }
+            guard let decoded = Self.decodeRepositoryInventoryReport(inventory) else {
+                await publisher.publishRepositoryInventoryRefreshState(nil)
+                return
+            }
             await publisher.publishInventoryVerification(decoded, signalOnly: true)
+            await publisher.publishRepositoryInventoryRefreshState(nil)
         }
     }
 
@@ -2471,6 +2539,11 @@ public final class AppState {
 
     /// Load the developer storage hygiene report once. The backend scan is
     /// bounded and read-only; explicit refreshes call `runStorageHygieneScan`.
+    func ensureRepositoryInventoryResponsiveLoad(roots: [String] = []) {
+        ensureStorageHygieneScan(roots: roots)
+        refreshRepositoryInventoryForVisibleCache(roots: roots)
+    }
+
     func ensureStorageHygieneScan(roots: [String] = []) {
         guard !storageHygieneIsLoading, !storageHygieneIsVerifyingCache else { return }
         if let storageHygieneReport,
@@ -2610,6 +2683,197 @@ public final class AppState {
                     message: inventory.errorMessage ?? "Repository inventory verification failed."
                 )
             }
+        }
+    }
+
+    private static let repositoryInventoryFingerprintAuditCooldownMillis: UInt64 = 15_000
+
+    private func refreshRepositoryInventoryForVisibleCache(roots: [String]) {
+        guard let report = storageHygieneReport else { return }
+        guard !storageHygieneIsVerifyingCache, storageScanJob == nil else { return }
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        guard nowMillis >= lastRepositoryInventoryFingerprintAuditMillis
+            + Self.repositoryInventoryFingerprintAuditCooldownMillis
+        else {
+            return
+        }
+        lastRepositoryInventoryFingerprintAuditMillis = nowMillis
+
+        let bridge = self.bridge
+        let publisher = StorageHygieneMainActorPublisher(self)
+        let discoveryRoots = roots.isEmpty ? report.roots : roots
+        repositoryInventorySignalTask?.cancel()
+        repositoryInventorySignalTask = Task.detached(priority: .utility) {
+            [report, roots, bridge, publisher, discoveryRoots] in
+            let audit = StorageHygieneReportCacheStore.auditRepositoryFingerprints(
+                report: report,
+                roots: roots
+            )
+            guard !Task.isCancelled else { return }
+            await publisher.publishRepositoryInventoryRefreshState(
+                RepositoryInventoryRefreshState(
+                    phase: .checkingFingerprints,
+                    checkedRepositoryCount: audit.checkedRepositoryCount,
+                    changedRepositoryCount: audit.changedRepositoryCount,
+                    missingRepositoryCount: audit.missingRepositoryCount,
+                    sampleRoots: audit.sampleRoots
+                )
+            )
+
+            if audit.hasChangedRepositories {
+                await publisher.publishRepositoryInventoryRefreshState(
+                    RepositoryInventoryRefreshState(
+                        phase: .refreshingChangedRepositories,
+                        checkedRepositoryCount: audit.checkedRepositoryCount,
+                        changedRepositoryCount: audit.changedRepositoryCount,
+                        missingRepositoryCount: audit.missingRepositoryCount,
+                        sampleRoots: audit.sampleRoots
+                    )
+                )
+                let targetRoots = audit.missingRepositoryRoots.isEmpty
+                    ? audit.changedRepositoryRoots
+                    : report.roots
+                let maxDepth: UInt32 = audit.missingRepositoryRoots.isEmpty ? 1 : 5
+                let inventory = bridge.repositoryInventoryJSON(roots: targetRoots, maxDepth: maxDepth)
+                guard !Task.isCancelled else { return }
+                if let decoded = Self.decodeRepositoryInventoryReport(inventory) {
+                    await publisher.publishInventoryVerification(decoded, signalOnly: true)
+                }
+                if !audit.missingRepositoryRoots.isEmpty {
+                    await publisher.publishRepositoryInventoryRefreshState(nil)
+                    return
+                }
+            }
+
+            await publisher.publishRepositoryInventoryRefreshState(
+                RepositoryInventoryRefreshState(
+                    phase: .scanningForNewRepositories,
+                    checkedRepositoryCount: audit.checkedRepositoryCount,
+                    changedRepositoryCount: 0,
+                    missingRepositoryCount: 0,
+                    sampleRoots: []
+                )
+            )
+            let knownRoots = Set(report.repositoryInventory.map(\.repoRoot))
+            let newRepositoryRoots = Self.discoverUnknownRepositoryRoots(
+                roots: discoveryRoots,
+                knownRoots: knownRoots,
+                maxDepth: 5
+            )
+            if !newRepositoryRoots.isEmpty {
+                let inventory = bridge.repositoryInventoryJSON(roots: newRepositoryRoots, maxDepth: 1)
+                guard !Task.isCancelled else { return }
+                if let decoded = Self.decodeRepositoryInventoryReport(inventory) {
+                    await publisher.publishInventoryVerification(decoded, signalOnly: true)
+                }
+            }
+
+            await publisher.publishRepositoryInventoryRefreshState(nil)
+        }
+    }
+
+    nonisolated private static func discoverUnknownRepositoryRoots(
+        roots: [String],
+        knownRoots: Set<String>,
+        maxDepth: Int
+    ) -> [String] {
+        let fileManager = FileManager.default
+        let normalizedKnownRoots = Set(
+            knownRoots.flatMap { root in
+                [root, URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL.path]
+            }
+        )
+        let rootURLs = roots.map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
+        let maxDepth = Swift.max(1, Swift.min(maxDepth, 12))
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        let maxScannedDirectories = 25_000
+        var scannedDirectories = 0
+        var discoveredRoots: [String] = []
+        var discoveredSet: Set<String> = []
+        var queue = rootURLs.map { ($0, 0) }
+        var cursor = 0
+
+        while cursor < queue.count,
+              scannedDirectories < maxScannedDirectories,
+              ProcessInfo.processInfo.systemUptime < deadline
+        {
+            let (url, depth) = queue[cursor]
+            cursor += 1
+            guard Self.repositoryDiscoveryIsReadableDirectory(url) else { continue }
+
+            let path = url.path
+            let isRepository = Self.repositoryDiscoveryIsGitRoot(url)
+            if isRepository,
+               !normalizedKnownRoots.contains(path),
+               discoveredSet.insert(path).inserted
+            {
+                discoveredRoots.append(path)
+            }
+
+            guard depth < maxDepth else { continue }
+            if !isRepository, depth > 0, Self.repositoryDiscoverySkipReason(url.lastPathComponent) != nil {
+                continue
+            }
+
+            scannedDirectories += 1
+            guard let children = try? fileManager.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: []
+            ) else {
+                continue
+            }
+
+            for child in children.sorted(by: { $0.path < $1.path }) {
+                if child.lastPathComponent == ".git" { continue }
+                guard Self.repositoryDiscoveryIsReadableDirectory(child) else { continue }
+                queue.append((child.standardizedFileURL, depth + 1))
+            }
+        }
+
+        return discoveredRoots
+    }
+
+    nonisolated private static func repositoryDiscoveryIsGitRoot(_ url: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: url.appendingPathComponent(".git", isDirectory: false).path
+        )
+    }
+
+    nonisolated private static func repositoryDiscoveryIsReadableDirectory(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+              values.isDirectory == true,
+              values.isSymbolicLink != true
+        else {
+            return false
+        }
+        return true
+    }
+
+    nonisolated private static func repositoryDiscoverySkipReason(_ name: String) -> String? {
+        switch name {
+        case ".git",
+             "node_modules",
+             "target",
+             ".build",
+             "DerivedData",
+             ".cache",
+             "Library",
+             ".docker",
+             ".npm",
+             ".pnpm-store",
+             ".cargo",
+             ".gradle",
+             ".venv",
+             "venv",
+             ".tox",
+             "__pycache__",
+             ".next",
+             ".turbo",
+             "Pods":
+            return "skipped"
+        default:
+            return nil
         }
     }
 
@@ -3638,6 +3902,7 @@ public final class AppState {
         storageHygieneIsLoading = true
         storageHygieneIsVerifyingCache = false
         storageHygieneError = nil
+        repositoryInventoryRefreshState = nil
         storageScanJob = nil
         storageScanController.start(
             roots: roots,
@@ -3689,12 +3954,24 @@ public final class AppState {
         storageHygieneIsLoading = false
         storageHygieneIsVerifyingCache = true
         storageHygieneError = nil
+        repositoryInventoryRefreshState = RepositoryInventoryRefreshState(
+            phase: .scanningForNewRepositories,
+            checkedRepositoryCount: storageHygieneReport?.repositoryInventory.count ?? 0,
+            changedRepositoryCount: 0,
+            missingRepositoryCount: 0,
+            sampleRoots: []
+        )
         recordLocalDiagnosticsEvent(
             level: .info,
             subsystem: .ui,
             eventType: "storage-hygiene-cache-verification-started",
             message: "Started lightweight repository inventory verification."
         )
+    }
+
+    fileprivate func publishRepositoryInventoryRefreshState(_ refreshState: RepositoryInventoryRefreshState?) {
+        guard !Task.isCancelled else { return }
+        repositoryInventoryRefreshState = refreshState
     }
 
     fileprivate func publishStorageRepositoryInventoryVerification(
@@ -3708,6 +3985,7 @@ public final class AppState {
             storageHygieneTask = nil
         }
         guard var report = storageHygieneReport else {
+            repositoryInventoryRefreshState = nil
             recordLocalDiagnosticsEvent(
                 level: .info,
                 subsystem: .ui,
@@ -3730,6 +4008,39 @@ public final class AppState {
             previousStorageHygieneReport = storageHygieneReport
         }
         repositorySummaryInputsGeneration += 1
+        let displayedRoots = Set(report.repositoryInventory.map(\.repoRoot))
+        let verifiedRoots = Set(inventory.repositoryInventory.map(\.repoRoot))
+        let isPartialSignalRefresh = signalOnly
+            && !verifiedRoots.isEmpty
+            && !displayedRoots.isSubset(of: verifiedRoots)
+
+        if isPartialSignalRefresh {
+            var replacements = Dictionary(
+                uniqueKeysWithValues: inventory.repositoryInventory.map { ($0.repoRoot, $0) }
+            )
+            report.repositoryInventory = report.repositoryInventory.map { repository in
+                replacements.removeValue(forKey: repository.repoRoot) ?? repository
+            }
+            report.repositoryInventory.append(contentsOf: replacements.values)
+            report.repositoryInventory.sort {
+                $0.repoName.localizedCaseInsensitiveCompare($1.repoName) == .orderedAscending
+            }
+            storageHygieneReport = report
+            storageRootChangeMonitor.startWatching(roots: report.roots)
+            storageHygieneError = nil
+            repositoryInventoryRefreshState = nil
+            recordLocalDiagnosticsEvent(
+                level: .info,
+                subsystem: .ui,
+                eventType: "storage-hygiene-inventory-partial-merged",
+                message: "Merged changed repository inventory rows into the cached report.",
+                fields: [
+                    DiagnosticsField(key: "updated_count", value: String(inventory.repositoryInventory.count)),
+                ]
+            )
+            return
+        }
+
         // An incomplete verification walk (budget-truncated under load) must
         // not replace a richer inventory already on screen.
         let displayedCount = report.repositoryInventory.count
@@ -3757,6 +4068,7 @@ public final class AppState {
         }
         storageRootChangeMonitor.startWatching(roots: report.roots)
         storageHygieneError = nil
+        repositoryInventoryRefreshState = nil
 
         recordLocalDiagnosticsEvent(
             level: inventory.repositoryInventoryComplete ? .info : .warn,
@@ -3785,6 +4097,7 @@ public final class AppState {
         storageHygieneIsLoading = false
         storageHygieneIsVerifyingCache = false
         storageHygieneTask = nil
+        repositoryInventoryRefreshState = nil
         if let message, storageHygieneReport != nil {
             recordLocalDiagnosticsEvent(
                 level: .warn,
