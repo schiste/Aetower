@@ -2745,15 +2745,6 @@ public final class AppState {
                 }
             }
 
-            await publisher.publishRepositoryInventoryRefreshState(
-                RepositoryInventoryRefreshState(
-                    phase: .scanningForNewRepositories,
-                    checkedRepositoryCount: audit.checkedRepositoryCount,
-                    changedRepositoryCount: 0,
-                    missingRepositoryCount: 0,
-                    sampleRoots: []
-                )
-            )
             let knownRoots = Set(report.repositoryInventory.map(\.repoRoot))
             let newRepositoryRoots = Self.discoverUnknownRepositoryRoots(
                 roots: discoveryRoots,
@@ -2761,6 +2752,15 @@ public final class AppState {
                 maxDepth: 5
             )
             if !newRepositoryRoots.isEmpty {
+                await publisher.publishRepositoryInventoryRefreshState(
+                    RepositoryInventoryRefreshState(
+                        phase: .scanningForNewRepositories,
+                        checkedRepositoryCount: audit.checkedRepositoryCount,
+                        changedRepositoryCount: newRepositoryRoots.count,
+                        missingRepositoryCount: 0,
+                        sampleRoots: Array(newRepositoryRoots.prefix(3))
+                    )
+                )
                 let inventory = bridge.repositoryInventoryJSON(roots: newRepositoryRoots, maxDepth: 1)
                 guard !Task.isCancelled else { return }
                 if let decoded = Self.decodeRepositoryInventoryReport(inventory) {
@@ -2780,10 +2780,13 @@ public final class AppState {
         let fileManager = FileManager.default
         let normalizedKnownRoots = Set(
             knownRoots.flatMap { root in
-                [root, URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL.path]
+                [root, normalizedScanRoot(root)]
             }
         )
-        let rootURLs = roots.map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
+        let rootURLs = roots
+            .map(normalizedScanRoot)
+            .filter { !$0.isEmpty }
+            .map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
         let maxDepth = Swift.max(1, Swift.min(maxDepth, 12))
         let deadline = ProcessInfo.processInfo.systemUptime + 5
         let maxScannedDirectories = 25_000
@@ -2896,11 +2899,11 @@ public final class AppState {
         return normalizedScanRootSet(report.repositoryInventoryRoots) == requested
     }
 
-    private static func normalizedScanRootSet(_ roots: [String]) -> Set<String> {
+    nonisolated private static func normalizedScanRootSet(_ roots: [String]) -> Set<String> {
         Set(roots.map(normalizedScanRoot).filter { !$0.isEmpty })
     }
 
-    private static func normalizedScanRoot(_ root: String) -> String {
+    nonisolated private static func normalizedScanRoot(_ root: String) -> String {
         let trimmed = root.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         let expanded: String
@@ -4007,9 +4010,23 @@ public final class AppState {
             // flap if every git-status refresh replaced it.
             previousStorageHygieneReport = storageHygieneReport
         }
-        repositorySummaryInputsGeneration += 1
         let displayedRoots = Set(report.repositoryInventory.map(\.repoRoot))
         let verifiedRoots = Set(inventory.repositoryInventory.map(\.repoRoot))
+        if signalOnly, verifiedRoots.isEmpty {
+            repositoryInventoryRefreshState = nil
+            recordLocalDiagnosticsEvent(
+                level: .info,
+                subsystem: .ui,
+                eventType: "storage-hygiene-inventory-signal-empty",
+                message: "Skipped empty signal-only repository inventory refresh.",
+                fields: [
+                    DiagnosticsField(key: "displayed_count", value: String(displayedRoots.count)),
+                ]
+            )
+            return
+        }
+
+        repositorySummaryInputsGeneration += 1
         let isPartialSignalRefresh = signalOnly
             && !verifiedRoots.isEmpty
             && !displayedRoots.isSubset(of: verifiedRoots)
