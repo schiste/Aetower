@@ -36,10 +36,10 @@ Do not present Developer Preview builds as production-ready or App Store-ready.
 
 ## Install and first run
 
-Latest Developer Preview: **0.54 build 478**.
+Latest Developer Preview: **0.8 build 800**.
 
 Download the release from
-[GitHub Releases](https://github.com/schiste/Aetower/releases/tag/v0.54).
+[aetower.dev](https://aetower.dev/).
 The release pipeline now produces a signed/notarized drag-and-drop DMG,
 installer PKG, Sparkle ZIP, matching source archive, Homebrew cask artifact,
 Sparkle appcast, third-party notices, and checksums.
@@ -50,11 +50,11 @@ Canonical Sparkle update metadata is configured for:
 https://aetower.dev/releases/appcast.xml
 ```
 
-Until `aetower.dev` DNS is fully active, the deployed release payload is also
-available from the Cloudflare Pages project URL:
+The release payload is served separately from the website so Sparkle update
+metadata stays available even when the marketing site changes:
 
 ```text
-https://aetower-dev.pages.dev/releases/appcast.xml
+https://aetower.dev/releases/appcast.xml
 ```
 
 For Developer Preview builds:

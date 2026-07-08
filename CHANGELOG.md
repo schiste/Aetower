@@ -2,7 +2,7 @@
 
 All notable public changes to Aetower should be documented here.
 
-## Unreleased
+## 0.8 (build 800) - 2026-07-08
 
 Accessibility & automation:
 
@@ -20,6 +20,34 @@ Accessibility & automation:
   `defaults write com.aeptus.aetower nav.defaultWorkspaceTab <slug>`.
 - Sidebar rail buttons and section menus now expose selection state, labels,
   and hints to VoiceOver and UI automation.
+
+Repository operations:
+
+- Reworked the Repos tab into a cache-first operator view: cached repository
+  inventory paints immediately, a fingerprint pass decides whether a deeper
+  parse is needed, and a small background toast reports new-repo scans without
+  blocking the list.
+- Split repository optimization planning out of the Aetower-specific view layer
+  so future content sources can feed the same optimization decisions.
+- Aligned Repos list rows and floating controls with the Monitor tab and shared
+  design-system components.
+
+Storage:
+
+- Added the Storage cube explorer and reclaim-card actions for scanning storage
+  pressure visually.
+- Fixed environment-dependent storage scan policy assertions and preserved
+  cached repository rows when an empty signal-only refresh returns.
+
+macOS:
+
+- Disabled AppKit automatic window tabbing so `Cmd+T` no longer creates
+  duplicate macOS-level Aetower window tabs.
+
+Website:
+
+- Updated the public site with early-alpha positioning, Chau7 links, and real
+  Storage and Repos captures from the current app.
 
 ## 0.74 (build 723) - 2026-07-04
 
