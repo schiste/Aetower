@@ -17,144 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-private enum ActivityWorkspaceTab: String, CaseIterable, Hashable, Identifiable {
-    case overview
-    case history
-    case timeline
-    case storage
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .overview: return "Overview"
-        case .history: return "History"
-        case .timeline: return "Timeline"
-        case .storage: return "Storage"
-        }
-    }
-
-    var role: String {
-        switch self {
-        case .overview: return "Time-domain summary"
-        case .history: return "Persisted snapshots"
-        case .timeline: return "Recent events"
-        case .storage: return "Store health"
-        }
-    }
-
-    var summary: String {
-        switch self {
-        case .overview:
-            return "Recent changes, event pressure, history coverage, and load status."
-        case .history:
-            return "Stored snapshots, trends, recurring entities, and before/after comparisons."
-        case .timeline:
-            return "Live events, alerts, anomalies, regressions, and recently finished processes."
-        case .storage:
-            return "History DB/WAL size, retention coverage, quarantine, and maintenance state."
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .overview: return "rectangle.grid.2x2"
-        case .history: return "clock.arrow.trianglehead.counterclockwise.rotate.90"
-        case .timeline: return "timeline.selection"
-        case .storage: return "externaldrive"
-        }
-    }
-}
-
-private enum AgentsWorkspaceTab: String, CaseIterable, Hashable, Identifiable {
-    case chau7
-    case aiAgents
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .chau7: return "Chau7"
-        case .aiAgents: return "AI Agents"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .chau7: return "terminal"
-        case .aiAgents: return "cpu"
-        }
-    }
-}
-
-private enum SystemWorkspaceTab: String, CaseIterable, Hashable, Identifiable {
-    case sensors
-    case persistence
-    case diagnostics
-    case fleet
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .sensors: return "Sensors"
-        case .persistence: return "Startup"
-        case .diagnostics: return "Diagnostics"
-        case .fleet: return "Fleet"
-        }
-    }
-
-    var groupTitle: String {
-        switch self {
-        case .sensors: return "Live Machine"
-        case .persistence: return "Trust & Startup"
-        case .diagnostics: return "Aetower Ops"
-        case .fleet: return "Network"
-        }
-    }
-
-    var role: String {
-        switch self {
-        case .sensors: return "Hardware health"
-        case .persistence: return "Startup inventory"
-        case .diagnostics: return "Self-observability"
-        case .fleet: return "Peer discovery"
-        }
-    }
-
-    var summary: String {
-        switch self {
-        case .sensors:
-            return "Thermals, fans, power, storage, battery, Bluetooth, and per-core load."
-        case .persistence:
-            return "What starts on this Mac, what is active now, and what deserves review."
-        case .diagnostics:
-            return "Aetower runtime health, MCP state, payload sizes, memory, and logs."
-        case .fleet:
-            return "Optional local-network visibility across other Aetower instances."
-        }
-    }
-
-    var detailTitle: String {
-        switch self {
-        case .persistence: return "Startup & persistence"
-        default: return title
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .sensors: return "thermometer.medium"
-        case .persistence: return "lock.shield"
-        case .diagnostics: return "waveform.path.ecg.rectangle"
-        case .fleet: return "network"
-        }
-    }
-}
-
 private struct AgentsWorkspaceView: View {
     let state: AppState
-    @State private var selectedTab: AgentsWorkspaceTab = .chau7
+    @Bindable var nav: NavigationModel
     @State private var searchText = ""
 
     private enum Chau7Status: Hashable {
@@ -166,7 +31,7 @@ private struct AgentsWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            mergedTabHeader(selection: $selectedTab)
+            mergedTabHeader(selection: $nav.agents)
             Divider()
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -216,7 +81,7 @@ private struct AgentsWorkspaceView: View {
         if !agentSearchQuery.isEmpty {
             agentSearchResults
         } else {
-            switch selectedTab {
+            switch nav.agents {
             case .chau7:
                 Chau7View(state: state).demandsFullSnapshot(from: state)
             case .aiAgents:
@@ -338,6 +203,8 @@ private struct AgentsWorkspaceView: View {
                 selection: selection,
                 options: AgentsWorkspaceTab.allCases,
                 accessibilityLabel: "Agents section",
+                accessibilityIdentifier: "tab.agents.selector",
+                optionAccessibilityIdentifier: { $0.accessibilityIdentifier },
                 title: { $0.title },
                 systemImage: { $0.systemImage }
             )
@@ -400,10 +267,10 @@ private struct AgentsWorkspaceView: View {
     private func selectPreferredAgentView(for status: Chau7Status) {
         switch status {
         case .enriched, .running:
-            selectedTab = .chau7
+            nav.agents = .chau7
         case .configured, .unavailable:
-            if selectedTab == .chau7 {
-                selectedTab = .aiAgents
+            if nav.agents == .chau7 {
+                nav.agents = .aiAgents
             }
         }
     }
@@ -412,7 +279,7 @@ private struct AgentsWorkspaceView: View {
 private struct ActivityWorkspaceView: View {
     let state: AppState
     let settings: SettingsStore
-    @State private var selectedTab: ActivityWorkspaceTab = .overview
+    @Bindable var nav: NavigationModel
     @State private var searchText = ""
 
     var body: some View {
@@ -435,9 +302,11 @@ private struct ActivityWorkspaceView: View {
             searchWidth: 280
         ) {
             AetowerSelectionMenu(
-                selection: $selectedTab,
+                selection: $nav.activity,
                 options: ActivityWorkspaceTab.allCases,
                 accessibilityLabel: "Activity section",
+                accessibilityIdentifier: "tab.activity.selector",
+                optionAccessibilityIdentifier: { $0.accessibilityIdentifier },
                 title: { $0.title },
                 systemImage: { $0.systemImage }
             )
@@ -487,15 +356,16 @@ private struct ActivityWorkspaceView: View {
             signal: moduleSignal(for: tab),
             systemImage: tab.systemImage,
             signalTone: signalTint(for: tab),
-            isSelected: selectedTab == tab
+            isSelected: nav.activity == tab,
+            accessibilityIdentifier: tab.accessibilityIdentifier
         ) {
-            selectedTab = tab
+            nav.activity = tab
         }
     }
 
     @ViewBuilder
     private var content: some View {
-        switch selectedTab {
+        switch nav.activity {
         case .overview:
             overview
         case .history:
@@ -958,7 +828,7 @@ private struct ActivityWorkspaceView: View {
 private struct SystemWorkspaceView: View {
     let state: AppState
     let settings: SettingsStore
-    @State private var selectedTab: SystemWorkspaceTab = .sensors
+    @Bindable var nav: NavigationModel
     @State private var searchText = ""
 
     private let groupedTabs: [(title: String, tabs: [SystemWorkspaceTab])] = [
@@ -988,9 +858,11 @@ private struct SystemWorkspaceView: View {
             searchWidth: 280
         ) {
             AetowerSelectionMenu(
-                selection: $selectedTab,
+                selection: $nav.system,
                 options: SystemWorkspaceTab.allCases,
                 accessibilityLabel: "System section",
+                accessibilityIdentifier: "tab.system.selector",
+                optionAccessibilityIdentifier: { $0.accessibilityIdentifier },
                 title: { $0.title },
                 systemImage: { $0.systemImage }
             )
@@ -1042,15 +914,16 @@ private struct SystemWorkspaceView: View {
             signal: moduleSignal(for: tab),
             systemImage: tab.systemImage,
             signalTone: signalTint(for: tab),
-            isSelected: selectedTab == tab
+            isSelected: nav.system == tab,
+            accessibilityIdentifier: tab.accessibilityIdentifier
         ) {
-            selectedTab = tab
+            nav.system = tab
         }
     }
 
     @ViewBuilder
     private var content: some View {
-        switch selectedTab {
+        switch nav.system {
         case .sensors:
             SensorDashboardView(state: state, settings: settings).demandsFullSnapshot(from: state)
         case .persistence:
@@ -1215,6 +1088,7 @@ struct AetowerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var state = AppState()
     @State private var settings = SettingsStore()
+    @State private var nav = NavigationModel()
     @State private var updater = UpdaterController()
     @State private var menuBarExtraInserted = false
     @State private var hudPanel: CompactHUDPanel?
@@ -1255,50 +1129,69 @@ struct AetowerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TabView {
+            TabView(selection: $nav.workspace) {
                 MainListView(state: state, settings: settings).demandsFullSnapshot(from: state)
                     .tabItem {
-                        Label("Monitor", systemImage: "gauge.with.needle")
+                        Label(WorkspaceTab.monitor.title, systemImage: WorkspaceTab.monitor.systemImage)
                     }
+                    .tag(WorkspaceTab.monitor)
+                    .accessibilityIdentifier(WorkspaceTab.monitor.accessibilityIdentifier)
 
-                ActivityWorkspaceView(state: state, settings: settings)
+                ActivityWorkspaceView(state: state, settings: settings, nav: nav)
                     .tabItem {
-                        Label("Activity", systemImage: "timeline.selection")
+                        Label(WorkspaceTab.activity.title, systemImage: WorkspaceTab.activity.systemImage)
                     }
+                    .tag(WorkspaceTab.activity)
+                    .accessibilityIdentifier(WorkspaceTab.activity.accessibilityIdentifier)
 
                 StorageView(state: state)
                     .tabItem {
-                        Label("Storage", systemImage: "externaldrive")
+                        Label(WorkspaceTab.storage.title, systemImage: WorkspaceTab.storage.systemImage)
                     }
+                    .tag(WorkspaceTab.storage)
+                    .accessibilityIdentifier(WorkspaceTab.storage.accessibilityIdentifier)
 
                 RepositoryView(state: state, settings: settings).demandsFullSnapshot(from: state)
                     .tabItem {
-                        Label("Repos", systemImage: "folder.badge.gearshape")
+                        Label(WorkspaceTab.repos.title, systemImage: WorkspaceTab.repos.systemImage)
                     }
+                    .tag(WorkspaceTab.repos)
+                    .accessibilityIdentifier(WorkspaceTab.repos.accessibilityIdentifier)
 
                 ProjectsView(state: state, settings: settings)
                     .tabItem {
-                        Label("Projects", systemImage: "shippingbox")
+                        Label(WorkspaceTab.projects.title, systemImage: WorkspaceTab.projects.systemImage)
                     }
+                    .tag(WorkspaceTab.projects)
+                    .accessibilityIdentifier(WorkspaceTab.projects.accessibilityIdentifier)
 
-                AgentsWorkspaceView(state: state)
+                AgentsWorkspaceView(state: state, nav: nav)
                     .tabItem {
-                        Label("Agents", systemImage: "cpu")
+                        Label(WorkspaceTab.agents.title, systemImage: WorkspaceTab.agents.systemImage)
                     }
+                    .tag(WorkspaceTab.agents)
+                    .accessibilityIdentifier(WorkspaceTab.agents.accessibilityIdentifier)
 
-                SystemWorkspaceView(state: state, settings: settings)
+                SystemWorkspaceView(state: state, settings: settings, nav: nav)
                     .tabItem {
-                        Label("System", systemImage: "wrench.and.screwdriver")
+                        Label(WorkspaceTab.system.title, systemImage: WorkspaceTab.system.systemImage)
                     }
+                    .tag(WorkspaceTab.system)
+                    .accessibilityIdentifier(WorkspaceTab.system.accessibilityIdentifier)
 
-                SettingsView(state: state, settings: settings)
+                SettingsView(state: state, settings: settings, nav: nav)
                     .environment(updater)
                     .tabItem {
-                        Label("Settings", systemImage: "slider.horizontal.3")
+                        Label(WorkspaceTab.settings.title, systemImage: WorkspaceTab.settings.systemImage)
                     }
+                    .tag(WorkspaceTab.settings)
+                    .accessibilityIdentifier(WorkspaceTab.settings.accessibilityIdentifier)
             }
             .frame(minWidth: 940, minHeight: 680)
             .preferredColorScheme(resolvedColorScheme)
+            .onOpenURL { url in
+                nav.handleURL(url)
+            }
             .task {
                 menuBarExtraInserted = settings.showMenuBarExtra
                 refreshMenuBarTitle(force: true)
@@ -1353,6 +1246,25 @@ struct AetowerApp: App {
             }
         }
         .commands {
+            CommandMenu("Navigate") {
+                ForEach(WorkspaceTab.allCases) { tab in
+                    Button(tab.title) {
+                        nav.select(tab)
+                    }
+                    .keyboardShortcut(
+                        KeyEquivalent(Character("\(tab.shortcutIndex)")),
+                        modifiers: .command
+                    )
+                }
+                Divider()
+                Button("Set “\(nav.workspace.title)” as Default Startup Tab") {
+                    nav.defaultTab = nav.workspace
+                }
+                Button("Clear Default Startup Tab") {
+                    nav.defaultTab = nil
+                }
+                .disabled(nav.defaultTab == nil)
+            }
             CommandMenu("View") {
                 Button("Toggle Compact HUD") {
                     if hudPanel == nil { hudPanel = CompactHUDPanel(state: state) }

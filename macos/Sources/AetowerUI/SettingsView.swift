@@ -7,6 +7,7 @@ import AetowerBridge
 public struct SettingsView: View {
     let state: AppState
     let settings: SettingsStore
+    var nav: NavigationModel?
     @Environment(UpdaterController.self) private var updater
     @FocusState private var focusedField: SettingsField?
     @State private var selectedSection: SettingsSection = .setup
@@ -22,9 +23,10 @@ public struct SettingsView: View {
     /// only when the user applies them, so endpoint edits are genuinely staged.
     @State private var integrationDraft = SettingsIntegrationDraft()
 
-    public init(state: AppState, settings: SettingsStore) {
+    public init(state: AppState, settings: SettingsStore, nav: NavigationModel? = nil) {
         self.state = state
         self.settings = settings
+        self.nav = nav
     }
 
     private enum SettingsField: Hashable {
@@ -498,6 +500,32 @@ public struct SettingsView: View {
             }
 
             SettingsCard(title: "Window and launch behavior", subtitle: "Small controls that change how Aetower shows up on macOS.") {
+                if let nav {
+                    @Bindable var nav = nav
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                        Text("Startup tab")
+                            .font(.headline)
+                        Picker(
+                            "Startup tab",
+                            selection: Binding(
+                                get: { nav.defaultTab ?? .monitor },
+                                set: { nav.defaultTab = ($0 == .monitor ? nil : $0) }
+                            )
+                        ) {
+                            Text("Monitor (default)").tag(WorkspaceTab.monitor)
+                            ForEach(WorkspaceTab.allCases.filter { $0 != .monitor }) { tab in
+                                Text(tab.title).tag(tab)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.startupTab")
+                        Text("Which tab Aetower opens on. Agents and scripts can also set this with `defaults write com.aeptus.aetower nav.defaultWorkspaceTab <slug>` or `aetower tab <slug> --default`.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    SettingDivider()
+                }
+
                 Toggle("Show menu bar extra", isOn: $settings.showMenuBarExtra)
                 Toggle("Operator-safe mode for History and Timeline", isOn: $settings.operatorSafeModeEnabled)
                 Text("Heavy History and Timeline views start from summaries first, smaller visible windows, and manual expansion for large detail lists.")
