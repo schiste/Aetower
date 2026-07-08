@@ -514,17 +514,10 @@ public struct StorageView: View {
                 }
             }
         } label: {
-            HStack(spacing: AetowerDesign.Spacing.xs) {
-                Image(systemName: "line.3.horizontal.decrease.circle")
-                Text(selectedFilter.label)
-                Image(systemName: "chevron.down")
-                    .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
-            }
-            .font(AetowerDesign.Typography.caption.weight(.semibold))
-            .foregroundStyle(AetowerDesign.Ink.secondary)
-            .padding(.horizontal, AetowerDesign.Spacing.sm)
-            .padding(.vertical, AetowerDesign.Spacing.xs)
-            .aetowerControlChrome()
+            AetowerMenuLabel(
+                systemImage: "line.3.horizontal.decrease.circle",
+                title: selectedFilter.label
+            )
         }
         .menuStyle(.borderlessButton)
         .fixedSize()

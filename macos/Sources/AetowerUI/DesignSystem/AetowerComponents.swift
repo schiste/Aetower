@@ -612,6 +612,34 @@ public struct AetowerToolBadgeGroup: View {
     }
 }
 
+/// The label chrome for a borderless dropdown-menu trigger: a leading icon, a
+/// title, and a trailing chevron in the standard control chrome. Extracted so
+/// menu triggers across the app share one definition instead of copy-pasting
+/// the same HStack and modifier stack.
+public struct AetowerMenuLabel: View {
+    let systemImage: String
+    let title: String
+
+    public init(systemImage: String, title: String) {
+        self.systemImage = systemImage
+        self.title = title
+    }
+
+    public var body: some View {
+        HStack(spacing: AetowerDesign.Spacing.xs) {
+            Image(systemName: systemImage)
+            Text(title)
+            Image(systemName: "chevron.down")
+                .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
+        }
+        .font(AetowerDesign.Typography.caption.weight(.semibold))
+        .foregroundStyle(AetowerDesign.Ink.secondary)
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+        .padding(.vertical, AetowerDesign.Spacing.xs)
+        .aetowerControlChrome()
+    }
+}
+
 public struct AetowerSelectionMenu<Item: Identifiable & Hashable>: View {
     let selection: Binding<Item>
     let options: [Item]
@@ -660,17 +688,10 @@ public struct AetowerSelectionMenu<Item: Identifiable & Hashable>: View {
                 .accessibilityAddTraits(selection.wrappedValue == option ? .isSelected : [])
             }
         } label: {
-            HStack(spacing: AetowerDesign.Spacing.xs) {
-                Image(systemName: systemImage(selection.wrappedValue) ?? fallbackSystemImage)
-                Text(title(selection.wrappedValue))
-                Image(systemName: "chevron.down")
-                    .font(AetowerDesign.Typography.compactData(size: 8, weight: .semibold))
-            }
-            .font(AetowerDesign.Typography.caption.weight(.semibold))
-            .foregroundStyle(AetowerDesign.Ink.secondary)
-            .padding(.horizontal, AetowerDesign.Spacing.sm)
-            .padding(.vertical, AetowerDesign.Spacing.xs)
-            .aetowerControlChrome()
+            AetowerMenuLabel(
+                systemImage: systemImage(selection.wrappedValue) ?? fallbackSystemImage,
+                title: title(selection.wrappedValue)
+            )
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
