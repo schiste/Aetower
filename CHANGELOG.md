@@ -2,6 +2,25 @@
 
 All notable public changes to Aetower should be documented here.
 
+## Unreleased
+
+Accessibility & automation:
+
+- The main window's tabs are now addressable, not just clickable. Every
+  workspace has a stable slug and four ways to reach it: the
+  `aetower://tab/<slug>` URL scheme (e.g. `open "aetower://tab/system"`,
+  sub-tabs via `aetower://tab/activity/timeline`), an `aetower tab <slug>`
+  CLI verb, Cmd+1…8 in a new **Navigate** menu, and matching
+  accessibility identifiers (`tab.system`, `rail.activity.timeline`). None
+  of these need Accessibility trust or synthetic clicks, so headless agents
+  and scripts can drive the UI.
+- Added a persisted default startup tab (Settings → General → "Startup
+  tab"). The app opens on Monitor unless an explicit default is set, which
+  agents can also write with `aetower tab <slug> --default` or
+  `defaults write com.aeptus.aetower nav.defaultWorkspaceTab <slug>`.
+- Sidebar rail buttons and section menus now expose selection state, labels,
+  and hints to VoiceOver and UI automation.
+
 ## 0.74 (build 723) - 2026-07-04
 
 Developer Preview feature release.
