@@ -1152,12 +1152,9 @@
 
         <!-- Real capture of the Monitor tab from the current build. -->
         <figure class="mock shot">
-          <div class="mock-bar">
-            <i></i><i></i><i></i><span class="mono">Aetower · Monitor</span>
-          </div>
           <img
             src="/assets/aetower-monitor.png"
-            alt="Aetower's Monitor tab: a metric ring header for CPU, memory, disk, network, and wakeups above a friction-ranked list of running entities."
+            alt="Aetower's Monitor tab: metric cards for friction, CPU, memory, disk, network, wakeups, and GPU above a friction-ranked list of running entities, led by the burden leaders."
             width="1600"
             height="1000"
             loading="lazy"
@@ -1221,40 +1218,17 @@
                 <li>Recommendations that adapt to battery, thermal state, and memory pressure.</li>
               </ul>
             </div>
-            <div class="mock">
-              <div class="mock-bar"><i></i><i></i><i></i><span class="mono">Monitor · by friction</span></div>
-              <div class="mock-body">
-                <div class="m-head"><span>Entity</span><span>Friction</span></div>
-                <div class="m-row">
-                  <div>
-                    <div class="name">Chrome <span class="tag">entity · 48 processes</span></div>
-                    <div class="meter"><b style="width: 72%; background: linear-gradient(90deg, #f59e0b, #ef4444)"></b></div>
-                  </div>
-                  <div class="score">72</div>
-                </div>
-                <div class="m-row">
-                  <div>
-                    <div class="name">Ollama <span class="tag">AI runtime · GPU-bound · 8.1 W</span></div>
-                    <div class="meter"><b style="width: 58%; background: linear-gradient(90deg, var(--purple), #f59e0b)"></b></div>
-                  </div>
-                  <div class="score">58</div>
-                </div>
-                <div class="m-row">
-                  <div>
-                    <div class="name">Spotlight <span class="tag">system · indexing burst</span></div>
-                    <div class="meter"><b style="width: 31%; background: var(--green)"></b></div>
-                  </div>
-                  <div class="score">31</div>
-                </div>
-                <div class="m-row">
-                  <div>
-                    <div class="name">Claude Code <span class="tag">agent · repo aetower · 0.2 W</span></div>
-                    <div class="meter"><b style="width: 14%; background: var(--green)"></b></div>
-                  </div>
-                  <div class="score">14</div>
-                </div>
-              </div>
-            </div>
+            <!-- Real capture of the Agents workspace (live Chau7 runtime). -->
+            <figure class="mock shot">
+              <img
+                src="/assets/aetower-agents.png"
+                alt="Aetower's Agents workspace: live CPU, memory, wakeups, and disk cards for the agent runtime, a session counter showing prompts and approvals, and per-session cards with repo, branch, and resource chips."
+                width="1600"
+                height="1222"
+                loading="lazy"
+                decoding="async"
+              />
+            </figure>
           </div>
 
           <div class="stop">
@@ -1272,19 +1246,17 @@
                 <li>Reverse pivots: which process holds this file, port, or socket.</li>
               </ul>
             </div>
-            <!-- Swap for /assets/aetower-activity.png when captured. -->
-            <div class="mock">
-              <div class="mock-bar"><i></i><i></i><i></i><span class="mono">Activity · Timeline</span></div>
-              <div class="mock-body">
-                <div class="feed">
-                  <div class="evt info"><time>15:12</time><i></i><span><strong>Chrome</strong> friction rose to 65 — WebGL tab is top contributor</span></div>
-                  <div class="evt warn"><time>15:13</time><i></i><span>Thermal state degraded to <strong>Serious</strong></span></div>
-                  <div class="evt crit"><time>15:14</time><i></i><span><strong>helperd</strong> restart loop detected — 4 restarts in 90 s</span></div>
-                  <div class="evt ai"><time>15:21</time><i></i><span><strong>Claude Code</strong> session ended · 412 mWh · 38 mAh</span></div>
-                  <div class="evt info"><time>15:24</time><i></i><span>Memory pressure back to <strong>Normal</strong></span></div>
-                </div>
-              </div>
-            </div>
+            <!-- Real capture of the Activity workspace (Overview mode). -->
+            <figure class="mock shot">
+              <img
+                src="/assets/aetower-activity.png"
+                alt="Aetower's Activity workspace in Overview mode: cards for timeline events, criticals, persisted history range, and safe mode, above a recent timeline narrating friction spikes, anomalies, and disk churn."
+                width="1600"
+                height="1222"
+                loading="lazy"
+                decoding="async"
+              />
+            </figure>
           </div>
 
           <div class="stop">
