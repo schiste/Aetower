@@ -71,6 +71,19 @@ enum Command {
         #[arg(long, default_value_t = 40)]
         limit: usize,
     },
+    /// Switch the app's visible tab: `aetower tab system`, `aetower tab activity/timeline`.
+    ///
+    /// A thin wrapper over the `aetower://tab/<name>` URL scheme, so it works
+    /// without Accessibility trust (no synthetic clicks) and launches the app
+    /// if it isn't already running.
+    Tab {
+        /// Workspace slug (monitor, activity, storage, repos, projects, agents,
+        /// system, settings), optionally with a sub-tab: `activity/timeline`.
+        name: String,
+        /// Also persist this workspace as the default startup tab.
+        #[arg(long)]
+        default: bool,
+    },
     /// Self-check: reachability, capabilities, and engine health.
     Doctor,
     /// List every tool the running app exposes.
@@ -147,6 +160,7 @@ fn run(cli: Cli) -> i32 {
             |v| verbs::repos(v, limit),
         ),
         Command::Alerts { fail_on_warn } => run_alerts(&client, cli.json, cli.watch, fail_on_warn),
+        Command::Tab { name, default } => run_tab(&name, default),
         Command::Doctor => run_doctor(&client, cli.json),
         Command::Tools => run_tools(&client, cli.json),
         Command::Call { tool, args } => run_call(&client, cli.json, &tool, &args),
@@ -347,6 +361,50 @@ fn run_call(client: &Client, as_json: bool, tool: &str, args: &[String]) -> i32 
         Err(error) => {
             eprintln!("aetower: {error}");
             exit::TOOL_ERROR
+        }
+    }
+}
+
+/// The canonical top-level workspace slugs. Mirrors `WorkspaceTab` in the app;
+/// kept in sync so a typo prints a helpful list instead of silently no-opping.
+const WORKSPACE_TABS: &[&str] = &[
+    "monitor", "activity", "storage", "repos", "projects", "agents", "system", "settings",
+];
+
+/// Navigate the running app to `name` (optionally `workspace/subtab`) via the
+/// `aetower://tab/…` URL scheme. Launches the app if it isn't running.
+fn run_tab(name: &str, set_default: bool) -> i32 {
+    let path = name.trim().trim_matches('/');
+    let top = path
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !WORKSPACE_TABS.contains(&top.as_str()) {
+        eprintln!(
+            "aetower: unknown tab '{name}'. Valid tabs: {}",
+            WORKSPACE_TABS.join(", ")
+        );
+        return exit::LOCAL;
+    }
+
+    let mut url = format!("aetower://tab/{path}");
+    if set_default {
+        url.push_str("?default=true");
+    }
+
+    match std::process::Command::new("open").arg(&url).status() {
+        Ok(status) if status.success() => {
+            println!("Opened {url}");
+            exit::OK
+        }
+        Ok(status) => {
+            eprintln!("aetower: `open {url}` exited with {status}");
+            exit::LOCAL
+        }
+        Err(error) => {
+            eprintln!("aetower: failed to run `open`: {error}");
+            exit::LOCAL
         }
     }
 }
