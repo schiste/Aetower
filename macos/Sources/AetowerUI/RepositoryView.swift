@@ -81,22 +81,12 @@ private struct RepositoryAttentionItem: Identifiable {
     let level: AetowerSurfaceLevel
 }
 
-private enum RepositoryPrimaryActionKind {
-    case refreshInventory
-    case prepareContract
-    case improveScorecard
-    case runScorecard
-    case reviewCleanup
-    case reviewClones
-    case reveal
-}
-
 private struct RepositoryPrimaryAction {
     let title: String
     let detail: String
     let systemImage: String
     let tone: Color
-    let kind: RepositoryPrimaryActionKind
+    let kind: RepositoryOptimizationActionKind
 }
 
 /// Precomputed, value-only display data for one cockpit row. The parent builds
@@ -1633,7 +1623,8 @@ public struct RepositoryView: View {
     }
 
     private func primaryRepositoryAction(_ repository: RepositorySummary) -> RepositoryPrimaryAction {
-        if repository.inventoryNeedsAttention {
+        switch repository.primaryOptimizationActionKind {
+        case .refreshInventory:
             return RepositoryPrimaryAction(
                 title: "Refresh repo",
                 detail: inventoryFreshnessDetail(repository),
@@ -1641,12 +1632,7 @@ public struct RepositoryView: View {
                 tone: AetowerDesign.Status.warning,
                 kind: .refreshInventory
             )
-        }
-        if repository.agentReadinessStatus == "blocked"
-            || repository.agentReadinessStatus == "weak"
-            || repository.agentGuidanceIssueCount > 0
-            || repository.qualityIssueCount > 0
-        {
+        case .prepareContract:
             return RepositoryPrimaryAction(
                 title: "Prepare with Aethyme",
                 detail: agentGuidanceTitle(repository),
@@ -1654,8 +1640,7 @@ public struct RepositoryView: View {
                 tone: AetowerDesign.Tone.energy,
                 kind: .prepareContract
             )
-        }
-        if repository.hasScorecardAttention, repository.scorecardReport != nil {
+        case .improveScorecard:
             return RepositoryPrimaryAction(
                 title: "Ask Chau7",
                 detail: "Improve Scorecard posture with local edits and a remote settings checklist.",
@@ -1663,8 +1648,7 @@ public struct RepositoryView: View {
                 tone: AetowerDesign.Tone.energy,
                 kind: .improveScorecard
             )
-        }
-        if repository.scorecardReport == nil {
+        case .runScorecard:
             return RepositoryPrimaryAction(
                 title: "Run Scorecard",
                 detail: "Run OpenSSF Scorecard on demand for this repository.",
@@ -1672,8 +1656,7 @@ public struct RepositoryView: View {
                 tone: AetowerDesign.Tone.cpu,
                 kind: .runScorecard
             )
-        }
-        if repository.reviewItemCount > 0 || repository.artifactBytes > 0 {
+        case .reviewCleanup:
             return RepositoryPrimaryAction(
                 title: "Review cleanup",
                 detail: "Copy a focused optimization brief for artifact cleanup review.",
@@ -1681,8 +1664,7 @@ public struct RepositoryView: View {
                 tone: AetowerDesign.Tone.disk,
                 kind: .reviewCleanup
             )
-        }
-        if repository.cloneGroupCount > 1 {
+        case .reviewClones:
             return RepositoryPrimaryAction(
                 title: "Review clones",
                 detail: cloneGroupDetail(repository),
@@ -1690,14 +1672,15 @@ public struct RepositoryView: View {
                 tone: AetowerDesign.Status.warning,
                 kind: .reviewClones
             )
+        case .reveal:
+            return RepositoryPrimaryAction(
+                title: "Reveal",
+                detail: "Reveal this repository in Finder.",
+                systemImage: "folder",
+                tone: AetowerDesign.Status.neutral,
+                kind: .reveal
+            )
         }
-        return RepositoryPrimaryAction(
-            title: "Reveal",
-            detail: "Reveal this repository in Finder.",
-            systemImage: "folder",
-            tone: AetowerDesign.Status.neutral,
-            kind: .reveal
-        )
     }
 
     private func performPrimaryRepositoryAction(
@@ -2064,108 +2047,120 @@ public struct RepositoryView: View {
     }
 
     private func repositoryAttentionItems(_ repository: RepositorySummary) -> [RepositoryAttentionItem] {
-        var items: [RepositoryAttentionItem] = []
-        if repository.violationCount > 0 {
-            items.append(RepositoryAttentionItem(
-                id: "budget",
+        repository.optimizationSignals.map { signal in
+            repositoryAttentionItem(signal, repository: repository)
+        }
+    }
+
+    private func repositoryAttentionItem(
+        _ signal: RepositoryOptimizationSignal,
+        repository: RepositorySummary
+    ) -> RepositoryAttentionItem {
+        switch signal.kind {
+        case .inventoryFreshness:
+            return RepositoryAttentionItem(
+                id: signal.id,
+                title: "Inventory freshness",
+                detail: inventoryFreshnessDetail(repository),
+                systemImage: "arrow.clockwise",
+                tone: inventoryFreshnessTone(repository),
+                level: repositoryAttentionLevel(signal)
+            )
+        case .budget:
+            return RepositoryAttentionItem(
+                id: signal.id,
                 title: "Budget guardrail",
                 detail: "\(repository.violationCount) repository budget signal\(repository.violationCount == 1 ? "" : "s") need review before cleanup.",
                 systemImage: "exclamationmark.triangle",
                 tone: AetowerDesign.Status.error,
                 level: .critical
-            ))
-        }
-        if repository.agentReadinessStatus == "blocked" || repository.agentReadinessStatus == "weak" {
-            items.append(RepositoryAttentionItem(
-                id: "contract-readiness",
+            )
+        case .contractReadiness:
+            return RepositoryAttentionItem(
+                id: signal.id,
                 title: "Contract readiness",
                 detail: agentReadinessDetail(repository),
                 systemImage: "checklist.checked",
                 tone: agentReadinessTone(repository),
-                level: repository.agentReadinessStatus == "blocked" ? .critical : .warning
-            ))
-        }
-        if repository.agentGuidanceIssueCount > 0 || repository.qualityIssueCount > 0 {
-            items.append(RepositoryAttentionItem(
-                id: "guidance",
+                level: repositoryAttentionLevel(signal)
+            )
+        case .guidance:
+            return RepositoryAttentionItem(
+                id: signal.id,
                 title: agentGuidanceTitle(repository),
                 detail: qualityDetail(repository),
                 systemImage: "doc.badge.exclamationmark",
                 tone: repository.qualityStatusTone,
-                level: repository.agentGuidanceStatus == "error" ? .critical : .warning
-            ))
-        }
-        if repository.hasScorecardAttention {
-            items.append(RepositoryAttentionItem(
-                id: "scorecard",
+                level: repositoryAttentionLevel(signal)
+            )
+        case .scorecard:
+            return RepositoryAttentionItem(
+                id: signal.id,
                 title: "Scorecard posture",
                 detail: scorecardReadinessDetail(repository),
                 systemImage: "shield.lefthalf.filled",
                 tone: scorecardReadinessTone(repository),
-                level: repository.scorecardAttentionScore >= 10 ? .critical : .warning
-            ))
-        }
-        if repository.hasGitHubProviderAttention {
-            items.append(RepositoryAttentionItem(
-                id: "github-provider",
+                level: repositoryAttentionLevel(signal)
+            )
+        case .githubProvider:
+            return RepositoryAttentionItem(
+                id: signal.id,
                 title: "GitHub status",
                 detail: repositoryGitHubProviderDetail(repository),
                 systemImage: "chevron.left.forwardslash.chevron.right",
                 tone: repositoryGitHubProviderTone(repository.project?.githubStatus),
-                level: repository.githubProviderAttentionScore >= 8 ? .critical : .warning
-            ))
-        }
-        if repository.hasCloudflareProviderAttention {
-            items.append(RepositoryAttentionItem(
-                id: "cloudflare-provider",
+                level: repositoryAttentionLevel(signal)
+            )
+        case .cloudflareProvider:
+            return RepositoryAttentionItem(
+                id: signal.id,
                 title: "Cloudflare deployment",
                 detail: repositoryCloudflareProviderDetail(repository),
                 systemImage: "cloud",
                 tone: repositoryCloudflareProviderTone(repository),
-                level: repository.cloudflareProviderAttentionScore >= 8 ? .critical : .warning
-            ))
-        }
-        if repository.cloneGroupCount > 1 {
-            items.append(RepositoryAttentionItem(
-                id: "clone-group",
+                level: repositoryAttentionLevel(signal)
+            )
+        case .cloneGroup:
+            return RepositoryAttentionItem(
+                id: signal.id,
                 title: "Duplicate clone group",
                 detail: cloneGroupDetail(repository),
                 systemImage: "square.stack.3d.up",
                 tone: AetowerDesign.Status.warning,
                 level: .warning
-            ))
-        }
-        if repository.gitDirtyStatus == "dirty" {
-            items.append(RepositoryAttentionItem(
-                id: "dirty",
+            )
+        case .dirtyWorktree:
+            return RepositoryAttentionItem(
+                id: signal.id,
                 title: "Dirty worktree",
                 detail: dirtyDetail(repository),
                 systemImage: "pencil.and.scribble",
                 tone: AetowerDesign.Tone.energy,
                 level: .warning
-            ))
-        }
-        if (repository.growthBytes ?? 0) > 0 {
-            items.append(RepositoryAttentionItem(
-                id: "growth",
+            )
+        case .storageGrowth:
+            return RepositoryAttentionItem(
+                id: signal.id,
                 title: "Storage growth",
                 detail: "\(growthLabel(repository)) in \(repository.growthWindow).",
                 systemImage: "chart.line.uptrend.xyaxis",
                 tone: growthTone(repository),
                 level: .warning
-            ))
-        }
-        if repository.reviewItemCount > 0 {
-            items.append(RepositoryAttentionItem(
-                id: "review-items",
+            )
+        case .reviewItems:
+            return RepositoryAttentionItem(
+                id: signal.id,
                 title: "Reviewable artifacts",
                 detail: "\(repository.reviewItemCount) item\(repository.reviewItemCount == 1 ? "" : "s") need human review before cleanup.",
                 systemImage: "shippingbox",
                 tone: AetowerDesign.Status.warning,
                 level: .warning
-            ))
+            )
         }
-        return items
+    }
+
+    private func repositoryAttentionLevel(_ signal: RepositoryOptimizationSignal) -> AetowerSurfaceLevel {
+        signal.severity == .critical ? .critical : .warning
     }
 
     private func repositoryStorageSignals(_ repository: RepositorySummary) -> some View {

@@ -197,19 +197,7 @@ struct RepositorySummary: Identifiable {
     }
 
     var requiresAttention: Bool {
-        attentionScore >= 8
-            || inventoryNeedsAttention
-            || violationCount > 0
-            || reviewItemCount > 0
-            || qualityIssueCount > 0
-            || agentGuidanceIssueCount > 0
-            || agentReadinessStatus == "blocked"
-            || agentReadinessStatus == "weak"
-            || cloneGroupCount > 1
-            || gitDirtyStatus == "dirty"
-            || hasScorecardAttention
-            || hasGitHubProviderAttention
-            || hasCloudflareProviderAttention
+        optimizationProfile.requiresAttention
     }
 
     var inventoryNeedsAttention: Bool {

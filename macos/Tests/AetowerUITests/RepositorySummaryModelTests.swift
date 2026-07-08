@@ -143,6 +143,110 @@ final class RepositorySummaryModelTests: XCTestCase {
         XCTAssertEqual(active.attentionScore, 4.2, accuracy: 0.001)
     }
 
+    func testOptimizationSignalsUseExplicitPriorityOrder() {
+        let repo = summary(
+            growthBytes: 1024,
+            violationCount: 1,
+            reviewItemCount: 2,
+            gitDirtyStatus: "dirty",
+            inventoryFingerprintChanged: true,
+            hasAgentsMd: false,
+            hasClaudeMd: false
+        )
+
+        XCTAssertEqual(
+            repo.optimizationSignals.map(\.kind),
+            [
+                .inventoryFreshness,
+                .budget,
+                .guidance,
+                .dirtyWorktree,
+                .storageGrowth,
+                .reviewItems,
+            ]
+        )
+    }
+
+    func testMissingInventorySignalIsCriticalAndRefreshesFirst() {
+        let repo = summary(inventoryCacheStatus: "missing")
+
+        XCTAssertEqual(repo.optimizationSignals.first?.kind, .inventoryFreshness)
+        XCTAssertEqual(repo.optimizationSignals.first?.severity, .critical)
+        XCTAssertEqual(repo.primaryOptimizationActionKind, .refreshInventory)
+        XCTAssertTrue(repo.requiresAttention)
+    }
+
+    func testQuietRepositoryPrimaryActionCanStillRunScorecard() {
+        let repo = summary()
+
+        XCTAssertTrue(repo.optimizationSignals.isEmpty)
+        XCTAssertEqual(repo.primaryOptimizationActionKind, .runScorecard)
+        XCTAssertFalse(repo.requiresAttention)
+    }
+
+    func testPlannerAcceptsNeutralOptimizationInput() {
+        let input = RepositoryOptimizationInput(
+            identity: .init(
+                id: "external-repo",
+                root: "/workspace/external",
+                name: "external",
+                source: "external-tool"
+            ),
+            aggregateAttentionScore: 4,
+            inventory: .init(status: "changed"),
+            scorecard: .init(scanned: true)
+        )
+
+        let profile = RepositoryOptimizationPlanner.profile(for: input)
+
+        XCTAssertEqual(input.identity.source, "external-tool")
+        XCTAssertEqual(profile.signals.map(\.kind), [.inventoryFreshness])
+        XCTAssertEqual(profile.primaryActionKind, .refreshInventory)
+        XCTAssertTrue(profile.requiresAttention)
+    }
+
+    func testAggregateAttentionDoesNotCreateBudgetSignal() {
+        let input = RepositoryOptimizationInput(
+            aggregateAttentionScore: 9,
+            scorecard: .init(scanned: true)
+        )
+
+        let profile = RepositoryOptimizationPlanner.profile(for: input)
+
+        XCTAssertTrue(profile.signals.isEmpty)
+        XCTAssertTrue(profile.requiresAttention)
+    }
+
+    func testOptimizationInputRoundTripsForExternalFeeds() throws {
+        let input = RepositoryOptimizationInput(
+            identity: .init(
+                id: "external-repo",
+                root: "/workspace/external",
+                name: "external",
+                source: "external-tool"
+            ),
+            aggregateAttentionScore: 12.5,
+            budgetViolationCount: 1,
+            inventory: .init(status: "current"),
+            storage: .init(artifactBytes: 42, growthBytes: 7, reviewItemCount: 2),
+            git: .init(dirtyStatus: "dirty", cloneGroupCount: 3),
+            agentGuidance: .init(
+                readinessStatus: "weak",
+                guidanceStatus: "warning",
+                guidanceIssueCount: 1,
+                qualityIssueCount: 2
+            ),
+            scorecard: .init(scanned: true, attentionScore: 6),
+            github: .init(scanned: true, attentionScore: 8),
+            cloudflare: .init(scanned: true, attentionScore: 0)
+        )
+
+        let encoded = try JSONEncoder().encode(input)
+        let decoded = try JSONDecoder().decode(RepositoryOptimizationInput.self, from: encoded)
+
+        XCTAssertEqual(decoded, input)
+    }
+
     func testAiUsageJoinAndOverlay() {
         let usage = AiRepoSummary(
             repoPath: "/tmp/repo", displayName: "repo", totalRuns: 7,
