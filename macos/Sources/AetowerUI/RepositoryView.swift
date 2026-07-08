@@ -1183,64 +1183,75 @@ public struct RepositoryView: View {
     private var repositoryBulkPill: some View {
         if !selectedRepoRoots.isEmpty {
             let roots = Array(selectedRepoRoots)
-            HStack(spacing: AetowerDesign.Spacing.sm) {
-                Image(systemName: "checklist").foregroundStyle(AetowerDesign.Tone.cpu)
-                Text("\(selectedRepoRoots.count) selected").font(.callout.weight(.semibold))
+            repositoryFloatingSurface(maxWidth: 760) {
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    AetowerBadge(
+                        "\(selectedRepoRoots.count) selected",
+                        systemImage: "checklist",
+                        tone: AetowerDesign.Tone.cpu
+                    )
 
-                if let progress = state.repositoryBulkProgress, let label = state.repositoryBulkLabel {
+                    if let progress = state.repositoryBulkProgress, let label = state.repositoryBulkLabel {
+                        Divider().frame(height: 16)
+                        ProgressView().controlSize(.small)
+                        Text("\(label): \(progress.completed)/\(progress.total)")
+                            .font(AetowerDesign.Typography.caption)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                    }
+
                     Divider().frame(height: 16)
-                    ProgressView().controlSize(.small)
-                    Text("\(label): \(progress.completed)/\(progress.total)")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Run Scorecard") { state.bulkRunScorecard(roots: roots) }
+                        .buttonStyle(.bordered)
+                    Button("Refresh providers") { state.bulkRefreshProviders(roots: roots) }
+                        .buttonStyle(.bordered)
+                    Button {
+                        selectedRepoRoots.removeAll()
+                        state.clearRepositoryBulk()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .help("Clear selection")
                 }
-
-                Divider().frame(height: 16)
-                Button("Run Scorecard") { state.bulkRunScorecard(roots: roots) }
-                    .buttonStyle(.bordered)
-                Button("Refresh providers") { state.bulkRefreshProviders(roots: roots) }
-                    .buttonStyle(.bordered)
-                Button {
-                    selectedRepoRoots.removeAll()
-                    state.clearRepositoryBulk()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
-                .help("Clear selection")
+                .controlSize(.small)
             }
-            .controlSize(.small)
-            .padding(.horizontal, AetowerDesign.Spacing.lg)
-            .padding(.vertical, AetowerDesign.Spacing.sm)
-            .background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(AetowerDesign.Surface.divider, lineWidth: 1))
-            .shadow(color: .black.opacity(0.18), radius: 14, y: 5)
-            .fixedSize()
         }
     }
 
     private func repositoryInventoryRefreshToast(_ refreshState: RepositoryInventoryRefreshState) -> some View {
-        HStack(spacing: AetowerDesign.Spacing.sm) {
-            ProgressView()
-                .controlSize(.small)
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-                Text(refreshState.title)
-                    .font(AetowerDesign.Typography.caption.weight(.semibold))
-                    .foregroundStyle(AetowerDesign.Ink.primary)
-                    .lineLimit(1)
-                Text(refreshState.detail)
-                    .font(AetowerDesign.Typography.metadata)
-                    .foregroundStyle(AetowerDesign.Ink.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        repositoryFloatingSurface(maxWidth: 420) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                ProgressView()
+                    .controlSize(.small)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    Text(refreshState.title)
+                        .font(AetowerDesign.Typography.caption.weight(.semibold))
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(1)
+                    Text(refreshState.detail)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
         }
-        .padding(.horizontal, AetowerDesign.Spacing.lg)
-        .padding(.vertical, AetowerDesign.Spacing.sm)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(AetowerDesign.Surface.divider, lineWidth: 1))
-        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
-        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func repositoryFloatingSurface<Content: View>(
+        maxWidth: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        AetowerSurface(
+            level: .card,
+            padding: AetowerDesign.Spacing.sm,
+            cornerRadius: AetowerDesign.Radius.md
+        ) {
+            content()
+        }
+        .frame(maxWidth: maxWidth)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func tableHeader(
