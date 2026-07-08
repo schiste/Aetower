@@ -4,6 +4,10 @@ import Sparkle
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
+
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         false
     }
