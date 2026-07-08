@@ -287,6 +287,7 @@ struct StorageDirectTrashUndo {
     let originalPath: String
     let trashURL: URL?
     let bytes: UInt64
+    let succeeded: Bool
 }
 
 public struct StorageView: View {
@@ -738,12 +739,10 @@ public struct StorageView: View {
         }
     }
 
-    /// Primary surface: disk pressure up top (the frame the whole tab needs),
-    /// then the reclaim opportunities and the staged-cleanup workflow.
+    /// Primary surface: disk pressure up top, then the staged-cleanup workflow.
     private func storageReclaimHome(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             storageReclaimSummaryBand(report)
-            storageReclaimActionsSection(report)
             storageReclaimTableSection(report)
             storageReclaimSupportingData(report)
         }
@@ -754,6 +753,11 @@ public struct StorageView: View {
         let safeBytes = actions.first { $0.id == "safe-reclaim" }?.bytes ?? 0
         let developerBytes = actions.first { $0.id == "developer-artifacts" }?.bytes ?? 0
         let riskyBytes = actions.first { $0.id == "risky-review" }?.bytes ?? 0
+        let safeAction = actions.first { $0.id == "safe-reclaim" }
+        let developerAction = actions.first { $0.id == "developer-artifacts" }
+        let directReclaimItems = directCleanItems(from: actions.flatMap(\.stageItems))
+        let directSafeItems = safeAction.map { directCleanItems(from: $0.stageItems) } ?? []
+        let directDeveloperItems = developerAction.map { directCleanItems(from: $0.stageItems) } ?? []
         let volume = primaryVolume(report)
 
         return AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md, cornerRadius: 16) {
@@ -781,7 +785,7 @@ public struct StorageView: View {
                 }
 
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 132), spacing: AetowerDesign.Spacing.sm)],
+                    columns: [GridItem(.adaptive(minimum: 168), spacing: AetowerDesign.Spacing.sm)],
                     alignment: .leading,
                     spacing: AetowerDesign.Spacing.sm
                 ) {
@@ -790,42 +794,94 @@ public struct StorageView: View {
                         value: formatBytes(report.summary.totalReclaimableBytes),
                         detail: "bounded estimate",
                         systemImage: "externaldrive.badge.minus",
-                        tone: AetowerDesign.Tone.disk
+                        tone: AetowerDesign.Tone.disk,
+                        primaryActionKind: .clean,
+                        reviewEnabled: report.summary.itemCount > 0,
+                        primaryEnabled: !directReclaimItems.isEmpty,
+                        reviewAction: {
+                            focusReclaimTable(filter: .all, scope: .all, sort: .recommended)
+                        },
+                        primaryAction: {
+                            trashStorageItemsDirectly(directReclaimItems, sourceTitle: "Reclaimable")
+                        }
                     )
                     storageReclaimMetric(
                         "Safe",
                         value: formatBytes(safeBytes),
                         detail: "\(report.summary.safeCandidateCount) candidate\(report.summary.safeCandidateCount == 1 ? "" : "s")",
                         systemImage: "checkmark.shield",
-                        tone: AetowerDesign.Status.ready
+                        tone: AetowerDesign.Status.ready,
+                        primaryActionKind: .clean,
+                        reviewEnabled: report.summary.safeCandidateCount > 0 || safeBytes > 0,
+                        primaryEnabled: !directSafeItems.isEmpty,
+                        reviewAction: {
+                            focusReclaimTable(filter: .safe, scope: .all, sort: .recommended)
+                        },
+                        primaryAction: {
+                            trashStorageItemsDirectly(directSafeItems, sourceTitle: "Safe")
+                        }
                     )
                     storageReclaimMetric(
                         "Dev Artifacts",
                         value: formatBytes(developerBytes),
                         detail: "builds, caches, deps",
                         systemImage: "hammer",
-                        tone: AetowerDesign.Tone.cpu
+                        tone: AetowerDesign.Tone.cpu,
+                        primaryActionKind: .clean,
+                        reviewEnabled: developerBytes > 0,
+                        primaryEnabled: !directDeveloperItems.isEmpty,
+                        reviewAction: {
+                            focusReclaimTable(filter: .all, scope: .repoLinked, sort: .recommended)
+                        },
+                        primaryAction: {
+                            trashStorageItemsDirectly(directDeveloperItems, sourceTitle: "Developer Artifacts")
+                        }
                     )
                     storageReclaimMetric(
                         "Review",
                         value: formatBytes(riskyBytes),
                         detail: "\(report.summary.reviewCandidateCount) blocked/manual",
                         systemImage: "exclamationmark.triangle",
-                        tone: AetowerDesign.Status.warning
+                        tone: AetowerDesign.Status.warning,
+                        primaryActionKind: .clean,
+                        reviewEnabled: report.summary.reviewCandidateCount > 0 || riskyBytes > 0,
+                        primaryEnabled: false,
+                        reviewAction: {
+                            focusReclaimTable(filter: .risky, scope: .all, sort: .recommended)
+                        },
+                        primaryAction: {}
                     )
                     storageReclaimMetric(
                         "Tracked Trash",
                         value: formatBytes(trashPendingBytes),
                         detail: emptyTrashInFlight ? "emptying" : "pending delete",
                         systemImage: "trash",
-                        tone: trashPendingBytes > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral
+                        tone: trashPendingBytes > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.neutral,
+                        primaryActionKind: .clean,
+                        reviewEnabled: trashPendingBytes > 0,
+                        primaryEnabled: trashPendingBytes > 0 && !emptyTrashInFlight,
+                        reviewAction: {
+                            openTrash()
+                        },
+                        primaryAction: {
+                            emptyTrash()
+                        }
                     )
                     storageReclaimMetric(
                         "Scan",
                         value: storageScanFreshnessLabel(report),
                         detail: "\(report.scanDurationMillis) ms",
                         systemImage: "clock.arrow.circlepath",
-                        tone: AetowerDesign.Status.neutral
+                        tone: AetowerDesign.Status.neutral,
+                        primaryActionKind: .scan,
+                        reviewEnabled: true,
+                        primaryEnabled: !state.storageHygieneIsLoading,
+                        reviewAction: {
+                            selectedSection = .insights
+                        },
+                        primaryAction: {
+                            runScan()
+                        }
                     )
                 }
             }
@@ -837,17 +893,74 @@ public struct StorageView: View {
         value: String,
         detail: String,
         systemImage: String,
-        tone: Color
+        tone: Color,
+        primaryActionKind: StorageDataCardActionKind,
+        reviewEnabled: Bool = true,
+        primaryEnabled: Bool = true,
+        reviewAction: @escaping () -> Void,
+        primaryAction: @escaping () -> Void
     ) -> some View {
-        AetowerMetricTile(
-            title,
-            value: value,
-            detail: detail,
-            systemImage: systemImage,
-            tone: tone,
-            minHeight: 72,
-            valueSize: 15
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(tone)
+                Text(title.uppercased())
+                    .font(AetowerDesign.Typography.metadataStrong)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+            }
+            Text(value)
+                .font(AetowerDesign.Typography.metricValue(size: 15, weight: .semibold))
+                .foregroundStyle(tone)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(detail)
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
+                .lineLimit(2)
+            Spacer(minLength: AetowerDesign.Spacing.xs)
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Button {
+                    reviewAction()
+                } label: {
+                    Label(StorageDataCardActionKind.review.title, systemImage: StorageDataCardActionKind.review.systemImage)
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .disabled(!reviewEnabled)
+
+                Button {
+                    primaryAction()
+                } label: {
+                    storageDataCardActionLabel(primaryActionKind)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.mini)
+                .disabled(!primaryEnabled)
+            }
+        }
+        .padding(AetowerDesign.Spacing.sm)
+        .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
+        .background(
+            AetowerDesign.Surface.card,
+            in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
         )
+    }
+
+    @ViewBuilder
+    private func storageDataCardActionLabel(_ actionKind: StorageDataCardActionKind) -> some View {
+        if actionKind == .scan && state.storageHygieneIsLoading {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Scanning")
+            }
+        } else {
+            Label(actionKind.title, systemImage: actionKind.systemImage)
+                .labelStyle(.titleAndIcon)
+        }
     }
 
     private func storageScanFreshnessLabel(_ report: StorageHygieneReportModel) -> String {
@@ -865,10 +978,6 @@ public struct StorageView: View {
             return "\(hours)h ago"
         }
         return capturedAt.formatted(date: .abbreviated, time: .omitted)
-    }
-
-    private func storageReclaimActionsSection(_ report: StorageHygieneReportModel) -> some View {
-        storageHomeActionsSection(report)
     }
 
     private func storageReclaimTableSection(_ report: StorageHygieneReportModel) -> some View {
@@ -1414,6 +1523,7 @@ public struct StorageView: View {
     /// Analytical surface: everything that explains rather than acts.
     private func storageInsightsWorkspace(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            storageHomeActionsSection(report)
             if let insights = report.growthInsights {
                 storageGrowthInsightsSection(insights)
                 if let diff = insights.sinceLastScan {
@@ -1603,7 +1713,8 @@ public struct StorageView: View {
             Spacer(minLength: 0)
 
             HStack(spacing: AetowerDesign.Spacing.sm) {
-                if action.hasStageableItems {
+                let dataActionKind = storageHomeActionKind(action)
+                if dataActionKind == .clean {
                     let decision = storageReclaimActionDecision(for: action)
                     Button {
                         if decision == .moveToTrash {
@@ -1620,15 +1731,17 @@ public struct StorageView: View {
                     .buttonStyle(.borderedProminent)
                 } else {
                     Button {
-                        copy(storageHomeActionPlan(action))
+                        reviewStorageHomeAction(action)
                     } label: {
-                        Label("Copy cleanup plan", systemImage: "doc.on.doc")
+                        Label(dataActionKind.title, systemImage: dataActionKind.systemImage)
                     }
                     .buttonStyle(.borderedProminent)
                 }
 
-                Button("Explain") {
+                Button {
                     classificationExplanation = explanation(for: action)
+                } label: {
+                    Label("Explain", systemImage: "info.circle")
                 }
                 Spacer()
             }
@@ -1638,6 +1751,57 @@ public struct StorageView: View {
         .padding(AetowerDesign.Spacing.md)
         .frame(maxWidth: .infinity, minHeight: 240, alignment: .topLeading)
         .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func storageHomeActionKind(_ action: StorageHomeAction) -> StorageDataCardActionKind {
+        switch action.id {
+        case "safe-reclaim", "developer-artifacts":
+            return action.hasStageableItems ? .clean : .review
+        default:
+            return .review
+        }
+    }
+
+    private func reviewStorageHomeAction(_ action: StorageHomeAction) {
+        switch action.id {
+        case "safe-reclaim":
+            focusReclaimTable(filter: .safe, scope: .all, sort: .recommended)
+        case "developer-artifacts":
+            focusReclaimTable(filter: .all, scope: .repoLinked, sort: .recommended)
+        case "largest-offenders":
+            focusReclaimTable(filter: .all, scope: .all, sort: .largest)
+        case "recently-grew":
+            focusReclaimTable(filter: .all, scope: .all, sort: .newest)
+        case "old-unused":
+            focusReclaimTable(filter: .attention, scope: .cold, sort: .recommended)
+        case "risky-review":
+            focusReclaimTable(filter: .risky, scope: .all, sort: .recommended)
+        default:
+            focusReclaimTable(filter: .all, scope: .all, sort: .recommended)
+        }
+
+        if let firstItem = action.sampleItems.first {
+            selectedReclaimFilePath = firstItem.path
+            selectedReclaimFolderPath = nil
+            reclaimListMode = .files
+        } else {
+            classificationExplanation = explanation(for: action)
+        }
+    }
+
+    private func focusReclaimTable(
+        filter: StorageFilter,
+        scope: StorageArtifactScope,
+        sort: StorageArtifactSort
+    ) {
+        selectedSection = .reclaim
+        selectedFilter = filter
+        artifactScope = scope
+        artifactSort = sort
+        reclaimListMode = .files
+        selectedReclaimFilePath = nil
+        selectedReclaimFolderPath = nil
+        searchText = ""
     }
 
     /// Compact one-line replacement for the old six-tile decision grid. The
@@ -6268,10 +6432,10 @@ public struct StorageView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 210)
+                .frame(width: 220)
             }
 
-            Text("Full disk maps block area to each folder's share of the displayed total. Treemap stays lazy; the list stays paged and sorted from the current bounded projection.")
+            Text("Full disk keeps proportional folder rectangles, with rounded storage cubes inside each block. Cube size is coarse at root and gets finer as you drill down.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -6295,6 +6459,11 @@ public struct StorageView: View {
         let totalBytes = nodes.reduce(UInt64(0)) { total, node in
             sumBytes(total, node.sizeBytes)
         }
+        let preferredUnitBytes = storageCubePreferredUnitBytes(for: selectedNode)
+        let projection = storageCubeProjection(for: nodes, preferredUnitBytes: preferredUnitBytes)
+        let cubeBinsByNodeID = Dictionary(
+            uniqueKeysWithValues: storageCubeNodeBins(nodes: nodes, projection: projection).map { ($0.id, $0) }
+        )
 
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             storageTreemapNavigationBar(
@@ -6313,12 +6482,26 @@ public struct StorageView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        AetowerBadge("1 cube = \(formatBytes(projection.unitBytes))", tone: AetowerDesign.Tone.disk)
+                        if projection.unitBytes > preferredUnitBytes {
+                            AetowerBadge("scaled from \(formatBytes(preferredUnitBytes))", tone: AetowerDesign.Status.warning)
+                        }
+                        AetowerBadge("\(projection.totalCubes) cube\(projection.totalCubes == 1 ? "" : "s")", tone: AetowerDesign.Tone.memory)
+                        AetowerBadge("rounded up", tone: AetowerDesign.Status.warning)
+                        Spacer()
+                    }
+
                     GeometryReader { proxy in
                         let bounds = CGRect(origin: .zero, size: proxy.size)
                         let layouts = storageProportionalTreemapLayouts(for: nodes, in: bounds)
                         ZStack(alignment: .topLeading) {
                             ForEach(layouts) { layout in
-                                storageFullDiskBlock(layout, displayedTotalBytes: totalBytes)
+                                storageFullDiskBlock(
+                                    layout,
+                                    displayedTotalBytes: totalBytes,
+                                    cubeBin: cubeBinsByNodeID[layout.node.id]
+                                )
                             }
                         }
                         .frame(width: proxy.size.width, height: proxy.size.height)
@@ -6328,7 +6511,132 @@ public struct StorageView: View {
 
                     HStack(spacing: AetowerDesign.Spacing.sm) {
                         Label("Area is proportional to displayed bytes", systemImage: "ruler")
-                        Text("Click a folder to drill down; click a leaf to reveal it in Finder.")
+                        Text("Cubes show rounded byte units inside each folder. Click a folder to drill down; click a leaf to reveal it in Finder.")
+                    }
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+            }
+        }
+    }
+
+    private func storageCubeExplorer(_ report: StorageHygieneReportModel) -> some View {
+        let breadcrumbs = storageTreemapBreadcrumbs(in: report.treemapRoots)
+        let selectedNode = storageTreemapSelectedNode(in: report.treemapRoots)
+        let nodes = selectedNode?.children ?? report.treemapRoots
+        let preferredUnitBytes = storageCubePreferredUnitBytes(for: selectedNode)
+        let projection = storageCubeProjection(for: nodes, preferredUnitBytes: preferredUnitBytes)
+        let bins = storageCubeNodeBins(nodes: nodes, projection: projection)
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            storageTreemapNavigationBar(
+                breadcrumbs: breadcrumbs,
+                blockCount: bins.count,
+                totalBytes: projection.totalBytes,
+                totalLabel: selectedNode?.label ?? "Full disk"
+            )
+
+            if bins.isEmpty {
+                ContentUnavailableView(
+                    "No cube map yet",
+                    systemImage: "square.grid.3x3",
+                    description: Text("Run a scan with storage candidates, then return to Cubes.")
+                )
+                .frame(maxWidth: .infinity)
+            } else {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        AetowerBadge("1 cube = \(formatBytes(projection.unitBytes))", tone: AetowerDesign.Tone.disk)
+                        if projection.unitBytes > preferredUnitBytes {
+                            AetowerBadge("scaled from \(formatBytes(preferredUnitBytes))", tone: AetowerDesign.Status.warning)
+                        }
+                        AetowerBadge("\(projection.totalCubes) cube\(projection.totalCubes == 1 ? "" : "s")", tone: AetowerDesign.Tone.memory)
+                        AetowerBadge("rounded up", tone: AetowerDesign.Status.warning)
+                        Spacer()
+                    }
+
+                    GeometryReader { proxy in
+                        let layout = storageCubeGridLayout(
+                            cubeCount: projection.totalCubes,
+                            in: proxy.size
+                        )
+                        Canvas { context, _ in
+                            for bin in bins {
+                                let color = storageTreemapColor(bin.node.colorKey)
+                                for index in bin.startIndex..<bin.endIndex {
+                                    let rect = storageCubeRect(index: index, layout: layout)
+                                    guard rect.width > 0, rect.height > 0 else { continue }
+                                    context.fill(
+                                        Path(roundedRect: rect, cornerRadius: min(3, rect.width / 4)),
+                                        with: .color(color.opacity(0.82))
+                                    )
+                                }
+                            }
+                        }
+                        .background(
+                            AetowerDesign.Surface.rowIdle,
+                            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(AetowerDesign.Surface.divider, lineWidth: AetowerDesign.Stroke.hairline)
+                        )
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onEnded { value in
+                                    guard let index = storageCubeIndex(at: value.location, layout: layout),
+                                          let bin = bins.first(where: { $0.contains(index) })
+                                    else { return }
+                                    if !bin.node.children.isEmpty {
+                                        selectedTreemapNodeID = bin.node.id
+                                    } else {
+                                        reveal(path: bin.node.path)
+                                    }
+                                }
+                        )
+                        .help("Click a cube group to drill into folders; leaf cubes reveal in Finder.")
+                    }
+                    .frame(minHeight: 360, idealHeight: 460)
+
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 180), spacing: AetowerDesign.Spacing.sm)],
+                        alignment: .leading,
+                        spacing: AetowerDesign.Spacing.sm
+                    ) {
+                        ForEach(bins.prefix(12)) { bin in
+                            Button {
+                                if !bin.node.children.isEmpty {
+                                    selectedTreemapNodeID = bin.node.id
+                                } else {
+                                    reveal(path: bin.node.path)
+                                }
+                            } label: {
+                                HStack(spacing: AetowerDesign.Spacing.xs) {
+                                    Circle()
+                                        .fill(storageTreemapColor(bin.node.colorKey))
+                                        .frame(width: 8, height: 8)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(bin.node.label)
+                                            .font(AetowerDesign.Typography.caption.weight(.semibold))
+                                            .lineLimit(1)
+                                        Text("\(bin.cubeCount) cube\(bin.cubeCount == 1 ? "" : "s") · \(formatBytes(bin.node.sizeBytes))")
+                                            .font(AetowerDesign.Typography.caption)
+                                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer(minLength: AetowerDesign.Spacing.xs)
+                                }
+                                .padding(.horizontal, AetowerDesign.Spacing.sm)
+                                .padding(.vertical, AetowerDesign.Spacing.xs)
+                                .background(AetowerDesign.Surface.badge, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Label("Cube counts are rounded up", systemImage: "cube")
+                        Text("Root starts around 50 MB per cube; drill down for 10 MB and smaller units. Very large scopes auto-scale up to stay responsive.")
                     }
                     .font(AetowerDesign.Typography.caption)
                     .foregroundStyle(AetowerDesign.Ink.secondary)
@@ -6425,7 +6733,8 @@ public struct StorageView: View {
 
     private func storageFullDiskBlock(
         _ layout: StorageTreemapLayout,
-        displayedTotalBytes: UInt64
+        displayedTotalBytes: UInt64,
+        cubeBin: StorageCubeNodeBin?
     ) -> some View {
         let node = layout.node
         let color = storageTreemapColor(node.colorKey)
@@ -6447,11 +6756,16 @@ public struct StorageView: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [color.opacity(0.34), color.opacity(0.1)],
+                            colors: [color.opacity(0.22), color.opacity(0.06)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
+                storageFullDiskCubeCanvas(
+                    cubeCount: cubeBin?.cubeCount ?? 0,
+                    color: color,
+                    isTiny: isTiny
+                )
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(color.opacity(0.28), lineWidth: AetowerDesign.Stroke.hairline)
 
@@ -6475,6 +6789,12 @@ public struct StorageView: View {
                             .font(AetowerDesign.Typography.caption)
                             .foregroundStyle(AetowerDesign.Ink.secondary)
                             .lineLimit(1)
+                        if let cubeBin {
+                            Text("\(cubeBin.cubeCount) cube\(cubeBin.cubeCount == 1 ? "" : "s")")
+                                .font(AetowerDesign.Typography.caption)
+                                .foregroundStyle(AetowerDesign.Ink.tertiary)
+                                .lineLimit(1)
+                        }
                     }
 
                     if !isCompact {
@@ -6497,6 +6817,28 @@ public struct StorageView: View {
         .buttonStyle(.plain)
         .position(x: usableRect.midX, y: usableRect.midY)
         .help("\(node.path) · \(formatBytes(node.sizeBytes)) · \(Int((share * 100).rounded()))% of displayed total")
+    }
+
+    private func storageFullDiskCubeCanvas(
+        cubeCount: Int,
+        color: Color,
+        isTiny: Bool
+    ) -> some View {
+        Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, size in
+            guard cubeCount > 0, size.width > 0, size.height > 0 else { return }
+            let layout = storageCubeGridLayout(cubeCount: cubeCount, in: size)
+            guard layout.cubeSize > 0 else { return }
+            for index in 0..<cubeCount {
+                var rect = storageCubeRect(index: index, layout: layout)
+                rect = rect.insetBy(dx: max(0, min(0.35, rect.width * 0.08)), dy: max(0, min(0.35, rect.height * 0.08)))
+                guard rect.width > 0, rect.height > 0 else { continue }
+                context.fill(
+                    Path(roundedRect: rect, cornerRadius: min(3, rect.width / 4)),
+                    with: .color(color.opacity(isTiny ? 0.34 : 0.50))
+                )
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     private func storageTreemapBlock(_ node: StorageTreemapNodeModel, totalBytes: UInt64) -> some View {
@@ -6549,6 +6891,115 @@ public struct StorageView: View {
         }
         .buttonStyle(.plain)
         .help(node.path)
+    }
+
+    private func storageCubeProjection(
+        for nodes: [StorageTreemapNodeModel],
+        preferredUnitBytes: UInt64
+    ) -> StorageCubeProjection {
+        StorageCubeProjectionBuilder.build(
+            inputs: nodes
+                .filter { $0.sizeBytes > 0 }
+                .sorted { left, right in
+                    left.sizeBytes == right.sizeBytes ? left.label < right.label : left.sizeBytes > right.sizeBytes
+                }
+                .map { StorageCubeProjectionInput(id: $0.id, sizeBytes: $0.sizeBytes) },
+            maxCubes: 2_400,
+            preferredUnitBytes: preferredUnitBytes
+        )
+    }
+
+    private func storageCubePreferredUnitBytes(for selectedNode: StorageTreemapNodeModel?) -> UInt64 {
+        let mib = UInt64(1_024 * 1_024)
+        guard let selectedNode else { return 50 * mib }
+        switch selectedNode.depth {
+        case 0: return 10 * mib
+        case 1: return 5 * mib
+        case 2: return 1 * mib
+        default: return 256 * 1_024
+        }
+    }
+
+    private func storageCubeNodeBins(
+        nodes: [StorageTreemapNodeModel],
+        projection: StorageCubeProjection
+    ) -> [StorageCubeNodeBin] {
+        let nodesByID = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
+        return projection.bins.compactMap { bin in
+            guard let node = nodesByID[bin.id] else { return nil }
+            return StorageCubeNodeBin(node: node, bin: bin)
+        }
+    }
+
+    private func storageCubeGridLayout(
+        cubeCount: Int,
+        in size: CGSize
+    ) -> StorageCubeGridLayout {
+        guard cubeCount > 0, size.width > 0, size.height > 0 else {
+            return StorageCubeGridLayout(columns: 1, rows: 0, cubeSize: 0, gap: 0, origin: .zero, cubeCount: 0)
+        }
+
+        let aspect = max(0.25, min(4.0, Double(size.width / max(1, size.height))))
+        let columns = max(1, Int(ceil(sqrt(Double(cubeCount) * aspect))))
+        let rows = max(1, Int(ceil(Double(cubeCount) / Double(columns))))
+        let coarseGap = CGFloat(2)
+        let coarseCubeSize = min(
+            (size.width - coarseGap * CGFloat(max(0, columns - 1))) / CGFloat(columns),
+            (size.height - coarseGap * CGFloat(max(0, rows - 1))) / CGFloat(rows)
+        )
+        let gap = coarseCubeSize < 6 ? CGFloat(1) : coarseGap
+        let cubeSize = max(
+            1,
+            min(
+                (size.width - gap * CGFloat(max(0, columns - 1))) / CGFloat(columns),
+                (size.height - gap * CGFloat(max(0, rows - 1))) / CGFloat(rows)
+            )
+        )
+        let gridWidth = cubeSize * CGFloat(columns) + gap * CGFloat(max(0, columns - 1))
+        let gridHeight = cubeSize * CGFloat(rows) + gap * CGFloat(max(0, rows - 1))
+        return StorageCubeGridLayout(
+            columns: columns,
+            rows: rows,
+            cubeSize: cubeSize,
+            gap: gap,
+            origin: CGPoint(
+                x: max(0, (size.width - gridWidth) / 2),
+                y: max(0, (size.height - gridHeight) / 2)
+            ),
+            cubeCount: cubeCount
+        )
+    }
+
+    private func storageCubeRect(index: Int, layout: StorageCubeGridLayout) -> CGRect {
+        guard layout.columns > 0, index >= 0, index < layout.cubeCount else { return .zero }
+        let row = index / layout.columns
+        let column = index % layout.columns
+        return CGRect(
+            x: layout.origin.x + CGFloat(column) * (layout.cubeSize + layout.gap),
+            y: layout.origin.y + CGFloat(row) * (layout.cubeSize + layout.gap),
+            width: layout.cubeSize,
+            height: layout.cubeSize
+        )
+    }
+
+    private func storageCubeIndex(
+        at location: CGPoint,
+        layout: StorageCubeGridLayout
+    ) -> Int? {
+        guard layout.columns > 0, layout.cubeSize > 0, layout.cubeCount > 0 else { return nil }
+        let stride = layout.cubeSize + layout.gap
+        guard stride > 0 else { return nil }
+        let x = location.x - layout.origin.x
+        let y = location.y - layout.origin.y
+        guard x >= 0, y >= 0 else { return nil }
+        let column = Int(floor(x / stride))
+        let row = Int(floor(y / stride))
+        guard column >= 0, column < layout.columns, row >= 0, row < layout.rows else { return nil }
+        let localX = x - CGFloat(column) * stride
+        let localY = y - CGFloat(row) * stride
+        guard localX <= layout.cubeSize, localY <= layout.cubeSize else { return nil }
+        let index = row * layout.columns + column
+        return index < layout.cubeCount ? index : nil
     }
 
     private func storageProportionalTreemapLayouts(
@@ -8772,6 +9223,115 @@ public struct StorageView: View {
         }
     }
 
+    private func directCleanItems(from items: [StorageHygieneItemModel]) -> [StorageHygieneItemModel] {
+        uniqueStorageItems(items).filter {
+            storageItemIsTrashActionable($0)
+                && $0.safety == "safe"
+                && !directTrashInFlightPaths.contains($0.path)
+        }
+    }
+
+    private func trashStorageItemsDirectly(
+        _ items: [StorageHygieneItemModel],
+        sourceTitle: String
+    ) {
+        let candidates = directCleanItems(from: items)
+        guard !candidates.isEmpty else { return }
+
+        let limited = Array(candidates.prefix(80))
+        let paths = limited.map(\.path)
+        for path in paths {
+            directTrashInFlightPaths.insert(path)
+        }
+
+        let activeWriterProbe = state.cleanupActiveWriterProbe()
+        Task.detached(priority: .utility) {
+            let result = Self.movePathsToTrash(paths, activeWriterProbe: activeWriterProbe)
+            await MainActor.run {
+                for path in paths {
+                    directTrashInFlightPaths.remove(path)
+                }
+                recordDirectTrashResult(
+                    items: limited,
+                    result: result,
+                    sourceTitle: sourceTitle
+                )
+            }
+        }
+    }
+
+    private func recordDirectTrashResult(
+        items: [StorageHygieneItemModel],
+        result: StorageCleanupExecutionResult,
+        sourceTitle: String
+    ) {
+        var metadataByPath: [String: StorageHygieneItemModel] = [:]
+        for item in items where metadataByPath[item.path] == nil {
+            metadataByPath[item.path] = item
+        }
+        let moved = Set(result.movedPaths)
+        let alreadyReclaimed = Set(result.failedPaths.compactMap { path, reason in
+            reason == "Path no longer exists" ? path : nil
+        })
+        let resolved = moved.union(alreadyReclaimed)
+
+        cleanupBasket.removeAll { resolved.contains($0.path) }
+        state.markStoragePathsMovedToTrash(Array(resolved))
+
+        for (path, trashURL) in result.movedTrashURLs {
+            guard let metadata = metadataByPath[path] else { continue }
+            trashedItemURLsByOriginalPath[path] = trashURL
+            StorageTrackedTrashStore.upsert(
+                originalPath: path,
+                trashURL: trashURL,
+                bytes: metadata.sizeBytes
+            )
+        }
+
+        trashPendingBytes = result.movedPaths.reduce(trashPendingBytes) { acc, path in
+            let (sum, overflow) = acc.addingReportingOverflow(metadataByPath[path]?.sizeBytes ?? 0)
+            return overflow ? UInt64.max : sum
+        }
+
+        for path in metadataByPath.keys.sorted() {
+            let metadata = metadataByPath[path]
+            let pathSucceeded = moved.contains(path)
+            let pathAlreadyReclaimed = alreadyReclaimed.contains(path)
+            appendCleanupAudit(
+                action: pathSucceeded ? "direct-trash" : pathAlreadyReclaimed ? "already-reclaimed" : "failed-direct-trash",
+                path: path,
+                detail: pathSucceeded
+                    ? "One-click Clean moved \(sourceTitle) target to Finder Trash."
+                    : pathAlreadyReclaimed
+                        ? "Path no longer exists; treating it as already reclaimed."
+                        : (result.failedPaths[path] ?? "Not attempted."),
+                bytes: metadata?.sizeBytes ?? 0,
+                cleanupTier: metadata?.cleanupTier,
+                safety: metadata?.safety,
+                blockers: metadata?.cleanupBlockers ?? [],
+                succeeded: pathSucceeded || pathAlreadyReclaimed
+            )
+        }
+
+        let movedCount = result.movedPaths.count
+        let failedCount = result.failedPaths.count
+        let bytes = result.movedPaths.reduce(UInt64(0)) { total, path in
+            let (sum, overflow) = total.addingReportingOverflow(metadataByPath[path]?.sizeBytes ?? 0)
+            return overflow ? UInt64.max : sum
+        }
+        presentDirectTrashUndo(
+            StorageDirectTrashUndo(
+                message: movedCount > 0
+                    ? "\(sourceTitle): moved \(movedCount) item\(movedCount == 1 ? "" : "s") (\(formatBytes(bytes))) to Trash"
+                    : "\(sourceTitle): no items moved\(failedCount > 0 ? " (\(failedCount) issue\(failedCount == 1 ? "" : "s"))" : "")",
+                originalPath: result.movedPaths.first ?? sourceTitle,
+                trashURL: result.movedTrashURLs[result.movedPaths.first ?? ""],
+                bytes: bytes,
+                succeeded: movedCount > 0
+            )
+        )
+    }
+
     private func stageReclaimFolder(_ folder: StorageReclaimFolderRow) {
         if storageReclaimFolderIsTrashActionable(folder) {
             let item = StorageCleanupBasketItem(
@@ -9239,7 +9799,7 @@ public struct StorageView: View {
 
     private func directTrashUndoToast(_ undo: StorageDirectTrashUndo) -> some View {
         HStack(spacing: AetowerDesign.Spacing.md) {
-            Image(systemName: undo.trashURL == nil ? "exclamationmark.triangle" : "trash")
+            Image(systemName: undo.succeeded ? "trash" : "exclamationmark.triangle")
             Text(undo.message)
                 .font(.callout)
                 .lineLimit(1)
@@ -9311,7 +9871,8 @@ public struct StorageView: View {
                             : "Could not trash \(title): \(outcome.message)",
                         originalPath: path,
                         trashURL: outcome.trashURL,
-                        bytes: bytes
+                        bytes: bytes,
+                        succeeded: outcome.trashURL != nil
                     )
                 )
             }
@@ -10013,6 +10574,29 @@ private struct StorageTreemapLayout: Identifiable {
     let rect: CGRect
 
     var id: String { node.id }
+}
+
+private struct StorageCubeNodeBin: Identifiable {
+    let node: StorageTreemapNodeModel
+    let bin: StorageCubeProjectionBin
+
+    var id: String { node.id }
+    var cubeCount: Int { bin.cubeCount }
+    var startIndex: Int { bin.startIndex }
+    var endIndex: Int { bin.endIndex }
+
+    func contains(_ index: Int) -> Bool {
+        index >= startIndex && index < endIndex
+    }
+}
+
+private struct StorageCubeGridLayout {
+    let columns: Int
+    let rows: Int
+    let cubeSize: CGFloat
+    let gap: CGFloat
+    let origin: CGPoint
+    let cubeCount: Int
 }
 
 private enum StorageVisualExplorerMode: String, CaseIterable, Identifiable {
