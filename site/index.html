@@ -1275,37 +1275,17 @@
                 <li>Rebuildable artifacts first — <span class="mono">node_modules</span>, <span class="mono">target/</span>, DerivedData — staged, not deleted.</li>
               </ul>
             </div>
-            <!-- Swap for /assets/aetower-storage.png when captured. -->
-            <div class="mock">
-              <div class="mock-bar"><i></i><i></i><i></i><span class="mono">Activity · Storage</span></div>
-              <div class="mock-body">
-                <div class="chips">
-                  <span class="chip ok">58.7 GB reclaimable · 40 items</span>
-                  <span class="chip">largest: agent session logs · 12.2 GB</span>
-                </div>
-                <div class="treemap">
-                  <div class="cell" style="background: color-mix(in srgb, var(--purple) 82%, #000)">
-                    ~/Library/Caches <small>18.4 GB</small>
-                  </div>
-                  <div class="cell" style="background: color-mix(in srgb, var(--purple) 58%, #000)">
-                    node_modules ×23 <small>11.2 GB</small>
-                  </div>
-                  <div class="cell" style="background: color-mix(in srgb, var(--green-deep) 85%, #000)">
-                    Xcode DerivedData <small>7.9 GB</small>
-                  </div>
-                  <div class="cell" style="background: color-mix(in srgb, var(--green-deep) 60%, #000)">
-                    target/ (Rust) <small>6.3 GB</small>
-                  </div>
-                  <div class="cell" style="background: #3b5bdb">
-                    Docker.raw <small>4.1 GB</small>
-                  </div>
-                  <div class="cell" style="background: #74707f">
-                    Cold data <small>90 d+</small>
-                  </div>
-                </div>
-                <span class="reclaim-pill">↺ Stage 40 items via Trash · verified estimate</span>
-              </div>
-            </div>
+            <!-- Real capture of the Storage tab (Reclaim view). -->
+            <figure class="mock shot">
+              <img
+                src="/assets/aetower-storage.png"
+                alt="Aetower's Storage tab: reclaim lanes for reclaimable, safe, dev artifacts, and review candidates above a reclaim list with safety-tier badges, per-path sizes, and Stage-via-Trash actions."
+                width="1600"
+                height="900"
+                loading="lazy"
+                decoding="async"
+              />
+            </figure>
           </div>
 
           <div class="stop">
@@ -1324,40 +1304,17 @@
                 <li>Bonjour fleet summaries: CPU, memory pressure, thermal state per machine.</li>
               </ul>
             </div>
-            <!-- Swap for /assets/aetower-repos.png when captured. -->
-            <div class="mock">
-              <div class="mock-bar"><i></i><i></i><i></i><span class="mono">Repos · Attention</span></div>
-              <div class="mock-body">
-                <div class="repo">
-                  <div>
-                    <span class="name">aetower</span>
-                    <span class="sub">master · clean · $1.30 AI spend / 7 d</span>
-                  </div>
-                  <div class="badges"><span class="badge ok">contracts</span><span class="badge">6.3 GB target/</span></div>
-                </div>
-                <div class="repo">
-                  <div>
-                    <span class="name">client-portal</span>
-                    <span class="sub">feat/auth · dirty · 2 clones detected</span>
-                  </div>
-                  <div class="badges"><span class="badge warn">duplicate</span><span class="badge warn">dirty</span></div>
-                </div>
-                <div class="repo">
-                  <div>
-                    <span class="name">data-pipeline</span>
-                    <span class="sub">main · CI failing · workflow re-run available</span>
-                  </div>
-                  <div class="badges"><span class="badge warn">no contracts</span><span class="badge">1.9 GB venv</span></div>
-                </div>
-                <div class="repo">
-                  <div>
-                    <span class="name">blog</span>
-                    <span class="sub">main · clean · Cloudflare Pages linked</span>
-                  </div>
-                  <div class="badges"><span class="badge ok">contracts</span><span class="badge ok">deployed</span></div>
-                </div>
-              </div>
-            </div>
+            <!-- Real capture of the Repos tab (Overview). -->
+            <figure class="mock shot">
+              <img
+                src="/assets/aetower-repos.png"
+                alt="Aetower's Repos tab: the local repository fleet with per-repo agent status, git state including duplicate clones and detached heads, inventory freshness, contract readiness, and next actions."
+                width="1600"
+                height="900"
+                loading="lazy"
+                decoding="async"
+              />
+            </figure>
           </div>
         </div>
       </section>
