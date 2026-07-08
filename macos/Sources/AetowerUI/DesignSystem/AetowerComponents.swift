@@ -87,6 +87,53 @@ public struct AetowerSurface<Content: View>: View {
     }
 }
 
+public struct AetowerOperationalListRow<Content: View>: View {
+    let tone: Color
+    let isSelected: Bool
+    let minHeight: CGFloat
+    let content: Content
+    @State private var isHovered = false
+
+    public init(
+        tone: Color = AetowerDesign.Status.neutral,
+        isSelected: Bool = false,
+        minHeight: CGFloat = AetowerDesign.Size.controlHeight,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.tone = tone
+        self.isSelected = isSelected
+        self.minHeight = minHeight
+        self.content = content()
+    }
+
+    public var body: some View {
+        content
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, AetowerDesign.Spacing.xs)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: minHeight)
+            .background(
+                tone.opacity(backgroundOpacity),
+                in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm, style: .continuous)
+                    .stroke(
+                        isSelected ? Color.accentColor.opacity(0.5) : Color.clear,
+                        lineWidth: AetowerDesign.Stroke.hairline
+                    )
+            }
+            .onHover { isHovered = $0 }
+            .animation(AetowerDesign.Motion.quick, value: isHovered)
+    }
+
+    private var backgroundOpacity: Double {
+        if isSelected { return 0.14 }
+        if isHovered { return 0.08 }
+        return 0.035
+    }
+}
+
 public enum AetowerBadgeStyle {
     case soft
     case outline

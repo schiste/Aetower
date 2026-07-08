@@ -89,6 +89,19 @@ private struct RepositoryPrimaryAction {
     let kind: RepositoryOptimizationActionKind
 }
 
+private enum RepositoryRowLayout {
+    static let height: CGFloat = 34
+    static let rowSpacing: CGFloat = AetowerDesign.Spacing.xxs
+    static let columnSpacing: CGFloat = AetowerDesign.Spacing.xs + AetowerDesign.Spacing.xxs
+    static let selectionWidth: CGFloat = 18
+    static let iconWidth: CGFloat = 16
+    static let statusWidth: CGFloat = 92
+    static let gitWidth: CGFloat = 116
+    static let inventoryWidth: CGFloat = 122
+    static let attentionWidth: CGFloat = 220
+    static let actionWidth: CGFloat = 166
+}
+
 /// Precomputed, value-only display data for one cockpit row. The parent builds
 /// this from its existing helpers so the row view stays a pure function of its
 /// inputs — no reach-back into AppState.
@@ -105,6 +118,7 @@ private struct RepositoryRowModel {
     let inventoryDetail: String
     let attentionTitle: String
     let attentionDetail: String
+    let attentionTone: Color
     let aiUsageLabel: String?
     let aiUsageHelp: String
     let projectTone: Color?
@@ -127,37 +141,44 @@ private struct RepositoryRow: View {
     let onCopyBrief: () -> Void
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            wideRow
-            compactRow
+        AetowerOperationalListRow(
+            tone: rowTone,
+            isSelected: model.isSelected,
+            minHeight: RepositoryRowLayout.height
+        ) {
+            ViewThatFits(in: .horizontal) {
+                wideRow
+                compactRow
+            }
         }
-        .padding(.horizontal, AetowerDesign.Spacing.md)
-        .padding(.vertical, AetowerDesign.Spacing.sm)
-        .background(model.inventoryNeedsAttention ? AetowerDesign.Status.warning.opacity(0.05) : Color.clear)
         .contextMenu {
             Button("Reveal in Finder", action: onReveal)
             Button("Copy path", action: onCopyPath)
             Button("Copy optimization brief", action: onCopyBrief)
         }
+        .help(model.attentionDetail)
     }
 
     private var wideRow: some View {
-        HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+        HStack(alignment: .center, spacing: RepositoryRowLayout.columnSpacing) {
             selectionToggle
-                .frame(width: 22)
+                .frame(width: RepositoryRowLayout.selectionWidth)
+            Image(systemName: "folder.badge.gearshape")
+                .font(AetowerDesign.Typography.compactData(size: 11, weight: .medium))
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .frame(width: RepositoryRowLayout.iconWidth)
             nameCell
-                .frame(width: 260, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             AetowerBadge(model.statusLabel, tone: model.statusTone)
-                .frame(width: 92, alignment: .leading)
-            cellText(model.gitOverview, detail: model.gitDetail)
-                .frame(width: 120, alignment: .leading)
+                .frame(width: RepositoryRowLayout.statusWidth, alignment: .leading)
+            metricText(model.gitOverview)
+                .frame(width: RepositoryRowLayout.gitWidth, alignment: .center)
             inventoryCell
-                .frame(width: 118, alignment: .leading)
+                .frame(width: RepositoryRowLayout.inventoryWidth, alignment: .center)
             attentionCell
-                .frame(width: 220, alignment: .leading)
-            Spacer(minLength: AetowerDesign.Spacing.sm)
+                .frame(width: RepositoryRowLayout.attentionWidth, alignment: .leading)
             primaryButton
-                .frame(width: 180, alignment: .trailing)
+                .frame(width: RepositoryRowLayout.actionWidth, alignment: .trailing)
         }
     }
 
@@ -189,67 +210,51 @@ private struct RepositoryRow: View {
     }
 
     private var nameCell: some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+        HStack(spacing: AetowerDesign.Spacing.xs) {
             NavigationLink(value: model.id) {
-                Text(model.name)
-                    .font(AetowerDesign.Typography.controlLabel)
-                    .foregroundStyle(AetowerDesign.Ink.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    Text(model.name)
+                        .font(AetowerDesign.Typography.caption.weight(.medium))
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(model.shortPath)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
             .buttonStyle(.plain)
-            HStack(spacing: AetowerDesign.Spacing.xs) {
-                Text(model.shortPath)
-                    .font(AetowerDesign.Typography.metadata)
-                    .foregroundStyle(AetowerDesign.Ink.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if let projectTone = model.projectTone {
-                    Text("Project")
-                        .font(AetowerDesign.Typography.metadataStrong)
-                        .foregroundStyle(projectTone)
-                        .padding(.horizontal, AetowerDesign.Spacing.xs)
-                        .padding(.vertical, 1)
-                        .background(projectTone.opacity(0.08), in: Capsule())
-                        .help(model.projectName ?? "")
-                }
-                if let aiUsageLabel = model.aiUsageLabel {
-                    Text(aiUsageLabel)
-                        .font(AetowerDesign.Typography.metadataStrong)
-                        .foregroundStyle(AetowerDesign.Tone.energy)
-                        .padding(.horizontal, AetowerDesign.Spacing.xs)
-                        .padding(.vertical, 1)
-                        .background(AetowerDesign.Tone.energy.opacity(0.08), in: Capsule())
-                        .help(model.aiUsageHelp)
-                }
+
+            if let projectTone = model.projectTone {
+                miniSignal("Project", tone: projectTone)
+                    .help(model.projectName ?? "")
+            }
+            if let aiUsageLabel = model.aiUsageLabel {
+                miniSignal(aiUsageLabel, tone: AetowerDesign.Tone.energy)
+                    .help(model.aiUsageHelp)
             }
         }
     }
 
     private var inventoryCell: some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-            AetowerBadge(model.inventoryLabel, tone: model.inventoryTone)
-            Text(model.inventoryDetail)
-                .font(AetowerDesign.Typography.metadata)
-                .foregroundStyle(AetowerDesign.Ink.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
+        compactSignal(
+            model.inventoryLabel,
+            systemImage: model.inventoryNeedsAttention ? "exclamationmark.triangle.fill" : "checkmark.circle",
+            tone: model.inventoryTone
+        )
+        .help(model.inventoryDetail)
     }
 
     private var attentionCell: some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-            Text(model.attentionTitle)
-                .font(AetowerDesign.Typography.caption.weight(.semibold))
-                .foregroundStyle(AetowerDesign.Ink.primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Text(model.attentionDetail)
-                .font(AetowerDesign.Typography.metadata)
-                .foregroundStyle(AetowerDesign.Ink.secondary)
-                .lineLimit(2)
-                .truncationMode(.tail)
-        }
+        AetowerBadge(
+            model.attentionTitle,
+            systemImage: model.inventoryNeedsAttention ? "exclamationmark.triangle.fill" : "target",
+            tone: model.attentionTone,
+            style: .outline
+        )
+        .help(model.attentionDetail)
     }
 
     private var primaryButton: some View {
@@ -261,6 +266,27 @@ private struct RepositoryRow: View {
         .controlSize(.small)
         .tint(model.primaryAction.tone)
         .help(model.primaryAction.detail)
+    }
+
+    private var rowTone: Color {
+        if model.inventoryNeedsAttention { return model.attentionTone }
+        return model.statusTone
+    }
+
+    private func compactSignal(_ label: String, systemImage: String, tone: Color) -> some View {
+        AetowerBadge(label, systemImage: systemImage, tone: tone, style: .outline)
+    }
+
+    private func miniSignal(_ label: String, tone: Color) -> some View {
+        AetowerBadge(label, tone: tone, style: .soft)
+    }
+
+    private func metricText(_ value: String) -> some View {
+        Text(value)
+            .font(AetowerDesign.Typography.compactData(size: 11))
+            .foregroundStyle(AetowerDesign.Ink.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
     }
 
     private func cellText(_ value: String, detail: String) -> some View {
@@ -1135,11 +1161,10 @@ public struct RepositoryView: View {
     }
 
     private func repositoryCockpitList(_ repositories: [RepositorySummary]) -> some View {
-        AetowerSurface(level: .card, padding: AetowerDesign.Spacing.none) {
-            LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.none) {
+        AetowerSurface(level: .card, padding: AetowerDesign.Spacing.sm) {
+            LazyVStack(alignment: .leading, spacing: RepositoryRowLayout.rowSpacing) {
                 repositoryListHeader(visible: repositories)
                 ForEach(repositories) { repository in
-                    Divider()
                     repositoryListRow(repository)
                 }
             }
@@ -1147,19 +1172,23 @@ public struct RepositoryView: View {
     }
 
     private func repositoryListHeader(visible: [RepositorySummary]) -> some View {
-        HStack(spacing: AetowerDesign.Spacing.md) {
+        HStack(spacing: RepositoryRowLayout.columnSpacing) {
             repositorySelectAllToggle(visible: visible)
-                .frame(width: 22)
-            tableHeader("Repository", width: 260)
-            tableHeader("Status", width: 92)
-            tableHeader("Git", width: 120)
-            tableHeader("Inventory", width: 118)
-            tableHeader("Attention", width: 220)
-            Spacer(minLength: AetowerDesign.Spacing.sm)
-            tableHeader("Next action", width: 180, alignment: .trailing)
+                .frame(width: RepositoryRowLayout.selectionWidth)
+            Text("")
+                .frame(width: RepositoryRowLayout.iconWidth)
+            tableHeader("Repository")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            tableHeader("Status", width: RepositoryRowLayout.statusWidth)
+            tableHeader("Git", width: RepositoryRowLayout.gitWidth, alignment: .center)
+            tableHeader("Inventory", width: RepositoryRowLayout.inventoryWidth, alignment: .center)
+            tableHeader("Attention", width: RepositoryRowLayout.attentionWidth)
+            tableHeader("Next action", width: RepositoryRowLayout.actionWidth, alignment: .trailing)
         }
-        .padding(.horizontal, AetowerDesign.Spacing.md)
-        .padding(.vertical, AetowerDesign.Spacing.sm)
+        .font(AetowerDesign.Typography.metadataStrong)
+        .foregroundStyle(AetowerDesign.Ink.tertiary)
+        .padding(.horizontal, AetowerDesign.Spacing.sm)
+        .padding(.vertical, AetowerDesign.Spacing.xxs)
     }
 
     private func repositorySelectAllToggle(visible visibleRepos: [RepositorySummary]) -> some View {
@@ -1254,15 +1283,19 @@ public struct RepositoryView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    @ViewBuilder
     private func tableHeader(
         _ label: String,
-        width: CGFloat,
+        width: CGFloat? = nil,
         alignment: Alignment = .leading
     ) -> some View {
-        Text(label.uppercased())
-            .font(AetowerDesign.Typography.metadata)
-            .foregroundStyle(AetowerDesign.Ink.tertiary)
-            .frame(width: width, alignment: alignment)
+        let text = Text(label.uppercased())
+            .lineLimit(1)
+        if let width {
+            text.frame(width: width, alignment: alignment)
+        } else {
+            text
+        }
     }
 
     private func repositoryListRow(_ repository: RepositorySummary) -> some View {
@@ -1282,6 +1315,7 @@ public struct RepositoryView: View {
             inventoryDetail: inventoryFreshnessDetail(repository),
             attentionTitle: attention?.title ?? "Ready",
             attentionDetail: attention?.detail ?? "No immediate action required.",
+            attentionTone: attention?.tone ?? AetowerDesign.Status.ready,
             aiUsageLabel: repository.aiRunCount > 0 ? repositoryAiUsageLabel(repository) : nil,
             aiUsageHelp: repositoryAiUsageHelp(repository),
             projectTone: project.map { repositoryProjectTone($0) },
