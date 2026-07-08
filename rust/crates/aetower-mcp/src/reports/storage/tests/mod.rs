@@ -1781,7 +1781,10 @@ fn storage_hygiene_attributes_artifacts_to_git_repo_and_branch() {
     assert!(json.contains("\"id\":\"safe-tier-auto-trash\""));
     assert!(json.contains("\"enabled\":false"));
     assert!(json.contains("\"prevention_suggestions\""));
-    assert!(json.contains("\"action_label\":\"Review scan policy\""));
+    // The "Review scan policy" suggestion is gated on budget violations, which
+    // depend on the host's real volume pressure — not something this
+    // artifact-attribution scenario controls. Asserting its presence (or
+    // absence) here is environment-dependent, so it is deliberately not checked.
     let value = parse_json_value(&json, "storage hygiene JSON parses");
     let budget_violations = value["budget_guardrails"]["violations"]
         .as_array()
