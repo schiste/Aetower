@@ -36,6 +36,28 @@ enum StorageReclaimActionDecision: Equatable {
     }
 }
 
+enum StorageDataCardActionKind: Equatable {
+    case review
+    case clean
+    case scan
+
+    var title: String {
+        switch self {
+        case .review: return "Review"
+        case .clean: return "Clean"
+        case .scan: return "Start scan"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .review: return "magnifyingglass"
+        case .clean: return "sparkles"
+        case .scan: return "arrow.triangle.2.circlepath"
+        }
+    }
+}
+
 enum StorageReclaimPolicy {
     static func primaryActionDecision(
         hasStageableContent: Bool,
