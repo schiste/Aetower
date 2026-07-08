@@ -6,7 +6,7 @@
     <title>Aetower · run your Mac like an operator</title>
     <meta
       name="description"
-      content="Aetower is the operator console for Macs that run AI agents. See friction, energy, money, disk, and repo impact from day one — and grow into budgets, incident playback, MCP, and fleet views. Local-first: nothing leaves your Mac."
+      content="Aetower is the operator console for Macs that run AI agents. See friction, energy, money, disk, and repo impact from day one — and grow into incident playback, storage reclaim, MCP, and fleet views. Local-first: nothing leaves your Mac."
     />
     <meta name="color-scheme" content="light dark" />
     <style>
@@ -1119,8 +1119,8 @@
           <h1>Your Mac runs agents now.<br /><span class="brand-text">Run it like an operator.</span></h1>
           <p class="lead">
             Aetower is the operator console for the machine your agents run on. See friction,
-            energy, money, disk, and repo impact from day one — grow into budgets, incident
-            playback, fleet views, and agents that inspect their own runtime over MCP.
+            energy, money, disk, and repo impact from day one — grow into incident playback,
+            storage reclaim, fleet views, and agents that inspect their own runtime over MCP.
             <strong>Nothing leaves your machine</strong> unless you export it.
           </p>
 
@@ -1262,17 +1262,17 @@
           <div class="stop">
             <div class="stop-copy">
               <span class="kicker brand-text">03 · Steady state</span>
-              <h3>Set budgets, act with guardrails</h3>
+              <h3>Reclaim what agent work leaves behind</h3>
               <p>
-                Once you can see the spend, you'll want limits on it. Per-agent budgets alert when
-                a session runs hot; storage intelligence explains growth and stages safety-tiered
-                cleanup of agent artifacts through the Trash; process actions preview before they
-                touch anything.
+                Agent-heavy work fills disks: build artifacts, caches, model weights, spare
+                clones. Storage keeps a persistent index that explains what grew and what wrote
+                it, then stages safety-tiered cleanup through the Trash — verified, APFS-aware
+                estimates and per-path outcomes, never a blind delete.
               </p>
               <ul>
-                <li>Budgets and alerts per agent, with category toggles and snooze.</li>
-                <li>Growth attribution and APFS-aware reclaim — <span class="mono">node_modules</span>, <span class="mono">target/</span>, DerivedData first, never blind.</li>
-                <li>Guarded actions with previews and follow-up verification; persistence and code-signing audits.</li>
+                <li>A treemap and full-index explorer to find what's actually big.</li>
+                <li>Growth attribution with filesystem evidence: which roots grew, and why.</li>
+                <li>Rebuildable artifacts first — <span class="mono">node_modules</span>, <span class="mono">target/</span>, DerivedData — staged, not deleted.</li>
               </ul>
             </div>
             <!-- Swap for /assets/aetower-storage.png when captured. -->
@@ -1280,8 +1280,8 @@
               <div class="mock-bar"><i></i><i></i><i></i><span class="mono">Activity · Storage</span></div>
               <div class="mock-body">
                 <div class="chips">
-                  <span class="chip ok">Claude Code · $2/day budget · ok</span>
-                  <span class="chip hot">Ollama · 5 W cap · alerted</span>
+                  <span class="chip ok">58.7 GB reclaimable · 40 items</span>
+                  <span class="chip">largest: agent session logs · 12.2 GB</span>
                 </div>
                 <div class="treemap">
                   <div class="cell" style="background: color-mix(in srgb, var(--purple) 82%, #000)">
@@ -1303,7 +1303,7 @@
                     Cold data <small>90 d+</small>
                   </div>
                 </div>
-                <span class="reclaim-pill">↺ 27.8 GB reclaimable · staged via Trash</span>
+                <span class="reclaim-pill">↺ Stage 40 items via Trash · verified estimate</span>
               </div>
             </div>
           </div>
@@ -1501,7 +1501,7 @@ Claude Code · repo x          14     0   340 MB</pre>
           <div>
             <span class="tick" style="background: #14b8a6"></span>
             <h4>Agent impact</h4>
-            <p>Timelines, budgets &amp; MCP.</p>
+            <p>Timelines, sessions &amp; MCP.</p>
           </div>
           <div>
             <span class="tick" style="background: #8b5cf6"></span>
