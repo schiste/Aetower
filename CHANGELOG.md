@@ -2,6 +2,15 @@
 
 All notable public changes to Aetower should be documented here.
 
+## Unreleased
+
+Cost model:
+
+- Added unified resource-cost rollups for repositories, sessions, entities,
+  and machine-level activity, with shared estimates for energy, battery,
+  dollars, carbon, disk growth, thermal contribution, source, and
+  confidence.
+
 ## 0.8 (build 800) - 2026-07-08
 
 Accessibility & automation:
