@@ -115,6 +115,29 @@ final class RepositorySummaryModelTests: XCTestCase {
         XCTAssertTrue(changed.inventoryNeedsAttention)
     }
 
+    func testOptimizationLayerRoutesFingerprintChangesToRefreshInventory() {
+        let changed = summary(
+            inventoryCacheStatus: "changed",
+            inventoryFingerprintChanged: true
+        )
+
+        XCTAssertEqual(changed.primaryOptimizationActionKind, .refreshInventory)
+        XCTAssertEqual(changed.optimizationSignals.first?.kind, .inventoryFreshness)
+        XCTAssertTrue(changed.requiresAttention)
+    }
+
+    func testStaleRepositoryRemainsVisibleAndRefreshable() {
+        let stale = summary(
+            inventoryCacheStatus: "missing",
+            notSeenInLatestScan: true
+        )
+
+        XCTAssertEqual(stale.statusLabel, "Missing")
+        XCTAssertEqual(stale.primaryOptimizationActionKind, .refreshInventory)
+        XCTAssertTrue(stale.inventoryNeedsAttention)
+        XCTAssertTrue(stale.requiresAttention)
+    }
+
     func testArtifactScoreCapsAtEighteen() {
         let huge = summary(artifactBytes: 100 * 1024 * 1024 * 1024)
         XCTAssertEqual(huge.attentionScore, 18.0, accuracy: 0.001)
@@ -410,5 +433,44 @@ final class RepositorySummaryModelTests: XCTestCase {
         fetch(generation: 2, sequence: 2)
         XCTAssertEqual(staticBuilds, 2)
         XCTAssertEqual(liveBuilds, 3)
+    }
+
+    // MARK: repository refresh state
+
+    func testRepositoryInventoryRefreshStateDrivesBackgroundScanToast() {
+        let state = RepositoryInventoryRefreshState(
+            phase: .scanningForNewRepositories,
+            checkedRepositoryCount: 12,
+            changedRepositoryCount: 2,
+            missingRepositoryCount: 0,
+            sampleRoots: ["/tmp/NewRepo", "/tmp/OtherRepo"]
+        )
+
+        XCTAssertEqual(state.title, "Scanning for new repos")
+        XCTAssertTrue(state.detail.contains("Cached repositories are visible"))
+        XCTAssertTrue(state.detail.contains("2 new repository candidates"))
+        XCTAssertTrue(state.detail.contains("/tmp/NewRepo"))
+        XCTAssertEqual(
+            state.accessibilityIdentifier,
+            "repository.inventory.refresh.scanningForNewRepositories"
+        )
+    }
+
+    func testRepositoryInventoryRefreshStateSummarizesFingerprintAudit() {
+        let state = RepositoryInventoryRefreshState(
+            phase: .refreshingChangedRepositories,
+            checkedRepositoryCount: 8,
+            changedRepositoryCount: 1,
+            missingRepositoryCount: 1,
+            sampleRoots: ["/tmp/ChangedRepo"]
+        )
+
+        XCTAssertEqual(state.title, "Refreshing changed repos")
+        XCTAssertTrue(state.detail.contains("2 repository fingerprints changed"))
+        XCTAssertTrue(state.detail.contains("/tmp/ChangedRepo"))
+        XCTAssertEqual(
+            state.accessibilityIdentifier,
+            "repository.inventory.refresh.refreshingChangedRepositories"
+        )
     }
 }

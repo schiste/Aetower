@@ -93,8 +93,16 @@ struct RepositoryInventoryRefreshState: Equatable, Sendable {
             let sample = sampleRoots.map(Self.shortPath).joined(separator: ", ")
             return "\(changed) repository fingerprint\(changed == 1 ? "" : "s") changed\(sample.isEmpty ? "." : ": \(sample).")"
         case .scanningForNewRepositories:
+            if changedRepositoryCount > 0 {
+                let sample = sampleRoots.map(Self.shortPath).joined(separator: ", ")
+                return "Cached repositories are visible; scanning \(changedRepositoryCount) new repository candidate\(changedRepositoryCount == 1 ? "" : "s")\(sample.isEmpty ? "." : ": \(sample).")"
+            }
             return "Cached repositories are visible; a background root walk is looking for newly added clones."
         }
+    }
+
+    var accessibilityIdentifier: String {
+        "repository.inventory.refresh.\(phase.rawValue)"
     }
 
     private static func shortPath(_ path: String) -> String {

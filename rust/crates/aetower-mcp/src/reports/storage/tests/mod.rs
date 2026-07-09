@@ -2995,7 +2995,7 @@ fn repository_inventory_json_returns_inventory_without_artifact_payload() {
 }
 
 #[test]
-fn repository_inventory_cache_marks_repos_not_seen_in_latest_scan() {
+fn repository_inventory_cache_marks_stale_repos_without_hiding_them() {
     let root = test_root("repository-inventory-cache-stale");
     let repo = root.join("CachedRepo");
     create_git_repo(&repo, "main");
@@ -3036,6 +3036,10 @@ fn repository_inventory_cache_marks_repos_not_seen_in_latest_scan() {
         .unwrap_or_else(|| panic!("stale repository inventory is an array"));
 
     assert_eq!(second_inventory.len(), 1);
+    assert_eq!(
+        second_inventory[0]["id"].as_str().map(str::to_owned),
+        Some(repo.display().to_string())
+    );
     assert_eq!(second_inventory[0]["repo_name"], "CachedRepo");
     assert_eq!(
         second_inventory[0]["not_seen_in_latest_scan"].as_bool(),
@@ -3059,7 +3063,7 @@ fn repository_inventory_cache_marks_repos_not_seen_in_latest_scan() {
 }
 
 #[test]
-fn storage_hygiene_indexed_snapshot_returns_cached_repository_inventory_without_artifacts() {
+fn repos_tab_cached_repository_inventory_is_visible_from_instant_snapshot() {
     let _index_guard = storage_index_test_guard();
     let root = test_root("indexed-cache-inventory-only");
     let repo = root.join("CachedOnlyRepo");
@@ -3112,7 +3116,40 @@ fn storage_hygiene_indexed_snapshot_returns_cached_repository_inventory_without_
 }
 
 #[test]
-fn repository_inventory_cache_detects_git_metadata_changes() {
+fn repository_inventory_fingerprint_detects_git_head_index_and_config_changes() {
+    let root = test_root("repository-inventory-fingerprint-parts");
+    let repo = root.join("FingerprintPartsRepo");
+    create_git_repo(&repo, "main");
+    write_git_origin_config(&repo, "git@github.com:example/fingerprint.git");
+    if let Err(error) = fs::write(repo.join(".git").join("index"), "index-v1") {
+        panic!("write initial git index: {error}");
+    }
+
+    let initial = repository_inventory_fingerprint(&repo);
+    write_git_origin_config(&repo, "git@github.com:example/fingerprint-renamed.git");
+    let config_changed = repository_inventory_fingerprint(&repo);
+    assert_ne!(initial, config_changed);
+
+    if let Err(error) = fs::write(repo.join(".git").join("index"), "index-v2") {
+        panic!("write changed git index: {error}");
+    }
+    let index_changed = repository_inventory_fingerprint(&repo);
+    assert_ne!(config_changed, index_changed);
+
+    if let Err(error) = fs::write(
+        repo.join(".git").join("refs").join("heads").join("main"),
+        "fedcba0987654321fedcba0987654321fedcba09\n",
+    ) {
+        panic!("write changed git ref: {error}");
+    }
+    let git_changed = repository_inventory_fingerprint(&repo);
+    assert_ne!(index_changed, git_changed);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn repository_inventory_cache_flags_fingerprint_changes_in_instant_snapshot() {
     let _index_guard = storage_index_test_guard();
     let root = test_root("repository-inventory-cache-fingerprint");
     let repo = root.join("FingerprintRepo");

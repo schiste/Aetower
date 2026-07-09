@@ -48,6 +48,12 @@ Homebrew tap:
 - Updated docs and website copy to distinguish the downloadable cask artifact
   from the brew-installable tap distribution.
 
+Repository operations:
+
+- Added explicit Repos operator-truth coverage for immediate cached inventory,
+  Git/index/config fingerprint changes, stale-but-visible repositories, and the
+  background new-repo scan toast/state.
+
 Storage:
 
 - Added explicit APFS-aware storage coverage for sparse files, hardlinks,

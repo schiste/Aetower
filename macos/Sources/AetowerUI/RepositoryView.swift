@@ -1266,6 +1266,7 @@ public struct RepositoryView: View {
                 }
             }
         }
+        .accessibilityIdentifier(refreshState.accessibilityIdentifier)
     }
 
     private func repositoryFloatingSurface<Content: View>(
