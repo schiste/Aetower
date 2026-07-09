@@ -250,7 +250,7 @@ public struct SettingsView: View {
         case .automation:
             return "\(section.title) shortcuts rules budget actions \(status.label)"
         case .privacy:
-            return "\(section.title) export redaction local data privacy \(status.label)"
+            return "\(section.title) outbound data local first export redaction telemetry fleet virustotal provider tokens mcp privacy \(status.label)"
         case .updates:
             return "\(section.title) Sparkle release update download \(status.label)"
         case .advanced:
@@ -383,6 +383,149 @@ public struct SettingsView: View {
         let names = oneClickMcpClientStatuses.map(\.displayName)
         guard !names.isEmpty else { return "No supported Claude or Codex client detected yet." }
         return "Detected: \(names.joined(separator: ", "))"
+    }
+
+    private var virusTotalKeyConfigured: Bool {
+        KeychainHelper.exists(account: KeychainHelper.binaryReputationAccount)
+    }
+
+    private var providerCredentialSnapshots: [ProviderCredentialSnapshot] {
+        let store = ProviderCredentialStore()
+        return ProjectProvider.allCases.map { provider in
+            let source = store.credentialSource(for: provider)
+            return ProviderCredentialSnapshot(
+                provider: provider,
+                source: source,
+                canAuthenticate: source != .none
+                    && (
+                        store.resolvedAccessToken(for: provider) != nil
+                            || store.credentialNeedsRefresh(for: provider)
+                    )
+            )
+        }
+    }
+
+    private var configuredProviderCredentials: [ProviderCredentialSnapshot] {
+        providerCredentialSnapshots.filter { $0.source != .none }
+    }
+
+    private var activeProviderCredentials: [ProviderCredentialSnapshot] {
+        configuredProviderCredentials.filter(\.canAuthenticate)
+    }
+
+    private var registeredMcpClientNames: [String] {
+        state.localMcpClientStatuses.compactMap { status in
+            status.state == .registered ? status.displayName : nil
+        }
+    }
+
+    private var outboundDataSnapshot: OutboundDataSnapshot {
+        let rows = outboundDataRows
+        return OutboundDataSnapshot(
+            rows: rows,
+            outboundRows: rows.filter(\.canLeaveMac),
+            registeredMcpClientNames: registeredMcpClientNames
+        )
+    }
+
+    private var outboundDataRows: [OutboundDataRow] {
+        let telemetryEndpoint = SettingsStore.normalizedTelemetryEndpoint(settings.telemetryEndpoint)
+        let telemetryInterval = SettingsStore.normalizedTelemetryExportIntervalSeconds(
+            settings.telemetryExportIntervalSeconds
+        )
+        let configuredProviders = configuredProviderCredentials
+        let activeProviders = activeProviderCredentials
+        let providerDetail: String
+        if configuredProviders.isEmpty {
+            providerDetail = "No GitHub or Cloudflare token is configured. Provider refreshes and provider actions cannot authenticate."
+        } else if activeProviders.isEmpty {
+            providerDetail = "\(configuredProviders.map(providerCredentialSummary).joined(separator: ", ")) configured, but no usable provider credential is currently available. Provider refreshes and actions will prompt for reconnection before contacting remote APIs."
+        } else if activeProviders.count == configuredProviders.count {
+            providerDetail = "\(configuredProviders.map(providerCredentialSummary).joined(separator: ", ")) configured. Aetower contacts provider APIs only for linked project/deployment refreshes and explicit provider actions."
+        } else {
+            providerDetail = "\(configuredProviders.map(providerCredentialSummary).joined(separator: ", ")) configured; ready: \(activeProviders.map(providerCredentialSummary).joined(separator: ", ")). Aetower contacts provider APIs only when a usable credential exists."
+        }
+        let mcpNames = registeredMcpClientNames
+        let mcpDetail = mcpNames.isEmpty
+            ? "No supported local AI client is registered. Aetower still runs its local MCP server for explicit local use."
+            : "\(mcpNames.joined(separator: ", ")) can launch Aetower's local MCP proxy. Data stays on this Mac unless that local client forwards it elsewhere; operator actions are \(settings.localMcpOperatorActionsEnabled ? "enabled with approval gates" : "not exposed")."
+
+        return [
+            OutboundDataRow(
+                id: "telemetry",
+                title: "Telemetry",
+                badge: settings.telemetryEnabled ? "On" : "Off",
+                badgeColor: settings.telemetryEnabled ? AetowerDesign.Status.warning : AetowerDesign.Status.success,
+                detail: settings.telemetryEnabled
+                    ? "Exports host and entity metrics to \(telemetryEndpoint) every \(telemetryInterval) seconds."
+                    : "No observability metrics are exported.",
+                systemImage: "arrow.up.forward.circle",
+                tone: .network,
+                canLeaveMac: settings.telemetryEnabled
+            ),
+            OutboundDataRow(
+                id: "fleet",
+                title: "Fleet",
+                badge: settings.fleetEnabled ? "On" : "Off",
+                badgeColor: settings.fleetEnabled ? AetowerDesign.Status.warning : AetowerDesign.Status.success,
+                detail: settings.fleetEnabled
+                    ? "Advertises this Mac on the trusted local network and can serve current snapshots to nearby Aetower peers with Fleet enabled."
+                    : "This Mac is not advertising Fleet snapshots on the local network.",
+                systemImage: "network",
+                tone: .network,
+                canLeaveMac: settings.fleetEnabled
+            ),
+            OutboundDataRow(
+                id: "virustotal",
+                title: "VirusTotal",
+                badge: virusTotalBadge,
+                badgeColor: virusTotalBadgeColor,
+                detail: virusTotalDetail,
+                systemImage: "checkmark.shield",
+                tone: .warning,
+                canLeaveMac: settings.binaryReputationEnabled && virusTotalKeyConfigured
+            ),
+            OutboundDataRow(
+                id: "provider-tokens",
+                title: "Provider tokens",
+                badge: configuredProviders.isEmpty ? "None" : "\(configuredProviders.count) configured",
+                badgeColor: configuredProviders.isEmpty ? AetowerDesign.Status.success : AetowerDesign.Status.ready,
+                detail: providerDetail,
+                systemImage: "key",
+                tone: .ready,
+                canLeaveMac: !activeProviders.isEmpty
+            ),
+            OutboundDataRow(
+                id: "mcp-clients",
+                title: "MCP registered clients",
+                badge: mcpNames.isEmpty ? "None" : "\(mcpNames.count) registered",
+                badgeColor: mcpNames.isEmpty ? AetowerDesign.Status.success : AetowerDesign.Status.ready,
+                detail: mcpDetail,
+                systemImage: "cpu",
+                tone: .cpu,
+                canLeaveMac: false
+            ),
+        ]
+    }
+
+    private var virusTotalBadge: String {
+        guard settings.binaryReputationEnabled else { return "Off" }
+        return virusTotalKeyConfigured ? "On" : "Needs key"
+    }
+
+    private var virusTotalBadgeColor: Color {
+        guard settings.binaryReputationEnabled else { return AetowerDesign.Status.success }
+        return virusTotalKeyConfigured ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
+    }
+
+    private var virusTotalDetail: String {
+        guard settings.binaryReputationEnabled else {
+            return "No binary hashes are sent to VirusTotal."
+        }
+        guard virusTotalKeyConfigured else {
+            return "The lookup consent is enabled, but no API key is saved. Aetower cannot perform VirusTotal lookups until a key is added."
+        }
+        return "For unsigned or ad-hoc binaries with network activity, Aetower sends only the executable SHA-256 hash to VirusTotal; it never uploads the file, path, or host context."
     }
 
     private func isCapabilityReady(_ kind: CapabilityKind) -> Bool {
@@ -1509,20 +1652,87 @@ public struct SettingsView: View {
     @ViewBuilder
     private var privacySection: some View {
         @Bindable var settings = settings
-        SettingsCard(
-            title: "Export privacy",
-            subtitle: "Controls what leaves the machine in JSON exports and support bundles.",
-            status: status(for: .privacy)
-        ) {
-            Picker("Export privacy tier", selection: $settings.exportPrivacyTier) {
-                Text("Redacted").tag(ExportPrivacyTier.redacted)
-                Text("Operator").tag(ExportPrivacyTier.operatorMode)
-                Text("Full").tag(ExportPrivacyTier.full)
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            outboundDataSection
+
+            SettingsCard(
+                title: "Export privacy",
+                subtitle: "Controls what leaves the machine in JSON exports and support bundles.",
+                status: status(for: .privacy)
+            ) {
+                Picker("Export privacy tier", selection: $settings.exportPrivacyTier) {
+                    Text("Redacted").tag(ExportPrivacyTier.redacted)
+                    Text("Operator").tag(ExportPrivacyTier.operatorMode)
+                    Text("Full").tag(ExportPrivacyTier.full)
+                }
+                .pickerStyle(.segmented)
+                Text("Redacted strips sensitive titles, paths, URLs, and commands. Operator keeps structural context while still hiding secrets. Full exports everything and is intended only for explicit troubleshooting.")
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
             }
-            .pickerStyle(.segmented)
-            Text("Redacted strips sensitive titles, paths, URLs, and commands. Operator keeps structural context while still hiding secrets. Full exports everything and is intended only for explicit troubleshooting.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var outboundDataSection: some View {
+        let snapshot = outboundDataSnapshot
+        return SettingsCard(
+            title: "Outbound Data",
+            subtitle: "Applied settings that determine when Aetower can send data outside the app.",
+            status: snapshot.status
+        ) {
+            SettingsNotice(
+                title: snapshot.noticeTitle,
+                detail: snapshot.noticeDetail,
+                color: snapshot.noticeColor
+            )
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.none) {
+                ForEach(snapshot.rows) { row in
+                    SettingsRowCard {
+                        HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                            outboundDataIcon(row)
+                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                                HStack(spacing: AetowerDesign.Spacing.sm) {
+                                    Text(row.title)
+                                        .font(AetowerDesign.Typography.sectionTitle)
+                                        .foregroundStyle(AetowerDesign.Ink.primary)
+                                    SettingsBadge(row.badge, color: row.badgeColor)
+                                }
+                                Text(row.detail)
+                                    .font(AetowerDesign.Typography.caption)
+                                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text("Manual exports and support bundles still use the Export privacy tier below. Provider and VirusTotal secrets are stored in the macOS Keychain, not in UserDefaults.")
+                .font(AetowerDesign.Typography.caption)
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
+        }
+    }
+
+    @ViewBuilder
+    private func outboundDataIcon(_ row: OutboundDataRow) -> some View {
+        switch row.tone {
+        case .network:
+            Image(systemName: row.systemImage)
+                .foregroundStyle(AetowerDesign.Tone.network)
+                .frame(width: 24)
+        case .warning:
+            Image(systemName: row.systemImage)
+                .foregroundStyle(AetowerDesign.Status.warning)
+                .frame(width: 24)
+        case .ready:
+            Image(systemName: row.systemImage)
+                .foregroundStyle(AetowerDesign.Status.ready)
+                .frame(width: 24)
+        case .cpu:
+            Image(systemName: row.systemImage)
+                .foregroundStyle(AetowerDesign.Tone.cpu)
+                .frame(width: 24)
         }
     }
 
@@ -1770,6 +1980,30 @@ public struct SettingsView: View {
     }
 }
 
+private func providerCredentialSummary(_ credential: ProviderCredentialSnapshot) -> String {
+    "\(projectProviderDisplayName(credential.provider)) \(providerCredentialSourceLabel(credential.source))"
+}
+
+private func projectProviderDisplayName(_ provider: ProjectProvider) -> String {
+    switch provider {
+    case .github:
+        return "GitHub"
+    case .cloudflare:
+        return "Cloudflare"
+    }
+}
+
+private func providerCredentialSourceLabel(_ source: ProviderCredentialSource) -> String {
+    switch source {
+    case .none:
+        return "not configured"
+    case .manualToken:
+        return "manual token"
+    case .oauth:
+        return "OAuth"
+    }
+}
+
 private func registrationLabel(_ state: LocalMcpClientRegistrationState) -> String {
     switch state {
     case .registered:
@@ -1885,6 +2119,71 @@ private struct SettingsStatus {
         self.label = label
         self.color = color
     }
+}
+
+private struct OutboundDataRow: Identifiable {
+    let id: String
+    let title: String
+    let badge: String
+    let badgeColor: Color
+    let detail: String
+    let systemImage: String
+    let tone: OutboundDataTone
+    let canLeaveMac: Bool
+}
+
+private enum OutboundDataTone {
+    case network
+    case warning
+    case ready
+    case cpu
+}
+
+private struct OutboundDataSnapshot {
+    let rows: [OutboundDataRow]
+    let outboundRows: [OutboundDataRow]
+    let registeredMcpClientNames: [String]
+
+    var status: SettingsStatus {
+        if outboundRows.isEmpty {
+            return registeredMcpClientNames.isEmpty
+                ? SettingsStatus("Local-only", AetowerDesign.Status.success)
+                : SettingsStatus("Local MCP", AetowerDesign.Status.ready)
+        }
+        return SettingsStatus(
+            "\(outboundRows.count) path\(outboundRows.count == 1 ? "" : "s")",
+            AetowerDesign.Status.warning
+        )
+    }
+
+    var noticeTitle: String {
+        if outboundRows.isEmpty {
+            return registeredMcpClientNames.isEmpty
+                ? "No outbound data paths are enabled"
+                : "Only local MCP client access is configured"
+        }
+        return "Outbound data paths are configured"
+    }
+
+    var noticeDetail: String {
+        if outboundRows.isEmpty {
+            if registeredMcpClientNames.isEmpty {
+                return "Telemetry, Fleet, VirusTotal, provider tokens, and MCP client registrations are off or absent. Aetower stays local unless you manually export and share data."
+            }
+            return "No enabled path sends data off this Mac. Registered MCP clients can read Aetower over a local socket on this Mac."
+        }
+        return "Data can leave this Mac through: \(outboundRows.map(\.title).joined(separator: ", ")). Review the rows below for the exact trigger and destination."
+    }
+
+    var noticeColor: Color {
+        outboundRows.isEmpty ? AetowerDesign.Status.success : AetowerDesign.Status.warning
+    }
+}
+
+private struct ProviderCredentialSnapshot {
+    let provider: ProjectProvider
+    let source: ProviderCredentialSource
+    let canAuthenticate: Bool
 }
 
 private struct SettingsIntegrationDraft: Equatable {
