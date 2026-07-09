@@ -935,7 +935,7 @@ private struct SystemWorkspaceView: View {
         case .diagnostics:
             DiagnosticsView(state: state, settings: settings).demandsFullSnapshot(from: state)
         case .fleet:
-            FleetView(state: state)
+            FleetView(state: state, settings: settings)
         }
     }
 

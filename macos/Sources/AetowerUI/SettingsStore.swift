@@ -501,6 +501,9 @@ public final class SettingsStore {
     public var localMcpOperatorActionsEnabled: Bool {
         didSet { persist() }
     }
+    public var fleetEnabled: Bool {
+        didSet { persist() }
+    }
     public private(set) var launchAtLoginEnabled: Bool
     public private(set) var launchAtLoginError: String?
 
@@ -577,6 +580,7 @@ public final class SettingsStore {
         self.localMcpOperatorActionsEnabled = defaults.object(
             forKey: Self.localMcpOperatorActionsEnabledKey
         ) as? Bool ?? false
+        self.fleetEnabled = defaults.object(forKey: Self.fleetEnabledKey) as? Bool ?? false
         self.launchAtLoginEnabled = false
         self.launchAtLoginError = nil
         normalizeLoadedValues()
@@ -667,6 +671,7 @@ public final class SettingsStore {
     private static let exportPrivacyTierKey = "settings.exportPrivacyTier"
     private static let autoRegisterLocalMcpClientsEnabledKey = "settings.autoRegisterLocalMcpClientsEnabled"
     private static let localMcpOperatorActionsEnabledKey = "settings.localMcpOperatorActionsEnabled"
+    private static let fleetEnabledKey = "settings.fleetEnabled"
     private static let includeSensitiveExportsKey = "settings.includeSensitiveExports"
 
     /// Read the persisted export privacy tier directly from UserDefaults.
@@ -904,6 +909,7 @@ extension SettingsStore {
         exportPrivacyTier = .redacted
         autoRegisterLocalMcpClientsEnabled = false
         localMcpOperatorActionsEnabled = false
+        fleetEnabled = false
         if launchAtLoginEnabled {
             setLaunchAtLogin(false)
         } else {
@@ -976,6 +982,7 @@ extension SettingsStore {
         defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
         defaults.set(autoRegisterLocalMcpClientsEnabled, forKey: Self.autoRegisterLocalMcpClientsEnabledKey)
         defaults.set(localMcpOperatorActionsEnabled, forKey: Self.localMcpOperatorActionsEnabledKey)
+        defaults.set(fleetEnabled, forKey: Self.fleetEnabledKey)
         defaults.set(exportPrivacyTier == .full, forKey: Self.includeSensitiveExportsKey)
     }
 
