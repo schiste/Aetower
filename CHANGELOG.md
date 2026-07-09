@@ -10,6 +10,13 @@ Cost model:
   and machine-level activity, with shared estimates for energy, battery,
   dollars, carbon, disk growth, thermal contribution, source, and
   confidence.
+- Repository rollups include estimated energy and carbon only when
+  attribution is strong enough (known repo path, matching Chau7
+  session/workspace, session linked to an entity with accumulated session
+  energy), tagged with the `chau7-repo+estimated-energy` source. The Repos
+  UI carries dollars, tokens, estimated energy, carbon, source, and
+  confidence, and row/detail help text explains the estimates where
+  available.
 
 ## 0.8 (build 800) - 2026-07-08
 
