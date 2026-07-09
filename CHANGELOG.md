@@ -18,6 +18,27 @@ Cost model:
   confidence, and row/detail help text explains the estimates where
   available.
 
+Privacy:
+
+- Added an Outbound Data panel under Settings → Privacy that shows every
+  channel that can leave the machine and its live state: telemetry on/off
+  with endpoint and cadence, Fleet on/off with local-network advertising
+  behavior, VirusTotal on/off/key state with its exact hash-only behavior,
+  provider credentials configured versus actually usable for outbound API
+  calls, and registered MCP clients with the local-socket/client-forwarding
+  caveat.
+
+CLI install consistency:
+
+- Homebrew casks now declare a `binary` artifact for the bundled
+  `Aetower.app/Contents/Helpers/aetower` helper, so `brew install --cask`
+  links `aetower` into Homebrew's `bin` directory automatically.
+- Settings → Setup now tracks CLI readiness, and Settings → AI Clients shows
+  the command-line tool status before MCP registration, with explicit smoke
+  commands for `aetower top`, `aetower storage`, and `aetower repos`.
+- Release matrix verification now fails if the generated Homebrew cask stops
+  linking the CLI or stops documenting the three smoke commands.
+
 ## 0.8 (build 800) - 2026-07-08
 
 Accessibility & automation:
