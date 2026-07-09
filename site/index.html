@@ -1266,7 +1266,7 @@
               </p>
               <ul>
                 <li>Entity grouping: Chrome plus 47 helpers is one row, not fifty.</li>
-                <li>The AI-tax panel: GPU, VRAM, and energy per agent — with a warning before the VRAM swap cliff.</li>
+                <li>The AI-tax panel: inferred GPU share, unified-memory pressure, and kernel-measured energy per agent — each labeled with its source.</li>
                 <li>Recommendations that adapt to battery, thermal state, and memory pressure.</li>
               </ul>
             </div>
@@ -1415,8 +1415,8 @@
 
 <span class="cmt">agent › calling aetower_top_findings…</span>
 <span class="cmt">agent › Ollama (llama3:70b) leads at friction 58 —</span>
-<span class="cmt">        GPU-bound, 8.1 W. VRAM is at 78%, close to</span>
-<span class="cmt">        the swap cliff. Consider a smaller quant.</span></pre>
+<span class="cmt">        GPU-bound (inferred), 8.1 W. Unified memory at</span>
+<span class="cmt">        78%, near the swap cliff. Consider a smaller quant.</span></pre>
             <hr />
             <pre><span class="you">$</span> aetower top
 ENTITY                  FRICTION  CPU%      MEM
@@ -1542,7 +1542,7 @@ Claude Code · repo x          14     0   340 MB</pre>
           </div>
           <div class="compare-row">
             <div class="them"><b>Everything else</b>No concept of AI agents at all.</div>
-            <div class="us"><strong>Aetower</strong> attributes GPU, VRAM, energy, and per-repo spend to each agent — and serves it all to agents over MCP.</div>
+            <div class="us"><strong>Aetower</strong> shows inferred GPU share, unified-memory pressure, kernel-measured energy, and per-repo cost rollups for each agent — and serves it all to agents over MCP.</div>
           </div>
         </div>
       </section>
