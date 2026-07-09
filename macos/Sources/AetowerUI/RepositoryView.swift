@@ -1316,7 +1316,7 @@ public struct RepositoryView: View {
             attentionTitle: attention?.title ?? "Ready",
             attentionDetail: attention?.detail ?? "No immediate action required.",
             attentionTone: attention?.tone ?? AetowerDesign.Status.ready,
-            aiUsageLabel: repository.aiRunCount > 0 ? repositoryAiUsageLabel(repository) : nil,
+            aiUsageLabel: repository.hasRepositoryUsage ? repositoryAiUsageLabel(repository) : nil,
             aiUsageHelp: repositoryAiUsageHelp(repository),
             projectTone: project.map { repositoryProjectTone($0) },
             projectName: project?.name,
@@ -3718,22 +3718,38 @@ public struct RepositoryView: View {
                 )
                 AetowerMetricTile(
                     "AI usage",
-                    value: repository.aiRunCount > 0
+                    value: repository.hasRepositoryUsage
                         ? String(format: "$%.2f", repository.aiCostUsd)
                         : "None",
-                    detail: repository.aiRunCount > 0
-                        ? "\(repository.aiRunCount) runs · \(formatTokenCount(repository.aiTotalTokens)) tokens"
-                            + (repository.aiProviders.isEmpty ? "" : " · \(repository.aiProviders.joined(separator: ", "))")
+                    detail: repository.hasRepositoryUsage
+                        ? repositoryAiUsageDetail(repository)
                         : "no recorded agent runs in this repository",
                     systemImage: "brain",
-                    tone: repository.aiRunCount > 0 ? AetowerDesign.Tone.energy : AetowerDesign.Status.neutral
+                    tone: repository.hasRepositoryUsage ? AetowerDesign.Tone.energy : AetowerDesign.Status.neutral
                 )
             }
         }
     }
 
     private func repositoryAiUsageLabel(_ repository: RepositorySummary) -> String {
-        String(format: "$%.2f · %d run%@", repository.aiCostUsd, repository.aiRunCount, repository.aiRunCount == 1 ? "" : "s")
+        if let energyCarbon = repositoryEnergyCarbonLabel(repository) {
+            return String(format: "$%.2f · %@", repository.aiCostUsd, energyCarbon)
+        }
+        return String(format: "$%.2f · %d run%@", repository.aiCostUsd, repository.aiRunCount, repository.aiRunCount == 1 ? "" : "s")
+    }
+
+    private func repositoryAiUsageDetail(_ repository: RepositorySummary) -> String {
+        var parts = [
+            "\(repository.aiRunCount) runs",
+            "\(formatTokenCount(repository.aiTotalTokens)) tokens",
+        ]
+        if !repository.aiProviders.isEmpty {
+            parts.append(repository.aiProviders.joined(separator: ", "))
+        }
+        if let energyCarbon = repositoryEnergyCarbonLabel(repository) {
+            parts.append("estimated \(energyCarbon)")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func repositoryAiUsageHelp(_ repository: RepositorySummary) -> String {
@@ -3743,10 +3759,31 @@ public struct RepositoryView: View {
             "\(repository.aiRunCount) runs",
             "\(formatTokenCount(repository.aiTotalTokens)) tokens",
         ]
+        if repository.resourceEnergyWattHours > 0 {
+            parts.append("~\(EnergyTranslation.formatEnergy(repository.resourceEnergyWattHours)) estimated energy")
+        }
+        if repository.resourceCarbonGrams > 0 {
+            parts.append("~\(EnergyTranslation.formatCarbon(repository.resourceCarbonGrams)) estimated carbon")
+        }
+        if repository.hasRepositoryResourceEstimate {
+            parts.append("source: \(repository.resourceCostSource)")
+            parts.append(String(format: "confidence: %.0f%%", repository.resourceCostConfidence * 100))
+        }
         if !repository.aiProviders.isEmpty {
             parts.append("providers: \(repository.aiProviders.joined(separator: ", "))")
         }
         return parts.joined(separator: " · ")
+    }
+
+    private func repositoryEnergyCarbonLabel(_ repository: RepositorySummary) -> String? {
+        var parts = [String]()
+        if repository.resourceEnergyWattHours > 0 {
+            parts.append("~\(EnergyTranslation.formatEnergy(repository.resourceEnergyWattHours))")
+        }
+        if repository.resourceCarbonGrams > 0 {
+            parts.append("~\(EnergyTranslation.formatCarbon(repository.resourceCarbonGrams))")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var repositoryCountLabel: String {

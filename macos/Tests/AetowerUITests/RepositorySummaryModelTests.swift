@@ -258,9 +258,10 @@ final class RepositorySummaryModelTests: XCTestCase {
         XCTAssertEqual(overlaid[0].aiTotalTokens, 1_500_000)
         XCTAssertEqual(overlaid[0].aiCostUsd, 12.5, accuracy: 0.001)
         XCTAssertEqual(overlaid[0].aiProviders, ["claude"])
+        XCTAssertTrue(overlaid[0].hasRepositoryUsage)
     }
 
-    func testResourceCostRollupOverridesRepositoryCost() {
+    func testResourceCostRollupAddsRepositoryEnergyAndCarbon() {
         let rollup = ResourceCostRollup(
             scope: .repository,
             id: "repository:/tmp/repo",
@@ -275,8 +276,8 @@ final class RepositorySummaryModelTests: XCTestCase {
             carbonGrams: 0.72,
             diskGrowthBytes: 0,
             thermalContribution: nil,
-            source: "chau7+kernel-energy",
-            confidence: 0.8
+            source: "chau7-repo+estimated-energy",
+            confidence: 0.72
         )
 
         let byRoot = RepositorySummaryBuilder.resourceCost(byRoot: [rollup])
@@ -287,6 +288,12 @@ final class RepositorySummaryModelTests: XCTestCase {
         )
 
         XCTAssertEqual(overlaid[0].aiCostUsd, 14.75, accuracy: 0.001)
+        XCTAssertEqual(overlaid[0].resourceEnergyWattHours, 1.5, accuracy: 0.001)
+        XCTAssertEqual(overlaid[0].resourceCarbonGrams, 0.72, accuracy: 0.001)
+        XCTAssertEqual(overlaid[0].resourceCostSource, "chau7-repo+estimated-energy")
+        XCTAssertEqual(overlaid[0].resourceCostConfidence, 0.72, accuracy: 0.001)
+        XCTAssertTrue(overlaid[0].hasRepositoryResourceEstimate)
+        XCTAssertTrue(overlaid[0].hasRepositoryUsage)
     }
 
     func testStatusLabelPriority() {

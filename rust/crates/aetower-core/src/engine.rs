@@ -228,6 +228,7 @@ fn build_resource_cost_rollups(
         rollups.push(repository_resource_cost_rollup(
             repo,
             entities,
+            chau7_sessions,
             total_watts,
             battery_minutes,
         ));
@@ -306,23 +307,32 @@ fn entity_resource_cost_rollup(
 fn repository_resource_cost_rollup(
     repo: &AiRepoSummary,
     entities: &[EntitySnapshot],
+    chau7_sessions: &[Chau7SessionSummary],
     total_watts: f64,
     machine_battery_minutes: Option<f64>,
 ) -> ResourceCostRollup {
-    let matching_entities = entities
+    let linked_entity_ids = repository_session_linked_entity_ids(&repo.repo_path, chau7_sessions);
+    let attributed_entities = entities
         .iter()
-        .filter(|entity| entity_matches_repo(entity, &repo.repo_path))
+        .filter(|entity| {
+            linked_entity_ids.contains(entity.entity_id.as_str())
+                && entity
+                    .agent_cost
+                    .as_ref()
+                    .is_some_and(|cost| cost.session_energy_nj > 0)
+        })
         .collect::<Vec<_>>();
-    let watts = matching_entities
+    let watts = attributed_entities
         .iter()
         .map(|entity| watts_from_energy_rate(entity.metrics.energy_nj_per_s))
         .sum::<f64>();
-    let energy_watt_hours = matching_entities
+    let energy_watt_hours = attributed_entities
         .iter()
         .filter_map(|entity| entity.agent_cost.as_ref())
         .map(|cost| watt_hours_from_nj(cost.session_energy_nj))
         .sum::<f64>();
     let (energy_dollars, carbon_grams) = energy_cost_and_carbon(energy_watt_hours);
+    let has_estimated_energy = energy_watt_hours > 0.0;
 
     ResourceCostRollup {
         scope: ResourceCostScope::Repository,
@@ -338,14 +348,47 @@ fn repository_resource_cost_rollup(
         battery_minutes: battery_share_minutes(watts, total_watts, machine_battery_minutes),
         dollars: repo.total_cost_usd as f64 + energy_dollars,
         carbon_grams,
-        source: if watts > 0.0 || energy_watt_hours > 0.0 {
-            "chau7+kernel-energy".to_owned()
+        source: if has_estimated_energy {
+            "chau7-repo+estimated-energy".to_owned()
+        } else if repo.total_runs > 0 {
+            "chau7-repo".to_owned()
         } else {
             "chau7".to_owned()
         },
-        confidence: if repo.total_runs > 0 { 0.8 } else { 0.55 },
+        confidence: if has_estimated_energy {
+            0.72
+        } else if repo.total_runs > 0 {
+            0.8
+        } else {
+            0.55
+        },
         ..ResourceCostRollup::default()
     }
+}
+
+fn repository_session_linked_entity_ids<'a>(
+    repo_path: &str,
+    chau7_sessions: &'a [Chau7SessionSummary],
+) -> BTreeSet<&'a str> {
+    if repo_path.is_empty() {
+        return BTreeSet::new();
+    }
+    chau7_sessions
+        .iter()
+        .filter(|session| chau7_session_matches_repo(session, repo_path))
+        .flat_map(|session| session.linked_entity_ids.iter().map(String::as_str))
+        .collect()
+}
+
+fn chau7_session_matches_repo(session: &Chau7SessionSummary, repo_path: &str) -> bool {
+    session
+        .repo_root
+        .as_deref()
+        .is_some_and(|path| path_related(path, repo_path))
+        || session
+            .workspace_path
+            .as_deref()
+            .is_some_and(|path| path_related(path, repo_path))
 }
 
 fn session_resource_cost_rollup(
@@ -482,25 +525,6 @@ fn battery_share_minutes(
     } else {
         None
     }
-}
-
-fn entity_matches_repo(entity: &EntitySnapshot, repo_path: &str) -> bool {
-    entity.components.iter().any(|component| {
-        component
-            .adapter_context
-            .as_ref()
-            .map(|context| {
-                context
-                    .repo_root
-                    .as_deref()
-                    .is_some_and(|path| path_related(path, repo_path))
-                    || context
-                        .workspace_path
-                        .as_deref()
-                        .is_some_and(|path| path_related(path, repo_path))
-            })
-            .unwrap_or(false)
-    })
 }
 
 fn path_related(left: &str, right: &str) -> bool {
@@ -3258,7 +3282,10 @@ mod tests {
             .expect("repo rollup");
         assert_eq!(repo.repository_path.as_deref(), Some("/repo/a"));
         assert_eq!(repo.watts, 2.0);
+        assert_eq!(repo.energy_watt_hours, 2.0);
+        assert!((repo.carbon_grams - 0.96).abs() < 0.001);
         assert!(repo.dollars > 3.0);
+        assert_eq!(repo.source, "chau7-repo+estimated-energy");
 
         let session = rollups
             .iter()
@@ -3267,6 +3294,70 @@ mod tests {
         assert_eq!(session.session_id.as_deref(), Some("session-1"));
         assert_eq!(session.repository_path.as_deref(), Some("/repo/a"));
         assert_eq!(session.watts, 2.0);
+    }
+
+    #[test]
+    fn repository_resource_energy_requires_session_linked_entity_energy() {
+        let energy_entity = EntitySnapshot {
+            entity_id: "entity-a".to_owned(),
+            display_name: "Agent A".to_owned(),
+            metrics: aetower_model::AggregateMetrics {
+                energy_nj_per_s: 2_000_000_000.0,
+                ..aetower_model::AggregateMetrics::default()
+            },
+            agent_cost: Some(aetower_model::AgentCostSummary {
+                cost_usd: 1.25,
+                session_energy_nj: 7_200_000_000_000,
+                ..aetower_model::AgentCostSummary::default()
+            }),
+            components: vec![aetower_model::ComponentSnapshot {
+                adapter_context: Some(aetower_model::AdapterContextSnapshot {
+                    repo_root: Some("/repo/a".to_owned()),
+                    ..aetower_model::AdapterContextSnapshot::default()
+                }),
+                ..aetower_model::ComponentSnapshot::default()
+            }],
+            ..EntitySnapshot::default()
+        };
+        let repo = AiRepoSummary {
+            repo_path: "/repo/a".to_owned(),
+            display_name: "a".to_owned(),
+            total_runs: 2,
+            total_cost_usd: 3.0,
+            ..AiRepoSummary::default()
+        };
+        let host = HostSnapshot::default();
+
+        let without_session = build_resource_cost_rollups(
+            &host,
+            std::slice::from_ref(&energy_entity),
+            std::slice::from_ref(&repo),
+            &[],
+        );
+        let repo_without_session = without_session
+            .iter()
+            .find(|rollup| rollup.scope == ResourceCostScope::Repository)
+            .expect("repo rollup");
+        assert_eq!(repo_without_session.energy_watt_hours, 0.0);
+        assert_eq!(repo_without_session.carbon_grams, 0.0);
+        assert_eq!(repo_without_session.dollars, 3.0);
+        assert_eq!(repo_without_session.source, "chau7-repo");
+
+        let linked_session = Chau7SessionSummary {
+            id: "tab-1".to_owned(),
+            workspace_path: Some("/repo/a".to_owned()),
+            linked_entity_ids: vec!["entity-a".to_owned()],
+            ..Chau7SessionSummary::default()
+        };
+        let with_session =
+            build_resource_cost_rollups(&host, &[energy_entity], &[repo], &[linked_session]);
+        let repo_with_session = with_session
+            .iter()
+            .find(|rollup| rollup.scope == ResourceCostScope::Repository)
+            .expect("repo rollup");
+        assert_eq!(repo_with_session.energy_watt_hours, 2.0);
+        assert!((repo_with_session.carbon_grams - 0.96).abs() < 0.001);
+        assert_eq!(repo_with_session.source, "chau7-repo+estimated-energy");
     }
 
     fn temp_history_db_path(test_name: &str) -> std::path::PathBuf {

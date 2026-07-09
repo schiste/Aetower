@@ -101,6 +101,24 @@ enum EnergyTranslation {
         return String(format: "%.2f kgCO₂/hr", gramsPerHour / 1000.0)
     }
 
+    static func formatEnergy(_ wattHours: Double) -> String {
+        if wattHours < 1 {
+            return String(format: "%.0f mWh", wattHours * 1000.0)
+        } else if wattHours < 1000 {
+            return String(format: "%.1f Wh", wattHours)
+        }
+        return String(format: "%.2f kWh", wattHours / 1000.0)
+    }
+
+    static func formatCarbon(_ grams: Double) -> String {
+        if grams < 1 {
+            return String(format: "%.2f gCO₂", grams)
+        } else if grams < 1000 {
+            return String(format: "%.1f gCO₂", grams)
+        }
+        return String(format: "%.2f kgCO₂", grams / 1000.0)
+    }
+
     static func formatMinutes(_ minutes: Double) -> String {
         if minutes >= 90 {
             return String(format: "%.1f h", minutes / 60.0)

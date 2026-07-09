@@ -44,6 +44,10 @@ struct RepositorySummary: Identifiable {
     var aiRunCount: UInt32 = 0
     var aiTotalTokens: UInt64 = 0
     var aiCostUsd: Float = 0
+    var resourceEnergyWattHours: Double = 0
+    var resourceCarbonGrams: Double = 0
+    var resourceCostSource: String = ""
+    var resourceCostConfidence: Float = 0
     var aiProviders: [String] = []
     let agentArtifactBytes: UInt64
     let agentCount: Int
@@ -156,6 +160,14 @@ struct RepositorySummary: Identifiable {
             if let score = check.score, score <= 0 { return true }
             return highSeverityChecks.contains(Self.normalizedScorecardCheckName(check.name))
         }.count
+    }
+
+    var hasRepositoryResourceEstimate: Bool {
+        resourceEnergyWattHours > 0 || resourceCarbonGrams > 0
+    }
+
+    var hasRepositoryUsage: Bool {
+        aiRunCount > 0 || aiCostUsd > 0 || hasRepositoryResourceEstimate
     }
 
     var scorecardCaveat: String? {
@@ -465,6 +477,10 @@ enum RepositorySummaryBuilder {
             }
             if let cost = resourceCostByRoot[summary.root] {
                 updated.aiCostUsd = Float(cost.dollars)
+                updated.resourceEnergyWattHours = cost.energyWattHours
+                updated.resourceCarbonGrams = cost.carbonGrams
+                updated.resourceCostSource = cost.source
+                updated.resourceCostConfidence = cost.confidence
             }
             return updated
         }
