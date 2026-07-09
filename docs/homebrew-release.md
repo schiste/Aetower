@@ -32,29 +32,42 @@ sh scripts/verify-sparkle-distribution-matrix.sh
 
 ## Publish through a tap
 
-Homebrew expects public casks to live in a tap repository. Use a dedicated tap,
-for example:
+Homebrew expects public casks to live in a tap repository. Aetower publishes to
+the dedicated tap repository:
 
 ```text
-homebrew-aetower
+https://github.com/Aeptus/homebrew-aetower
 ```
 
-Copy the generated file into the tap as:
-
-```text
-Casks/aetower.rb
-```
-
-Then validate from inside the tap repository:
+Users install it as:
 
 ```sh
-brew style --cask Casks/aetower.rb
-brew audit --cask --online aetower
+brew tap aeptus/aetower
+brew install --cask aetower
 ```
+
+The release pipeline updates the tap with:
+
+```sh
+sh scripts/release-public-preview.sh --prepare-only --publish-homebrew-tap
+```
+
+For a full public release that makes both Sparkle/website artifacts and the tap
+visible, use:
+
+```sh
+sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare --publish-homebrew-tap
+```
+
+`scripts/publish-homebrew-tap.sh` clones or reuses the configured tap checkout,
+copies the generated cask to `Casks/aetower.rb`, writes the tap README, runs
+Ruby syntax validation before commit, commits changed tap content, pushes it,
+then taps the published repository locally and runs Homebrew style/audit checks
+when `brew` is available.
 
 Before the release ZIP is public, `brew audit --online` can fail because the URL
 is not reachable yet. That is expected during local preparation; it must pass
-before a public link is shared.
+before the tap is pushed for a public release.
 
 ## Install smoke
 
@@ -64,7 +77,7 @@ After the ZIP and appcast are hosted:
 brew install --cask ./Casks/aetower.rb
 ```
 
-For a published tap:
+For the published tap:
 
 ```sh
 brew tap aeptus/aetower

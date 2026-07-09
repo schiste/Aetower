@@ -39,6 +39,15 @@ CLI install consistency:
 - Release matrix verification now fails if the generated Homebrew cask stops
   linking the CLI or stops documenting the three smoke commands.
 
+Homebrew tap:
+
+- Published Aetower through the real `Aeptus/homebrew-aetower` tap so users can
+  install with `brew tap aeptus/aetower` and `brew install --cask aetower`.
+- Added an explicit tap publisher to the release pipeline; generated cask files
+  remain build artifacts until `--publish-homebrew-tap` pushes the tap.
+- Updated docs and website copy to distinguish the downloadable cask artifact
+  from the brew-installable tap distribution.
+
 ## 0.8 (build 800) - 2026-07-08
 
 Accessibility & automation:

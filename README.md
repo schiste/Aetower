@@ -41,7 +41,7 @@ Latest Developer Preview: **0.8 build 800**.
 Download the release from
 [aetower.dev](https://aetower.dev/).
 The release pipeline now produces a signed/notarized drag-and-drop DMG,
-installer PKG, Sparkle ZIP, matching source archive, Homebrew cask artifact,
+installer PKG, Sparkle ZIP, matching source archive, Homebrew tap cask,
 Sparkle appcast, third-party notices, and checksums.
 
 Canonical Sparkle update metadata is configured for:
@@ -66,9 +66,16 @@ For Developer Preview builds:
 3. Launch Aetower.
 4. Open **Settings -> Setup** and complete the readiness checklist.
 5. Confirm the CLI path with `aetower top`, `aetower storage`, and
-   `aetower repos`. PKG and Homebrew cask installs link the command
+   `aetower repos`. PKG and Homebrew tap installs link the command
    automatically; DMG/ZIP installs can use **Settings -> AI Clients ->
    Install Command Line Tool**.
+
+Homebrew install:
+
+```sh
+brew tap aeptus/aetower
+brew install --cask aetower
+```
 
 See [Getting Started](docs/getting-started.md) for the first-run flow.
 See [Feature List](docs/features.md) for a structured technical and non-technical overview of Aetower capabilities.
@@ -119,7 +126,7 @@ verification is documented in
 Brand asset import is documented in [Brand Assets](docs/brand-assets.md).
 Cloudflare Pages hosting is documented in
 [Cloudflare Release Hosting](docs/cloudflare-release-hosting.md).
-Homebrew cask publishing is documented in
+Homebrew tap publishing is documented in
 [Homebrew Release](docs/homebrew-release.md).
 
 ## Privacy and safety

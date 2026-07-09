@@ -139,6 +139,8 @@ This runs, in order:
    (`dist/releases-payload`), syncing the currently-published history first.
 10. `scripts/prepare-cloudflare-site.sh` — stages the website
     (`dist/cloudflare-site`), which deploys separately from the payload.
+11. Optional `scripts/publish-homebrew-tap.sh` — publishes the generated cask
+    to the real tap repository when `--publish-homebrew-tap` is set.
 
 The individual scripts can also be run directly with the same environment.
 
@@ -155,10 +157,10 @@ generates the Homebrew cask artifact, generates the corresponding source
 archive, generates signed/notarized DMG and PKG installers, generates
 third-party dependency/license notices, verifies the Sparkle distribution
 matrix, and prepares the Cloudflare Pages payload. It does not publish to
-Cloudflare by default.
+Cloudflare or the Homebrew tap by default.
 
-The generated cask is a tap-ready artifact, not a full Homebrew publication by
-itself. Publish it through a dedicated tap such as `homebrew-aetower`; see
+The generated cask becomes a real Homebrew distribution only after it is pushed
+to the `Aeptus/homebrew-aetower` tap. Publish that tap explicitly; see
 [Homebrew Release](homebrew-release.md).
 
 The `.dmg` is the default human download. The `.pkg` is for installer-style
@@ -195,18 +197,34 @@ and the generated third-party notices are public. Use
 `--skip-public-verify` only when Cloudflare propagation is being checked
 manually.
 
+When the public URLs verify, publish the matching Homebrew tap in the same run:
+
+```sh
+sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare --publish-homebrew-tap
+```
+
+If Cloudflare is already current and only the tap needs repair, run:
+
+```sh
+sh scripts/release-public-preview.sh --prepare-only --publish-homebrew-tap
+```
+
 ## Publish
 
 Upload the prepared release payload (`dist/releases-payload/`) or equivalent
 host payload; the website (`dist/cloudflare-site/`) deploys separately via
-`scripts/deploy-website.sh`. At minimum, publish the appcast archives (`appcast.xml`,
-`Aetower-<version>-<build>.zip`, and any generated deltas), the latest DMG, the
-latest PKG, source archives, notices, and the generated Homebrew cask so that:
+`scripts/deploy-website.sh`. At minimum, publish the appcast archives
+(`appcast.xml`, `Aetower-<version>-<build>.zip`, and any generated deltas), the
+latest DMG, the latest PKG, source archives, notices, and the generated
+Homebrew cask mirror so that:
 
 - `appcast.xml` is reachable at `AETOWER_APPCAST_URL`, and
 - each `<enclosure>` URL resolves (the download URL prefix + filename).
 - the human download link resolves to `Aetower.dmg`.
 - the managed-install link resolves to `Aetower.pkg`.
+
+Then publish `Aeptus/homebrew-aetower` so Homebrew users get the matching cask
+through `brew tap aeptus/aetower`.
 
 Keep the archives directory between releases (don't wipe it): `generate_appcast`
 re-uses the existing `appcast.xml` and prior archives to build delta updates and

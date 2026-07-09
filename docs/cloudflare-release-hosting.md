@@ -32,7 +32,9 @@ https://aetower.dev/releases/appcast.xml
 - `/releases/Aetower-<version>-<build>.{zip,dmg,pkg}` and
   `/releases/Aetower-<version>-<build>-source.tar.gz` — immutable artifacts.
 - `/releases/Aetower<build>-<oldbuild>.delta` — Sparkle deltas (immutable).
-- `/homebrew/Casks/aetower.rb` — generated Homebrew cask.
+- `/homebrew/Casks/aetower.rb` — downloadable mirror of the generated Homebrew
+  cask. The installable Homebrew distribution is the
+  `Aeptus/homebrew-aetower` tap.
 - `/third-party-notices.md` — dependency/license inventory.
 
 Header rules live next to what they govern: `site/_headers` (security block

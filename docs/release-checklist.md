@@ -120,6 +120,15 @@ aetower storage
 aetower repos
 ```
 
+For a public release, publish the real tap only after the release ZIP URL is
+public:
+
+```sh
+sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare --publish-homebrew-tap
+brew tap aeptus/aetower
+brew install --cask aetower
+```
+
 ## 5. Verify artifact
 
 Run:

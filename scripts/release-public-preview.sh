@@ -6,7 +6,7 @@ ENV_FILE="${AETOWER_RELEASE_ENV_FILE:-$ROOT/.env.release.local}"
 
 usage() {
     cat <<EOF
-usage: $0 [--prepare-only] [--with-dmg] [--without-dmg] [--with-pkg] [--without-pkg] [--skip-matrix] [--deploy-cloudflare|--publish-cloudflare] [--skip-public-verify]
+usage: $0 [--prepare-only] [--with-dmg] [--without-dmg] [--with-pkg] [--without-pkg] [--skip-matrix] [--deploy-cloudflare|--publish-cloudflare] [--publish-homebrew-tap] [--skip-public-verify]
 
 Build the public Developer Preview release set:
   1. signed/notarized macOS app + zip
@@ -18,9 +18,12 @@ Build the public Developer Preview release set:
   7. third-party dependency/license inventory
   8. Sparkle distribution matrix verification
   9. Cloudflare Pages static payload
+  10. optional Homebrew tap publication
 
 By default this does not publish to Cloudflare. Use --publish-cloudflare only
 when the generated release should become visible to Sparkle clients.
+Use --publish-homebrew-tap only when the generated cask should be pushed to
+the configured Homebrew tap repository.
 
 Public builds include both .dmg and .pkg artifacts by default. Use
 --without-dmg or --without-pkg only for local testing and never for a public
@@ -34,6 +37,7 @@ WITH_DMG="${AETOWER_RELEASE_WITH_DMG:-1}"
 WITH_PKG="${AETOWER_RELEASE_WITH_PKG:-1}"
 RUN_MATRIX=1
 VERIFY_PUBLIC=1
+PUBLISH_HOMEBREW_TAP="${AETOWER_PUBLISH_HOMEBREW_TAP:-0}"
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --prepare-only)
@@ -62,6 +66,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --deploy-cloudflare|--publish-cloudflare)
             DEPLOY_CLOUDFLARE=1
+            shift
+            ;;
+        --publish-homebrew-tap)
+            PUBLISH_HOMEBREW_TAP=1
             shift
             ;;
         --skip-public-verify)
@@ -180,7 +188,19 @@ if [ "$DEPLOY_CLOUDFLARE" -eq 1 ]; then
 else
     printf '\nCloudflare publish intentionally skipped.\n'
     printf 'Publish explicitly with:\n'
-    printf '  sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare\n'
+    printf '  sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare --publish-homebrew-tap\n'
     printf 'Website-only changes deploy with:\n'
     printf '  sh scripts/deploy-website.sh\n'
+fi
+
+if [ "$PUBLISH_HOMEBREW_TAP" -eq 1 ]; then
+    printf '\n=== publish Homebrew tap ===\n'
+    if [ "$DEPLOY_CLOUDFLARE" -eq 0 ]; then
+        printf 'Cloudflare publish was skipped; assuming the cask URL is already public.\n'
+    fi
+    sh "$ROOT/scripts/publish-homebrew-tap.sh"
+else
+    printf '\nHomebrew tap publish intentionally skipped.\n'
+    printf 'Publish explicitly with:\n'
+    printf '  sh scripts/release-public-preview.sh --prepare-only --publish-homebrew-tap\n'
 fi

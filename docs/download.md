@@ -39,7 +39,7 @@ Expected public artifact:
    `aetower repos`. If the CLI is not on `PATH`, open
    **Settings -> AI Clients -> Install Command Line Tool**.
 
-Homebrew users can install the same app bundle through the generated cask:
+Homebrew users can install the same app bundle through the official tap:
 
 ```sh
 brew tap aeptus/aetower

@@ -40,9 +40,9 @@ cask "aetower" do
   version "$VERSION,$BUILD_NUMBER"
   sha256 "$SHA256"
 
-  url "${DOWNLOAD_PREFIX}Aetower-#{version.before_comma}-#{version.after_comma}.zip"
+  url "${DOWNLOAD_PREFIX}Aetower-#{version.csv.first}-#{version.csv.second}.zip"
   name "Aetower"
-  desc "Local-first macOS observability for operators, developers, and AI agents"
+  desc "Local-first observability for operators, developers, and AI agents"
   homepage "https://aetower.dev/"
 
   livecheck do
@@ -51,11 +51,18 @@ cask "aetower" do
   end
 
   auto_updates true
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "Aetower.app"
   binary "#{appdir}/Aetower.app/Contents/Helpers/aetower",
          target: "aetower"
+
+  zap trash: [
+    "~/Library/Application Support/Aetower",
+    "~/Library/Caches/com.aeptus.aetower",
+    "~/Library/Logs/Aetower",
+    "~/Library/Preferences/com.aeptus.aetower.plist",
+  ]
 
   caveats <<~EOS
     Homebrew links the bundled \`aetower\` command to:
@@ -65,13 +72,6 @@ cask "aetower" do
       aetower storage
       aetower repos
   EOS
-
-  zap trash: [
-    "~/Library/Application Support/Aetower",
-    "~/Library/Caches/com.aeptus.aetower",
-    "~/Library/Logs/Aetower",
-    "~/Library/Preferences/com.aeptus.aetower.plist",
-  ]
 end
 CASK
 
