@@ -83,7 +83,9 @@ private struct HistoryDerivedContent: Sendable {
 public struct HistoryView: View {
     let state: AppState
     let settings: SettingsStore
-    @State private var range: HistoryRangePreset = .lastHour
+    @State private var range: HistoryRangePreset = .last7Days
+    @State private var rangeEndDate = Date()
+    @State private var rangeFollowsNow = true
     @State private var showClearHistoryConfirmation = false
     @State private var showAllEntities = false
     @State private var showEntityDetailsInSafeMode = false
@@ -102,7 +104,7 @@ public struct HistoryView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                HStack {
+                HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
                     Picker("Range", selection: $range) {
                         ForEach(HistoryRangePreset.allCases) { preset in
                             Text(preset.label).tag(preset)
@@ -111,9 +113,29 @@ public struct HistoryView: View {
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 320)
 
+                    DatePicker(
+                        "End",
+                        selection: rangeEndDateBinding,
+                        in: ...Date(),
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
+                    .datePickerStyle(.compact)
+                    .frame(maxWidth: 270)
+
+                    Button("Now") {
+                        rangeFollowsNow = true
+                        rangeEndDate = Date()
+                        state.clearHistoryRangeEndOverride()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(rangeFollowsNow || state.historyIsLoading || state.historyIsLoadingMore)
+
                     Spacer()
 
                     Button("Reload") {
+                        if rangeFollowsNow {
+                            rangeEndDate = Date()
+                        }
                         state.loadHistory(force: true)
                     }
                     .buttonStyle(.bordered)
@@ -132,7 +154,10 @@ public struct HistoryView: View {
         }
         .navigationTitle("History")
         .task {
+            rangeEndDate = Date()
+            rangeFollowsNow = true
             state.setHistoryWindow(seconds: range.rawValue)
+            state.clearHistoryRangeEndOverride()
             state.setHistoryVisible(true)
         }
         .task(id: historyDerivationToken) {
@@ -379,6 +404,12 @@ public struct HistoryView: View {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                 LabeledContent("Range", value: range.detail)
                 LabeledContent(
+                    "Range end",
+                    value: rangeFollowsNow
+                        ? "now"
+                        : historyTimestamp(UInt64(max(0.0, rangeEndDate.timeIntervalSince1970) * 1000))
+                )
+                LabeledContent(
                     "Loaded samples",
                     value: "\(state.historySnapshots.count)\(state.historyRangeSummary.map { " of \($0.rangeCount)" } ?? "")"
                 )
@@ -416,7 +447,7 @@ public struct HistoryView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Aetower now keeps persisted history on a bounded local budget by default: a shorter retention window, WAL checkpoints, and automatic hard-cap trims when the store grows too large.")
+                Text("Aetower keeps seven days of persisted history on a bounded local budget by default, with WAL checkpoints and emergency hard-cap trims when the store grows too large.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -771,6 +802,17 @@ private func historyEntityDeltaSummary(_ entity: SnapshotEntityDeltaReport) -> S
 }
 
 private extension HistoryView {
+    var rangeEndDateBinding: Binding<Date> {
+        Binding(
+            get: { rangeEndDate },
+            set: { newValue in
+                rangeFollowsNow = false
+                rangeEndDate = newValue
+                state.setHistoryRangeEnd(date: newValue)
+            }
+        )
+    }
+
     var historyCompareChoices: [HistoryCompareChoice] {
         derivedContent.compareChoices
     }

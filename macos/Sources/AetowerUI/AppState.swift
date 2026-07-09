@@ -759,6 +759,8 @@ public final class AppState {
     private var historyRangeStartMillis: UInt64 = 0
     @ObservationIgnored
     private var historyRangeEndMillis: UInt64 = 0
+    @ObservationIgnored
+    private var historyRangeEndOverrideMillis: UInt64?
     private var lastOperatorStateRefreshDate = Date.distantPast
     @ObservationIgnored
     private var entityAnalysisLoadingKeys = Set<String>()
@@ -789,8 +791,6 @@ public final class AppState {
     private let historyInitialPageSize: UInt32 = 48
     @ObservationIgnored
     private let historyLoadMorePageSize: UInt32 = 96
-    @ObservationIgnored
-    private let historyMaxRetainedSamples = 240
     @ObservationIgnored
     private let diagnosticsMaxRetainedEvents: UInt32 = 500
     @ObservationIgnored
@@ -2197,6 +2197,22 @@ public final class AppState {
 
     public func setHistoryWindow(seconds: TimeInterval) {
         historyWindowSeconds = max(seconds, 300)
+        if historyVisible {
+            loadHistory(force: true)
+        }
+    }
+
+    public func setHistoryRangeEnd(date: Date) {
+        let requestedMillis = UInt64(max(0.0, date.timeIntervalSince1970) * 1000)
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        historyRangeEndOverrideMillis = min(requestedMillis, nowMillis)
+        if historyVisible {
+            loadHistory(force: true)
+        }
+    }
+
+    public func clearHistoryRangeEndOverride() {
+        historyRangeEndOverrideMillis = nil
         if historyVisible {
             loadHistory(force: true)
         }
@@ -4603,10 +4619,11 @@ public final class AppState {
         }
         lastHistoryLoadDate = now
 
-        let endMillis = max(
+        let liveEndMillis = max(
             snapshot.capturedAtMillis,
             UInt64(Date().timeIntervalSince1970 * 1000)
         )
+        let endMillis = historyRangeEndOverrideMillis.map { min($0, liveEndMillis) } ?? liveEndMillis
         let rangeMillis = UInt64(historyWindowSeconds * 1000)
         let startMillis = endMillis >= rangeMillis ? endMillis - rangeMillis : 0
         historyRangeStartMillis = startMillis
@@ -4642,36 +4659,34 @@ public final class AppState {
             await MainActor.run {
                 guard let self else { return }
                 let durationMillis = (CFAbsoluteTimeGetCurrent() - loadStarted) * 1000.0
-                let cappedSnapshots = Array(snapshots.suffix(self.historyMaxRetainedSamples))
-                let entityCount = cappedSnapshots.reduce(into: 0) { count, sample in
+                let entityCount = snapshots.reduce(into: 0) { count, sample in
                     count += sample.entities.count
                 }
                 self.historyRangeSummary = summary
                 self.historyStoreSummary = summary
-                self.historySnapshots = cappedSnapshots
+                self.historySnapshots = snapshots
                 self.historyLastLoadDurationMillis = durationMillis
                 self.historyUiDiagnostics = HistoryUiDiagnosticsSummary(
                     updatedAt: Date(),
                     pageDecodeDurationMillis: pageDecodeDurationMillis,
-                    snapshotCount: cappedSnapshots.count,
+                    snapshotCount: snapshots.count,
                     entityCount: entityCount,
                     derivedSummaryBuildDurationMillis: self.historyUiDiagnostics.derivedSummaryBuildDurationMillis,
                     recurringEntityCount: self.historyUiDiagnostics.recurringEntityCount,
                     changeSummaryCount: self.historyUiDiagnostics.changeSummaryCount
                 )
-                self.historyHasMore = UInt64(cappedSnapshots.count) < (summary?.rangeCount ?? 0)
-                    && cappedSnapshots.count < self.historyMaxRetainedSamples
+                self.historyHasMore = UInt64(snapshots.count) < (summary?.rangeCount ?? 0)
                 self.historyLoadError = self.historyLoadErrorMessage(
                     summaryError: summaryResult.errorMessage,
                     pageError: pageResult.errorMessage,
                     rangeSummary: summary,
-                    loadedCount: cappedSnapshots.count
+                    loadedCount: snapshots.count
                 )
                 self.resetHistoryComparisonIfNeeded()
                 self.refreshHistorySnapshotDiff()
                 self.historyLoadStatus = self.historyStatusMessage(
                     summary: summary,
-                    loadedCount: cappedSnapshots.count,
+                    loadedCount: snapshots.count,
                     durationMillis: durationMillis,
                     maintenance: nil,
                     isLoadMore: false
@@ -4685,12 +4700,11 @@ public final class AppState {
                     fields: [
                         DiagnosticsField(key: "duration_millis", value: String(format: "%.1f", durationMillis)),
                         DiagnosticsField(key: "page_decode_millis", value: String(format: "%.1f", pageDecodeDurationMillis)),
-                        DiagnosticsField(key: "loaded_count", value: String(cappedSnapshots.count)),
+                        DiagnosticsField(key: "loaded_count", value: String(snapshots.count)),
                         DiagnosticsField(key: "entity_count", value: String(entityCount)),
                         DiagnosticsField(key: "range_count", value: String(summary?.rangeCount ?? 0)),
                         DiagnosticsField(key: "store_bytes", value: String(summary?.storeBytes ?? 0)),
                         DiagnosticsField(key: "wal_bytes", value: String(summary?.walBytes ?? 0)),
-                        DiagnosticsField(key: "retained_cap", value: String(self.historyMaxRetainedSamples)),
                     ]
                 )
             }
@@ -4709,12 +4723,6 @@ public final class AppState {
         let startMillis = historyRangeStartMillis
         let endMillis = historyRangeEndMillis
         let bridge = self.bridge
-        let remainingCapacity = max(0, historyMaxRetainedSamples - historySnapshots.count)
-        guard remainingCapacity > 0 else {
-            historyHasMore = false
-            historyLoadStatus = "Loaded history is capped at \(historyMaxRetainedSamples) retained samples to protect UI memory."
-            return
-        }
         historyIsLoadingMore = true
         historyLoadStatus = "Loading older persisted samples…"
         historyLoadTask?.cancel()
@@ -4725,7 +4733,7 @@ public final class AppState {
                 startMillis: startMillis,
                 endMillis: endMillis,
                 beforeMillisExclusive: oldestMillis,
-                limit: min(self?.historyLoadMorePageSize ?? 96, UInt32(remainingCapacity))
+                limit: self?.historyLoadMorePageSize ?? 96
             )
             let pageDecodeDurationMillis = (CFAbsoluteTimeGetCurrent() - pageLoadStarted) * 1000.0
             let olderSnapshots = pageResult.snapshots
@@ -4760,7 +4768,6 @@ public final class AppState {
                 let appendedUniqueSamples = !uniqueOlder.isEmpty
                 self.historyHasMore = UInt64(self.historySnapshots.count) < rangeCount
                     && appendedUniqueSamples
-                    && self.historySnapshots.count < self.historyMaxRetainedSamples
                 self.historyIsLoadingMore = false
                 self.historyLoadError = nil
                 self.resetHistoryComparisonIfNeeded()
@@ -4778,9 +4785,7 @@ public final class AppState {
                         DiagnosticsField(key: "added_count", value: String(uniqueOlder.count)),
                     ]
                 )
-                if self.historySnapshots.count >= self.historyMaxRetainedSamples {
-                    self.historyLoadStatus = "Loaded history is capped at \(self.historyMaxRetainedSamples) retained samples to protect UI memory."
-                } else if olderSnapshots.isEmpty {
+                if olderSnapshots.isEmpty {
                     self.historyLoadStatus = "Reached the beginning of readable persisted history for this range."
                 } else if !appendedUniqueSamples {
                     self.historyLoadStatus = "No additional unique persisted samples were returned for this range."

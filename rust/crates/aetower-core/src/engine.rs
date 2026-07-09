@@ -71,7 +71,7 @@ const REGRESSION_MAX_SNAPSHOTS: usize = 400;
 // past HISTORY_STORE_WARNING_BYTES between two normal cycles.
 const HISTORY_MAINTENANCE_AGGRESSIVE_INTERVAL: Duration = Duration::from_secs(60);
 const RUNTIME_HEARTBEAT_INTERVAL_MILLIS: u64 = 10 * 60 * 1000;
-const DEFAULT_HISTORY_RETENTION_MILLIS: u64 = 12 * 60 * 60 * 1000;
+const DEFAULT_HISTORY_RETENTION_MILLIS: u64 = REGRESSION_WINDOW_MILLIS;
 const EMERGENCY_HISTORY_RETENTION_MILLIS: u64 = 3 * 60 * 60 * 1000;
 // Soft cap is 384 MB (25% headroom below HISTORY_STORE_WARNING_BYTES in
 // aetower-mcp). The pruner needs to begin reclaiming storage *before* the
@@ -81,9 +81,16 @@ const EMERGENCY_HISTORY_RETENTION_MILLIS: u64 = 3 * 60 * 60 * 1000;
 const HISTORY_SOFT_MAX_BYTES: u64 = 384 * 1024 * 1024;
 const HISTORY_HARD_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 const HISTORY_MAX_WAL_BYTES: u64 = 32 * 1024 * 1024;
-const HISTORY_TARGET_SNAPSHOT_COUNT: u64 = 2_000;
-const HISTORY_SOFT_MAX_SNAPSHOT_COUNT: u64 = 3_000;
-const HISTORY_HARD_MAX_SNAPSHOT_COUNT: u64 = 5_000;
+// Active collection attempts a persisted write every ~10 seconds before
+// material-change coalescing (2s active tick * write_interval=5). These count
+// caps leave enough room for a seven-day active baseline; byte caps remain the
+// primary safety valve for unusually large snapshots.
+const HISTORY_ACTIVE_WRITE_INTERVAL_MILLIS: u64 = 10_000;
+const HISTORY_SEVEN_DAY_ACTIVE_SNAPSHOT_COUNT: u64 =
+    DEFAULT_HISTORY_RETENTION_MILLIS / HISTORY_ACTIVE_WRITE_INTERVAL_MILLIS + 1;
+const HISTORY_TARGET_SNAPSHOT_COUNT: u64 = HISTORY_SEVEN_DAY_ACTIVE_SNAPSHOT_COUNT + 5_000;
+const HISTORY_SOFT_MAX_SNAPSHOT_COUNT: u64 = HISTORY_SEVEN_DAY_ACTIVE_SNAPSHOT_COUNT + 20_000;
+const HISTORY_HARD_MAX_SNAPSHOT_COUNT: u64 = HISTORY_SEVEN_DAY_ACTIVE_SNAPSHOT_COUNT + 40_000;
 const HISTORY_AGGRESSIVE_QUARANTINE_ROWS: u64 = 64;
 const HISTORY_HARD_MAX_QUARANTINE_ROWS: u64 = 128;
 const RESOURCE_COST_DEFAULT_ELECTRICITY_USD_PER_KWH: f64 = 0.15;
@@ -3361,6 +3368,59 @@ mod tests {
         };
 
         assert_eq!(config.target_tick(&host, &[]), config.low_power_tick);
+    }
+
+    #[test]
+    fn default_history_retention_policy_matches_seven_day_regression_window() {
+        let policy = default_history_retention_policy();
+
+        assert_eq!(policy.max_age_millis, REGRESSION_WINDOW_MILLIS);
+        assert_eq!(policy.max_age_millis, 7 * 86_400_000);
+        assert!(policy.emergency_max_age_millis < policy.max_age_millis);
+        assert!(policy.soft_max_store_bytes < policy.hard_max_store_bytes);
+        assert!(policy.target_snapshot_count >= HISTORY_SEVEN_DAY_ACTIVE_SNAPSHOT_COUNT);
+        assert!(policy.soft_max_snapshot_count > policy.target_snapshot_count);
+        assert!(policy.hard_max_snapshot_count > policy.soft_max_snapshot_count);
+    }
+
+    #[test]
+    fn default_history_retention_keeps_seven_days_under_normal_budget() {
+        let path = temp_history_db_path("seven-day-retention");
+        remove_history_db_files(&path);
+        let mut store = aetower_persistence::HistoryStore::open(&path, 1)
+            .unwrap_or_else(|error| panic!("open history store: {error}"));
+        let hour_millis = 60 * 60_000;
+        let expected_samples = DEFAULT_HISTORY_RETENTION_MILLIS / hour_millis + 1;
+        let first_millis = 1_900_000_000_000;
+        let newest_millis = first_millis + DEFAULT_HISTORY_RETENTION_MILLIS;
+
+        for index in 0..expected_samples {
+            if store.pending_writes() >= 32 {
+                wait_for_history_writer(&store);
+            }
+            store.store_immediately(&SystemSnapshot {
+                sequence: index,
+                captured_at_millis: first_millis + index * hour_millis,
+                ..SystemSnapshot::default()
+            });
+        }
+        wait_for_history_writer(&store);
+
+        let report = store
+            .maintain_with_policy(default_history_retention_policy())
+            .unwrap_or_else(|error| panic!("maintain history store: {error}"));
+        assert!(!report.cancelled);
+        assert_eq!(report.pruned_rows, 0);
+
+        let summary = store
+            .range_summary(first_millis, newest_millis)
+            .unwrap_or_else(|error| panic!("range summary: {error}"));
+        assert_eq!(summary.range_count, expected_samples);
+        assert_eq!(summary.oldest_millis, Some(first_millis));
+        assert_eq!(summary.newest_millis, Some(newest_millis));
+
+        drop(store);
+        remove_history_db_files(&path);
     }
 
     /// Pin the relationship between the engine-side retention policy and the
