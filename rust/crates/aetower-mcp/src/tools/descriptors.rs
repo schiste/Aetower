@@ -24,6 +24,7 @@ pub(crate) struct ToolDescriptor {
     description: &'static str,
     properties: Vec<ToolProperty>,
     handler: ToolHandler,
+    operator_action: bool,
 }
 
 struct ToolProperty {
@@ -61,6 +62,7 @@ impl ToolDescriptor {
             description,
             properties,
             handler: ToolHandler::Args(handler),
+            operator_action: false,
         }
     }
 
@@ -70,7 +72,17 @@ impl ToolDescriptor {
             description,
             properties: Vec::new(),
             handler: ToolHandler::NoArgs(handler),
+            operator_action: false,
         }
+    }
+
+    fn operator_action(mut self) -> Self {
+        self.operator_action = true;
+        self
+    }
+
+    fn is_visible(&self, operator_actions_enabled: bool) -> bool {
+        !self.operator_action || operator_actions_enabled
     }
 
     fn definition(&self) -> Value {
@@ -109,31 +121,44 @@ impl ToolDescriptor {
 }
 
 #[cfg(test)]
-pub(crate) fn tool_definitions() -> Vec<Value> {
-    TOOL_DEFINITIONS.clone()
+pub(crate) fn tool_definitions(operator_actions_enabled: bool) -> Vec<Value> {
+    tool_definitions_for_mode(operator_actions_enabled)
 }
 
-pub(crate) fn tool_list_result() -> Value {
-    TOOL_LIST_RESULT.clone()
+pub(crate) fn tool_list_result(operator_actions_enabled: bool) -> Value {
+    if operator_actions_enabled {
+        TOOL_LIST_RESULT_OPERATOR.clone()
+    } else {
+        TOOL_LIST_RESULT_READ_ONLY.clone()
+    }
 }
 
 pub(crate) fn dispatch_tool(server: &AetowerMcpServer, name: &str, arguments: Value) -> ToolResult {
     TOOL_DESCRIPTORS
         .iter()
-        .find(|descriptor| descriptor.name == name)
+        .find(|descriptor| {
+            descriptor.name == name && descriptor.is_visible(server.operator_actions_enabled())
+        })
         .map(|descriptor| descriptor.call(server, arguments))
         .unwrap_or_else(|| Ok(tool_error(format!("Unknown tool: {name}"))))
 }
 
-static TOOL_DEFINITIONS: LazyLock<Vec<Value>> = LazyLock::new(|| {
+fn tool_definitions_for_mode(operator_actions_enabled: bool) -> Vec<Value> {
     TOOL_DESCRIPTORS
         .iter()
+        .filter(|descriptor| descriptor.is_visible(operator_actions_enabled))
         .map(ToolDescriptor::definition)
         .collect()
-});
+}
 
-static TOOL_LIST_RESULT: LazyLock<Value> =
-    LazyLock::new(|| json!({ "tools": TOOL_DEFINITIONS.clone() }));
+static TOOL_DEFINITIONS_READ_ONLY: LazyLock<Vec<Value>> =
+    LazyLock::new(|| tool_definitions_for_mode(false));
+static TOOL_DEFINITIONS_OPERATOR: LazyLock<Vec<Value>> =
+    LazyLock::new(|| tool_definitions_for_mode(true));
+static TOOL_LIST_RESULT_READ_ONLY: LazyLock<Value> =
+    LazyLock::new(|| json!({ "tools": TOOL_DEFINITIONS_READ_ONLY.clone() }));
+static TOOL_LIST_RESULT_OPERATOR: LazyLock<Value> =
+    LazyLock::new(|| json!({ "tools": TOOL_DEFINITIONS_OPERATOR.clone() }));
 
 static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
     vec![
@@ -467,7 +492,8 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
                 boolean("privileged_helper_approved", None).described("Explicit operator approval for an elevated retry. Current public builds report approved-but-unavailable rather than silently escalating."),
             ],
             AetowerMcpServer::tool_process_action,
-        ),
+        )
+        .operator_action(),
         ToolDescriptor::with_args(
             "aetower_process_action_history",
             "Return recent operator process actions recorded by Aetower diagnostics.",
@@ -503,7 +529,7 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
         ),
         ToolDescriptor::with_args(
             "aetower_recommendations",
-            "Return structured remediation recommendations derived from host load, history health, diagnostics, and entity recommendations. Items may include a suggested_action (e.g. \"suspend\", \"lower-priority\") with target_pid and target_label - pass these to aetower_process_action with dry_run:true to preview, then dry_run:false after confirming, to fix what is slowing the machine.",
+            "Return structured remediation recommendations derived from host load, history health, diagnostics, and entity recommendations. Items may include a suggested_action (e.g. \"suspend\", \"lower-priority\") with target_pid and target_label. In MCP operator-action mode, use aetower_process_action with dry_run:true to preview, then dry_run:false only after explicit operator confirmation.",
             vec![uint("limit", Some(1), Some(50), None)],
             AetowerMcpServer::tool_recommendations,
         ),

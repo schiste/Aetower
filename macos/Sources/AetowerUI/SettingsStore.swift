@@ -498,6 +498,9 @@ public final class SettingsStore {
     public var autoRegisterLocalMcpClientsEnabled: Bool {
         didSet { persist() }
     }
+    public var localMcpOperatorActionsEnabled: Bool {
+        didSet { persist() }
+    }
     public private(set) var launchAtLoginEnabled: Bool
     public private(set) var launchAtLoginError: String?
 
@@ -570,6 +573,9 @@ public final class SettingsStore {
             ?? (legacySensitive ? .full : .redacted)
         self.autoRegisterLocalMcpClientsEnabled = defaults.object(
             forKey: Self.autoRegisterLocalMcpClientsEnabledKey
+        ) as? Bool ?? false
+        self.localMcpOperatorActionsEnabled = defaults.object(
+            forKey: Self.localMcpOperatorActionsEnabledKey
         ) as? Bool ?? false
         self.launchAtLoginEnabled = false
         self.launchAtLoginError = nil
@@ -660,6 +666,7 @@ public final class SettingsStore {
     private static let cloudflareOAuthRedirectURIKey = "settings.cloudflareOAuthRedirectURI"
     private static let exportPrivacyTierKey = "settings.exportPrivacyTier"
     private static let autoRegisterLocalMcpClientsEnabledKey = "settings.autoRegisterLocalMcpClientsEnabled"
+    private static let localMcpOperatorActionsEnabledKey = "settings.localMcpOperatorActionsEnabled"
     private static let includeSensitiveExportsKey = "settings.includeSensitiveExports"
 
     /// Read the persisted export privacy tier directly from UserDefaults.
@@ -896,6 +903,7 @@ extension SettingsStore {
         ProviderCredentialStore(defaults: defaults).resetAll()
         exportPrivacyTier = .redacted
         autoRegisterLocalMcpClientsEnabled = false
+        localMcpOperatorActionsEnabled = false
         if launchAtLoginEnabled {
             setLaunchAtLogin(false)
         } else {
@@ -967,6 +975,7 @@ extension SettingsStore {
         )
         defaults.set(exportPrivacyTier.rawValue, forKey: Self.exportPrivacyTierKey)
         defaults.set(autoRegisterLocalMcpClientsEnabled, forKey: Self.autoRegisterLocalMcpClientsEnabledKey)
+        defaults.set(localMcpOperatorActionsEnabled, forKey: Self.localMcpOperatorActionsEnabledKey)
         defaults.set(exportPrivacyTier == .full, forKey: Self.includeSensitiveExportsKey)
     }
 

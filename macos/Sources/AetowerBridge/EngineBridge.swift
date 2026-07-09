@@ -166,8 +166,14 @@ public final class EngineBridge: @unchecked Sendable {
         engine.exportSnapshotJson()
     }
 
-    public func startLocalMcpServer(socketPath: String? = nil) -> String? {
-        let result = engine.startLocalMcpServer(socketPath: socketPath)
+    public func startLocalMcpServer(
+        socketPath: String? = nil,
+        operatorActionsEnabled: Bool = false
+    ) -> String? {
+        let result = engine.startLocalMcpServer(
+            socketPath: socketPath,
+            operatorActionsEnabled: operatorActionsEnabled
+        )
         return result.isEmpty ? nil : result
     }
 

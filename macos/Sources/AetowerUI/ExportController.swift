@@ -244,6 +244,7 @@ final class ExportController {
             "gpuSampleLowPowerIntervalSeconds": settings.gpuSampleLowPowerIntervalSeconds,
             "exportPrivacyTier": settings.exportPrivacyTier.rawValue,
             "autoRegisterLocalMcpClientsEnabled": settings.autoRegisterLocalMcpClientsEnabled,
+            "localMcpOperatorActionsEnabled": settings.localMcpOperatorActionsEnabled,
         ]
     }
 

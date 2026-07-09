@@ -1217,17 +1217,24 @@ pub trait AetowerMcpDataSource: Send + Sync + 'static {
 pub(crate) struct AetowerMcpServer {
     data_source: Arc<dyn AetowerMcpDataSource>,
     mcp_stats: Option<Arc<McpRuntimeStats>>,
+    operator_actions_enabled: bool,
 }
 
 impl AetowerMcpServer {
     pub(crate) fn new_with_stats(
         data_source: Arc<dyn AetowerMcpDataSource>,
         mcp_stats: Option<Arc<McpRuntimeStats>>,
+        operator_actions_enabled: bool,
     ) -> Self {
         Self {
             data_source,
             mcp_stats,
+            operator_actions_enabled,
         }
+    }
+
+    pub(crate) fn operator_actions_enabled(&self) -> bool {
+        self.operator_actions_enabled
     }
 
     pub(crate) fn handle_message(&self, message: Value) -> Option<Value> {
@@ -1260,7 +1267,9 @@ impl AetowerMcpServer {
             })),
             "notifications/initialized" => return None,
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(tools::descriptors::tool_list_result()),
+            "tools/list" => Ok(tools::descriptors::tool_list_result(
+                self.operator_actions_enabled,
+            )),
             "tools/call" => self.handle_tool_call(params).or_else(Ok),
             "resources/list" => Ok(json!({ "resources": [] })),
             "prompts/list" => Ok(json!({ "prompts": [] })),
@@ -2940,8 +2949,8 @@ fn parse_args<T: serde::de::DeserializeOwned>(arguments: Value) -> Result<T, Val
 }
 
 #[cfg(test)]
-fn tool_definitions() -> Vec<Value> {
-    tools::descriptors::tool_definitions()
+fn tool_definitions(operator_actions_enabled: bool) -> Vec<Value> {
+    tools::descriptors::tool_definitions(operator_actions_enabled)
 }
 
 #[cfg(test)]
@@ -3490,9 +3499,14 @@ mod tests {
     }
 
     fn fake_server() -> AetowerMcpServer {
+        fake_server_with_operator_actions(false)
+    }
+
+    fn fake_server_with_operator_actions(operator_actions_enabled: bool) -> AetowerMcpServer {
         AetowerMcpServer {
             data_source: Arc::new(FakeSource),
             mcp_stats: None,
+            operator_actions_enabled,
         }
     }
 
@@ -3500,27 +3514,55 @@ mod tests {
         AetowerMcpServer {
             data_source: Arc::new(HistoryBrokenSource),
             mcp_stats: None,
+            operator_actions_enabled: false,
         }
+    }
+
+    fn tool_names(operator_actions_enabled: bool) -> Vec<String> {
+        tool_definitions(operator_actions_enabled)
+            .into_iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_owned))
+            .collect()
     }
 
     #[test]
     fn tool_names_are_unique() {
-        let mut names = tool_definitions()
-            .into_iter()
-            .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_owned))
-            .collect::<Vec<_>>();
-        let original_len = names.len();
-        names.sort();
-        names.dedup();
-        assert_eq!(names.len(), original_len);
+        for operator_actions_enabled in [false, true] {
+            let mut names = tool_names(operator_actions_enabled);
+            let original_len = names.len();
+            names.sort();
+            names.dedup();
+            assert_eq!(names.len(), original_len);
+        }
     }
 
     #[test]
-    fn tools_list_includes_agent_facing_summary_tools() {
-        let names = tool_definitions()
-            .into_iter()
-            .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_owned))
-            .collect::<Vec<_>>();
+    fn default_tools_list_excludes_operator_actions() {
+        let names = tool_names(false);
+
+        assert!(!names.iter().any(|name| name == "aetower_process_action"));
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "aetower_process_action_history"),
+            "operator action audit history is read-only and should stay listed"
+        );
+    }
+
+    #[test]
+    fn operator_tools_list_includes_process_action() {
+        let names = tool_names(true);
+
+        assert!(names.iter().any(|name| name == "aetower_process_action"));
+        assert!(
+            tool_names(true).len() > tool_names(false).len(),
+            "operator mode should be visibly different in tools/list"
+        );
+    }
+
+    #[test]
+    fn tools_list_includes_read_only_agent_facing_summary_tools() {
+        let names = tool_names(false);
         for expected in [
             "aetower_diff_snapshots",
             "aetower_reboot_report",
@@ -3552,7 +3594,6 @@ mod tests {
             "aetower_process_inspect",
             "aetower_process_open_resources",
             "aetower_process_sample",
-            "aetower_process_action",
             "aetower_process_action_history",
             "aetower_diagnostics_summary",
             "aetower_support_bundle_manifest",
@@ -3945,6 +3986,116 @@ mod tests {
     }
 
     #[test]
+    fn resource_cost_rollups_tool_filters_by_repository_path() {
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_resource_cost_rollups",
+                "arguments": {
+                    "scope": "repository",
+                    "id": "/repo"
+                }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+
+        let structured = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .expect("structured content");
+        assert_eq!(
+            structured.get("returned_rollups").and_then(Value::as_u64),
+            Some(1)
+        );
+        let rollup = structured
+            .get("rollups")
+            .and_then(Value::as_array)
+            .and_then(|rollups| rollups.first())
+            .expect("first rollup");
+        assert_eq!(
+            rollup.get("scope").and_then(Value::as_str),
+            Some("repository")
+        );
+        assert_eq!(
+            rollup.get("repository_path").and_then(Value::as_str),
+            Some("/repo")
+        );
+        assert_eq!(rollup.get("dollars").and_then(Value::as_f64), Some(4.25));
+    }
+
+    #[test]
+    fn default_tools_call_hides_process_action_even_by_name() {
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_process_action",
+                "arguments": {
+                    "pid": 42,
+                    "action": "terminate",
+                    "dry_run": true
+                }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+
+        assert_eq!(
+            response
+                .get("result")
+                .and_then(|result| result.get("isError"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(
+            response
+                .get("result")
+                .and_then(|result| result.get("content"))
+                .and_then(Value::as_array)
+                .and_then(|content| content.first())
+                .and_then(|item| item.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("Unknown tool")
+        );
+    }
+
+    #[test]
+    fn operator_tools_call_allows_process_action_preview() {
+        let response = match fake_server_with_operator_actions(true).handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_process_action",
+                "arguments": {
+                    "pid": 42,
+                    "action": "terminate",
+                    "dry_run": true
+                }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+
+        assert_eq!(
+            response
+                .get("result")
+                .and_then(|result| result.get("structuredContent"))
+                .and_then(|content| content.get("executed"))
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn top_findings_reports_high_signal_issues() {
         let response = match fake_server().handle_message(json!({
             "jsonrpc": "2.0",
@@ -4189,6 +4340,7 @@ mod tests {
         let response = AetowerMcpServer {
             data_source: Arc::new(BrokenSource),
             mcp_stats: None,
+            operator_actions_enabled: false,
         }
         .handle_message(json!({
             "jsonrpc": "2.0",
@@ -4218,7 +4370,7 @@ mod tests {
         let socket_path = parent.join("mcp.sock");
         let _ = fs::remove_file(&socket_path);
         let _ = fs::remove_dir_all(&parent);
-        let handle = match start_local_socket_server(Arc::new(FakeSource), &socket_path) {
+        let handle = match start_local_socket_server(Arc::new(FakeSource), &socket_path, false) {
             Ok(handle) => handle,
             Err(error) => panic!("server: {error}"),
         };
@@ -4243,7 +4395,7 @@ mod tests {
         let socket_path = parent.join("mcp.sock");
         let _ = fs::remove_file(&socket_path);
         let _ = fs::remove_dir_all(&parent);
-        let handle = match start_local_socket_server(Arc::new(FakeSource), &socket_path) {
+        let handle = match start_local_socket_server(Arc::new(FakeSource), &socket_path, false) {
             Ok(handle) => handle,
             Err(error) => panic!("server: {error}"),
         };
@@ -4343,6 +4495,7 @@ mod tests {
                 observations: Arc::clone(&observations),
             }),
             &socket_path,
+            false,
         ) {
             Ok(handle) => handle,
             Err(error) => panic!("server: {error}"),
@@ -4700,6 +4853,7 @@ mod tests {
                     .collect(),
             }),
             mcp_stats: None,
+            operator_actions_enabled: false,
         };
         let response = match server.handle_message(json!({
             "jsonrpc": "2.0",

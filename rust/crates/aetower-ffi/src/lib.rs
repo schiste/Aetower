@@ -1505,13 +1505,18 @@ impl MonitorEngine {
         }
     }
 
-    pub fn start_local_mcp_server(&self, socket_path: Option<String>) -> String {
+    pub fn start_local_mcp_server(
+        &self,
+        socket_path: Option<String>,
+        operator_actions_enabled: bool,
+    ) -> String {
         let resolved_path = socket_path
             .map(std::path::PathBuf::from)
             .unwrap_or_else(default_socket_path);
         if let Ok(mut slot) = self.mcp_server.lock() {
             if let Some(existing) = slot.as_ref()
                 && existing.socket_path() == resolved_path.as_path()
+                && existing.operator_actions_enabled() == operator_actions_enabled
                 && is_socket_listener_reachable(&resolved_path)
             {
                 return String::new();
@@ -1521,7 +1526,7 @@ impl MonitorEngine {
         let data_source = Arc::new(MonitorEngineDataSource {
             engine: Arc::clone(&self.inner),
         });
-        match start_local_socket_server(data_source, &resolved_path) {
+        match start_local_socket_server(data_source, &resolved_path, operator_actions_enabled) {
             Ok(handle) => {
                 let path_display = resolved_path.display().to_string();
                 if let Ok(mut slot) = self.mcp_server.lock() {
@@ -1536,6 +1541,7 @@ impl MonitorEngine {
                             "Started local MCP server",
                         )
                         .field("path", path_display)
+                        .field("operator_actions_enabled", operator_actions_enabled)
                         .build(),
                     );
                 }
@@ -4080,7 +4086,7 @@ mod tests {
         let socket_path = dir.join("mcp.sock");
         let socket_string = socket_path.display().to_string();
         let engine = MonitorEngine::new();
-        let result = engine.start_local_mcp_server(Some(socket_string.clone()));
+        let result = engine.start_local_mcp_server(Some(socket_string.clone()), false);
         assert!(result.is_empty(), "{result}");
 
         for _ in 0..50 {
@@ -4103,7 +4109,7 @@ mod tests {
         let socket_string = socket_path.display().to_string();
         let engine = MonitorEngine::new();
 
-        let first = engine.start_local_mcp_server(Some(socket_string.clone()));
+        let first = engine.start_local_mcp_server(Some(socket_string.clone()), false);
         assert!(first.is_empty(), "{first}");
         for _ in 0..50 {
             if socket_path.exists() {
@@ -4113,7 +4119,7 @@ mod tests {
         }
         assert!(socket_path.exists(), "expected socket at {}", socket_string);
 
-        let second = engine.start_local_mcp_server(Some(socket_string.clone()));
+        let second = engine.start_local_mcp_server(Some(socket_string.clone()), false);
         assert!(second.is_empty(), "{second}");
         assert!(
             socket_path.exists(),

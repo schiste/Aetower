@@ -1199,7 +1199,10 @@ struct AetowerApp: App {
             .task {
                 menuBarExtraInserted = settings.showMenuBarExtra
                 refreshMenuBarTitle(force: true)
-                state.startLocalMcpServer(autoRegisterClients: settings.autoRegisterLocalMcpClientsEnabled)
+                state.startLocalMcpServer(
+                    autoRegisterClients: settings.autoRegisterLocalMcpClientsEnabled,
+                    operatorActionsEnabled: settings.localMcpOperatorActionsEnabled
+                )
                 state.applyNotificationSettings(settings)
                 state.applyRuntimeCollectionSettings(settings)
                 state.applyStoragePolicySettings(settings)
@@ -1243,6 +1246,9 @@ struct AetowerApp: App {
                 state.applyStoragePolicySettings(settings)
             }
             .onChange(of: settings.autoRegisterLocalMcpClientsEnabled) { _, _ in
+                state.applyLocalMcpClientRegistrationSettings(settings)
+            }
+            .onChange(of: settings.localMcpOperatorActionsEnabled) { _, _ in
                 state.applyLocalMcpClientRegistrationSettings(settings)
             }
             .onDisappear {

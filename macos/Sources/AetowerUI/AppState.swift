@@ -738,6 +738,8 @@ public final class AppState {
     @ObservationIgnored
     private var mirroredDiagnosticsSignatures = Set<String>()
     @ObservationIgnored
+    private var localMcpOperatorActionsEnabled = false
+    @ObservationIgnored
     private var historyWindowSeconds: TimeInterval = 3600
     @ObservationIgnored
     private var lastHistoryLoadDate = Date.distantPast
@@ -889,8 +891,15 @@ public final class AppState {
         localMcpController.socketPathDisplay
     }
 
-    public func startLocalMcpServer(autoRegisterClients: Bool = false) {
-        localMcpController.start(autoRegisterClients: autoRegisterClients)
+    public func startLocalMcpServer(
+        autoRegisterClients: Bool = false,
+        operatorActionsEnabled: Bool = false
+    ) {
+        localMcpOperatorActionsEnabled = operatorActionsEnabled
+        localMcpController.start(
+            autoRegisterClients: autoRegisterClients,
+            operatorActionsEnabled: operatorActionsEnabled
+        )
         consumeLocalMcpError()
     }
 
@@ -1793,6 +1802,11 @@ public final class AppState {
     }
 
     public func applyLocalMcpClientRegistrationSettings(_ settings: SettingsStore) {
+        let modeChanged = localMcpOperatorActionsEnabled != settings.localMcpOperatorActionsEnabled
+        localMcpOperatorActionsEnabled = settings.localMcpOperatorActionsEnabled
+        if modeChanged {
+            ensureLocalMcpServer(force: true)
+        }
         localMcpController.applyClientRegistrationSettings(settings)
         consumeLocalMcpError()
     }
@@ -1857,7 +1871,10 @@ public final class AppState {
     }
 
     private func ensureLocalMcpServer(force: Bool = false) {
-        localMcpController.ensureServer(force: force)
+        localMcpController.ensureServer(
+            force: force,
+            operatorActionsEnabled: localMcpOperatorActionsEnabled
+        )
         consumeLocalMcpError()
     }
 

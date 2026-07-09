@@ -62,6 +62,7 @@ pub struct LocalMcpServerHandle {
     client_threads: Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
     socket_path: PathBuf,
     stats: Arc<McpRuntimeStats>,
+    operator_actions_enabled: bool,
 }
 
 impl LocalMcpServerHandle {
@@ -71,6 +72,10 @@ impl LocalMcpServerHandle {
 
     pub fn stats(&self) -> (u64, u64, u64) {
         self.stats.snapshot()
+    }
+
+    pub fn operator_actions_enabled(&self) -> bool {
+        self.operator_actions_enabled
     }
 }
 
@@ -134,6 +139,7 @@ pub fn default_socket_path() -> PathBuf {
 pub fn start_local_socket_server(
     data_source: Arc<dyn AetowerMcpDataSource>,
     socket_path: impl AsRef<Path>,
+    operator_actions_enabled: bool,
 ) -> Result<LocalMcpServerHandle, String> {
     let socket_path = socket_path.as_ref().to_path_buf();
     if let Some(parent) = socket_path.parent() {
@@ -187,6 +193,7 @@ pub fn start_local_socket_server(
                     }
                     let source = Arc::clone(&data_source);
                     let connection_running = Arc::clone(&thread_running);
+                    let connection_operator_actions_enabled = operator_actions_enabled;
                     thread_stats
                         .total_connections
                         .fetch_add(1, Ordering::Relaxed);
@@ -199,6 +206,7 @@ pub fn start_local_socket_server(
                             Arc::clone(&source),
                             connection_running,
                             Arc::clone(&stats),
+                            connection_operator_actions_enabled,
                         ) {
                             // Surface per-connection failures — handle_connection
                             // returns Ok on clean peer close, so reaching here
@@ -230,6 +238,7 @@ pub fn start_local_socket_server(
         client_threads,
         socket_path,
         stats,
+        operator_actions_enabled,
     })
 }
 
@@ -668,6 +677,7 @@ pub(crate) fn handle_connection(
     data_source: Arc<dyn AetowerMcpDataSource>,
     running: Arc<AtomicBool>,
     stats: Arc<McpRuntimeStats>,
+    operator_actions_enabled: bool,
 ) -> Result<(), String> {
     let mut connection = McpSocketConnection::new(stream);
     if !connection.arm_read_timeout()? {
@@ -675,7 +685,8 @@ pub(crate) fn handle_connection(
         // probe or the accept-loop wakeup). Nothing to do; close cleanly.
         return Ok(());
     }
-    let server = AetowerMcpServer::new_with_stats(data_source, Some(stats));
+    let server =
+        AetowerMcpServer::new_with_stats(data_source, Some(stats), operator_actions_enabled);
     let mut framing = None;
 
     loop {

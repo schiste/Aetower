@@ -706,7 +706,7 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
      */
     func setFanMinRpm(fanId: UInt8, rpm: Float)  -> String
 
-    func startLocalMcpServer(socketPath: String?)  -> String
+    func startLocalMcpServer(socketPath: String?, operatorActionsEnabled: Bool)  -> String
 
     func stopAgentSession(sessionId: String, force: Bool)  -> String
 
@@ -1290,10 +1290,11 @@ open func setFanMinRpm(fanId: UInt8, rpm: Float) -> String  {
 })
 }
 
-open func startLocalMcpServer(socketPath: String?) -> String  {
+open func startLocalMcpServer(socketPath: String?, operatorActionsEnabled: Bool) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_start_local_mcp_server(self.uniffiClonePointer(),
-        FfiConverterOptionString.lower(socketPath),$0
+        FfiConverterOptionString.lower(socketPath),
+        FfiConverterBool.lower(operatorActionsEnabled),$0
     )
 })
 }
@@ -12290,7 +12291,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_set_fan_min_rpm() != 11672) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_aetower_ffi_checksum_method_monitorengine_start_local_mcp_server() != 18448) {
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_start_local_mcp_server() != 14789) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_stop_agent_session() != 46014) {

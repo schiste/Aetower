@@ -29,6 +29,8 @@ final class LocalMcpController {
     @ObservationIgnored
     private var serverStarted = false
     @ObservationIgnored
+    private var serverOperatorActionsEnabled: Bool?
+    @ObservationIgnored
     private var lastHealthProbeDate = Date.distantPast
     @ObservationIgnored
     private var lastSocketProbeDate = Date.distantPast
@@ -55,8 +57,11 @@ final class LocalMcpController {
         socketPath
     }
 
-    func start(autoRegisterClients: Bool = false) {
-        ensureServer(force: true)
+    func start(
+        autoRegisterClients: Bool = false,
+        operatorActionsEnabled: Bool = false
+    ) {
+        ensureServer(force: true, operatorActionsEnabled: operatorActionsEnabled)
         refreshClientStatuses()
         if autoRegisterClients {
             ensureAutomaticClientRegistration()
@@ -66,6 +71,7 @@ final class LocalMcpController {
     func stop() {
         bridge.stopLocalMcpServer()
         serverStarted = false
+        serverOperatorActionsEnabled = nil
         serverHealthy = false
         lastProbeDetail = "listener stopped"
         lastSocketProbeDate = Date()
@@ -75,18 +81,23 @@ final class LocalMcpController {
         )
     }
 
-    func ensureServer(force: Bool = false) {
+    func ensureServer(
+        force: Bool = false,
+        operatorActionsEnabled: Bool = false
+    ) {
         let now = Date()
         let healthCheckInterval = serverHealthy
             ? healthyHealthCheckInterval
             : unhealthyHealthCheckInterval
-        guard force || now.timeIntervalSince(lastHealthProbeDate) >= healthCheckInterval else {
+        let modeChanged = serverOperatorActionsEnabled != nil
+            && serverOperatorActionsEnabled != operatorActionsEnabled
+        guard force || modeChanged || now.timeIntervalSince(lastHealthProbeDate) >= healthCheckInterval else {
             return
         }
         lastHealthProbeDate = now
         lastHealthCheckDate = now
 
-        let probe = currentSocketProbe(forceFresh: force)
+        let probe = currentSocketProbe(forceFresh: force || modeChanged)
         lastProbeDetail = probe.detail
         if serverStarted && probe.reachable {
             serverHealthy = true
@@ -100,6 +111,7 @@ final class LocalMcpController {
         }
 
         let shouldRestart = force
+            || modeChanged
             || !serverStarted
             || (serverStarted && !probe.reachable && consecutiveProbeFailures >= restartFailureThreshold)
         guard shouldRestart else {
@@ -108,13 +120,15 @@ final class LocalMcpController {
 
         let wasStarted = serverStarted
         lastStartAttemptDate = now
-        if let error = bridge.startLocalMcpServer() {
+        if let error = bridge.startLocalMcpServer(operatorActionsEnabled: operatorActionsEnabled) {
             serverStarted = false
+            serverOperatorActionsEnabled = nil
             serverHealthy = false
             lastStartError = error
             lastError = error
         } else {
             serverStarted = true
+            serverOperatorActionsEnabled = operatorActionsEnabled
             if wasStarted || lastStartSucceededDate != nil {
                 restartCount += 1
             }

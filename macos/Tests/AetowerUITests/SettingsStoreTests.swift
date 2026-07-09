@@ -35,12 +35,14 @@ final class SettingsStoreTests: XCTestCase {
     func testResetRestoresSafeDefaultsAndDisablesAutomaticClientRegistration() {
         let store = makeStore()
         store.autoRegisterLocalMcpClientsEnabled = true
+        store.localMcpOperatorActionsEnabled = true
         store.telemetryEndpoint = "http://collector.example/v1/metrics"
         store.collectionProfile = .full
 
         store.resetToDefaults()
 
         XCTAssertFalse(store.autoRegisterLocalMcpClientsEnabled)
+        XCTAssertFalse(store.localMcpOperatorActionsEnabled)
         XCTAssertEqual(store.telemetryEndpoint, SettingsStore.defaultTelemetryEndpoint)
         XCTAssertEqual(store.chau7AgentCommand, SettingsStore.defaultChau7AgentCommand)
         XCTAssertEqual(store.collectionProfile, .balanced)
@@ -54,6 +56,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertFalse(store.privilegedHelperEnabled)
         XCTAssertFalse(store.telemetryEnabled)
         XCTAssertFalse(store.autoRegisterLocalMcpClientsEnabled)
+        XCTAssertFalse(store.localMcpOperatorActionsEnabled)
         XCTAssertFalse(store.storageScheduledScansEnabled)
         XCTAssertTrue(store.operatorSafeModeEnabled)
         XCTAssertEqual(store.exportPrivacyTier, .redacted)
@@ -70,6 +73,20 @@ final class SettingsStoreTests: XCTestCase {
 
         let reloaded = SettingsStore(defaults: defaults)
         XCTAssertTrue(reloaded.autoRegisterLocalMcpClientsEnabled)
+    }
+
+    func testLocalMcpOperatorActionsPreferencePersistsAndDefaultsOff() {
+        let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertFalse(SettingsStore(defaults: defaults).localMcpOperatorActionsEnabled)
+
+        let store = SettingsStore(defaults: defaults)
+        store.localMcpOperatorActionsEnabled = true
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertTrue(reloaded.localMcpOperatorActionsEnabled)
     }
 
     func testRepositoryRootsDefaultToRepositoryOnlyLocations() {
