@@ -1394,10 +1394,11 @@
             <p>
               The same socket answers <em>you</em>, too. The bundled <strong>aetower</strong> CLI is
               a thin client of that engine — <span class="mono">aetower top</span>,
-              <span class="mono">storage</span>, <span class="mono">repos</span>, or
+              <span class="mono">aetower storage</span>, <span class="mono">aetower repos</span>, or
               <span class="mono">--json</span> into any pipeline — so you read the exact state your
-              agents do, from any terminal. It ships in every download and installs onto your
-              <span class="mono">PATH</span>.
+              agents do, from any terminal. It ships in every download; the PKG and Homebrew cask
+              link it onto your <span class="mono">PATH</span>, while DMG/ZIP installs expose the same
+              action in Settings.
             </p>
             <div class="tool-grid">
               <code>aetower_investigation_bundle</code>
@@ -1449,7 +1450,7 @@ Claude Code · repo x          14     0   340 MB</pre>
           <div>
             <span class="tick" style="background: var(--green)"></span>
             <h4>CLI</h4>
-            <p><span class="mono">aetower top</span>, <span class="mono">storage</span>, <span class="mono">repos</span> — or <span class="mono">--json</span> into any pipeline. Same live data as the app, while it's running.</p>
+            <p><span class="mono">aetower top</span>, <span class="mono">aetower storage</span>, <span class="mono">aetower repos</span> — or <span class="mono">--json</span> into any pipeline. PKG and Homebrew installs link the command automatically; DMG/ZIP users can enable it from Settings.</p>
           </div>
           <div>
             <span class="tick" style="background: #f59e0b"></span>
@@ -1566,7 +1567,7 @@ Claude Code · repo x          14     0   340 MB</pre>
               </svg>
               Conservative
             </h3>
-            <p>Endpoint Security, telemetry, and MCP client registration are all off until you opt in.</p>
+            <p>Everything outbound is off until you opt in — and Privacy → Outbound Data shows each channel's live state: telemetry, Fleet advertising, hash-only VirusTotal lookups, provider credentials, and registered MCP clients.</p>
           </div>
           <div>
             <h3>
