@@ -137,6 +137,8 @@ and recommendations without launching its own duplicate monitoring engine.
 
 - Runs an app-owned local MCP server when Aetower is active.
 - Uses a local Unix socket and packaged stdio helper for supported clients.
+- Offers one-click registration for supported Claude and Codex clients; automatic
+  registration remains off by default.
 - Exposes read-only tools for snapshots, host summaries, entity details,
   diagnostics, history pages, recommendations, support-bundle manifests, runtime
   lag, export queries, and investigation bundles.

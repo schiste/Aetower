@@ -218,7 +218,7 @@ struct LocalMcpClientRegistrar {
                     state: registration,
                     detail: registration == .registered
                         ? "Claude Desktop is configured to launch Aetower's bundled MCP proxy."
-                        : "Claude Desktop has a stable user-owned MCP config file and can be registered automatically.",
+                        : "Claude Desktop has a stable user-owned MCP config file and can be registered with one click.",
                     configPath: client.configPath,
                     supportsAutomaticRegistration: true,
                     manualSnippet: configSnippet(for: client, commandPath: commandPath, socketPath: socketPath)
@@ -245,7 +245,7 @@ struct LocalMcpClientRegistrar {
                     state: registration,
                     detail: registration == .registered
                         ? "Claude CLI is configured to launch Aetower via `claude mcp`."
-                        : "Claude CLI has its own MCP registry and can be registered automatically.",
+                        : "Claude CLI has its own MCP registry and can be registered with one click.",
                     configPath: client.configPath,
                     supportsAutomaticRegistration: true,
                     manualSnippet: configSnippet(for: client, commandPath: commandPath, socketPath: socketPath)
@@ -272,7 +272,7 @@ struct LocalMcpClientRegistrar {
                     state: registration,
                     detail: registration == .registered
                         ? "Codex is configured to launch Aetower's bundled MCP proxy via ~/.codex/config.toml."
-                        : "Codex has a stable user-owned MCP config surface and can be registered automatically.",
+                        : "Codex has a stable user-owned MCP config surface and can be registered with one click.",
                     configPath: client.configPath,
                     supportsAutomaticRegistration: true,
                     manualSnippet: configSnippet(for: client, commandPath: commandPath, socketPath: socketPath)

@@ -113,9 +113,10 @@ helper as `command`.
 }
 ```
 
-When a packaged Aetower app launches, it automatically registers that entry for
-Claude if Claude is installed locally. Other AI clients currently require
-manual setup unless they expose a stable writable MCP config file.
+Aetower does not register local AI clients automatically by default. The
+first-run Settings flow offers one-click registration for supported Claude and
+Codex clients, and other AI clients require manual setup unless they expose a
+stable writable MCP config file.
 
 If the app is not running, standard cached tools still work from the last
 written cache. Dynamic profiling tools return a clear error telling the caller

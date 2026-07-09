@@ -26,9 +26,10 @@ export, shares screenshots, or shares support artifacts.
 ## MCP Access
 
 Aetower can expose a local MCP surface for trusted AI tools. The public-preview
-default is conservative: automatic AI-client registration is off. Users should
-register only local clients they trust because those clients can inspect
-Aetower's local observation data through the owner-only socket/proxy path.
+default is conservative: automatic AI-client registration is off. Users can use
+one-click registration for supported Claude and Codex clients they trust because
+those clients can inspect Aetower's local observation data through the
+owner-only socket/proxy path.
 
 ## Heavy Views And History
 

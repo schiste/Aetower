@@ -291,9 +291,12 @@ public struct SettingsView: View {
                 ? SettingsStatus("Pending Apply", AetowerDesign.Status.warning)
                 : SettingsStatus("Applied", AetowerDesign.Status.success)
         case .aiClients:
+            if settings.localMcpOperatorActionsEnabled {
+                return SettingsStatus("Operator", AetowerDesign.Status.warning)
+            }
             return settings.autoRegisterLocalMcpClientsEnabled
                 ? SettingsStatus("Auto", AetowerDesign.Status.ready)
-                : SettingsStatus("Manual", AetowerDesign.Status.neutral)
+                : SettingsStatus("Read-only", AetowerDesign.Status.success)
         case .notifications:
             return settings.notificationsEnabled
                 ? SettingsStatus("Enabled", AetowerDesign.Status.success)
@@ -356,15 +359,30 @@ public struct SettingsView: View {
     }
 
     private var hasRegisteredLocalMcpClient: Bool {
-        if settings.autoRegisterLocalMcpClientsEnabled {
-            return true
-        }
         return state.localMcpClientStatuses.contains { status in
             if case .registered = status.state {
                 return true
             }
             return false
         }
+    }
+
+    private var oneClickMcpClientStatuses: [LocalMcpClientRegistrationStatus] {
+        state.localMcpClientStatuses.filter { status in
+            status.supportsAutomaticRegistration && status.isInstalled
+        }
+    }
+
+    private var oneClickMcpPendingClientStatuses: [LocalMcpClientRegistrationStatus] {
+        oneClickMcpClientStatuses.filter { status in
+            status.state == .availableForAutomaticRegistration
+        }
+    }
+
+    private var oneClickMcpDetectedClientLabel: String {
+        let names = oneClickMcpClientStatuses.map(\.displayName)
+        guard !names.isEmpty else { return "No supported Claude or Codex client detected yet." }
+        return "Detected: \(names.joined(separator: ", "))"
     }
 
     private func isCapabilityReady(_ kind: CapabilityKind) -> Bool {
@@ -424,6 +442,8 @@ public struct SettingsView: View {
                 ProgressView(value: Double(progress.completed), total: Double(progress.total))
             }
 
+            localMcpFirstRunConsentCard
+
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 SettingsChecklistRow(
                     title: "Keep heavy views safe",
@@ -453,8 +473,8 @@ public struct SettingsView: View {
                 }
 
                 SettingsChecklistRow(
-                    title: "Expose MCP to local AI clients",
-                    detail: "Registering supported clients makes Aetower discoverable from tools like Claude CLI and Codex.",
+                    title: "Register MCP with local AI clients",
+                    detail: "One-click registration makes Aetower discoverable from supported Claude and Codex clients after explicit consent.",
                     isComplete: hasRegisteredLocalMcpClient,
                     actionTitle: "Review AI Clients"
                 ) {
@@ -478,6 +498,63 @@ public struct SettingsView: View {
                 ) {
                     selectedSection = .updates
                 }
+            }
+        }
+    }
+
+    private var localMcpFirstRunConsentCard: some View {
+        let pendingTargets = oneClickMcpPendingClientStatuses
+        let isRegistered = hasRegisteredLocalMcpClient
+        return SettingsRowCard {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: isRegistered ? "checkmark.shield.fill" : "person.crop.circle.badge.plus")
+                    .foregroundStyle(isRegistered ? AetowerDesign.Status.success : AetowerDesign.Status.ready)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Text("Register Aetower MCP with Claude/Codex")
+                            .font(AetowerDesign.Typography.sectionTitle)
+                        SettingsBadge(
+                            isRegistered ? "Registered" : "Consent required",
+                            color: isRegistered ? AetowerDesign.Status.success : AetowerDesign.Status.ready
+                        )
+                    }
+                    Text("One-click registration writes Aetower's local MCP proxy into supported Claude and Codex config files. Default MCP tools remain read-only; operator actions need a separate setting.")
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+            }
+
+            Text(oneClickMcpDetectedClientLabel)
+                .font(AetowerDesign.Typography.caption.monospaced())
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
+                .padding(.leading, AetowerDesign.Spacing.xxl + AetowerDesign.Spacing.md)
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button {
+                    focusedField = nil
+                    state.registerSupportedLocalMcpClients()
+                } label: {
+                    Label("Register Aetower MCP", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(pendingTargets.isEmpty)
+
+                Button("Review AI Clients") {
+                    selectedSection = .aiClients
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding(.leading, AetowerDesign.Spacing.xxl + AetowerDesign.Spacing.md)
+
+            if let message = state.localMcpRegistrationStatusMessage {
+                Text(message)
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(message.contains("Registered")
+                        ? AetowerDesign.Status.neutral
+                        : AetowerDesign.Status.warning)
+                    .padding(.leading, AetowerDesign.Spacing.xxl + AetowerDesign.Spacing.md)
             }
         }
     }
@@ -1104,87 +1181,115 @@ public struct SettingsView: View {
     private var aiClientsSection: some View {
         @Bindable var settings = settings
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-        SettingsCard(
-            title: "Local AI client MCP access",
-            subtitle: "Aetower can register its bundled MCP proxy for supported local agents.",
-            status: status(for: .aiClients)
-        ) {
-            Toggle(
-                "Auto-register supported AI clients on launch",
-                isOn: $settings.autoRegisterLocalMcpClientsEnabled
-            )
-            Text("Off by default. Manual registration is safer for shared machines.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: AetowerDesign.Spacing.sm) {
-                Button("Register supported clients") {
-                    focusedField = nil
-                    state.registerSupportedLocalMcpClients()
+            SettingsCard(
+                title: "Local AI client MCP access",
+                subtitle: "Aetower can register its bundled MCP proxy for supported local agents.",
+                status: status(for: .aiClients)
+            ) {
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Text("MCP mode")
+                        .font(AetowerDesign.Typography.controlLabel)
+                    SettingsBadge(
+                        settings.localMcpOperatorActionsEnabled ? "Operator actions exposed" : "Read-only tools",
+                        color: settings.localMcpOperatorActionsEnabled
+                            ? AetowerDesign.Status.warning
+                            : AetowerDesign.Status.success
+                    )
+                    Spacer()
                 }
-                .buttonStyle(.borderedProminent)
 
-                Button("Refresh client status") {
-                    state.refreshLocalMcpClientStatuses()
+                Toggle(
+                    "Automatically register supported AI clients on launch",
+                    isOn: $settings.autoRegisterLocalMcpClientsEnabled
+                )
+                Text("Advanced opt-in. Off by default so Aetower does not modify Claude or Codex config files without an explicit setup action.")
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+
+                Toggle(
+                    "Enable MCP operator actions",
+                    isOn: $settings.localMcpOperatorActionsEnabled
+                )
+                if settings.localMcpOperatorActionsEnabled {
+                    Text("Off by default. When enabled, local MCP exposes guarded process-action tools; execution still requires preview and operator confirmation.")
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Status.warning)
+                } else {
+                    Text("Off by default. When enabled, local MCP exposes guarded process-action tools; execution still requires preview and operator confirmation.")
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
                 }
-                .buttonStyle(.bordered)
-            }
 
-            if let message = state.localMcpRegistrationStatusMessage {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(message.contains("Registered")
-                        ? AetowerDesign.Status.neutral
-                        : AetowerDesign.Status.warning)
-            }
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Button {
+                        focusedField = nil
+                        state.registerSupportedLocalMcpClients()
+                    } label: {
+                        Label("Register Aetower MCP with Claude/Codex", systemImage: "checkmark.circle")
+                    }
+                    .buttonStyle(.borderedProminent)
 
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-                ForEach(state.localMcpClientStatuses) { status in
-                    SettingsRowCard {
-                        HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
-                            Text(status.displayName)
-                                .font(.headline)
-                            SettingsBadge(
-                                registrationLabel(status.state),
-                                color: registrationColor(status.state)
-                            )
-                            Spacer()
-                        }
+                    Button("Refresh client status") {
+                        state.refreshLocalMcpClientStatuses()
+                    }
+                    .buttonStyle(.bordered)
+                }
 
-                        Text(status.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                if let message = state.localMcpRegistrationStatusMessage {
+                    Text(message)
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(message.contains("Registered")
+                            ? AetowerDesign.Status.neutral
+                            : AetowerDesign.Status.warning)
+                }
 
-                        if let configPath = status.configPath {
-                            Text(configPath)
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.tertiary)
-                                .textSelection(.enabled)
-                        }
-
-                        HStack(spacing: AetowerDesign.Spacing.sm) {
-                            if status.supportsAutomaticRegistration,
-                               status.isInstalled,
-                               status.state != .registered {
-                                Button("Register") {
-                                    focusedField = nil
-                                    state.registerSupportedLocalMcpClients()
-                                }
-                                .buttonStyle(.bordered)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    ForEach(state.localMcpClientStatuses) { status in
+                        SettingsRowCard {
+                            HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                                Text(status.displayName)
+                                    .font(AetowerDesign.Typography.sectionTitle)
+                                SettingsBadge(
+                                    registrationLabel(status.state),
+                                    color: registrationColor(status.state)
+                                )
+                                Spacer()
                             }
 
-                            if status.manualSnippet != nil {
-                                Button("Copy MCP snippet") {
-                                    focusedField = nil
-                                    state.copyLocalMcpConfigSnippet(providerId: status.id)
+                            Text(status.detail)
+                                .font(AetowerDesign.Typography.caption)
+                                .foregroundStyle(AetowerDesign.Ink.secondary)
+
+                            if let configPath = status.configPath {
+                                Text(configPath)
+                                    .font(AetowerDesign.Typography.caption.monospaced())
+                                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                                    .textSelection(.enabled)
+                            }
+
+                            HStack(spacing: AetowerDesign.Spacing.sm) {
+                                if status.supportsAutomaticRegistration,
+                                   status.isInstalled,
+                                   status.state != .registered {
+                                    Button("Register") {
+                                        focusedField = nil
+                                        state.registerSupportedLocalMcpClients()
+                                    }
+                                    .buttonStyle(.bordered)
                                 }
-                                .buttonStyle(.bordered)
+
+                                if status.manualSnippet != nil {
+                                    Button("Copy MCP snippet") {
+                                        focusedField = nil
+                                        state.copyLocalMcpConfigSnippet(providerId: status.id)
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
                             }
                         }
                     }
                 }
             }
-        }
             CommandLineToolCard()
         }
     }
