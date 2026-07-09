@@ -74,6 +74,26 @@ brew install --cask aetower
 Confirm the installed app launches, Gatekeeper accepts it, and Sparkle can still
 detect updates from the app's configured feed.
 
+The generated cask also links the bundled operator CLI:
+
+```ruby
+binary "#{appdir}/Aetower.app/Contents/Helpers/aetower",
+       target: "aetower"
+```
+
+After `brew install --cask aetower`, confirm the shell path and the three
+operator entry points:
+
+```sh
+command -v aetower
+aetower top
+aetower storage
+aetower repos
+```
+
+The read verbs require Aetower.app to be running because the CLI talks to the
+app-owned local MCP socket.
+
 ## Relationship to Sparkle, DMG, and PKG
 
 Sparkle remains the app's in-app update path. The cask installs the app from the
@@ -85,3 +105,12 @@ PKG installs can still receive future Sparkle app updates because Sparkle
 updates the installed `.app`; however, this repository's Sparkle
 `generate_appcast` tooling is ZIP-based and does not create DMG- or
 package-based Sparkle update items.
+
+CLI install behavior by channel:
+
+- **PKG**: postinstall best-effort links `/usr/local/bin/aetower`.
+- **Homebrew cask**: the `binary` stanza links `aetower` into
+  `$(brew --prefix)/bin`.
+- **DMG / ZIP**: launch Aetower, open **Settings → AI Clients**, and use
+  **Install Command Line Tool**, or run
+  `/Applications/Aetower.app/Contents/Helpers/aetower install`.

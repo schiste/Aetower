@@ -41,8 +41,9 @@ rm -f "$PKG_PATH"
 # Build a distribution pkg (not a bare component archive) so it can carry a
 # postinstall script. The script symlinks the bundled `aetower` CLI onto $PATH,
 # giving the flagship download the "just works in your shell" experience. The
-# app itself, plus DMG/ZIP/brew installs, offer the same symlink via the in-app
-# "Install Command Line Tool" action.
+# app itself offers the same symlink via the in-app "Install Command Line Tool"
+# action for DMG/ZIP installs and repair flows; Homebrew uses the cask `binary`
+# artifact.
 STAGING_ROOT="$(mktemp -d)"
 SCRIPTS_DIR="$(mktemp -d)"
 COMPONENT_DIR="$(mktemp -d)"

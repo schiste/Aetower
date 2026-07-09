@@ -54,12 +54,16 @@ cask "aetower" do
   depends_on macos: ">= :sonoma"
 
   app "Aetower.app"
+  binary "#{appdir}/Aetower.app/Contents/Helpers/aetower",
+         target: "aetower"
 
   caveats <<~EOS
-    To use the \`aetower\` command line tool from any shell, run once:
-      /Applications/Aetower.app/Contents/Helpers/aetower install
-    (or use "Install Command Line Tool" in Aetower's Settings → AI Clients).
-    The CLI reads live data from a running Aetower, so keep the app open.
+    Homebrew links the bundled \`aetower\` command to:
+      \$(brew --prefix)/bin/aetower
+    Keep Aetower.app running, then try:
+      aetower top
+      aetower storage
+      aetower repos
   EOS
 
   zap trash: [

@@ -198,8 +198,9 @@ strip -rSTx "$BIN_DIR/Aetower" 2>/dev/null || strip -S "$BIN_DIR/Aetower"
 cp "$ROOT/rust/target/release/libaetower_ffi.dylib" "$FRAMEWORK_DIR/"
 cp "$ROOT/rust/target/release/aetower-mcp" "$HELPER_DIR/aetower-mcp"
 # The `aetower` operator CLI. It ships inside the bundle so it arrives through
-# every channel (pkg/dmg/zip/brew); the pkg postinstall and the in-app "Install
-# Command Line Tool" action symlink it onto $PATH.
+# every channel (pkg/dmg/zip/brew). The pkg postinstall and Homebrew cask
+# artifact link it automatically; the in-app "Install Command Line Tool" action
+# covers DMG/ZIP/manual installs and repairs conflicts.
 cp "$ROOT/rust/target/release/aetower" "$HELPER_DIR/aetower"
 sh "$ROOT/scripts/generate-app-icon.sh" >/dev/null
 cp "$APP_ICON_PATH" "$PLIST_DIR/Resources/Aetower.icns"

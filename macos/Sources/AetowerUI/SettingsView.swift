@@ -351,6 +351,7 @@ public struct SettingsView: View {
             settings.operatorSafeModeEnabled,
             true,
             isCapabilityReady(.chau7),
+            hasInstalledCommandLineTool,
             hasRegisteredLocalMcpClient,
             settings.exportPrivacyTier != .full,
             updater.isConfigured,
@@ -365,6 +366,10 @@ public struct SettingsView: View {
             }
             return false
         }
+    }
+
+    private var hasInstalledCommandLineTool: Bool {
+        CommandLineToolInstaller.currentState() == .installed
     }
 
     private var oneClickMcpClientStatuses: [LocalMcpClientRegistrationStatus] {
@@ -613,6 +618,15 @@ public struct SettingsView: View {
                     actionTitle: "Review Integrations"
                 ) {
                     selectedSection = .integrations
+                }
+
+                SettingsChecklistRow(
+                    title: "Install the aetower CLI",
+                    detail: "PKG and Homebrew installs should put aetower on PATH automatically; DMG/ZIP installs can use the in-app installer.",
+                    isComplete: hasInstalledCommandLineTool,
+                    actionTitle: "Review AI Clients"
+                ) {
+                    selectedSection = .aiClients
                 }
 
                 SettingsChecklistRow(
@@ -1324,6 +1338,8 @@ public struct SettingsView: View {
     private var aiClientsSection: some View {
         @Bindable var settings = settings
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            CommandLineToolCard()
+
             SettingsCard(
                 title: "Local AI client MCP access",
                 subtitle: "Aetower can register its bundled MCP proxy for supported local agents.",
@@ -1433,7 +1449,6 @@ public struct SettingsView: View {
                     }
                 }
             }
-            CommandLineToolCard()
         }
     }
 
@@ -2808,7 +2823,8 @@ private struct CommandLineToolCard: View {
     var body: some View {
         SettingsCard(
             title: "Command line tool",
-            subtitle: "Run Aetower from any shell: aetower top, storage, repos, or aetower --json … | jq. Requires Aetower to be running."
+            subtitle: "Run Aetower from any shell. PKG and Homebrew installs should link it automatically; DMG and ZIP installs can use this installer.",
+            status: SettingsStatus(statusLabel, statusColor)
         ) {
             HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
                 Text(CommandLineToolInstaller.linkPath)
@@ -2818,6 +2834,10 @@ private struct CommandLineToolCard: View {
                 SettingsBadge(statusLabel, color: statusColor)
                 Spacer()
             }
+
+            Text("Smoke path: aetower top · aetower storage · aetower repos. The app must be running because the CLI reads the app-owned local MCP socket.")
+                .font(AetowerDesign.Typography.caption)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
 
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 Button(state == .installed ? "Reinstall" : "Install Command Line Tool") {
@@ -2861,8 +2881,8 @@ private struct CommandLineToolCard: View {
 
     private var statusColor: Color {
         switch state {
-        case .installed: return AetowerDesign.Status.neutral
-        case .notInstalled: return AetowerDesign.Ink.secondary
+        case .installed: return AetowerDesign.Status.success
+        case .notInstalled: return AetowerDesign.Status.warning
         case .conflict, .unavailable: return AetowerDesign.Status.warning
         }
     }

@@ -59,10 +59,16 @@ https://aetower.dev/releases/appcast.xml
 
 For Developer Preview builds:
 
-1. Download the signed and notarized `Aetower.dmg`.
-2. Open it and drag `Aetower.app` to `Applications`.
+1. Download the signed and notarized `Aetower.pkg` for the default installer
+   path, or `Aetower.dmg` for drag-and-drop installs.
+2. Run the PKG installer, or open the DMG and drag `Aetower.app` to
+   Applications.
 3. Launch Aetower.
 4. Open **Settings -> Setup** and complete the readiness checklist.
+5. Confirm the CLI path with `aetower top`, `aetower storage`, and
+   `aetower repos`. PKG and Homebrew cask installs link the command
+   automatically; DMG/ZIP installs can use **Settings -> AI Clients ->
+   Install Command Line Tool**.
 
 See [Getting Started](docs/getting-started.md) for the first-run flow.
 See [Feature List](docs/features.md) for a structured technical and non-technical overview of Aetower capabilities.

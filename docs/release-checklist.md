@@ -111,6 +111,14 @@ sh scripts/verify-sparkle-distribution-matrix.sh --require-dmg --require-pkg
 
 Validate the generated cask from the Homebrew tap repository before publishing.
 See [Homebrew Release](homebrew-release.md).
+The cask must link the bundled CLI and, with Aetower.app running, pass:
+
+```sh
+command -v aetower
+aetower top
+aetower storage
+aetower repos
+```
 
 ## 5. Verify artifact
 

@@ -3,8 +3,9 @@
 //! The binary itself ships inside the app bundle (`Contents/Helpers/aetower`),
 //! which is why it arrives through every channel — pkg, dmg, zip, brew. Getting
 //! `aetower` onto `$PATH` is a separate, explicit step: a symlink in
-//! `/usr/local/bin`. The flagship PKG does this in its postinstall; DMG/ZIP/brew
-//! users (or anyone who wants it) run `aetower install`.
+//! `/usr/local/bin`. The flagship PKG does this in its postinstall, and the
+//! Homebrew cask links the bundled helper into `$(brew --prefix)/bin`. DMG/ZIP
+//! users (or anyone repairing a broken link) run `aetower install`.
 
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};

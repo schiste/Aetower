@@ -212,6 +212,16 @@ verify_homebrew_cask() {
         || fail "Homebrew cask must declare auto_updates true because Sparkle owns in-app updates"
     contains_literal "$HOMEBREW_CASK_PATH" "app \"Aetower.app\"" \
         || fail "Homebrew cask does not install Aetower.app"
+    contains_literal "$HOMEBREW_CASK_PATH" "binary \"#{appdir}/Aetower.app/Contents/Helpers/aetower\"," \
+        || fail "Homebrew cask does not link the bundled aetower CLI"
+    contains_literal "$HOMEBREW_CASK_PATH" "target: \"aetower\"" \
+        || fail "Homebrew cask binary stanza must expose the command as aetower"
+    contains_literal "$HOMEBREW_CASK_PATH" "aetower top" \
+        || fail "Homebrew cask caveats must document the CLI smoke path"
+    contains_literal "$HOMEBREW_CASK_PATH" "aetower storage" \
+        || fail "Homebrew cask caveats must document the storage CLI path"
+    contains_literal "$HOMEBREW_CASK_PATH" "aetower repos" \
+        || fail "Homebrew cask caveats must document the repos CLI path"
     contains_literal "$HOMEBREW_CASK_PATH" "$BASE_FEED_URL" \
         || fail "Homebrew cask livecheck does not reference the app Sparkle feed"
 }

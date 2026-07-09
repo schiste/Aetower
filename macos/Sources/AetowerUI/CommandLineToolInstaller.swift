@@ -4,9 +4,10 @@ import Foundation
 ///
 /// The binary ships inside the app bundle at `Contents/Helpers/aetower`, so it
 /// arrives through every channel (pkg/dmg/zip/brew). Getting it onto `$PATH` is
-/// a separate, explicit step: a symlink in `/usr/local/bin`. The flagship PKG
-/// does this in its postinstall; for DMG/ZIP/brew installs the app offers the
-/// same via this helper (the "Install Command Line Tool" Settings action).
+/// a channel-specific link step: the flagship PKG writes `/usr/local/bin`,
+/// Homebrew uses its cask `binary` stanza, and DMG/ZIP/manual installs use this
+/// helper (the "Install Command Line Tool" Settings action). The helper also
+/// repairs broken or missing symlink state after upgrades.
 ///
 /// Aetower is not sandboxed, so it can create the symlink directly. When
 /// `/usr/local/bin` needs administrator rights we don't silently escalate —

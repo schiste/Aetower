@@ -6,8 +6,8 @@ Sparkle update metadata.
 
 ## Download
 
-Use only the published `Aetower.dmg` for normal installs on the current
-Developer Preview channel.
+Use only the published `Aetower.pkg` or `Aetower.dmg` for normal installs on
+the current Developer Preview channel.
 Do not share ad-hoc local builds outside development machines.
 
 Expected public artifact:
@@ -28,11 +28,27 @@ Expected public artifact:
 
 ## Install
 
-1. Download `Aetower.dmg`.
-2. Open it.
-3. Drag `Aetower.app` to `Applications`.
+1. Download `Aetower.pkg` for the default installer path, or `Aetower.dmg`
+   for drag-and-drop installs.
+2. For the PKG, run the installer. It installs `Aetower.app` and best-effort
+   links `/usr/local/bin/aetower`.
+3. For the DMG, open it and drag `Aetower.app` to `Applications`.
 4. Launch from Finder.
 5. Open **Settings -> Setup** and review the readiness checklist.
+6. Confirm CLI access with `aetower top`, `aetower storage`, and
+   `aetower repos`. If the CLI is not on `PATH`, open
+   **Settings -> AI Clients -> Install Command Line Tool**.
+
+Homebrew users can install the same app bundle through the generated cask:
+
+```sh
+brew tap aeptus/aetower
+brew install --cask aetower
+```
+
+The cask links the bundled `aetower` helper into `$(brew --prefix)/bin`. Keep
+Aetower.app running while using read commands; the CLI reads the app-owned local
+MCP socket.
 
 If macOS says the app cannot be verified, stop and request a signed and
 notarized build. Do not bypass Gatekeeper for a public preview artifact.
