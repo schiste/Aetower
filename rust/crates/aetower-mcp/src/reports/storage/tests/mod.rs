@@ -1143,7 +1143,21 @@ fn storage_growth_forecast_reports_seasonality_purgeable_and_cloud_dynamics() {
     assert!(forecast.volatility_percent > 0);
     assert_eq!(forecast.cloud_daily_rate_bytes, (10 * mib) as i64);
     assert!(forecast.cloud_growth_share_percent > 0);
+    assert_eq!(forecast.free_now_bytes, 1_400 * mib);
+    assert_eq!(forecast.available_bytes, 1_700 * mib);
     assert_eq!(forecast.purgeable_bytes_estimate, 300 * mib);
+    assert_eq!(
+        forecast.purgeable_bytes_estimate,
+        forecast
+            .available_bytes
+            .saturating_sub(forecast.free_now_bytes)
+    );
+    assert_eq!(forecast.effective_available_bytes, 1_600 * mib);
+    assert_eq!(forecast.important_usage_available_bytes, Some(1_600 * mib));
+    assert_eq!(
+        forecast.opportunistic_usage_available_bytes,
+        Some(1_900 * mib)
+    );
     assert!(forecast.purgeable_cushion_days > 0.0);
     assert!(forecast.days_to_available_full > forecast.days_to_full);
     assert!(forecast.days_to_effective_full > forecast.days_to_full);
@@ -1154,6 +1168,12 @@ fn storage_growth_forecast_reports_seasonality_purgeable_and_cloud_dynamics() {
             .forecast_notes
             .iter()
             .any(|note| note.contains("Purgeable APFS space"))
+    );
+    assert!(
+        forecast
+            .forecast_notes
+            .iter()
+            .any(|note| note.contains("APFS important/opportunistic capacity"))
     );
     assert!(
         forecast
@@ -1911,7 +1931,17 @@ fn storage_hygiene_reports_redundancy_beyond_byte_duplicates() {
     assert!(
         shared["caveat"]
             .as_str()
-            .is_some_and(|caveat| caveat.contains("exact APFS clone lineage"))
+            .is_some_and(|caveat| caveat.contains("exact APFS clone lineage")
+                && caveat.contains("requires a deeper filesystem ownership collector"))
+    );
+    assert!(
+        shared["evidence"]
+            .as_array()
+            .is_some_and(|evidence| evidence.iter().any(|entry| entry
+                .as_str()
+                .is_some_and(|entry| entry.contains(
+                    "APFS clones, compression, sparse files, or partial materialization"
+                ))))
     );
     assert_eq!(shared["actions"]["can_reveal"].as_bool(), Some(true));
     assert_eq!(shared["actions"]["can_quick_look"].as_bool(), Some(true));
@@ -3912,6 +3942,64 @@ fn storage_hygiene_reclaimable_regression_detects_build_logs_and_caches() {
 }
 
 #[test]
+fn storage_hygiene_reports_sparse_files_with_physical_block_estimates() {
+    let root = test_root("sparse-file-physical-blocks");
+    let target = root.join("project").join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&target) {
+        panic!("create target dir: {error}");
+    }
+    let artifact = target.join("sparse-artifact");
+    let mut file = match fs::File::create(&artifact) {
+        Ok(file) => file,
+        Err(error) => panic!("create sparse artifact: {error}"),
+    };
+    if let Err(error) = file.write_all(&[9u8]) {
+        panic!("write sparse artifact marker: {error}");
+    }
+    if let Err(error) = file.set_len(MIN_ITEM_BYTES + 128) {
+        panic!("size sparse artifact: {error}");
+    }
+    drop(file);
+    let metadata = fs::metadata(&artifact).expect("sparse metadata is readable");
+    let expected_physical_bytes = metadata.blocks().saturating_mul(512);
+    if expected_physical_bytes == 0 || expected_physical_bytes >= metadata.len() {
+        let _ = fs::remove_dir_all(root);
+        return;
+    }
+    mark_tree_old(&root);
+
+    let json = build_storage_hygiene_report_for_roots(vec![root.display().to_string()], 5, 80);
+    let value = parse_json_value(&json, "sparse physical block JSON parses");
+    let item = value["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["kind"] == "rust-build"))
+        .expect("rust build item is present");
+
+    assert_eq!(item["logical_bytes"].as_u64(), Some(MIN_ITEM_BYTES + 128));
+    assert_eq!(
+        item["physical_bytes"].as_u64(),
+        Some(expected_physical_bytes)
+    );
+    assert_eq!(item["size_bytes"].as_u64(), Some(expected_physical_bytes));
+    assert_eq!(
+        item["byte_accounting"].as_str(),
+        Some("APFS physical blocks")
+    );
+    assert_eq!(item["sparse_or_shared"].as_bool(), Some(true));
+    assert_eq!(item["cloud_placeholder"].as_bool(), Some(false));
+    assert!(
+        item["evidence"]
+            .as_array()
+            .is_some_and(|evidence| evidence
+                .iter()
+                .any(|entry| entry.as_str().is_some_and(|entry| entry
+                    .contains("APFS clone, compression, sparse, or cloud materialization"))))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_hygiene_counts_zero_block_placeholders_as_zero_local_reclaim() {
     let root = test_root("zero-block-placeholder-reclaim");
     let target = root.join("project").join("target").join("debug");
@@ -3957,6 +4045,66 @@ fn storage_hygiene_counts_zero_block_placeholders_as_zero_local_reclaim() {
 }
 
 #[test]
+fn storage_hygiene_marks_cloud_placeholders_as_zero_local_reclaim() {
+    let root = test_root("cloud-placeholder-reclaim");
+    let cloud_root = root
+        .join("Library")
+        .join("CloudStorage")
+        .join("ExampleDrive");
+    let target = cloud_root.join("project").join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&target) {
+        panic!("create cloud target dir: {error}");
+    }
+    let artifact = target.join("cloud-only-artifact");
+    let file = match fs::File::create(&artifact) {
+        Ok(file) => file,
+        Err(error) => panic!("create cloud placeholder artifact: {error}"),
+    };
+    if let Err(error) = file.set_len(MIN_ITEM_BYTES + 128) {
+        panic!("size cloud placeholder artifact: {error}");
+    }
+    drop(file);
+    let metadata = fs::metadata(&artifact).expect("cloud placeholder metadata is readable");
+    if metadata.blocks() > 0 {
+        let _ = fs::remove_dir_all(root);
+        return;
+    }
+    mark_tree_old(&cloud_root);
+
+    let json =
+        build_storage_hygiene_report_for_roots(vec![cloud_root.display().to_string()], 5, 80);
+    let value = parse_json_value(&json, "cloud placeholder JSON parses");
+    let item = value["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["kind"] == "rust-build"))
+        .expect("rust build item is present");
+
+    assert_eq!(item["logical_bytes"].as_u64(), Some(MIN_ITEM_BYTES + 128));
+    assert_eq!(item["physical_bytes"].as_u64(), Some(0));
+    assert_eq!(item["size_bytes"].as_u64(), Some(0));
+    assert_eq!(
+        item["byte_accounting"].as_str(),
+        Some("zero local allocated blocks")
+    );
+    assert_eq!(item["cloud_placeholder"].as_bool(), Some(true));
+    assert_eq!(item["cleanup_allowed"].as_bool(), Some(false));
+    assert!(
+        item["evidence"]
+            .as_array()
+            .is_some_and(|evidence| evidence.iter().any(|entry| entry
+                .as_str()
+                .is_some_and(|entry| entry.contains("zero local allocated blocks"))))
+    );
+    assert!(value["source_coverage"].as_array().is_some_and(|sources| {
+        sources
+            .iter()
+            .any(|source| source["kind"] == "cloud" && source["status"] == "scanned-cloud-aware")
+    }));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_hygiene_deduplicates_hardlinked_files_in_directory_size() {
     let root = test_root("hardlink-deduped-reclaim");
     let target = root.join("project").join("target").join("debug");
@@ -3994,6 +4142,12 @@ fn storage_hygiene_deduplicates_hardlinked_files_in_directory_size() {
     assert_eq!(item["has_hardlinks"].as_bool(), Some(true));
     assert_eq!(item["hardlink_count"].as_u64(), Some(2));
     assert_eq!(item["cleanup_allowed"].as_bool(), Some(false));
+    assert!(
+        item["evidence"].as_array().is_some_and(|evidence| evidence
+            .iter()
+            .any(|entry| entry.as_str().is_some_and(|entry| entry
+                .contains("Hardlink count reached 2; Aetower deduplicates repeated links"))))
+    );
     assert!(
         item["cleanup_blockers"]
             .as_array()

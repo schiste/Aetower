@@ -48,6 +48,13 @@ Homebrew tap:
 - Updated docs and website copy to distinguish the downloadable cask artifact
   from the brew-installable tap distribution.
 
+Storage:
+
+- Added explicit APFS-aware storage coverage for sparse files, hardlinks,
+  cloud placeholders, purgeable capacity, and clone-lineage caveats, with docs
+  that frame the feature as local reclaim estimates rather than exact
+  filesystem ownership forensics.
+
 ## 0.8 (build 800) - 2026-07-08
 
 Accessibility & automation:

@@ -15,6 +15,7 @@ features in both practical human terms and technical implementation terms.
 | History | Reconstruct past slowdowns instead of guessing. | Persists local snapshots and supports historical investigation, comparison, and store-health checks. |
 | Timeline | Read a machine incident as a story. | Correlates lifecycle events, host state changes, sensor alerts, restart loops, and AI session markers. |
 | AI agent observability | Measure the local cost of coding agents and model runtimes. | Detects supported AI runtimes, attributes burden, estimates GPU/VRAM pressure, and tracks session energy/cost context. |
+| Storage hygiene | See reclaimable storage without confusing logical size with local disk savings. | Reports logical bytes, APFS physical-block estimates, hardlink dedupe, sparse/cloud placeholder flags, purgeable capacity, and clone-lineage caveats. |
 | Local MCP server | Let trusted local agents inspect Aetower data without a second collector. | Ships a read-only MCP interface over a local app-owned socket and stdio helper. |
 | Diagnostics | Debug Aetower itself when collection, adapters, or persistence misbehave. | Exposes subsystem events, pipeline timing, capability state, session health, and support-bundle manifests. |
 | Fleet | Compare nearby Macs without a cloud account. | Uses local peer discovery to surface summary machine health across Aetower peers. |
@@ -125,7 +126,28 @@ excess CPU, memory, GPU-like resources, battery, or project budget.
 - Integrates optional Chau7 context for AI session state, project cost, and
   adapter metadata.
 
-## 7. Local read-only MCP server
+## 7. Storage hygiene and APFS-aware estimates
+
+### What it does for people
+
+Storage hygiene helps the operator find rebuildable or redundant local data
+without overstating how much space cleanup will actually free. On APFS, logical
+file size can differ from local allocated blocks because of sparse files,
+compression, cloud placeholders, hardlinks, and cloned/shared extents.
+
+### Technical details
+
+- Tracks logical bytes and local physical-block estimates separately.
+- Uses local allocated blocks for reclaim estimates when available, and treats
+  zero-block cloud or sparse placeholders as 0 bytes of proven local reclaim.
+- Deduplicates hardlinked files within a sized directory while warning that
+  external hardlinks can still reduce the space actually freed.
+- Reports volume free-now, available, important/opportunistic available, and
+  purgeable-capacity estimates where the platform exposes them.
+- Labels sparse/shared-block candidates as estimates; Aetower does not infer or
+  promise exact APFS clone lineage.
+
+## 8. Local read-only MCP server
 
 ### What it does for people
 
@@ -145,7 +167,7 @@ and recommendations without launching its own duplicate monitoring engine.
 - Standard cached tools can still provide last-known state when the app is not
   running; deeper profiling requires the live app.
 
-## 8. Diagnostics and self-observability
+## 9. Diagnostics and self-observability
 
 ### What it does for people
 
@@ -161,7 +183,7 @@ adapter, database, or collection path is unavailable.
 - Reports capability status and permission/adaptor availability.
 - Provides support-bundle previews and diagnostics summaries for issue reports.
 
-## 9. Fleet
+## 10. Fleet
 
 ### What it does for people
 
@@ -178,7 +200,7 @@ monitoring.
 - Avoids requiring a centralized account or external service for basic peer
   awareness.
 
-## 10. Settings, setup, and runtime tuning
+## 11. Settings, setup, and runtime tuning
 
 ### What it does for people
 
@@ -195,7 +217,7 @@ who want useful observability without turning on every advanced capability.
 - Manages local MCP client registration.
 - Includes setup, diagnostics, support, and reset workflows.
 
-## 11. Export and external observability
+## 12. Export and external observability
 
 ### What it does for people
 
@@ -210,7 +232,7 @@ Mac performance can be investigated alongside the rest of a developer platform.
 - Keeps export opt-in so users do not accidentally send local machine metadata
   outside their device.
 
-## 12. Privacy, safety, and Developer Preview boundaries
+## 13. Privacy, safety, and Developer Preview boundaries
 
 ### What it does for people
 

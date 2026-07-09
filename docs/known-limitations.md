@@ -37,6 +37,24 @@ History, Timeline, and process detail views can involve large datasets on busy
 machines. Operator-safe mode is enabled by default so heavy views start from
 summaries and expand into large detail lists only on demand.
 
+## Storage And APFS Estimates
+
+Storage reports are APFS-aware estimates, not filesystem forensics. Aetower
+keeps logical bytes, local physical blocks, and local reclaim estimates
+separate so sparse files, cloud placeholders, hardlinks, and purgeable capacity
+do not inflate cleanup promises.
+
+- Sparse files and cloud-only placeholders can have logical size with few or no
+  local allocated blocks. Zero-block placeholders are treated as 0 bytes of
+  proven local reclaim.
+- Hardlinks are deduplicated inside a sized directory, but links outside the
+  scanned directory can keep blocks alive after cleanup.
+- APFS available capacity can include purgeable space, so Storage preserves
+  both "free now" and "available" values when forecasting pressure.
+- Physical bytes below logical bytes can mean APFS clones, compression, sparse
+  allocation, or partial cloud materialization. Aetower does not claim exact
+  APFS clone lineage.
+
 ## Update Channel
 
 Sparkle is the expected direct-download update path. Every public artifact must
