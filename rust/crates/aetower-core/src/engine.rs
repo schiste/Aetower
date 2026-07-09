@@ -13,8 +13,9 @@ use aetower_diagnostics::{
     DiagnosticsSubsystem,
 };
 use aetower_model::{
-    CapabilityKind, CapabilitySnapshot, CapabilityState, FrontmostAppState, HostSnapshot,
-    HostTrend, RuntimeLagMetrics, SystemSnapshot, ThermalState,
+    AiRepoSummary, CapabilityKind, CapabilitySnapshot, CapabilityState, Chau7SessionSummary,
+    EntitySnapshot, FrontmostAppState, HostSnapshot, HostTrend, ResourceCostRollup,
+    ResourceCostScope, RuntimeLagMetrics, SystemSnapshot, ThermalState,
 };
 use aetower_policy::{
     COMPRESSED_MEMORY_CRITICAL_BYTES, COMPRESSED_MEMORY_WARNING_BYTES,
@@ -85,6 +86,11 @@ const HISTORY_SOFT_MAX_SNAPSHOT_COUNT: u64 = 3_000;
 const HISTORY_HARD_MAX_SNAPSHOT_COUNT: u64 = 5_000;
 const HISTORY_AGGRESSIVE_QUARANTINE_ROWS: u64 = 64;
 const HISTORY_HARD_MAX_QUARANTINE_ROWS: u64 = 128;
+const RESOURCE_COST_DEFAULT_ELECTRICITY_USD_PER_KWH: f64 = 0.15;
+const RESOURCE_COST_DEFAULT_CARBON_GRAMS_PER_KWH: f64 = 480.0;
+const RESOURCE_COST_NOMINAL_BATTERY_PACK_VOLTAGE: f64 = 11.4;
+const NANOJOULES_PER_WATT_HOUR: f64 = 3_600_000_000_000.0;
+const NANOWATTS_PER_WATT: f64 = 1_000_000_000.0;
 const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
 const MCP_HELPER_REAP_RETRY_MILLIS: u64 = 60 * 1000;
 const MCP_HELPER_LIFECYCLE_AGE_BUCKET_MILLIS: u64 = 15 * 60 * 1000;
@@ -174,6 +180,333 @@ impl RuntimeCollectionConfig {
             self.gpu_sample_interval
         }
     }
+}
+
+fn build_resource_cost_rollups(
+    host: &HostSnapshot,
+    entities: &[EntitySnapshot],
+    repo_summaries: &[AiRepoSummary],
+    chau7_sessions: &[Chau7SessionSummary],
+) -> Vec<ResourceCostRollup> {
+    let total_watts = entities
+        .iter()
+        .map(|entity| watts_from_energy_rate(entity.metrics.energy_nj_per_s))
+        .sum::<f64>();
+    let battery_minutes = remaining_battery_watt_hours(host)
+        .and_then(|watt_hours| battery_minutes_remaining(watt_hours, total_watts));
+
+    let mut rollups = Vec::new();
+    rollups.push(ResourceCostRollup {
+        scope: ResourceCostScope::Machine,
+        id: "machine".to_owned(),
+        label: "This Mac".to_owned(),
+        watts: total_watts,
+        battery_minutes,
+        source: if total_watts > 0.0 {
+            "kernel-energy".to_owned()
+        } else {
+            "host-snapshot".to_owned()
+        },
+        confidence: if total_watts > 0.0 { 0.65 } else { 0.25 },
+        ..ResourceCostRollup::default()
+    });
+
+    for entity in entities {
+        if let Some(rollup) = entity_resource_cost_rollup(entity, total_watts, battery_minutes) {
+            rollups.push(rollup);
+        }
+    }
+
+    for repo in repo_summaries {
+        rollups.push(repository_resource_cost_rollup(
+            repo,
+            entities,
+            total_watts,
+            battery_minutes,
+        ));
+    }
+
+    for session in chau7_sessions {
+        rollups.push(session_resource_cost_rollup(
+            session,
+            entities,
+            total_watts,
+            battery_minutes,
+        ));
+    }
+
+    rollups
+}
+
+fn entity_resource_cost_rollup(
+    entity: &EntitySnapshot,
+    total_watts: f64,
+    machine_battery_minutes: Option<f64>,
+) -> Option<ResourceCostRollup> {
+    let watts = watts_from_energy_rate(entity.metrics.energy_nj_per_s);
+    let energy_watt_hours = entity
+        .agent_cost
+        .as_ref()
+        .map(|cost| watt_hours_from_nj(cost.session_energy_nj))
+        .unwrap_or_default();
+    let ai_dollars = entity
+        .agent_cost
+        .as_ref()
+        .map(|cost| cost.cost_usd as f64)
+        .unwrap_or_default();
+    let has_signal = watts > 0.0
+        || energy_watt_hours > 0.0
+        || ai_dollars > 0.0
+        || entity.thermal_contribution.is_some();
+    if !has_signal {
+        return None;
+    }
+
+    let (energy_dollars, carbon_grams) = energy_cost_and_carbon(energy_watt_hours);
+    let source = match (
+        watts > 0.0 || energy_watt_hours > 0.0,
+        entity.agent_cost.is_some(),
+    ) {
+        (true, true) => "kernel-energy+chau7",
+        (true, false) => "kernel-energy",
+        (false, true) => "chau7",
+        (false, false) => "thermal",
+    };
+    let confidence = match source {
+        "kernel-energy+chau7" => 0.8,
+        "kernel-energy" => 0.7,
+        "chau7" => 0.65,
+        _ => 0.45,
+    };
+
+    Some(ResourceCostRollup {
+        scope: ResourceCostScope::Entity,
+        id: format!("entity:{}", entity.entity_id),
+        label: entity.display_name.clone(),
+        entity_id: Some(entity.entity_id.clone()),
+        watts,
+        energy_watt_hours,
+        battery_minutes: battery_share_minutes(watts, total_watts, machine_battery_minutes),
+        dollars: ai_dollars + energy_dollars,
+        carbon_grams,
+        thermal_contribution: entity.thermal_contribution.clone(),
+        source: source.to_owned(),
+        confidence,
+        ..ResourceCostRollup::default()
+    })
+}
+
+fn repository_resource_cost_rollup(
+    repo: &AiRepoSummary,
+    entities: &[EntitySnapshot],
+    total_watts: f64,
+    machine_battery_minutes: Option<f64>,
+) -> ResourceCostRollup {
+    let matching_entities = entities
+        .iter()
+        .filter(|entity| entity_matches_repo(entity, &repo.repo_path))
+        .collect::<Vec<_>>();
+    let watts = matching_entities
+        .iter()
+        .map(|entity| watts_from_energy_rate(entity.metrics.energy_nj_per_s))
+        .sum::<f64>();
+    let energy_watt_hours = matching_entities
+        .iter()
+        .filter_map(|entity| entity.agent_cost.as_ref())
+        .map(|cost| watt_hours_from_nj(cost.session_energy_nj))
+        .sum::<f64>();
+    let (energy_dollars, carbon_grams) = energy_cost_and_carbon(energy_watt_hours);
+
+    ResourceCostRollup {
+        scope: ResourceCostScope::Repository,
+        id: format!("repository:{}", repo.repo_path),
+        label: if repo.display_name.is_empty() {
+            repo.repo_path.clone()
+        } else {
+            repo.display_name.clone()
+        },
+        repository_path: Some(repo.repo_path.clone()),
+        watts,
+        energy_watt_hours,
+        battery_minutes: battery_share_minutes(watts, total_watts, machine_battery_minutes),
+        dollars: repo.total_cost_usd as f64 + energy_dollars,
+        carbon_grams,
+        source: if watts > 0.0 || energy_watt_hours > 0.0 {
+            "chau7+kernel-energy".to_owned()
+        } else {
+            "chau7".to_owned()
+        },
+        confidence: if repo.total_runs > 0 { 0.8 } else { 0.55 },
+        ..ResourceCostRollup::default()
+    }
+}
+
+fn session_resource_cost_rollup(
+    session: &Chau7SessionSummary,
+    entities: &[EntitySnapshot],
+    total_watts: f64,
+    machine_battery_minutes: Option<f64>,
+) -> ResourceCostRollup {
+    let linked_ids = session
+        .linked_entity_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let linked_entities = entities
+        .iter()
+        .filter(|entity| linked_ids.contains(entity.entity_id.as_str()))
+        .collect::<Vec<_>>();
+    let watts = linked_entities
+        .iter()
+        .map(|entity| watts_from_energy_rate(entity.metrics.energy_nj_per_s))
+        .sum::<f64>();
+    let energy_watt_hours = linked_entities
+        .iter()
+        .filter_map(|entity| entity.agent_cost.as_ref())
+        .map(|cost| watt_hours_from_nj(cost.session_energy_nj))
+        .sum::<f64>();
+    let ai_dollars = linked_entities
+        .iter()
+        .filter_map(|entity| entity.agent_cost.as_ref())
+        .map(|cost| cost.cost_usd as f64)
+        .sum::<f64>();
+    let (energy_dollars, carbon_grams) = energy_cost_and_carbon(energy_watt_hours);
+
+    ResourceCostRollup {
+        scope: ResourceCostScope::Session,
+        id: format!(
+            "session:{}",
+            session.session_id.as_deref().unwrap_or(&session.id)
+        ),
+        label: if session.title.is_empty() {
+            if session.provider.is_empty() {
+                session.id.clone()
+            } else {
+                session.provider.clone()
+            }
+        } else {
+            session.title.clone()
+        },
+        session_id: Some(
+            session
+                .session_id
+                .clone()
+                .unwrap_or_else(|| session.id.clone()),
+        ),
+        repository_path: session
+            .repo_root
+            .clone()
+            .or_else(|| session.workspace_path.clone()),
+        watts,
+        energy_watt_hours,
+        battery_minutes: battery_share_minutes(watts, total_watts, machine_battery_minutes),
+        dollars: ai_dollars + energy_dollars,
+        carbon_grams,
+        source: if linked_entities.is_empty() {
+            "chau7-session".to_owned()
+        } else {
+            "chau7-session+kernel-energy".to_owned()
+        },
+        confidence: if linked_entities.is_empty() {
+            0.45
+        } else {
+            0.7
+        },
+        ..ResourceCostRollup::default()
+    }
+}
+
+fn watts_from_energy_rate(energy_nj_per_s: f64) -> f64 {
+    if energy_nj_per_s.is_finite() && energy_nj_per_s > 0.0 {
+        energy_nj_per_s / NANOWATTS_PER_WATT
+    } else {
+        0.0
+    }
+}
+
+fn watt_hours_from_nj(energy_nj: u64) -> f64 {
+    if energy_nj == 0 {
+        0.0
+    } else {
+        energy_nj as f64 / NANOJOULES_PER_WATT_HOUR
+    }
+}
+
+fn energy_cost_and_carbon(energy_watt_hours: f64) -> (f64, f64) {
+    if energy_watt_hours <= 0.0 || !energy_watt_hours.is_finite() {
+        return (0.0, 0.0);
+    }
+    let kilowatt_hours = energy_watt_hours / 1000.0;
+    (
+        kilowatt_hours * RESOURCE_COST_DEFAULT_ELECTRICITY_USD_PER_KWH,
+        kilowatt_hours * RESOURCE_COST_DEFAULT_CARBON_GRAMS_PER_KWH,
+    )
+}
+
+fn remaining_battery_watt_hours(host: &HostSnapshot) -> Option<f64> {
+    let max_capacity_mah = host.battery_health.as_ref()?.max_capacity_mah?;
+    let charge_percent = host.battery_charge_percent?;
+    if max_capacity_mah == 0 {
+        return None;
+    }
+    Some(
+        max_capacity_mah as f64 * f64::from(charge_percent.min(100)) / 100.0
+            * RESOURCE_COST_NOMINAL_BATTERY_PACK_VOLTAGE
+            / 1000.0,
+    )
+}
+
+fn battery_minutes_remaining(watt_hours: f64, total_watts: f64) -> Option<f64> {
+    if watt_hours > 0.0 && total_watts > 0.0 {
+        Some((watt_hours / total_watts) * 60.0)
+    } else {
+        None
+    }
+}
+
+fn battery_share_minutes(
+    watts: f64,
+    total_watts: f64,
+    machine_battery_minutes: Option<f64>,
+) -> Option<f64> {
+    let machine_battery_minutes = machine_battery_minutes?;
+    if watts > 0.0 && total_watts > 0.0 {
+        Some((watts / total_watts) * machine_battery_minutes)
+    } else {
+        None
+    }
+}
+
+fn entity_matches_repo(entity: &EntitySnapshot, repo_path: &str) -> bool {
+    entity.components.iter().any(|component| {
+        component
+            .adapter_context
+            .as_ref()
+            .map(|context| {
+                context
+                    .repo_root
+                    .as_deref()
+                    .is_some_and(|path| path_related(path, repo_path))
+                    || context
+                        .workspace_path
+                        .as_deref()
+                        .is_some_and(|path| path_related(path, repo_path))
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn path_related(left: &str, right: &str) -> bool {
+    if left.is_empty() || right.is_empty() {
+        return false;
+    }
+    left == right
+        || left
+            .strip_prefix(right)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+        || right
+            .strip_prefix(left)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 struct EngineState {
@@ -315,6 +648,7 @@ impl Engine {
             timeline: Vec::new(),
             ai_repo_summaries: Vec::new(),
             chau7_sessions: Vec::new(),
+            resource_cost_rollups: Vec::new(),
             thermal_forecast: None,
         };
 
@@ -685,7 +1019,14 @@ impl Engine {
                         .build(),
                     );
                 }
+                let ai_repo_summaries = adapters.ai_repo_summaries();
                 let chau7_sessions = adapters.chau7_session_summaries(&entities);
+                let resource_cost_rollups = build_resource_cost_rollups(
+                    &host,
+                    &entities,
+                    &ai_repo_summaries,
+                    &chau7_sessions,
+                );
                 let latest_snapshot = Arc::new(SystemSnapshot {
                     sequence,
                     captured_at_millis,
@@ -694,8 +1035,9 @@ impl Engine {
                     capabilities: capabilities.values().cloned().collect(),
                     entities,
                     timeline,
-                    ai_repo_summaries: adapters.ai_repo_summaries(),
+                    ai_repo_summaries,
                     chau7_sessions,
+                    resource_cost_rollups,
                     thermal_forecast,
                 });
                 let entity_count = latest_snapshot.entities.len();
@@ -2834,6 +3176,119 @@ fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_cost_rollups_aggregate_machine_entity_repo_and_session() {
+        let entity = EntitySnapshot {
+            entity_id: "entity-a".to_owned(),
+            display_name: "Agent A".to_owned(),
+            metrics: aetower_model::AggregateMetrics {
+                energy_nj_per_s: 2_000_000_000.0,
+                ..aetower_model::AggregateMetrics::default()
+            },
+            agent_cost: Some(aetower_model::AgentCostSummary {
+                cost_usd: 1.25,
+                session_energy_nj: 7_200_000_000_000,
+                ..aetower_model::AgentCostSummary::default()
+            }),
+            thermal_contribution: Some("warm".to_owned()),
+            components: vec![aetower_model::ComponentSnapshot {
+                adapter_context: Some(aetower_model::AdapterContextSnapshot {
+                    repo_root: Some("/repo/a".to_owned()),
+                    ..aetower_model::AdapterContextSnapshot::default()
+                }),
+                ..aetower_model::ComponentSnapshot::default()
+            }],
+            ..EntitySnapshot::default()
+        };
+        let host = HostSnapshot {
+            battery_charge_percent: Some(50),
+            battery_health: Some(aetower_model::BatteryHealthSnapshot {
+                max_capacity_mah: Some(10_000),
+                ..aetower_model::BatteryHealthSnapshot::default()
+            }),
+            ..HostSnapshot::default()
+        };
+        let repo = AiRepoSummary {
+            repo_path: "/repo/a".to_owned(),
+            display_name: "a".to_owned(),
+            total_runs: 2,
+            total_cost_usd: 3.0,
+            ..AiRepoSummary::default()
+        };
+        let session = Chau7SessionSummary {
+            id: "tab-1".to_owned(),
+            session_id: Some("session-1".to_owned()),
+            title: "Fix tests".to_owned(),
+            repo_root: Some("/repo/a".to_owned()),
+            linked_entity_ids: vec!["entity-a".to_owned()],
+            ..Chau7SessionSummary::default()
+        };
+
+        let rollups = build_resource_cost_rollups(&host, &[entity], &[repo], &[session]);
+
+        let machine = rollups
+            .iter()
+            .find(|rollup| rollup.scope == ResourceCostScope::Machine)
+            .expect("machine rollup");
+        assert_eq!(machine.id, "machine");
+        assert_eq!(machine.watts, 2.0);
+        assert!((machine.battery_minutes.unwrap_or_default() - 1_710.0).abs() < 0.001);
+
+        let entity = rollups
+            .iter()
+            .find(|rollup| rollup.scope == ResourceCostScope::Entity)
+            .expect("entity rollup");
+        assert_eq!(entity.entity_id.as_deref(), Some("entity-a"));
+        assert_eq!(entity.energy_watt_hours, 2.0);
+        assert!(entity.dollars > 1.25);
+        assert!((entity.carbon_grams - 0.96).abs() < 0.001);
+        assert_eq!(entity.source, "kernel-energy+chau7");
+
+        let repo = rollups
+            .iter()
+            .find(|rollup| rollup.scope == ResourceCostScope::Repository)
+            .expect("repo rollup");
+        assert_eq!(repo.repository_path.as_deref(), Some("/repo/a"));
+        assert_eq!(repo.watts, 2.0);
+        assert!(repo.dollars > 3.0);
+
+        let session = rollups
+            .iter()
+            .find(|rollup| rollup.scope == ResourceCostScope::Session)
+            .expect("session rollup");
+        assert_eq!(session.session_id.as_deref(), Some("session-1"));
+        assert_eq!(session.repository_path.as_deref(), Some("/repo/a"));
+        assert_eq!(session.watts, 2.0);
+    }
+
+    fn temp_history_db_path(test_name: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        std::env::temp_dir().join(format!(
+            "aetower-core-{test_name}-{}-{unique}.db",
+            std::process::id()
+        ))
+    }
+
+    fn remove_history_db_files(path: &std::path::Path) {
+        std::fs::remove_file(path).ok();
+        std::fs::remove_file(format!("{}-wal", path.display())).ok();
+        std::fs::remove_file(format!("{}-shm", path.display())).ok();
+    }
+
+    fn wait_for_history_writer(store: &aetower_persistence::HistoryStore) {
+        let started = Instant::now();
+        while store.pending_writes() > 0 {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "history writer did not drain within 10s"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
 
     fn engine_state_with_runtime_metrics(
         runtime_lag_metrics: RuntimeLagMetrics,

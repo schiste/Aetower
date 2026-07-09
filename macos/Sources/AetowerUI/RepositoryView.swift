@@ -3943,7 +3943,8 @@ public struct RepositoryView: View {
             return RepositorySummaryBuilder.applyingLive(
                 staticSummaries,
                 live: live,
-                aiUsageByRoot: RepositorySummaryBuilder.aiUsage(byRoot: state.agentContextState.aiRepoSummaries)
+                aiUsageByRoot: RepositorySummaryBuilder.aiUsage(byRoot: state.agentContextState.aiRepoSummaries),
+                resourceCostByRoot: RepositorySummaryBuilder.resourceCost(byRoot: state.agentContextState.resourceCostRollups)
             )
         }
     }

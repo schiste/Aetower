@@ -834,6 +834,61 @@ pub struct TimelineEvent {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResourceCostScope {
+    Entity,
+    Session,
+    Repository,
+    #[default]
+    Machine,
+}
+
+impl ResourceCostScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Entity => "entity",
+            Self::Session => "session",
+            Self::Repository => "repository",
+            Self::Machine => "machine",
+        }
+    }
+}
+
+/// One normalized cost row for an entity, session, repository, or whole machine.
+///
+/// Monetary and carbon values include only the sources Aetower can currently
+/// attribute. For example, Chau7 can provide cumulative AI spend, while kernel
+/// energy provides watts and session energy for observed processes.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ResourceCostRollup {
+    pub scope: ResourceCostScope,
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub entity_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub repository_path: Option<String>,
+    #[serde(default)]
+    pub watts: f64,
+    #[serde(default)]
+    pub energy_watt_hours: f64,
+    #[serde(default)]
+    pub battery_minutes: Option<f64>,
+    #[serde(default)]
+    pub dollars: f64,
+    #[serde(default)]
+    pub carbon_grams: f64,
+    #[serde(default)]
+    pub disk_growth_bytes: i64,
+    #[serde(default)]
+    pub thermal_contribution: Option<String>,
+    pub source: String,
+    pub confidence: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SystemSnapshot {
     pub sequence: u64,
@@ -851,6 +906,11 @@ pub struct SystemSnapshot {
     /// attribution is incomplete so the UI can show every active tab/session.
     #[serde(default)]
     pub chau7_sessions: Vec<Chau7SessionSummary>,
+    /// Normalized resource cost rows for machine, entity, repository, and
+    /// session scopes. This is the shared UI/MCP surface for "what did it cost?"
+    /// questions.
+    #[serde(default)]
+    pub resource_cost_rollups: Vec<ResourceCostRollup>,
     /// Heuristic throttle forecast, present only while the Mac is warming and a
     /// throttle is plausibly imminent. `None` when nominal/cooling.
     #[serde(default)]

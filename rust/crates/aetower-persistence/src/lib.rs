@@ -44,6 +44,7 @@ const HISTORY_PERSISTED_HOST_VECTOR_LIMIT: usize = 16;
 const HISTORY_PERSISTED_AI_REPO_LIMIT: usize = 64;
 const HISTORY_PERSISTED_CHAU7_SESSION_LIMIT: usize = 64;
 const HISTORY_PERSISTED_CHAU7_LINK_LIMIT: usize = 16;
+const HISTORY_PERSISTED_RESOURCE_COST_ROLLUP_LIMIT: usize = 160;
 const HISTORY_ROLLUP_BUCKETS_MILLIS: [u64; 2] = [60_000, 3_600_000];
 const HISTORY_ROLLUP_RETENTION_MILLIS: u64 = 30 * 24 * 60 * 60 * 1000;
 
@@ -71,6 +72,7 @@ struct HistorySnapshotSignature {
     timeline_tail: Option<TimelineWriteSignature>,
     ai_repo_count: u32,
     chau7_session_count: u32,
+    resource_cost_rollup_count: u32,
     thermal_forecast_active: bool,
 }
 
@@ -150,6 +152,8 @@ impl HistorySnapshotSignature {
                 .map(TimelineWriteSignature::from_event),
             ai_repo_count: snapshot.ai_repo_summaries.len().min(u32::MAX as usize) as u32,
             chau7_session_count: snapshot.chau7_sessions.len().min(u32::MAX as usize) as u32,
+            resource_cost_rollup_count: snapshot.resource_cost_rollups.len().min(u32::MAX as usize)
+                as u32,
             thermal_forecast_active: snapshot.thermal_forecast.is_some(),
         }
     }
@@ -333,6 +337,9 @@ fn compact_snapshot_for_history(snapshot: &SystemSnapshot) -> SystemSnapshot {
     compact
         .chau7_sessions
         .truncate(HISTORY_PERSISTED_CHAU7_SESSION_LIMIT);
+    compact
+        .resource_cost_rollups
+        .truncate(HISTORY_PERSISTED_RESOURCE_COST_ROLLUP_LIMIT);
     for session in &mut compact.chau7_sessions {
         session
             .linked_entity_ids

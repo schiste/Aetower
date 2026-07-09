@@ -150,6 +150,16 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
             AetowerMcpServer::tool_host_summary,
         ),
         ToolDescriptor::with_args(
+            "aetower_resource_cost_rollups",
+            "Return normalized resource cost rollups for machine, entity, repository, and session scopes. Supports optional scope/id filtering.",
+            vec![
+                string_enum("scope", &["machine", "entity", "repository", "session"]),
+                string("id").described("Optional exact rollup id, entity_id, session_id, or repository_path."),
+                uint("limit", Some(1), Some(200), Some(100)),
+            ],
+            AetowerMcpServer::tool_resource_cost_rollups,
+        ),
+        ToolDescriptor::with_args(
             "aetower_entity_details",
             "Return the full entity snapshot for one entity_id.",
             vec![string("entity_id").required()],

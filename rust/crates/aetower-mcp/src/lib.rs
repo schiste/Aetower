@@ -3042,6 +3042,19 @@ mod tests {
                     title: "Agent blocked on approval".to_owned(),
                     detail: "A Chau7 session is waiting for approval.".to_owned(),
                 }],
+                resource_cost_rollups: vec![aetower_model::ResourceCostRollup {
+                    scope: aetower_model::ResourceCostScope::Repository,
+                    id: "repository:/repo".to_owned(),
+                    label: "repo".to_owned(),
+                    repository_path: Some("/repo".to_owned()),
+                    watts: 2.0,
+                    energy_watt_hours: 1.5,
+                    dollars: 4.25,
+                    carbon_grams: 0.72,
+                    source: "chau7+kernel-energy".to_owned(),
+                    confidence: 0.8,
+                    ..aetower_model::ResourceCostRollup::default()
+                }],
                 ..SystemSnapshot::default()
             })
         }

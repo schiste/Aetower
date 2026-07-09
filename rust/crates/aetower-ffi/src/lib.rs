@@ -683,6 +683,7 @@ pub struct SystemSnapshot {
     pub timeline: Vec<TimelineEvent>,
     pub ai_repo_summaries: Vec<AiRepoSummary>,
     pub chau7_sessions: Vec<Chau7SessionSummary>,
+    pub resource_cost_rollups: Vec<ResourceCostRollup>,
     pub thermal_forecast: Option<ThermalForecast>,
 }
 
@@ -854,6 +855,33 @@ pub struct ThermalForecast {
     pub top_contributor_entity_id: Option<String>,
     pub top_contributor_pid: Option<u32>,
     pub top_contributor_label: Option<String>,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum ResourceCostScope {
+    Entity,
+    Session,
+    Repository,
+    Machine,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct ResourceCostRollup {
+    pub scope: ResourceCostScope,
+    pub id: String,
+    pub label: String,
+    pub entity_id: Option<String>,
+    pub session_id: Option<String>,
+    pub repository_path: Option<String>,
+    pub watts: f64,
+    pub energy_watt_hours: f64,
+    pub battery_minutes: Option<f64>,
+    pub dollars: f64,
+    pub carbon_grams: f64,
+    pub disk_growth_bytes: i64,
+    pub thermal_contribution: Option<String>,
+    pub source: String,
+    pub confidence: f32,
 }
 
 /// Per-repository AI cost summary from the Chau7 adapter.
@@ -3894,6 +3922,39 @@ impl From<model::TimelineEvent> for TimelineEvent {
     }
 }
 
+impl From<model::ResourceCostScope> for ResourceCostScope {
+    fn from(value: model::ResourceCostScope) -> Self {
+        match value {
+            model::ResourceCostScope::Entity => Self::Entity,
+            model::ResourceCostScope::Session => Self::Session,
+            model::ResourceCostScope::Repository => Self::Repository,
+            model::ResourceCostScope::Machine => Self::Machine,
+        }
+    }
+}
+
+impl From<model::ResourceCostRollup> for ResourceCostRollup {
+    fn from(value: model::ResourceCostRollup) -> Self {
+        Self {
+            scope: value.scope.into(),
+            id: value.id,
+            label: value.label,
+            entity_id: value.entity_id,
+            session_id: value.session_id,
+            repository_path: value.repository_path,
+            watts: value.watts,
+            energy_watt_hours: value.energy_watt_hours,
+            battery_minutes: value.battery_minutes,
+            dollars: value.dollars,
+            carbon_grams: value.carbon_grams,
+            disk_growth_bytes: value.disk_growth_bytes,
+            thermal_contribution: value.thermal_contribution,
+            source: value.source,
+            confidence: value.confidence,
+        }
+    }
+}
+
 impl From<model::SystemSnapshot> for SystemSnapshot {
     fn from(value: model::SystemSnapshot) -> Self {
         Self {
@@ -3910,6 +3971,11 @@ impl From<model::SystemSnapshot> for SystemSnapshot {
                 .map(Into::into)
                 .collect(),
             chau7_sessions: value.chau7_sessions.into_iter().map(Into::into).collect(),
+            resource_cost_rollups: value
+                .resource_cost_rollups
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             thermal_forecast: value.thermal_forecast.map(Into::into),
         }
     }

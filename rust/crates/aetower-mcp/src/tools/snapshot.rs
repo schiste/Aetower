@@ -111,6 +111,60 @@ impl AetowerMcpServer {
         })
     }
 
+    pub(crate) fn tool_resource_cost_rollups(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            scope: Option<String>,
+            #[serde(default)]
+            id: Option<String>,
+            #[serde(default = "default_resource_cost_limit")]
+            limit: usize,
+        }
+
+        #[derive(Serialize)]
+        struct Response {
+            sequence: u64,
+            captured_at_millis: u64,
+            total_rollups: usize,
+            returned_rollups: usize,
+            rollups: Vec<aetower_model::ResourceCostRollup>,
+        }
+
+        fn default_resource_cost_limit() -> usize {
+            100
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let limit = args.limit.clamp(1, 200);
+        let scope = args.scope.as_deref();
+        let id = args.id.as_deref().filter(|value| !value.is_empty());
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let total_rollups = snapshot.resource_cost_rollups.len();
+        let rollups = snapshot
+            .resource_cost_rollups
+            .into_iter()
+            .filter(|rollup| {
+                scope
+                    .map(|scope| rollup.scope.as_str() == scope)
+                    .unwrap_or(true)
+            })
+            .filter(|rollup| {
+                id.map(|id| resource_cost_rollup_matches_id(rollup, id))
+                    .unwrap_or(true)
+            })
+            .take(limit)
+            .collect::<Vec<_>>();
+
+        tool_json(Response {
+            sequence: snapshot.sequence,
+            captured_at_millis: snapshot.captured_at_millis,
+            total_rollups,
+            returned_rollups: rollups.len(),
+            rollups,
+        })
+    }
+
     pub(crate) fn tool_entity_details(&self, arguments: Value) -> Result<Value, Value> {
         #[derive(serde::Deserialize)]
         struct Args {
@@ -447,4 +501,11 @@ impl AetowerMcpServer {
             capabilities,
         })
     }
+}
+
+fn resource_cost_rollup_matches_id(rollup: &aetower_model::ResourceCostRollup, id: &str) -> bool {
+    rollup.id == id
+        || rollup.entity_id.as_deref() == Some(id)
+        || rollup.session_id.as_deref() == Some(id)
+        || rollup.repository_path.as_deref() == Some(id)
 }

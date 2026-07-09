@@ -446,7 +446,8 @@ enum RepositorySummaryBuilder {
     static func applyingLive(
         _ summaries: [RepositorySummary],
         live: [String: RepositoryLiveContext],
-        aiUsageByRoot: [String: AiRepoSummary] = [:]
+        aiUsageByRoot: [String: AiRepoSummary] = [:],
+        resourceCostByRoot: [String: ResourceCostRollup] = [:]
     ) -> [RepositorySummary] {
         summaries.map { summary in
             var updated = summary
@@ -462,6 +463,9 @@ enum RepositorySummaryBuilder {
                 updated.aiCostUsd = usage.totalCostUsd
                 updated.aiProviders = usage.providers
             }
+            if let cost = resourceCostByRoot[summary.root] {
+                updated.aiCostUsd = Float(cost.dollars)
+            }
             return updated
         }
     }
@@ -470,6 +474,16 @@ enum RepositorySummaryBuilder {
     /// repo_root/workspace_path in the same path domain as the inventory).
     static func aiUsage(byRoot summaries: [AiRepoSummary]) -> [String: AiRepoSummary] {
         Dictionary(summaries.map { ($0.repoPath, $0) }) { first, _ in first }
+    }
+
+    static func resourceCost(byRoot rollups: [ResourceCostRollup]) -> [String: ResourceCostRollup] {
+        Dictionary(
+            rollups.compactMap { rollup -> (String, ResourceCostRollup)? in
+                guard rollup.scope == .repository, let path = rollup.repositoryPath else { return nil }
+                return (path, rollup)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
     static func caveats(

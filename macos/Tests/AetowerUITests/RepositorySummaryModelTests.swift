@@ -260,6 +260,35 @@ final class RepositorySummaryModelTests: XCTestCase {
         XCTAssertEqual(overlaid[0].aiProviders, ["claude"])
     }
 
+    func testResourceCostRollupOverridesRepositoryCost() {
+        let rollup = ResourceCostRollup(
+            scope: .repository,
+            id: "repository:/tmp/repo",
+            label: "repo",
+            entityId: nil,
+            sessionId: nil,
+            repositoryPath: "/tmp/repo",
+            watts: 2.0,
+            energyWattHours: 1.5,
+            batteryMinutes: nil,
+            dollars: 14.75,
+            carbonGrams: 0.72,
+            diskGrowthBytes: 0,
+            thermalContribution: nil,
+            source: "chau7+kernel-energy",
+            confidence: 0.8
+        )
+
+        let byRoot = RepositorySummaryBuilder.resourceCost(byRoot: [rollup])
+        let overlaid = RepositorySummaryBuilder.applyingLive(
+            [summary(aiCostUsd: 1.0)],
+            live: [:],
+            resourceCostByRoot: byRoot
+        )
+
+        XCTAssertEqual(overlaid[0].aiCostUsd, 14.75, accuracy: 0.001)
+    }
+
     func testStatusLabelPriority() {
         XCTAssertEqual(summary(inventoryCacheStatus: "missing").statusLabel, "Missing")
         XCTAssertEqual(summary(violationCount: 1).statusLabel, "Budget")

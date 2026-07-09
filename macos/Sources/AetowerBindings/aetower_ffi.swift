@@ -448,6 +448,22 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
+    typealias FfiType = Int64
+    typealias SwiftType = Int64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int64, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterFloat: FfiConverterPrimitive {
     typealias FfiType = Float
     typealias SwiftType = Float
@@ -6018,6 +6034,180 @@ public func FfiConverterTypeRecommendation_lower(_ value: Recommendation) -> Rus
 }
 
 
+public struct ResourceCostRollup {
+    public var scope: ResourceCostScope
+    public var id: String
+    public var label: String
+    public var entityId: String?
+    public var sessionId: String?
+    public var repositoryPath: String?
+    public var watts: Double
+    public var energyWattHours: Double
+    public var batteryMinutes: Double?
+    public var dollars: Double
+    public var carbonGrams: Double
+    public var diskGrowthBytes: Int64
+    public var thermalContribution: String?
+    public var source: String
+    public var confidence: Float
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(scope: ResourceCostScope, id: String, label: String, entityId: String?, sessionId: String?, repositoryPath: String?, watts: Double, energyWattHours: Double, batteryMinutes: Double?, dollars: Double, carbonGrams: Double, diskGrowthBytes: Int64, thermalContribution: String?, source: String, confidence: Float) {
+        self.scope = scope
+        self.id = id
+        self.label = label
+        self.entityId = entityId
+        self.sessionId = sessionId
+        self.repositoryPath = repositoryPath
+        self.watts = watts
+        self.energyWattHours = energyWattHours
+        self.batteryMinutes = batteryMinutes
+        self.dollars = dollars
+        self.carbonGrams = carbonGrams
+        self.diskGrowthBytes = diskGrowthBytes
+        self.thermalContribution = thermalContribution
+        self.source = source
+        self.confidence = confidence
+    }
+}
+
+#if compiler(>=6)
+extension ResourceCostRollup: Sendable {}
+#endif
+
+
+extension ResourceCostRollup: Equatable, Hashable {
+    public static func ==(lhs: ResourceCostRollup, rhs: ResourceCostRollup) -> Bool {
+        if lhs.scope != rhs.scope {
+            return false
+        }
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.entityId != rhs.entityId {
+            return false
+        }
+        if lhs.sessionId != rhs.sessionId {
+            return false
+        }
+        if lhs.repositoryPath != rhs.repositoryPath {
+            return false
+        }
+        if lhs.watts != rhs.watts {
+            return false
+        }
+        if lhs.energyWattHours != rhs.energyWattHours {
+            return false
+        }
+        if lhs.batteryMinutes != rhs.batteryMinutes {
+            return false
+        }
+        if lhs.dollars != rhs.dollars {
+            return false
+        }
+        if lhs.carbonGrams != rhs.carbonGrams {
+            return false
+        }
+        if lhs.diskGrowthBytes != rhs.diskGrowthBytes {
+            return false
+        }
+        if lhs.thermalContribution != rhs.thermalContribution {
+            return false
+        }
+        if lhs.source != rhs.source {
+            return false
+        }
+        if lhs.confidence != rhs.confidence {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(scope)
+        hasher.combine(id)
+        hasher.combine(label)
+        hasher.combine(entityId)
+        hasher.combine(sessionId)
+        hasher.combine(repositoryPath)
+        hasher.combine(watts)
+        hasher.combine(energyWattHours)
+        hasher.combine(batteryMinutes)
+        hasher.combine(dollars)
+        hasher.combine(carbonGrams)
+        hasher.combine(diskGrowthBytes)
+        hasher.combine(thermalContribution)
+        hasher.combine(source)
+        hasher.combine(confidence)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeResourceCostRollup: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ResourceCostRollup {
+        return
+            try ResourceCostRollup(
+                scope: FfiConverterTypeResourceCostScope.read(from: &buf),
+                id: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                entityId: FfiConverterOptionString.read(from: &buf),
+                sessionId: FfiConverterOptionString.read(from: &buf),
+                repositoryPath: FfiConverterOptionString.read(from: &buf),
+                watts: FfiConverterDouble.read(from: &buf),
+                energyWattHours: FfiConverterDouble.read(from: &buf),
+                batteryMinutes: FfiConverterOptionDouble.read(from: &buf),
+                dollars: FfiConverterDouble.read(from: &buf),
+                carbonGrams: FfiConverterDouble.read(from: &buf),
+                diskGrowthBytes: FfiConverterInt64.read(from: &buf),
+                thermalContribution: FfiConverterOptionString.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                confidence: FfiConverterFloat.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ResourceCostRollup, into buf: inout [UInt8]) {
+        FfiConverterTypeResourceCostScope.write(value.scope, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterOptionString.write(value.entityId, into: &buf)
+        FfiConverterOptionString.write(value.sessionId, into: &buf)
+        FfiConverterOptionString.write(value.repositoryPath, into: &buf)
+        FfiConverterDouble.write(value.watts, into: &buf)
+        FfiConverterDouble.write(value.energyWattHours, into: &buf)
+        FfiConverterOptionDouble.write(value.batteryMinutes, into: &buf)
+        FfiConverterDouble.write(value.dollars, into: &buf)
+        FfiConverterDouble.write(value.carbonGrams, into: &buf)
+        FfiConverterInt64.write(value.diskGrowthBytes, into: &buf)
+        FfiConverterOptionString.write(value.thermalContribution, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterFloat.write(value.confidence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeResourceCostRollup_lift(_ buf: RustBuffer) throws -> ResourceCostRollup {
+    return try FfiConverterTypeResourceCostRollup.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeResourceCostRollup_lower(_ value: ResourceCostRollup) -> RustBuffer {
+    return FfiConverterTypeResourceCostRollup.lower(value)
+}
+
+
 public struct RuntimeCollectionSettingsInput {
     public var fullCollection: Bool
     public var adaptiveCadence: Bool
@@ -6566,11 +6756,12 @@ public struct SystemSnapshot {
     public var timeline: [TimelineEvent]
     public var aiRepoSummaries: [AiRepoSummary]
     public var chau7Sessions: [Chau7SessionSummary]
+    public var resourceCostRollups: [ResourceCostRollup]
     public var thermalForecast: ThermalForecast?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sequence: UInt64, capturedAtMillis: UInt64, host: HostSnapshot, hostTrend: HostTrend, capabilities: [CapabilitySnapshot], entities: [EntitySnapshot], timeline: [TimelineEvent], aiRepoSummaries: [AiRepoSummary], chau7Sessions: [Chau7SessionSummary], thermalForecast: ThermalForecast?) {
+    public init(sequence: UInt64, capturedAtMillis: UInt64, host: HostSnapshot, hostTrend: HostTrend, capabilities: [CapabilitySnapshot], entities: [EntitySnapshot], timeline: [TimelineEvent], aiRepoSummaries: [AiRepoSummary], chau7Sessions: [Chau7SessionSummary], resourceCostRollups: [ResourceCostRollup], thermalForecast: ThermalForecast?) {
         self.sequence = sequence
         self.capturedAtMillis = capturedAtMillis
         self.host = host
@@ -6580,6 +6771,7 @@ public struct SystemSnapshot {
         self.timeline = timeline
         self.aiRepoSummaries = aiRepoSummaries
         self.chau7Sessions = chau7Sessions
+        self.resourceCostRollups = resourceCostRollups
         self.thermalForecast = thermalForecast
     }
 }
@@ -6618,6 +6810,9 @@ extension SystemSnapshot: Equatable, Hashable {
         if lhs.chau7Sessions != rhs.chau7Sessions {
             return false
         }
+        if lhs.resourceCostRollups != rhs.resourceCostRollups {
+            return false
+        }
         if lhs.thermalForecast != rhs.thermalForecast {
             return false
         }
@@ -6634,6 +6829,7 @@ extension SystemSnapshot: Equatable, Hashable {
         hasher.combine(timeline)
         hasher.combine(aiRepoSummaries)
         hasher.combine(chau7Sessions)
+        hasher.combine(resourceCostRollups)
         hasher.combine(thermalForecast)
     }
 }
@@ -6656,6 +6852,7 @@ public struct FfiConverterTypeSystemSnapshot: FfiConverterRustBuffer {
                 timeline: FfiConverterSequenceTypeTimelineEvent.read(from: &buf),
                 aiRepoSummaries: FfiConverterSequenceTypeAiRepoSummary.read(from: &buf),
                 chau7Sessions: FfiConverterSequenceTypeChau7SessionSummary.read(from: &buf),
+                resourceCostRollups: FfiConverterSequenceTypeResourceCostRollup.read(from: &buf),
                 thermalForecast: FfiConverterOptionTypeThermalForecast.read(from: &buf)
         )
     }
@@ -6670,6 +6867,7 @@ public struct FfiConverterTypeSystemSnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeTimelineEvent.write(value.timeline, into: &buf)
         FfiConverterSequenceTypeAiRepoSummary.write(value.aiRepoSummaries, into: &buf)
         FfiConverterSequenceTypeChau7SessionSummary.write(value.chau7Sessions, into: &buf)
+        FfiConverterSequenceTypeResourceCostRollup.write(value.resourceCostRollups, into: &buf)
         FfiConverterOptionTypeThermalForecast.write(value.thermalForecast, into: &buf)
     }
 }
@@ -10178,6 +10376,90 @@ extension ReputationVerdict: Equatable, Hashable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum ResourceCostScope {
+
+    case entity
+    case session
+    case repository
+    case machine
+}
+
+
+#if compiler(>=6)
+extension ResourceCostScope: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeResourceCostScope: FfiConverterRustBuffer {
+    typealias SwiftType = ResourceCostScope
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ResourceCostScope {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .entity
+
+        case 2: return .session
+
+        case 3: return .repository
+
+        case 4: return .machine
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ResourceCostScope, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .entity:
+            writeInt(&buf, Int32(1))
+
+
+        case .session:
+            writeInt(&buf, Int32(2))
+
+
+        case .repository:
+            writeInt(&buf, Int32(3))
+
+
+        case .machine:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeResourceCostScope_lift(_ buf: RustBuffer) throws -> ResourceCostScope {
+    return try FfiConverterTypeResourceCostScope.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeResourceCostScope_lower(_ value: ResourceCostScope) -> RustBuffer {
+    return FfiConverterTypeResourceCostScope.lower(value)
+}
+
+
+extension ResourceCostScope: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum SessionMarkerKind {
 
     case runStart
@@ -11635,6 +11917,31 @@ fileprivate struct FfiConverterSequenceTypeRecommendation: FfiConverterRustBuffe
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeRecommendation.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeResourceCostRollup: FfiConverterRustBuffer {
+    typealias SwiftType = [ResourceCostRollup]
+
+    public static func write(_ value: [ResourceCostRollup], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeResourceCostRollup.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ResourceCostRollup] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ResourceCostRollup]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeResourceCostRollup.read(from: &buf))
         }
         return seq
     }

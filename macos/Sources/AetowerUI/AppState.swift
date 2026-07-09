@@ -876,6 +876,7 @@ public final class AppState {
             timeline: [],
             aiRepoSummaries: [],
             chau7Sessions: [],
+            resourceCostRollups: [],
             thermalForecast: nil
         )
     }
@@ -5200,7 +5201,8 @@ public final class AppState {
         }
         let agentContext = AgentContextSlice(
             chau7Sessions: snapshot.chau7Sessions,
-            aiRepoSummaries: snapshot.aiRepoSummaries
+            aiRepoSummaries: snapshot.aiRepoSummaries,
+            resourceCostRollups: snapshot.resourceCostRollups
         )
         if agentContextState != agentContext {
             agentContextState = agentContext

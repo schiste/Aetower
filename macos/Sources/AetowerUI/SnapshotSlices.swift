@@ -2,19 +2,23 @@ import AetowerBridge
 import Foundation
 import SwiftUI
 
-/// Rarely-changing agent context (Chau7 sessions + AI repo summaries) grouped
-/// into one change-gated slice so its readers are only invalidated when the
-/// agent landscape actually moves, not on every engine tick.
+/// Rarely-changing agent context (Chau7 sessions, AI repo summaries, and
+/// resource cost rollups) grouped into one change-gated slice so its readers are
+/// only invalidated when the agent landscape actually moves, not on every engine
+/// tick.
 public struct AgentContextSlice: Equatable, Sendable {
     public var chau7Sessions: [Chau7SessionSummary]
     public var aiRepoSummaries: [AiRepoSummary]
+    public var resourceCostRollups: [ResourceCostRollup]
 
     public init(
         chau7Sessions: [Chau7SessionSummary] = [],
-        aiRepoSummaries: [AiRepoSummary] = []
+        aiRepoSummaries: [AiRepoSummary] = [],
+        resourceCostRollups: [ResourceCostRollup] = []
     ) {
         self.chau7Sessions = chau7Sessions
         self.aiRepoSummaries = aiRepoSummaries
+        self.resourceCostRollups = resourceCostRollups
     }
 }
 
