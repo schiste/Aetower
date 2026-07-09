@@ -35,21 +35,21 @@ The primary triage surface. When the Mac feels slow, open this tab. The highest-
 
 **What it does**
 
-Time-travel for your machine. Loads stored snapshots from the local SQLite database (up to 7 days of retention) and lets you scrub through historical system state. Every entity's friction, CPU, memory, and disk activity are preserved at the tick cadence they were captured.
+Time-travel for your machine. Loads stored snapshots from the local SQLite database (12 hours of raw snapshots by default, with 30-day aggregated rollups) and lets you scrub through historical system state. Every entity's friction, CPU, memory, and disk activity are preserved at the tick cadence they were captured.
 
 **Its role**
 
-Post-incident investigation. "My Mac was sluggish at 2 PM yesterday — what was running?" Open History, pick the time range, and see exactly which entities were active, what their friction scores were, and how host metrics (CPU, memory pressure, swap, wakeups) evolved.
+Post-incident investigation. "My Mac was sluggish at 2 PM — what was running?" Open History, pick the time range, and see exactly which entities were active, what their friction scores were, and how host metrics (CPU, memory pressure, swap, wakeups) evolved.
 
 **Aetower's value vs competitors**
 
-No competitor in the macOS monitoring space offers entity-level historical playback. Activity Monitor has no history. iStat Menus logs host-level metrics but not per-app attribution. Sensei stores cleanup recommendations but not live system state. Aetower is the only tool that lets you reconstruct "who was doing what" at any point in the last week.
+No competitor in the macOS monitoring space offers entity-level historical playback. Activity Monitor has no history. iStat Menus logs host-level metrics but not per-app attribution. Sensei stores cleanup recommendations but not live system state. Aetower is the only tool that lets you reconstruct "who was doing what" across its retained history window.
 
 **3 things to do with this tab**
 
 1. **Investigate a past slowdown** — select the time range when the machine felt bad. Sort by friction to find the culprit entity, then compare its metrics across the window.
 2. **Spot recurring patterns** — check if the same entity spikes at the same time every day (backup daemons, indexing, scheduled tasks). If so, reschedule it to a time you're not working.
-3. **Verify a fix** — after quitting a problem app or disabling a background service, come back the next day and confirm the friction is actually gone. History gives you the before/after proof.
+3. **Verify a fix** — after quitting a problem app or disabling a background service, come back later in the day and confirm the friction is actually gone. History gives you the before/after proof.
 
 ---
 
