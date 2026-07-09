@@ -165,13 +165,14 @@ adapter, database, or collection path is unavailable.
 
 ### What it does for people
 
-Fleet gives a lightweight view of nearby Aetower machines, useful for comparing a
-MacBook, Mac Studio, build host, or teammate machine on the same network. It is
-meant for local awareness, not enterprise cloud monitoring.
+Fleet gives a lightweight view of nearby Aetower machines with Fleet enabled,
+useful for comparing a MacBook, Mac Studio, build host, or teammate machine on
+the same trusted network. It is meant for local awareness, not enterprise cloud
+monitoring.
 
 ### Technical details
 
-- Uses local network peer discovery.
+- Uses opt-in local network peer discovery.
 - Displays summary host health such as CPU, memory pressure, thermal state, and
   active entity count.
 - Avoids requiring a centralized account or external service for basic peer

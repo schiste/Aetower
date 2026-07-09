@@ -154,7 +154,7 @@ No competitor exposes its own internal pipeline metrics. This is Aetower "eating
 
 **What it does**
 
-Multi-machine peer discovery via Bonjour (mDNS). When multiple Macs on the same network are running Aetower, they automatically discover each other and surface summary metrics: hostname, CPU%, memory pressure, thermal state, and active entity count.
+Multi-machine peer discovery via Bonjour (mDNS). When multiple nearby Macs are running Aetower with Fleet enabled, they discover each other and surface summary metrics: hostname, CPU%, memory pressure, thermal state, and active entity count.
 
 **Its role**
 
@@ -162,7 +162,7 @@ The team-scale view. For developers working across multiple machines (a MacBook 
 
 **Aetower's value vs competitors**
 
-iStat Menus and Stats are single-machine tools with no network awareness. Sensei is single-machine. The only competitor with multi-machine monitoring is enterprise tooling (Datadog, New Relic) which is priced and scoped for servers, not developer workstations. Fleet is zero-config Bonjour — no server, no account, no cloud dependency.
+iStat Menus and Stats are single-machine tools with no network awareness. Sensei is single-machine. The only competitor with multi-machine monitoring is enterprise tooling (Datadog, New Relic) which is priced and scoped for servers, not developer workstations. Fleet is opt-in Bonjour — no server, no account, no cloud dependency.
 
 **3 things to do with this tab**
 
