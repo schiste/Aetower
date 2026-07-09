@@ -2,7 +2,7 @@ import AetowerBridge
 import SwiftUI
 
 /// Dedicated tab for AI agent hardware impact — surfaces GPU attribution,
-/// energy draw, session costs, and unified GPU memory pressure alongside
+/// energy draw, session costs, and unified memory pressure alongside
 /// per-repository token and cost breakdowns from local AI runtimes.
 package struct AIAgentsView: View {
     let state: AppState
@@ -121,6 +121,12 @@ package struct AIAgentsView: View {
 
     private var host: HostSnapshot { state.hostState }
 
+    private var hostGpuMemoryUnifiedPercent: Double {
+        host.memoryTotalBytes > 0
+            ? Double(host.gpuMemoryBytes) / Double(host.memoryTotalBytes) * 100
+            : 0
+    }
+
     private var derived: DerivedData {
         let aiAgents = state.entitiesState.filter { $0.entityKind == .aiAgent }
         let aiAgentIDs = Set(aiAgents.map(\.entityId))
@@ -157,9 +163,7 @@ package struct AIAgentsView: View {
         let totalEnergy = aiAgents.reduce(0) { $0 + $1.metrics.energyNjPerS }
         let totalCost = aiAgents.compactMap(\.agentCost?.costUsd).reduce(0, +)
         let totalSessionEnergyNj = aiAgents.compactMap(\.agentCost?.sessionEnergyNj).reduce(0, +)
-        let gpuMemoryUnifiedPercent = host.memoryTotalBytes > 0
-            ? Double(host.gpuMemoryBytes) / Double(host.memoryTotalBytes) * 100
-            : 0
+        let gpuMemoryUnifiedPercent = hostGpuMemoryUnifiedPercent
 
         // Compute runtime groups once and pass to both the struct and
         // the historical trend builder — previously buildRuntimeGroups
@@ -278,48 +282,51 @@ package struct AIAgentsView: View {
     private func summaryStrip(_ derived: DerivedData) -> some View {
         let columns = [GridItem(.adaptive(minimum: 118), spacing: AetowerDesign.Spacing.sm)]
 
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-            summaryChip(
-                label: "\(derived.aiAgents.count) agent\(derived.aiAgents.count == 1 ? "" : "s")",
-                icon: "cpu",
-                color: AetowerDesign.Tone.cpu
-            )
-            summaryChip(
-                label: "Host GPU \(Int(host.gpuPercent))%",
-                icon: "gpu",
-                color: AetowerDesign.Tone.gpu
-            )
-            summaryChip(
-                label: agentFormatEnergy(njPerS: derived.totalEnergy),
-                icon: "bolt.fill",
-                color: AetowerDesign.Tone.energy
-            )
-            summaryChip(
-                label: "Unified mem \(Int(derived.gpuMemoryUnifiedPercent))%",
-                icon: "memorychip",
-                color: gpuMemoryTone(derived.gpuMemoryUnifiedPercent)
-            )
-            if derived.totalCost > 0 {
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                 summaryChip(
-                    label: String(format: "$%.2f", derived.totalCost),
-                    icon: "dollarsign.circle",
-                    color: AetowerDesign.Status.neutral
+                    label: "\(derived.aiAgents.count) agent\(derived.aiAgents.count == 1 ? "" : "s")",
+                    icon: "cpu",
+                    color: AetowerDesign.Tone.cpu
                 )
-            }
-            if derived.totalSessionEnergyNj > 0 {
                 summaryChip(
-                    label: formatSessionEnergy(nj: derived.totalSessionEnergyNj),
-                    icon: "battery.25percent",
-                    color: AetowerDesign.Status.warning
+                    label: "Host GPU \(Int(host.gpuPercent))%",
+                    icon: "gpu",
+                    color: AetowerDesign.Tone.gpu
                 )
-            }
-            if host.onBattery {
                 summaryChip(
-                    label: "On Battery",
-                    icon: "bolt.slash.fill",
-                    color: AetowerDesign.Status.warning
+                    label: agentFormatEnergy(njPerS: derived.totalEnergy),
+                    icon: "bolt.fill",
+                    color: AetowerDesign.Tone.energy
                 )
+                summaryChip(
+                    label: "Unified mem \(Int(derived.gpuMemoryUnifiedPercent))%",
+                    icon: "memorychip",
+                    color: gpuMemoryTone(derived.gpuMemoryUnifiedPercent)
+                )
+                if derived.totalCost > 0 {
+                    summaryChip(
+                        label: String(format: "$%.2f", derived.totalCost),
+                        icon: "dollarsign.circle",
+                        color: AetowerDesign.Status.neutral
+                    )
+                }
+                if derived.totalSessionEnergyNj > 0 {
+                    summaryChip(
+                        label: formatSessionEnergy(nj: derived.totalSessionEnergyNj),
+                        icon: "battery.25percent",
+                        color: AetowerDesign.Status.warning
+                    )
+                }
+                if host.onBattery {
+                    summaryChip(
+                        label: "On Battery",
+                        icon: "bolt.slash.fill",
+                        color: AetowerDesign.Status.warning
+                    )
+                }
             }
+            sourceBadgeRow(sourceBadges(for: derived))
         }
         .padding(.horizontal, AetowerDesign.Spacing.lg)
     }
@@ -545,6 +552,8 @@ package struct AIAgentsView: View {
                         }
                     }
 
+                    sourceBadgeRow(sourceBadges(for: group))
+
                     HStack(spacing: AetowerDesign.Spacing.xs) {
                         if group.approvalCount > 0 {
                             agentStateBadge("Approvals \(group.approvalCount)", color: AetowerDesign.Status.warning)
@@ -600,11 +609,12 @@ package struct AIAgentsView: View {
             }
 
             dataQualityBadgeRow(for: entity)
+            sourceBadgeRow(sourceBadges(for: entity))
 
             HStack(spacing: AetowerDesign.Spacing.md) {
                 if entity.metrics.estimatedGpuPercent > 0 {
                     agentMetricPill(
-                        label: "GPU \(Int(entity.metrics.estimatedGpuPercent))%",
+                        label: "GPU est \(Int(entity.metrics.estimatedGpuPercent))%",
                         color: AetowerDesign.Tone.gpu
                     )
                 }
@@ -867,7 +877,6 @@ package struct AIAgentsView: View {
     private func dataBadges(for entity: EntitySnapshot) -> [DataBadge] {
         let sessionLinked = agentSessionComponent(for: entity)?.adapterContext?.sessionId != nil
         let projectLinked = agentProjectContext(for: entity) != nil
-        let gpuEstimated = entity.metrics.estimatedGpuPercent > 0
 
         var badges: [DataBadge] = [
             DataBadge(
@@ -878,9 +887,6 @@ package struct AIAgentsView: View {
 
         if projectLinked {
             badges.append(DataBadge(label: "Project linked", color: AetowerDesign.Status.ready))
-        }
-        if gpuEstimated {
-            badges.append(DataBadge(label: "GPU inferred", color: AetowerDesign.Tone.gpu))
         }
         if entity.badges.contains("approval-needed") {
             badges.append(DataBadge(label: "Approval needed", color: AetowerDesign.Status.warning))
@@ -895,11 +901,74 @@ package struct AIAgentsView: View {
         return badges
     }
 
+    private func sourceBadges(for derived: DerivedData) -> [DataBadge] {
+        var badges = [DataBadge]()
+        if derived.sortedAiAgents.contains(where: { $0.metrics.estimatedGpuPercent > 0 }) {
+            badges.append(DataBadge(label: "GPU inferred", color: AetowerDesign.Tone.gpu))
+        }
+        if host.gpuMemoryBytes > 0 || derived.gpuMemoryUnifiedPercent > 0 {
+            badges.append(DataBadge(
+                label: "Unified memory pressure",
+                color: gpuMemoryTone(derived.gpuMemoryUnifiedPercent)
+            ))
+        }
+        if derived.totalEnergy > 0 || derived.totalSessionEnergyNj > 0 {
+            badges.append(DataBadge(label: "Kernel energy", color: AetowerDesign.Tone.energy))
+        }
+        return badges
+    }
+
+    private func sourceBadges(for group: RuntimeGroup) -> [DataBadge] {
+        var badges = [DataBadge]()
+        if group.agents.contains(where: { $0.metrics.estimatedGpuPercent > 0 }) {
+            badges.append(DataBadge(label: "GPU inferred", color: AetowerDesign.Tone.gpu))
+        }
+        if host.gpuMemoryBytes > 0 {
+            badges.append(DataBadge(
+                label: "Unified memory pressure",
+                color: gpuMemoryTone(hostGpuMemoryUnifiedPercent)
+            ))
+        }
+        if group.totalEnergyNjPerS > 0
+            || group.agents.contains(where: { ($0.agentCost?.sessionEnergyNj ?? 0) > 0 }) {
+            badges.append(DataBadge(label: "Kernel energy", color: AetowerDesign.Tone.energy))
+        }
+        return badges
+    }
+
+    private func sourceBadges(for entity: EntitySnapshot) -> [DataBadge] {
+        var badges = [DataBadge]()
+        if entity.metrics.estimatedGpuPercent > 0 {
+            badges.append(DataBadge(label: "GPU inferred", color: AetowerDesign.Tone.gpu))
+        }
+        if host.gpuMemoryBytes > 0 {
+            badges.append(DataBadge(
+                label: "Unified memory pressure",
+                color: gpuMemoryTone(hostGpuMemoryUnifiedPercent)
+            ))
+        }
+        if entity.metrics.energyNjPerS > 0 || (entity.agentCost?.sessionEnergyNj ?? 0) > 0 {
+            badges.append(DataBadge(label: "Kernel energy", color: AetowerDesign.Tone.energy))
+        }
+        return badges
+    }
+
     @ViewBuilder
     private func dataQualityBadgeRow(for entity: EntitySnapshot) -> some View {
         HStack(spacing: AetowerDesign.Spacing.xs) {
             ForEach(dataBadges(for: entity).prefix(4)) { badge in
                 agentStateBadge(badge.label, color: badge.color)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sourceBadgeRow(_ badges: [DataBadge]) -> some View {
+        if !badges.isEmpty {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                ForEach(badges) { badge in
+                    agentStateBadge(badge.label, color: badge.color)
+                }
             }
         }
     }
@@ -1021,7 +1090,7 @@ package struct AIAgentsView: View {
             budgetMetric(title: "Host CPU", value: cpuShare)
             budgetMetric(title: "Host mem", value: memoryShare)
             if entity.metrics.estimatedGpuPercent > 0 {
-                budgetMetric(title: "Host GPU", value: gpuShare)
+                budgetMetric(title: "GPU inferred", value: gpuShare)
             }
             if entity.metrics.wakeupsPerSecond > 0 {
                 budgetMetric(title: "Wakeups", value: wakeupShare)
@@ -1218,9 +1287,9 @@ package struct AIAgentsView: View {
         if let gpu = agents.max(by: { $0.metrics.estimatedGpuPercent < $1.metrics.estimatedGpuPercent }), gpu.metrics.estimatedGpuPercent > 0 {
             leaders.append(BurdenLeader(
                 id: "gpu",
-                title: "Top GPU",
+                title: "Top GPU (inferred)",
                 entityName: gpu.displayName,
-                valueLabel: String(format: "%.0f%%", gpu.metrics.estimatedGpuPercent),
+                valueLabel: String(format: "est %.0f%%", gpu.metrics.estimatedGpuPercent),
                 color: AetowerDesign.Tone.gpu,
                 // MetricTrend has no GPU-specific trend array. Friction
                 // is a reasonable proxy — it blends CPU, memory, disk,
