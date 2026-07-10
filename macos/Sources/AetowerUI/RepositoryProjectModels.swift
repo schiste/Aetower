@@ -89,6 +89,20 @@ struct RepositoryProjectModel: Codable, Identifiable, Equatable, Sendable {
         cloudflareLinks.contains { $0.identityKey == link.identityKey }
     }
 
+    /// Attention score for failed Cloudflare deployments, weighted by the
+    /// affected environment's rank (production outranks previews).
+    var cloudflareAttentionScore: Double {
+        let failedRank = cloudflareEnvironmentGroups.compactMap { group -> Int? in
+            group.links.contains {
+                cloudflareStatus(for: $0)?.hasFailedDeployment == true
+            } ? group.rank : nil
+        }.max() ?? 0
+        if failedRank >= 80 { return 10 }
+        if failedRank >= 50 { return 6 }
+        if failedRank > 0 { return 3 }
+        return 0
+    }
+
     mutating func upsertCloudflareLink(
         _ link: RepositoryProjectLinkModel,
         environmentName: String,
@@ -206,23 +220,78 @@ struct RepositoryProjectModel: Codable, Identifiable, Equatable, Sendable {
     }
 
     static func normalizedRepoRoot(_ path: String) -> String {
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        let expanded: String
-        if trimmed == "~" {
-            expanded = FileManager.default.homeDirectoryForCurrentUser.path
-        } else if trimmed.hasPrefix("~/") {
-            expanded = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(String(trimmed.dropFirst(2)))
-                .path
-        } else {
-            expanded = trimmed
-        }
-        return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL.path
+        PathNormalization.standardizedDirectoryPath(path)
     }
 
     private static func currentMillis() -> UInt64 {
         UInt64(Date().timeIntervalSince1970 * 1000)
+    }
+}
+
+/// Cloudflare environment preset shared by the Repos and Projects link
+/// sheets. The two surfaces render different labels for the development case
+/// ("Development" vs the compact "Dev"), so both spellings live here rather
+/// than in per-view copies of the whole enum.
+enum CloudflareEnvironmentPreset: String, CaseIterable, Identifiable, Sendable {
+    case production
+    case staging
+    case development
+    case custom
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .production: return "Production"
+        case .staging: return "Staging"
+        case .development: return "Development"
+        case .custom: return "Custom"
+        }
+    }
+
+    /// Compact variant for narrow pickers.
+    var shortLabel: String {
+        self == .development ? "Dev" : label
+    }
+
+    var defaultName: String {
+        switch self {
+        case .production: return "Production"
+        case .staging: return "Staging"
+        case .development: return "Development"
+        case .custom: return ""
+        }
+    }
+
+    var rank: Int {
+        switch self {
+        case .production: return 100
+        case .staging: return 60
+        case .development: return 20
+        case .custom: return 40
+        }
+    }
+
+    /// Cloudflare Pages deployment environment this preset maps to, when one
+    /// applies ("production"/"preview"; nil for custom).
+    var pagesDeploymentEnvironment: String? {
+        switch self {
+        case .production: return "production"
+        case .staging, .development: return "preview"
+        case .custom: return nil
+        }
+    }
+
+    /// Shared validation for the Cloudflare link sheets: a draft is saveable
+    /// once the environment, account, and resource fields are all non-blank.
+    static func linkDraftIsSaveable(
+        environmentName: String,
+        accountID: String,
+        resourceName: String
+    ) -> Bool {
+        ![environmentName, accountID, resourceName].contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 }
 

@@ -192,16 +192,7 @@ struct RepositorySummary: Identifiable {
     }
 
     var cloudflareProviderAttentionScore: Double {
-        guard let project else { return 0 }
-        let failedRank = project.cloudflareEnvironmentGroups.compactMap { group -> Int? in
-            group.links.contains {
-                project.cloudflareStatus(for: $0)?.hasFailedDeployment == true
-            } ? group.rank : nil
-        }.max() ?? 0
-        if failedRank >= 80 { return 10 }
-        if failedRank >= 50 { return 6 }
-        if failedRank > 0 { return 3 }
-        return 0
+        project?.cloudflareAttentionScore ?? 0
     }
 
     var hasCloudflareProviderAttention: Bool {

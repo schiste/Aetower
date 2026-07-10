@@ -686,19 +686,7 @@ enum StorageHygieneReportCacheStore {
     }
 
     private static func normalizedPath(_ path: String) -> String {
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        let expanded: String
-        if trimmed == "~" {
-            expanded = FileManager.default.homeDirectoryForCurrentUser.path
-        } else if trimmed.hasPrefix("~/") {
-            expanded = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(String(trimmed.dropFirst(2)))
-                .path
-        } else {
-            expanded = trimmed
-        }
-        return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL.path
+        PathNormalization.standardizedDirectoryPath(path)
     }
 
     private static func currentMillis() -> UInt64 {

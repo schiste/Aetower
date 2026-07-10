@@ -1002,9 +1002,9 @@ private struct ProjectCloudflareLinkSheet: View {
     @State private var branch = ""
 
     private var canSave: Bool {
-        !environmentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !resourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        CloudflareEnvironmentPreset.linkDraftIsSaveable(
+            environmentName: environmentName, accountID: accountID, resourceName: resourceName
+        )
     }
 
     var body: some View {
@@ -1027,14 +1027,14 @@ private struct ProjectCloudflareLinkSheet: View {
 
             Picker("Environment", selection: $environmentPreset) {
                 ForEach(EnvironmentPreset.allCases) { preset in
-                    Text(preset.label).tag(preset)
+                    Text(preset.shortLabel).tag(preset)
                 }
             }
             .pickerStyle(.segmented)
             .onChange(of: environmentPreset) { _, preset in
                 guard preset != .custom else { return }
                 environmentName = preset.defaultName
-                pagesDeploymentEnvironment = preset.pagesEnvironment
+                pagesDeploymentEnvironment = Self.pagesEnvironment(for: preset)
             }
 
             TextField("Environment name", text: $environmentName)
@@ -1121,47 +1121,13 @@ private struct ProjectCloudflareLinkSheet: View {
         var label: String { self == .pages ? "Pages" : "Worker" }
     }
 
-    private enum EnvironmentPreset: String, CaseIterable, Identifiable {
-        case production
-        case staging
-        case development
-        case custom
+    private typealias EnvironmentPreset = CloudflareEnvironmentPreset
 
-        var id: Self { self }
-
-        var label: String {
-            switch self {
-            case .production: return "Production"
-            case .staging: return "Staging"
-            case .development: return "Dev"
-            case .custom: return "Custom"
-            }
-        }
-
-        var defaultName: String {
-            switch self {
-            case .production: return "Production"
-            case .staging: return "Staging"
-            case .development: return "Development"
-            case .custom: return ""
-            }
-        }
-
-        var rank: Int {
-            switch self {
-            case .production: return 100
-            case .staging: return 60
-            case .development: return 20
-            case .custom: return 40
-            }
-        }
-
-        var pagesEnvironment: PagesDeploymentEnvironment {
-            switch self {
-            case .production: return .production
-            case .staging, .development: return .preview
-            case .custom: return .any
-            }
+    private static func pagesEnvironment(for preset: EnvironmentPreset) -> PagesDeploymentEnvironment {
+        switch preset {
+        case .production: return .production
+        case .staging, .development: return .preview
+        case .custom: return .any
         }
     }
 

@@ -527,52 +527,7 @@ private enum RepositoryCloudflareLinkKind: String, CaseIterable, Identifiable {
     }
 }
 
-private enum RepositoryCloudflareEnvironmentPreset: String, CaseIterable, Identifiable {
-    case production
-    case staging
-    case development
-    case custom
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .production: return "Production"
-        case .staging: return "Staging"
-        case .development: return "Development"
-        case .custom: return "Custom"
-        }
-    }
-
-    var defaultName: String {
-        switch self {
-        case .production: return "Production"
-        case .staging: return "Staging"
-        case .development: return "Development"
-        case .custom: return ""
-        }
-    }
-
-    var rank: Int {
-        switch self {
-        case .production: return 100
-        case .staging: return 60
-        case .development: return 20
-        case .custom: return 40
-        }
-    }
-
-    var pagesDeploymentEnvironment: String? {
-        switch self {
-        case .production:
-            return "production"
-        case .staging, .development:
-            return "preview"
-        case .custom:
-            return nil
-        }
-    }
-}
+private typealias RepositoryCloudflareEnvironmentPreset = CloudflareEnvironmentPreset
 
 private enum RepositoryCloudflarePagesDeploymentEnvironment: String, CaseIterable, Identifiable {
     case any
@@ -4120,15 +4075,7 @@ public struct RepositoryView: View {
     private func repositoryProjectCloudflareAttentionScore(
         _ project: RepositoryProjectModel
     ) -> Double {
-        let failedRank = project.cloudflareEnvironmentGroups.compactMap { group -> Int? in
-            group.links.contains {
-                project.cloudflareStatus(for: $0)?.hasFailedDeployment == true
-            } ? group.rank : nil
-        }.max() ?? 0
-        if failedRank >= 80 { return 10 }
-        if failedRank >= 50 { return 6 }
-        if failedRank > 0 { return 3 }
-        return 0
+        project.cloudflareAttentionScore
     }
 
     private func repositoryProjectCloudflareGroupLabel(
@@ -4968,9 +4915,11 @@ private struct RepositoryCloudflareLinkSheet: View {
     @State private var branch = ""
 
     private var canSave: Bool {
-        !environmentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !resourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        CloudflareEnvironmentPreset.linkDraftIsSaveable(
+            environmentName: environmentName,
+            accountID: accountID,
+            resourceName: resourceName
+        )
     }
 
     var body: some View {

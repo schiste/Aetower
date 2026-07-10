@@ -2822,11 +2822,11 @@ public final class AppState {
         let fileManager = FileManager.default
         let normalizedKnownRoots = Set(
             knownRoots.flatMap { root in
-                [root, normalizedScanRoot(root)]
+                [root, RepositoryProjectModel.normalizedRepoRoot(root)]
             }
         )
         let rootURLs = roots
-            .map(normalizedScanRoot)
+            .map(RepositoryProjectModel.normalizedRepoRoot)
             .filter { !$0.isEmpty }
             .map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
         let maxDepth = Swift.max(1, Swift.min(maxDepth, 12))
@@ -2942,23 +2942,7 @@ public final class AppState {
     }
 
     nonisolated private static func normalizedScanRootSet(_ roots: [String]) -> Set<String> {
-        Set(roots.map(normalizedScanRoot).filter { !$0.isEmpty })
-    }
-
-    nonisolated private static func normalizedScanRoot(_ root: String) -> String {
-        let trimmed = root.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        let expanded: String
-        if trimmed == "~" {
-            expanded = FileManager.default.homeDirectoryForCurrentUser.path
-        } else if trimmed.hasPrefix("~/") {
-            expanded = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(String(trimmed.dropFirst(2)))
-                .path
-        } else {
-            expanded = trimmed
-        }
-        return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL.path
+        Set(roots.map(RepositoryProjectModel.normalizedRepoRoot).filter { !$0.isEmpty })
     }
 
     /// Observability for stuck hygiene loads: the FFI report calls have no
