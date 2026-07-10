@@ -12,8 +12,12 @@ SITE_OUTPUT="${AETOWER_CLOUDFLARE_SITE_DIR:-$ROOT/dist/cloudflare-site}"
 SITE_PROJECT="${AETOWER_CLOUDFLARE_PROJECT:-aetower-dev}"
 BRANCH="${AETOWER_CLOUDFLARE_BRANCH:-master}"
 PUBLIC_BASE_URL="${AETOWER_PUBLIC_BASE_URL:-https://aetower.dev}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 sh "$ROOT/scripts/prepare-cloudflare-site.sh"
+
+printf 'validating public claims before website deploy\n'
+"$PYTHON_BIN" "$ROOT/scripts/validate-public-claims.py" --published
 
 # Run from the repo root so wrangler discovers the website config.
 (

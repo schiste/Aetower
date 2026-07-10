@@ -54,6 +54,13 @@ Repository operations:
   Git/index/config fingerprint changes, stale-but-visible repositories, and the
   background new-repo scan toast/state.
 
+Release validation:
+
+- Added a public-claims validation gate that checks release-facing claims
+  against source defaults, local release artifacts, the Sparkle appcast, source
+  archives, bundled CLI, Fleet/outbound defaults, and published release URLs
+  before website deploys.
+
 Storage:
 
 - Added explicit APFS-aware storage coverage for sparse files, hardlinks,
