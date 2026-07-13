@@ -1,0 +1,2066 @@
+{
+ "aetower_ai_runtime_report": {
+  "args": {},
+  "output": {
+   "approvals": [],
+   "burden_leaders": [
+    {
+     "display_name": "Claude Code",
+     "entity_id": "ai-agent:19171",
+     "kind": "cpu",
+     "value_label": "6%"
+    },
+    "… 4 more items"
+   ],
+   "captured_at_millis": 1783970204757,
+   "delegations": [],
+   "historical_groups": [],
+   "history_status": "ok",
+   "history_warning": null,
+   "recent_changes": [],
+   "recommendations": [
+    {
+     "detail": "This agent session is currently waiting for input. Resume the conversation if you expect more wo…",
+     "entity_id": "ai-agent:19153",
+     "expected_benefit": "Lower AI runtime friction and clearer operator action.",
+     "severity": "info",
+     "source": "Codex",
+     "title": "Resume waiting agent"
+    },
+    {
+     "detail": "This agent session is currently waiting for input. Resume the conversation if you expect more wo…",
+     "entity_id": "ai-agent:19339",
+     "expected_benefit": "Lower AI runtime friction and clearer operator action.",
+     "severity": "info",
+     "source": "Codex",
+     "title": "Resume waiting agent"
+    }
+   ],
+   "runtime_groups": [
+    {
+     "agent_count": 6,
+     "approval_count": 0,
+     "chau7_build": {
+      "app_version": "0.3.1-dev",
+      "build_channel": "release",
+      "build_sha": "435dafacfebd",
+      "build_timestamp": "2026-07-13T13:55:59Z"
+     },
+     "delegating_count": 0,
+     "provider": "codex",
+     "total_cost_usd": 0.0,
+     "total_cpu_percent": 2.3494808673858643,
+     "total_energy_nj_per_s": 1829866.8033847704,
+     "total_memory_bytes": 386301952,
+     "workspace": "~/Repositories/Aetower"
+    },
+    {
+     "agent_count": 8,
+     "approval_count": 0,
+     "chau7_build": {
+      "app_version": "0.3.1-dev",
+      "build_channel": "release",
+      "build_sha": "435dafacfebd",
+      "build_timestamp": "2026-07-13T13:55:59Z"
+     },
+     "delegating_count": 0,
+     "provider": "claude",
+     "total_cost_usd": 8188.71533203125,
+     "total_cpu_percent": 13.810041427612305,
+     "total_energy_nj_per_s": 6043.747510534055,
+     "total_memory_bytes": 1161216000,
+     "workspace": "~/Repositories/Chau7"
+    }
+   ],
+   "summary": {
+    "agent_count": 14,
+    "host_gpu_memory_unified_percent": 1.7477035522460938,
+    "host_gpu_percent": 18.0,
+    "total_cost_usd": 8188.71533203125,
+    "total_energy_nj_per_s": 1835910.550895305,
+    "total_session_energy_nj": 7343640
+   }
+  }
+ },
+ "aetower_capability_status": {
+  "args": {},
+  "output": {
+   "capabilities": [
+    {
+     "action_label": "Grant access",
+     "detail": "Accessibility access is not granted. Use Request to open the macOS prompt.",
+     "health": "Configured",
+     "kind": "Accessibility",
+     "last_updated_millis": 1783970165471,
+     "operator_label": "Missing access",
+     "severity": "critical",
+     "state": "Denied"
+    },
+    "… 7 more items"
+   ],
+   "captured_at_millis": 1783970204757,
+   "counts": {
+    "critical": 2,
+    "ok": 6,
+    "warning": 0
+   }
+  }
+ },
+ "aetower_current_snapshot": {
+  "args": {
+   "entity_limit": 2
+  },
+  "output": {
+   "sequence": 14,
+   "snapshot": {
+    "ai_repo_summaries": [
+     {
+      "display_name": "~/Repositories/Aethyme",
+      "providers": [
+       "anthropic"
+      ],
+      "repo_path": "~/Repositories/Aethyme",
+      "total_cost_usd": 0.0,
+      "total_runs": 1,
+      "total_tokens": 0
+     },
+     "… 2 more items"
+    ],
+    "capabilities": [
+     {
+      "detail": "Accessibility access is not granted. Use Request to open the macOS prompt.",
+      "health": "configured",
+      "kind": "accessibility",
+      "last_updated_millis": 1783970165471,
+      "state": "denied"
+     },
+     "… 7 more items"
+    ],
+    "captured_at_millis": 1783970204757,
+    "chau7_sessions": [
+     {
+      "active_app": "Codex",
+      "active_run_duration_millis": 0,
+      "child_session_count": 0,
+      "cto_active": true,
+      "git_branch": "main",
+      "id": "tab:tab_2",
+      "is_at_prompt": true,
+      "last_active": "2026-07-13T05:05:41.944Z",
+      "last_exit_reason": null,
+      "linked_entity_ids": [
+       "ai-agent:19156",
+       "… 7 more items"
+      ],
+      "pending_approval_description": null,
+      "provider": "codex",
+      "…": "10 more fields"
+     },
+     "… 830 more items"
+    ],
+    "entities": [
+     {
+      "active_window_title": null,
+      "agent_cost": null,
+      "anomaly_detected": false,
+      "app_version": "0.3.1-dev",
+      "attribution_notes": [
+       "Components were launched by more than one parent lineage: Chau7 (pid 19113), launchd service man…"
+      ],
+      "badges": [
+       "user-app",
+       "helper-group"
+      ],
+      "binary_reputation": null,
+      "bundle_id": "local.chau7",
+      "components": [
+       "…",
+       "…"
+      ],
+      "display_name": "Chau7",
+      "entity_id": "bundle-path:/applications/chau7.app",
+      "entity_kind": "app",
+      "…": "16 more fields"
+     },
+     {
+      "active_window_title": null,
+      "agent_cost": null,
+      "anomaly_detected": false,
+      "app_version": null,
+      "attribution_notes": [],
+      "badges": [
+       "system",
+       "… 2 more items"
+      ],
+      "binary_reputation": null,
+      "bundle_id": null,
+      "components": [
+       "…",
+       "… 7 more items"
+      ],
+      "display_name": "com.apple.WebKit.WebContent",
+      "entity_id": "process-path:/system/volumes/preboot/cryptexes/app/system/library/stagedframeworks/safari/webkit…",
+      "entity_kind": "service",
+      "…": "16 more fields"
+     }
+    ],
+    "host": {
+     "ai_agent_count": 14,
+     "ai_agent_friction": 22.04348373413086,
+     "ane_percent": 0.0,
+     "battery_charge_percent": 100,
+     "battery_health": {
+      "condition": "good",
+      "cycle_count": null,
+      "design_capacity_mah": null,
+      "health_percent": null,
+      "max_capacity_mah": 100,
+      "temperature_celsius": null
+     },
+     "bluetooth_devices": [
+      {
+       "address": "f8-73-df-c5-93-9f",
+       "battery_percent": 21,
+       "device_type": "mouse",
+       "name": "Mickey"
+      },
+      {
+       "address": "38-09-fb-02-17-14",
+       "battery_percent": 100,
+       "device_type": "keyboard",
+       "name": "Magic Keyboard with Touch ID and Numeric Keypad"
+      }
+     ],
+     "boot_session": {
+      "boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+      "boot_time_millis": 1783870655991,
+      "host_uptime_millis": 99540767,
+      "previous_shutdown": null
+     },
+     "compressed_memory_bytes": 6772211712,
+     "cpu_percent": 35.097373962402344,
+     "cpu_temperatures": [
+      {
+       "celsius": 1.8432122282939837e-38,
+       "label": "CPU P-Core 2"
+      }
+     ],
+     "disk_read_bps": 16311329,
+     "disk_write_bps": 1338592,
+     "…": "19 more fields"
+    },
+    "host_trend": {
+     "ai_agent_friction": [
+      10.235328674316406,
+      "… 6 more items"
+     ],
+     "compressed_memory_bytes": [
+      6468141056,
+      "… 6 more items"
+     ],
+     "cpu_percent": [
+      32.692222595214844,
+      "… 6 more items"
+     ],
+     "disk_activity_bps": [
+      0,
+      "… 6 more items"
+     ],
+     "gpu_memory_bytes": [
+      305397760,
+      "… 6 more items"
+     ],
+     "gpu_percent": [
+      3.0,
+      "… 6 more items"
+     ],
+     "machine_friction": [
+      60.77667236328125,
+      "… 6 more items"
+     ],
+     "max_cpu_temperature": [
+      1.4022224805321926e-38,
+      "… 6 more items"
+     ],
+     "memory_pressure_score": [
+      60.1514892578125,
+      "… 6 more items"
+     ],
+     "memory_used_bytes": [
+      13091438592,
+      "… 6 more items"
+     ],
+     "network_activity_bps": [
+      0,
+      "… 6 more items"
+     ],
+     "wakeups_per_second": [
+      0.0,
+      "… 6 more items"
+     ]
+    },
+    "resource_cost_rollups": [
+     {
+      "battery_minutes": 324.00883360783024,
+      "carbon_grams": 0.0,
+      "confidence": 0.6499999761581421,
+      "disk_growth_bytes": 0,
+      "dollars": 0.0,
+      "energy_watt_hours": 0.0,
+      "entity_id": null,
+      "id": "machine",
+      "label": "This Mac",
+      "repository_path": null,
+      "scope": "machine",
+      "session_id": null,
+      "…": "3 more fields"
+     },
+     "… 917 more items"
+    ],
+    "sequence": 14,
+    "thermal_forecast": null,
+    "timeline": [
+     {
+      "category": "host",
+      "detail": "6.0 GB compressed, 7.1 GB swap in use. Top memory entities: com.apple.WebKit.WebContent, Google …",
+      "entity_id": null,
+      "id": "system:1783970156730",
+      "severity": "critical",
+      "timestamp_millis": 1783970156730,
+      "title": "Memory pressure severe"
+     },
+     "… 5 more items"
+    ]
+   },
+   "updated": true
+  }
+ },
+ "aetower_diagnostics_overview": {
+  "args": {},
+  "output": {
+   "current_size": 2000,
+   "dropped_events": 21,
+   "error_count": 80,
+   "last_error_message": "Critical host memory pressure incident snapshot recorded.",
+   "last_error_millis": 1783968882325,
+   "last_event_millis": 1783970208046,
+   "persisted_bytes": 10488972,
+   "persisted_events": 12500,
+   "persisted_path": "~/Library/Application Support/Aetower/diagnostics.ndjson",
+   "persistence_error": null,
+   "ring_capacity": 2000,
+   "warn_count": 953
+  }
+ },
+ "aetower_diagnostics_summary": {
+  "args": {},
+  "output": {
+   "event_count": 1000,
+   "groups": [
+    {
+     "count": 357,
+     "event_type": "operator-safe-cadence-active",
+     "first_millis": 1783699989929,
+     "latest_detail": null,
+     "latest_message": "Adaptive cadence widened while host pressure was elevated.",
+     "latest_millis": 1783970156730,
+     "level": "warn",
+     "sample_fields": {
+      "compressed_memory_bytes": "6468141056",
+      "incident_key": "operator-safe-cadence",
+      "memory_used_ratio": "0.762",
+      "reason": "host-memory-pressure",
+      "swap_used_bytes": "7583105024",
+      "target_tick_millis": "8000",
+      "thermal_state": "Nominal",
+      "wakeups_per_second": "0.0"
+     },
+     "subsystem": "engine"
+    },
+    "… 24 more items"
+   ],
+   "include_persisted": true,
+   "limit": 25,
+   "minimum_level": null,
+   "overview": {
+    "current_size": 2000,
+    "dropped_events": 21,
+    "error_count": 80,
+    "last_error_message": "Critical host memory pressure incident snapshot recorded.",
+    "last_error_millis": 1783968882325,
+    "last_event_millis": 1783970208046,
+    "persisted_bytes": 10488972,
+    "persisted_events": 12500,
+    "persisted_path": "~/Library/Application Support/Aetower/diagnostics.ndjson",
+    "persistence_error": null,
+    "ring_capacity": 2000,
+    "warn_count": 953
+   },
+   "recommendations": [
+    "80 retained diagnostics errors are present; start with the top error-level group before paging r…",
+    "… 3 more items"
+   ],
+   "search": null,
+   "since_millis": null,
+   "subsystem": null
+  }
+ },
+ "aetower_diff_snapshots": {
+  "args": {
+   "before_millis": "<epoch-millis>",
+   "after_millis": "<epoch-millis>"
+  },
+  "output": {
+   "after_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+   "after_boot_time_millis": 1783870655991,
+   "after_previous_shutdown": null,
+   "after_snapshot_millis": 1783970027215,
+   "before_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+   "before_boot_time_millis": 1783870655991,
+   "before_previous_shutdown": null,
+   "before_snapshot_millis": 1783968370201,
+   "crossed_boot_boundary": false,
+   "entities": [
+    {
+     "after_present": true,
+     "before_present": true,
+     "cpu_percent": {
+      "after": 110.71764373779295,
+      "before": 59.86746597290039,
+      "delta": 50.85017776489258,
+      "percent_change": 84.9379156751188
+     },
+     "display_name": "Chau7",
+     "entity_id": "bundle-path:/applications/chau7.app",
+     "friction": {
+      "after": 74.86165618896484,
+      "before": 27.497283935546875,
+      "delta": 47.36437225341797,
+      "percent_change": 172.25109346959206
+     },
+     "memory_bytes": {
+      "after": 327516160.0,
+      "before": 518111232.0,
+      "delta": -190595072.0,
+      "percent_change": -36.78651614331341
+     },
+     "memory_physical_footprint_bytes": {
+      "after": 1154813456.0,
+      "before": 1078447584.0,
+      "delta": 76365872.0,
+      "percent_change": 7.081092593926197
+     },
+     "process_count": {
+      "after": 2.0,
+      "before": 2.0,
+      "delta": 0.0,
+      "percent_change": 0.0
+     },
+     "recent_change_summary": null,
+     "wakeups_per_second": {
+      "after": 1290.1934814453125,
+      "before": 156.41612243652344,
+      "delta": 1133.777359008789,
+      "percent_change": 724.846864471338
+     }
+    },
+    "… 9 more items"
+   ],
+   "host": {
+    "compressed_memory_bytes": {
+     "after": 6702940160.0,
+     "before": 7166476288.0,
+     "delta": -463536128.0,
+     "percent_change": -6.468117794182534
+    },
+    "cpu_percent": {
+     "after": 46.72484588623047,
+     "before": 17.898006439208984,
+     "delta": 28.826839447021484,
+     "percent_change": 161.06173357872314
+    },
+    "memory_used_bytes": {
+     "after": 13210419200.0,
+     "before": 13211746304.0,
+     "delta": -1327104.0,
+     "percent_change": -0.010044879529651616
+    },
+    "swap_used_bytes": {
+     "after": 7489781760.0,
+     "before": 7209943040.0,
+     "delta": 279838720.0,
+     "percent_change": 3.881288915147935
+    },
+    "wakeups_per_second": {
+     "after": 2419.753173828125,
+     "before": 1077.388916015625,
+     "delta": 1342.3642578125,
+     "percent_change": 124.59421457358228
+    }
+   },
+   "summary": {
+    "entity_summary": "9 changed, 1 appeared, 0 disappeared. Largest shift: Chau7 (friction +47.4).",
+    "host_summary": "CPU +28.8%, memory -1.27 MB, wakeups +1342/s across the selected window."
+   }
+  }
+ },
+ "aetower_explain_anomalies": {
+  "args": {},
+  "output": {
+   "captured_at_millis": 1783970204757,
+   "explanations": []
+  }
+ },
+ "aetower_export_query": {
+  "args": {},
+  "output": {
+   "endMillis": 1783970204757,
+   "privacyTier": "redacted",
+   "snapshot": {
+    "ai_repo_summaries": "<redacted>",
+    "capabilities": [
+     {
+      "detail": "Accessibility access is not granted. Use Request to open the macOS prompt.",
+      "health": "configured",
+      "kind": "accessibility",
+      "last_updated_millis": 1783970165471,
+      "state": "denied"
+     },
+     "… 7 more items"
+    ],
+    "captured_at_millis": 1783970204757,
+    "chau7_sessions": [
+     {
+      "active_app": "Codex",
+      "active_run_duration_millis": 0,
+      "child_session_count": 0,
+      "cto_active": true,
+      "git_branch": "main",
+      "id": "tab:tab_2",
+      "is_at_prompt": true,
+      "last_active": "2026-07-13T05:05:41.944Z",
+      "last_exit_reason": null,
+      "linked_entity_ids": [
+       "ai-agent:19156",
+       "… 7 more items"
+      ],
+      "pending_approval_description": null,
+      "provider": "codex",
+      "…": "10 more fields"
+     },
+     "… 830 more items"
+    ],
+    "entities": [
+     {
+      "active_window_title": null,
+      "agent_cost": null,
+      "anomaly_detected": false,
+      "app_version": "0.3.1-dev",
+      "attribution_notes": [
+       "Components were launched by more than one parent lineage: Chau7 (pid 19113), launchd service man…"
+      ],
+      "badges": [
+       "user-app",
+       "helper-group"
+      ],
+      "binary_reputation": null,
+      "bundle_id": "local.chau7",
+      "components": [
+       "…",
+       "…"
+      ],
+      "display_name": "Chau7",
+      "entity_id": "bundle-path:/applications/chau7.app",
+      "entity_kind": "app",
+      "…": "16 more fields"
+     },
+     "… 373 more items"
+    ],
+    "host": {
+     "ai_agent_count": 14,
+     "ai_agent_friction": 22.04348373413086,
+     "ane_percent": 0.0,
+     "battery_charge_percent": 100,
+     "battery_health": {
+      "condition": "good",
+      "cycle_count": null,
+      "design_capacity_mah": null,
+      "health_percent": null,
+      "max_capacity_mah": 100,
+      "temperature_celsius": null
+     },
+     "bluetooth_devices": [
+      {
+       "address": "f8-73-df-c5-93-9f",
+       "battery_percent": 21,
+       "device_type": "mouse",
+       "name": "Mickey"
+      },
+      {
+       "address": "38-09-fb-02-17-14",
+       "battery_percent": 100,
+       "device_type": "keyboard",
+       "name": "Magic Keyboard with Touch ID and Numeric Keypad"
+      }
+     ],
+     "boot_session": {
+      "boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+      "boot_time_millis": 1783870655991,
+      "host_uptime_millis": 99540767,
+      "previous_shutdown": null
+     },
+     "compressed_memory_bytes": 6772211712,
+     "cpu_percent": 35.097373962402344,
+     "cpu_temperatures": [
+      {
+       "celsius": 1.8432122282939837e-38,
+       "label": "CPU P-Core 2"
+      }
+     ],
+     "disk_read_bps": 16311329,
+     "disk_write_bps": 1338592,
+     "…": "19 more fields"
+    },
+    "host_trend": {
+     "ai_agent_friction": [
+      10.235328674316406,
+      "… 6 more items"
+     ],
+     "compressed_memory_bytes": [
+      6468141056,
+      "… 6 more items"
+     ],
+     "cpu_percent": [
+      32.692222595214844,
+      "… 6 more items"
+     ],
+     "disk_activity_bps": [
+      0,
+      "… 6 more items"
+     ],
+     "gpu_memory_bytes": [
+      305397760,
+      "… 6 more items"
+     ],
+     "gpu_percent": [
+      3.0,
+      "… 6 more items"
+     ],
+     "machine_friction": [
+      60.77667236328125,
+      "… 6 more items"
+     ],
+     "max_cpu_temperature": [
+      1.4022224805321926e-38,
+      "… 6 more items"
+     ],
+     "memory_pressure_score": [
+      60.1514892578125,
+      "… 6 more items"
+     ],
+     "memory_used_bytes": [
+      13091438592,
+      "… 6 more items"
+     ],
+     "network_activity_bps": [
+      0,
+      "… 6 more items"
+     ],
+     "wakeups_per_second": [
+      0.0,
+      "… 6 more items"
+     ]
+    },
+    "resource_cost_rollups": [
+     {
+      "battery_minutes": 324.00883360783024,
+      "carbon_grams": 0.0,
+      "confidence": 0.6499999761581421,
+      "disk_growth_bytes": 0,
+      "dollars": 0.0,
+      "energy_watt_hours": 0.0,
+      "entity_id": null,
+      "id": "machine",
+      "label": "This Mac",
+      "repository_path": "<redacted>",
+      "scope": "machine",
+      "session_id": null,
+      "…": "3 more fields"
+     },
+     "… 917 more items"
+    ],
+    "sequence": 14,
+    "thermal_forecast": null,
+    "timeline": [
+     {
+      "category": "host",
+      "detail": "6.0 GB compressed, 7.1 GB swap in use. Top memory entities: com.apple.WebKit.WebContent, Google …",
+      "entity_id": null,
+      "id": "system:1783970156730",
+      "severity": "critical",
+      "timestamp_millis": 1783970156730,
+      "title": "Memory pressure severe"
+     },
+     "… 5 more items"
+    ]
+   },
+   "startMillis": 1783711004757
+  }
+ },
+ "aetower_history_data_quality": {
+  "args": {},
+  "output": {
+   "boot_boundary_count": 0,
+   "coverage_millis": 34388549,
+   "coverage_ratio": 0.13267187114197532,
+   "duplicate_timestamp_count": 0,
+   "expected_interval_millis": 10000,
+   "gap_count": 347,
+   "gap_threshold_millis": 30000,
+   "largest_gap_millis": 234876,
+   "newest_millis": 1783970188749,
+   "oldest_millis": 1783935800200,
+   "recommendations": [
+    "Investigate 347 history coverage gap(s) above 30.0 s.",
+    "Sequence numbers reset after a coverage gap, which usually indicates an app restart; correlate w…"
+   ],
+   "sampled_snapshots": 1578,
+   "…": "6 more fields"
+  }
+ },
+ "aetower_history_page": {
+  "args": {
+   "start_millis": "<epoch-millis>",
+   "end_millis": "<epoch-millis>"
+  },
+  "output": {
+   "next_before_millis_exclusive": 1783968410210,
+   "returned": 43,
+   "snapshots": [
+    {
+     "ai_repo_summaries": [
+      {
+       "display_name": "~/Repositories/Aethyme",
+       "providers": "…",
+       "repo_path": "~/Repositories/Aethyme",
+       "total_cost_usd": 0.0,
+       "total_runs": 1,
+       "total_tokens": 0
+      },
+      "… 2 more items"
+     ],
+     "capabilities": [
+      {
+       "detail": "Accessibility access is not granted. Use Request to open the macOS prompt.",
+       "health": "configured",
+       "kind": "accessibility",
+       "last_updated_millis": 1783940285528,
+       "state": "denied"
+      },
+      "… 7 more items"
+     ],
+     "captured_at_millis": 1783968410211,
+     "chau7_sessions": [
+      {
+       "active_app": "Codex",
+       "active_run_duration_millis": 0,
+       "child_session_count": 0,
+       "cto_active": true,
+       "git_branch": "main",
+       "id": "tab:tab_2",
+       "is_at_prompt": true,
+       "last_active": "2026-07-13T05:05:41.944Z",
+       "last_exit_reason": null,
+       "linked_entity_ids": "…",
+       "pending_approval_description": null,
+       "provider": "codex",
+       "…": "10 more fields"
+      },
+      "… 63 more items"
+     ],
+     "entities": [
+      {
+       "active_window_title": null,
+       "agent_cost": null,
+       "anomaly_detected": false,
+       "app_version": "0.3.1-dev",
+       "attribution_notes": "…",
+       "badges": "…",
+       "binary_reputation": null,
+       "bundle_id": "local.chau7",
+       "components": "…",
+       "display_name": "Chau7",
+       "entity_id": "bundle-path:/applications/chau7.app",
+       "entity_kind": "app",
+       "…": "16 more fields"
+      },
+      "… 63 more items"
+     ],
+     "host": {
+      "ai_agent_count": 14,
+      "ai_agent_friction": 13.128777503967283,
+      "ane_percent": 0.0,
+      "battery_charge_percent": 100,
+      "battery_health": {
+       "condition": "good",
+       "cycle_count": null,
+       "design_capacity_mah": null,
+       "health_percent": null,
+       "max_capacity_mah": 100,
+       "temperature_celsius": null
+      },
+      "bluetooth_devices": [
+       "…",
+       "…"
+      ],
+      "boot_session": {
+       "boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+       "boot_time_millis": 1783870655991,
+       "host_uptime_millis": 97738244,
+       "previous_shutdown": null
+      },
+      "compressed_memory_bytes": 7072268288,
+      "cpu_percent": 21.93856430053711,
+      "cpu_temperatures": [
+       "…",
+       "… 2 more items"
+      ],
+      "disk_read_bps": 13123328,
+      "disk_write_bps": 266638,
+      "…": "19 more fields"
+     },
+     "host_trend": {
+      "ai_agent_friction": [
+       12.767752647399902,
+       "… 11 more items"
+      ],
+      "compressed_memory_bytes": [
+       7268073472,
+       "… 11 more items"
+      ],
+      "cpu_percent": [
+       16.195510864257812,
+       "… 11 more items"
+      ],
+      "disk_activity_bps": [
+       8876343,
+       "… 11 more items"
+      ],
+      "gpu_memory_bytes": [
+       289259520,
+       "… 11 more items"
+      ],
+      "gpu_percent": [
+       4.0,
+       "… 11 more items"
+      ],
+      "machine_friction": [
+       60.8248176574707,
+       "… 11 more items"
+      ],
+      "max_cpu_temperature": [
+       2.229674722270571e-24,
+       "… 11 more items"
+      ],
+      "memory_pressure_score": [
+       61.48553466796875,
+       "… 11 more items"
+      ],
+      "memory_used_bytes": [
+       13280231424,
+       "… 11 more items"
+      ],
+      "network_activity_bps": [
+       3993,
+       "… 11 more items"
+      ],
+      "wakeups_per_second": [
+       1139.1175537109375,
+       "… 11 more items"
+      ]
+     },
+     "resource_cost_rollups": [
+      {
+       "battery_minutes": 20478.47676957093,
+       "carbon_grams": 0.0,
+       "confidence": 0.6499999761581421,
+       "disk_growth_bytes": 0,
+       "dollars": 0.0,
+       "energy_watt_hours": 0.0,
+       "entity_id": null,
+       "id": "machine",
+       "label": "This Mac",
+       "repository_path": null,
+       "scope": "machine",
+       "session_id": null,
+       "…": "3 more fields"
+      },
+      "… 159 more items"
+     ],
+     "sequence": 6350,
+     "thermal_forecast": null,
+     "timeline": [
+      {
+       "category": "friction",
+       "detail": "high CPU 78.2%, foreground app",
+       "entity_id": "bundle-path:/applications/chau7.app",
+       "id": "bundle-path:/applications/chau7.app:1783966241688",
+       "severity": "critical",
+       "timestamp_millis": 1783966241688,
+       "title": "Chau7 friction spiked"
+      },
+      "… 119 more items"
+     ]
+    },
+    "… 42 more items"
+   ]
+  }
+ },
+ "aetower_history_store_health": {
+  "args": {},
+  "output": {
+   "data_quality": {
+    "boot_boundary_count": 0,
+    "coverage_millis": 34388549,
+    "coverage_ratio": 0.13267187114197532,
+    "duplicate_timestamp_count": 0,
+    "expected_interval_millis": 10000,
+    "gap_count": 347,
+    "gap_threshold_millis": 30000,
+    "largest_gap_millis": 234876,
+    "newest_millis": 1783970188749,
+    "oldest_millis": 1783935800200,
+    "recommendations": [
+     "Investigate 347 history coverage gap(s) above 30.0 s.",
+     "Sequence numbers reset after a coverage gap, which usually indicates an app restart; correlate w…"
+    ],
+    "sampled_snapshots": 1578,
+    "…": "6 more fields"
+   },
+   "efficiency": {
+    "average_snapshot_bytes": 203992,
+    "checkpoint_status": "Checkpointed at 1783964819383; WAL after maintenance 0 B.",
+    "estimated_bytes_per_minute": 561639.357333745,
+    "estimated_minutes_to_store_warning": 382.7551705431096,
+    "estimated_minutes_to_wal_warning": 52.06323171298723,
+    "recommendations": [],
+    "severity": "info",
+    "snapshot_count_pressure_percent": 52.6,
+    "store_pressure_percent": 59.958648681640625,
+    "summary": "2.8 persisted sample(s)/min, average snapshot 199.21 KB, DB pressure 60%, WAL pressure 13%.",
+    "wal_age_millis": 20944,
+    "wal_pressure_percent": 12.85574436187744,
+    "…": "2 more fields"
+   },
+   "range": {
+    "newest_millis": 1783970188749,
+    "oldest_millis": 1783935800200,
+    "pending_writes": 0,
+    "quarantine_count": 128,
+    "range_count": 1578,
+    "snapshot_count": 1578,
+    "store_bytes": 321900544,
+    "store_modified_millis": 1783969738642,
+    "wal_bytes": 4313672,
+    "wal_modified_millis": 1783970188829
+   },
+   "recent_history_events": [
+    {
+     "adapter": null,
+     "capability": null,
+     "entity_id": null,
+     "event_type": "history-loaded",
+     "fields": [
+      {
+       "key": "start_millis",
+       "value": "1783968381473"
+      },
+      "… 6 more items"
+     ],
+     "id": "diag-2048123",
+     "level": "info",
+     "message": "Loaded persisted history range.",
+     "sensitive": false,
+     "sequence": null,
+     "subsystem": "persistence",
+     "timestamp_millis": 1783970209032
+    },
+    "… 63 more items"
+   ],
+   "recommendations": [
+    "Inspect persisted history compatibility issues; quarantined rows should stay near zero.",
+    "… 2 more items"
+   ],
+   "severity": "warning",
+   "summary": "306.99 MB DB, 4.11 MB WAL, 1578 persisted snapshots, 128 quarantined rows.",
+   "thresholds": {
+    "critical_quarantine_count": 256,
+    "critical_store_bytes": 1073741824,
+    "critical_wal_bytes": 134217728,
+    "warning_quarantine_count": 64,
+    "warning_store_bytes": 536870912,
+    "warning_wal_bytes": 33554432
+   }
+  }
+ },
+ "aetower_history_summary": {
+  "args": {
+   "start_millis": "<epoch-millis>",
+   "end_millis": "<epoch-millis>"
+  },
+  "output": {
+   "newest_millis": 1783970027215,
+   "oldest_millis": 1783968410211,
+   "pending_writes": 0,
+   "quarantine_count": 128,
+   "range_count": 43,
+   "snapshot_count": 1578,
+   "store_bytes": 321900544,
+   "store_modified_millis": 1783969738642,
+   "wal_bytes": 4313672,
+   "wal_modified_millis": 1783970188829
+  }
+ },
+ "aetower_host_alerts": {
+  "args": {},
+  "output": {
+   "alerts": [
+    {
+     "category": "memory-pressure",
+     "detail": "12.17 GB used of 16.00 GB, 6.31 GB compressed, 7.03 GB swap. Top current groups: external leader…",
+     "entity_ids": [
+      "process-path:/system/volumes/preboot/cryptexes/app/system/library/stagedframeworks/safari/webkit…",
+      "… 4 more items"
+     ],
+     "id": "host-memory-pressure",
+     "metrics": {
+      "compressed_memory_bytes": 6772211712,
+      "memory_total_bytes": 17179869184,
+      "memory_used_bytes": 13070909440,
+      "swap_used_bytes": 7549550592
+     },
+     "severity": "critical",
+     "title": "Host memory pressure is elevated"
+    }
+   ],
+   "captured_at_millis": 1783970204757
+  }
+ },
+ "aetower_host_summary": {
+  "args": {},
+  "output": {
+   "capability_states": {
+    "Accessibility": "Denied",
+    "AppleAutomation": "Unavailable",
+    "Chau7": "Granted",
+    "ChromiumDebug": "Unavailable",
+    "DockerSocket": "Unavailable",
+    "EndpointSecurity": "Unavailable",
+    "FullDiskAccess": "Denied",
+    "PrivilegedHelper": "Unavailable"
+   },
+   "captured_at_millis": 1783970204757,
+   "host": {
+    "ai_agent_count": 14,
+    "ai_agent_friction": 22.04348373413086,
+    "ane_percent": 0.0,
+    "battery_charge_percent": 100,
+    "battery_health": {
+     "condition": "good",
+     "cycle_count": null,
+     "design_capacity_mah": null,
+     "health_percent": null,
+     "max_capacity_mah": 100,
+     "temperature_celsius": null
+    },
+    "bluetooth_devices": [
+     {
+      "address": "f8-73-df-c5-93-9f",
+      "battery_percent": 21,
+      "device_type": "mouse",
+      "name": "Mickey"
+     },
+     {
+      "address": "38-09-fb-02-17-14",
+      "battery_percent": 100,
+      "device_type": "keyboard",
+      "name": "Magic Keyboard with Touch ID and Numeric Keypad"
+     }
+    ],
+    "boot_session": {
+     "boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+     "boot_time_millis": 1783870655991,
+     "host_uptime_millis": 99540767,
+     "previous_shutdown": null
+    },
+    "compressed_memory_bytes": 6772211712,
+    "cpu_percent": 35.097373962402344,
+    "cpu_temperatures": [
+     {
+      "celsius": 1.8432122282939837e-38,
+      "label": "CPU P-Core 2"
+     }
+    ],
+    "disk_read_bps": 16311329,
+    "disk_write_bps": 1338592,
+    "…": "19 more fields"
+   },
+   "sequence": 14,
+   "top_entities": [
+    {
+     "badges": [
+      "user-app",
+      "helper-group"
+     ],
+     "cpu_percent": 111.77645874023438,
+     "display_name": "Chau7",
+     "entity_id": "bundle-path:/applications/chau7.app",
+     "friction": 70.80496215820312,
+     "memory_bytes": 414875648,
+     "recent_change_summary": null
+    },
+    "… 7 more items"
+   ]
+  }
+ },
+ "aetower_investigation_bundle": {
+  "args": {},
+  "output": {
+   "captured_at_millis": 1783970204757,
+   "caveats": [],
+   "diagnostics": [
+    {
+     "adapter": null,
+     "capability": null,
+     "entity_id": null,
+     "event_type": "sensor-power-readings-unavailable",
+     "fields": [],
+     "id": "diag-2048111",
+     "level": "info",
+     "message": "Power readings are unavailable on this system. Aetower is treating this as a stable unsupported …",
+     "sensitive": false,
+     "sequence": null,
+     "subsystem": "engine",
+     "timestamp_millis": 1783970204757
+    },
+    "… 36 more items"
+   ],
+   "entity_ids": [
+    "process-path:/system/volumes/preboot/cryptexes/app/system/library/stagedframeworks/safari/webkit…",
+    "… 4 more items"
+   ],
+   "history_diff": {
+    "after_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+    "after_boot_time_millis": 1783870655991,
+    "after_previous_shutdown": null,
+    "after_snapshot_millis": 1783970188749,
+    "before_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+    "before_boot_time_millis": 1783870655991,
+    "before_previous_shutdown": null,
+    "before_snapshot_millis": 1783968410211,
+    "crossed_boot_boundary": false,
+    "entities": [
+     {
+      "after_present": true,
+      "before_present": true,
+      "cpu_percent": {
+       "after": 25.799497604370117,
+       "before": 87.96334075927734,
+       "delta": -62.16384315490723,
+       "percent_change": -70.67017079879486
+      },
+      "display_name": "Chau7",
+      "entity_id": "bundle-path:/applications/chau7.app",
+      "friction": {
+       "after": 12.501907348632812,
+       "before": 50.257843017578125,
+       "delta": -37.75593566894531,
+       "percent_change": -75.12446496309012
+      },
+      "memory_bytes": {
+       "after": 414875648.0,
+       "before": 518111232.0,
+       "delta": -103235584.0,
+       "percent_change": -19.925370774436328
+      },
+      "memory_physical_footprint_bytes": {
+       "after": 1175014904.0,
+       "before": 1071975904.0,
+       "delta": 103039000.0,
+       "percent_change": 9.612063071149032
+      },
+      "process_count": {
+       "after": 2.0,
+       "before": 2.0,
+       "delta": 0.0,
+       "percent_change": 0.0
+      },
+      "recent_change_summary": null,
+      "wakeups_per_second": {
+       "after": 0.0,
+       "before": 166.48768615722656,
+       "delta": -166.48768615722656,
+       "percent_change": -100.0
+      }
+     },
+     "… 4 more items"
+    ],
+    "host": {
+     "compressed_memory_bytes": {
+      "after": 6663864320.0,
+      "before": 7072268288.0,
+      "delta": -408403968.0,
+      "percent_change": -5.7747239127362695
+     },
+     "cpu_percent": {
+      "after": 26.04658889770508,
+      "before": 21.93856430053711,
+      "delta": 4.108024597167969,
+      "percent_change": 18.725129597780445
+     },
+     "memory_used_bytes": {
+      "after": 13009616896.0,
+      "before": 13211992064.0,
+      "delta": -202375168.0,
+      "percent_change": -1.5317536297303065
+     },
+     "swap_used_bytes": {
+      "after": 7549550592.0,
+      "before": 7209943040.0,
+      "delta": 339607552.0,
+      "percent_change": 4.710266781802481
+     },
+     "wakeups_per_second": {
+      "after": 0.0,
+      "before": 1142.5765380859375,
+      "delta": -1142.5765380859375,
+      "percent_change": -100.0
+     }
+    },
+    "summary": {
+     "entity_summary": "5 changed, 0 appeared, 0 disappeared. Largest shift: Chau7 (friction -37.8).",
+     "host_summary": "CPU +4.1%, memory -193.00 MB, wakeups -1143/s across the selected window."
+    }
+   },
+   "host_alerts": [
+    {
+     "category": "memory-pressure",
+     "detail": "12.17 GB used of 16.00 GB, 6.31 GB compressed, 7.03 GB swap. Top current groups: external leader…",
+     "entity_ids": [
+      "process-path:/system/volumes/preboot/cryptexes/app/system/library/stagedframeworks/safari/webkit…",
+      "… 4 more items"
+     ],
+     "id": "host-memory-pressure",
+     "metrics": {
+      "compressed_memory_bytes": 6772211712,
+      "memory_total_bytes": 17179869184,
+      "memory_used_bytes": 13070909440,
+      "swap_used_bytes": 7549550592
+     },
+     "severity": "critical",
+     "title": "Host memory pressure is elevated"
+    }
+   ],
+   "process_trees": [
+    {
+     "captured_at_millis": 1783970204757,
+     "expanded_entity_ids": [
+      "process-path:/system/volumes/preboot/cryptexes/app/system/library/stagedframeworks/safari/webkit…"
+     ],
+     "expanded_process_count": 8,
+     "grouped_process_count": 8,
+     "grouping_reasons": [],
+     "root_display_name": "com.apple.WebKit.WebContent",
+     "root_entity_id": "process-path:/system/volumes/preboot/cryptexes/app/system/library/stagedframeworks/safari/webkit…",
+     "roots": [
+      {
+       "adapter_label": null,
+       "badges": "…",
+       "children": "…",
+       "cwd": null,
+       "launched_by": "launchd service manager (pid 1)",
+       "owner_display_name": "com.apple.WebKit.WebContent",
+       "owner_entity_id": "process-path:/system/volumes/preboot/cryptexes/app/system/library/stagedframeworks/safari/webkit…",
+       "pid": 4504,
+       "provenance": "XpcService: XPC service process",
+       "relation": "process-root",
+       "self_cpu_percent": 3.617597103118897,
+       "self_memory_bytes": 118358016,
+       "…": "6 more fields"
+      },
+      "… 7 more items"
+     ],
+     "seed_entity_ids": [
+      "process-path:/system/volumes/preboot/cryptexes/app/system/library/stagedframeworks/safari/webkit…"
+     ]
+    },
+    "… 4 more items"
+   ],
+   "recent_changes": [
+    {
+     "detail": "high CPU 111.8%, heavy disk 8.8 MiB/s, wakeups 434/s, energy 4 mW, foreground app",
+     "entity_id": "bundle-path:/applications/chau7.app",
+     "severity": "critical",
+     "source": "timeline:friction",
+     "timestamp_millis": 1783970204757,
+     "title": "Chau7 friction spiked"
+    },
+    "… 5 more items"
+   ],
+   "top_findings": [
+    {
+     "detail": "111.8% CPU, 395.66 MB resident, friction 70.8. No recent change summary is attached.",
+     "entity_ids": [
+      "bundle-path:/applications/chau7.app"
+     ],
+     "id": "entity:bundle-path:/applications/chau7.app",
+     "recommendation": "Reduce active compute: 1 Chau7 process using about 112% CPU. Lower its priority to free up the M…",
+     "severity": "critical",
+     "source": "entity",
+     "title": "Chau7 is a top current friction source"
+    },
+    "… 6 more items"
+   ],
+   "window_end_millis": 1783970204757,
+   "window_minutes": 30,
+   "window_start_millis": 1783968404757
+  }
+ },
+ "aetower_process_action_history": {
+  "args": {},
+  "output": {
+   "actions": [],
+   "returned": 0,
+   "window_minutes": 60
+  }
+ },
+ "aetower_query_diagnostics": {
+  "args": {
+   "limit": 3
+  },
+  "output": [
+   {
+    "adapter": null,
+    "capability": null,
+    "entity_id": null,
+    "event_type": "history-loaded",
+    "fields": [
+     {
+      "key": "start_millis",
+      "value": "1783968404757"
+     },
+     "… 6 more items"
+    ],
+    "id": "diag-2048132",
+    "level": "info",
+    "message": "Loaded persisted history range.",
+    "sensitive": false,
+    "sequence": null,
+    "subsystem": "persistence",
+    "timestamp_millis": 1783970209816
+   },
+   "… 2 more items"
+  ]
+ },
+ "aetower_reboot_report": {
+  "args": {},
+  "output": {
+   "boundaries": [],
+   "boundary_count": 0,
+   "range_end_millis": 1783970204757,
+   "range_start_millis": 1783711004757,
+   "session_count": 1,
+   "sessions": [
+    {
+     "boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+     "boot_time_millis": 1783870655990,
+     "first_sequence": 328,
+     "first_snapshot_millis": 1783935800200,
+     "last_sequence": 12,
+     "last_snapshot_millis": 1783970188749,
+     "previous_shutdown": null,
+     "snapshot_count": 1578
+    }
+   ]
+  }
+ },
+ "aetower_recent_changes": {
+  "args": {
+   "limit": 3
+  },
+  "output": {
+   "captured_at_millis": 1783970204757,
+   "changes": [
+    {
+     "detail": "high CPU 111.8%, heavy disk 8.8 MiB/s, wakeups 434/s, energy 4 mW, foreground app",
+     "entity_id": "bundle-path:/applications/chau7.app",
+     "severity": "critical",
+     "source": "timeline:friction",
+     "timestamp_millis": 1783970204757,
+     "title": "Chau7 friction spiked"
+    },
+    "… 2 more items"
+   ],
+   "window_minutes": 30
+  }
+ },
+ "aetower_recommendations": {
+  "args": {},
+  "output": {
+   "captured_at_millis": 1783970204757,
+   "recommendations": [
+    {
+     "detail": "Compression (6.31 GB) and swap (7.03 GB) are elevated. Start with external memory leaders: com.a…",
+     "entity_id": "process-path:/system/volumes/preboot/cryptexes/app/system/library/stagedframeworks/safari/webkit…",
+     "expected_benefit": "Lower swap, better responsiveness, and less battery drain.",
+     "severity": "critical",
+     "source": "host",
+     "title": "Reduce current memory pressure"
+    },
+    "… 8 more items"
+   ]
+  }
+ },
+ "aetower_repository_inventory": {
+  "args": {},
+  "output": {
+   "captured_at_millis": 1783970210428,
+   "diagnostics": {
+    "discovered_repository_count": 58,
+    "git_millis": 1586,
+    "repository_walk_millis": 2847,
+    "scanned_directory_count": 19875,
+    "skipped_directory_count": 1245
+   },
+   "repository_inventory": [
+    {
+     "agent_contract_coverage": [
+      {
+       "coverage_percent": 0,
+       "detail": "Missing AGENTS.md. Human-readable operating contract: precedence, workflow, git discipline, appr…",
+       "earned_weight": 0,
+       "generated": false,
+       "id": "agents_md",
+       "kind": "human-contract",
+       "label": "AGENTS.md",
+       "path": "AGENTS.md",
+       "present": false,
+       "reviewed": false,
+       "schema_version": null,
+       "severity": "error",
+       "…": "3 more fields"
+      },
+      "… 9 more items"
+     ],
+     "agent_contract_missing_count": 10,
+     "agent_guidance_issue_count": 10,
+     "agent_guidance_issues": [
+      {
+       "detail": "Every repository should have a tracked root AGENTS.md as the canonical agent contract.",
+       "id": "agents.root.missing",
+       "path": "AGENTS.md",
+       "severity": "error",
+       "title": "Missing root AGENTS.md"
+      },
+      "… 9 more items"
+     ],
+     "agent_guidance_status": "error",
+     "agent_readiness_score": 0,
+     "agent_readiness_status": "blocked",
+     "claude_md_bytes": null,
+     "claude_md_delegates_to_agents_md": false,
+     "claude_md_delegation_max_bytes": 1024,
+     "clone_group_count": 1,
+     "clone_group_roots": [],
+     "…": "24 more fields"
+    },
+    "… 67 more items"
+   ],
+   "repository_inventory_complete": false,
+   "repository_inventory_coverage": [
+    {
+     "detail": "Readable and scanned by the repository inventory pass.",
+     "id": "~/Repositories",
+     "label": "Repositories",
+     "path": "~/Repositories",
+     "permission_state": "readable",
+     "repository_count": 44,
+     "scanned": true,
+     "scanned_directory_count": 4968,
+     "skipped_directory_count": 591,
+     "status": "scanned",
+     "truncated": false
+    },
+    "… 37 more items"
+   ],
+   "repository_inventory_partial_roots": [
+    "~/Developer",
+    "… 16 more items"
+   ],
+   "repository_inventory_roots": [
+    "~/Repositories",
+    "… 37 more items"
+   ],
+   "repository_inventory_truncated": false,
+   "roots": [
+    "~/Repositories",
+    "… 37 more items"
+   ],
+   "scan_duration_millis": 4528,
+   "truncated": false
+  }
+ },
+ "aetower_repository_scorecard": {
+  "args": {
+   "repo_root": "/Users/christophehenner/.claude/plugins/cache/claude-plugins-official/sentry/1.0.0"
+  },
+  "output": {
+   "cache_hit": false,
+   "cache_key": "159691141ab8ed0a",
+   "cache_status": "miss",
+   "cached_at_millis": null,
+   "captured_at_millis": 1783970214975,
+   "checks": [],
+   "commit_sha": "215e5f1bf44a5a332da8fb3661980658b8db116c",
+   "failed_checks": [],
+   "mode": "auto",
+   "owner": "getsentry",
+   "provider": "github",
+   "recommendations": [],
+   "…": "11 more fields"
+  }
+ },
+ "aetower_resource_cost_rollups": {
+  "args": {},
+  "output": {
+   "captured_at_millis": 1783970212762,
+   "returned_rollups": 100,
+   "rollups": [
+    {
+     "battery_minutes": 324.0088336078302,
+     "carbon_grams": 0.0,
+     "confidence": 0.6499999761581421,
+     "disk_growth_bytes": 0,
+     "dollars": 0.0,
+     "energy_watt_hours": 0.0,
+     "entity_id": null,
+     "id": "machine",
+     "label": "This Mac",
+     "repository_path": null,
+     "scope": "machine",
+     "session_id": null,
+     "…": "3 more fields"
+    },
+    "… 99 more items"
+   ],
+   "sequence": 15,
+   "total_rollups": 918
+  }
+ },
+ "aetower_runtime_burst_explanation": {
+  "args": {},
+  "output": {
+   "captured_at_millis": 1783970212762,
+   "correlated_events": [
+    {
+     "detail": null,
+     "event_type": "history-loaded",
+     "level": "Info",
+     "message": "Loaded persisted history range.",
+     "subsystem": "Persistence",
+     "timestamp_millis": 1783970210091
+    },
+    "… 19 more items"
+   ],
+   "drivers": [
+    {
+     "detail": "Aetower self CPU is elevated.",
+     "key": "self-cpu",
+     "metric": "self_cpu_percent",
+     "recommendation": "Run aetower_watch_self and correlate peaks with collector, adapter, history, and UI timings.",
+     "severity": "critical",
+     "value": "38.0"
+    }
+   ],
+   "recommendations": [
+    "Run aetower_watch_self and correlate peaks with collector, adapter, history, and UI timings."
+   ],
+   "severity": "critical",
+   "summary": "1 runtime burst driver(s); strongest signal is self_cpu_percent at 38.0.",
+   "window_minutes": 10
+  }
+ },
+ "aetower_runtime_lag": {
+  "args": {},
+  "output": {
+   "attribution_millis": 0.7319579720497131,
+   "bridge_fetch_millis": 0.0,
+   "collect_millis": 6.361083984375,
+   "diagnostics_queue_depth": 0,
+   "display_dropped_frames": 0,
+   "display_frame_interval_millis": 0.0,
+   "display_refresh_hz": 0.0,
+   "engine_tick_millis": 574.0,
+   "enrich_millis": 564.4691772460938,
+   "friction_millis": 0.22641700506210327,
+   "gpu_sample_millis": 0.0,
+   "history_millis": 0.5350419878959656,
+   "…": "25 more fields"
+  }
+ },
+ "aetower_session_health": {
+  "args": {},
+  "output": {
+   "captured_at_millis": 1783970212762,
+   "checks": [
+    {
+     "detail": "Runtime sample 1783970212762, collect 6.4 ms, history 0.5 ms, persist 0.0 ms, history queue 0, d…",
+     "key": "runtime",
+     "severity": "info",
+     "summary": "Engine tick 574.0 ms against a 8000 ms target."
+    },
+    "… 6 more items"
+   ],
+   "overall": "critical",
+   "runtime_lag": {
+    "attribution_millis": 0.7319579720497131,
+    "bridge_fetch_millis": 0.0,
+    "collect_millis": 6.361083984375,
+    "diagnostics_queue_depth": 0,
+    "display_dropped_frames": 0,
+    "display_frame_interval_millis": 0.0,
+    "display_refresh_hz": 0.0,
+    "engine_tick_millis": 574.0,
+    "enrich_millis": 564.4691772460938,
+    "friction_millis": 0.22641700506210327,
+    "gpu_sample_millis": 0.0,
+    "history_millis": 0.5350419878959656,
+    "…": "25 more fields"
+   }
+  }
+ },
+ "aetower_support_bundle_manifest": {
+  "args": {},
+  "output": {
+   "privacy_tier": "redacted",
+   "redaction_notes": [
+    "Redacted exports hide sensitive paths, URLs, titles, commands, and session identifiers."
+   ],
+   "sections": [
+    {
+     "description": "Live snapshot of host, capabilities, and current entities.",
+     "estimated_bytes": 2254367,
+     "name": "current_snapshot",
+     "redacted": true
+    },
+    "… 4 more items"
+   ],
+   "total_estimated_bytes": 3301749
+  }
+ },
+ "aetower_top_findings": {
+  "args": {},
+  "output": {
+   "captured_at_millis": 1783970364844,
+   "findings": [
+    {
+     "detail": "34.9% CPU, 406.45 MB resident, friction 23.6. No recent change summary is attached.",
+     "entity_ids": [
+      "bundle-path:/applications/chau7.app"
+     ],
+     "id": "entity:bundle-path:/applications/chau7.app",
+     "recommendation": "Look for timer churn: Frequent wakeups usually come from watchers, polling loops, extensions, or…",
+     "severity": "critical",
+     "source": "entity",
+     "title": "Chau7 is a top current friction source"
+    },
+    "… 6 more items"
+   ]
+  }
+ },
+ "aetower_watch_self": {
+  "args": {},
+  "output": {
+   "averages": {
+    "collect_millis": 20.668073654174805,
+    "engine_tick_millis": 143.0,
+    "history_millis": 27.53911781311035,
+    "mcp_requests_per_second": 0.0,
+    "persist_millis": 0.4490503668785095,
+    "self_cpu_percent": 144.90782165527344,
+    "self_wakeups_per_second": 57.8870964050293
+   },
+   "duration_seconds": 20,
+   "ended_at_millis": 1783970385538,
+   "interval_millis": 5000,
+   "memory": {
+    "caveats": [
+     "VM region breakdown was skipped by request."
+    ],
+    "current_physical_footprint_bytes": 249514216,
+    "current_resident_bytes": 217956352,
+    "note": "Resident bytes come from Aetower self telemetry; physical footprint follows macOS task footprint…",
+    "peak_at_millis": 1783970385538,
+    "peak_delta_from_current_bytes": 0,
+    "peak_physical_footprint_bytes": 249514216,
+    "peak_resident_bytes": 217956352,
+    "process_ids": [
+     91824
+    ],
+    "regions": [],
+    "self_display_name": null,
+    "self_entity_id": null,
+    "…": "1 more fields"
+   },
+   "sample_count": 5,
+   "samples": [
+    {
+     "bridge_fetch_millis": 0.0,
+     "collect_millis": 7.0091657638549805,
+     "engine_tick_millis": 87.0,
+     "history_millis": 9.081375122070312,
+     "mcp_active_client_count": 6,
+     "mcp_helper_count": 0,
+     "mcp_requests_per_second": 0.0,
+     "observed_at_millis": 1783970365537,
+     "persist_millis": 0.00041700000292621553,
+     "render_commit_millis": 0.0,
+     "self_cpu_percent": 167.173583984375,
+     "self_memory_bytes": 201293824,
+     "…": "6 more fields"
+    },
+    "… 4 more items"
+   ],
+   "started_at_millis": 1783970365537,
+   "summary": "5 samples: avg tick 143.0 ms, peak tick 169.0 ms, avg CPU 144.9%, peak CPU 206.5%, peak wakeups …"
+  }
+ },
+ "aetower_entity_details": {
+  "args": {
+   "entity_id": "bundle-path:/applications/google chrome.app"
+  },
+  "output": {
+   "active_window_title": null,
+   "agent_cost": null,
+   "anomaly_detected": true,
+   "app_version": null,
+   "attribution_notes": [
+    "Components were launched by more than one parent lineage: Google Chrome (pid 676), launchd servi…"
+   ],
+   "badges": [
+    "browser",
+    "… 2 more items"
+   ],
+   "binary_reputation": null,
+   "bundle_id": "local.google-chrome",
+   "components": [
+    {
+     "adapter_context": null,
+     "command_line": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+     "cpu_percent": 14.316475868225098,
+     "cwd": null,
+     "detail": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+     "executable_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+     "kind": "process",
+     "launched_by": "launchd service manager (pid 1)",
+     "memory_bytes": 329154560,
+     "memory_physical_footprint_bytes": 428083936,
+     "parent_summary": "launchd (pid 1)",
+     "process_id": 676,
+     "…": "5 more fields"
+    },
+    "… 7 more items"
+   ],
+   "display_name": "Google Chrome",
+   "entity_id": "bundle-path:/applications/google chrome.app",
+   "entity_kind": "browser",
+   "…": "16 more fields"
+  }
+ },
+ "aetower_entity_group_tree": {
+  "args": {
+   "entity_id": "bundle-path:/applications/google chrome.app"
+  },
+  "output": {
+   "captured_at_millis": 1783970935992,
+   "grouped_entity_count": 1,
+   "grouped_process_count": 39,
+   "relations": [],
+   "root_entity_id": "bundle-path:/applications/google chrome.app",
+   "tree": {
+    "badges": [
+     "browser",
+     "… 2 more items"
+    ],
+    "children": [],
+    "cpu_percent": 24.75054168701172,
+    "display_name": "Google Chrome",
+    "entity_id": "bundle-path:/applications/google chrome.app",
+    "friction": 38.4351921081543,
+    "memory_bytes": 3005415424,
+    "process_count": 39,
+    "recent_change_summary": null,
+    "relation": "selected-root"
+   }
+  }
+ },
+ "aetower_entity_process_tree": {
+  "args": {
+   "entity_id": "bundle-path:/applications/google chrome.app"
+  },
+  "output": {
+   "captured_at_millis": 1783970935992,
+   "expanded_entity_ids": [
+    "bundle-path:/applications/google chrome.app",
+    "… 2 more items"
+   ],
+   "expanded_process_count": 10,
+   "grouped_process_count": 8,
+   "grouping_reasons": [
+    "expanded through parent/child PID lineage"
+   ],
+   "root_display_name": "Google Chrome",
+   "root_entity_id": "bundle-path:/applications/google chrome.app",
+   "roots": [
+    {
+     "adapter_label": null,
+     "badges": [
+      "browser",
+      "… 2 more items"
+     ],
+     "children": [
+      {
+       "adapter_label": null,
+       "badges": "…",
+       "children": "…",
+       "cwd": null,
+       "launched_by": "Google Chrome (pid 676)",
+       "owner_display_name": "Google Chrome",
+       "owner_entity_id": "bundle-path:/applications/google chrome.app",
+       "pid": 863,
+       "provenance": "HelperTree: App helper subprocess",
+       "relation": "child",
+       "self_cpu_percent": 6.729320049285889,
+       "self_memory_bytes": 90505216,
+       "…": "6 more fields"
+      },
+      "… 8 more items"
+     ],
+     "cwd": null,
+     "launched_by": "launchd service manager (pid 1)",
+     "owner_display_name": "Google Chrome",
+     "owner_entity_id": "bundle-path:/applications/google chrome.app",
+     "pid": 676,
+     "provenance": "ServiceManager: launchd service manager",
+     "relation": "process-root",
+     "self_cpu_percent": 14.316475868225098,
+     "self_memory_bytes": 329154560,
+     "…": "6 more fields"
+    }
+   ],
+   "seed_entity_ids": [
+    "bundle-path:/applications/google chrome.app"
+   ]
+  }
+ },
+ "aetower_memory_breakdown": {
+  "args": {
+   "entity_id": "bundle-path:/applications/google chrome.app"
+  },
+  "output": {
+   "captured_at_millis": 1783970935992,
+   "display_name": "Google Chrome",
+   "entity_id": "bundle-path:/applications/google chrome.app",
+   "memory_metric_note": "resident_bytes is the current resident set; physical_footprint_bytes follows macOS task footprin…",
+   "physical_footprint_bytes": 5686176928,
+   "process_ids": [
+    676,
+    "… 7 more items"
+   ],
+   "regions": [
+    {
+     "dirty_bytes": 0,
+     "region_type": "__TEXT",
+     "resident_bytes": 2118293912,
+     "swap_bytes": 0,
+     "virtual_bytes": 10638901256
+    },
+    "… 9 more items"
+   ],
+   "resident_bytes": 3005415424
+  }
+ },
+ "aetower_wakeup_attribution": {
+  "args": {
+   "entity_id": "bundle-path:/applications/google chrome.app"
+  },
+  "output": {
+   "attribution_mode": "sampled-call-stack-heuristic",
+   "captured_at_millis": 1783971096036,
+   "caveats": [
+    "Sampled thread percentages are not exact wakeup counters; they identify where CPU/render time wa…",
+    "… 2 more items"
+   ],
+   "data_sources": [
+    {
+     "detail": "Current entity wakeup rate from proc_pid_rusage/process aggregation is 68/s.",
+     "key": "process-wakeups",
+     "next_action": null,
+     "status": "available-exact-process-delta",
+     "title": "Process wakeups"
+    },
+    "… 4 more items"
+   ],
+   "display_link_state": {
+    "detail": "No app-specific display-link adapter is available for this entity. Generic sampling can still cl…",
+    "latest_pipeline": null,
+    "recent_pipeline": [],
+    "recommended_integration_fields": [
+     "view_id",
+     "… 10 more items"
+    ],
+    "source": null,
+    "status": "not-applicable",
+    "views": []
+   },
+   "display_name": "Google Chrome",
+   "dominant_cause": "cpu-work dominates sampled wakeups with 2595 samples on HangWatcher.",
+   "duration_seconds": 3,
+   "entity_id": "bundle-path:/applications/google chrome.app",
+   "exact_thread_wakeup_counters": {
+    "detail": "macOS proc_pid_rusage exposes process-level wakeup counts, but not wakeup deltas per thread. Aet…",
+    "key": "per-thread-wakeup-counters",
+    "next_action": "Add a privileged, opt-in sampler or instrument the target app to publish per-thread/timer counte…",
+    "status": "unavailable-with-public-proc-api",
+    "title": "Per-thread wakeup counters"
+   },
+   "process_wakeups_per_second": 68.42646026611328,
+   "queue_breakdown": [
+    {
+     "classification": "cpu-work",
+     "queue_label": "HangWatcher",
+     "sample_count": 2595,
+     "thread_label": "Thread_14652: HangWatcher",
+     "top_frames": [
+      "ChromeMain",
+      "… 3 more items"
+     ]
+    },
+    "… 4 more items"
+   ],
+   "…": "3 more fields"
+  }
+ },
+ "aetower_process_inspect": {
+  "args": {
+   "pid": 19113
+  },
+  "output": {
+   "alive": true,
+   "bundle": {
+    "bundle_id": "com.chau7.app",
+    "bundle_path": "/Applications/Chau7.app",
+    "name": "Chau7",
+    "short_version": "0.3.1-dev",
+    "version": "1"
+   },
+   "captured_at_millis": 1783971200052,
+   "child_pids": [
+    19135,
+    "… 25 more items"
+   ],
+   "command_line": "/Applications/Chau7.app/Contents/MacOS/Chau7",
+   "component_kind": "Process",
+   "component_title": "Chau7",
+   "cpu_percent": 77.33618927001953,
+   "cwd": null,
+   "display_name": "Chau7",
+   "dylib_summary": {
+    "injected": 0,
+    "third_party": 2,
+    "total": 31
+   },
+   "entitlements": [],
+   "…": "17 more fields"
+  }
+ },
+ "aetower_process_open_resources": {
+  "args": {
+   "pid": 19113
+  },
+  "output": {
+   "captured_at_millis": 1783971205657,
+   "file_count": 281,
+   "native_fd_count": 211,
+   "pid": 19113,
+   "resource_count": 285,
+   "resources": [
+    {
+     "detail": "1,15 704 2",
+     "fd": "cwd",
+     "is_socket": false,
+     "name": "/",
+     "resource_type": "DIR"
+    },
+    "… 79 more items"
+   ],
+   "returned": 80,
+   "socket_count": 4
+  }
+ },
+ "aetower_process_sample": {
+  "args": {
+   "pid": 19113
+  },
+  "output": {
+   "captured_at_millis": 1783971209730,
+   "duration_seconds": 3,
+   "pid": 19113,
+   "summary": "Top sampled thread Thread_3256024: Main Thread   DispatchQueue_<multiple> accounted for 1743 sam…",
+   "thread_count": 5,
+   "top_stacks": [
+    {
+     "classification": "cpu-work",
+     "queue_label": "Main Thread   DispatchQueue_<multiple>",
+     "sample_count": 1743,
+     "thread_label": "Thread_3256024: Main Thread   DispatchQueue_<multiple>",
+     "top_frames": [
+      "Chau7_main",
+      "… 5 more items"
+     ]
+    },
+    "… 4 more items"
+   ]
+  }
+ },
+ "aetower_profile_entity": {
+  "args": {
+   "entity_id": "bundle-path:/applications/chau7.app"
+  },
+  "output": {
+   "captured_at_millis": 1783971208057,
+   "display_name": "Chau7",
+   "duration_seconds": 3,
+   "entity_id": "bundle-path:/applications/chau7.app",
+   "sampled_process_ids": [
+    19113,
+    19152
+   ],
+   "summary": "Top sampled thread Thread_3256339   DispatchQueue_1: com.apple.main-thread  (serial) accounted f…",
+   "thread_count": 5,
+   "top_stacks": [
+    {
+     "classification": "cpu-work",
+     "queue_label": "com.apple.main-thread",
+     "sample_count": 2655,
+     "thread_label": "Thread_3256339   DispatchQueue_1: com.apple.main-thread  (serial)",
+     "top_frames": [
+      "???",
+      "… 4 more items"
+     ]
+    },
+    "… 4 more items"
+   ]
+  }
+ }
+}

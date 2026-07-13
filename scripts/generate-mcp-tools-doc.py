@@ -89,7 +89,7 @@ def schema_rows(schema: dict) -> list[str]:
         spec = properties[name]
         kind = spec.get("type", "any")
         if "enum" in spec:
-            kind = " | ".join(f"`{v}`" for v in spec["enum"])
+            kind = " · ".join(f"`{v}`" for v in spec["enum"])
         notes = []
         if name in required:
             notes.append("required")
@@ -101,6 +101,153 @@ def schema_rows(schema: dict) -> list[str]:
         rows.append(f"| `{name}` | {kind} | {'; '.join(notes) or '—'} |")
     return rows
 
+
+
+# Tools whose example call would be heavy or destructive to run casually.
+EXAMPLE_SKIP = {
+    "aetower_storage_hygiene_deep_scan",
+    "aetower_storage_hygiene",
+}
+
+# Optional args that keep example outputs small.
+OPTIONAL_EXAMPLE_ARGS = {
+    "aetower_current_snapshot": {"entity_limit": 2},
+    "aetower_query_diagnostics": {"limit": 3},
+    "aetower_recent_changes": {"limit": 3},
+}
+
+HOME = str(pathlib.Path.home())
+USERNAME = pathlib.Path.home().name
+EXAMPLES_CACHE = ROOT / "docs" / "mcp-tools.examples.json"
+
+
+def load_examples_cache() -> dict:
+    if EXAMPLES_CACHE.exists():
+        return json.loads(EXAMPLES_CACHE.read_text())
+    return {}
+
+
+def save_examples_cache(cache: dict) -> None:
+    EXAMPLES_CACHE.write_text(json.dumps(cache, indent=1, ensure_ascii=False) + "\n")
+
+
+def call_tool(name: str, args: dict, attempts: int = 3) -> dict | list | None:
+    cmd = [str(CLI), "call", name, "--json"]
+    for key, value in args.items():
+        cmd += ["--arg", f"{key}={json.dumps(value)}"]
+    for attempt in range(attempts):
+        if attempt:
+            __import__("time").sleep(8)  # let a busy engine catch its breath
+        try:
+            raw = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+        except subprocess.TimeoutExpired:
+            continue
+        if raw.returncode != 0:
+            continue
+        try:
+            return json.loads(raw.stdout)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def seed_values() -> dict:
+    seeds = {}
+    now = int(__import__("time").time() * 1000)
+    seeds["end_millis"] = now
+    seeds["start_millis"] = now - 30 * 60 * 1000
+    seeds["after_millis"] = now
+    seeds["before_millis"] = now - 30 * 60 * 1000
+    payload = call_tool("aetower_current_snapshot", {"entity_limit": 3}) or {}
+    snapshot = payload.get("snapshot") or payload
+    entities = snapshot.get("entities") or []
+    if entities:
+        seeds["entity_id"] = entities[0].get("entity_id") or entities[0].get("id")
+        for entity in entities:
+            for component in entity.get("components") or []:
+                pid = (
+                    component.get("process_id") or component.get("pid")
+                ) if isinstance(component, dict) else None
+                if pid:
+                    seeds["pid"] = pid
+                    break
+            if "pid" in seeds:
+                break
+    inventory = call_tool("aetower_repository_inventory", {}) or {}
+    repos = inventory.get("repository_inventory") or inventory.get("repositories") or []
+    for repo in repos if isinstance(repos, list) else []:
+        root = repo.get("root") or repo.get("path") or repo.get("repo_root")
+        if root:
+            seeds["repo_root"] = root
+            break
+    missing = {"entity_id", "pid"} - set(seeds)
+    if missing:
+        print(f"warning: seeds missing after snapshot: {sorted(missing)}", file=sys.stderr)
+    return {k: v for k, v in seeds.items() if v is not None}
+
+
+def sanitize(value, depth: int = 0):
+    if depth >= 5 and isinstance(value, (dict, list)):
+        return "…"
+    if isinstance(value, dict):
+        items = list(value.items())
+        trimmed = {k: sanitize(v, depth + 1) for k, v in items[:12]}
+        if len(items) > 12:
+            trimmed["…"] = f"{len(items) - 12} more fields"
+        return trimmed
+    if isinstance(value, list):
+        if len(value) > 2:
+            return [sanitize(value[0], depth + 1), f"… {len(value) - 1} more items"]
+        return [sanitize(v, depth + 1) for v in value]
+    if isinstance(value, str):
+        text = value.replace(HOME, "~").replace(USERNAME, "operator")
+        return text[:96] + "…" if len(text) > 96 else text
+    return value
+
+
+def example_block(name: str, schema: dict, seeds: dict, cache: dict) -> list[str]:
+    if name in EXAMPLE_SKIP:
+        return []
+    cached = cache.get(name)
+    if cached is None:
+        required = schema.get("required") or []
+        args = {}
+        for key in required:
+            if key not in seeds:
+                print(f"warning: no seed for {name}.{key}; skipping example", file=sys.stderr)
+                return []
+            args[key] = seeds[key]
+        args.update(OPTIONAL_EXAMPLE_ARGS.get(name, {}))
+        payload = call_tool(name, args, attempts=1)
+        if payload is None:
+            print(f"warning: example call failed for {name} (will retry next run)", file=sys.stderr)
+            return []
+        # Cache the SANITIZED payload: times/paths are already normalized and
+        # nothing personal is persisted. Time-window args are cached as a
+        # readable placeholder so the invocation line stays meaningful.
+        display_args = {
+            k: ("<epoch-millis>" if k.endswith("_millis") else v) for k, v in args.items()
+        }
+        cached = {"args": display_args, "output": sanitize(payload)}
+        cache[name] = cached
+        save_examples_cache(cache)
+    rendered = json.dumps(cached["output"], indent=1, ensure_ascii=False)
+    lines = rendered.splitlines()
+    if len(lines) > 40:
+        lines = lines[:40] + ["…"]
+    shown_args = " ".join(
+        f"--arg {k}={v if v == '<epoch-millis>' else json.dumps(v)}"
+        for k, v in cached["args"].items()
+    )
+    invocation = f"aetower call {name}" + (f" {shown_args}" if shown_args else "")
+    return [
+        "",
+        f"Example — `{invocation}`:",
+        "",
+        "```json",
+        *lines,
+        "```",
+    ]
 
 def main() -> None:
     if not CLI.exists():
@@ -115,6 +262,12 @@ def main() -> None:
     payload = json.loads(raw.stdout)
     tools = payload if isinstance(payload, list) else payload["tools"]
     tools.sort(key=lambda t: t["name"])
+    cache = load_examples_cache()
+    missing = [t["name"] for t in tools if t["name"] not in cache and t["name"] not in EXAMPLE_SKIP]
+    seeds = {}
+    if missing:
+        print(f"collecting example seeds… ({len(missing)} examples missing)", file=sys.stderr)
+        seeds = seed_values()
 
     lines = [
         "# MCP tool reference",
@@ -157,6 +310,7 @@ def main() -> None:
             lines.append("| Parameter | Type | Notes |")
             lines.append("|---|---|---|")
             lines.extend(rows)
+        lines.extend(example_block(tool["name"], tool.get("inputSchema") or {}, seeds, cache))
         lines.append("")
 
     OUT.write_text("\n".join(lines).rstrip() + "\n")
