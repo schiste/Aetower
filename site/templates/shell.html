@@ -241,6 +241,39 @@
         font-size: inherit;
       }
 
+      .table-scroll {
+        overflow-x: auto;
+        margin: 14px 0;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+      }
+
+      main table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13.5px;
+      }
+
+      main th,
+      main td {
+        text-align: left;
+        padding: 9px 14px;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        vertical-align: top;
+      }
+
+      main th {
+        color: var(--ink);
+        font-weight: 600;
+        background: color-mix(in srgb, var(--ink) 4%, transparent);
+        white-space: nowrap;
+      }
+
+      main tbody tr:last-child td {
+        border-bottom: none;
+      }
+
       main blockquote {
         margin: 14px 0;
         padding: 4px 18px;
