@@ -59,6 +59,48 @@ impl StorageScanMode {
         }
     }
 
+    /// Repository discovery is useful context for repo attribution, but it is
+    /// not the storage walk itself. Quick scans keep this bounded tightly;
+    /// Complete/Forensic scans can spend longer so repo coverage does not mark
+    /// a successful whole-computer storage scan as globally partial.
+    pub(super) fn repository_inventory_time_budget(self) -> Duration {
+        match self {
+            Self::InstantCached | Self::FastChangedOnly => REPOSITORY_INVENTORY_TIME_BUDGET,
+            Self::DeepNative => Duration::from_secs(120),
+            Self::ForensicVerified => Duration::from_secs(300),
+        }
+    }
+
+    pub(super) fn scan_latency_warn_millis(self) -> u64 {
+        match self {
+            Self::InstantCached | Self::FastChangedOnly => STORAGE_SCAN_LATENCY_WARN_MILLIS,
+            Self::DeepNative => 120_000,
+            Self::ForensicVerified => 300_000,
+        }
+    }
+
+    pub(super) fn scan_latency_critical_millis(self) -> u64 {
+        match self {
+            Self::InstantCached | Self::FastChangedOnly => STORAGE_SCAN_LATENCY_CRITICAL_MILLIS,
+            Self::DeepNative => 300_000,
+            Self::ForensicVerified => 600_000,
+        }
+    }
+
+    pub(super) fn payload_warn_bytes(self) -> u64 {
+        match self {
+            Self::InstantCached | Self::FastChangedOnly => STORAGE_PAYLOAD_WARN_BYTES,
+            Self::DeepNative | Self::ForensicVerified => 8 * 1024 * 1024,
+        }
+    }
+
+    pub(super) fn payload_critical_bytes(self) -> u64 {
+        match self {
+            Self::InstantCached | Self::FastChangedOnly => STORAGE_PAYLOAD_CRITICAL_BYTES,
+            Self::DeepNative | Self::ForensicVerified => 16 * 1024 * 1024,
+        }
+    }
+
     /// Minimum walk slice granted to each root regardless of how much of the
     /// overall walk budget earlier roots consumed. Keeps one huge early root
     /// (e.g. ~/Repositories) from starving every later root to zero; the

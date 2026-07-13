@@ -4427,6 +4427,29 @@ fn storage_performance_budget_flags_million_file_payload_and_table_pressure() {
 }
 
 #[test]
+fn forensic_performance_budget_accepts_complete_scan_payload() {
+    let diagnostics = storage_performance_budget_diagnostics(
+        StorageScanMode::ForensicVerified,
+        197_294,
+        3_026_016,
+        713,
+        0,
+        7,
+    );
+
+    assert_eq!(diagnostics.status, "ok");
+    assert_eq!(diagnostics.payload_budget_bytes, 8 * 1024 * 1024);
+    assert!(
+        diagnostics
+            .notes
+            .iter()
+            .any(|note| note.contains("stayed within current budgets")),
+        "unexpected notes: {:?}",
+        diagnostics.notes
+    );
+}
+
+#[test]
 fn protected_path_classification_blocks_unattended_cleanup() {
     let now_millis = crate::current_unix_millis().unwrap_or_default();
     let old_millis = now_millis.saturating_sub(RECENT_CLEANUP_BLOCK_MILLIS + 60_000);
@@ -6078,6 +6101,30 @@ fn size_walk_budget_is_scaled_per_mode() {
     assert_eq!(
         StorageScanMode::ForensicVerified.report_item_limit(120),
         MAX_ITEMS_PAGE_LIMIT
+    );
+    assert_eq!(
+        StorageScanMode::FastChangedOnly.repository_inventory_time_budget(),
+        REPOSITORY_INVENTORY_TIME_BUDGET
+    );
+    assert_eq!(
+        StorageScanMode::DeepNative.repository_inventory_time_budget(),
+        Duration::from_secs(120)
+    );
+    assert_eq!(
+        StorageScanMode::ForensicVerified.repository_inventory_time_budget(),
+        Duration::from_secs(300)
+    );
+    assert_eq!(
+        StorageScanMode::FastChangedOnly.scan_latency_critical_millis(),
+        STORAGE_SCAN_LATENCY_CRITICAL_MILLIS
+    );
+    assert_eq!(
+        StorageScanMode::ForensicVerified.scan_latency_warn_millis(),
+        300_000
+    );
+    assert_eq!(
+        StorageScanMode::ForensicVerified.payload_warn_bytes(),
+        8 * 1024 * 1024
     );
 }
 

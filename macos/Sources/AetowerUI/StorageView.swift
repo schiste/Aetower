@@ -1665,7 +1665,7 @@ public struct StorageView: View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             cleanupRecipesSection(report)
             if report.truncated {
-                warningBanner("The scan hit a cap or time budget. Results are partial; open Insights to inspect coverage or narrow the root.")
+                warningBanner(storageWalkPartialMessage)
             }
         }
     }
@@ -1973,7 +1973,7 @@ public struct StorageView: View {
             storageHomeActionsSection(report)
             topOffenderCallout(report)
             if report.truncated {
-                warningBanner("The scan hit a cap or time budget. Results are partial; use Sources to inspect coverage or narrow the root.")
+                warningBanner(storageWalkPartialMessage)
             }
         }
     }
@@ -3576,7 +3576,7 @@ public struct StorageView: View {
             cleanupRecipesSection(report)
             summaryGrid(report)
             if report.truncated {
-                warningBanner("The scan hit a cap or time budget. Results are partial; narrow the root or refresh when the machine is idle.")
+                warningBanner(storageWalkPartialMessage)
             }
             rootsSection(report)
             caveatsSection(report)
@@ -4932,6 +4932,10 @@ public struct StorageView: View {
                 footprintMetric("Cloud roots", value: "\(cloud)", detail: "local bytes are separated")
                 footprintMetric("Protected", value: "\(protected)", detail: "blocked from unattended cleanup")
                 footprintMetric("Volumes", value: "\(report.volumeStates.count)", detail: "capacity sources")
+            }
+
+            if report.repositoryInventoryTruncated || !report.repositoryInventoryComplete {
+                coverageNoteBanner(repositoryInventoryPartialMessage(report))
             }
 
             LazyVGrid(
@@ -8819,6 +8823,41 @@ public struct StorageView: View {
             systemImage: "exclamationmark.triangle",
             tone: AetowerDesign.Status.warning,
             level: .warning
+        )
+    }
+
+    private var storageWalkPartialMessage: String {
+        "The storage walk hit a cap or time budget. Storage candidates are partial; narrow the root or refresh when the machine is idle."
+    }
+
+    private func repositoryInventoryPartialMessage(_ report: StorageHygieneReportModel) -> String {
+        let roots = report.repositoryInventoryPartialRoots
+        if roots.isEmpty {
+            return "Repository inventory is partial. Storage candidates are loaded, but repo attribution may miss cached or unscanned repositories."
+        }
+        let visibleRoots = roots.prefix(3).map(storageShortPath).joined(separator: ", ")
+        let remainingCount = roots.count - min(roots.count, 3)
+        if remainingCount > 0 {
+            return "Repository inventory is partial for \(visibleRoots), +\(remainingCount) more. Storage candidates are loaded; repo attribution may be incomplete."
+        }
+        return "Repository inventory is partial for \(visibleRoots). Storage candidates are loaded; repo attribution may be incomplete."
+    }
+
+    private func storageShortPath(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path == home { return "~" }
+        if path.hasPrefix(home + "/") {
+            return "~/" + String(path.dropFirst(home.count + 1))
+        }
+        return path
+    }
+
+    private func coverageNoteBanner(_ text: String) -> some View {
+        AetowerInfoBanner(
+            text,
+            systemImage: "point.3.connected.trianglepath.dotted",
+            tone: AetowerDesign.Status.warning,
+            level: .card
         )
     }
 

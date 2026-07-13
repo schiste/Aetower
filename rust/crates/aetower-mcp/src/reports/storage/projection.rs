@@ -249,6 +249,7 @@ fn storage_hygiene_items_page_from_index(
         lazy_git_status: true,
         top_k_retained: false,
         performance_budget: storage_performance_budget_diagnostics(
+            StorageScanMode::InstantCached,
             0,
             0,
             item_count,

@@ -526,12 +526,14 @@ public final class AppState {
         }
     }
     /// Set by the load watchdog when an in-flight hygiene load has been
-    /// running past its budget (~30s). Re-enables the manual Rescan button so
-    /// an explicit user action can supersede the stuck load —
+    /// running past its mode-specific budget. Re-enables the manual Rescan
+    /// button so an explicit user action can supersede the stuck load —
     /// `runStorageHygieneScan` cancels the previous task, whose results are
     /// then dropped at its next cancellation checkpoint.
     private(set) var storageHygieneLoadExceededBudget = false
     @ObservationIgnored private var storageHygieneLoadWatchdogTask: Task<Void, Never>?
+    @ObservationIgnored private var storageHygieneLoadWatchdogMode = "fast_changed_only"
+    @ObservationIgnored private var storageHygieneLoadWatchdogBudgetSeconds: TimeInterval = 30
     private(set) var storageHygieneIsVerifyingCache = false
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
@@ -2610,6 +2612,7 @@ public final class AppState {
             }
         }
 
+        configureStorageHygieneLoadWatchdog(mode: "instant_cached")
         storageHygieneIsLoading = storageHygieneReport == nil
         storageHygieneIsVerifyingCache = false
         storageHygieneError = nil
@@ -2948,27 +2951,49 @@ public final class AppState {
     /// Observability for stuck hygiene loads: the FFI report calls have no
     /// timeout, so if one wedges (e.g. a pathological index query) the
     /// loading flag would otherwise pin the UI in "Scanning" forever with a
-    /// silently disabled Rescan button. After the budget elapses this records
-    /// a diagnostics event and flips `storageHygieneLoadExceededBudget` so an
-    /// explicit user rescan can supersede the stuck load. It never cancels
-    /// the in-flight FFI call.
-    private static let storageHygieneLoadBudgetSeconds: TimeInterval = 30
+    /// silently disabled Rescan button. After the mode-specific budget elapses
+    /// this records a diagnostics event and flips `storageHygieneLoadExceededBudget`
+    /// so an explicit user rescan can supersede the stuck load. It never
+    /// cancels the in-flight FFI call.
+    private static func storageHygieneLoadBudgetSeconds(for mode: String) -> TimeInterval {
+        switch StorageScanModeSelection(rawValue: mode) {
+        case .complete:
+            return 300
+        case .forensic:
+            return 600
+        case .fast, nil:
+            return 30
+        }
+    }
+
+    private func configureStorageHygieneLoadWatchdog(mode: String) {
+        storageHygieneLoadWatchdogMode = mode
+        storageHygieneLoadWatchdogBudgetSeconds = Self.storageHygieneLoadBudgetSeconds(for: mode)
+    }
 
     private func restartStorageHygieneLoadWatchdog() {
         storageHygieneLoadWatchdogTask?.cancel()
         storageHygieneLoadWatchdogTask = nil
         storageHygieneLoadExceededBudget = false
         guard storageHygieneIsLoading else { return }
-        storageHygieneLoadWatchdogTask = Task { [weak self] in
+        let budgetSeconds = storageHygieneLoadWatchdogBudgetSeconds
+        let mode = storageHygieneLoadWatchdogMode
+        storageHygieneLoadWatchdogTask = Task { [weak self, budgetSeconds, mode] in
             try? await Task.sleep(
-                nanoseconds: UInt64(Self.storageHygieneLoadBudgetSeconds * 1_000_000_000)
+                nanoseconds: UInt64(budgetSeconds * 1_000_000_000)
             )
             guard !Task.isCancelled else { return }
-            self?.reportStorageHygieneLoadExceededBudget()
+            self?.reportStorageHygieneLoadExceededBudget(
+                budgetSeconds: budgetSeconds,
+                mode: mode
+            )
         }
     }
 
-    private func reportStorageHygieneLoadExceededBudget() {
+    private func reportStorageHygieneLoadExceededBudget(
+        budgetSeconds: TimeInterval,
+        mode: String
+    ) {
         guard storageHygieneIsLoading, !storageHygieneLoadExceededBudget else { return }
         storageHygieneLoadExceededBudget = true
         recordLocalDiagnosticsEvent(
@@ -2976,13 +3001,14 @@ public final class AppState {
             subsystem: .ui,
             eventType: "storage-hygiene-load-slow",
             message: "Storage hygiene load has been running for over "
-                + "\(Int(Self.storageHygieneLoadBudgetSeconds))s; "
+                + "\(Int(budgetSeconds))s in \(StorageScanModeSelection.label(for: mode)) mode; "
                 + "the Rescan button was re-enabled so a manual rescan can supersede it.",
             fields: [
                 DiagnosticsField(
                     key: "budget_seconds",
-                    value: String(Int(Self.storageHygieneLoadBudgetSeconds))
-                )
+                    value: String(Int(budgetSeconds))
+                ),
+                DiagnosticsField(key: "mode", value: mode),
             ]
         )
     }
@@ -2996,6 +3022,7 @@ public final class AppState {
         mode: String = "fast_changed_only"
     ) {
         storageHygieneTask?.cancel()
+        configureStorageHygieneLoadWatchdog(mode: mode)
         storageHygieneIsLoading = true
         storageHygieneIsVerifyingCache = false
         storageHygieneError = nil
@@ -3928,6 +3955,7 @@ public final class AppState {
         limit: UInt32,
         mode: String
     ) {
+        configureStorageHygieneLoadWatchdog(mode: mode)
         storageHygieneIsLoading = true
         storageHygieneIsVerifyingCache = false
         storageHygieneError = nil
@@ -4234,12 +4262,22 @@ public final class AppState {
             let storagePublishMillis = UInt64(
                 max(0, (CFAbsoluteTimeGetCurrent() - storagePublishStartedAt) * 1000)
             )
+            let storageBudgetStatus = report.diagnostics.performanceBudget?.status ?? "unknown"
+            let storageBudgetCritical = storageBudgetStatus == "critical"
+            let repositoryInventoryPartial =
+                report.repositoryInventoryTruncated || !report.repositoryInventoryComplete
+            let storageDiagnosticsEventType: String
+            if report.truncated {
+                storageDiagnosticsEventType = "storage-hygiene-storage-walk-truncated"
+            } else if repositoryInventoryPartial {
+                storageDiagnosticsEventType = "storage-hygiene-scan-completed-inventory-partial"
+            } else {
+                storageDiagnosticsEventType = "storage-hygiene-scan-completed"
+            }
             recordLocalDiagnosticsEvent(
-                level: report.truncated ? .warn : .info,
+                level: report.truncated || storageBudgetCritical ? .warn : .info,
                 subsystem: .ui,
-                eventType: report.truncated
-                    ? "storage-hygiene-scan-truncated"
-                    : "storage-hygiene-scan-completed",
+                eventType: storageDiagnosticsEventType,
                 message: "Completed read-only developer storage hygiene scan.",
                 fields: [
                     DiagnosticsField(
@@ -4264,7 +4302,7 @@ public final class AppState {
                     ),
                     DiagnosticsField(
                         key: "storage_budget_status",
-                        value: report.diagnostics.performanceBudget?.status ?? "unknown"
+                        value: storageBudgetStatus
                     ),
                     DiagnosticsField(
                         key: "storage_scan_latency_millis",
@@ -4330,6 +4368,18 @@ public final class AppState {
                         value: String(report.repoFootprints.count)
                     ),
                     DiagnosticsField(
+                        key: "repository_inventory_complete",
+                        value: report.repositoryInventoryComplete ? "true" : "false"
+                    ),
+                    DiagnosticsField(
+                        key: "repository_inventory_truncated",
+                        value: report.repositoryInventoryTruncated ? "true" : "false"
+                    ),
+                    DiagnosticsField(
+                        key: "repository_inventory_partial_root_count",
+                        value: String(report.repositoryInventoryPartialRoots.count)
+                    ),
+                    DiagnosticsField(
                         key: "persisted_baseline_available",
                         value: persistedStorageHygieneBaseline == nil ? "false" : "true"
                     ),
@@ -4360,6 +4410,14 @@ public final class AppState {
                     DiagnosticsField(
                         key: "truncated",
                         value: report.truncated ? "true" : "false"
+                    ),
+                    DiagnosticsField(
+                        key: "storage_walk_truncated",
+                        value: report.truncated ? "true" : "false"
+                    ),
+                    DiagnosticsField(
+                        key: "top_k_retained",
+                        value: report.diagnostics.topKRetained ? "true" : "false"
                     ),
                 ]
             )

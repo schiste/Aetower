@@ -131,6 +131,7 @@ pub(super) fn refresh_storage_performance_budget(
     render_publish_millis: u64,
 ) {
     report.diagnostics.performance_budget = storage_performance_budget_diagnostics(
+        StorageScanMode::parse(&report.scan_mode),
         report.scan_duration_millis,
         report.diagnostics.payload_bytes,
         report.diagnostics.candidate_seen_count,
@@ -140,6 +141,7 @@ pub(super) fn refresh_storage_performance_budget(
 }
 
 pub(super) fn storage_performance_budget_diagnostics(
+    mode: StorageScanMode,
     scan_duration_millis: u64,
     payload_bytes: u64,
     candidate_seen_count: u64,
@@ -148,26 +150,34 @@ pub(super) fn storage_performance_budget_diagnostics(
 ) -> StoragePerformanceBudgetDiagnostics {
     let mut notes = Vec::new();
     let mut severity = 0u8;
-    if scan_duration_millis >= STORAGE_SCAN_LATENCY_CRITICAL_MILLIS {
+    let scan_latency_warn_millis = mode.scan_latency_warn_millis();
+    let scan_latency_critical_millis = mode.scan_latency_critical_millis();
+    let payload_warn_bytes = mode.payload_warn_bytes();
+    let payload_critical_bytes = mode.payload_critical_bytes();
+    if scan_duration_millis >= scan_latency_critical_millis {
         severity = severity.max(2);
         notes.push(format!(
-            "scan latency exceeded critical budget: {scan_duration_millis}ms >= {STORAGE_SCAN_LATENCY_CRITICAL_MILLIS}ms"
+            "scan latency exceeded critical budget for {}: {scan_duration_millis}ms >= {scan_latency_critical_millis}ms",
+            mode.as_str()
         ));
-    } else if scan_duration_millis >= STORAGE_SCAN_LATENCY_WARN_MILLIS {
+    } else if scan_duration_millis >= scan_latency_warn_millis {
         severity = severity.max(1);
         notes.push(format!(
-            "scan latency exceeded warning budget: {scan_duration_millis}ms >= {STORAGE_SCAN_LATENCY_WARN_MILLIS}ms"
+            "scan latency exceeded warning budget for {}: {scan_duration_millis}ms >= {scan_latency_warn_millis}ms",
+            mode.as_str()
         ));
     }
-    if payload_bytes >= STORAGE_PAYLOAD_CRITICAL_BYTES {
+    if payload_bytes >= payload_critical_bytes {
         severity = severity.max(2);
         notes.push(format!(
-            "payload exceeded critical budget: {payload_bytes} bytes >= {STORAGE_PAYLOAD_CRITICAL_BYTES} bytes"
+            "payload exceeded critical budget for {}: {payload_bytes} bytes >= {payload_critical_bytes} bytes",
+            mode.as_str()
         ));
-    } else if payload_bytes >= STORAGE_PAYLOAD_WARN_BYTES {
+    } else if payload_bytes >= payload_warn_bytes {
         severity = severity.max(1);
         notes.push(format!(
-            "payload exceeded warning budget: {payload_bytes} bytes >= {STORAGE_PAYLOAD_WARN_BYTES} bytes"
+            "payload exceeded warning budget for {}: {payload_bytes} bytes >= {payload_warn_bytes} bytes",
+            mode.as_str()
         ));
     }
     if table_page_millis >= STORAGE_TABLE_PAGE_CRITICAL_MILLIS {
@@ -209,7 +219,7 @@ pub(super) fn storage_performance_budget_diagnostics(
         .to_owned(),
         scan_job_latency_millis: scan_duration_millis,
         payload_bytes,
-        payload_budget_bytes: STORAGE_PAYLOAD_WARN_BYTES,
+        payload_budget_bytes: payload_warn_bytes,
         table_page_millis,
         table_page_budget_millis: STORAGE_TABLE_PAGE_WARN_MILLIS,
         render_publish_millis,
@@ -276,7 +286,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
     let repository_inventory_scan = scan_repository_inventory_roots_with_budget(
         &requested_roots,
         options.max_depth,
-        REPOSITORY_INVENTORY_TIME_BUDGET,
+        options.mode.repository_inventory_time_budget(),
         options.runtime.as_ref(),
     );
     if let Some(runtime) = options.runtime.as_ref() {
@@ -302,7 +312,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
     let mut scanned_roots = Vec::new();
     let mut skipped_roots = Vec::new();
     let mut scanned_directory_count = 0;
-    let mut truncated = repository_inventory_scan.truncated;
+    let mut storage_walk_truncated = false;
 
     // The walk phase runs on its own clock: the repository/git phase above is
     // bounded separately, so a git-heavy start (forensic mode over many repos)
@@ -314,13 +324,13 @@ pub(super) fn build_storage_hygiene_report_with_options(
     let total_roots = roots.len();
     for (root_index, root) in roots.into_iter().enumerate() {
         if walk_started.elapsed() >= walk_budget {
-            truncated = true;
+            storage_walk_truncated = true;
             break;
         }
         if let Some(runtime) = options.runtime.as_ref()
             && !runtime.checkpoint(STORAGE_SCAN_PHASE_ARTIFACT_SIZING, Some(&root), 0, 0, 0)
         {
-            truncated = true;
+            storage_walk_truncated = true;
             break;
         }
 
@@ -372,7 +382,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
             .root_walk_millis
             .saturating_add(root_started.elapsed().as_millis() as u64);
         scanned_directory_count += root_dirs;
-        truncated |= root_truncated;
+        storage_walk_truncated |= root_truncated;
     }
 
     metrics.candidate_seen_count = collector.seen;
@@ -418,7 +428,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
     }
 
     let summary = summarize_storage_items(&items, scanned_directory_count);
-    let investigation = summarize_storage_investigation(&items, truncated);
+    let investigation = summarize_storage_investigation(&items, storage_walk_truncated);
     let cleanup_tiers = summarize_cleanup_tiers(&items);
     let cleanup_recipes = build_cleanup_recipes(&items);
     let cleanup_bundles = build_cleanup_bundles(&items);
@@ -506,7 +516,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
         growth_deltas,
         growth_insights,
         cold_data,
-        truncated,
+        truncated: storage_walk_truncated,
         caveats: vec![
             "Cleanup cockpit: Aetower prepares evidence, reveal targets, verification commands, and Trash-first cleanup manifests."
                 .to_owned(),
