@@ -439,6 +439,7 @@ public struct StorageView: View {
         } actions: {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 storageScanActionGroup
+                storageInlineScanProgress
                 if !cleanupBasket.isEmpty {
                     Button {
                         showCleanupBasket = true
@@ -464,6 +465,59 @@ public struct StorageView: View {
             storageScanOptionsMenu
         }
         .fixedSize()
+    }
+
+    @ViewBuilder
+    private var storageInlineScanProgress: some View {
+        if state.storageHygieneIsLoading || state.storageHygieneIsVerifyingCache {
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                if state.storageHygieneLoadExceededBudget {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(AetowerDesign.Status.warning)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    Text(storageInlineScanProgressTitle)
+                        .font(AetowerDesign.Typography.metadataStrong)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(1)
+                    Text(storageInlineScanProgressDetail)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .frame(height: AetowerDesign.Size.controlHeight)
+            .frame(maxWidth: 260, alignment: .leading)
+            .aetowerControlChrome()
+            .help(storageScanLoadingDetail)
+        }
+    }
+
+    private var storageInlineScanProgressTitle: String {
+        if state.storageHygieneIsVerifyingCache {
+            return "Verifying cache"
+        }
+        if state.storageHygieneLoadExceededBudget {
+            return "Scan still running"
+        }
+        return state.storageScanJob?.progress.phase.capitalized ?? "Starting scan"
+    }
+
+    private var storageInlineScanProgressDetail: String {
+        if state.storageHygieneIsVerifyingCache {
+            return "Checking cached results"
+        }
+        guard let progress = state.storageScanJob?.progress else {
+            return "Preparing job"
+        }
+        let bytes = formatBytes(progress.scannedBytes)
+        return "\(bytes) · \(progress.scannedDirectories) dirs · \(progress.scannedFiles) files"
     }
 
     private var storageScanOptionsMenu: some View {
