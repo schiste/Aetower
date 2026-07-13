@@ -325,7 +325,7 @@ public struct StorageView: View {
     @State private var emptyTrashInFlight = false
     @State private var cleanupAuditEvents = StorageCleanupAuditLog.loadRecent()
     @State private var classificationExplanation: StorageClassificationExplanation?
-    @State private var storageVisualExplorerMode: StorageVisualExplorerMode = .fullDisk
+    @State private var storageVisualExplorerMode: StorageVisualExplorerMode = .table
     @State private var showStorageTreemap = false
     @State private var selectedTreemapNodeID: String?
     @State private var storageExplorerPage = 0
@@ -338,7 +338,7 @@ public struct StorageView: View {
     @State private var ignoredSimilarityGroupIDs: Set<String> = []
     @State private var showIgnoredSimilarityGroups = false
     @State private var duplicateCanonicalPathByGroupID: [String: String] = [:]
-    @State private var collapsedSimilarityGroupKeys: Set<String> = []
+    @State private var expandedSimilarityGroupKeys: Set<String> = []
     @State private var similarityTelemetryViewedGroupKeys: Set<String> = []
     @State private var similarityTelemetryViewedSurfaceKeys: Set<String> = []
 
@@ -2659,26 +2659,26 @@ public struct StorageView: View {
     }
 
     private func similarityGroupIsExpanded(_ key: String) -> Bool {
-        !collapsedSimilarityGroupKeys.contains(key)
+        expandedSimilarityGroupKeys.contains(key)
     }
 
     private func toggleDuplicateGroupExpansion(_ group: StorageDuplicateGroupModel) {
         let key = duplicateGroupActionKey(group)
-        if collapsedSimilarityGroupKeys.contains(key) {
-            collapsedSimilarityGroupKeys.remove(key)
-            recordSimilarityAction("group-expanded", duplicateGroup: group)
+        if expandedSimilarityGroupKeys.contains(key) {
+            expandedSimilarityGroupKeys.remove(key)
         } else {
-            collapsedSimilarityGroupKeys.insert(key)
+            expandedSimilarityGroupKeys.insert(key)
+            recordSimilarityAction("group-expanded", duplicateGroup: group)
         }
     }
 
     private func toggleRedundancyGroupExpansion(_ group: StorageRedundancyGroupModel) {
         let key = redundancyGroupActionKey(group)
-        if collapsedSimilarityGroupKeys.contains(key) {
-            collapsedSimilarityGroupKeys.remove(key)
-            recordSimilarityAction("group-expanded", redundancyGroup: group)
+        if expandedSimilarityGroupKeys.contains(key) {
+            expandedSimilarityGroupKeys.remove(key)
         } else {
-            collapsedSimilarityGroupKeys.insert(key)
+            expandedSimilarityGroupKeys.insert(key)
+            recordSimilarityAction("group-expanded", redundancyGroup: group)
         }
     }
 
@@ -3406,6 +3406,7 @@ public struct StorageView: View {
         _ report: StorageHygieneReportModel,
         filter: StorageSimilarityFilter
     ) -> some View {
+        let groupDisplayLimit = 40
         if filter == .otherRedundancy {
             let groups = sortedRedundancyGroups(
                 otherRedundancyGroups(from: report, includeIgnored: showIgnoredSimilarityGroups)
@@ -3413,9 +3414,16 @@ public struct StorageView: View {
             if groups.isEmpty {
                 similarFilesEmptyState(filter)
             } else {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                    ForEach(groups) { group in
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(groups.prefix(groupDisplayLimit)) { group in
                         similarRedundancyGroupRow(group)
+                    }
+                    if groups.count > groupDisplayLimit {
+                        similarFilesLimitBanner(
+                            shown: groupDisplayLimit,
+                            total: groups.count,
+                            filter: filter
+                        )
                     }
                 }
             }
@@ -3426,13 +3434,33 @@ public struct StorageView: View {
             if groups.isEmpty {
                 similarFilesEmptyState(filter)
             } else {
-                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                    ForEach(groups) { group in
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                    ForEach(groups.prefix(groupDisplayLimit)) { group in
                         similarDuplicateGroupRow(group)
+                    }
+                    if groups.count > groupDisplayLimit {
+                        similarFilesLimitBanner(
+                            shown: groupDisplayLimit,
+                            total: groups.count,
+                            filter: filter
+                        )
                     }
                 }
             }
         }
+    }
+
+    private func similarFilesLimitBanner(
+        shown: Int,
+        total: Int,
+        filter: StorageSimilarityFilter
+    ) -> some View {
+        AetowerInfoBanner(
+            "Showing the first \(shown) \(filter.emptyStateLabel). Narrow the scan root or hide reviewed groups to inspect the remaining \(max(0, total - shown)).",
+            systemImage: "rectangle.stack.badge.plus",
+            tone: AetowerDesign.Status.neutral,
+            level: .card
+        )
     }
 
     private func similarDuplicateGroupRow(_ group: StorageDuplicateGroupModel) -> some View {
@@ -6412,8 +6440,7 @@ public struct StorageView: View {
     }
 
     private func visualExplorationSection(_ report: StorageHygieneReportModel) -> some View {
-        let visibleItems = filteredItems(from: report)
-        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
                 Label("Full disk map and advanced explorer", systemImage: "square.grid.3x3.topleft.filled")
                     .font(.headline)
@@ -6428,7 +6455,7 @@ public struct StorageView: View {
                 .frame(width: 220)
             }
 
-            Text("Full disk keeps proportional folder rectangles, with rounded storage cubes inside each block. Cube size is coarse at root and gets finer as you drill down.")
+            Text("The table opens first for responsiveness. Switch to Full disk or Treemap when you want the heavier visual map.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -6438,7 +6465,7 @@ public struct StorageView: View {
             } else if storageVisualExplorerMode == .treemap {
                 storageTreemapExplorer(report)
             } else {
-                storageExplorerTable(visibleItems)
+                storageExplorerTable(report)
             }
         }
         .padding(AetowerDesign.Spacing.lg)
@@ -7083,18 +7110,24 @@ public struct StorageView: View {
         return max(1, nodes.count / 2)
     }
 
-    private func storageExplorerTable(_ visibleItems: [StorageHygieneItemModel]) -> some View {
+    private func storageExplorerTable(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             if let error = state.storageItemsPageError {
                 storageItemsPageErrorBanner(error)
             }
             if let page = state.storageItemsPage {
                 storageServerExplorerTable(page)
+            } else if state.storageItemsPageIsLoading || state.storageItemsPageError == nil {
+                ContentUnavailableView(
+                    "Loading indexed storage page",
+                    systemImage: "list.bullet.rectangle",
+                    description: Text("Aetower is fetching a small server-side page instead of sorting the full scan on the UI thread.")
+                )
             } else {
                 // Fallback for the first paint and for older engines that do
                 // not serve the items-page endpoint: the in-memory top-K
                 // report slice with client-side sort/filter/paging.
-                storageLocalExplorerTable(visibleItems)
+                storageLocalExplorerTable(filteredItems(from: report))
             }
         }
         .overlay(alignment: .center) {
@@ -7465,8 +7498,8 @@ public struct StorageView: View {
     }
 
     private func itemSection(_ report: StorageHygieneReportModel) -> some View {
-        let visibleItems = filteredItems(from: report)
-        return DisclosureGroup(isExpanded: $showRawArtifacts) {
+        DisclosureGroup(isExpanded: $showRawArtifacts) {
+            let visibleItems = filteredItems(from: report)
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 HStack(spacing: AetowerDesign.Spacing.sm) {
                     Picker("Artifact scope", selection: $artifactScope) {
@@ -7500,9 +7533,17 @@ public struct StorageView: View {
                     )
                 } else {
                     LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-                        ForEach(visibleItems) { item in
+                        ForEach(visibleItems.prefix(120)) { item in
                             artifactRow(item)
                         }
+                    }
+                    if visibleItems.count > 120 {
+                        AetowerInfoBanner(
+                            "Showing the first 120 matching artifacts. Use the Explore table for paged server-side browsing.",
+                            systemImage: "line.3.horizontal.decrease.circle",
+                            tone: AetowerDesign.Status.neutral,
+                            level: .card
+                        )
                     }
                 }
             }
@@ -7511,7 +7552,7 @@ public struct StorageView: View {
             let visibleCandidateCount = visibleStorageItems(from: report).count
             advancedSectionLabel(
                 title: "Raw artifacts",
-                detail: "\(visibleItems.count) visible of \(visibleCandidateCount) candidate\(visibleCandidateCount == 1 ? "" : "s")",
+                detail: "\(visibleCandidateCount) candidate\(visibleCandidateCount == 1 ? "" : "s")",
                 systemImage: "list.bullet.rectangle"
             )
         }
