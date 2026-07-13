@@ -19,6 +19,8 @@ answers questions like "what is straining this machine", with tools such as
 - [Getting started](https://aetower.dev/docs/): install, first-run checklist, safe defaults
 - [Local MCP server](https://aetower.dev/docs/mcp/): tools, runtime model, client registration
 - [CLI reference](https://aetower.dev/docs/cli/): `aetower top/storage/repos/tab/call`, `--json`, exit codes
+- [MCP tool reference](https://aetower.dev/docs/mcp-tools/): all 45 tools with parameters, generated from the running app
+- [All documentation](https://aetower.dev/docs/): the full docs/ directory, rendered on every deploy
 
 ## Product
 

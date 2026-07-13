@@ -29,7 +29,7 @@ printf 'validating public claims before website deploy\n'
 )
 
 printf 'smoke-checking %s\n' "$PUBLIC_BASE_URL"
-for CHECK_PATH in "" "assets/aetower-app-icon-preview.png" "changelog/" "docs/" "docs/cli/" "docs/mcp/" "vs/activity-monitor/" "ai-agent-monitoring/" "sitemap.xml" "llms.txt" "robots.txt"; do
+for CHECK_PATH in "" "assets/aetower-app-icon-preview.png" "changelog/" "docs/" "docs/cli/" "docs/mcp/" "docs/mcp-tools/" "docs/getting-started/" "privacy/" "security/" "vs/activity-monitor/" "ai-agent-monitoring/" "sitemap.xml" "llms.txt" "robots.txt"; do
     CODE="$(curl -s -o /dev/null -w '%{http_code}' -I "$PUBLIC_BASE_URL/$CHECK_PATH")"
     printf '  %s /%s\n' "$CODE" "$CHECK_PATH"
     [ "$CODE" = "200" ] || { echo "smoke check failed: /$CHECK_PATH" >&2; exit 1; }
