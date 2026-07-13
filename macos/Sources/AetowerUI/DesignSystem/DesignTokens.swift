@@ -127,7 +127,8 @@ public enum AetowerDesign {
         public static let rowIdle = Color.secondary.opacity(0.04)
         public static let rowHover = Color.secondary.opacity(0.08)
         public static let rowSelected = Color.accentColor.opacity(0.10)
-        public static let card = Color.secondary.opacity(0.05)
+        public static let card = Color.clear
+        public static let control = Color.secondary.opacity(0.05)
         public static let cardHover = Color.secondary.opacity(0.09)
         public static let badge = Color.secondary.opacity(0.08)
         public static let badgeStrong = Color.secondary.opacity(0.14)

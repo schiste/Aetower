@@ -36,7 +36,7 @@ public enum AetowerSurfaceLevel {
     var fill: Color {
         switch self {
         case .quiet: return Color.clear
-        case .card: return AetowerDesign.Surface.card
+        case .card: return Color.clear
         case .selected: return AetowerDesign.Surface.rowSelected
         case .warning: return AetowerDesign.Surface.alertWarning
         case .critical: return AetowerDesign.Surface.alertCritical
@@ -46,7 +46,7 @@ public enum AetowerSurfaceLevel {
     var stroke: Color {
         switch self {
         case .quiet: return Color.clear
-        case .card: return AetowerDesign.Surface.divider
+        case .card: return Color.clear
         case .selected: return Color.accentColor.opacity(0.24)
         case .warning: return AetowerDesign.Status.warning.opacity(0.28)
         case .critical: return AetowerDesign.Status.error.opacity(0.28)
@@ -345,7 +345,7 @@ public extension View {
     ) -> some View {
         self
             .frame(minHeight: minHeight)
-            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .background(AetowerDesign.Surface.control, in: RoundedRectangle(cornerRadius: cornerRadius))
     }
 }
 
@@ -536,7 +536,7 @@ public struct AetowerTabSearchField: View {
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, AetowerDesign.Spacing.xs)
         .frame(minHeight: AetowerDesign.Size.controlHeight)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
+        .background(AetowerDesign.Surface.control, in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
     }
 }
 
@@ -645,7 +645,7 @@ public struct AetowerToolBadgeGroup: View {
                     .foregroundStyle(AetowerDesign.Ink.secondary)
                     .padding(.horizontal, AetowerDesign.Spacing.sm)
                     .frame(height: AetowerDesign.Size.controlHeight)
-                    .background(AetowerDesign.Surface.card, in: Capsule())
+                    .background(AetowerDesign.Surface.control, in: Capsule())
                     .overlay {
                         Capsule()
                             .stroke(AetowerDesign.Surface.divider, lineWidth: AetowerDesign.Stroke.hairline)
@@ -908,7 +908,7 @@ public struct AetowerRailButton: View {
             .padding(AetowerDesign.Spacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                isSelected ? AetowerDesign.Surface.rowSelected : AetowerDesign.Surface.card,
+                isSelected ? AetowerDesign.Surface.rowSelected : Color.clear,
                 in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md)
             )
             .overlay {
@@ -1037,7 +1037,7 @@ public struct AetowerSelectableTile: View {
             .padding(AetowerDesign.Spacing.sm)
             .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
             .background(
-                isSelected ? AetowerDesign.Surface.rowSelected : AetowerDesign.Surface.card,
+                isSelected ? AetowerDesign.Surface.rowSelected : Color.clear,
                 in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
             )
             .overlay {

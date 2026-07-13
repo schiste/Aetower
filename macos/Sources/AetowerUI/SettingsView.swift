@@ -2917,11 +2917,6 @@ private struct SettingsRowCard<Content: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, AetowerDesign.Spacing.md)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.secondary.opacity(0.12))
-                .frame(height: 1)
-        }
     }
 }
 

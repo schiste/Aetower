@@ -200,10 +200,6 @@ public struct ProjectsView: View {
             AetowerDesign.Surface.card,
             in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm)
-                .stroke(AetowerDesign.Surface.divider, lineWidth: AetowerDesign.Stroke.hairline)
-        )
     }
 
     private func connectorActionRow(

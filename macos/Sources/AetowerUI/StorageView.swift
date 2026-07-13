@@ -1010,10 +1010,6 @@ public struct StorageView: View {
         }
         .padding(AetowerDesign.Spacing.sm)
         .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
-        .background(
-            AetowerDesign.Surface.card,
-            in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.md, style: .continuous)
-        )
     }
 
     @ViewBuilder
@@ -1762,7 +1758,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.lg)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func storageHomeActionCard(_ action: StorageHomeAction, maxBytes: UInt64) -> some View {
@@ -2124,7 +2119,6 @@ public struct StorageView: View {
                             .textSelection(.enabled)
                             .padding(AetowerDesign.Spacing.sm)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
 
                     VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
@@ -3276,7 +3270,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.lg)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func wholeComputerOptimizationSection(_ report: StorageHygieneReportModel) -> some View {
@@ -3346,7 +3339,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.lg)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func wholeComputerItemCard(
@@ -3435,7 +3427,6 @@ public struct StorageView: View {
                 }
             }
             .padding(AetowerDesign.Spacing.lg)
-            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .onAppear {
                 recordSimilarityOverviewImpression(report, summary: summary)
             }
@@ -3507,7 +3498,6 @@ public struct StorageView: View {
             similarFilesFilteredContent(report, filter: selectedSimilarityFilter)
         }
         .padding(AetowerDesign.Spacing.lg)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .onAppear {
             recordSimilarityReviewSectionImpression(report, summary: summary)
         }
@@ -4374,7 +4364,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.lg)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func heroStat(_ value: String, _ label: String, _ tone: Color, trailing: Bool = false) -> some View {
@@ -4530,7 +4519,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.lg)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func storageCoverageOverview(_ report: StorageHygieneReportModel) -> some View {
@@ -4575,7 +4563,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.lg)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func volumeStateSection(_ report: StorageHygieneReportModel) -> some View {
@@ -4596,7 +4583,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.lg)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func storageInvestigationSection(_ report: StorageHygieneReportModel) -> some View {
@@ -4690,7 +4676,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func storageInvestigationFindingCard(_ finding: StorageInvestigationFindingModel) -> some View {
@@ -4842,7 +4827,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func reclaimActionCard(_ recipe: StorageCleanupRecipeModel) -> some View {
@@ -5050,7 +5034,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func budgetGuardrailsSection(_ report: StorageHygieneReportModel) -> some View {
@@ -5149,7 +5132,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func preventionSuggestionRow(
@@ -5297,7 +5279,6 @@ public struct StorageView: View {
                     .foregroundStyle(.secondary)
                     .padding(AetowerDesign.Spacing.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
                 LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                     ForEach(hygiene.agents) { agent in
@@ -5313,7 +5294,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func agentHygieneCard(_ agent: StorageAgentArtifactSummaryModel) -> some View {
@@ -5485,7 +5465,6 @@ public struct StorageView: View {
                     .foregroundStyle(.secondary)
                     .padding(AetowerDesign.Spacing.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
                 LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                     ForEach(report.cleanupBundles) { bundle in
@@ -5659,7 +5638,6 @@ public struct StorageView: View {
                             .textSelection(.enabled)
                             .padding(AetowerDesign.Spacing.sm)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
 
                     VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
@@ -5795,7 +5773,6 @@ public struct StorageView: View {
                             .textSelection(.enabled)
                             .padding(AetowerDesign.Spacing.sm)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
 
                     if let result = cleanupExecutionResult {
@@ -5821,7 +5798,6 @@ public struct StorageView: View {
                                 .textSelection(.enabled)
                                 .padding(AetowerDesign.Spacing.sm)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                             Text(String(format: "%.1fs", result.durationSeconds))
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
@@ -5911,7 +5887,6 @@ public struct StorageView: View {
                         .foregroundStyle(.secondary)
                         .padding(AetowerDesign.Spacing.md)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 } else {
                     LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                         ForEach(report.cleanupRecipes) { recipe in
@@ -5947,7 +5922,6 @@ public struct StorageView: View {
                     .foregroundStyle(.secondary)
                     .padding(AetowerDesign.Spacing.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
                 LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                     ForEach(Array(cleanupAuditEvents.prefix(12))) { event in
@@ -6073,7 +6047,6 @@ public struct StorageView: View {
                     .foregroundStyle(.secondary)
                     .padding(AetowerDesign.Spacing.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
                 LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                     ForEach(report.repoFootprints) { footprint in
@@ -6222,14 +6195,12 @@ public struct StorageView: View {
                     .foregroundStyle(.secondary)
                     .padding(AetowerDesign.Spacing.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else if events.isEmpty {
                 Label("No meaningful storage jumps were detected since the last baseline.", systemImage: "checkmark.circle")
                     .font(.caption)
                     .foregroundStyle(AetowerDesign.Status.ready)
                     .padding(AetowerDesign.Spacing.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
                 LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
                     ForEach(events) { event in
@@ -6356,7 +6327,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func storageSinceLastScanSection(_ diff: StorageScanDiffModel) -> some View {
@@ -6418,7 +6388,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func storageScanDiffRow(_ entry: StorageScanDiffEntryModel, badge: String) -> some View {
@@ -6548,7 +6517,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func visualExplorationSection(_ report: StorageHygieneReportModel) -> some View {
@@ -6581,7 +6549,6 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.lg)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func storageFullDiskExplorer(_ report: StorageHygieneReportModel) -> some View {
@@ -7842,7 +7809,6 @@ public struct StorageView: View {
             )
         }
         .padding(AetowerDesign.Spacing.md)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var loadingSection: some View {
@@ -7974,7 +7940,6 @@ public struct StorageView: View {
         }
         .padding(AetowerDesign.Spacing.md)
         .frame(maxWidth: .infinity, minHeight: 126, alignment: .topLeading)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func footprintMetric(
@@ -9166,7 +9131,6 @@ public struct StorageView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(AetowerDesign.Spacing.md)
-                            .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     } else {
                         ForEach(cleanupBasket) { item in
                             HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
@@ -10619,7 +10583,6 @@ private struct StorageSimilarityImageThumbnail: View {
         }
         .padding(6)
         .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
-        .background(AetowerDesign.Surface.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 
