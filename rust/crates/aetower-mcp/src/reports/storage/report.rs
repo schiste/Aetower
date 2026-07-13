@@ -282,7 +282,8 @@ pub(super) fn build_storage_hygiene_report_with_options(
     if let Some(runtime) = options.runtime.as_ref() {
         let _ = runtime.set_phase(STORAGE_SCAN_PHASE_ARTIFACT_SIZING, None);
     }
-    let mut collector = StorageCandidateCollector::new(options.limit);
+    let report_item_limit = options.mode.report_item_limit(options.limit);
+    let mut collector = StorageCandidateCollector::new(report_item_limit);
     repository_cache.store_repository_inventory_cache(
         &repository_inventory_scan.repositories_by_root,
         now_millis,
@@ -449,6 +450,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
         &items,
         &growth_deltas,
     );
+    let retained_count = items.len().min(u64::MAX as usize) as u64;
     let diagnostics = StorageScanDiagnostics {
         mode: options.mode.as_str().to_owned(),
         root_walk_millis: metrics.root_walk_millis,
@@ -461,7 +463,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
         discovered_repository_count: metrics.discovered_repository_count,
         sized_entry_count: metrics.sized_entry_count,
         candidate_seen_count: metrics.candidate_seen_count,
-        candidate_retained_count: items.len().min(u64::MAX as usize) as u64,
+        candidate_retained_count: retained_count,
         storage_index_status: metrics.storage_index_status,
         storage_index_hits: metrics.storage_index_hits,
         storage_index_misses: metrics.storage_index_misses,
@@ -469,7 +471,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
         native_metadata_strategy: options.mode.native_metadata_strategy().to_owned(),
         fsevents_status: "swift_cache_invalidation".to_owned(),
         lazy_git_status: !options.mode.collect_git_status(),
-        top_k_retained: true,
+        top_k_retained: metrics.candidate_seen_count > retained_count,
         performance_budget: StoragePerformanceBudgetDiagnostics::default(),
     };
     StorageHygieneReport {

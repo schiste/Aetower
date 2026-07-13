@@ -227,6 +227,8 @@ pub(super) struct StorageItemRowsPage {
     pub(super) total_available: u64,
 }
 
+const STORAGE_INDEX_STALE_EVICTION_MAX_PASSES: usize = 128;
+
 pub(super) struct StorageSizeIndex {
     connection: Option<Connection>,
     pub(super) status: String,
@@ -964,12 +966,41 @@ impl StorageSizeIndex {
         metrics: &mut StorageScanMetrics,
     ) -> Result<Vec<StorageIndexedFileRow>, String> {
         self.flush_pending_rows();
-        let Some(connection) = self.connection.as_ref() else {
-            return Err(self.status.clone());
-        };
         let read_limit = limit
             .saturating_mul(STORAGE_INDEX_SNAPSHOT_READ_MULTIPLIER)
             .clamp(1, 5_000);
+        let mut retained = Vec::new();
+        for _ in 0..STORAGE_INDEX_STALE_EVICTION_MAX_PASSES {
+            let mut stale_paths = Vec::new();
+            retained =
+                self.query_candidate_rows_once(roots, limit, read_limit, &mut stale_paths)?;
+            if stale_paths.is_empty() {
+                break;
+            }
+            self.delete_indexed_rows(&stale_paths)?;
+            if retained.len() >= limit {
+                break;
+            }
+        }
+        metrics.storage_index_hits = metrics
+            .storage_index_hits
+            .saturating_add(retained.len().min(u64::MAX as usize) as u64);
+        if retained.is_empty() {
+            metrics.storage_index_misses = metrics.storage_index_misses.saturating_add(1);
+        }
+        Ok(retained)
+    }
+
+    fn query_candidate_rows_once(
+        &self,
+        roots: &[PathBuf],
+        limit: usize,
+        read_limit: usize,
+        stale_paths: &mut Vec<String>,
+    ) -> Result<Vec<StorageIndexedFileRow>, String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
         let mut statement = connection
             .prepare(
                 "SELECT path, device, inode, file_id, source_root, repo_root, kind,
@@ -994,21 +1025,18 @@ impl StorageSizeIndex {
                 indexed_file_row_from_sql,
             )
             .map_err(|error| error.to_string())?;
-        let mut retained = Vec::new();
+        let mut retained = Vec::with_capacity(limit.min(read_limit));
         for row in rows.flatten() {
-            if !Path::new(&row.path).exists() {
+            if !indexed_row_matches_live_metadata(&row) {
+                stale_paths.push(row.path.clone());
                 continue;
             }
             if roots.is_empty() || roots.iter().any(|root| path_is_under_root(&row.path, root)) {
                 retained.push(row);
-                metrics.storage_index_hits = metrics.storage_index_hits.saturating_add(1);
                 if retained.len() >= limit {
                     break;
                 }
             }
-        }
-        if retained.is_empty() {
-            metrics.storage_index_misses = metrics.storage_index_misses.saturating_add(1);
         }
         Ok(retained)
     }
@@ -1019,8 +1047,9 @@ impl StorageSizeIndex {
     /// `large-directory` row at the large-directory threshold, plus the
     /// minimum item size)
     /// and the ordering semantics of `sort_storage_items`. Rows whose paths no
-    /// longer exist on disk are evicted from the index in one statement and the
-    /// page is refilled once.
+    /// longer match live metadata are evicted from the index and the page is
+    /// refilled until the visible rows are clean or the repair pass budget is
+    /// exhausted.
     pub(super) fn load_item_rows_page(
         &self,
         roots: &[PathBuf],
@@ -1033,16 +1062,20 @@ impl StorageSizeIndex {
         self.flush_pending_rows();
         let mut page =
             self.query_item_rows_page(roots, sort_key, sort_descending, offset, limit)?;
-        let missing = page
-            .rows
-            .iter()
-            .filter(|row| fs::symlink_metadata(&row.path).is_err())
-            .map(|row| row.path.clone())
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            self.delete_indexed_rows(&missing)?;
+        for _ in 0..STORAGE_INDEX_STALE_EVICTION_MAX_PASSES {
+            let stale = page
+                .rows
+                .iter()
+                .filter(|row| !indexed_row_matches_live_metadata(row))
+                .map(|row| row.path.clone())
+                .collect::<Vec<_>>();
+            if stale.is_empty() {
+                break;
+            }
+            self.delete_indexed_rows(&stale)?;
             page = self.query_item_rows_page(roots, sort_key, sort_descending, offset, limit)?;
         }
+        page.rows.retain(indexed_row_matches_live_metadata);
         if page.rows.is_empty() {
             metrics.storage_index_misses = metrics.storage_index_misses.saturating_add(1);
         } else {
@@ -1136,6 +1169,12 @@ impl StorageSizeIndex {
         connection
             .execute(
                 &format!("DELETE FROM storage_file_index WHERE path IN ({placeholders})"),
+                params_from_iter(paths.iter()),
+            )
+            .map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                &format!("DELETE FROM storage_size_index WHERE path IN ({placeholders})"),
                 params_from_iter(paths.iter()),
             )
             .map_err(|error| error.to_string())?;
@@ -2610,4 +2649,14 @@ fn indexed_file_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<Storag
         truncated: row.get::<_, i64>(18)? != 0,
         last_scan_millis: last_scan_millis.max(0) as u64,
     })
+}
+
+fn indexed_row_matches_live_metadata(row: &StorageIndexedFileRow) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(&row.path) else {
+        return false;
+    };
+    if metadata.dev() as i64 != row.device || metadata.ino() as i64 != row.inode {
+        return false;
+    }
+    true
 }

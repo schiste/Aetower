@@ -43,7 +43,12 @@ final class StorageReclaimPolicyTests: XCTestCase {
     }
 
     func testScanModesExposeOperatorLabels() {
-        XCTAssertEqual(StorageScanModeSelection.allCases.map(\.label), ["Fast", "Complete", "Forensic"])
+        XCTAssertEqual(StorageScanModeSelection.allCases.map(\.label), ["Quick", "Complete", "Forensic"])
+        XCTAssertEqual(
+            StorageScanModeSelection.allCases.map(\.actionTitle),
+            ["Quick scan", "Complete scan", "Forensic scan"]
+        )
+        XCTAssertEqual(StorageScanModeSelection.label(for: "fast_changed_only"), "Quick")
         XCTAssertEqual(StorageScanModeSelection.label(for: "deep_native"), "Complete")
         XCTAssertEqual(StorageScanModeSelection.label(for: "unknown_mode"), "unknown_mode")
     }
@@ -52,6 +57,8 @@ final class StorageReclaimPolicyTests: XCTestCase {
         XCTAssertEqual(StorageScanModeSelection.fast.defaultMaxDepth, 5)
         XCTAssertEqual(StorageScanModeSelection.complete.defaultMaxDepth, 12)
         XCTAssertEqual(StorageScanModeSelection.complete.resultLimit, 200)
+        XCTAssertEqual(StorageScanModeSelection.fast.rowLimitLabel, "120 top rows")
+        XCTAssertEqual(StorageScanModeSelection.complete.rowLimitLabel, "all normal rows")
     }
 
     func testDataCardActionsExposeClearOperatorLabels() {

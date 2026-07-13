@@ -36,6 +36,16 @@ impl StorageScanMode {
         }
     }
 
+    /// Retained rows in the report envelope. Fast scans are deliberately
+    /// top-K; Complete/Forensic scans keep the full normal operator table and
+    /// rely on the dedicated page API only for extreme (>10k row) machines.
+    pub(super) fn report_item_limit(self, requested_limit: usize) -> usize {
+        match self {
+            Self::InstantCached | Self::FastChangedOnly => requested_limit.clamp(1, MAX_LIMIT),
+            Self::DeepNative | Self::ForensicVerified => MAX_ITEMS_PAGE_LIMIT,
+        }
+    }
+
     /// Wall-clock budget for the artifact size walk. The ambient fast pass
     /// must stay snappy; Deep/Forensic run as cancellable background jobs
     /// with checkpoints, so minutes-scale walks are safe there. This budget

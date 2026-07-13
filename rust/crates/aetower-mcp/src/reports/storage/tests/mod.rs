@@ -1,5 +1,5 @@
 use super::*;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 fn storage_index_test_guard() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -188,7 +188,7 @@ fn storage_hygiene_fast_mode_uses_lazy_git_status_and_diagnostics() {
 
     assert_eq!(value["scan_mode"], "fast_changed_only");
     assert_eq!(value["diagnostics"]["lazy_git_status"], true);
-    assert_eq!(value["diagnostics"]["top_k_retained"], true);
+    assert_eq!(value["diagnostics"]["top_k_retained"], false);
     assert_eq!(
         value["repository_inventory"][0]["git_dirty_status"],
         "not_checked_lazy"
@@ -196,6 +196,72 @@ fn storage_hygiene_fast_mode_uses_lazy_git_status_and_diagnostics() {
     assert_eq!(
         value["repository_inventory_coverage"][0]["repository_count"].as_u64(),
         Some(1)
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn complete_scan_retains_all_normal_candidates_beyond_fast_cap() {
+    let root = test_root("complete-retains-beyond-fast-cap");
+    let blob = vec![1u8; (MIN_ITEM_BYTES + 128) as usize];
+    let candidate_count = MAX_LIMIT + 5;
+    for index in 0..candidate_count {
+        let target = root
+            .join(format!("project-{index:03}"))
+            .join("target")
+            .join("debug");
+        if let Err(error) = fs::create_dir_all(&target) {
+            panic!("create target artifact dir {index}: {error}");
+        }
+        if let Err(error) = fs::write(target.join("artifact.bin"), &blob) {
+            panic!("write target artifact {index}: {error}");
+        }
+    }
+
+    let fast = parse_json_value(
+        &build_storage_hygiene_report_for_roots_mode(
+            vec![root.display().to_string()],
+            5,
+            120,
+            "fast_changed_only",
+        ),
+        "fast storage JSON parses",
+    );
+    let complete = parse_json_value(
+        &build_storage_hygiene_report_for_roots_mode(
+            vec![root.display().to_string()],
+            12,
+            120,
+            "deep_native",
+        ),
+        "complete storage JSON parses",
+    );
+
+    assert_eq!(fast["items"].as_array().map(Vec::len), Some(120));
+    assert_eq!(fast["diagnostics"]["top_k_retained"], true);
+    assert_eq!(
+        complete["items"].as_array().map(Vec::len),
+        Some(candidate_count)
+    );
+    assert_eq!(
+        complete["summary"]["item_count"].as_u64(),
+        Some(candidate_count as u64)
+    );
+    assert_eq!(
+        complete["diagnostics"]["candidate_retained_count"].as_u64(),
+        Some(candidate_count as u64)
+    );
+    assert_eq!(complete["diagnostics"]["top_k_retained"], false);
+    let complete_bytes = complete["summary"]["total_reclaimable_bytes"]
+        .as_u64()
+        .unwrap_or_default();
+    let fast_bytes = fast["summary"]["total_reclaimable_bytes"]
+        .as_u64()
+        .unwrap_or_default();
+    assert!(
+        complete_bytes > fast_bytes,
+        "complete bytes {complete_bytes} should exceed fast top-K bytes {fast_bytes}"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -447,16 +513,20 @@ fn seed_items_page_fixture(root: &Path, count: usize) -> Vec<SeededPageRow> {
         if let Err(error) = fs::write(&file, b"fixture") {
             panic!("write items page fixture file: {error}");
         }
+        let metadata = fs::symlink_metadata(&file)
+            .unwrap_or_else(|error| panic!("stat items page fixture file: {error}"));
         let physical_bytes = MIN_ITEM_BYTES + ((count - index) as u64) * 4096;
-        let modified_millis =
-            (index % 7 != 3).then(|| now_millis.saturating_sub(index as u64 * 61_000));
+        let modified_millis = (index % 7 != 3)
+            .then(|| unix_metadata_millis(metadata.mtime(), metadata.mtime_nsec()).max(0) as u64);
+        let changed_millis =
+            Some(unix_metadata_millis(metadata.ctime(), metadata.ctime_nsec()).max(0) as u64);
         let accessed_millis =
             (index % 5 != 2).then(|| now_millis.saturating_sub(index as u64 * 97_000));
         let row = StorageIndexedFileRow {
             path: file.display().to_string(),
-            device: 7,
-            inode: index as i64 + 1,
-            file_id: format!("7:{index}"),
+            device: metadata.dev() as i64,
+            inode: metadata.ino() as i64,
+            file_id: format!("{}:{}", metadata.dev(), metadata.ino()),
             source_root: root.display().to_string(),
             repo_root: None,
             kind: kinds[index % kinds.len()].to_owned(),
@@ -466,9 +536,9 @@ fn seed_items_page_fixture(root: &Path, count: usize) -> Vec<SeededPageRow> {
             logical_bytes: physical_bytes,
             physical_bytes,
             modified_millis,
-            changed_millis: Some(now_millis),
+            changed_millis,
             accessed_millis,
-            birth_millis: Some(now_millis),
+            birth_millis: modified_millis,
             is_directory: false,
             entries: 1,
             truncated: false,
@@ -639,6 +709,89 @@ fn storage_hygiene_items_page_evicts_missing_rows_and_refills() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn storage_hygiene_items_page_evicts_metadata_mismatched_rows() {
+    let _index_guard = storage_index_test_guard();
+    let root = test_root("items-page-metadata-eviction");
+    fs::create_dir_all(&root).expect("create metadata eviction fixture dir");
+    let live_path = root.join("live.bin");
+    let stale_paths = (0..STORAGE_INDEX_SNAPSHOT_READ_MULTIPLIER)
+        .map(|index| root.join(format!("stale-{index:02}.bin")))
+        .collect::<Vec<_>>();
+    for path in stale_paths.iter().chain(std::iter::once(&live_path)) {
+        if let Err(error) = fs::write(path, b"fixture") {
+            panic!(
+                "write metadata eviction fixture {}: {error}",
+                path.display()
+            );
+        }
+    }
+    let now_millis = storage_now_millis();
+    let storage_index = StorageSizeIndex::open();
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+    let mut stale_rows = Vec::new();
+    for (index, stale_path) in stale_paths.iter().enumerate() {
+        let mut stale = seeded_index_row(
+            &root,
+            stale_path,
+            (4 * MIN_ITEM_BYTES).saturating_add(index as u64),
+            "rebuildable",
+            None,
+            Some(now_millis),
+            Some(now_millis),
+            now_millis,
+        );
+        stale.device = stale.device.saturating_add(42);
+        storage_index.store_indexed_row(&stale, &mut metrics);
+        stale_rows.push(stale);
+    }
+    let live = seeded_index_row(
+        &root,
+        &live_path,
+        2 * MIN_ITEM_BYTES,
+        "rebuildable",
+        None,
+        Some(now_millis),
+        Some(now_millis),
+        now_millis,
+    );
+    storage_index.store_indexed_row(&live, &mut metrics);
+    storage_index.flush_pending_rows();
+    drop(storage_index);
+
+    let indexed = must_ok(
+        storage_hygiene_indexed_json(vec![root.display().to_string()], 5, 1),
+        "indexed report serializes after metadata eviction",
+    );
+    let indexed = parse_json_value(&indexed, "indexed report parses");
+    assert_eq!(
+        indexed["summary"]["item_count"].as_u64(),
+        Some(1),
+        "indexed report evicts metadata-mismatched rows"
+    );
+    assert!(indexed["items"].as_array().is_some_and(|items| {
+        items.iter().all(|item| {
+            !stale_rows
+                .iter()
+                .any(|row| item["path"].as_str() == Some(row.path.as_str()))
+        })
+    }));
+
+    let (paths, total_available, page_source) = items_page_paths(
+        &root,
+        0,
+        STORAGE_INDEX_SNAPSHOT_READ_MULTIPLIER + 1,
+        "size",
+        true,
+    );
+    assert_eq!(page_source, "index");
+    assert_eq!(total_available, 1, "metadata-mismatched row is evicted");
+    assert_eq!(paths, vec![live_path.display().to_string()]);
+
+    let _ = fs::remove_dir_all(root);
+}
+
 fn batched_flush_row(
     root: &Path,
     name: &str,
@@ -647,11 +800,20 @@ fn batched_flush_row(
     last_scan_millis: u64,
 ) -> StorageIndexedFileRow {
     let path = root.join(name);
+    let metadata = fs::symlink_metadata(&path).ok();
+    let device = metadata
+        .as_ref()
+        .map(|metadata| metadata.dev() as i64)
+        .unwrap_or(11);
+    let inode = metadata
+        .as_ref()
+        .map(|metadata| metadata.ino() as i64)
+        .unwrap_or(1);
     StorageIndexedFileRow {
         path: path.display().to_string(),
-        device: 11,
-        inode: 1,
-        file_id: format!("11:{name}"),
+        device,
+        inode,
+        file_id: format!("{device}:{inode}"),
         source_root: root.display().to_string(),
         repo_root: None,
         kind: "rust-build".to_owned(),
@@ -888,11 +1050,20 @@ fn seeded_index_row(
     accessed_millis: Option<u64>,
     last_scan_millis: u64,
 ) -> StorageIndexedFileRow {
+    let metadata = fs::symlink_metadata(path).ok();
+    let device = metadata
+        .as_ref()
+        .map(|metadata| metadata.dev() as i64)
+        .unwrap_or(13);
+    let inode = metadata
+        .as_ref()
+        .map(|metadata| metadata.ino() as i64)
+        .unwrap_or(1);
     StorageIndexedFileRow {
         path: path.display().to_string(),
-        device: 13,
-        inode: 1,
-        file_id: format!("13:{}", path.display()),
+        device,
+        inode,
+        file_id: format!("{device}:{inode}"),
         source_root: source_root.display().to_string(),
         repo_root: repo_root.map(|repo| repo.display().to_string()),
         kind: "rust-build".to_owned(),
@@ -1413,6 +1584,7 @@ fn storage_growth_insights_report_since_last_scan_diff() {
 
 #[test]
 fn storage_cold_data_lane_bands_and_exclusions() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("cold-data-lane");
     let now_millis = storage_now_millis();
     let age = |days: u64| now_millis - days * DAY_MILLIS;
@@ -1628,6 +1800,7 @@ fn storage_recommendation_score_formula_weights_size_tier_and_staleness() {
 
 #[test]
 fn storage_items_page_sorts_by_persisted_recommendation_score() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("items-page-score-sort");
     if let Err(error) = fs::create_dir_all(&root) {
         panic!("create score fixture dir: {error}");
@@ -5105,6 +5278,7 @@ fn storage_scan_throttle_detects_pressure_cloud_and_network_roots() {
 /// debug builds.
 #[test]
 fn indexed_report_build_is_fast_on_large_synthetic_index() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("large-synthetic-index");
     let target = root.join("project").join("target").join("debug");
     if let Err(error) = fs::create_dir_all(&target) {
@@ -5896,6 +6070,15 @@ fn size_walk_budget_is_scaled_per_mode() {
         StorageScanMode::ForensicVerified.size_walk_time_budget(),
         Duration::from_secs(120)
     );
+    assert_eq!(StorageScanMode::FastChangedOnly.report_item_limit(120), 120);
+    assert_eq!(
+        StorageScanMode::DeepNative.report_item_limit(120),
+        MAX_ITEMS_PAGE_LIMIT
+    );
+    assert_eq!(
+        StorageScanMode::ForensicVerified.report_item_limit(120),
+        MAX_ITEMS_PAGE_LIMIT
+    );
 }
 
 #[test]
@@ -6356,8 +6539,7 @@ fn storage_hygiene_items_page_admits_large_directory_rows() {
     small_row.storage_role = "artifact".to_owned();
     small_row.safety = "review".to_owned();
     small_row.is_directory = true;
-    small_row.inode = 2;
-    let mut classified_row = seeded_index_row(
+    let classified_row = seeded_index_row(
         &root,
         &artifact,
         MIN_ITEM_BYTES * 4,
@@ -6367,7 +6549,6 @@ fn storage_hygiene_items_page_admits_large_directory_rows() {
         Some(now_millis.saturating_sub(DAY_MILLIS)),
         now_millis,
     );
-    classified_row.inode = 3;
     for row in [&large_row, &small_row, &classified_row] {
         storage_index.store_indexed_row(row, &mut metrics);
     }

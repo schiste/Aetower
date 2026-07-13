@@ -23,9 +23,17 @@ enum StorageScanModeSelection: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .fast: return "Fast"
+        case .fast: return "Quick"
         case .complete: return "Complete"
         case .forensic: return "Forensic"
+        }
+    }
+
+    var actionTitle: String {
+        switch self {
+        case .fast: return "Quick scan"
+        case .complete: return "Complete scan"
+        case .forensic: return "Forensic scan"
         }
     }
 
@@ -33,6 +41,13 @@ enum StorageScanModeSelection: String, CaseIterable, Identifiable {
         switch self {
         case .fast: return 120
         case .complete, .forensic: return 200
+        }
+    }
+
+    var rowLimitLabel: String {
+        switch self {
+        case .fast: return "\(resultLimit) top rows"
+        case .complete, .forensic: return "all normal rows"
         }
     }
 

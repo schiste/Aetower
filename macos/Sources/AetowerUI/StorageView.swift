@@ -457,6 +457,7 @@ public struct StorageView: View {
             // A load that blew its watchdog budget re-enables the button
             // so an explicit quick scan can supersede the stuck load.
             AetowerScanButton(
+                StorageScanModeSelection.fast.actionTitle,
                 isRunning: state.storageHygieneIsLoading
                     && !state.storageHygieneLoadExceededBudget
             ) {
@@ -528,7 +529,27 @@ public struct StorageView: View {
 
     private var storageScanOptionsMenu: some View {
         Menu {
-            Section("Attention list") {
+            Section("Scan profile") {
+                Button {
+                    runQuickScan()
+                } label: {
+                    Label(StorageScanModeSelection.fast.actionTitle, systemImage: "bolt")
+                }
+                Button {
+                    runCompleteScan()
+                } label: {
+                    Label(StorageScanModeSelection.complete.actionTitle, systemImage: "externaldrive")
+                }
+                Button {
+                    runForensicScan()
+                } label: {
+                    Label(StorageScanModeSelection.forensic.actionTitle, systemImage: "checkmark.seal")
+                }
+            }
+
+            Divider()
+
+            Section("List filter") {
                 ForEach(StorageFilter.allCases) { filter in
                     Button {
                         selectedFilter = filter
@@ -559,7 +580,7 @@ public struct StorageView: View {
         .menuStyle(.borderlessButton)
         .buttonStyle(.borderedProminent)
         .controlSize(.small)
-        .help("Choose the visible reclaim list or open custom scan settings")
+        .help("Choose a scan profile, change the visible list, or open custom scan settings")
     }
 
     private var storageHeaderBadges: [AetowerToolBadgeItem] {
@@ -679,7 +700,7 @@ public struct StorageView: View {
                         storageScanDepthStepper
                         storageScanModePicker
                         AetowerBadge(
-                            "\(scanMode.resultLimit) rows",
+                            scanMode.rowLimitLabel,
                             systemImage: "list.number",
                             tone: AetowerDesign.Tone.disk
                         )
@@ -691,7 +712,7 @@ public struct StorageView: View {
             AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md, cornerRadius: AetowerDesign.Radius.lg) {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                     HStack(spacing: AetowerDesign.Spacing.md) {
-                        Picker("Open list", selection: $selectedFilter) {
+                        Picker("List filter", selection: $selectedFilter) {
                             ForEach(StorageFilter.allCases) { filter in
                                 Text(filter.label).tag(filter)
                             }
@@ -723,9 +744,18 @@ public struct StorageView: View {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 Button("Quick defaults") {
                     customRoot = ""
-                    maxDepth = 5
+                    maxDepth = Double(StorageScanModeSelection.fast.defaultMaxDepth)
                     scanMode = .fast
                     selectedFilter = .attention
+                }
+                .buttonStyle(.bordered)
+
+                Button("Complete defaults") {
+                    customRoot = ""
+                    maxDepth = Double(StorageScanModeSelection.complete.defaultMaxDepth)
+                    scanMode = .complete
+                    selectedFilter = .all
+                    artifactScope = .all
                 }
                 .buttonStyle(.bordered)
 
@@ -8846,6 +8876,16 @@ public struct StorageView: View {
         )
     }
 
+    private func runForensicScan() {
+        selectedFilter = .attention
+        state.runStorageHygieneScan(
+            roots: [],
+            maxDepth: StorageScanModeSelection.forensic.defaultMaxDepth,
+            limit: StorageScanModeSelection.forensic.resultLimit,
+            mode: StorageScanModeSelection.forensic.rawValue
+        )
+    }
+
     private func runQuickScan() {
         selectedFilter = .attention
         state.runStorageHygieneScan(
@@ -11286,7 +11326,7 @@ private enum StorageFilter: String, CaseIterable, Identifiable {
         case .rebuildable: return "Rebuildable"
         case .expensive: return "Expensive"
         case .risky: return "Risky"
-        case .all: return "All"
+        case .all: return "All items"
         }
     }
 
