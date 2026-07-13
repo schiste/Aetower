@@ -721,6 +721,9 @@ public struct StorageView: View {
         _ section: StorageSection,
         report: StorageHygieneReportModel?
     ) -> String? {
+        if section == .audit {
+            return "\(cleanupAuditEvents.count) event\(cleanupAuditEvents.count == 1 ? "" : "s")"
+        }
         guard let report else {
             if state.storageHygieneIsVerifyingCache { return "Verifying" }
             return state.storageHygieneIsLoading ? "Scanning" : "No scan"
@@ -733,6 +736,8 @@ public struct StorageView: View {
             return "\(summary.groupCount) group\(summary.groupCount == 1 ? "" : "s")"
         case .explore:
             return "\(report.summary.itemCount) item\(report.summary.itemCount == 1 ? "" : "s")"
+        case .audit:
+            return "\(cleanupAuditEvents.count) event\(cleanupAuditEvents.count == 1 ? "" : "s")"
         case .insights:
             let growthCount = report.growthDeltas.filter { $0.deltaBytes > 0 }.count
             return "\(growthCount) growth signal\(growthCount == 1 ? "" : "s")"
@@ -755,6 +760,10 @@ public struct StorageView: View {
             return summary.groupCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
         case .explore:
             return AetowerDesign.Tone.memory
+        case .audit:
+            return cleanupAuditEvents.contains(where: { $0.succeeded == false })
+                ? AetowerDesign.Status.warning
+                : AetowerDesign.Status.neutral
         case .insights:
             if !report.budgetGuardrails.violations.isEmpty
                 || report.growthDeltas.contains(where: { $0.deltaBytes > 0 }) {
@@ -803,6 +812,8 @@ public struct StorageView: View {
             storageSimilarWorkspace(report)
         case .explore:
             storageExploreWorkspace(report)
+        case .audit:
+            storageAuditWorkspace()
         case .insights:
             storageInsightsWorkspace(report)
         }
@@ -1562,53 +1573,44 @@ public struct StorageView: View {
 
     private func storageReclaimSupportingData(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-            if let coldData = report.coldData, coldData.bands.contains(where: { $0.itemCount > 0 }) {
-                coldDataLaneSection(coldData)
-            }
             cleanupRecipesSection(report)
-            cleanupAuditSection
             if report.truncated {
                 warningBanner("The scan hit a cap or time budget. Results are partial; open Insights to inspect coverage or narrow the root.")
             }
         }
     }
 
-    @ViewBuilder
     private func storageQuickWinsSection(_ report: StorageHygieneReportModel) -> some View {
         let exactGroups = sortedDuplicateGroups(duplicateGroups(for: .exactDuplicates, in: report))
         let screenshots = storageScreenshotQuickWinItems(in: report)
-        let quickWinCount = (exactGroups.isEmpty ? 0 : 1) + (screenshots.isEmpty ? 0 : 1)
-        if quickWinCount > 0 {
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-                HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
-                    Label("Quick wins", systemImage: "bolt.fill")
-                        .font(AetowerDesign.Typography.sectionTitle)
-                        .foregroundStyle(AetowerDesign.Ink.primary)
-                    Spacer(minLength: AetowerDesign.Spacing.md)
-                    AetowerBadge(
-                        "\(quickWinCount) lead\(quickWinCount == 1 ? "" : "s")",
-                        tone: AetowerDesign.Tone.disk
+        let quickWinCount = exactGroups.isEmpty ? 1 : 2
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                Label("Quick wins", systemImage: "bolt.fill")
+                    .font(AetowerDesign.Typography.sectionTitle)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                AetowerBadge(
+                    "\(quickWinCount) lead\(quickWinCount == 1 ? "" : "s")",
+                    tone: AetowerDesign.Tone.disk
+                )
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 320), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                if !exactGroups.isEmpty {
+                    duplicateQuickWinCard(
+                        groups: exactGroups,
+                        reclaimableBytes: sumDuplicateGroupBytes(exactGroups)
                     )
                 }
-
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 320), spacing: AetowerDesign.Spacing.sm)],
-                    alignment: .leading,
-                    spacing: AetowerDesign.Spacing.sm
-                ) {
-                    if !exactGroups.isEmpty {
-                        duplicateQuickWinCard(
-                            groups: exactGroups,
-                            reclaimableBytes: sumDuplicateGroupBytes(exactGroups)
-                        )
-                    }
-                    if !screenshots.isEmpty {
-                        screenshotsQuickWinCard(screenshots)
-                    }
-                }
+                screenshotsQuickWinCard(screenshots)
             }
-            .padding(AetowerDesign.Spacing.lg)
         }
+        .padding(AetowerDesign.Spacing.lg)
     }
 
     private func duplicateQuickWinCard(
@@ -1698,8 +1700,18 @@ public struct StorageView: View {
                     footprintMetric("Size", value: formatBytes(sumItemBytes(items)), detail: "current scan")
                 }
 
-                ForEach(items.prefix(3)) { item in
-                    storageQuickWinItemSampleRow(item)
+                if items.isEmpty {
+                    Label(
+                        "No screenshots older than \(screenshotQuickWinAgeDays)d in the current scan.",
+                        systemImage: "checkmark.circle"
+                    )
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    ForEach(items.prefix(3)) { item in
+                        storageQuickWinItemSampleRow(item)
+                    }
                 }
 
                 Spacer(minLength: 0)
@@ -1780,6 +1792,12 @@ public struct StorageView: View {
         }
     }
 
+    private func storageAuditWorkspace() -> some View {
+        LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            cleanupAuditSection
+        }
+    }
+
     /// Hunt-for-space surface: the visual treemap and the full item list.
     private func storageExploreWorkspace(_ report: StorageHygieneReportModel) -> some View {
         LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
@@ -1803,7 +1821,7 @@ public struct StorageView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(width: 320)
+                    .frame(width: 390)
                 }
 
                 Text(selectedExplorePane.detail)
@@ -1822,6 +1840,16 @@ public struct StorageView: View {
         case .optimize:
             wholeComputerOptimizationSection(report)
             storageInvestigationSection(report)
+        case .cold:
+            if let coldData = report.coldData, coldData.bands.contains(where: { $0.itemCount > 0 }) {
+                coldDataLaneSection(coldData)
+            } else {
+                ContentUnavailableView(
+                    "No cold data",
+                    systemImage: "snowflake",
+                    description: Text("Run a deeper scan or widen the scan roots to surface long-unmodified candidates.")
+                )
+            }
         case .raw:
             itemSection(report)
         }
@@ -1866,11 +1894,7 @@ public struct StorageView: View {
             cleanupPreviewSection(report)
             cleanupBundlesSection(report)
             reclaimSpaceSection(report)
-            if let coldData = report.coldData, coldData.bands.contains(where: { $0.itemCount > 0 }) {
-                coldDataLaneSection(coldData)
-            }
             cleanupRecipesSection(report)
-            cleanupAuditSection
         }
     }
 
@@ -1919,7 +1943,6 @@ public struct StorageView: View {
     private func storagePoliciesWorkspace(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             budgetGuardrailsSection(report)
-            cleanupAuditSection
             cleanupPreviewSection(report)
         }
     }
@@ -3461,7 +3484,6 @@ public struct StorageView: View {
             cleanupPreviewSection(report)
             cleanupBundlesSection(report)
             cleanupRecipesSection(report)
-            cleanupAuditSection
             summaryGrid(report)
             if report.truncated {
                 warningBanner("The scan hit a cap or time budget. Results are partial; narrow the root or refresh when the machine is idle.")
@@ -10919,6 +10941,7 @@ private enum StorageSection: String, CaseIterable, Identifiable {
     case reclaim
     case similar
     case explore
+    case audit
     case insights
 
     var id: String { rawValue }
@@ -10928,6 +10951,7 @@ private enum StorageSection: String, CaseIterable, Identifiable {
         case .reclaim: return "Reclaim"
         case .similar: return "Similar"
         case .explore: return "Explore"
+        case .audit: return "Audit"
         case .insights: return "Insights"
         }
     }
@@ -10937,6 +10961,7 @@ private enum StorageSection: String, CaseIterable, Identifiable {
         case .reclaim: return "Free up space"
         case .similar: return "Duplicates & redundancy"
         case .explore: return "Find what's big"
+        case .audit: return "Cleanup record"
         case .insights: return "Trends & coverage"
         }
     }
@@ -10948,7 +10973,9 @@ private enum StorageSection: String, CaseIterable, Identifiable {
         case .similar:
             return "Exact duplicates, fuzzy matches, and redundancy review."
         case .explore:
-            return "Indexed browser, visual maps, optimization leads, and raw artifacts."
+            return "Indexed browser, visual maps, cold data, optimization leads, and raw artifacts."
+        case .audit:
+            return "Local record of staged, blocked, trashed, override, and failed cleanup actions."
         case .insights:
             return "Growth over time, volume coverage, budgets, and raw diagnostics."
         }
@@ -10959,6 +10986,7 @@ private enum StorageSection: String, CaseIterable, Identifiable {
         case .reclaim: return "sparkles"
         case .similar: return "doc.on.doc"
         case .explore: return "square.grid.3x3.topleft.filled"
+        case .audit: return "list.clipboard"
         case .insights: return "chart.line.uptrend.xyaxis"
         }
     }
@@ -10967,6 +10995,7 @@ private enum StorageSection: String, CaseIterable, Identifiable {
 private enum StorageExplorePane: String, CaseIterable, Identifiable {
     case browse
     case optimize
+    case cold
     case raw
 
     var id: String { rawValue }
@@ -10975,6 +11004,7 @@ private enum StorageExplorePane: String, CaseIterable, Identifiable {
         switch self {
         case .browse: return "Browse"
         case .optimize: return "Optimize"
+        case .cold: return "Cold"
         case .raw: return "Raw"
         }
     }
@@ -10984,7 +11014,9 @@ private enum StorageExplorePane: String, CaseIterable, Identifiable {
         case .browse:
             return "Open the indexed table first, then opt into heavier full-disk and treemap views."
         case .optimize:
-            return "Large files, cold data, app footprints, System Data, and investigation leads."
+            return "Large files, app footprints, System Data, and investigation leads."
+        case .cold:
+            return "Long-unmodified candidates ranked by age band and reclaim potential."
         case .raw:
             return "The raw artifact list stays collapsed until opened; use it when you need every retained candidate."
         }
