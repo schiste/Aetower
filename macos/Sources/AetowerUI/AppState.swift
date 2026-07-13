@@ -2054,70 +2054,70 @@ public final class AppState {
     private static let storageEstimateRefreshCooldownMillis: UInt64 = 120_000
     private static let storageEstimateFullScanDirtyPathThreshold = 220
 
-    /// Low-impact storage freshness loop. FSEvents only marks roots dirty; this
-    /// waits for quiescence and starts the existing changed-only Rust scan job.
-    /// That keeps totals fresh after cleanup/build activity without rescanning
-    /// on every write burst or blocking the visible Storage report.
-    private func refreshStorageEstimateIfQuiescent() {
-        guard let report = storageHygieneReport else { return }
-        updateStorageEstimateStatus(report: report)
-        guard !storageHygieneIsLoading, !storageHygieneIsVerifyingCache, storageScanJob == nil else { return }
-
-        let summary = StorageRootChangeJournal.summary(sampleLimit: 4)
-        guard summary.hasChanges, let lastChange = summary.lastChangeMillis else { return }
-        guard lastChange > report.capturedAtMillis else { return }
-
-        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
-        guard nowMillis >= lastChange + Self.storageEstimateQuietMillis else { return }
-        guard nowMillis >= lastStorageEstimateDecisionMillis + Self.storageEstimateRefreshCooldownMillis else { return }
-        lastStorageEstimateDecisionMillis = nowMillis
-
-        guard summary.dirtyPathCount < Self.storageEstimateFullScanDirtyPathThreshold else {
-            storageEstimateStatus = StorageEstimateStatus(
-                confidence: .needsFullScan,
-                title: "Full Scan Needed",
-                detail: "\(summary.dirtyPathCount) changed paths recorded; run a full scan to avoid underestimating broad filesystem churn.",
-                dirtyPathCount: summary.dirtyPathCount,
-                lastChangeMillis: lastChange,
-                lastRefreshMillis: lastStorageEstimateRefreshMillis == 0
-                    ? report.capturedAtMillis
-                    : lastStorageEstimateRefreshMillis
-            )
-            recordLocalDiagnosticsEvent(
-                level: .info,
-                subsystem: .ui,
-                eventType: "storage-estimate-refresh-deferred",
-                message: "Deferred automatic storage re-estimation because too many paths changed.",
-                fields: [
-                    DiagnosticsField(key: "dirty_path_count", value: String(summary.dirtyPathCount)),
-                    DiagnosticsField(
-                        key: "dirty_path_threshold",
-                        value: String(Self.storageEstimateFullScanDirtyPathThreshold)
-                    ),
-                    DiagnosticsField(key: "sample_paths", value: summary.samplePaths.joined(separator: " | ")),
-                ]
-            )
-            return
+    @discardableResult
+    private func startStorageRefreshForDirtyDisplayedReportIfNeeded(
+        _ report: StorageHygieneReportModel,
+        trigger: String
+    ) -> Bool {
+        guard !storageHygieneIsLoading,
+              !storageHygieneIsVerifyingCache,
+              storageScanJob == nil
+        else {
+            return false
         }
 
+        let summary = StorageRootChangeJournal.summary(sampleLimit: 4)
+        guard summary.hasChanges, let lastChange = summary.lastChangeMillis else { return false }
+        guard lastChange > report.capturedAtMillis else { return false }
+
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        guard nowMillis >= lastChange + Self.storageEstimateQuietMillis else {
+            updateStorageEstimateStatus(report: report)
+            return false
+        }
+        guard nowMillis >= lastStorageEstimateDecisionMillis + Self.storageEstimateRefreshCooldownMillis else {
+            updateStorageEstimateStatus(report: report)
+            return false
+        }
+
+        lastStorageEstimateDecisionMillis = nowMillis
+        let broadChurn = summary.dirtyPathCount >= Self.storageEstimateFullScanDirtyPathThreshold
+        let mode = broadChurn ? "deep_native" : "fast_changed_only"
+        let maxDepth: UInt32 = broadChurn ? 8 : 5
         recordLocalDiagnosticsEvent(
             level: .info,
             subsystem: .ui,
-            eventType: "storage-estimate-refresh-started",
-            message: "Started changed-only storage re-estimation after filesystem quiescence.",
+            eventType: broadChurn
+                ? "storage-estimate-refresh-started-deep"
+                : "storage-estimate-refresh-started",
+            message: broadChurn
+                ? "Started deep storage refresh because cached data is stale after broad filesystem changes."
+                : "Started changed-only storage refresh because cached data is stale.",
             fields: [
+                DiagnosticsField(key: "trigger", value: trigger),
                 DiagnosticsField(key: "dirty_path_count", value: String(summary.dirtyPathCount)),
                 DiagnosticsField(key: "root_count", value: String(report.roots.count)),
-                DiagnosticsField(key: "mode", value: "fast_changed_only"),
+                DiagnosticsField(key: "mode", value: mode),
                 DiagnosticsField(key: "sample_paths", value: summary.samplePaths.joined(separator: " | ")),
             ]
         )
         startStorageScanJob(
             roots: report.roots,
-            maxDepth: 5,
+            maxDepth: maxDepth,
             limit: 200,
-            mode: "fast_changed_only"
+            mode: mode
         )
+        return true
+    }
+
+    /// Low-impact storage freshness loop. FSEvents only marks roots dirty; this
+    /// waits for quiescence and starts a refresh scan. Small dirty sets use the
+    /// changed-only job; broad churn uses a deeper scan so deletions and moves
+    /// do not leave stale indexed rows visible.
+    private func refreshStorageEstimateIfQuiescent() {
+        guard let report = storageHygieneReport else { return }
+        updateStorageEstimateStatus(report: report)
+        startStorageRefreshForDirtyDisplayedReportIfNeeded(report, trigger: "storage-fsevents")
     }
 
     private func updateStorageEstimateStatus(report: StorageHygieneReportModel? = nil) {
@@ -2593,6 +2593,11 @@ public final class AppState {
         if let storageHygieneReport,
            (roots.isEmpty || Self.storageHygieneReportMatchesRequestedRoots(storageHygieneReport, roots: roots))
         {
+            updateStorageEstimateStatus(report: storageHygieneReport)
+            startStorageRefreshForDirtyDisplayedReportIfNeeded(
+                storageHygieneReport,
+                trigger: "storage-open"
+            )
             return
         }
         storageHygieneTask?.cancel()
