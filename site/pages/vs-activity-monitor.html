@@ -1,0 +1,97 @@
+<h1>Aetower vs Activity Monitor</h1>
+<p>
+  An honest comparison. Activity Monitor is good software — it ships with every Mac, it's
+  free, and for many questions it's exactly enough. Aetower exists for the questions it
+  can't answer. Here's where the line actually falls.
+</p>
+
+<h2>What Activity Monitor does well</h2>
+<ul>
+  <li><strong>It's already installed</strong> — zero download, zero trust decision.</li>
+  <li><strong>Force-quitting</strong> a misbehaving app is two clicks.</li>
+  <li><strong>The Energy pane</strong> gives a fair per-app energy-impact ranking.</li>
+  <li>
+    <strong>Kernel-accurate counters</strong> for CPU, memory, disk, and network — the same
+    numbers everything else (Aetower included) ultimately reads.
+  </li>
+</ul>
+<p>
+  If your question is "which app is eating my CPU <em>right now</em>, and can I quit it," you
+  don't need Aetower. Activity Monitor answers that.
+</p>
+
+<h2>Where it stops</h2>
+<p>
+  Activity Monitor is a flat process list with no memory of the past and no idea what a
+  process <em>means</em>. The questions it can't answer are the ones that actually cost you
+  time:
+</p>
+<ul>
+  <li>
+    <strong>"Why is Chrome 50 rows?"</strong> — helpers, GPU processes, and renderers appear
+    as unrelated entries. You sum them in your head.
+  </li>
+  <li>
+    <strong>"What was running when my Mac locked up at 2 PM?"</strong> — there is no
+    history. If you didn't see it happen, it didn't happen.
+  </li>
+  <li>
+    <strong>"What did that coding-agent session cost?"</strong> — Energy Impact is a live
+    number; it isn't attributed to a session, accumulated over one, or connected to the
+    repository the agent was working on.
+  </li>
+  <li>
+    <strong>"Can my script or agent read this?"</strong> — Activity Monitor has no API, no
+    CLI, no automation surface at all.
+  </li>
+</ul>
+
+<h2>What Aetower adds</h2>
+<ul>
+  <li>
+    <strong>Entities, not processes.</strong> Chrome plus its helpers is one row with one
+    0–100 friction score built from CPU, memory, disk, network, wakeups, energy, and thermal
+    contribution — the loudest thing on the machine is at the top.
+  </li>
+  <li>
+    <strong>Bounded local history.</strong> Scrub back through recent entity-level snapshots
+    and read a timeline that narrates spikes, anomalies, and restart loops — so a past
+    slowdown is an answerable question, not a shrug.
+  </li>
+  <li>
+    <strong>An AI-agent surface.</strong> Sessions from coding agents and local model
+    servers appear with inferred GPU share, unified-memory pressure, and kernel-measured
+    energy, each labeled with its source.
+  </li>
+  <li>
+    <strong>Machine-readable everything.</strong> A read-only local MCP server for agents, an
+    <code>aetower</code> CLI for your shell, and an addressable UI
+    (<code>aetower://tab/&lt;slug&gt;</code>, ⌘1–8) — the same live state, three ways in.
+  </li>
+  <li>
+    <strong>Storage and repository context.</strong> Safety-tiered disk reclaim that stages
+    through the Trash, and a repository fleet view with git state and agent-contract
+    readiness.
+  </li>
+</ul>
+
+<h2>The honest caveats</h2>
+<ul>
+  <li>
+    Aetower is an <strong>early alpha</strong>: surfaces move fast, and you should read its
+    output as an operator, not an auditor.
+  </li>
+  <li>
+    Per-agent GPU numbers are <strong>inferred</strong> (macOS has no per-process GPU API);
+    energy and cost figures are <strong>estimates with stated confidence</strong>, not exact
+    metering.
+  </li>
+  <li>
+    It's another app running on your machine — a deliberately lightweight one that watches
+    its own overhead in its Diagnostics tab, but not zero.
+  </li>
+</ul>
+<p>
+  Local-first either way: runtime history stays on your Mac unless you explicitly export it,
+  and every outbound channel is opt-in and visible under Privacy → Outbound Data.
+</p>

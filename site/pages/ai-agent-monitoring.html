@@ -1,0 +1,85 @@
+<h1>Monitor the AI agents running on your Mac</h1>
+<p>
+  Claude Code in three terminals, Codex on a branch, Ollama holding a model in unified
+  memory — your Mac runs workloads you didn't schedule, and the built-in tools have no
+  concept of them. Aetower is the operator console for exactly this: what your agents are
+  doing, what it costs, and what to do about it.
+</p>
+
+<h2>What you can see</h2>
+<ul>
+  <li>
+    <strong>Every agent as an entity.</strong> Coding agents, local model servers, and
+    inference tools appear as first-class entities with a single 0–100 friction score, not
+    as anonymous rows in a process list.
+  </li>
+  <li>
+    <strong>Live sessions.</strong> With the Chau7 adapter connected, sessions surface with
+    their repository, branch, prompt/approval state, and per-session resource chips — so
+    "which session is the heavy one" is a glance, not an investigation.
+  </li>
+  <li>
+    <strong>Resource attribution, honestly labeled.</strong> Inferred GPU share (macOS has
+    no per-process GPU API, so it's a heuristic and says so), unified-memory pressure, and
+    kernel-measured energy per agent — each with a visible source badge.
+  </li>
+  <li>
+    <strong>Cost context per repository.</strong> The Repos view carries per-repo AI spend,
+    so an agent-heavy project's bill is attached to the project, not lost in a global
+    counter.
+  </li>
+  <li>
+    <strong>The aftermath.</strong> When a session ends or a machine locks up, the Activity
+    timeline narrates what spiked and when — bounded local history you can scrub, entirely
+    on your machine.
+  </li>
+</ul>
+
+<h2>Your agents can read it too</h2>
+<p>
+  The same engine that renders the app serves a <strong>read-only local MCP server</strong> —
+  30+ tools for snapshots, history, anomaly explanations, memory breakdowns, storage, and
+  repository state. Point Claude Code or any MCP client at it and ask
+  <em>"what's straining my Mac right now?"</em>; one
+  <code>aetower_investigation_bundle</code> call replaces twenty shell commands. Guarded
+  operator actions exist behind a separate opt-in, and every action stays preview- and
+  approval-gated.
+</p>
+<pre><code>{
+  "mcpServers": {
+    "aetower": {
+      "command": "/Applications/Aetower.app/Contents/Helpers/aetower-mcp"
+    }
+  }
+}</code></pre>
+<p>
+  Prefer the shell? <code>aetower top</code>, <code>aetower repos</code>, and
+  <code>aetower storage</code> print the same live state, with <code>--json</code> for
+  pipelines — see the <a href="/docs/cli/">CLI reference</a>.
+</p>
+
+<h2>What Aetower deliberately doesn't claim</h2>
+<ul>
+  <li>
+    <strong>No exact metering.</strong> Energy, dollars, and GPU figures are estimates from
+    a consistent model, labeled with source and confidence. Numbers you can act on; not
+    numbers you should bill against.
+  </li>
+  <li>
+    <strong>No cloud.</strong> Everything is local-first: history and diagnostics stay on
+    your Mac unless you export them, and every channel that could leave the machine is
+    opt-in and inspectable under Privacy → Outbound Data.
+  </li>
+  <li>
+    <strong>No agent babysitting theater.</strong> Aetower observes and explains; it doesn't
+    pretend to sandbox or control your agents.
+  </li>
+</ul>
+
+<h2>Works with</h2>
+<p>
+  Anything that runs as a process is visible. Session-level detail comes from the
+  <a href="https://chau7.sh">Chau7</a> adapter; local model servers such as Ollama and
+  other inference tools are recognized as AI runtimes; and any MCP-capable agent — Claude
+  Code, Codex, and friends — can query Aetower directly.
+</p>
