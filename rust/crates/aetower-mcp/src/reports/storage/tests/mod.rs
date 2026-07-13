@@ -6087,11 +6087,11 @@ fn size_walk_budget_is_scaled_per_mode() {
     );
     assert_eq!(
         StorageScanMode::DeepNative.size_walk_time_budget(),
-        Duration::from_secs(60)
+        Duration::from_secs(180)
     );
     assert_eq!(
         StorageScanMode::ForensicVerified.size_walk_time_budget(),
-        Duration::from_secs(120)
+        Duration::from_secs(600)
     );
     assert_eq!(StorageScanMode::FastChangedOnly.report_item_limit(120), 120);
     assert_eq!(
@@ -6108,11 +6108,11 @@ fn size_walk_budget_is_scaled_per_mode() {
     );
     assert_eq!(
         StorageScanMode::DeepNative.repository_inventory_time_budget(),
-        Duration::from_secs(120)
+        Duration::from_secs(180)
     );
     assert_eq!(
         StorageScanMode::ForensicVerified.repository_inventory_time_budget(),
-        Duration::from_secs(300)
+        Duration::from_secs(600)
     );
     assert_eq!(
         StorageScanMode::FastChangedOnly.scan_latency_critical_millis(),
@@ -6120,7 +6120,7 @@ fn size_walk_budget_is_scaled_per_mode() {
     );
     assert_eq!(
         StorageScanMode::ForensicVerified.scan_latency_warn_millis(),
-        300_000
+        600_000
     );
     assert_eq!(
         StorageScanMode::ForensicVerified.payload_warn_bytes(),
@@ -6160,7 +6160,7 @@ fn forensic_walk_survives_a_slow_pre_walk_phase() {
     let mut metrics = StorageScanMetrics::default();
     let deadline = Instant::now() + options.mode.per_root_slice_floor();
 
-    let (_repos, scanned_dirs, truncated) = scan_root(
+    let root_scan = scan_root(
         &root,
         &options,
         deadline,
@@ -6171,9 +6171,63 @@ fn forensic_walk_survives_a_slow_pre_walk_phase() {
     );
 
     assert!(
-        scanned_dirs > 0,
-        "walk must proceed on its own deadline (scanned {scanned_dirs} dirs, truncated={truncated})"
+        root_scan.scanned_dirs > 0,
+        "walk must proceed on its own deadline (scanned {} dirs, truncated={})",
+        root_scan.scanned_dirs,
+        root_scan.walk_truncated
     );
+}
+
+#[test]
+fn partial_size_estimate_does_not_mark_root_walk_truncated() {
+    let root = test_root("partial-size-not-root-truncated");
+    let modules = root.join("node_modules");
+    if let Err(error) = fs::create_dir_all(&modules) {
+        panic!("create node_modules fixture: {error}");
+    }
+    for index in 0..=StorageScanMode::InstantCached.size_walk_entry_budget() {
+        if let Err(error) = fs::write(modules.join(format!("pkg-{index:05}.dat")), [0u8; 256]) {
+            panic!("write node_modules fixture file {index}: {error}");
+        }
+    }
+
+    let options = StorageHygieneOptions {
+        max_depth: 2,
+        limit: 10,
+        mode: StorageScanMode::InstantCached,
+        runtime: None,
+        dirty_paths: Vec::new(),
+    };
+    let storage_index = StorageSizeIndex::disabled("test");
+    let mut collector = StorageCandidateCollector::new(options.limit);
+    let mut metrics = StorageScanMetrics::default();
+    let root_scan = scan_root(
+        &root,
+        &options,
+        Instant::now() + Duration::from_secs(30),
+        storage_now_millis(),
+        &storage_index,
+        &mut collector,
+        &mut metrics,
+    );
+    let items = collector.into_sorted_items();
+
+    assert!(
+        root_scan.sizing_truncated,
+        "fixture should force an item-level size cap"
+    );
+    assert!(
+        !root_scan.walk_truncated,
+        "item-level size caps must not mark root traversal partial"
+    );
+    assert!(
+        items
+            .iter()
+            .any(|item| item.path == modules.display().to_string() && item.size_truncated),
+        "node_modules item should be retained and visibly marked as partial size"
+    );
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -6210,6 +6264,10 @@ fn per_root_walk_slice_shares_remaining_budget_with_floor() {
     assert_eq!(
         StorageScanMode::DeepNative.per_root_slice_floor(),
         Duration::from_secs(2)
+    );
+    assert_eq!(
+        StorageScanMode::ForensicVerified.per_root_slice_floor(),
+        Duration::from_secs(10)
     );
 }
 
@@ -6250,7 +6308,7 @@ fn per_root_deadline_keeps_second_root_walkable_after_a_huge_first_root() {
 
     // First root: injected slice already spent (the "huge root" case).
     let expired = Instant::now();
-    let (_repos, first_dirs, first_truncated) = scan_root(
+    let first_scan = scan_root(
         &first,
         &options,
         expired,
@@ -6259,13 +6317,19 @@ fn per_root_deadline_keeps_second_root_walkable_after_a_huge_first_root() {
         &mut collector,
         &mut metrics,
     );
-    assert!(first_truncated, "expired slice must report truncation");
-    assert_eq!(first_dirs, 0, "expired slice must not keep walking");
+    assert!(
+        first_scan.walk_truncated,
+        "expired slice must report truncation"
+    );
+    assert_eq!(
+        first_scan.scanned_dirs, 0,
+        "expired slice must not keep walking"
+    );
 
     // Second root: a fresh floor-sized slice, exactly what the fairness loop
     // hands out after an earlier root consumed its share.
     let fresh_deadline = Instant::now() + options.mode.per_root_slice_floor();
-    let (_repos, second_dirs, second_truncated) = scan_root(
+    let second_scan = scan_root(
         &second,
         &options,
         fresh_deadline,
@@ -6275,8 +6339,10 @@ fn per_root_deadline_keeps_second_root_walkable_after_a_huge_first_root() {
         &mut metrics,
     );
     assert!(
-        second_dirs > 0,
-        "second root must be walked on its own slice (dirs={second_dirs}, truncated={second_truncated})"
+        second_scan.scanned_dirs > 0,
+        "second root must be walked on its own slice (dirs={}, truncated={})",
+        second_scan.scanned_dirs,
+        second_scan.walk_truncated
     );
 
     let _ = fs::remove_dir_all(first);

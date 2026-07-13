@@ -68,7 +68,7 @@ impl StorageCandidateCollector {
         }
     }
 
-    fn into_sorted_items(self) -> Vec<StorageHygieneItem> {
+    pub(super) fn into_sorted_items(self) -> Vec<StorageHygieneItem> {
         let mut items: Vec<_> = self.heap.into_iter().map(|ranked| ranked.0.item).collect();
         items.sort_by(|left, right| {
             right
@@ -313,6 +313,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
     let mut skipped_roots = Vec::new();
     let mut scanned_directory_count = 0;
     let mut storage_walk_truncated = false;
+    let mut storage_sizing_truncated = false;
 
     // The walk phase runs on its own clock: the repository/git phase above is
     // bounded separately, so a git-heavy start (forensic mode over many repos)
@@ -369,7 +370,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
                 total_roots.saturating_sub(root_index),
                 options.mode.per_root_slice_floor(),
             );
-        let (_root_repositories, root_dirs, root_truncated) = scan_root(
+        let root_scan = scan_root(
             &root,
             &options,
             root_deadline,
@@ -381,8 +382,9 @@ pub(super) fn build_storage_hygiene_report_with_options(
         metrics.root_walk_millis = metrics
             .root_walk_millis
             .saturating_add(root_started.elapsed().as_millis() as u64);
-        scanned_directory_count += root_dirs;
-        storage_walk_truncated |= root_truncated;
+        scanned_directory_count += root_scan.scanned_dirs;
+        storage_walk_truncated |= root_scan.walk_truncated;
+        storage_sizing_truncated |= root_scan.sizing_truncated;
     }
 
     metrics.candidate_seen_count = collector.seen;
@@ -484,6 +486,31 @@ pub(super) fn build_storage_hygiene_report_with_options(
         top_k_retained: metrics.candidate_seen_count > retained_count,
         performance_budget: StoragePerformanceBudgetDiagnostics::default(),
     };
+    let mut caveats = vec![
+        "Cleanup cockpit: Aetower prepares evidence, reveal targets, verification commands, and Trash-first cleanup manifests."
+            .to_owned(),
+        "Sizes are bounded estimates and may omit paths that require additional permissions."
+            .to_owned(),
+        "Reclaimable bytes use local allocated blocks when available; zero-block cloud/sparse placeholders are counted as 0 local reclaim."
+            .to_owned(),
+        "Hardlinked content is deduplicated inside a sized directory, but external hardlinks and APFS clone sharing can reduce the bytes actually freed."
+            .to_owned(),
+        "Review candidates may be rebuildable but can still contain release artifacts or local environments."
+            .to_owned(),
+        "Last-access timestamps can be unavailable, coarse, or lazily updated depending on the macOS volume."
+            .to_owned(),
+        "Command and process-tree attribution uses indexed deltas plus optional writer ledgers from Aetower/Chau7; unmatched writers are reported as low-confidence instead of guessed."
+            .to_owned(),
+        "Repository inventory runs before artifact sizing so repository coverage remains available even when artifact sizing truncates."
+            .to_owned(),
+    ];
+    if storage_sizing_truncated || items.iter().any(|item| item.size_truncated) {
+        caveats.push(
+            "Some large item byte estimates are partial; those rows are marked individually as partial sizes."
+                .to_owned(),
+        );
+    }
+
     StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
@@ -517,24 +544,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
         growth_insights,
         cold_data,
         truncated: storage_walk_truncated,
-        caveats: vec![
-            "Cleanup cockpit: Aetower prepares evidence, reveal targets, verification commands, and Trash-first cleanup manifests."
-                .to_owned(),
-            "Sizes are bounded estimates and may omit paths that require additional permissions."
-                .to_owned(),
-            "Reclaimable bytes use local allocated blocks when available; zero-block cloud/sparse placeholders are counted as 0 local reclaim."
-                .to_owned(),
-            "Hardlinked content is deduplicated inside a sized directory, but external hardlinks and APFS clone sharing can reduce the bytes actually freed."
-                .to_owned(),
-            "Review candidates may be rebuildable but can still contain release artifacts or local environments."
-                .to_owned(),
-            "Last-access timestamps can be unavailable, coarse, or lazily updated depending on the macOS volume."
-                .to_owned(),
-            "Command and process-tree attribution uses indexed deltas plus optional writer ledgers from Aetower/Chau7; unmatched writers are reported as low-confidence instead of guessed."
-                .to_owned(),
-            "Repository inventory runs before artifact sizing so repository coverage remains available even when artifact sizing truncates."
-                .to_owned(),
-        ],
+        caveats,
     }
 }
 

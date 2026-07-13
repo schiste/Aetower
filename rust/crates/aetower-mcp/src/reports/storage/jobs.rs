@@ -54,8 +54,8 @@ impl StorageScanMode {
     pub(super) fn size_walk_time_budget(self) -> Duration {
         match self {
             Self::InstantCached | Self::FastChangedOnly => SCAN_TIME_BUDGET,
-            Self::DeepNative => Duration::from_secs(60),
-            Self::ForensicVerified => Duration::from_secs(120),
+            Self::DeepNative => Duration::from_secs(180),
+            Self::ForensicVerified => Duration::from_secs(600),
         }
     }
 
@@ -66,24 +66,24 @@ impl StorageScanMode {
     pub(super) fn repository_inventory_time_budget(self) -> Duration {
         match self {
             Self::InstantCached | Self::FastChangedOnly => REPOSITORY_INVENTORY_TIME_BUDGET,
-            Self::DeepNative => Duration::from_secs(120),
-            Self::ForensicVerified => Duration::from_secs(300),
+            Self::DeepNative => Duration::from_secs(180),
+            Self::ForensicVerified => Duration::from_secs(600),
         }
     }
 
     pub(super) fn scan_latency_warn_millis(self) -> u64 {
         match self {
             Self::InstantCached | Self::FastChangedOnly => STORAGE_SCAN_LATENCY_WARN_MILLIS,
-            Self::DeepNative => 120_000,
-            Self::ForensicVerified => 300_000,
+            Self::DeepNative => 240_000,
+            Self::ForensicVerified => 600_000,
         }
     }
 
     pub(super) fn scan_latency_critical_millis(self) -> u64 {
         match self {
             Self::InstantCached | Self::FastChangedOnly => STORAGE_SCAN_LATENCY_CRITICAL_MILLIS,
-            Self::DeepNative => 300_000,
-            Self::ForensicVerified => 600_000,
+            Self::DeepNative => 480_000,
+            Self::ForensicVerified => 900_000,
         }
     }
 
@@ -108,7 +108,8 @@ impl StorageScanMode {
     pub(super) fn per_root_slice_floor(self) -> Duration {
         match self {
             Self::InstantCached | Self::FastChangedOnly => Duration::from_millis(500),
-            Self::DeepNative | Self::ForensicVerified => Duration::from_secs(2),
+            Self::DeepNative => Duration::from_secs(2),
+            Self::ForensicVerified => Duration::from_secs(10),
         }
     }
 

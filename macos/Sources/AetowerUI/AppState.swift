@@ -2958,9 +2958,9 @@ public final class AppState {
     private static func storageHygieneLoadBudgetSeconds(for mode: String) -> TimeInterval {
         switch StorageScanModeSelection(rawValue: mode) {
         case .complete:
-            return 300
+            return 480
         case .forensic:
-            return 600
+            return 900
         case .fast, nil:
             return 30
         }

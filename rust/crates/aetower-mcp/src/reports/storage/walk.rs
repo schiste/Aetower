@@ -12,6 +12,13 @@ pub(super) struct SizeWalkResult {
     pub(super) cloud_placeholder: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct StorageRootScanResult {
+    pub(super) scanned_dirs: u64,
+    pub(super) walk_truncated: bool,
+    pub(super) sizing_truncated: bool,
+}
+
 pub(super) fn scan_root(
     root: &Path,
     options: &StorageHygieneOptions,
@@ -20,22 +27,23 @@ pub(super) fn scan_root(
     storage_index: &StorageSizeIndex,
     collector: &mut StorageCandidateCollector,
     metrics: &mut StorageScanMetrics,
-) -> (BTreeSet<PathBuf>, u64, bool) {
+) -> StorageRootScanResult {
     let mut stack = vec![(root.to_path_buf(), 0usize)];
     let mut repositories = BTreeSet::new();
     let mut large_directory_candidates: Vec<(usize, PathBuf)> = Vec::new();
     let mut scanned_dirs = 0;
-    let mut truncated = false;
+    let mut walk_truncated = false;
+    let mut sizing_truncated = false;
 
     while let Some((path, depth)) = stack.pop() {
         if Instant::now() >= deadline || scanned_dirs >= options.mode.dir_budget() {
-            truncated = true;
+            walk_truncated = true;
             break;
         }
         if let Some(runtime) = options.runtime.as_ref()
             && !runtime.checkpoint(STORAGE_SCAN_PHASE_ARTIFACT_SIZING, Some(&path), 0, 0, 0)
         {
-            truncated = true;
+            walk_truncated = true;
             break;
         }
 
@@ -64,6 +72,7 @@ pub(super) fn scan_root(
                 now_millis,
                 options.runtime.as_ref(),
             );
+            sizing_truncated |= size.truncated;
             if should_retain_storage_item(rule.kind.as_ref(), size.bytes) {
                 let item = storage_item_for_path(
                     &path,
@@ -100,7 +109,7 @@ pub(super) fn scan_root(
         if let Some(runtime) = options.runtime.as_ref()
             && !runtime.checkpoint(STORAGE_SCAN_PHASE_ARTIFACT_SIZING, Some(&path), 0, 1, 0)
         {
-            truncated = true;
+            walk_truncated = true;
             break;
         }
         let Ok(entries) = fs::read_dir(&path) else {
@@ -111,7 +120,7 @@ pub(super) fn scan_root(
         }
     }
 
-    truncated |= surface_large_directories(
+    sizing_truncated |= surface_large_directories(
         root,
         options,
         deadline,
@@ -127,7 +136,11 @@ pub(super) fn scan_root(
     // index rows durable before the caller moves on or tears down.
     storage_index.flush_pending_rows();
 
-    (repositories, scanned_dirs, truncated)
+    StorageRootScanResult {
+        scanned_dirs,
+        walk_truncated,
+        sizing_truncated,
+    }
 }
 
 /// Size shallow unclassified directories with the budget left after the main
@@ -632,6 +645,10 @@ fn size_of_path(
             continue;
         };
         for entry in entries.flatten() {
+            if result.entries >= mode.size_walk_entry_budget() {
+                result.truncated = true;
+                break;
+            }
             let path = entry.path();
             let Ok(metadata) = fs::symlink_metadata(&path) else {
                 continue;
@@ -695,6 +712,9 @@ fn size_of_path(
                     break;
                 }
             }
+        }
+        if result.truncated {
+            break;
         }
     }
     metrics.sized_entry_count = metrics.sized_entry_count.saturating_add(result.entries);
