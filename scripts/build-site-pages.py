@@ -65,6 +65,172 @@ DOC_GROUPS = [
     ),
 ]
 
+
+# Curated Q&A per page: rendered as a "Questions this page answers" section
+# and baked into FAQPage JSON-LD so answer engines can quote the site
+# directly. Keep answers short, honest, and consistent with the page body.
+PAGE_FAQS: dict[str, list[tuple[str, str]]] = {
+    "/docs/getting-started/": [
+        (
+            "How do I install Aetower?",
+            "Download the signed installer package or DMG from aetower.dev, or use Homebrew: "
+            "brew tap aeptus/aetower && brew install --cask aetower. macOS 14+ on Apple silicon.",
+        ),
+        (
+            "What should I check on first run?",
+            "Open Settings → Setup and walk the checklist: operator-safe mode for heavy views, "
+            "collection behavior, optional Chau7 and MCP exposure, and export privacy tiers.",
+        ),
+        (
+            "How do I reset Aetower's local data?",
+            "Settings → Advanced → Reset Aetower local data clears persisted history and "
+            "diagnostics and restores safe defaults.",
+        ),
+    ],
+    "/docs/mcp/": [
+        (
+            "How do AI agents connect to Aetower?",
+            "Aetower runs a local MCP server on a Unix socket (~/.aetower/mcp.sock). Agents use "
+            "the bundled aetower-mcp helper as a stdio MCP server; the app and server share one "
+            "live engine.",
+        ),
+        (
+            "Is Aetower's MCP server read-only?",
+            "Read-only by default. Guarded operator actions are a separate advanced opt-in in "
+            "Settings, and every action stays preview- and approval-gated.",
+        ),
+        (
+            "Does the MCP server work when the app is closed?",
+            "Standard cached tools keep working from the last written cache; dynamic profiling "
+            "tools return a clear error saying the running app is required.",
+        ),
+        (
+            "How do I register Claude or Codex with Aetower?",
+            "Settings offers one-click registration for supported Claude and Codex clients. "
+            "Registration is never automatic — you opt in before Aetower writes any client "
+            "config.",
+        ),
+    ],
+    "/docs/cli/": [
+        (
+            "How do I see what's straining my Mac from the terminal?",
+            "Run aetower top for the loudest entities by friction, or aetower findings for the "
+            "recommendation feed. The app must be running.",
+        ),
+        (
+            "How do I get machine-readable output from aetower?",
+            "Add --json to any command; exit codes are scriptable, so it composes with jq and "
+            "pipelines.",
+        ),
+        (
+            "How do I install the aetower command?",
+            "The installer package links it onto your PATH automatically; the Homebrew tap "
+            "declares it as a binary; DMG/ZIP installs add it from Settings → AI Clients or "
+            "with aetower install.",
+        ),
+        (
+            "Can I switch Aetower's tabs from a script?",
+            "Yes: aetower tab <slug> (or the aetower://tab/<slug> URL scheme) switches the "
+            "visible workspace without Accessibility trust or synthetic clicks.",
+        ),
+    ],
+    "/privacy/": [
+        (
+            "What data does Aetower observe?",
+            "Local system and process metadata needed to explain runtime pressure — friction, "
+            "CPU, memory, disk, network, wakeups, and energy per entity. It stays on your Mac.",
+        ),
+        (
+            "Does anything leave my Mac?",
+            "Not unless you opt in. Telemetry, Fleet advertising, VirusTotal hash lookups, and "
+            "provider API calls are all off by default, and Privacy → Outbound Data shows each "
+            "channel's live state.",
+        ),
+        (
+            "How do I share diagnostics safely?",
+            "Export a privacy-tiered support bundle; the redacted tier is the default and "
+            "aetower_support_bundle_manifest previews contents before anything is written.",
+        ),
+    ],
+    "/security/": [
+        (
+            "How do I report a security vulnerability in Aetower?",
+            "Use GitHub's private vulnerability reporting at "
+            "github.com/schiste/Aetower/security/advisories/new, and do not publish details "
+            "publicly before coordination.",
+        ),
+    ],
+    "/vs/activity-monitor/": [
+        (
+            "Is there an Activity Monitor alternative with history?",
+            "Aetower keeps bounded local history with entity-level playback and a narrated "
+            "timeline, so a past slowdown is an answerable question. Activity Monitor has no "
+            "history.",
+        ),
+        (
+            "Can Activity Monitor track AI agent sessions?",
+            "No — it has no concept of agents. Aetower shows agent sessions with inferred GPU "
+            "share, unified-memory pressure, and kernel-measured energy, each labeled with its "
+            "source.",
+        ),
+        (
+            "Do I still need Activity Monitor if I use Aetower?",
+            "For a quick force-quit it's fine and always there. Aetower adds entity grouping, "
+            "friction scoring, history, storage reclaim, and an agent-readable interface.",
+        ),
+    ],
+    "/ai-agent-monitoring/": [
+        (
+            "How do I monitor Claude Code's resource usage on a Mac?",
+            "Aetower shows each agent as an entity with a friction score, kernel-measured "
+            "energy, and — with the Chau7 adapter — per-session repo, branch, and resource "
+            "detail.",
+        ),
+        (
+            "How much energy do local LLMs like Ollama use?",
+            "Aetower reports kernel-measured per-entity energy and inferred GPU share for local "
+            "model servers, labeled as estimates with their source — not exact metering.",
+        ),
+        (
+            "Can my AI agent check what is straining my Mac?",
+            "Yes — Aetower's read-only local MCP server exposes 45 tools; one "
+            "aetower_top_findings or aetower_investigation_bundle call gives an agent the "
+            "ranked answer.",
+        ),
+    ],
+}
+
+
+def faq_jsonld(entries: list[tuple[str, str]]) -> str:
+    import json as _json
+
+    payload = {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+            {
+                "@type": "Question",
+                "name": q,
+                "acceptedAnswer": {"@type": "Answer", "text": a},
+            }
+            for q, a in entries
+        ],
+    }
+    return (
+        '    <script type="application/ld+json">\n'
+        + _json.dumps(payload, indent=2, ensure_ascii=False)
+        + "\n    </script>\n"
+    )
+
+
+def faq_section(entries: list[tuple[str, str]]) -> str:
+    parts = ["<h2>Questions this page answers</h2>"]
+    for q, a in entries:
+        parts.append(f"<h3>{html.escape(q, quote=False)}</h3>")
+        parts.append(f"<p>{html.escape(a, quote=False)}</p>")
+    return "\n".join(parts)
+
+
 INLINE_CODE = re.compile(r"`([^`]+)`")
 BOLD = re.compile(r"\*\*([^*]+)\*\*")
 ITALIC = re.compile(r"(?<!\*)\*([^*\s][^*]*)\*(?!\*)")
@@ -376,12 +542,27 @@ def build(output_dir: pathlib.Path) -> None:
     )
 
     sitemap_entries = [f"  <url><loc>{BASE_URL}/</loc><lastmod>{today}</lastmod></url>"]
+    tools_faq_path = DOCS / "mcp-tools.faq.json"
     for path, title, description, eyebrow, body in pages:
+        faqs = list(PAGE_FAQS.get(path, []))
+        extra_head = ""
+        if faqs:
+            body = body + "\n" + faq_section(faqs)
+        if path == "/docs/mcp-tools/" and tools_faq_path.exists():
+            import json as _json
+
+            tool_faqs = [
+                (entry["q"], entry["a"]) for entry in _json.loads(tools_faq_path.read_text())
+            ]
+            faqs.extend(tool_faqs)
+        if faqs:
+            extra_head = faq_jsonld(faqs)
         content = f'        <p class="page-eyebrow">{eyebrow}</p>\n{body}'
         page = (
             shell.replace("{{TITLE}}", html.escape(title, quote=True))
             .replace("{{DESCRIPTION}}", html.escape(description, quote=True))
             .replace("{{PATH}}", path)
+            .replace("{{EXTRA_HEAD}}", extra_head)
             .replace("{{CONTENT}}", content)
         )
         target = output_dir / path.strip("/") / "index.html"
