@@ -9,6 +9,26 @@
       content="Aetower is the operator console for Macs that run AI agents. See friction, energy, money, disk, and repo impact from day one — and grow into incident playback, storage reclaim, MCP, and fleet views. Local-first: nothing leaves your Mac."
     />
     <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/png" href="/assets/aetower-app-icon-preview.png" />
+    <link rel="canonical" href="https://aetower.dev/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Aetower" />
+    <meta property="og:title" content="Aetower · run your Mac like an operator" />
+    <meta
+      property="og:description"
+      content="The operator console for Macs that run AI agents: friction, energy, money, disk, and repo impact — local-first, read-only MCP, scriptable to the bone."
+    />
+    <meta property="og:url" content="https://aetower.dev/" />
+    <meta property="og:image" content="https://aetower.dev/assets/aetower-og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Aetower · run your Mac like an operator" />
+    <meta
+      name="twitter:description"
+      content="The operator console for Macs that run AI agents: friction, energy, money, disk, and repo impact — local-first, read-only MCP, scriptable to the bone."
+    />
+    <meta name="twitter:image" content="https://aetower.dev/assets/aetower-og.png" />
     <style>
       :root {
         color-scheme: light dark;
@@ -1197,6 +1217,8 @@
             <a href="/releases/Aetower-source.tar.gz">Source</a>
             <span class="sep">·</span>
             <a href="/releases/appcast.xml">Appcast</a>
+            <span class="sep">·</span>
+            <a href="https://github.com/schiste/Aetower/blob/master/CHANGELOG.md" target="_blank" rel="noopener noreferrer">Changelog</a>
           </div>
         </div>
 
@@ -1400,6 +1422,13 @@
               agents do, from any terminal. It ships in every download; the PKG and Homebrew tap
               link it onto your <span class="mono">PATH</span>, while DMG/ZIP installs expose the same
               action in Settings.
+            </p>
+            <p>
+              And the console itself is addressable: every workspace answers to
+              <span class="mono">aetower://tab/&lt;slug&gt;</span>,
+              <span class="mono">aetower tab</span>, ⌘1–8 in the Navigate menu, and stable
+              accessibility identifiers — no Accessibility trust, no synthetic clicks. Scripts,
+              agents, and UI tests drive the same interface you see.
             </p>
             <div class="tool-grid">
               <code>aetower_investigation_bundle</code>
