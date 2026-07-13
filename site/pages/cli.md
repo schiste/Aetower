@@ -72,6 +72,28 @@ Slugs: `monitor`, `activity`, `storage`, `repos`, `projects`, `agents`,
 `system`, `settings` — with sub-tabs like `activity/timeline` and
 `system/diagnostics`.
 
+## Example outputs
+
+```
+$ aetower doctor
+Socket:   ~/.aetower/mcp.sock  (reachable)
+Engine:   live · 6503 snapshots published
+```
+
+```
+$ aetower storage
+Volume /System/Volumes/Data: 50.3 GB free of 460.4 GB
+Reclaimable: 5.3 GB across 22 items  (largest: ~/Repositories/Aetower/rust/target, 2.8 GB)
+
+LANE           ITEMS  RECLAIMABLE
+rebuildable        9       4.1 GB
+safe              10       1.0 GB
+review             3     220.4 MB
+```
+
+Every command supports `--json`; the same data arrives as a structured
+payload for pipelines.
+
 ## Exit codes and pipelines
 
 Commands exit non-zero when the app is unreachable or the query fails, so

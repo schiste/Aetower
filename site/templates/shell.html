@@ -73,9 +73,18 @@
       }
 
       .wrap {
-        width: min(880px, 100%);
+        width: min(1140px, 100%);
         margin: 0 auto;
         padding: 0 32px;
+      }
+
+      main > * {
+        max-width: 880px;
+      }
+
+      main .table-scroll,
+      main pre {
+        max-width: 100%;
       }
 
       .brand-text {
