@@ -303,6 +303,7 @@ public struct StorageView: View {
     @State private var copiedCleanupRecipeID: String?
     @State private var candidateCommandPreviewBundle: StorageCleanupBundleModel?
     @State private var selectedSection: StorageSection = .reclaim
+    @State private var showCustomScanSettings = false
     @State private var showCleanupRecipes = false
     @State private var showRawArtifacts = false
     @State private var showScannedRoots = false
@@ -356,8 +357,6 @@ public struct StorageView: View {
                 Divider()
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-                        storageScanOptionsCard
-
                         if let error = state.storageHygieneError {
                             warningBanner(error)
                         }
@@ -417,6 +416,9 @@ public struct StorageView: View {
         .sheet(isPresented: $showCleanupBasket) {
             cleanupBasketSheet
         }
+        .sheet(isPresented: $showCustomScanSettings) {
+            storageCustomScanSettingsSheet
+        }
         .sheet(item: $classificationExplanation) { explanation in
             classificationExplanationSheet(explanation)
         }
@@ -435,15 +437,7 @@ public struct StorageView: View {
             AetowerToolBadgeGroup(storageHeaderBadges, visibleCount: 3)
         } actions: {
             HStack(spacing: AetowerDesign.Spacing.sm) {
-                storageFilterMenu
-                // A load that blew its watchdog budget re-enables the button
-                // so an explicit rescan can supersede the stuck load.
-                AetowerScanButton(
-                    isRunning: state.storageHygieneIsLoading
-                        && !state.storageHygieneLoadExceededBudget
-                ) {
-                    runScan()
-                }
+                storageScanActionGroup
                 if !cleanupBasket.isEmpty {
                     Button {
                         showCleanupBasket = true
@@ -454,6 +448,57 @@ public struct StorageView: View {
                 }
             }
         }
+    }
+
+    private var storageScanActionGroup: some View {
+        HStack(spacing: AetowerDesign.Spacing.none) {
+            // A load that blew its watchdog budget re-enables the button
+            // so an explicit quick scan can supersede the stuck load.
+            AetowerScanButton(
+                isRunning: state.storageHygieneIsLoading
+                    && !state.storageHygieneLoadExceededBudget
+            ) {
+                runQuickScan()
+            }
+            storageScanOptionsMenu
+        }
+        .fixedSize()
+    }
+
+    private var storageScanOptionsMenu: some View {
+        Menu {
+            Section("Attention list") {
+                ForEach(StorageFilter.allCases) { filter in
+                    Button {
+                        selectedFilter = filter
+                    } label: {
+                        HStack {
+                            Text(filter.label)
+                            if selectedFilter == filter {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                showCustomScanSettings = true
+            } label: {
+                Label("Custom scan", systemImage: "slider.horizontal.3")
+            }
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(AetowerDesign.Typography.compactData(size: 9, weight: .bold))
+                .frame(width: AetowerDesign.Size.controlHeight, height: AetowerDesign.Size.controlHeight)
+        }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .help("Choose the visible reclaim list or open custom scan settings")
     }
 
     private var storageHeaderBadges: [AetowerToolBadgeItem] {
@@ -497,74 +542,6 @@ public struct StorageView: View {
         case .refreshing: return AetowerDesign.Status.ready
         case .needsFullScan: return AetowerDesign.Status.error
         }
-    }
-
-    private var storageFilterMenu: some View {
-        Menu {
-            ForEach(StorageFilter.allCases) { filter in
-                Button {
-                    selectedFilter = filter
-                } label: {
-                    HStack {
-                        Text(filter.label)
-                        if selectedFilter == filter {
-                            Spacer()
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-        } label: {
-            AetowerMenuLabel(
-                systemImage: "line.3.horizontal.decrease.circle",
-                title: selectedFilter.label
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-    }
-
-    private var storageScanOptionsCard: some View {
-        AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md) {
-            ViewThatFits(in: .horizontal) {
-                storageScanOptionsWide
-                    .fixedSize(horizontal: true, vertical: false)
-                storageScanOptionsStacked
-            }
-        }
-    }
-
-    private var storageScanOptionsWide: some View {
-        HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
-            storageScanOptionsTitle
-            storageScanRootField
-                .frame(width: 300)
-            storageScanDepthStepper
-            storageScanModePicker
-            storageScanLoadingStatus
-        }
-    }
-
-    private var storageScanOptionsStacked: some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
-            HStack(spacing: AetowerDesign.Spacing.md) {
-                storageScanOptionsTitle
-                Spacer(minLength: AetowerDesign.Spacing.sm)
-                storageScanDepthStepper
-                storageScanModePicker
-            }
-            HStack(spacing: AetowerDesign.Spacing.md) {
-                storageScanRootField
-                storageScanLoadingStatus
-            }
-        }
-    }
-
-    private var storageScanOptionsTitle: some View {
-        Label("Scan options", systemImage: "slider.horizontal.3")
-            .font(AetowerDesign.Typography.controlLabel)
-            .foregroundStyle(AetowerDesign.Ink.secondary)
-            .fixedSize()
     }
 
     private var storageScanRootField: some View {
@@ -614,6 +591,102 @@ public struct StorageView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
+    }
+
+    private var storageCustomScanSettingsSheet: some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                Label("Custom scan", systemImage: "slider.horizontal.3")
+                    .font(AetowerDesign.Typography.sectionTitle)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                Spacer()
+                Button {
+                    showCustomScanSettings = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(AetowerDesign.Typography.caption.weight(.semibold))
+                        .frame(width: AetowerDesign.Size.controlHeight, height: AetowerDesign.Size.controlHeight)
+                }
+                .buttonStyle(.plain)
+                .help("Close")
+            }
+
+            AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md, cornerRadius: AetowerDesign.Radius.lg) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    storageScanRootField
+                    HStack(spacing: AetowerDesign.Spacing.md) {
+                        storageScanDepthStepper
+                        storageScanModePicker
+                        AetowerBadge(
+                            "\(scanMode.resultLimit) rows",
+                            systemImage: "list.number",
+                            tone: AetowerDesign.Tone.disk
+                        )
+                        Spacer(minLength: AetowerDesign.Spacing.none)
+                    }
+                }
+            }
+
+            AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md, cornerRadius: AetowerDesign.Radius.lg) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    HStack(spacing: AetowerDesign.Spacing.md) {
+                        Picker("Open list", selection: $selectedFilter) {
+                            ForEach(StorageFilter.allCases) { filter in
+                                Text(filter.label).tag(filter)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 180)
+
+                        Picker("Table scope", selection: $artifactScope) {
+                            ForEach(StorageArtifactScope.allCases) { scope in
+                                Text(scope.label).tag(scope)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 180)
+
+                        Picker("Sort", selection: $artifactSort) {
+                            ForEach(StorageArtifactSort.allCases) { sort in
+                                Text(sort.label).tag(sort)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 180)
+                    }
+
+                    storageScanLoadingStatus
+                }
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Button("Quick defaults") {
+                    customRoot = ""
+                    maxDepth = 5
+                    scanMode = .fast
+                    selectedFilter = .attention
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("Cancel") {
+                    showCustomScanSettings = false
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    runScan()
+                    showCustomScanSettings = false
+                } label: {
+                    Label("Run custom scan", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(state.storageHygieneIsLoading && !state.storageHygieneLoadExceededBudget)
+            }
+        }
+        .padding(AetowerDesign.Spacing.xxl)
+        .frame(width: 660)
     }
 
     private func storageNavigationRail(report: StorageHygieneReportModel?) -> some View {
@@ -8443,6 +8516,16 @@ public struct StorageView: View {
             maxDepth: UInt32(maxDepth),
             limit: scanMode.resultLimit,
             mode: scanMode.rawValue
+        )
+    }
+
+    private func runQuickScan() {
+        selectedFilter = .attention
+        state.runStorageHygieneScan(
+            roots: [],
+            maxDepth: 5,
+            limit: StorageScanModeSelection.fast.resultLimit,
+            mode: StorageScanModeSelection.fast.rawValue
         )
     }
 
