@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{TITLE}}</title>
+    <meta name="description" content="{{DESCRIPTION}}" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/png" href="/assets/aetower-app-icon-preview.png" />
+    <link rel="canonical" href="https://aetower.dev{{PATH}}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Aetower" />
+    <meta property="og:title" content="{{TITLE}}" />
+    <meta property="og:description" content="{{DESCRIPTION}}" />
+    <meta property="og:url" content="https://aetower.dev{{PATH}}" />
+    <meta property="og:image" content="https://aetower.dev/assets/aetower-og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --green: #36d683;
+        --green-deep: #1f9d57;
+        --purple: #7b3ff2;
+
+        --bg: #ffffff;
+        --bg-tint-a: transparent;
+        --bg-tint-b: transparent;
+        --panel: #ffffff;
+        --ink: #14201c;
+        --muted: #55635e;
+        --faint: #889490;
+        --line: #e8ece9;
+        --line-strong: #d8e0db;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #17141f;
+          --bg-tint-a: rgba(123, 63, 242, 0.16);
+          --bg-tint-b: rgba(54, 214, 131, 0.12);
+          --panel: #1e1b29;
+          --ink: #ecefee;
+          --muted: #a3aab4;
+          --faint: #6f7787;
+          --line: #2a2740;
+          --line-strong: #393450;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+        font-size: 16px;
+        line-height: 1.6;
+        color: var(--ink);
+        background:
+          radial-gradient(60rem 32rem at 78% -8%, var(--bg-tint-a), transparent 70%),
+          radial-gradient(52rem 30rem at 2% 8%, var(--bg-tint-b), transparent 65%),
+          var(--bg);
+        background-attachment: fixed;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .mono,
+      code {
+        font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      }
+
+      .wrap {
+        width: min(880px, 100%);
+        margin: 0 auto;
+        padding: 0 32px;
+      }
+
+      .brand-text {
+        background: linear-gradient(105deg, var(--purple), var(--green));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      .alpha-tape {
+        display: flex;
+        align-items: baseline;
+        justify-content: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 4px 0 0;
+        padding: 9px 16px;
+        border: 1px dashed color-mix(in srgb, #f59e0b 55%, transparent);
+        border-radius: 12px;
+        background: color-mix(in srgb, #f59e0b 9%, transparent);
+        font-size: 13px;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .alpha-tape strong {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: #b45309;
+        white-space: nowrap;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .alpha-tape strong {
+          color: #fbbf24;
+        }
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 24px 0;
+      }
+
+      .wordmark {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        font-weight: 650;
+        font-size: 17px;
+        letter-spacing: -0.01em;
+        color: var(--ink);
+        text-decoration: none;
+      }
+
+      .wordmark img {
+        width: 28px;
+        height: 28px;
+        border-radius: 7px;
+      }
+
+      .topnav {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 14px;
+      }
+
+      .topnav a {
+        color: var(--muted);
+        text-decoration: none;
+        padding: 6px 11px;
+        border-radius: 8px;
+        transition:
+          color 140ms ease,
+          background 140ms ease;
+      }
+
+      .topnav a:hover {
+        color: var(--ink);
+        background: color-mix(in srgb, var(--purple) 12%, transparent);
+      }
+
+      main {
+        padding: 24px 0 48px;
+      }
+
+      main h1 {
+        font-size: clamp(30px, 4vw, 40px);
+        line-height: 1.1;
+        letter-spacing: -0.03em;
+        font-weight: 680;
+        margin: 12px 0 18px;
+      }
+
+      main h2 {
+        font-size: 22px;
+        letter-spacing: -0.02em;
+        font-weight: 650;
+        margin: 36px 0 10px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+      }
+
+      main h3 {
+        font-size: 17px;
+        font-weight: 640;
+        margin: 24px 0 8px;
+      }
+
+      main p,
+      main li {
+        color: var(--muted);
+        font-size: 15.5px;
+      }
+
+      main li {
+        margin: 5px 0;
+      }
+
+      main strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      main a {
+        color: var(--ink);
+        text-decoration: none;
+        border-bottom: 1px solid var(--line-strong);
+      }
+
+      main a:hover {
+        border-bottom-color: var(--purple);
+      }
+
+      main code {
+        font-size: 0.88em;
+        color: var(--ink);
+        background: color-mix(in srgb, var(--ink) 7%, transparent);
+        padding: 1.5px 6px;
+        border-radius: 6px;
+      }
+
+      main pre {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px 18px;
+        overflow-x: auto;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      main pre code {
+        background: none;
+        padding: 0;
+        color: var(--ink);
+        font-size: inherit;
+      }
+
+      main blockquote {
+        margin: 14px 0;
+        padding: 4px 18px;
+        border-left: 3px solid var(--purple);
+        color: var(--muted);
+      }
+
+      .page-eyebrow {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--faint);
+      }
+
+      .cta-band {
+        margin-top: 40px;
+        padding: 22px 26px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--panel);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      .cta-band p {
+        margin: 0;
+      }
+
+      a.primary {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        height: 44px;
+        padding: 0 22px;
+        border-radius: 11px;
+        background: linear-gradient(120deg, var(--purple), var(--green));
+        color: #fff;
+        font-weight: 600;
+        font-size: 14.5px;
+        text-decoration: none;
+        border-bottom: none;
+      }
+
+      footer {
+        margin-top: 24px;
+        padding: 24px 0 48px;
+        border-top: 1px solid var(--line);
+        font-size: 13px;
+        color: var(--faint);
+        line-height: 1.7;
+      }
+
+      footer a {
+        color: var(--muted);
+        text-decoration: none;
+        border-bottom: 1px solid var(--line-strong);
+      }
+
+      footer a:hover {
+        color: var(--ink);
+      }
+
+      footer .footnav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 18px;
+        margin-bottom: 10px;
+      }
+
+      @media (max-width: 520px) {
+        .wrap {
+          padding: 0 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <p class="alpha-tape">
+        <strong>🚧 Early alpha</strong>
+        Under active construction. Everything here may change without notice — except the appcast
+        URL. That one's forever.
+      </p>
+      <header class="topbar">
+        <a class="wordmark" href="/">
+          <img src="/assets/aetower-app-icon-preview.png" alt="" />
+          Aetower
+        </a>
+        <nav class="topnav" aria-label="Site">
+          <a href="/docs/">Docs</a>
+          <a href="/changelog/">Changelog</a>
+          <a href="/vs/activity-monitor/">vs Activity Monitor</a>
+          <a href="https://github.com/schiste/Aetower" target="_blank" rel="noopener noreferrer">GitHub</a>
+        </nav>
+      </header>
+
+      <main>
+{{CONTENT}}
+
+        <div class="cta-band">
+          <p><strong>Aetower</strong> is a free early-alpha download for macOS 14+ (Apple silicon).</p>
+          <a class="primary" href="/releases/Aetower.pkg">Download for macOS</a>
+        </div>
+      </main>
+
+      <footer>
+        <div class="footnav">
+          <a href="/">Home</a>
+          <a href="/docs/">Docs</a>
+          <a href="/docs/cli/">CLI</a>
+          <a href="/docs/mcp/">Local MCP</a>
+          <a href="/changelog/">Changelog</a>
+          <a href="/vs/activity-monitor/">vs Activity Monitor</a>
+          <a href="/ai-agent-monitoring/">AI agent monitoring</a>
+        </div>
+        Aetower is an early-alpha Developer Preview. Licensed under
+        <a href="https://spdx.org/licenses/AGPL-3.0-only.html">AGPL-3.0-only</a> ·
+        <a href="/third-party-notices.md">Third-party notices</a>
+      </footer>
+    </div>
+  </body>
+</html>

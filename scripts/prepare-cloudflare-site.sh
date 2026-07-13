@@ -19,6 +19,12 @@ rm -rf "$SITE_OUTPUT"
 mkdir -p "$SITE_OUTPUT/assets"
 cp "$SITE_SOURCE/index.html" "$SITE_OUTPUT/index.html"
 cp "$SITE_SOURCE/_headers" "$SITE_OUTPUT/_headers"
+cp "$SITE_SOURCE/robots.txt" "$SITE_OUTPUT/robots.txt"
+cp "$SITE_SOURCE/llms.txt" "$SITE_OUTPUT/llms.txt"
+
+# Subpages (changelog, docs, comparison/use-case pages) + sitemap.xml are
+# assembled from repo markdown and site/pages fragments.
+"${PYTHON_BIN:-python3}" "$ROOT/scripts/build-site-pages.py" --output "$SITE_OUTPUT"
 
 # Keep the hero version chip in lockstep with what the download button
 # actually serves: read the published appcast and rewrite the chip in the
@@ -29,6 +35,8 @@ LIVE_VERSION="$(curl -fsS --max-time 5 "$APPCAST_URL" 2>/dev/null \
     | grep -oE '<sparkle:shortVersionString>[^<]+' | head -1 | cut -d'>' -f2 || true)"
 if [ -n "$LIVE_VERSION" ]; then
     sed -i '' -E "s|(<span class=\"ver\">)v[^<]*(</span>)|\\1v$LIVE_VERSION\\2|" \
+        "$SITE_OUTPUT/index.html"
+    sed -i '' -E "s|(\"softwareVersion\": \")[^\"]*(\")|\\1$LIVE_VERSION\\2|" \
         "$SITE_OUTPUT/index.html"
     printf 'version chip set from appcast: v%s\n' "$LIVE_VERSION"
 else
