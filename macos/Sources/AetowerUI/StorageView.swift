@@ -549,24 +549,6 @@ public struct StorageView: View {
 
             Divider()
 
-            Section("List filter") {
-                ForEach(StorageFilter.allCases) { filter in
-                    Button {
-                        selectedFilter = filter
-                    } label: {
-                        HStack {
-                            Text(filter.label)
-                            if selectedFilter == filter {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            }
-
-            Divider()
-
             Button {
                 showCustomScanSettings = true
             } label: {
@@ -580,7 +562,7 @@ public struct StorageView: View {
         .menuStyle(.borderlessButton)
         .buttonStyle(.borderedProminent)
         .controlSize(.small)
-        .help("Choose a scan profile, change the visible list, or open custom scan settings")
+        .help("Choose a scan profile or open custom scan settings")
     }
 
     private var storageHeaderBadges: [AetowerToolBadgeItem] {
@@ -8906,7 +8888,9 @@ public struct StorageView: View {
     }
 
     private func runCompleteScan() {
-        selectedFilter = .attention
+        selectedFilter = .all
+        artifactScope = .all
+        artifactSort = .recommended
         state.runStorageHygieneScan(
             roots: [],
             maxDepth: StorageScanModeSelection.complete.defaultMaxDepth,
@@ -8916,7 +8900,9 @@ public struct StorageView: View {
     }
 
     private func runForensicScan() {
-        selectedFilter = .attention
+        selectedFilter = .all
+        artifactScope = .all
+        artifactSort = .recommended
         state.runStorageHygieneScan(
             roots: [],
             maxDepth: StorageScanModeSelection.forensic.defaultMaxDepth,
