@@ -2908,6 +2908,7 @@ public final class AppState {
              ".cache",
              "Library",
              ".docker",
+             ".colima",
              ".npm",
              ".pnpm-store",
              ".cargo",
@@ -2956,6 +2957,9 @@ public final class AppState {
     /// so an explicit user rescan can supersede the stuck load. It never
     /// cancels the in-flight FFI call.
     private static func storageHygieneLoadBudgetSeconds(for mode: String) -> TimeInterval {
+        if mode == "instant_cached" {
+            return 120
+        }
         switch StorageScanModeSelection(rawValue: mode) {
         case .complete:
             return 480
@@ -4263,7 +4267,8 @@ public final class AppState {
                 max(0, (CFAbsoluteTimeGetCurrent() - storagePublishStartedAt) * 1000)
             )
             let storageBudgetStatus = report.diagnostics.performanceBudget?.status ?? "unknown"
-            let storageBudgetCritical = storageBudgetStatus == "critical"
+            let storageBudgetCritical = report.scanMode != "instant_cached"
+                && storageBudgetStatus == "critical"
             let repositoryInventoryPartial =
                 report.repositoryInventoryTruncated || !report.repositoryInventoryComplete
             let storageDiagnosticsEventType: String

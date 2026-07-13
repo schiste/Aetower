@@ -4059,6 +4059,7 @@ fn default_storage_roots() -> Vec<String> {
         ".aider",
         ".cache",
         ".docker",
+        ".colima",
         ".npm",
         ".pnpm-store",
         ".cargo",
@@ -4368,6 +4369,8 @@ pub(super) fn storage_source_kind(path: &Path) -> String {
         "xcode".to_owned()
     } else if display.contains(".docker") || display.contains("Docker") {
         "docker".to_owned()
+    } else if display.contains(".colima") {
+        "container-vm".to_owned()
     } else if display.contains(".cargo")
         || display.contains(".npm")
         || display.contains(".pnpm")

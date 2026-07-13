@@ -248,6 +248,7 @@ fn command_matches_artifact_kind(command: &str, kind: &str) -> bool {
                 || command.contains("uv ")
         }
         "docker-storage" | "docker-vm" => command.contains("docker "),
+        "colima-vm" => command.contains("docker ") || command.contains("colima "),
         "gradle-cache" => command.contains("gradle"),
         "maven-repository" => command.contains("mvn ") || command.contains("maven"),
         "go-build-cache" => command.contains("go "),
@@ -288,6 +289,12 @@ pub(super) fn apply_cleanup_guardrails(items: &mut [StorageHygieneItem], now_mil
             block_cleanup(
                 item,
                 "Docker owns this VM storage; reclaim through `docker system prune`, never by deleting files.",
+            );
+        }
+        if item.kind == "colima-vm" {
+            block_cleanup(
+                item,
+                "Colima owns this VM storage; reclaim through Docker/Colima commands, never by deleting VM disk files.",
             );
         }
         if is_protected_cleanup_path(&item.path) {
@@ -477,9 +484,11 @@ pub(super) fn storage_role_for_kind(kind: &str) -> &'static str {
         | "xcode-device-support"
         | "browser-cache" => "cache",
         "node-dependencies" | "xcode-source-packages" | "maven-repository" => "dependency-tree",
-        "python-environment" | "docker-storage" | "docker-vm" | "xcode-simulator-runtime" => {
-            "environment"
-        }
+        "python-environment"
+        | "docker-storage"
+        | "docker-vm"
+        | "colima-vm"
+        | "xcode-simulator-runtime" => "environment",
         "trash" => "temporary",
         "large-directory" => "artifact",
         "macos-app-bundle" => "application",
@@ -739,6 +748,14 @@ pub(super) fn artifact_intelligence(kind: &str, path: &str) -> ArtifactIntellige
             estimated_rebuild_seconds: Some(1_800),
             cleanup_consequence:
                 "Docker VM disk images hold images, containers, and volumes; reclaim only through `docker system prune`, never by deleting files."
+                    .to_owned(),
+        },
+        "colima-vm" => ArtifactIntelligence {
+            rebuild_command: Some("docker system df && docker system prune".to_owned()),
+            estimated_rebuild_cost: "High".to_owned(),
+            estimated_rebuild_seconds: Some(1_800),
+            cleanup_consequence:
+                "Colima/Lima VM disks hold images, containers, and volumes; reclaim through Docker or by deleting/recreating the Colima profile after review."
                     .to_owned(),
         },
         "large-directory" => ArtifactIntelligence {
@@ -1122,6 +1139,10 @@ fn is_docker_vm_path(path_lower: &str) -> bool {
     path_lower.contains("/com.docker.docker/data/vms")
 }
 
+fn is_colima_vm_path(path_lower: &str) -> bool {
+    path_lower.contains("/.colima/_lima")
+}
+
 fn is_trash_directory(path_lower: &str, name: &str) -> bool {
     name == ".Trash" || (path_lower.contains("/.trashes/") && name.chars().all(char::is_numeric))
 }
@@ -1267,6 +1288,15 @@ pub(super) fn classify_artifact(
             "Reveal and inspect ownership before deleting; access time is useful evidence but not proof that the file is disposable.",
         ));
     }
+    if metadata.is_file() && metadata.len() >= MIN_ITEM_BYTES && is_colima_vm_path(&path_lower) {
+        return Some(rule(
+            "colima-vm",
+            "review",
+            "expensive",
+            "Colima/Lima VM disk storage (images, containers, volumes).",
+            "Use Docker cleanup tools inside Colima, or delete/recreate the Colima profile after backup; never Trash VM disk files directly.",
+        ));
+    }
     if metadata.is_file() && metadata.len() >= LARGE_FILE_BYTES {
         return Some(rule(
             "large-file",
@@ -1330,6 +1360,16 @@ pub(super) fn classify_artifact(
             "safe",
             "macOS Trash contents already staged for deletion.",
             "Empty the Trash from Finder to reclaim this space; Finder owns Trash lifecycle.",
+        ));
+    }
+
+    if is_colima_vm_path(&path_lower) {
+        return Some(rule(
+            "colima-vm",
+            "review",
+            "expensive",
+            "Colima/Lima VM disk storage (images, containers, volumes).",
+            "Use Docker cleanup tools inside Colima, or delete/recreate the Colima profile after backup; never Trash VM disk files directly.",
         ));
     }
 

@@ -6533,6 +6533,7 @@ fn classify_artifact_broadens_cache_and_system_rules() {
             "expensive",
             "review",
         ),
+        (&[".colima", "_lima"], "colima-vm", "expensive", "review"),
         (
             &["Library", "Developer", "CoreSimulator", "Caches"],
             "simulator-cache",
@@ -6598,6 +6599,49 @@ fn classify_artifact_broadens_cache_and_system_rules() {
         );
     }
     let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn storage_hygiene_surfaces_colima_vm_storage_as_review_only() {
+    let root = test_root("colima-vm-storage");
+    let colima_root = root.join(".colima");
+    let datadisk = colima_root
+        .join("_lima")
+        .join("_disks")
+        .join("colima")
+        .join("datadisk");
+    if let Some(parent) = datadisk.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        panic!("create Colima fixture directory: {error}");
+    }
+    if let Err(error) = fs::write(&datadisk, vec![7u8; (MIN_ITEM_BYTES + 128) as usize]) {
+        panic!("write Colima fixture datadisk: {error}");
+    }
+
+    let json =
+        build_storage_hygiene_report_for_roots(vec![colima_root.display().to_string()], 6, 80);
+    let value = parse_json_value(&json, "Colima storage report JSON parses");
+    let items = value["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("storage items serialize as an array"));
+    let item = items
+        .iter()
+        .find(|item| item["kind"] == "colima-vm")
+        .unwrap_or_else(|| panic!("Colima VM storage item is surfaced"));
+
+    assert_eq!(item["cleanup_tier"], "expensive");
+    assert_eq!(item["safety"], "review");
+    assert_eq!(item["cleanup_allowed"], false);
+    assert!(
+        item["cleanup_blockers"]
+            .as_array()
+            .is_some_and(|blockers| blockers.iter().any(|blocker| blocker
+                .as_str()
+                .is_some_and(|blocker| blocker.contains("Colima owns this VM storage"))))
+    );
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

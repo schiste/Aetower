@@ -568,7 +568,7 @@ public struct StorageView: View {
     private var storageHeaderBadges: [AetowerToolBadgeItem] {
         [
             AetowerToolBadgeItem(
-                    "Reclaim",
+                    "Detected",
                     value: storageReclaimableLabel,
                     systemImage: "externaldrive.badge.minus",
                     tone: AetowerDesign.Tone.disk
@@ -910,6 +910,7 @@ public struct StorageView: View {
         let directReclaimItems = directCleanItems(from: actions.flatMap(\.stageItems))
         let directSafeItems = safeAction.map { directCleanItems(from: $0.stageItems) } ?? []
         let directDeveloperItems = developerAction.map { directCleanItems(from: $0.stageItems) } ?? []
+        let actionableBytes = actionableReclaimableBytes(from: report)
         let volume = primaryVolume(report)
 
         return AetowerSurface(level: .card, padding: AetowerDesign.Spacing.md, cornerRadius: 16) {
@@ -931,7 +932,7 @@ public struct StorageView: View {
                     diskCapacityBar(
                         total: volume.totalBytes,
                         free: free,
-                        reclaimable: min(report.summary.totalReclaimableBytes, volume.totalBytes),
+                        reclaimable: min(actionableBytes, volume.totalBytes),
                         tone: AetowerDesign.Tone.disk
                     )
                 }
@@ -942,9 +943,9 @@ public struct StorageView: View {
                     spacing: AetowerDesign.Spacing.sm
                 ) {
                     storageReclaimMetric(
-                        "Reclaimable",
+                        "Detected",
                         value: formatBytes(report.summary.totalReclaimableBytes),
-                        detail: "bounded estimate",
+                        detail: "all candidates",
                         systemImage: "externaldrive.badge.minus",
                         tone: AetowerDesign.Tone.disk,
                         primaryActionKind: .clean,
@@ -958,9 +959,9 @@ public struct StorageView: View {
                         }
                     )
                     storageReclaimMetric(
-                        "Safe",
-                        value: formatBytes(safeBytes),
-                        detail: "\(report.summary.safeCandidateCount) candidate\(report.summary.safeCandidateCount == 1 ? "" : "s")",
+                        "Actionable",
+                        value: formatBytes(actionableBytes),
+                        detail: "Trash-ready subset",
                         systemImage: "checkmark.shield",
                         tone: AetowerDesign.Status.ready,
                         primaryActionKind: .clean,
@@ -2839,6 +2840,10 @@ public struct StorageView: View {
         }
     }
 
+    private func actionableReclaimableBytes(from report: StorageHygieneReportModel) -> UInt64 {
+        sumItemBytes(visibleStorageItems(from: report).filter(storageItemIsTrashActionable))
+    }
+
     private func sumBytes(_ left: UInt64, _ right: UInt64) -> UInt64 {
         let sum = left.addingReportingOverflow(right)
         return sum.overflow ? UInt64.max : sum.partialValue
@@ -4666,14 +4671,15 @@ public struct StorageView: View {
     /// "Reclaim safely" panel so the primary number and CTA appear once.
     private func storageDiskPressureHeader(_ report: StorageHygieneReportModel) -> some View {
         let volume = primaryVolume(report)
-        let reclaimable = report.summary.totalReclaimableBytes
+        let detectedBytes = report.summary.totalReclaimableBytes
+        let actionableBytes = actionableReclaimableBytes(from: report)
         let safeBundle = report.cleanupBundles.first
         let hasCTA = safeBundle.map(cleanupBundleHasActionableCommands) ?? false
 
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
             if let volume, volume.totalBytes > 0 {
                 let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
-                let cappedReclaim = min(reclaimable, volume.totalBytes)
+                let cappedActionable = min(actionableBytes, volume.totalBytes)
                 let freeRatio = Double(free) / Double(volume.totalBytes)
                 let tone: Color = freeRatio < 0.05 ? AetowerDesign.Status.error
                     : freeRatio < 0.12 ? AetowerDesign.Status.warning
@@ -4694,13 +4700,13 @@ public struct StorageView: View {
                         + Text("  free").font(.callout).foregroundColor(.secondary))
                 }
 
-                diskCapacityBar(total: volume.totalBytes, free: free, reclaimable: cappedReclaim, tone: tone)
+                diskCapacityBar(total: volume.totalBytes, free: free, reclaimable: cappedActionable, tone: tone)
 
                 HStack(spacing: AetowerDesign.Spacing.md) {
                     Text("\(formatBytes(volume.totalBytes - free)) used of \(formatBytes(volume.totalBytes))")
                         .font(.caption).foregroundStyle(.secondary)
-                    if cappedReclaim > 0 {
-                        Text("up to \(formatBytes(free + cappedReclaim)) free after cleanup")
+                    if cappedActionable > 0 {
+                        Text("up to \(formatBytes(free + cappedActionable)) free after approved cleanup")
                             .font(.caption.weight(.medium))
                             .foregroundStyle(AetowerDesign.Tone.disk)
                     }
@@ -4708,7 +4714,7 @@ public struct StorageView: View {
                 }
             }
 
-            if reclaimable > 0 {
+            if detectedBytes > 0 {
                 Divider().padding(.vertical, AetowerDesign.Spacing.xxs)
                 HStack(spacing: AetowerDesign.Spacing.md) {
                     if hasCTA, let safeBundle {
@@ -4722,8 +4728,9 @@ public struct StorageView: View {
                     }
                     heroStat("\(report.summary.safeCandidateCount)", "safe", AetowerDesign.Status.ready)
                     heroStat("\(report.summary.reviewCandidateCount)", "to review", AetowerDesign.Status.warning)
+                    heroStat(formatBytes(actionableBytes), "actionable", AetowerDesign.Status.ready)
                     Spacer()
-                    heroStat(formatBytes(reclaimable), "total reclaimable", AetowerDesign.Tone.disk, trailing: true)
+                    heroStat(formatBytes(detectedBytes), "detected candidates", AetowerDesign.Tone.disk, trailing: true)
                 }
             }
         }

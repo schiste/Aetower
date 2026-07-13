@@ -515,10 +515,14 @@ private struct StorageHygieneContractCacheFingerprint: Codable, Equatable {
 }
 
 enum StorageHygieneReportCacheStore {
+    // v6: scan truncation semantics split root-walk truncation from partial
+    // sizing, and default storage coverage now includes Colima/Lima VM disks.
+    // Older records can replay obsolete startup warnings or omit large Colima
+    // storage, so force one fresh engine payload.
+    private static let schemaVersion: UInt8 = 6
     // v5: growth insights, cold-data lane, recommendation score, and writer
     // identity fields landed; older cached reports without them are treated as
     // stale so the new sections repaint from a fresh engine payload.
-    private static let schemaVersion: UInt8 = 5
     private static let fileName = "storage-hygiene-report-cache-v1.json"
     private static let cacheMaxAgeMillis: UInt64 = 7 * 24 * 60 * 60 * 1000
 
@@ -675,6 +679,7 @@ enum StorageHygieneReportCacheStore {
             ".codex",
             ".cursor",
             ".aider",
+            ".colima",
             "Library/Developer/Xcode/DerivedData",
             "Library/Caches/org.swift.swiftpm",
             "Library/Caches/com.apple.dt.Xcode",
