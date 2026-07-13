@@ -148,7 +148,7 @@ def main() -> None:
         )
         lines.append(f"## `{tool['name']}`")
         lines.append("")
-        lines.append(f"**Answers:** \u201c{question}\u201d")
+        lines.append(f"*{question}*")
         lines.append("")
         lines.append(description)
         rows = schema_rows(tool.get("inputSchema") or {})

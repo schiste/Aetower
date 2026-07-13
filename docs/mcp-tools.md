@@ -8,7 +8,7 @@ Call any tool from the shell with `aetower call <name> [--json]`, or from any MC
 
 ## `aetower_ai_runtime_report`
 
-**Answers:** “What are my AI agents doing right now, and which sessions need approval?”
+*What are my AI agents doing right now, and which sessions need approval?*
 
 Return grouped AI runtime insights including burden leaders, approval queue, delegated sessions, recent changes, and recent persisted history trends.
 
@@ -19,13 +19,13 @@ Return grouped AI runtime insights including burden leaders, approval queue, del
 
 ## `aetower_capability_status`
 
-**Answers:** “Which permissions and adapters are working, and what should I fix next?”
+*Which permissions and adapters are working, and what should I fix next?*
 
 Return operator-grade capability state, health, and next-action labels for permissions and adapters.
 
 ## `aetower_current_snapshot`
 
-**Answers:** “What is running on this Mac right now, with friction scores?”
+*What is running on this Mac right now, with friction scores?*
 
 Return the latest live Aetower snapshot. Optionally skip output unless the sequence advanced.
 
@@ -36,13 +36,13 @@ Return the latest live Aetower snapshot. Optionally skip output unless the seque
 
 ## `aetower_diagnostics_overview`
 
-**Answers:** “Is Aetower itself healthy?”
+*Is Aetower itself healthy?*
 
 Return diagnostics ring and persisted diagnostics health.
 
 ## `aetower_diagnostics_summary`
 
-**Answers:** “What diagnostic noise keeps repeating, grouped by subsystem and severity?”
+*What diagnostic noise keeps repeating, grouped by subsystem and severity?*
 
 Return diagnostics grouped by subsystem, event type, and level with counts, latest samples, and noise-reduction recommendations.
 
@@ -58,7 +58,7 @@ Return diagnostics grouped by subsystem, event type, and level with counts, late
 
 ## `aetower_diff_snapshots`
 
-**Answers:** “What changed on this machine between two points in time?”
+*What changed on this machine between two points in time?*
 
 Compare two persisted time points and return host plus per-entity deltas for friction, CPU, memory, wakeups, and process count, including boot-boundary metadata when the snapshots span a reboot.
 
@@ -71,7 +71,7 @@ Compare two persisted time points and return host plus per-entity deltas for fri
 
 ## `aetower_entity_details`
 
-**Answers:** “What is everything Aetower knows about this one app or process group?”
+*What is everything Aetower knows about this one app or process group?*
 
 Return the full entity snapshot for one entity_id.
 
@@ -81,7 +81,7 @@ Return the full entity snapshot for one entity_id.
 
 ## `aetower_entity_group_tree`
 
-**Answers:** “How do processes group into apps, sessions, and agent families?”
+*How do processes group into apps, sessions, and agent families?*
 
 Return a grouped entity family view for one entity_id using runtime/session/repo relationships.
 
@@ -91,7 +91,7 @@ Return a grouped entity family view for one entity_id using runtime/session/repo
 
 ## `aetower_entity_process_tree`
 
-**Answers:** “Which processes belong to this entity, and which subtree carries the burden?”
+*Which processes belong to this entity, and which subtree carries the burden?*
 
 Return a per-process tree for one entity with subtree burden, grouping scope, and expansion reasons.
 
@@ -101,7 +101,7 @@ Return a per-process tree for one entity with subtree burden, grouping scope, an
 
 ## `aetower_explain_anomalies`
 
-**Answers:** “Why does this app look unusual right now?”
+*Why does this app look unusual right now?*
 
 Explain current anomalous entities by highlighting the dominant changed metrics and recent supporting events.
 
@@ -113,7 +113,7 @@ Explain current anomalous entities by highlighting the dominant changed metrics 
 
 ## `aetower_export_query`
 
-**Answers:** “How do I export a privacy-tiered slice of Aetower's data without writing files?”
+*How do I export a privacy-tiered slice of Aetower's data without writing files?*
 
 Return a scoped, privacy-tiered export payload for current snapshot, history, diagnostics, and session health.
 
@@ -133,7 +133,7 @@ Return a scoped, privacy-tiered export payload for current snapshot, history, di
 
 ## `aetower_history_data_quality`
 
-**Answers:** “Are there gaps or duplicates in the recorded history window?”
+*Are there gaps or duplicates in the recorded history window?*
 
 Analyze persisted snapshot ordering and coverage for gaps, duplicate timestamps, sequence regressions, and boot boundaries.
 
@@ -145,7 +145,7 @@ Analyze persisted snapshot ordering and coverage for gaps, duplicate timestamps,
 
 ## `aetower_history_page`
 
-**Answers:** “How do I page through stored snapshots chronologically?”
+*How do I page through stored snapshots chronologically?*
 
 Return a bounded page of persisted snapshots for a time range, newest first.
 
@@ -158,7 +158,7 @@ Return a bounded page of persisted snapshots for a time range, newest first.
 
 ## `aetower_history_store_health`
 
-**Answers:** “How big is the history database, and is it healthy?”
+*How big is the history database, and is it healthy?*
 
 Return persisted history store health, thresholds, and recent history-related diagnostics.
 
@@ -168,7 +168,7 @@ Return persisted history store health, thresholds, and recent history-related di
 
 ## `aetower_history_summary`
 
-**Answers:** “What does the recorded history cover, at a glance?”
+*What does the recorded history cover, at a glance?*
 
 Return persisted history coverage and store size information for a time range.
 
@@ -179,7 +179,7 @@ Return persisted history coverage and store size information for a time range.
 
 ## `aetower_host_alerts`
 
-**Answers:** “Is anything on this Mac alerting right now?”
+*Is anything on this Mac alerting right now?*
 
 Return current host alerts such as memory pressure and wakeup storms with impacted entity IDs.
 
@@ -189,7 +189,7 @@ Return current host alerts such as memory pressure and wakeup storms with impact
 
 ## `aetower_host_summary`
 
-**Answers:** “How loaded is this Mac right now — CPU, memory, energy, thermal?”
+*How loaded is this Mac right now — CPU, memory, energy, thermal?*
 
 Return a concise host summary plus the top friction entities.
 
@@ -199,7 +199,7 @@ Return a concise host summary plus the top friction entities.
 
 ## `aetower_investigation_bundle`
 
-**Answers:** “My Mac froze or crashed — what happened in that window?”
+*My Mac froze or crashed — what happened in that window?*
 
 Return a focused crash/freeze investigation bundle with current pressure, recent changes, diagnostics, history diff, and optional process trees.
 
@@ -216,7 +216,7 @@ Return a focused crash/freeze investigation bundle with current pressure, recent
 
 ## `aetower_memory_breakdown`
 
-**Answers:** “Where is this process's memory actually going?”
+*Where is this process's memory actually going?*
 
 Ask the running Aetower app to collect a vmmap-style memory region breakdown for one entity.
 
@@ -227,7 +227,7 @@ Ask the running Aetower app to collect a vmmap-style memory region breakdown for
 
 ## `aetower_process_action_history`
 
-**Answers:** “Which process actions ran recently, and what were their outcomes?”
+*Which process actions ran recently, and what were their outcomes?*
 
 Return recent operator process actions recorded by Aetower diagnostics.
 
@@ -238,7 +238,7 @@ Return recent operator process actions recorded by Aetower diagnostics.
 
 ## `aetower_process_inspect`
 
-**Answers:** “What is this PID — provenance, code signing, and context?”
+*What is this PID — provenance, code signing, and context?*
 
 Inspect one running process by PID with current attribution, ps state, children, and safety notes.
 
@@ -248,7 +248,7 @@ Inspect one running process by PID with current attribution, ps state, children,
 
 ## `aetower_process_open_resources`
 
-**Answers:** “Which files, sockets, and ports does this process hold open?”
+*Which files, sockets, and ports does this process hold open?*
 
 List open files and sockets for one process using lsof with a bounded result limit.
 
@@ -259,7 +259,7 @@ List open files and sockets for one process using lsof with a bounded result lim
 
 ## `aetower_process_sample`
 
-**Answers:** “What is this process doing right now, at stack level?”
+*What is this process doing right now, at stack level?*
 
 Run a short bounded sample for one process and summarize the hottest sampled threads.
 
@@ -271,7 +271,7 @@ Run a short bounded sample for one process and summarize the hottest sampled thr
 
 ## `aetower_profile_entity`
 
-**Answers:** “Which threads and queues are hot in this app?”
+*Which threads and queues are hot in this app?*
 
 Ask the running Aetower app to run a short sampled profile for one entity and summarize hot threads, queues, and stacks.
 
@@ -283,7 +283,7 @@ Ask the running Aetower app to run a short sampled profile for one entity and su
 
 ## `aetower_query_diagnostics`
 
-**Answers:** “How do I search Aetower's diagnostics with filters?”
+*How do I search Aetower's diagnostics with filters?*
 
 Query recent or persisted diagnostics by level, subsystem, text, and time window.
 
@@ -298,7 +298,7 @@ Query recent or persisted diagnostics by level, subsystem, text, and time window
 
 ## `aetower_reboot_report`
 
-**Answers:** “Why did this Mac reboot, and what did it look like just before?”
+*Why did this Mac reboot, and what did it look like just before?*
 
 Summarize detected boot-session boundaries, pre-reboot pressure, and correlated sleep/wake/panic markers for a time range.
 
@@ -309,7 +309,7 @@ Summarize detected boot-session boundaries, pre-reboot pressure, and correlated 
 
 ## `aetower_recent_changes`
 
-**Answers:** “What changed recently — which processes appeared, spiked, or crashed?”
+*What changed recently — which processes appeared, spiked, or crashed?*
 
 Return a concise feed of recent timeline changes and entity change summaries.
 
@@ -320,7 +320,7 @@ Return a concise feed of recent timeline changes and entity change summaries.
 
 ## `aetower_recommendations`
 
-**Answers:** “What should I do about the current pressure on this machine?”
+*What should I do about the current pressure on this machine?*
 
 Return structured remediation recommendations derived from host load, history health, diagnostics, and entity recommendations. Items may include a suggested_action (e.g. "suspend", "lower-priority") with target_pid and target_label. In MCP operator-action mode, use aetower_process_action with dry_run:true to preview, then dry_run:false only after explicit operator confirmation.
 
@@ -330,7 +330,7 @@ Return structured remediation recommendations derived from host load, history he
 
 ## `aetower_repository_inventory`
 
-**Answers:** “Which Git repositories exist on this machine, and what state are they in?”
+*Which Git repositories exist on this machine, and what state are they in?*
 
 Discover local Git repository roots with a cheap inventory-only scan. Skips heavy artifact directories and returns per-root coverage without sizing files.
 
@@ -341,7 +341,7 @@ Discover local Git repository roots with a cheap inventory-only scan. Skips heav
 
 ## `aetower_repository_scorecard`
 
-**Answers:** “How does this GitHub repository score on supply-chain readiness?”
+*How does this GitHub repository score on supply-chain readiness?*
 
 Run an explicit OpenSSF Scorecard repository readiness scan for one GitHub repository root. Uses cached results unless refresh is true; never runs during default repository discovery.
 
@@ -354,7 +354,7 @@ Run an explicit OpenSSF Scorecard repository readiness scan for one GitHub repos
 
 ## `aetower_resource_cost_rollups`
 
-**Answers:** “What did this repo, session, or machine cost in estimated energy, dollars, and carbon?”
+*What did this repo, session, or machine cost in estimated energy, dollars, and carbon?*
 
 Return normalized resource cost rollups for machine, entity, repository, and session scopes. Supports optional scope/id filtering.
 
@@ -366,7 +366,7 @@ Return normalized resource cost rollups for machine, entity, repository, and ses
 
 ## `aetower_runtime_burst_explanation`
 
-**Answers:** “Why did the machine just spike?”
+*Why did the machine just spike?*
 
 Explain current Aetower observer overhead by correlating runtime lag, self CPU/wakeups, UI render latency, MCP request pressure, history work, and recent adapter diagnostics.
 
@@ -377,13 +377,13 @@ Explain current Aetower observer overhead by correlating runtime lag, self CPU/w
 
 ## `aetower_runtime_lag`
 
-**Answers:** “Is Aetower's engine keeping up with its tick cadence?”
+*Is Aetower's engine keeping up with its tick cadence?*
 
 Return the latest self-observability and runtime lag metrics for Aetower itself.
 
 ## `aetower_session_health`
 
-**Answers:** “Is the whole Aetower session healthy end to end?”
+*Is the whole Aetower session healthy end to end?*
 
 Return a merged health view across runtime lag, diagnostics, history store, capabilities, host load, and MCP state.
 
@@ -393,7 +393,7 @@ Return a merged health view across runtime lag, diagnostics, history store, capa
 
 ## `aetower_storage_growth_insights`
 
-**Answers:** “What is growing on my disk, and how fast?”
+*What is growing on my disk, and how fast?*
 
 Return growth intelligence straight from the persistent storage index: per-repo and per-root daily growth rates with trend, days-to-disk-full forecasts, and a since-last-scan diff of appeared and tier-changed items. No filesystem walk.
 
@@ -404,7 +404,7 @@ Return growth intelligence straight from the persistent storage index: per-repo 
 
 ## `aetower_storage_hygiene`
 
-**Answers:** “How do I scan developer storage for reclaimable artifacts?”
+*How do I scan developer storage for reclaimable artifacts?*
 
 Scan bounded local developer storage roots for build artifacts, logs, caches, and dependency trees. Read-only: reports size, age, safety tier, caveats, and review guidance without deleting anything.
 
@@ -417,7 +417,7 @@ Scan bounded local developer storage roots for build artifacts, logs, caches, an
 
 ## `aetower_storage_hygiene_actions`
 
-**Answers:** “What cleanup actions are available, with guardrails, without rescanning?”
+*What cleanup actions are available, with guardrails, without rescanning?*
 
 Return cleanup tiers, recipes, bundles, guardrails, and diagnostics without the raw artifact list.
 
@@ -430,7 +430,7 @@ Return cleanup tiers, recipes, bundles, guardrails, and diagnostics without the 
 
 ## `aetower_storage_hygiene_deep_scan`
 
-**Answers:** “How do I run a deeper storage scan than the default?”
+*How do I run a deeper storage scan than the default?*
 
 Run an explicit deep storage scan using the deep_native mode. Heavier than the default fast scan.
 
@@ -442,7 +442,7 @@ Run an explicit deep storage scan using the deep_native mode. Heavier than the d
 
 ## `aetower_storage_hygiene_items_page`
 
-**Answers:** “How do I page through the ranked storage items?”
+*How do I page through the ranked storage items?*
 
 Return one page of ranked storage items plus diagnostics. Pages in instant_cached mode are served directly from the persistent index at full depth.
 
@@ -458,7 +458,7 @@ Return one page of ranked storage items plus diagnostics. Pages in instant_cache
 
 ## `aetower_storage_hygiene_overview`
 
-**Answers:** “How much disk space can I reclaim right now, and where?”
+*How much disk space can I reclaim right now, and where?*
 
 Return a compact storage overview: summary, top findings, guardrails, top repo footprints, and scan diagnostics.
 
@@ -470,7 +470,7 @@ Return a compact storage overview: summary, top findings, guardrails, top repo f
 
 ## `aetower_storage_hygiene_repo_detail`
 
-**Answers:** “What is taking up space inside this one repository?”
+*What is taking up space inside this one repository?*
 
 Return storage detail for one repository root: repo intelligence, top artifacts, cleanup actions, and diagnostics.
 
@@ -481,7 +481,7 @@ Return storage detail for one repository root: repo intelligence, top artifacts,
 
 ## `aetower_support_bundle_manifest`
 
-**Answers:** “What would a support bundle include, before I export anything?”
+*What would a support bundle include, before I export anything?*
 
 Return a machine-readable preview of what an Aetower support bundle would contain for a given privacy tier.
 
@@ -493,7 +493,7 @@ Return a machine-readable preview of what an Aetower support bundle would contai
 
 ## `aetower_top_findings`
 
-**Answers:** “What is straining my Mac right now?”
+*What is straining my Mac right now?*
 
 Return the highest-signal current findings across host load, diagnostics, history health, and top friction groups.
 
@@ -503,7 +503,7 @@ Return the highest-signal current findings across host load, diagnostics, histor
 
 ## `aetower_wakeup_attribution`
 
-**Answers:** “What is causing all these CPU wakeups?”
+*What is causing all these CPU wakeups?*
 
 Ask the running Aetower app to sample one entity and return heuristic wakeup attribution by thread, queue, and dominant sampled cause.
 
@@ -515,7 +515,7 @@ Ask the running Aetower app to sample one entity and return heuristic wakeup att
 
 ## `aetower_watch_self`
 
-**Answers:** “How much is Aetower itself costing the machine?”
+*How much is Aetower itself costing the machine?*
 
 Run a bounded live watch of Aetower's own runtime overhead, memory peak, MCP pressure, UI latency, and optional self vmmap attribution.
 
