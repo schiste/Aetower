@@ -19,6 +19,21 @@ rm -rf "$SITE_OUTPUT"
 mkdir -p "$SITE_OUTPUT/assets"
 cp "$SITE_SOURCE/index.html" "$SITE_OUTPUT/index.html"
 cp "$SITE_SOURCE/_headers" "$SITE_OUTPUT/_headers"
+
+# Keep the hero version chip in lockstep with what the download button
+# actually serves: read the published appcast and rewrite the chip in the
+# DEPLOY OUTPUT only. Best-effort — offline or first-deploy runs keep the
+# committed value (the chip in git is the fallback, not the source of truth).
+APPCAST_URL="${AETOWER_APPCAST_URL:-https://aetower.dev/releases/appcast.xml}"
+LIVE_VERSION="$(curl -fsS --max-time 5 "$APPCAST_URL" 2>/dev/null \
+    | grep -oE '<sparkle:shortVersionString>[^<]+' | head -1 | cut -d'>' -f2 || true)"
+if [ -n "$LIVE_VERSION" ]; then
+    sed -i '' -E "s|(<span class=\"ver\">)v[^<]*(</span>)|\\1v$LIVE_VERSION\\2|" \
+        "$SITE_OUTPUT/index.html"
+    printf 'version chip set from appcast: v%s\n' "$LIVE_VERSION"
+else
+    printf 'version chip left at committed value (appcast unreachable)\n'
+fi
 # Static site assets checked into site/assets (e.g. product screenshots).
 # The brand icon is generated separately below and may overwrite its slot.
 if [ -d "$SITE_SOURCE/assets" ]; then
