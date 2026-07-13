@@ -728,10 +728,6 @@ public struct StorageView: View {
         case .reclaim:
             return formatBytes(report.summary.totalReclaimableBytes)
         case .explore:
-            let similaritySummary = similarityReviewSummary(for: report)
-            if similaritySummary.groupCount > 0 {
-                return "\(similaritySummary.groupCount) groups - \(formatBytes(similaritySummary.reviewableBytes))"
-            }
             return "\(report.summary.itemCount) item\(report.summary.itemCount == 1 ? "" : "s")"
         case .insights:
             let growthCount = report.growthDeltas.filter { $0.deltaBytes > 0 }.count
@@ -751,9 +747,6 @@ public struct StorageView: View {
         case .reclaim:
             return report.summary.totalReclaimableBytes > 0 ? AetowerDesign.Tone.disk : AetowerDesign.Status.ready
         case .explore:
-            if similarityReviewSummary(for: report).groupCount > 0 {
-                return AetowerDesign.Status.warning
-            }
             return AetowerDesign.Tone.memory
         case .insights:
             if !report.budgetGuardrails.violations.isEmpty
@@ -810,7 +803,9 @@ public struct StorageView: View {
     private func storageReclaimHome(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             storageReclaimSummaryBand(report)
-            storageReclaimTableSection(report)
+            similarFilesReviewSection(report)
+            wholeComputerOptimizationSection(report)
+            storageInvestigationSection(report)
             storageReclaimSupportingData(report)
         }
     }
@@ -866,7 +861,7 @@ public struct StorageView: View {
                         reviewEnabled: report.summary.itemCount > 0,
                         primaryEnabled: !directReclaimItems.isEmpty,
                         reviewAction: {
-                            focusReclaimTable(filter: .all, scope: .all, sort: .recommended)
+                            focusExploreBrowseTable(filter: .all, scope: .all, sort: .recommended)
                         },
                         primaryAction: {
                             trashStorageItemsDirectly(directReclaimItems, sourceTitle: "Reclaimable")
@@ -882,7 +877,7 @@ public struct StorageView: View {
                         reviewEnabled: report.summary.safeCandidateCount > 0 || safeBytes > 0,
                         primaryEnabled: !directSafeItems.isEmpty,
                         reviewAction: {
-                            focusReclaimTable(filter: .safe, scope: .all, sort: .recommended)
+                            focusExploreBrowseTable(filter: .safe, scope: .all, sort: .recommended)
                         },
                         primaryAction: {
                             trashStorageItemsDirectly(directSafeItems, sourceTitle: "Safe")
@@ -898,7 +893,7 @@ public struct StorageView: View {
                         reviewEnabled: developerBytes > 0,
                         primaryEnabled: !directDeveloperItems.isEmpty,
                         reviewAction: {
-                            focusReclaimTable(filter: .all, scope: .repoLinked, sort: .recommended)
+                            focusExploreBrowseTable(filter: .all, scope: .repoLinked, sort: .recommended)
                         },
                         primaryAction: {
                             trashStorageItemsDirectly(directDeveloperItems, sourceTitle: "Developer Artifacts")
@@ -914,7 +909,7 @@ public struct StorageView: View {
                         reviewEnabled: report.summary.reviewCandidateCount > 0 || riskyBytes > 0,
                         primaryEnabled: false,
                         reviewAction: {
-                            focusReclaimTable(filter: .risky, scope: .all, sort: .recommended)
+                            focusExploreBrowseTable(filter: .risky, scope: .all, sort: .recommended)
                         },
                         primaryAction: {}
                     )
@@ -1560,7 +1555,6 @@ public struct StorageView: View {
 
     private func storageReclaimSupportingData(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-            similarFilesOverviewSection(report)
             if let coldData = report.coldData, coldData.bands.contains(where: { $0.itemCount > 0 }) {
                 coldDataLaneSection(coldData)
             }
@@ -1595,7 +1589,7 @@ public struct StorageView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(width: 360)
+                    .frame(width: 220)
                 }
 
                 Text(selectedExplorePane.detail)
@@ -1611,11 +1605,6 @@ public struct StorageView: View {
         switch selectedExplorePane {
         case .browse:
             visualExplorationSection(report)
-        case .optimize:
-            wholeComputerOptimizationSection(report)
-            storageInvestigationSection(report)
-        case .similar:
-            similarFilesReviewSection(report)
         case .raw:
             itemSection(report)
         }
@@ -1865,19 +1854,19 @@ public struct StorageView: View {
     private func reviewStorageHomeAction(_ action: StorageHomeAction) {
         switch action.id {
         case "safe-reclaim":
-            focusReclaimTable(filter: .safe, scope: .all, sort: .recommended)
+            focusExploreBrowseTable(filter: .safe, scope: .all, sort: .recommended)
         case "developer-artifacts":
-            focusReclaimTable(filter: .all, scope: .repoLinked, sort: .recommended)
+            focusExploreBrowseTable(filter: .all, scope: .repoLinked, sort: .recommended)
         case "largest-offenders":
-            focusReclaimTable(filter: .all, scope: .all, sort: .largest)
+            focusExploreBrowseTable(filter: .all, scope: .all, sort: .largest)
         case "recently-grew":
-            focusReclaimTable(filter: .all, scope: .all, sort: .newest)
+            focusExploreBrowseTable(filter: .all, scope: .all, sort: .newest)
         case "old-unused":
-            focusReclaimTable(filter: .attention, scope: .cold, sort: .recommended)
+            focusExploreBrowseTable(filter: .attention, scope: .cold, sort: .recommended)
         case "risky-review":
-            focusReclaimTable(filter: .risky, scope: .all, sort: .recommended)
+            focusExploreBrowseTable(filter: .risky, scope: .all, sort: .recommended)
         default:
-            focusReclaimTable(filter: .all, scope: .all, sort: .recommended)
+            focusExploreBrowseTable(filter: .all, scope: .all, sort: .recommended)
         }
 
         if let firstItem = action.sampleItems.first {
@@ -1889,12 +1878,13 @@ public struct StorageView: View {
         }
     }
 
-    private func focusReclaimTable(
+    private func focusExploreBrowseTable(
         filter: StorageFilter,
         scope: StorageArtifactScope,
         sort: StorageArtifactSort
     ) {
-        selectedSection = .reclaim
+        selectedSection = .explore
+        selectedExplorePane = .browse
         selectedFilter = filter
         artifactScope = scope
         artifactSort = sort
@@ -10671,9 +10661,9 @@ private enum StorageSection: String, CaseIterable, Identifiable {
     var summary: String {
         switch self {
         case .reclaim:
-            return "Disk pressure, safe cleanup opportunities, and the staged basket."
+            return "Disk pressure, similar-file review, optimization leads, and staged cleanup."
         case .explore:
-            return "Treemap, similar files review, and the full item list."
+            return "Indexed browser, visual maps, and raw artifacts."
         case .insights:
             return "Growth over time, volume coverage, budgets, and raw diagnostics."
         }
@@ -10690,8 +10680,6 @@ private enum StorageSection: String, CaseIterable, Identifiable {
 
 private enum StorageExplorePane: String, CaseIterable, Identifiable {
     case browse
-    case optimize
-    case similar
     case raw
 
     var id: String { rawValue }
@@ -10699,8 +10687,6 @@ private enum StorageExplorePane: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .browse: return "Browse"
-        case .optimize: return "Optimize"
-        case .similar: return "Similar"
         case .raw: return "Raw"
         }
     }
@@ -10709,10 +10695,6 @@ private enum StorageExplorePane: String, CaseIterable, Identifiable {
         switch self {
         case .browse:
             return "Open the indexed table first, then opt into heavier full-disk and treemap views."
-        case .optimize:
-            return "Large-file, cold-data, app-footprint, System Data, and investigation leads for the current scan."
-        case .similar:
-            return "Exact duplicates, fuzzy media/document matches, and redundancy groups with review controls."
         case .raw:
             return "The raw artifact list stays collapsed until opened; use it when you need every retained candidate."
         }
