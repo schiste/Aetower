@@ -32,10 +32,10 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.gpuSampleLowPowerIntervalSeconds, 120)
     }
 
-    func testResetRestoresSafeDefaultsAndDisablesAutomaticClientRegistration() {
+    func testResetRestoresDefaultsAndDisablesAutomaticClientRegistration() {
         let store = makeStore()
         store.autoRegisterLocalMcpClientsEnabled = true
-        store.localMcpOperatorActionsEnabled = true
+        store.localMcpOperatorActionsEnabled = false
         store.fleetEnabled = true
         store.telemetryEndpoint = "http://collector.example/v1/metrics"
         store.collectionProfile = .full
@@ -43,7 +43,7 @@ final class SettingsStoreTests: XCTestCase {
         store.resetToDefaults()
 
         XCTAssertFalse(store.autoRegisterLocalMcpClientsEnabled)
-        XCTAssertFalse(store.localMcpOperatorActionsEnabled)
+        XCTAssertTrue(store.localMcpOperatorActionsEnabled)
         XCTAssertFalse(store.fleetEnabled)
         XCTAssertEqual(store.telemetryEndpoint, SettingsStore.defaultTelemetryEndpoint)
         XCTAssertEqual(store.chau7AgentCommand, SettingsStore.defaultChau7AgentCommand)
@@ -58,7 +58,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertFalse(store.privilegedHelperEnabled)
         XCTAssertFalse(store.telemetryEnabled)
         XCTAssertFalse(store.autoRegisterLocalMcpClientsEnabled)
-        XCTAssertFalse(store.localMcpOperatorActionsEnabled)
+        XCTAssertTrue(store.localMcpOperatorActionsEnabled)
         XCTAssertFalse(store.fleetEnabled)
         XCTAssertFalse(store.storageScheduledScansEnabled)
         XCTAssertTrue(store.operatorSafeModeEnabled)
@@ -78,18 +78,18 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(reloaded.autoRegisterLocalMcpClientsEnabled)
     }
 
-    func testLocalMcpOperatorActionsPreferencePersistsAndDefaultsOff() {
+    func testLocalMcpOperatorActionsPreferencePersistsAndDefaultsOn() {
         let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        XCTAssertFalse(SettingsStore(defaults: defaults).localMcpOperatorActionsEnabled)
+        XCTAssertTrue(SettingsStore(defaults: defaults).localMcpOperatorActionsEnabled)
 
         let store = SettingsStore(defaults: defaults)
-        store.localMcpOperatorActionsEnabled = true
+        store.localMcpOperatorActionsEnabled = false
 
         let reloaded = SettingsStore(defaults: defaults)
-        XCTAssertTrue(reloaded.localMcpOperatorActionsEnabled)
+        XCTAssertFalse(reloaded.localMcpOperatorActionsEnabled)
     }
 
     func testFleetPreferencePersistsAndDefaultsOff() {

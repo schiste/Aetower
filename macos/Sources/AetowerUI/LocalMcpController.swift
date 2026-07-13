@@ -59,7 +59,7 @@ final class LocalMcpController {
 
     func start(
         autoRegisterClients: Bool = false,
-        operatorActionsEnabled: Bool = false
+        operatorActionsEnabled: Bool = true
     ) {
         ensureServer(force: true, operatorActionsEnabled: operatorActionsEnabled)
         refreshClientStatuses()
@@ -83,7 +83,7 @@ final class LocalMcpController {
 
     func ensureServer(
         force: Bool = false,
-        operatorActionsEnabled: Bool = false
+        operatorActionsEnabled: Bool = true
     ) {
         let now = Date()
         let healthCheckInterval = serverHealthy

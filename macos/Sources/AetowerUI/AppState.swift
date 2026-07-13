@@ -746,7 +746,7 @@ public final class AppState {
     @ObservationIgnored
     private var mirroredDiagnosticsSignatures = Set<String>()
     @ObservationIgnored
-    private var localMcpOperatorActionsEnabled = false
+    private var localMcpOperatorActionsEnabled = true
     @ObservationIgnored
     private var historyWindowSeconds: TimeInterval = 3600
     @ObservationIgnored
@@ -901,7 +901,7 @@ public final class AppState {
 
     public func startLocalMcpServer(
         autoRegisterClients: Bool = false,
-        operatorActionsEnabled: Bool = false
+        operatorActionsEnabled: Bool = true
     ) {
         localMcpOperatorActionsEnabled = operatorActionsEnabled
         localMcpController.start(

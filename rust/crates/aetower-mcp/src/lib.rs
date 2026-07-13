@@ -3499,7 +3499,7 @@ mod tests {
     }
 
     fn fake_server() -> AetowerMcpServer {
-        fake_server_with_operator_actions(false)
+        fake_server_with_operator_actions(true)
     }
 
     fn fake_server_with_operator_actions(operator_actions_enabled: bool) -> AetowerMcpServer {
@@ -3537,7 +3537,7 @@ mod tests {
     }
 
     #[test]
-    fn default_tools_list_excludes_operator_actions() {
+    fn hidden_operator_tools_list_excludes_process_action() {
         let names = tool_names(false);
 
         assert!(!names.iter().any(|name| name == "aetower_process_action"));
@@ -3550,7 +3550,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_tools_list_includes_process_action() {
+    fn default_operator_tools_list_includes_process_action() {
         let names = tool_names(true);
 
         assert!(names.iter().any(|name| name == "aetower_process_action"));
@@ -4028,8 +4028,8 @@ mod tests {
     }
 
     #[test]
-    fn default_tools_call_hides_process_action_even_by_name() {
-        let response = match fake_server().handle_message(json!({
+    fn hidden_operator_tools_call_hides_process_action_even_by_name() {
+        let response = match fake_server_with_operator_actions(false).handle_message(json!({
             "jsonrpc": "2.0",
             "id": 10,
             "method": "tools/call",

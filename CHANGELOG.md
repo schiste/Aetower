@@ -27,6 +27,9 @@ Privacy:
   provider credentials configured versus actually usable for outbound API
   calls, and registered MCP clients with the local-socket/client-forwarding
   caveat.
+- MCP operator actions are now visible by default for trusted local clients,
+  while Settings can hide them and force the MCP surface back to read-only
+  tools. Process actions remain preview- and approval-gated.
 
 CLI install consistency:
 

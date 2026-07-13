@@ -453,7 +453,7 @@ public struct SettingsView: View {
         let mcpNames = registeredMcpClientNames
         let mcpDetail = mcpNames.isEmpty
             ? "No supported local AI client is registered. Aetower still runs its local MCP server for explicit local use."
-            : "\(mcpNames.joined(separator: ", ")) can launch Aetower's local MCP proxy. Data stays on this Mac unless that local client forwards it elsewhere; operator actions are \(settings.localMcpOperatorActionsEnabled ? "enabled with approval gates" : "not exposed")."
+            : "\(mcpNames.joined(separator: ", ")) can launch Aetower's local MCP proxy. Data stays on this Mac unless that local client forwards it elsewhere; operator actions are \(settings.localMcpOperatorActionsEnabled ? "visible with approval gates" : "hidden")."
 
         return [
             OutboundDataRow(
@@ -677,7 +677,7 @@ public struct SettingsView: View {
                             color: isRegistered ? AetowerDesign.Status.success : AetowerDesign.Status.ready
                         )
                     }
-                    Text("One-click registration writes Aetower's local MCP proxy into supported Claude and Codex config files. Default MCP tools remain read-only; operator actions need a separate setting.")
+                    Text("One-click registration writes Aetower's local MCP proxy into supported Claude and Codex config files. Operator actions are visible by default, can be hidden in Settings, and remain preview- and approval-gated.")
                         .font(AetowerDesign.Typography.caption)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
                 }
@@ -1349,7 +1349,7 @@ public struct SettingsView: View {
                     Text("MCP mode")
                         .font(AetowerDesign.Typography.controlLabel)
                     SettingsBadge(
-                        settings.localMcpOperatorActionsEnabled ? "Operator actions exposed" : "Read-only tools",
+                        settings.localMcpOperatorActionsEnabled ? "Operator actions visible" : "Read-only tools",
                         color: settings.localMcpOperatorActionsEnabled
                             ? AetowerDesign.Status.warning
                             : AetowerDesign.Status.success
@@ -1366,15 +1366,15 @@ public struct SettingsView: View {
                     .foregroundStyle(AetowerDesign.Ink.secondary)
 
                 Toggle(
-                    "Enable MCP operator actions",
+                    "Show MCP operator actions",
                     isOn: $settings.localMcpOperatorActionsEnabled
                 )
                 if settings.localMcpOperatorActionsEnabled {
-                    Text("Off by default. When enabled, local MCP exposes guarded process-action tools; execution still requires preview and operator confirmation.")
+                    Text("Visible by default. Local MCP exposes guarded process-action tools; execution still requires preview and operator confirmation.")
                         .font(AetowerDesign.Typography.caption)
                         .foregroundStyle(AetowerDesign.Status.warning)
                 } else {
-                    Text("Off by default. When enabled, local MCP exposes guarded process-action tools; execution still requires preview and operator confirmation.")
+                    Text("Hidden. Local MCP exposes only read-only tools until operator actions are shown again.")
                         .font(AetowerDesign.Typography.caption)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
                 }

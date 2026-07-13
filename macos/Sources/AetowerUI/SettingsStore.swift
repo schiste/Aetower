@@ -579,7 +579,7 @@ public final class SettingsStore {
         ) as? Bool ?? false
         self.localMcpOperatorActionsEnabled = defaults.object(
             forKey: Self.localMcpOperatorActionsEnabledKey
-        ) as? Bool ?? false
+        ) as? Bool ?? true
         self.fleetEnabled = defaults.object(forKey: Self.fleetEnabledKey) as? Bool ?? false
         self.launchAtLoginEnabled = false
         self.launchAtLoginError = nil
@@ -908,7 +908,7 @@ extension SettingsStore {
         ProviderCredentialStore(defaults: defaults).resetAll()
         exportPrivacyTier = .redacted
         autoRegisterLocalMcpClientsEnabled = false
-        localMcpOperatorActionsEnabled = false
+        localMcpOperatorActionsEnabled = true
         fleetEnabled = false
         if launchAtLoginEnabled {
             setLaunchAtLogin(false)

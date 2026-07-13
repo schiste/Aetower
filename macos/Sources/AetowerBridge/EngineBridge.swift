@@ -168,7 +168,7 @@ public final class EngineBridge: @unchecked Sendable {
 
     public func startLocalMcpServer(
         socketPath: String? = nil,
-        operatorActionsEnabled: Bool = false
+        operatorActionsEnabled: Bool = true
     ) -> String? {
         let result = engine.startLocalMcpServer(
             socketPath: socketPath,

@@ -27,8 +27,9 @@ Do not present Developer Preview builds as production-ready or App Store-ready.
   GPU-related signals, and friction trends.
 - Persists local history for incident reconstruction and before/after
   comparisons.
-- Exposes a local read-only MCP server so AI coding agents can inspect live
-  Aetower data without starting a second collection engine.
+- Exposes a local MCP server so AI coding agents can inspect live Aetower data
+  and, by default, see guarded operator actions without starting a second
+  collection engine.
 - Integrates optionally with Chau7, Chromium-compatible debug endpoints,
   Docker, local OTLP/HTTP metrics collectors, and an advanced signed helper.
 - Provides diagnostics, support-bundle previews, runtime lag checks, and

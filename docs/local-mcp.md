@@ -1,17 +1,15 @@
 # Aetower local MCP server
 
 Aetower includes a local MCP server for agents that need direct access to
-live snapshot, history, lag, and diagnostics data. It is read-only by
-default: local agents can inspect live system state, history, diagnostics,
-repository/storage reports, and recommendations without receiving action
-tools. Operators can explicitly enable "MCP operator actions" in Settings;
-that advanced mode exposes guarded process-action tools, and every action
-remains preview- and approval-gated.
+live snapshot, history, lag, and diagnostics data. Guarded operator actions are
+visible by default so trusted local agents can discover the available operator
+workflow, but every action remains preview- and approval-gated. Operators can
+hide MCP operator actions in Settings to expose only read-only tools.
 
 ## What it exposes
 
-By default the server exposes read-only raw data and agent-facing
-summaries:
+By default the server exposes raw data, agent-facing summaries, and guarded
+operator-action tools:
 
 - `aetower_current_snapshot`
 - `aetower_host_summary`
@@ -40,6 +38,8 @@ summaries:
 - `aetower_query_diagnostics`
 - `aetower_support_bundle_manifest`
 - `aetower_recommendations`
+- `aetower_process_action`
+- `aetower_process_action_history`
 - `aetower_session_health`
 - `aetower_export_query`
 

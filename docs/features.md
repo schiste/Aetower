@@ -16,7 +16,7 @@ features in both practical human terms and technical implementation terms.
 | Timeline | Read a machine incident as a story. | Correlates lifecycle events, host state changes, sensor alerts, restart loops, and AI session markers. |
 | AI agent observability | Measure the local cost of coding agents and model runtimes. | Detects supported AI runtimes, attributes burden, estimates GPU/VRAM pressure, and tracks session energy/cost context. |
 | Storage hygiene | See reclaimable storage without confusing logical size with local disk savings. | Reports logical bytes, APFS physical-block estimates, hardlink dedupe, sparse/cloud placeholder flags, purgeable capacity, and clone-lineage caveats. |
-| Local MCP server | Let trusted local agents inspect Aetower data without a second collector. | Ships a read-only MCP interface over a local app-owned socket and stdio helper. |
+| Local MCP server | Let trusted local agents inspect Aetower data without a second collector. | Ships a local MCP interface over an app-owned socket and stdio helper; guarded operator actions are visible by default and can be hidden in Settings. |
 | Diagnostics | Debug Aetower itself when collection, adapters, or persistence misbehave. | Exposes subsystem events, pipeline timing, capability state, session health, and support-bundle manifests. |
 | Fleet | Compare nearby Macs without a cloud account. | Uses local peer discovery to surface summary machine health across Aetower peers. |
 | Settings and setup | Tune depth versus overhead safely. | Controls collection cadence, optional integrations, MCP registration, export behavior, and reset/support flows. |
@@ -147,7 +147,7 @@ compression, cloud placeholders, hardlinks, and cloned/shared extents.
 - Labels sparse/shared-block candidates as estimates; Aetower does not infer or
   promise exact APFS clone lineage.
 
-## 8. Local read-only MCP server
+## 8. Local MCP server
 
 ### What it does for people
 
@@ -161,9 +161,11 @@ and recommendations without launching its own duplicate monitoring engine.
 - Uses a local Unix socket and packaged stdio helper for supported clients.
 - Offers one-click registration for supported Claude and Codex clients; automatic
   registration remains off by default.
-- Exposes read-only tools for snapshots, host summaries, entity details,
-  diagnostics, history pages, recommendations, support-bundle manifests, runtime
-  lag, export queries, and investigation bundles.
+- Exposes tools for snapshots, host summaries, entity details, diagnostics,
+  history pages, recommendations, support-bundle manifests, runtime lag, export
+  queries, investigation bundles, and guarded operator actions. Operator actions
+  are visible by default, can be hidden in Settings, and remain preview- and
+  approval-gated.
 - Standard cached tools can still provide last-known state when the app is not
   running; deeper profiling requires the live app.
 

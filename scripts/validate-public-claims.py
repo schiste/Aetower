@@ -187,25 +187,28 @@ def descriptor_block(source: str, tool_name: str) -> str:
 def check_mcp_default_tool_safety(validator: ClaimsValidator) -> None:
     descriptors = read_text(ROOT / "rust/crates/aetower-mcp/src/tools/descriptors.rs")
     lib = read_text(ROOT / "rust/crates/aetower-mcp/src/lib.rs")
+    settings = read_text(ROOT / "macos/Sources/AetowerUI/SettingsStore.swift")
     process_action = descriptor_block(descriptors, "aetower_process_action")
 
     validator.require(
-        "tool_definitions_for_mode(false)" in descriptors
-        and "TOOL_LIST_RESULT_READ_ONLY" in descriptors,
-        "MCP default list mode",
-        "read-only tool list is generated with operator_actions_enabled=false",
+        "tool_definitions_for_mode(true)" in descriptors
+        and "TOOL_LIST_RESULT_OPERATOR" in descriptors
+        and swift_default_true(settings, "localMcpOperatorActionsEnabled"),
+        "MCP default operator visibility",
+        "operator actions are visible by default and hideable via settings.localMcpOperatorActionsEnabled",
     )
     validator.require(
         bool(process_action) and ".operator_action()" in process_action,
-        "MCP process action hidden by default",
-        "aetower_process_action descriptor is operator-action gated",
+        "MCP process action hideable",
+        "aetower_process_action descriptor is operator-action gated for read-only mode",
     )
     validator.require(
-        "default_tools_list_excludes_operator_actions" in lib
+        "default_operator_tools_list_includes_process_action" in lib
+        and "hidden_operator_tools_list_excludes_process_action" in lib
         and 'name == "aetower_process_action"' in lib
-        and "default_tools_call_hides_process_action_even_by_name" in lib,
+        and "hidden_operator_tools_call_hides_process_action_even_by_name" in lib,
         "MCP safety tests present",
-        "default tool list and direct call hiding are pinned by Rust tests",
+        "default visibility and hidden-mode direct-call blocking are pinned by Rust tests",
     )
 
 
@@ -217,13 +220,20 @@ def swift_default_false(source: str, property_name: str) -> bool:
     return re.search(pattern, source, flags=re.DOTALL) is not None
 
 
+def swift_default_true(source: str, property_name: str) -> bool:
+    pattern = (
+        rf"self\.{re.escape(property_name)}\s*=\s*defaults\.object"
+        rf"\([^)]*{re.escape(property_name)}Key[^)]*\)\s*as\?\s*Bool\s*\?\?\s*true"
+    )
+    return re.search(pattern, source, flags=re.DOTALL) is not None
+
+
 def check_outbound_defaults(validator: ClaimsValidator) -> None:
     source = read_text(ROOT / "macos/Sources/AetowerUI/SettingsStore.swift")
     toggles = [
         "telemetryEnabled",
         "binaryReputationEnabled",
         "autoRegisterLocalMcpClientsEnabled",
-        "localMcpOperatorActionsEnabled",
         "fleetEnabled",
         "storageScheduledScansEnabled",
         "privilegedHelperEnabled",
