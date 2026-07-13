@@ -29,6 +29,20 @@
       content="The operator console for Macs that run AI agents: friction, energy, money, disk, and repo impact — local-first, read-only MCP, scriptable to the bone."
     />
     <meta name="twitter:image" content="https://aetower.dev/assets/aetower-og.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Aetower",
+        "operatingSystem": "macOS 14+",
+        "applicationCategory": "DeveloperApplication",
+        "softwareVersion": "0.8",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "downloadUrl": "https://aetower.dev/releases/Aetower.pkg",
+        "url": "https://aetower.dev/",
+        "license": "https://spdx.org/licenses/AGPL-3.0-only.html"
+      }
+    </script>
     <style>
       :root {
         color-scheme: light dark;
@@ -185,6 +199,13 @@
       .topbar-links a:hover {
         color: var(--ink);
         background: color-mix(in srgb, var(--purple) 14%, transparent);
+      }
+
+      .topbar-links a.textlink {
+        width: auto;
+        padding: 0 12px;
+        font-size: 14px;
+        font-weight: 550;
       }
 
       .topbar-links svg {
@@ -1140,7 +1161,9 @@
           <img src="/assets/aetower-app-icon-preview.png" alt="" />
           Aetower
         </span>
-        <nav class="topbar-links" aria-label="Project and author links">
+        <nav class="topbar-links" aria-label="Site and project links">
+          <a class="textlink" href="/docs/">Docs</a>
+          <a class="textlink" href="/changelog/">Changelog</a>
           <a
             href="https://github.com/schiste/Aetower"
             target="_blank"
@@ -1650,6 +1673,10 @@ Claude Code · repo x          14     0   340 MB</pre>
       </section>
 
       <footer>
+        <a href="/docs/">Docs</a> · <a href="/docs/cli/">CLI</a> ·
+        <a href="/docs/mcp/">Local MCP</a> · <a href="/changelog/">Changelog</a> ·
+        <a href="/vs/activity-monitor/">vs Activity Monitor</a> ·
+        <a href="/ai-agent-monitoring/">AI agent monitoring</a><br />
         Aetower is an early-alpha Developer Preview. Review local observability data before sharing screenshots,
         exports, or support bundles. Licensed under
         <a href="https://spdx.org/licenses/AGPL-3.0-only.html">AGPL-3.0-only</a> ·

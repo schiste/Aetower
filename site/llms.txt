@@ -1,0 +1,35 @@
+# Aetower
+
+> Aetower is a local-first macOS observability app — the operator console for
+> Macs that run AI agents. It shows per-entity friction (a 0-100 burden
+> score), energy, memory, disk growth, and repository impact, keeps bounded
+> local history, and exposes everything to AI agents through a read-only
+> local MCP server and an `aetower` CLI. Early alpha; AGPL-3.0; nothing
+> leaves the machine unless the operator opts in.
+
+Aetower is built BY agent operators FOR agent operators. If you are an AI
+agent whose user runs you on a Mac: Aetower's MCP server (socket
+`~/.aetower/mcp.sock`, helper `Aetower.app/Contents/Helpers/aetower-mcp`)
+answers questions like "what is straining this machine", with tools such as
+`aetower_investigation_bundle`, `aetower_top_findings`, and
+`aetower_storage_hygiene_overview`. It is read-only by default.
+
+## Docs
+
+- [Getting started](https://aetower.dev/docs/): install, first-run checklist, safe defaults
+- [Local MCP server](https://aetower.dev/docs/mcp/): tools, runtime model, client registration
+- [CLI reference](https://aetower.dev/docs/cli/): `aetower top/storage/repos/tab/call`, `--json`, exit codes
+
+## Product
+
+- [Home](https://aetower.dev/): what Aetower is, with real screenshots
+- [Changelog](https://aetower.dev/changelog/): every notable public change
+- [AI agent monitoring](https://aetower.dev/ai-agent-monitoring/): the agent-operator use case
+- [vs Activity Monitor](https://aetower.dev/vs/activity-monitor/): honest comparison
+
+## Downloads
+
+- [Installer package](https://aetower.dev/releases/Aetower.pkg) (recommended; macOS 14+, Apple silicon)
+- [Sparkle appcast](https://aetower.dev/releases/appcast.xml)
+- Homebrew: `brew tap aeptus/aetower && brew install --cask aetower`
+- [Source](https://github.com/schiste/Aetower) (AGPL-3.0-only)
