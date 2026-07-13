@@ -336,6 +336,7 @@ public struct StorageView: View {
     @State private var selectedReclaimFolderPath: String?
     @State private var coldDataSort: StorageColdDataSort = .recommended
     @State private var selectedSimilarityFilter: StorageSimilarityFilter = .exactDuplicates
+    @State private var screenshotQuickWinAgeDays = 7
     @State private var reviewedSimilarityGroupIDs: Set<String> = []
     @State private var ignoredSimilarityGroupIDs: Set<String> = []
     @State private var showIgnoredSimilarityGroups = false
@@ -727,6 +728,9 @@ public struct StorageView: View {
         switch section {
         case .reclaim:
             return formatBytes(report.summary.totalReclaimableBytes)
+        case .similar:
+            let summary = similarityReviewSummary(for: report)
+            return "\(summary.groupCount) group\(summary.groupCount == 1 ? "" : "s")"
         case .explore:
             return "\(report.summary.itemCount) item\(report.summary.itemCount == 1 ? "" : "s")"
         case .insights:
@@ -746,6 +750,9 @@ public struct StorageView: View {
         switch section {
         case .reclaim:
             return report.summary.totalReclaimableBytes > 0 ? AetowerDesign.Tone.disk : AetowerDesign.Status.ready
+        case .similar:
+            let summary = similarityReviewSummary(for: report)
+            return summary.groupCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
         case .explore:
             return AetowerDesign.Tone.memory
         case .insights:
@@ -792,6 +799,8 @@ public struct StorageView: View {
         switch selectedSection {
         case .reclaim:
             storageReclaimHome(report)
+        case .similar:
+            storageSimilarWorkspace(report)
         case .explore:
             storageExploreWorkspace(report)
         case .insights:
@@ -803,9 +812,7 @@ public struct StorageView: View {
     private func storageReclaimHome(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             storageReclaimSummaryBand(report)
-            similarFilesReviewSection(report)
-            wholeComputerOptimizationSection(report)
-            storageInvestigationSection(report)
+            storageQuickWinsSection(report)
             storageReclaimSupportingData(report)
         }
     }
@@ -1566,6 +1573,213 @@ public struct StorageView: View {
         }
     }
 
+    @ViewBuilder
+    private func storageQuickWinsSection(_ report: StorageHygieneReportModel) -> some View {
+        let exactGroups = sortedDuplicateGroups(duplicateGroups(for: .exactDuplicates, in: report))
+        let screenshots = storageScreenshotQuickWinItems(in: report)
+        let quickWinCount = (exactGroups.isEmpty ? 0 : 1) + (screenshots.isEmpty ? 0 : 1)
+        if quickWinCount > 0 {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                    Label("Quick wins", systemImage: "bolt.fill")
+                        .font(AetowerDesign.Typography.sectionTitle)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    Spacer(minLength: AetowerDesign.Spacing.md)
+                    AetowerBadge(
+                        "\(quickWinCount) lead\(quickWinCount == 1 ? "" : "s")",
+                        tone: AetowerDesign.Tone.disk
+                    )
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 320), spacing: AetowerDesign.Spacing.sm)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.sm
+                ) {
+                    if !exactGroups.isEmpty {
+                        duplicateQuickWinCard(
+                            groups: exactGroups,
+                            reclaimableBytes: sumDuplicateGroupBytes(exactGroups)
+                        )
+                    }
+                    if !screenshots.isEmpty {
+                        screenshotsQuickWinCard(screenshots)
+                    }
+                }
+            }
+            .padding(AetowerDesign.Spacing.lg)
+        }
+    }
+
+    private func duplicateQuickWinCard(
+        groups: [StorageDuplicateGroupModel],
+        reclaimableBytes: UInt64
+    ) -> some View {
+        let duplicateCopies = groups.reduce(0) { total, group in
+            total + max(group.paths.count - 1, 0)
+        }
+        return AetowerSurface(
+            level: .card,
+            padding: AetowerDesign.Spacing.md,
+            cornerRadius: AetowerDesign.Radius.lg
+        ) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                    Label("Duplicated files", systemImage: "doc.on.doc")
+                        .font(AetowerDesign.Typography.controlLabel)
+                    Spacer(minLength: AetowerDesign.Spacing.sm)
+                    AetowerBadge(formatBytes(reclaimableBytes), tone: AetowerDesign.Status.warning)
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 120), spacing: AetowerDesign.Spacing.xs)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.xs
+                ) {
+                    footprintMetric("Groups", value: "\(groups.count)", detail: "exact")
+                    footprintMetric("Copies", value: "\(duplicateCopies)", detail: "non-canonical")
+                }
+
+                if let firstGroup = groups.first {
+                    Text(duplicateGroupTitle(firstGroup))
+                        .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    ForEach(firstGroup.paths.prefix(2)) { item in
+                        storageQuickWinDuplicateSampleRow(item)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Button {
+                        focusSimilarReview(filter: .exactDuplicates)
+                    } label: {
+                        Label("Review duplicates", systemImage: "rectangle.stack.badge.person.crop")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
+    }
+
+    private func screenshotsQuickWinCard(_ items: [StorageHygieneItemModel]) -> some View {
+        let actionableItems = directCleanItems(from: items)
+        return AetowerSurface(
+            level: .card,
+            padding: AetowerDesign.Spacing.md,
+            cornerRadius: AetowerDesign.Radius.lg
+        ) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                    Label("Old screenshots", systemImage: "camera.viewfinder")
+                        .font(AetowerDesign.Typography.controlLabel)
+                    Spacer(minLength: AetowerDesign.Spacing.sm)
+                    AetowerBadge(
+                        "\(actionableItems.count) trash-ready",
+                        tone: actionableItems.isEmpty ? AetowerDesign.Status.neutral : AetowerDesign.Status.ready
+                    )
+                }
+
+                Stepper(value: $screenshotQuickWinAgeDays, in: 1...365, step: 1) {
+                    Text("Older than \(screenshotQuickWinAgeDays)d")
+                        .font(AetowerDesign.Typography.caption.weight(.semibold))
+                }
+                .controlSize(.small)
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 120), spacing: AetowerDesign.Spacing.xs)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.xs
+                ) {
+                    footprintMetric("Files", value: "\(items.count)", detail: "screenshots")
+                    footprintMetric("Size", value: formatBytes(sumItemBytes(items)), detail: "current scan")
+                }
+
+                ForEach(items.prefix(3)) { item in
+                    storageQuickWinItemSampleRow(item)
+                }
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Button {
+                        focusScreenshotQuickWinsInExplore()
+                    } label: {
+                        Label("Review screenshots", systemImage: "line.3.horizontal.decrease.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button {
+                        trashStorageItemsDirectly(actionableItems, sourceTitle: "Old screenshots")
+                    } label: {
+                        Label("Move to Trash", systemImage: "trash")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(actionableItems.isEmpty)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
+    }
+
+    private func storageQuickWinDuplicateSampleRow(_ item: StorageDuplicateItemModel) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.xs) {
+            Image(systemName: "doc")
+                .foregroundStyle(AetowerDesign.Status.warning)
+                .frame(width: AetowerDesign.Size.iconSlot)
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                Text(item.displayName)
+                    .font(AetowerDesign.Typography.metadataStrong)
+                    .lineLimit(1)
+                Text(item.path)
+                    .font(AetowerDesign.Typography.compactData(size: 10))
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: AetowerDesign.Spacing.xs)
+            Text(formatBytes(item.sizeBytes))
+                .font(AetowerDesign.Typography.metadataStrong)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+        }
+    }
+
+    private func storageQuickWinItemSampleRow(_ item: StorageHygieneItemModel) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.xs) {
+            Image(systemName: icon(for: item))
+                .foregroundStyle(tone(for: item))
+                .frame(width: AetowerDesign.Size.iconSlot)
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                Text(item.displayName)
+                    .font(AetowerDesign.Typography.metadataStrong)
+                    .lineLimit(1)
+                Text(item.path)
+                    .font(AetowerDesign.Typography.compactData(size: 10))
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: AetowerDesign.Spacing.xs)
+            Text(formatBytes(item.sizeBytes))
+                .font(AetowerDesign.Typography.metadataStrong)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+            Button("Reveal") { reveal(path: item.path) }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+        }
+    }
+
+    private func storageSimilarWorkspace(_ report: StorageHygieneReportModel) -> some View {
+        LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            similarFilesReviewSection(report)
+        }
+    }
+
     /// Hunt-for-space surface: the visual treemap and the full item list.
     private func storageExploreWorkspace(_ report: StorageHygieneReportModel) -> some View {
         LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
@@ -1589,7 +1803,7 @@ public struct StorageView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(width: 220)
+                    .frame(width: 320)
                 }
 
                 Text(selectedExplorePane.detail)
@@ -1605,6 +1819,9 @@ public struct StorageView: View {
         switch selectedExplorePane {
         case .browse:
             visualExplorationSection(report)
+        case .optimize:
+            wholeComputerOptimizationSection(report)
+            storageInvestigationSection(report)
         case .raw:
             itemSection(report)
         }
@@ -1892,6 +2109,69 @@ public struct StorageView: View {
         selectedReclaimFilePath = nil
         selectedReclaimFolderPath = nil
         searchText = ""
+    }
+
+    private func focusSimilarReview(filter: StorageSimilarityFilter) {
+        selectedSection = .similar
+        selectedSimilarityFilter = filter
+        showIgnoredSimilarityGroups = false
+    }
+
+    private func focusScreenshotQuickWinsInExplore() {
+        selectedSection = .explore
+        selectedExplorePane = .browse
+        selectedFilter = .all
+        artifactScope = .all
+        artifactSort = .oldest
+        reclaimListMode = .files
+        selectedReclaimFilePath = nil
+        selectedReclaimFolderPath = nil
+        searchText = "screen"
+    }
+
+    private func storageScreenshotQuickWinItems(
+        in report: StorageHygieneReportModel
+    ) -> [StorageHygieneItemModel] {
+        visibleStorageItems(from: report)
+            .filter { item in
+                storageItemLooksLikeScreenshot(item)
+                    && storageItem(item, isAtLeastDaysOld: screenshotQuickWinAgeDays)
+            }
+            .sorted { left, right in
+                StorageArtifactSort.oldest.areInIncreasingOrder(left, right)
+            }
+    }
+
+    private func storageItemLooksLikeScreenshot(_ item: StorageHygieneItemModel) -> Bool {
+        let imageExtensions: Set<String> = ["gif", "heic", "jpeg", "jpg", "png", "tif", "tiff", "webp"]
+        let fileExtension = URL(fileURLWithPath: item.path).pathExtension.lowercased()
+        let isImage = imageExtensions.contains(fileExtension) || item.kind.lowercased().contains("image")
+        guard isImage else { return false }
+
+        let displayName = item.displayName.lowercased()
+        let path = item.path.lowercased()
+        return displayName.contains("screenshot")
+            || displayName.contains("screen shot")
+            || displayName.contains("capture d")
+            || path.contains("/screenshots/")
+            || path.contains("/screen shots/")
+            || path.contains("/screencaptures/")
+            || item.kind.lowercased().contains("screenshot")
+    }
+
+    private func storageItem(
+        _ item: StorageHygieneItemModel,
+        isAtLeastDaysOld days: Int
+    ) -> Bool {
+        let minimumDays = UInt64(max(days, 1))
+        if let ageDays = item.ageDays {
+            return ageDays >= minimumDays
+        }
+        if let modifiedMillis = item.modifiedMillis {
+            let modified = Date(timeIntervalSince1970: Double(modifiedMillis) / 1000.0)
+            return Date().timeIntervalSince(modified) >= Double(minimumDays) * 86_400
+        }
+        return false
     }
 
     /// Compact one-line replacement for the old six-tile decision grid. The
@@ -10637,6 +10917,7 @@ private struct StorageSimilarityReviewSummary {
 
 private enum StorageSection: String, CaseIterable, Identifiable {
     case reclaim
+    case similar
     case explore
     case insights
 
@@ -10645,6 +10926,7 @@ private enum StorageSection: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .reclaim: return "Reclaim"
+        case .similar: return "Similar"
         case .explore: return "Explore"
         case .insights: return "Insights"
         }
@@ -10653,6 +10935,7 @@ private enum StorageSection: String, CaseIterable, Identifiable {
     var role: String {
         switch self {
         case .reclaim: return "Free up space"
+        case .similar: return "Duplicates & redundancy"
         case .explore: return "Find what's big"
         case .insights: return "Trends & coverage"
         }
@@ -10661,9 +10944,11 @@ private enum StorageSection: String, CaseIterable, Identifiable {
     var summary: String {
         switch self {
         case .reclaim:
-            return "Disk pressure, similar-file review, optimization leads, and staged cleanup."
+            return "Disk pressure, quick wins, and staged cleanup."
+        case .similar:
+            return "Exact duplicates, fuzzy matches, and redundancy review."
         case .explore:
-            return "Indexed browser, visual maps, and raw artifacts."
+            return "Indexed browser, visual maps, optimization leads, and raw artifacts."
         case .insights:
             return "Growth over time, volume coverage, budgets, and raw diagnostics."
         }
@@ -10672,6 +10957,7 @@ private enum StorageSection: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .reclaim: return "sparkles"
+        case .similar: return "doc.on.doc"
         case .explore: return "square.grid.3x3.topleft.filled"
         case .insights: return "chart.line.uptrend.xyaxis"
         }
@@ -10680,6 +10966,7 @@ private enum StorageSection: String, CaseIterable, Identifiable {
 
 private enum StorageExplorePane: String, CaseIterable, Identifiable {
     case browse
+    case optimize
     case raw
 
     var id: String { rawValue }
@@ -10687,6 +10974,7 @@ private enum StorageExplorePane: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .browse: return "Browse"
+        case .optimize: return "Optimize"
         case .raw: return "Raw"
         }
     }
@@ -10695,6 +10983,8 @@ private enum StorageExplorePane: String, CaseIterable, Identifiable {
         switch self {
         case .browse:
             return "Open the indexed table first, then opt into heavier full-disk and treemap views."
+        case .optimize:
+            return "Large files, cold data, app footprints, System Data, and investigation leads."
         case .raw:
             return "The raw artifact list stays collapsed until opened; use it when you need every retained candidate."
         }
