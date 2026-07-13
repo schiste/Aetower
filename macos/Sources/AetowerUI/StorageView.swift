@@ -329,6 +329,7 @@ public struct StorageView: View {
     @State private var showStorageTreemap = false
     @State private var selectedTreemapNodeID: String?
     @State private var storageExplorerPage = 0
+    @State private var selectedExplorePane: StorageExplorePane = .browse
     @State private var reclaimListMode: StorageReclaimListMode = .files
     @State private var selectedReclaimFilePath: String?
     @State private var selectedReclaimFolderPath: String?
@@ -354,7 +355,7 @@ public struct StorageView: View {
                 storageNavigationRail(report: state.storageHygieneReport)
                 Divider()
                 ScrollView {
-                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+                    LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
                         storageScanOptionsCard
 
                         if let error = state.storageHygieneError {
@@ -1504,11 +1505,49 @@ public struct StorageView: View {
 
     /// Hunt-for-space surface: the visual treemap and the full item list.
     private func storageExploreWorkspace(_ report: StorageHygieneReportModel) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+        LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            storageExplorePaneHeader
+            storageExplorePaneContent(report)
+        }
+    }
+
+    private var storageExplorePaneHeader: some View {
+        AetowerSurface(level: .card, padding: AetowerDesign.Spacing.lg, cornerRadius: AetowerDesign.Radius.lg) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                    Label("Explore", systemImage: "square.grid.3x3.topleft.filled")
+                        .font(AetowerDesign.Typography.sectionTitle)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    Spacer()
+                    Picker("Explore focus", selection: $selectedExplorePane) {
+                        ForEach(StorageExplorePane.allCases) { pane in
+                            Text(pane.label).tag(pane)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 360)
+                }
+
+                Text(selectedExplorePane.detail)
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func storageExplorePaneContent(_ report: StorageHygieneReportModel) -> some View {
+        switch selectedExplorePane {
+        case .browse:
             visualExplorationSection(report)
+        case .optimize:
             wholeComputerOptimizationSection(report)
-            similarFilesReviewSection(report)
             storageInvestigationSection(report)
+        case .similar:
+            similarFilesReviewSection(report)
+        case .raw:
             itemSection(report)
         }
     }
@@ -10599,6 +10638,37 @@ private enum StorageSection: String, CaseIterable, Identifiable {
         case .reclaim: return "sparkles"
         case .explore: return "square.grid.3x3.topleft.filled"
         case .insights: return "chart.line.uptrend.xyaxis"
+        }
+    }
+}
+
+private enum StorageExplorePane: String, CaseIterable, Identifiable {
+    case browse
+    case optimize
+    case similar
+    case raw
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .browse: return "Browse"
+        case .optimize: return "Optimize"
+        case .similar: return "Similar"
+        case .raw: return "Raw"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .browse:
+            return "Open the indexed table first, then opt into heavier full-disk and treemap views."
+        case .optimize:
+            return "Large-file, cold-data, app-footprint, System Data, and investigation leads for the current scan."
+        case .similar:
+            return "Exact duplicates, fuzzy media/document matches, and redundancy groups with review controls."
+        case .raw:
+            return "The raw artifact list stays collapsed until opened; use it when you need every retained candidate."
         }
     }
 }
