@@ -1,0 +1,182 @@
+[
+ {
+  "q": "What are my AI agents doing right now, and which sessions need approval?",
+  "a": "Use the `aetower_ai_runtime_report` MCP tool (or `aetower call aetower_ai_runtime_report` from the shell). Return grouped AI runtime insights including burden leaders, approval queue, delegated sessions, recent changes, and recent persisted history trends."
+ },
+ {
+  "q": "Which permissions and adapters are working, and what should I fix next?",
+  "a": "Use the `aetower_capability_status` MCP tool (or `aetower call aetower_capability_status` from the shell). Return operator-grade capability state, health, and next-action labels for permissions and adapters."
+ },
+ {
+  "q": "What is running on this Mac right now, with friction scores?",
+  "a": "Use the `aetower_current_snapshot` MCP tool (or `aetower call aetower_current_snapshot` from the shell). Return the latest live Aetower snapshot. Optionally skip output unless the sequence advanced."
+ },
+ {
+  "q": "Is Aetower itself healthy?",
+  "a": "Use the `aetower_diagnostics_overview` MCP tool (or `aetower call aetower_diagnostics_overview` from the shell). Return diagnostics ring and persisted diagnostics health."
+ },
+ {
+  "q": "What diagnostic noise keeps repeating, grouped by subsystem and severity?",
+  "a": "Use the `aetower_diagnostics_summary` MCP tool (or `aetower call aetower_diagnostics_summary` from the shell). Return diagnostics grouped by subsystem, event type, and level with counts, latest samples, and noise-reduction recommendations."
+ },
+ {
+  "q": "What changed on this machine between two points in time?",
+  "a": "Use the `aetower_diff_snapshots` MCP tool (or `aetower call aetower_diff_snapshots` from the shell). Compare two persisted time points and return host plus per-entity deltas for friction, CPU, memory, wakeups, and process count, including boot-boundary metadata when the snapshots span a reboot."
+ },
+ {
+  "q": "What is everything Aetower knows about this one app or process group?",
+  "a": "Use the `aetower_entity_details` MCP tool (or `aetower call aetower_entity_details` from the shell). Return the full entity snapshot for one entity_id."
+ },
+ {
+  "q": "How do processes group into apps, sessions, and agent families?",
+  "a": "Use the `aetower_entity_group_tree` MCP tool (or `aetower call aetower_entity_group_tree` from the shell). Return a grouped entity family view for one entity_id using runtime/session/repo relationships."
+ },
+ {
+  "q": "Which processes belong to this entity, and which subtree carries the burden?",
+  "a": "Use the `aetower_entity_process_tree` MCP tool (or `aetower call aetower_entity_process_tree` from the shell). Return a per-process tree for one entity with subtree burden, grouping scope, and expansion reasons."
+ },
+ {
+  "q": "Why does this app look unusual right now?",
+  "a": "Use the `aetower_explain_anomalies` MCP tool (or `aetower call aetower_explain_anomalies` from the shell). Explain current anomalous entities by highlighting the dominant changed metrics and recent supporting events."
+ },
+ {
+  "q": "How do I export a privacy-tiered slice of Aetower's data without writing files?",
+  "a": "Use the `aetower_export_query` MCP tool (or `aetower call aetower_export_query` from the shell). Return a scoped, privacy-tiered export payload for current snapshot, history, diagnostics, and session health."
+ },
+ {
+  "q": "Are there gaps or duplicates in the recorded history window?",
+  "a": "Use the `aetower_history_data_quality` MCP tool (or `aetower call aetower_history_data_quality` from the shell). Analyze persisted snapshot ordering and coverage for gaps, duplicate timestamps, sequence regressions, and boot boundaries."
+ },
+ {
+  "q": "How do I page through stored snapshots chronologically?",
+  "a": "Use the `aetower_history_page` MCP tool (or `aetower call aetower_history_page` from the shell). Return a bounded page of persisted snapshots for a time range, newest first."
+ },
+ {
+  "q": "How big is the history database, and is it healthy?",
+  "a": "Use the `aetower_history_store_health` MCP tool (or `aetower call aetower_history_store_health` from the shell). Return persisted history store health, thresholds, and recent history-related diagnostics."
+ },
+ {
+  "q": "What does the recorded history cover, at a glance?",
+  "a": "Use the `aetower_history_summary` MCP tool (or `aetower call aetower_history_summary` from the shell). Return persisted history coverage and store size information for a time range."
+ },
+ {
+  "q": "Is anything on this Mac alerting right now?",
+  "a": "Use the `aetower_host_alerts` MCP tool (or `aetower call aetower_host_alerts` from the shell). Return current host alerts such as memory pressure and wakeup storms with impacted entity IDs."
+ },
+ {
+  "q": "How loaded is this Mac right now — CPU, memory, energy, thermal?",
+  "a": "Use the `aetower_host_summary` MCP tool (or `aetower call aetower_host_summary` from the shell). Return a concise host summary plus the top friction entities."
+ },
+ {
+  "q": "My Mac froze or crashed — what happened in that window?",
+  "a": "Use the `aetower_investigation_bundle` MCP tool (or `aetower call aetower_investigation_bundle` from the shell). Return a focused crash/freeze investigation bundle with current pressure, recent changes, diagnostics, history diff, and optional process trees."
+ },
+ {
+  "q": "Where is this process's memory actually going?",
+  "a": "Use the `aetower_memory_breakdown` MCP tool (or `aetower call aetower_memory_breakdown` from the shell). Ask the running Aetower app to collect a vmmap-style memory region breakdown for one entity."
+ },
+ {
+  "q": "Which process actions ran recently, and what were their outcomes?",
+  "a": "Use the `aetower_process_action_history` MCP tool (or `aetower call aetower_process_action_history` from the shell). Return recent operator process actions recorded by Aetower diagnostics."
+ },
+ {
+  "q": "What is this PID — provenance, code signing, and context?",
+  "a": "Use the `aetower_process_inspect` MCP tool (or `aetower call aetower_process_inspect` from the shell). Inspect one running process by PID with current attribution, ps state, children, and safety notes."
+ },
+ {
+  "q": "Which files, sockets, and ports does this process hold open?",
+  "a": "Use the `aetower_process_open_resources` MCP tool (or `aetower call aetower_process_open_resources` from the shell). List open files and sockets for one process using lsof with a bounded result limit."
+ },
+ {
+  "q": "What is this process doing right now, at stack level?",
+  "a": "Use the `aetower_process_sample` MCP tool (or `aetower call aetower_process_sample` from the shell). Run a short bounded sample for one process and summarize the hottest sampled threads."
+ },
+ {
+  "q": "Which threads and queues are hot in this app?",
+  "a": "Use the `aetower_profile_entity` MCP tool (or `aetower call aetower_profile_entity` from the shell). Ask the running Aetower app to run a short sampled profile for one entity and summarize hot threads, queues, and stacks."
+ },
+ {
+  "q": "How do I search Aetower's diagnostics with filters?",
+  "a": "Use the `aetower_query_diagnostics` MCP tool (or `aetower call aetower_query_diagnostics` from the shell). Query recent or persisted diagnostics by level, subsystem, text, and time window."
+ },
+ {
+  "q": "Why did this Mac reboot, and what did it look like just before?",
+  "a": "Use the `aetower_reboot_report` MCP tool (or `aetower call aetower_reboot_report` from the shell). Summarize detected boot-session boundaries, pre-reboot pressure, and correlated sleep/wake/panic markers for a time range."
+ },
+ {
+  "q": "What changed recently — which processes appeared, spiked, or crashed?",
+  "a": "Use the `aetower_recent_changes` MCP tool (or `aetower call aetower_recent_changes` from the shell). Return a concise feed of recent timeline changes and entity change summaries."
+ },
+ {
+  "q": "What should I do about the current pressure on this machine?",
+  "a": "Use the `aetower_recommendations` MCP tool (or `aetower call aetower_recommendations` from the shell). Return structured remediation recommendations derived from host load, history health, diagnostics, and entity recommendations. Items may include a suggested_action (e.g. \"suspend\", \"lower-priority\") with target_pid and target_label. In MCP operator-action mode, use aetower_process_action with dry_run:true to preview, then dry_run:false only after explicit operator confirmation."
+ },
+ {
+  "q": "Which Git repositories exist on this machine, and what state are they in?",
+  "a": "Use the `aetower_repository_inventory` MCP tool (or `aetower call aetower_repository_inventory` from the shell). Discover local Git repository roots with a cheap inventory-only scan. Skips heavy artifact directories and returns per-root coverage without sizing files."
+ },
+ {
+  "q": "How does this GitHub repository score on supply-chain readiness?",
+  "a": "Use the `aetower_repository_scorecard` MCP tool (or `aetower call aetower_repository_scorecard` from the shell). Run an explicit OpenSSF Scorecard repository readiness scan for one GitHub repository root. Uses cached results unless refresh is true; never runs during default repository discovery."
+ },
+ {
+  "q": "What did this repo, session, or machine cost in estimated energy, dollars, and carbon?",
+  "a": "Use the `aetower_resource_cost_rollups` MCP tool (or `aetower call aetower_resource_cost_rollups` from the shell). Return normalized resource cost rollups for machine, entity, repository, and session scopes. Supports optional scope/id filtering."
+ },
+ {
+  "q": "Why did the machine just spike?",
+  "a": "Use the `aetower_runtime_burst_explanation` MCP tool (or `aetower call aetower_runtime_burst_explanation` from the shell). Explain current Aetower observer overhead by correlating runtime lag, self CPU/wakeups, UI render latency, MCP request pressure, history work, and recent adapter diagnostics."
+ },
+ {
+  "q": "Is Aetower's engine keeping up with its tick cadence?",
+  "a": "Use the `aetower_runtime_lag` MCP tool (or `aetower call aetower_runtime_lag` from the shell). Return the latest self-observability and runtime lag metrics for Aetower itself."
+ },
+ {
+  "q": "Is the whole Aetower session healthy end to end?",
+  "a": "Use the `aetower_session_health` MCP tool (or `aetower call aetower_session_health` from the shell). Return a merged health view across runtime lag, diagnostics, history store, capabilities, host load, and MCP state."
+ },
+ {
+  "q": "What is growing on my disk, and how fast?",
+  "a": "Use the `aetower_storage_growth_insights` MCP tool (or `aetower call aetower_storage_growth_insights` from the shell). Return growth intelligence straight from the persistent storage index: per-repo and per-root daily growth rates with trend, days-to-disk-full forecasts, and a since-last-scan diff of appeared and tier-changed items. No filesystem walk."
+ },
+ {
+  "q": "How do I scan developer storage for reclaimable artifacts?",
+  "a": "Use the `aetower_storage_hygiene` MCP tool (or `aetower call aetower_storage_hygiene` from the shell). Scan bounded local developer storage roots for build artifacts, logs, caches, and dependency trees. Read-only: reports size, age, safety tier, caveats, and review guidance without deleting anything."
+ },
+ {
+  "q": "What cleanup actions are available, with guardrails, without rescanning?",
+  "a": "Use the `aetower_storage_hygiene_actions` MCP tool (or `aetower call aetower_storage_hygiene_actions` from the shell). Return cleanup tiers, recipes, bundles, guardrails, and diagnostics without the raw artifact list."
+ },
+ {
+  "q": "How do I run a deeper storage scan than the default?",
+  "a": "Use the `aetower_storage_hygiene_deep_scan` MCP tool (or `aetower call aetower_storage_hygiene_deep_scan` from the shell). Run an explicit deep storage scan using the deep_native mode. Heavier than the default fast scan."
+ },
+ {
+  "q": "How do I page through the ranked storage items?",
+  "a": "Use the `aetower_storage_hygiene_items_page` MCP tool (or `aetower call aetower_storage_hygiene_items_page` from the shell). Return one page of ranked storage items plus diagnostics. Pages in instant_cached mode are served directly from the persistent index at full depth."
+ },
+ {
+  "q": "How much disk space can I reclaim right now, and where?",
+  "a": "Use the `aetower_storage_hygiene_overview` MCP tool (or `aetower call aetower_storage_hygiene_overview` from the shell). Return a compact storage overview: summary, top findings, guardrails, top repo footprints, and scan diagnostics."
+ },
+ {
+  "q": "What is taking up space inside this one repository?",
+  "a": "Use the `aetower_storage_hygiene_repo_detail` MCP tool (or `aetower call aetower_storage_hygiene_repo_detail` from the shell). Return storage detail for one repository root: repo intelligence, top artifacts, cleanup actions, and diagnostics."
+ },
+ {
+  "q": "What would a support bundle include, before I export anything?",
+  "a": "Use the `aetower_support_bundle_manifest` MCP tool (or `aetower call aetower_support_bundle_manifest` from the shell). Return a machine-readable preview of what an Aetower support bundle would contain for a given privacy tier."
+ },
+ {
+  "q": "What is straining my Mac right now?",
+  "a": "Use the `aetower_top_findings` MCP tool (or `aetower call aetower_top_findings` from the shell). Return the highest-signal current findings across host load, diagnostics, history health, and top friction groups."
+ },
+ {
+  "q": "What is causing all these CPU wakeups?",
+  "a": "Use the `aetower_wakeup_attribution` MCP tool (or `aetower call aetower_wakeup_attribution` from the shell). Ask the running Aetower app to sample one entity and return heuristic wakeup attribution by thread, queue, and dominant sampled cause."
+ },
+ {
+  "q": "How much is Aetower itself costing the machine?",
+  "a": "Use the `aetower_watch_self` MCP tool (or `aetower call aetower_watch_self` from the shell). Run a bounded live watch of Aetower's own runtime overhead, memory peak, MCP pressure, UI latency, and optional self vmmap attribution."
+ }
+]
