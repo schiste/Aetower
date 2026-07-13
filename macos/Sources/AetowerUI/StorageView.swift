@@ -504,9 +504,15 @@ public struct StorageView: View {
             return "Verifying cache"
         }
         if state.storageHygieneLoadExceededBudget {
+            if let job = state.storageScanJob {
+                return "\(StorageScanModeSelection.label(for: job.mode)) still running"
+            }
             return "Scan still running"
         }
-        return state.storageScanJob?.progress.phase.capitalized ?? "Starting scan"
+        if let job = state.storageScanJob {
+            return "\(StorageScanModeSelection.label(for: job.mode)) · \(job.progress.phase.capitalized)"
+        }
+        return "Starting scan"
     }
 
     private var storageInlineScanProgressDetail: String {
@@ -731,7 +737,7 @@ public struct StorageView: View {
                 .buttonStyle(.bordered)
 
                 Button {
-                    runScan()
+                    runCustomScan()
                     showCustomScanSettings = false
                 } label: {
                     Label("Run custom scan", systemImage: "arrow.clockwise")
@@ -1014,7 +1020,7 @@ public struct StorageView: View {
                             selectedSection = .insights
                         },
                         primaryAction: {
-                            runScan()
+                            runCompleteScan()
                         }
                     )
                 }
@@ -8208,7 +8214,7 @@ public struct StorageView: View {
         guard let job = state.storageScanJob else {
             return "Starting storage scan..."
         }
-        return "\(job.status.capitalized) \(job.progress.phase)"
+        return "\(StorageScanModeSelection.label(for: job.mode)) · \(job.status.capitalized) \(job.progress.phase)"
     }
 
     private var storageScanLoadingDetail: String {
@@ -8820,7 +8826,7 @@ public struct StorageView: View {
             || (item.attribution.aiAgentSession?.lowercased().contains(query) ?? false)
     }
 
-    private func runScan() {
+    private func runCustomScan() {
         let root = customRoot.trimmingCharacters(in: .whitespacesAndNewlines)
         state.runStorageHygieneScan(
             roots: root.isEmpty ? [] : [root],
@@ -8830,11 +8836,21 @@ public struct StorageView: View {
         )
     }
 
+    private func runCompleteScan() {
+        selectedFilter = .attention
+        state.runStorageHygieneScan(
+            roots: [],
+            maxDepth: StorageScanModeSelection.complete.defaultMaxDepth,
+            limit: StorageScanModeSelection.complete.resultLimit,
+            mode: StorageScanModeSelection.complete.rawValue
+        )
+    }
+
     private func runQuickScan() {
         selectedFilter = .attention
         state.runStorageHygieneScan(
             roots: [],
-            maxDepth: 5,
+            maxDepth: StorageScanModeSelection.fast.defaultMaxDepth,
             limit: StorageScanModeSelection.fast.resultLimit,
             mode: StorageScanModeSelection.fast.rawValue
         )
@@ -11119,30 +11135,6 @@ private enum StorageVisualExplorerMode: String, CaseIterable, Identifiable {
         case .fullDisk: return "Full disk"
         case .treemap: return "Treemap"
         case .table: return "Table"
-        }
-    }
-}
-
-private enum StorageScanModeSelection: String, CaseIterable, Identifiable {
-    case fast = "fast_changed_only"
-    case deep = "deep_native"
-    case forensic = "forensic_verified"
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .fast: return "Fast"
-        case .deep: return "Deep"
-        case .forensic: return "Forensic"
-        }
-    }
-
-    var resultLimit: UInt32 {
-        switch self {
-        case .fast: return 120
-        case .deep: return 160
-        case .forensic: return 200
         }
     }
 }

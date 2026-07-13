@@ -4166,10 +4166,11 @@ public final class AppState {
         case "queued", "running", "paused":
             storageHygieneIsLoading = true
             storageHygieneError = nil
+            let modeLabel = StorageScanModeSelection.label(for: job.mode)
             storageEstimateStatus = StorageEstimateStatus(
                 confidence: .refreshing,
                 title: "Refreshing",
-                detail: "\(job.progress.phase) · \(job.progress.currentPathHint ?? "checking changed storage paths")",
+                detail: "\(modeLabel) · \(job.progress.phase) · \(job.progress.currentPathHint ?? "checking changed storage paths")",
                 dirtyPathCount: StorageRootChangeJournal.summary().dirtyPathCount,
                 lastChangeMillis: StorageRootChangeJournal.lastChangeMillis(),
                 lastRefreshMillis: lastStorageEstimateRefreshMillis == 0 ? nil : lastStorageEstimateRefreshMillis

@@ -14,6 +14,40 @@ enum StorageReclaimListMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum StorageScanModeSelection: String, CaseIterable, Identifiable {
+    case fast = "fast_changed_only"
+    case complete = "deep_native"
+    case forensic = "forensic_verified"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .fast: return "Fast"
+        case .complete: return "Complete"
+        case .forensic: return "Forensic"
+        }
+    }
+
+    var resultLimit: UInt32 {
+        switch self {
+        case .fast: return 120
+        case .complete, .forensic: return 200
+        }
+    }
+
+    var defaultMaxDepth: UInt32 {
+        switch self {
+        case .fast: return 5
+        case .complete, .forensic: return 12
+        }
+    }
+
+    static func label(for rawMode: String) -> String {
+        StorageScanModeSelection(rawValue: rawMode)?.label ?? rawMode
+    }
+}
+
 enum StorageReclaimActionDecision: Equatable {
     case copyPlan
     case stageOnly
@@ -45,7 +79,7 @@ enum StorageDataCardActionKind: Equatable {
         switch self {
         case .review: return "Review"
         case .clean: return "Clean"
-        case .scan: return "Start scan"
+        case .scan: return "Complete scan"
         }
     }
 

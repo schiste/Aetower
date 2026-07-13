@@ -36,10 +36,28 @@ final class StorageReclaimPolicyTests: XCTestCase {
         XCTAssertEqual(StorageReclaimListMode.allCases.map(\.label), ["Files", "Folders"])
     }
 
+    func testScanModesExposeExplicitBackendModes() {
+        XCTAssertEqual(StorageScanModeSelection.fast.rawValue, "fast_changed_only")
+        XCTAssertEqual(StorageScanModeSelection.complete.rawValue, "deep_native")
+        XCTAssertEqual(StorageScanModeSelection.forensic.rawValue, "forensic_verified")
+    }
+
+    func testScanModesExposeOperatorLabels() {
+        XCTAssertEqual(StorageScanModeSelection.allCases.map(\.label), ["Fast", "Complete", "Forensic"])
+        XCTAssertEqual(StorageScanModeSelection.label(for: "deep_native"), "Complete")
+        XCTAssertEqual(StorageScanModeSelection.label(for: "unknown_mode"), "unknown_mode")
+    }
+
+    func testCompleteScanUsesFullDepthAndResultBudget() {
+        XCTAssertEqual(StorageScanModeSelection.fast.defaultMaxDepth, 5)
+        XCTAssertEqual(StorageScanModeSelection.complete.defaultMaxDepth, 12)
+        XCTAssertEqual(StorageScanModeSelection.complete.resultLimit, 200)
+    }
+
     func testDataCardActionsExposeClearOperatorLabels() {
         XCTAssertEqual(StorageDataCardActionKind.review.title, "Review")
         XCTAssertEqual(StorageDataCardActionKind.clean.title, "Clean")
-        XCTAssertEqual(StorageDataCardActionKind.scan.title, "Start scan")
+        XCTAssertEqual(StorageDataCardActionKind.scan.title, "Complete scan")
     }
 
     func testDataCardActionsExposeClearOperatorIcons() {
