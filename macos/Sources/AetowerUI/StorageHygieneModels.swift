@@ -1,7 +1,13 @@
 import Foundation
 
+enum StorageSupportDirectoryOverride {
+    nonisolated(unsafe) static var applicationSupportURL: URL?
+}
+
 func storageSupportFileURL(fileName: String, createDirectory: Bool) -> URL? {
-    guard let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+    guard let baseURL = StorageSupportDirectoryOverride.applicationSupportURL
+        ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    else {
         return nil
     }
     let directory = baseURL.appendingPathComponent("Aetower", isDirectory: true)
@@ -291,6 +297,20 @@ struct StorageHygieneReportCacheHit: Sendable {
     let repositoryCount: Int
 }
 
+struct StorageHygieneReportCacheDisplayHit: Sendable {
+    let cache: StorageHygieneReportCacheHit
+    let staleReason: String?
+
+    var isStale: Bool {
+        staleReason != nil
+    }
+}
+
+enum StorageHygieneReportCacheDisplayLoadResult: Sendable {
+    case hit(StorageHygieneReportCacheDisplayHit)
+    case miss(String)
+}
+
 enum StorageHygieneReportCacheLoadResult: Sendable {
     case hit(StorageHygieneReportCacheHit)
     case miss(String)
@@ -532,14 +552,7 @@ enum StorageHygieneReportCacheStore {
     static func loadIfValid(
         roots: [String]
     ) -> StorageHygieneReportCacheLoadResult {
-        guard let url = cacheURL(createDirectory: false) else {
-            return .miss("cache directory unavailable")
-        }
-        guard let data = try? Data(contentsOf: url) else {
-            return .miss("cache file missing")
-        }
-        let decoder = JSONDecoder()
-        guard let record = try? decoder.decode(StorageHygieneReportCacheRecord.self, from: data) else {
+        guard let record = loadRecord() else {
             return .miss("cache record could not be decoded")
         }
         guard record.schemaVersion == schemaVersion else {
@@ -555,21 +568,54 @@ enum StorageHygieneReportCacheStore {
         guard record.requestedRoots == requestedRoots else {
             return .stale("scan roots changed")
         }
-        guard let reportData = record.reportJson.data(using: .utf8) else {
-            return .stale("cached report JSON is invalid")
-        }
-        let reportDecoder = AetowerJSON.snakeCaseDecoder()
-        guard let report = try? reportDecoder.decode(StorageHygieneReportModel.self, from: reportData) else {
+        guard let report = decodeReport(from: record) else {
             return .stale("cached report no longer matches the app model")
         }
         guard record.reportCapturedAtMillis == report.capturedAtMillis else {
             return .stale("cached report metadata mismatch")
         }
+        return .hit(cacheHit(record: record, report: report))
+    }
+
+    /// Loads the last displayable report even when it needs a refresh. This is
+    /// intentionally looser than `loadIfValid`: startup should paint the last
+    /// known scan first, then let the freshness layer verify or rescan.
+    static func loadForDisplay(
+        roots: [String]
+    ) -> StorageHygieneReportCacheDisplayLoadResult {
+        guard let record = loadRecord() else {
+            return .miss("cache record could not be decoded")
+        }
+
+        let requestedRoots = normalizedRequestedRoots(roots)
+        let rootsMatch = record.requestedRoots == requestedRoots
+        let canDisplayRootMismatch = roots.isEmpty && !record.requestedRoots.isEmpty
+        guard rootsMatch || canDisplayRootMismatch else {
+            return .miss("scan roots changed")
+        }
+        guard let report = decodeReport(from: record) else {
+            return .miss("cached report no longer matches the app model")
+        }
+        guard record.reportCapturedAtMillis == report.capturedAtMillis else {
+            return .miss("cached report metadata mismatch")
+        }
+
+        var staleReasons: [String] = []
+        if record.schemaVersion != schemaVersion {
+            staleReasons.append("cache schema changed")
+        }
+        let nowMillis = currentMillis()
+        if nowMillis < record.savedAtMillis || nowMillis - record.savedAtMillis > cacheMaxAgeMillis {
+            staleReasons.append("cache age exceeded")
+        }
+        if !rootsMatch {
+            staleReasons.append("scan roots changed")
+        }
+
         return .hit(
-            StorageHygieneReportCacheHit(
-                report: report,
-                savedAtMillis: record.savedAtMillis,
-                repositoryCount: record.repositories.count
+            StorageHygieneReportCacheDisplayHit(
+                cache: cacheHit(record: record, report: report),
+                staleReason: staleReasons.isEmpty ? nil : staleReasons.joined(separator: ", ")
             )
         )
     }
@@ -647,15 +693,38 @@ enum StorageHygieneReportCacheStore {
     }
 
     private static func loadRecordForAudit(roots: [String]) -> StorageHygieneReportCacheRecord? {
-        guard let url = cacheURL(createDirectory: false),
-              let data = try? Data(contentsOf: url),
-              let record = try? JSONDecoder().decode(StorageHygieneReportCacheRecord.self, from: data)
-        else {
-            return nil
-        }
+        guard let record = loadRecord() else { return nil }
         guard record.schemaVersion == schemaVersion else { return nil }
         guard record.requestedRoots == normalizedRequestedRoots(roots) else { return nil }
         return record
+    }
+
+    private static func loadRecord() -> StorageHygieneReportCacheRecord? {
+        guard let url = cacheURL(createDirectory: false),
+              let data = try? Data(contentsOf: url)
+        else {
+            return nil
+        }
+        return try? JSONDecoder().decode(StorageHygieneReportCacheRecord.self, from: data)
+    }
+
+    private static func decodeReport(
+        from record: StorageHygieneReportCacheRecord
+    ) -> StorageHygieneReportModel? {
+        guard let reportData = record.reportJson.data(using: .utf8) else { return nil }
+        return try? AetowerJSON.snakeCaseDecoder()
+            .decode(StorageHygieneReportModel.self, from: reportData)
+    }
+
+    private static func cacheHit(
+        record: StorageHygieneReportCacheRecord,
+        report: StorageHygieneReportModel
+    ) -> StorageHygieneReportCacheHit {
+        StorageHygieneReportCacheHit(
+            report: report,
+            savedAtMillis: record.savedAtMillis,
+            repositoryCount: record.repositories.count
+        )
     }
 
     private static func cacheURL(createDirectory: Bool) -> URL? {

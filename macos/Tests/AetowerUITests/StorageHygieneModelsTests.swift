@@ -2,6 +2,56 @@ import XCTest
 @testable import AetowerUI
 
 final class StorageHygieneModelsTests: XCTestCase {
+    func testDisplayCacheLoadsStaleSchemaForStartupPaint() throws {
+        let temporarySupportURL = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("aetower-cache-display-\(UUID().uuidString)", isDirectory: true)
+        StorageSupportDirectoryOverride.applicationSupportURL = temporarySupportURL
+        defer {
+            StorageSupportDirectoryOverride.applicationSupportURL = nil
+            try? FileManager.default.removeItem(at: temporarySupportURL)
+        }
+
+        let root = temporarySupportURL.appendingPathComponent("Repositories", isDirectory: true).path
+        let rawJSON = Self.minimalStorageReportJSON(root: root)
+        let report = try AetowerJSON.snakeCaseDecoder().decode(
+            StorageHygieneReportModel.self,
+            from: Data(rawJSON.utf8)
+        )
+        StorageHygieneReportCacheStore.save(
+            report: report,
+            rawJSON: rawJSON,
+            roots: [root],
+            maxDepth: 5,
+            limit: 80,
+            mode: "deep_native"
+        )
+
+        let cacheURL = try XCTUnwrap(
+            storageSupportFileURL(fileName: "storage-hygiene-report-cache-v1.json", createDirectory: false)
+        )
+        var cacheRecord = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: cacheURL)) as? [String: Any]
+        )
+        cacheRecord["schemaVersion"] = 0
+        let staleRecordData = try JSONSerialization.data(withJSONObject: cacheRecord)
+        try staleRecordData.write(to: cacheURL, options: [.atomic])
+
+        if case let .stale(reason) = StorageHygieneReportCacheStore.loadIfValid(roots: [root]) {
+            XCTAssertEqual(reason, "cache schema changed")
+        } else {
+            XCTFail("Strict cache load should reject an old schema.")
+        }
+
+        guard case let .hit(display) = StorageHygieneReportCacheStore.loadForDisplay(roots: [root]) else {
+            return XCTFail("Display cache load should still paint a stale-but-decodable report.")
+        }
+        XCTAssertTrue(display.isStale)
+        XCTAssertEqual(display.staleReason, "cache schema changed")
+        XCTAssertEqual(display.cache.report.capturedAtMillis, 1_782_860_000_000)
+        XCTAssertEqual(display.cache.report.roots, [root])
+    }
+
     func testRepositoryInventoryReportDecodesSnakeCaseJSON() throws {
         let json = """
         {
@@ -590,5 +640,57 @@ final class StorageHygieneModelsTests: XCTestCase {
         )
         XCTAssertEqual(legacy.recommendationScore, 0)
         XCTAssertNil(legacy.attribution.writerDisplay)
+    }
+
+    private static func minimalStorageReportJSON(root: String) -> String {
+        """
+        {
+          "captured_at_millis": 1782860000000,
+          "scan_duration_millis": 42,
+          "scan_mode": "deep_native",
+          "summary": {
+            "item_count": 0,
+            "total_reclaimable_bytes": 0,
+            "safe_candidate_count": 0,
+            "review_candidate_count": 0,
+            "stale_candidate_count": 0,
+            "scanned_directory_count": 1,
+            "largest_item_path": null,
+            "largest_item_bytes": 0,
+            "attributed_repo_count": 0
+          },
+          "cleanup_tiers": [],
+          "budget_guardrails": {
+            "repo_growth_budget_bytes_per_day": 1048576,
+            "repo_artifact_budget_bytes": 10485760,
+            "total_artifact_budget_bytes": 20971520,
+            "free_space_floor_bytes": 1073741824,
+            "volume_pressure_floor_percent": 10,
+            "warning_only_by_default": true,
+            "auto_trash_safe_tier_enabled": false,
+            "scheduled_scan_recommended": false,
+            "scheduled_scan_interval_hours": 24,
+            "status": "ok",
+            "violations": [],
+            "policies": [],
+            "prevention_suggestions": []
+          },
+          "agent_hygiene": {
+            "total_agent_artifact_bytes": 0,
+            "week_agent_artifact_bytes": 0,
+            "rebuildable_agent_bytes": 0,
+            "rebuildable_agent_percent": 0,
+            "week_rebuildable_agent_bytes": 0,
+            "week_rebuildable_agent_percent": 0,
+            "attributed_item_count": 0,
+            "agent_count": 0,
+            "agents": [],
+            "caveats": []
+          },
+          "roots": ["\(root)"],
+          "truncated": false,
+          "caveats": []
+        }
+        """
     }
 }

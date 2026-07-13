@@ -2053,6 +2053,7 @@ public final class AppState {
     private static let storageEstimateQuietMillis: UInt64 = 45_000
     private static let storageEstimateRefreshCooldownMillis: UInt64 = 120_000
     private static let storageEstimateFullScanDirtyPathThreshold = 220
+    private static let storageCacheReverifyIntervalMillis: UInt64 = 6 * 60 * 60 * 1000
 
     @discardableResult
     private func startStorageRefreshForDirtyDisplayedReportIfNeeded(
@@ -2108,6 +2109,45 @@ public final class AppState {
             mode: mode
         )
         return true
+    }
+
+    private func startStorageRefreshForDisplayedCacheIfNeeded(
+        _ display: StorageHygieneReportCacheDisplayHit,
+        requestedRoots: [String],
+        trigger: String
+    ) {
+        if startStorageRefreshForDirtyDisplayedReportIfNeeded(display.cache.report, trigger: trigger) {
+            return
+        }
+
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        let cacheAge = nowMillis &- display.cache.savedAtMillis
+        guard display.isStale || cacheAge >= Self.storageCacheReverifyIntervalMillis else { return }
+
+        let mode = "fast_changed_only"
+        let scanRoots = requestedRoots.isEmpty ? [] : requestedRoots
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: display.isStale
+                ? "storage-cache-stale-refresh-started"
+                : "storage-cache-periodic-refresh-started",
+            message: display.isStale
+                ? "Started storage refresh because the displayed startup cache is stale."
+                : "Started periodic storage refresh after painting the startup cache.",
+            fields: [
+                DiagnosticsField(key: "trigger", value: trigger),
+                DiagnosticsField(key: "cache_age_millis", value: String(cacheAge)),
+                DiagnosticsField(key: "mode", value: mode),
+                DiagnosticsField(key: "stale_reason", value: display.staleReason ?? ""),
+            ]
+        )
+        startStorageScanJob(
+            roots: scanRoots,
+            maxDepth: 5,
+            limit: 200,
+            mode: mode
+        )
     }
 
     /// Low-impact storage freshness loop. FSEvents only marks roots dirty; this
@@ -2602,71 +2642,38 @@ public final class AppState {
         }
         storageHygieneTask?.cancel()
 
-        // Read the small JSON cache synchronously first so a hit paints
-        // instantly. The old flow flipped storageHygieneIsLoading true here and
-        // deferred the cache read onto a .background-priority task, so even a
-        // guaranteed hit flashed "Starting storage scan" for the deserialize
-        // window on every launch. Loading is now shown only on a real miss.
-        var paintedFromCache = false
-        var cacheSavedAtMillis: UInt64 = 0
-        if storageHygieneReport == nil {
-            if case let .hit(cache) = StorageHygieneReportCacheStore.loadIfValid(roots: roots) {
-                publishStorageHygieneCacheHit(cache)
-                paintedFromCache = true
-                cacheSavedAtMillis = cache.savedAtMillis
+        // Paint the small JSON report synchronously, even when it is only a
+        // displayable stale snapshot. Freshness is handled after paint by the
+        // dirty-path refresh logic; startup should not block on projection work.
+        switch StorageHygieneReportCacheStore.loadForDisplay(roots: roots) {
+        case let .hit(display):
+            publishStorageHygieneCacheHit(display.cache)
+            if let staleReason = display.staleReason {
+                publishStorageHygieneCacheStale(reason: staleReason)
             }
+            startStorageRefreshForDisplayedCacheIfNeeded(
+                display,
+                requestedRoots: roots,
+                trigger: display.isStale ? "storage-open-stale-cache" : "storage-open-cache"
+            )
+            return
+        case let .miss(reason):
+            publishStorageHygieneCacheStale(reason: reason)
         }
 
+        // If the UI snapshot is missing, recover it from the persistent index
+        // once and save it for future launches. Do not call
+        // storageHygieneOverviewJSON here: that projection path may fall back to
+        // scan-shaped work and is not a startup first-paint primitive.
         configureStorageHygieneLoadWatchdog(mode: "instant_cached")
-        storageHygieneIsLoading = storageHygieneReport == nil
+        storageHygieneIsLoading = true
         storageHygieneIsVerifyingCache = false
         storageHygieneError = nil
         let bridge = self.bridge
         let publisher = StorageHygieneMainActorPublisher(self)
-        storageHygieneTask = Task.detached(priority: paintedFromCache ? .utility : .background) {
+        storageHygieneTask = Task.detached(priority: .utility) {
             let maxDepth: UInt32 = 5
             let limit: UInt32 = 200
-            var publishedReport = paintedFromCache
-
-            // Only re-read the cache in the background if we didn't already
-            // paint it synchronously above; either way the index refresh below
-            // still runs to keep the displayed data current.
-            if !paintedFromCache {
-                switch StorageHygieneReportCacheStore.loadIfValid(roots: roots) {
-                case let .hit(cache):
-                    guard !Task.isCancelled else { return }
-                    await publisher.publishCacheHit(cache)
-                    publishedReport = true
-                case let .stale(reason):
-                    guard !Task.isCancelled else { return }
-                    await publisher.publishCacheStale(reason: reason)
-                case .miss:
-                    break
-                }
-            }
-
-            if !publishedReport {
-                guard !Task.isCancelled else { return }
-                let overview = bridge.storageHygieneOverviewJSON(
-                    roots: roots,
-                    maxDepth: maxDepth,
-                    mode: "instant_cached"
-                )
-                let overviewPrepared = StorageHygieneDecodePipeline.prepare(
-                    overview,
-                    roots: roots,
-                    maxDepth: maxDepth,
-                    limit: limit,
-                    mode: "instant_cached",
-                    saveCache: false,
-                    saveBaseline: false
-                )
-                if overviewPrepared.report != nil {
-                    await publisher.publishPrepared(overviewPrepared)
-                    publishedReport = true
-                }
-            }
-
             guard !Task.isCancelled else { return }
             let indexed = bridge.storageHygieneIndexedJSON(
                 roots: roots,
@@ -2689,49 +2696,8 @@ public final class AppState {
             )
             if indexedPrepared.report != nil {
                 await publisher.publishPrepared(indexedPrepared)
-                publishedReport = true
-            } else if !publishedReport {
-                await publisher.publishVerificationFinished(message: indexedPrepared.errorMessage)
-            }
-
-            guard !Task.isCancelled else { return }
-            guard publishedReport else { return }
-
-            // The repository inventory walk is a full live re-walk of every repo
-            // (~25-30s). Running it on every launch is the "full scan after every
-            // rebuild" cost. When we painted from a fresh cache and the on-disk
-            // change journal (persisted across launches) shows nothing changed
-            // since that cache was written, the walk would only reproduce what we
-            // already show — so skip it. Any real change (lastChange > cacheSaved,
-            // or no cache paint) still triggers a full verify.
-            //
-            // FSEvents only records while the app runs, so a change made while it
-            // was closed would be missed by the journal; the age bound below
-            // guarantees a periodic re-verify anyway, so staleness is capped at
-            // reverifyIntervalMillis rather than "until the next real event".
-            let reverifyIntervalMillis: UInt64 = 6 * 60 * 60 * 1000 // 6 hours
-            if paintedFromCache {
-                let lastChange = StorageRootChangeJournal.lastChangeMillis() ?? 0
-                let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
-                let cacheAge = nowMillis &- cacheSavedAtMillis
-                if lastChange <= cacheSavedAtMillis, cacheAge < reverifyIntervalMillis {
-                    return
-                }
-            }
-
-            await publisher.publishVerificationStarted()
-
-            let inventory = bridge.repositoryInventoryJSON(
-                roots: roots,
-                maxDepth: maxDepth
-            )
-            guard !Task.isCancelled else { return }
-            if let verifiedInventory = Self.decodeRepositoryInventoryReport(inventory) {
-                await publisher.publishInventoryVerification(verifiedInventory)
             } else {
-                await publisher.publishVerificationFinished(
-                    message: inventory.errorMessage ?? "Repository inventory verification failed."
-                )
+                await publisher.publishVerificationFinished(message: indexedPrepared.errorMessage)
             }
         }
     }
