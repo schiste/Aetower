@@ -2997,59 +2997,34 @@ public final class AppState {
         mode: String = "fast_changed_only"
     ) {
         storageHygieneTask?.cancel()
-        configureStorageHygieneLoadWatchdog(mode: mode)
-        storageHygieneIsLoading = true
-        storageHygieneIsVerifyingCache = false
-        storageHygieneError = nil
-        let bridge = self.bridge
-        let publisher = StorageHygieneMainActorPublisher(self)
-        storageHygieneTask = Task.detached(priority: .background) {
-            let overview = bridge.storageHygieneOverviewJSON(
-                roots: roots,
-                maxDepth: maxDepth,
-                mode: "instant_cached"
-            )
-            let overviewPrepared = StorageHygieneDecodePipeline.prepare(
-                overview,
-                roots: roots,
-                maxDepth: maxDepth,
-                limit: limit,
-                mode: "instant_cached",
-                saveCache: false,
-                saveBaseline: false
-            )
-            if overviewPrepared.report != nil {
-                guard !Task.isCancelled else { return }
-                await publisher.publishPrepared(overviewPrepared)
-            }
 
-            let indexed = bridge.storageHygieneIndexedJSON(
-                roots: roots,
-                maxDepth: maxDepth,
-                limit: limit
-            )
-            let indexedPrepared = StorageHygieneDecodePipeline.prepare(
-                indexed,
-                roots: roots,
-                maxDepth: maxDepth,
-                limit: limit,
-                mode: "instant_cached",
-                saveCache: false,
-                saveBaseline: true
-            )
-            if indexedPrepared.report != nil {
-                guard !Task.isCancelled else { return }
-                await publisher.publishPrepared(indexedPrepared)
+        if storageHygieneReport == nil,
+           case let .hit(display) = StorageHygieneReportCacheStore.loadForDisplay(roots: roots)
+        {
+            publishStorageHygieneCacheHit(display.cache)
+            if let staleReason = display.staleReason {
+                publishStorageHygieneCacheStale(reason: staleReason)
             }
-
-            guard !Task.isCancelled else { return }
-            await publisher.startScan(
-                roots: roots,
-                maxDepth: maxDepth,
-                limit: limit,
-                mode: mode
-            )
         }
+
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "storage-scan-job-start-requested",
+            message: "Requested explicit storage scan job.",
+            fields: [
+                DiagnosticsField(key: "mode", value: mode),
+                DiagnosticsField(key: "root_count", value: String(roots.count)),
+                DiagnosticsField(key: "max_depth", value: String(maxDepth)),
+                DiagnosticsField(key: "limit", value: String(limit)),
+            ]
+        )
+        startStorageScanJob(
+            roots: roots,
+            maxDepth: maxDepth,
+            limit: limit,
+            mode: mode
+        )
     }
 
     func storagePathWasMovedToTrash(_ path: String) -> Bool {
@@ -3059,16 +3034,17 @@ public final class AppState {
     func markStoragePathsMovedToTrash(_ paths: [String], refresh: Bool = true) {
         let normalizedPaths = Set(paths.map(Self.normalizedStorageCleanupPath).filter { !$0.isEmpty })
         guard !normalizedPaths.isEmpty else { return }
+        let newPaths = normalizedPaths.subtracting(storageCleanupMovedPaths)
+        guard !newPaths.isEmpty else { return }
         storageCleanupMovedPaths.formUnion(normalizedPaths)
-        StorageHygieneReportCacheStore.invalidate()
         repositorySummaryInputsGeneration += 1
         recordLocalDiagnosticsEvent(
             level: .info,
             subsystem: .ui,
             eventType: "storage-cleanup-paths-reconciled",
-            message: "Hid \(normalizedPaths.count) moved storage path(s) pending the next scan refresh.",
+            message: "Hid \(newPaths.count) moved storage path(s) pending the next scan refresh.",
             fields: [
-                DiagnosticsField(key: "moved_path_count", value: String(normalizedPaths.count)),
+                DiagnosticsField(key: "moved_path_count", value: String(newPaths.count)),
             ]
         )
         guard refresh, !storageHygieneIsLoading else { return }

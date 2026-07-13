@@ -406,6 +406,11 @@ public struct StorageView: View {
             .animation(AetowerDesign.Motion.quick, value: directTrashUndo == nil)
         }
         .task {
+            refreshTrackedTrashState()
+            state.markStoragePathsMovedToTrash(
+                Array(trashedItemURLsByOriginalPath.keys),
+                refresh: false
+            )
             state.ensureStorageHygieneScan()
         }
         .sheet(item: $candidateCommandPreviewBundle) { bundle in

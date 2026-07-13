@@ -2,6 +2,47 @@ import XCTest
 @testable import AetowerUI
 
 final class StorageHygieneModelsTests: XCTestCase {
+    @MainActor
+    func testMovedTrashReconciliationPreservesStartupCache() throws {
+        let temporarySupportURL = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("aetower-cache-preserve-\(UUID().uuidString)", isDirectory: true)
+        StorageSupportDirectoryOverride.applicationSupportURL = temporarySupportURL
+        defer {
+            StorageSupportDirectoryOverride.applicationSupportURL = nil
+            try? FileManager.default.removeItem(at: temporarySupportURL)
+        }
+
+        let root = temporarySupportURL.appendingPathComponent("Repositories", isDirectory: true).path
+        let rawJSON = Self.minimalStorageReportJSON(root: root)
+        let report = try AetowerJSON.snakeCaseDecoder().decode(
+            StorageHygieneReportModel.self,
+            from: Data(rawJSON.utf8)
+        )
+        StorageHygieneReportCacheStore.save(
+            report: report,
+            rawJSON: rawJSON,
+            roots: [root],
+            maxDepth: 5,
+            limit: 80,
+            mode: "deep_native"
+        )
+
+        let cacheURL = try XCTUnwrap(
+            storageSupportFileURL(fileName: "storage-hygiene-report-cache-v1.json", createDirectory: false)
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cacheURL.path))
+
+        let state = AppState()
+        state.markStoragePathsMovedToTrash([root.appending("/target")], refresh: false)
+
+        XCTAssertTrue(state.storagePathWasMovedToTrash(root.appending("/target")))
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: cacheURL.path),
+            "Moving storage paths to Trash should not delete the startup cache before a replacement scan succeeds."
+        )
+    }
+
     func testDisplayCacheLoadsStaleSchemaForStartupPaint() throws {
         let temporarySupportURL = FileManager.default
             .temporaryDirectory
