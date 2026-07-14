@@ -99,6 +99,20 @@ struct EntityGroup: Equatable {
     var id: String { root.entityId }
 }
 
+struct MonitorProcessComponentRef: Identifiable, Equatable {
+    let owner: EntitySnapshot
+    let component: ComponentSnapshot
+    let ownerSortIndex: Int
+
+    var pid: UInt32 {
+        component.processId ?? 0
+    }
+
+    var id: String {
+        "\(owner.entityId):\(pid)"
+    }
+}
+
 struct GroupingCacheKey: Hashable {
     let sequence: UInt64
     let query: String
@@ -348,6 +362,11 @@ func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
         }
     }
 
+    func isChau7ProxyRoot(_ entity: EntitySnapshot) -> Bool {
+        entity.displayName.localizedCaseInsensitiveContains("chau7")
+            || (entity.badges.contains("chau7-live") && entity.entityKind != .aiAgent)
+    }
+
     func sharesStrongContext(_ lhs: EntitySnapshot, _ rhs: EntitySnapshot) -> Bool {
         let sharedSessions = !sessionIDs(for: lhs).isDisjoint(with: sessionIDs(for: rhs))
         if sharedSessions {
@@ -371,10 +390,7 @@ func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
         for entity in entities {
             let ids = sessionIDs(for: entity)
             guard !ids.isEmpty else { continue }
-            let isChau7Root =
-                entity.displayName.localizedCaseInsensitiveContains("chau7")
-                || (entity.badges.contains("chau7-live") && entity.entityKind != .aiAgent)
-            guard isChau7Root else { continue }
+            guard isChau7ProxyRoot(entity) else { continue }
             for id in ids {
                 roots[id] = entity.entityId
             }
@@ -399,7 +415,7 @@ func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
             if isGenericSystemRoot(owner) {
                 continue
             }
-            if sharesStrongContext(entity, owner) {
+            if isChau7ProxyRoot(owner) || sharesStrongContext(entity, owner) {
                 return ownerID
             }
         }
@@ -443,9 +459,7 @@ func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
             energyScore: members.reduce(0) { $0 + $1.friction.energyImpactScore },
             frictionScore: members.reduce(0) { $0 + $1.friction.totalScore },
             processCount: members.reduce(0) { total, entity in
-                total + entity.components.reduce(0) { componentTotal, component in
-                    componentTotal + (component.kind == .adapterContext ? 0 : 1)
-                }
+                total + visibleProcessComponentCount(entity)
             },
             userSummary: groupUserSummary(for: members),
             oldestStartMillis: startTimes.min() ?? 0,
@@ -739,6 +753,25 @@ func expandedMemberEntities(for group: EntityGroup, by sortKey: SortKey) -> [Ent
     )
 }
 
+func expandedProcessComponents(for group: EntityGroup, by sortKey: SortKey) -> [MonitorProcessComponentRef] {
+    sortEntities(group.members, by: sortKey)
+        .enumerated()
+        .flatMap { ownerIndex, owner in
+            owner.components.compactMap { component -> MonitorProcessComponentRef? in
+                guard component.kind != .adapterContext, component.processId != nil else {
+                    return nil
+                }
+                return MonitorProcessComponentRef(owner: owner, component: component, ownerSortIndex: ownerIndex)
+            }
+        }
+        .sorted { compareProcessComponents($0, $1, by: sortKey) }
+}
+
+func uniqueEntityIDsPreservingOrder(_ entityIDs: [String]) -> [String] {
+    var seen = Set<String>()
+    return entityIDs.filter { seen.insert($0).inserted }
+}
+
 func buildGroupedEntities(
     from entities: [EntitySnapshot],
     query: String,
@@ -866,6 +899,65 @@ func compareGroups(_ left: EntityGroup, _ right: EntityGroup, by sortKey: SortKe
     }
 }
 
+func compareProcessComponents(
+    _ left: MonitorProcessComponentRef,
+    _ right: MonitorProcessComponentRef,
+    by sortKey: SortKey
+) -> Bool {
+    switch sortKey {
+    case .friction:
+        return descending(left.owner.friction.totalScore, right.owner.friction.totalScore) {
+            processComponentTieBreak(left, right)
+        }
+    case .cpu:
+        return descending(left.component.cpuPercent, right.component.cpuPercent) {
+            processComponentTieBreak(left, right)
+        }
+    case .memory:
+        return descending(componentEffectiveMemoryBytes(left.component), componentEffectiveMemoryBytes(right.component)) {
+            processComponentTieBreak(left, right)
+        }
+    case .wakeups:
+        return descending(left.owner.metrics.wakeupsPerSecond, right.owner.metrics.wakeupsPerSecond) {
+            processComponentTieBreak(left, right)
+        }
+    case .processCount:
+        return descending(liveProcessCount(for: left.owner), liveProcessCount(for: right.owner)) {
+            processComponentTieBreak(left, right)
+        }
+    case .disk:
+        let leftDisk = left.owner.metrics.diskReadBps + left.owner.metrics.diskWriteBps
+        let rightDisk = right.owner.metrics.diskReadBps + right.owner.metrics.diskWriteBps
+        return descending(leftDisk, rightDisk) {
+            processComponentTieBreak(left, right)
+        }
+    case .network:
+        let leftNetwork = left.owner.metrics.networkReceiveBps + left.owner.metrics.networkSendBps
+        let rightNetwork = right.owner.metrics.networkReceiveBps + right.owner.metrics.networkSendBps
+        return descending(leftNetwork, rightNetwork) {
+            processComponentTieBreak(left, right)
+        }
+    case .energy:
+        return descending(left.owner.friction.energyImpactScore, right.owner.friction.energyImpactScore) {
+            processComponentTieBreak(left, right)
+        }
+    case .alphabeticalAsc:
+        return processComponentNameAscending(left, right)
+    case .alphabeticalDesc:
+        return processComponentNameDescending(left, right)
+    case .oldestFirst:
+        let leftStart = left.component.startTimeMillis == 0 ? UInt64.max : left.component.startTimeMillis
+        let rightStart = right.component.startTimeMillis == 0 ? UInt64.max : right.component.startTimeMillis
+        return ascending(leftStart, rightStart) {
+            processComponentTieBreak(left, right)
+        }
+    case .newestFirst:
+        return descending(left.component.startTimeMillis, right.component.startTimeMillis) {
+            processComponentTieBreak(left, right)
+        }
+    }
+}
+
 private func descending<T: Comparable>(_ left: T, _ right: T, tieBreak: () -> Bool) -> Bool {
     if left != right {
         return left > right
@@ -926,4 +1018,50 @@ private func groupNameDescending(_ left: EntityGroup, _ right: EntityGroup) -> B
         return nameOrder == .orderedDescending
     }
     return left.id < right.id
+}
+
+private func componentEffectiveMemoryBytes(_ component: ComponentSnapshot) -> UInt64 {
+    max(component.memoryPhysicalFootprintBytes, component.memoryBytes)
+}
+
+private func processComponentTieBreak(
+    _ left: MonitorProcessComponentRef,
+    _ right: MonitorProcessComponentRef
+) -> Bool {
+    if left.ownerSortIndex != right.ownerSortIndex {
+        return left.ownerSortIndex < right.ownerSortIndex
+    }
+
+    let nameOrder = left.component.title.localizedCaseInsensitiveCompare(right.component.title)
+    if nameOrder != .orderedSame {
+        return nameOrder == .orderedAscending
+    }
+
+    if left.owner.entityId != right.owner.entityId {
+        return left.owner.entityId < right.owner.entityId
+    }
+
+    return left.pid < right.pid
+}
+
+private func processComponentNameAscending(
+    _ left: MonitorProcessComponentRef,
+    _ right: MonitorProcessComponentRef
+) -> Bool {
+    let nameOrder = left.component.title.localizedCaseInsensitiveCompare(right.component.title)
+    if nameOrder != .orderedSame {
+        return nameOrder == .orderedAscending
+    }
+    return processComponentTieBreak(left, right)
+}
+
+private func processComponentNameDescending(
+    _ left: MonitorProcessComponentRef,
+    _ right: MonitorProcessComponentRef
+) -> Bool {
+    let nameOrder = left.component.title.localizedCaseInsensitiveCompare(right.component.title)
+    if nameOrder != .orderedSame {
+        return nameOrder == .orderedDescending
+    }
+    return processComponentTieBreak(left, right)
 }

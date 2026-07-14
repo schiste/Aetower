@@ -229,6 +229,7 @@ public struct MainListView: View {
     let state: AppState
     let settings: SettingsStore
     @State private var selectedEntityID: String?
+    @State private var selectedProcessRowID: String?
     @State private var searchText = ""
     @State private var originFilter: ProcessOriginFilter = .all
     @State private var sortKey: SortKey = .friction
@@ -283,6 +284,14 @@ public struct MainListView: View {
         .onChange(of: selectedEntityID) { _, newValue in
             if newValue != nil {
                 searchFieldFocused = false
+            }
+            if let selectedProcessRowID,
+               let newValue,
+               !selectedProcessRowID.hasPrefix("\(newValue):") {
+                self.selectedProcessRowID = nil
+            }
+            if newValue == nil {
+                selectedProcessRowID = nil
             }
         }
         .onChange(of: state.monitorFocusEntityID) { _, _ in
@@ -398,9 +407,11 @@ public struct MainListView: View {
                 focusedIndex = 0
                 if listMode == .flat {
                     expandedGroupIDs.removeAll()
+                    selectedProcessRowID = nil
                 }
                 if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
                     self.selectedEntityID = nil
+                    selectedProcessRowID = nil
                 }
             }
         } filterTools: {
@@ -481,6 +492,7 @@ public struct MainListView: View {
                     focusedIndex = 0
                     if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
                         self.selectedEntityID = nil
+                        selectedProcessRowID = nil
                     }
                 } label: {
                     HStack {
@@ -530,6 +542,7 @@ public struct MainListView: View {
                     Button {
                         withAnimation(AetowerDesign.Motion.standard) {
                             selectedEntityID = nil
+                            selectedProcessRowID = nil
                         }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
@@ -867,10 +880,7 @@ public struct MainListView: View {
                         listSectionHeader("Burden leaders")
                         ForEach(burdenLeaderRows) { row in
                             Button {
-                                searchFieldFocused = false
-                                withAnimation(AetowerDesign.Motion.standard) {
-                                    selectedEntityID = row.id
-                                }
+                                selectEntity(row.id)
                             } label: {
                                 EntityRow(
                                     row: row,
@@ -926,16 +936,13 @@ public struct MainListView: View {
                             }
 
                             if isExpanded {
-                                ForEach(expandedMemberRows(for: row.group)) { childRow in
+                                ForEach(expandedProcessRows(for: row.group)) { processRow in
                                     Button {
-                                        searchFieldFocused = false
-                                        withAnimation(AetowerDesign.Motion.standard) {
-                                            selectedEntityID = childRow.id
-                                        }
+                                        selectProcessRow(processRow)
                                     } label: {
-                                        EntityRow(
-                                            row: childRow,
-                                            isSelected: selectedEntityID == childRow.id
+                                        MonitorProcessRow(
+                                            row: processRow,
+                                            isSelected: selectedProcessRowID == processRow.id
                                         )
                                         .equatable()
                                     }
@@ -943,7 +950,7 @@ public struct MainListView: View {
                                     .padding(.leading, AetowerDesign.Spacing.lg)
                                     .transition(.opacity.combined(with: .move(edge: .top)))
                                     .contextMenu {
-                                        monitorContextMenu(for: childRow.entity, members: [childRow.entity])
+                                        processComponentContextMenu(for: processRow)
                                     }
                                 }
                             }
@@ -951,10 +958,7 @@ public struct MainListView: View {
                     } else {
                         ForEach(allProcessRows) { row in
                             Button {
-                                searchFieldFocused = false
-                                withAnimation(AetowerDesign.Motion.standard) {
-                                    selectedEntityID = row.id
-                                }
+                                selectEntity(row.id)
                             } label: {
                                 EntityRow(
                                     row: row,
@@ -1044,6 +1048,43 @@ public struct MainListView: View {
         }
     }
 
+    @ViewBuilder
+    private func processComponentContextMenu(for row: MonitorProcessRowModel) -> some View {
+        Button("Open Detail") {
+            selectProcessRow(row)
+        }
+
+        Divider()
+        Button("Inspect PID \(row.pid)") {
+            requestProcessOperation(entityID: row.ownerEntityID, pid: row.pid, operation: .inspect)
+            selectedProcessRowID = row.id
+        }
+        Button("Open files & sockets") {
+            requestProcessOperation(entityID: row.ownerEntityID, pid: row.pid, operation: .resources)
+            selectedProcessRowID = row.id
+        }
+        Button("Run 3s sample") {
+            requestProcessOperation(entityID: row.ownerEntityID, pid: row.pid, operation: .sample)
+            selectedProcessRowID = row.id
+        }
+
+        Divider()
+        Button("Copy Process ID") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(String(row.pid), forType: .string)
+        }
+        Button("Copy Name") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(row.displayName, forType: .string)
+        }
+        if let commandLine = row.component.commandLine, !commandLine.isEmpty {
+            Button("Copy Command") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(commandLine, forType: .string)
+            }
+        }
+    }
+
     private var contextPreviewActions: [ProcessActionKind] {
         [.suspend, .resume, .lowerPriority, .normalPriority, .terminate, .forceKill, .terminateTree, .forceKillTree]
     }
@@ -1052,6 +1093,15 @@ public struct MainListView: View {
         searchFieldFocused = false
         withAnimation(AetowerDesign.Motion.standard) {
             selectedEntityID = entityID
+            selectedProcessRowID = nil
+        }
+    }
+
+    private func selectProcessRow(_ row: MonitorProcessRowModel) {
+        searchFieldFocused = false
+        withAnimation(AetowerDesign.Motion.standard) {
+            selectedEntityID = row.ownerEntityID
+            selectedProcessRowID = row.id
         }
     }
 
@@ -1618,7 +1668,7 @@ public struct MainListView: View {
 
     private var monitorVisibleRowCount: Int {
         if isGroupedMode {
-            return burdenLeaderRows.count + visibleGroupedEntityIDs.count
+            return burdenLeaderRows.count + allProcessGroupRows.count + visibleExpandedProcessRowCount
         }
         return burdenLeaderRows.count + allProcessRows.count
     }
@@ -1715,12 +1765,19 @@ public struct MainListView: View {
     }
 
     private var visibleGroupedEntityIDs: [String] {
-        allProcessGroupRows.flatMap { row in
+        uniqueEntityIDsPreservingOrder(allProcessGroupRows.flatMap { row in
             var ids = [row.id]
             if expandedGroupIDs.contains(row.id) {
-                ids.append(contentsOf: expandedMemberEntities(for: row.group, by: sortKey).map(\.entityId))
+                ids.append(contentsOf: expandedProcessComponents(for: row.group, by: sortKey).map(\.owner.entityId))
             }
             return ids
+        })
+    }
+
+    private var visibleExpandedProcessRowCount: Int {
+        allProcessGroupRows.reduce(0) { total, row in
+            guard expandedGroupIDs.contains(row.id) else { return total }
+            return total + expandedProcessComponents(for: row.group, by: sortKey).count
         }
     }
 
@@ -1758,28 +1815,24 @@ public struct MainListView: View {
     }
 
     private func canExpandGroup(_ group: EntityGroup) -> Bool {
-        !expandedMemberEntities(for: group, by: sortKey).isEmpty
+        expandedProcessComponents(for: group, by: sortKey).count > 1
     }
 
-    private func expandedMemberRows(for group: EntityGroup) -> [MonitorEntityRowModel] {
-        let nowMillis = state.snapshotCapturedAtMillis > 0
-            ? state.snapshotCapturedAtMillis
-            : UInt64(Date().timeIntervalSince1970 * 1000)
-        return expandedMemberEntities(for: group, by: sortKey).map {
-            MonitorEntityRowModel(
-                entity: $0,
-                origin: processOriginCache.summary(for: $0),
-                nowMillis: nowMillis
-            )
-        }
+    private func expandedProcessRows(for group: EntityGroup) -> [MonitorProcessRowModel] {
+        expandedProcessComponents(for: group, by: sortKey).map(MonitorProcessRowModel.init)
     }
 
     private func toggleGroupExpansion(_ group: EntityGroup) {
-        let childIDs = Set(expandedMemberEntities(for: group, by: sortKey).map(\.entityId))
+        let processRefs = expandedProcessComponents(for: group, by: sortKey)
+        let childIDs = Set(processRefs.map(\.owner.entityId))
+        let processRowIDs = Set(processRefs.map(\.id))
         withAnimation(AetowerDesign.Motion.standard) {
             if expandedGroupIDs.contains(group.id) {
                 expandedGroupIDs.remove(group.id)
-                if let selectedEntityID, childIDs.contains(selectedEntityID) {
+                if let selectedProcessRowID, processRowIDs.contains(selectedProcessRowID) {
+                    self.selectedEntityID = group.id
+                    self.selectedProcessRowID = nil
+                } else if let selectedEntityID, childIDs.contains(selectedEntityID) {
                     self.selectedEntityID = group.id
                 }
             } else {
@@ -1906,6 +1959,7 @@ public struct MainListView: View {
                group.members.contains(where: { $0.entityId == requestedEntityID })
            }) {
             selectedEntityID = group.root.entityId
+            selectedProcessRowID = nil
             return
         }
 
@@ -1913,6 +1967,7 @@ public struct MainListView: View {
             originFilter = .all
             listMode = .flat
             selectedEntityID = requestedEntityID
+            selectedProcessRowID = nil
         }
     }
 
@@ -1953,6 +2008,7 @@ public struct MainListView: View {
 
         if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
             self.selectedEntityID = nil
+            selectedProcessRowID = nil
         }
     }
 

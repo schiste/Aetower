@@ -78,6 +78,88 @@ final class MonitorListCoreTests: XCTestCase {
         XCTAssertEqual(expandedMemberEntities(for: group, by: .memory).map(\.entityId), ["large", "small"])
     }
 
+    func testExpandedProcessComponentsIncludeRootPIDsAndFollowProcessSort() {
+        let root = entity(
+            id: "chau7",
+            name: "Chau7",
+            components: [
+                component(title: "Chau7", pid: 100, cpu: 4, memory: 10),
+                component(title: "codex", pid: 101, cpu: 12, memory: 20),
+                component(title: "zsh", pid: 102, cpu: 1, memory: 30),
+            ]
+        )
+        let group = EntityGroup(
+            root: root,
+            members: [root],
+            cpuPercent: 17,
+            memoryBytes: 60,
+            wakeupsPerSecond: 0,
+            diskBps: 0,
+            networkBps: 0,
+            energyScore: 0,
+            frictionScore: 0,
+            processCount: 3,
+            userSummary: "",
+            oldestStartMillis: 0,
+            newestStartMillis: 0
+        )
+
+        XCTAssertEqual(expandedProcessComponents(for: group, by: .cpu).map(\.pid), [101, 100, 102])
+    }
+
+    func testChau7ParentProxyGroupsTerminalChildrenWithoutSharedWorkspaceContext() throws {
+        let chau7 = entity(
+            id: "chau7",
+            name: "Chau7",
+            kind: .terminalSession,
+            badges: ["chau7-live"],
+            executablePath: "/Applications/Chau7.app/Contents/MacOS/Chau7",
+            components: [
+                component(
+                    title: "Chau7",
+                    pid: 700,
+                    executablePath: "/Applications/Chau7.app/Contents/MacOS/Chau7"
+                ),
+            ]
+        )
+        let codex = entity(
+            id: "codex",
+            name: "codex",
+            kind: .aiAgent,
+            executablePath: "/opt/homebrew/bin/codex",
+            components: [
+                component(
+                    title: "codex",
+                    pid: 701,
+                    parentSummary: "Chau7 pid 700",
+                    executablePath: "/opt/homebrew/bin/codex",
+                    cwd: "/Users/me/ProjectA"
+                ),
+            ]
+        )
+        let zsh = entity(
+            id: "zsh",
+            name: "zsh",
+            kind: .terminalSession,
+            executablePath: "/bin/zsh",
+            components: [
+                component(
+                    title: "zsh",
+                    pid: 702,
+                    parentSummary: "Chau7 pid 700",
+                    executablePath: "/bin/zsh",
+                    cwd: "/Users/me/ProjectB"
+                ),
+            ]
+        )
+
+        let groups = buildEntityGroups(from: [codex, chau7, zsh])
+        let group = try XCTUnwrap(groups.first { $0.root.entityId == "chau7" })
+
+        XCTAssertEqual(Set(group.members.map(\.entityId)), Set(["chau7", "codex", "zsh"]))
+        XCTAssertEqual(group.processCount, 3)
+    }
+
     func testRegexTokenizerKeepsEscapedSlashInsideRegexToken() {
         XCTAssertEqual(
             tokenizeSearchQuery(#"/Users\/me\/Project/i cpu>10"#),
@@ -107,27 +189,24 @@ final class MonitorListCoreTests: XCTestCase {
         cpu: Float = 0,
         memory: UInt64 = 0,
         friction: Float = 0,
-        badges: [String] = []
+        badges: [String] = [],
+        executablePath: String? = nil,
+        components: [ComponentSnapshot]? = nil
     ) -> EntitySnapshot {
-        let component = ComponentSnapshot(
-            kind: .process,
-            title: name,
-            detail: "",
-            adapterContext: nil,
-            provenance: nil,
-            processId: UInt32(abs(id.hashValue % 10_000) + 1),
-            startTimeMillis: 1_000,
-            executablePath: "/usr/bin/\(name)",
-            commandLine: nil,
-            parentSummary: nil,
-            launchedBy: nil,
-            cpuPercent: cpu,
-            memoryBytes: memory,
-            memoryPhysicalFootprintBytes: memory,
-            cwd: nil,
-            user: nil,
-            threadCount: 1
-        )
+        let resolvedComponents = components ?? [
+            component(title: name, pid: UInt32(abs(id.hashValue % 10_000) + 1), cpu: cpu, memory: memory),
+        ]
+        let resolvedCPU = components == nil ? cpu : resolvedComponents.reduce(0) { $0 + $1.cpuPercent }
+        let resolvedMemory = components == nil ? memory : resolvedComponents.reduce(0) {
+            $0 + max($1.memoryPhysicalFootprintBytes, $1.memoryBytes)
+        }
+        let processCount = resolvedComponents.filter {
+            $0.kind != .adapterContext && $0.processId != nil
+        }.count
+        let threadCount = resolvedComponents.reduce(UInt32(0)) { $0 + $1.threadCount }
+        let starts = resolvedComponents.map(\.startTimeMillis).filter { $0 > 0 }
+        let resolvedExecutablePath = executablePath ?? "/usr/bin/\(name)"
+
         return EntitySnapshot(
             entityId: id,
             displayName: name,
@@ -135,14 +214,14 @@ final class MonitorListCoreTests: XCTestCase {
             launcherSummary: nil,
             attributionNotes: [],
             bundleId: nil,
-            executablePath: "/usr/bin/\(name)",
-            oldestProcessStartMillis: 1_000,
-            newestProcessStartMillis: 1_000,
+            executablePath: resolvedExecutablePath,
+            oldestProcessStartMillis: starts.min() ?? 1_000,
+            newestProcessStartMillis: starts.max() ?? 1_000,
             entityKind: kind,
             metrics: AggregateMetrics(
-                cpuPercent: cpu,
-                memoryResidentBytes: memory,
-                memoryPhysicalFootprintBytes: memory,
+                cpuPercent: resolvedCPU,
+                memoryResidentBytes: resolvedMemory,
+                memoryPhysicalFootprintBytes: resolvedMemory,
                 diskReadBps: 0,
                 diskWriteBps: 0,
                 networkReceiveBps: 0,
@@ -150,8 +229,8 @@ final class MonitorListCoreTests: XCTestCase {
                 wakeupsPerSecond: 0,
                 energyNjPerS: 0,
                 estimatedGpuPercent: 0,
-                processCount: 1,
-                threadCount: 1,
+                processCount: UInt32(processCount),
+                threadCount: threadCount,
                 isForeground: false
             ),
             friction: FrictionBreakdown(
@@ -167,7 +246,7 @@ final class MonitorListCoreTests: XCTestCase {
                 reasons: [],
                 contributors: []
             ),
-            components: [component],
+            components: resolvedComponents,
             trend: MetricTrend(
                 friction: [],
                 cpuPercent: [],
@@ -190,6 +269,36 @@ final class MonitorListCoreTests: XCTestCase {
             isAdhoc: false,
             binaryReputation: nil,
             appVersion: nil
+        )
+    }
+
+    private func component(
+        title: String,
+        pid: UInt32,
+        cpu: Float = 0,
+        memory: UInt64 = 0,
+        parentSummary: String? = nil,
+        executablePath: String? = nil,
+        cwd: String? = nil
+    ) -> ComponentSnapshot {
+        ComponentSnapshot(
+            kind: .process,
+            title: title,
+            detail: "",
+            adapterContext: nil,
+            provenance: nil,
+            processId: pid,
+            startTimeMillis: 1_000,
+            executablePath: executablePath ?? "/usr/bin/\(title)",
+            commandLine: nil,
+            parentSummary: parentSummary,
+            launchedBy: nil,
+            cpuPercent: cpu,
+            memoryBytes: memory,
+            memoryPhysicalFootprintBytes: memory,
+            cwd: cwd,
+            user: nil,
+            threadCount: 1
         )
     }
 }

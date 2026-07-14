@@ -233,6 +233,67 @@ struct MonitorGroupRowModel: Identifiable, Equatable {
     }
 }
 
+struct MonitorProcessRowModel: Identifiable, Equatable {
+    let id: String
+    let ownerEntityID: String
+    let owner: EntitySnapshot
+    let component: ComponentSnapshot
+    let pid: UInt32
+    let displayName: String
+    let subtitle: String
+    let cpuText: String
+    let memoryText: String
+    let threadsText: String
+    let pidText: String
+    let frictionScore: Float
+    let helpText: String
+
+    init(reference: MonitorProcessComponentRef) {
+        self.id = reference.id
+        self.ownerEntityID = reference.owner.entityId
+        self.owner = reference.owner
+        self.component = reference.component
+        self.pid = reference.pid
+        self.displayName = reference.component.title.isEmpty
+            ? reference.owner.displayName
+            : reference.component.title
+        self.subtitle = Self.subtitle(for: reference)
+        self.cpuText = String(format: "%.1f%%", reference.component.cpuPercent)
+        self.memoryText = formatBytes(
+            max(reference.component.memoryPhysicalFootprintBytes, reference.component.memoryBytes)
+        )
+        self.threadsText = "\(reference.component.threadCount) th"
+        self.pidText = "PID \(reference.pid)"
+        self.frictionScore = reference.owner.friction.totalScore
+        self.helpText = Self.helpText(for: reference)
+    }
+
+    private static func subtitle(for reference: MonitorProcessComponentRef) -> String {
+        let component = reference.component
+        if let cwd = component.cwd, !cwd.isEmpty {
+            return "\(reference.owner.displayName) · \(cwd)"
+        }
+        if let user = component.user, !user.isEmpty {
+            return "\(reference.owner.displayName) · \(user)"
+        }
+        return reference.owner.displayName
+    }
+
+    private static func helpText(for reference: MonitorProcessComponentRef) -> String {
+        let component = reference.component
+        return [
+            "Owner: \(reference.owner.displayName)",
+            "PID: \(reference.pid)",
+            component.user.map { "User: \($0)" },
+            component.parentSummary.map { "Parent: \($0)" },
+            component.cwd.map { "CWD: \($0)" },
+            component.commandLine.map { "Command: \($0)" },
+        ]
+        .compactMap { $0 }
+        .joined(separator: "\n")
+    }
+}
+
 struct EntityRow: View, Equatable {
     let row: MonitorEntityRowModel
     let isSelected: Bool
@@ -322,6 +383,65 @@ struct EntityRow: View, Equatable {
                 .padding(.vertical, 1)
                 .background(reputationTone.color.opacity(0.15), in: Capsule())
                 .help("VirusTotal reputation for this binary.")
+        }
+    }
+}
+
+struct MonitorProcessRow: View, Equatable {
+    let row: MonitorProcessRowModel
+    let isSelected: Bool
+
+    nonisolated static func == (lhs: MonitorProcessRow, rhs: MonitorProcessRow) -> Bool {
+        lhs.row == rhs.row && lhs.isSelected == rhs.isSelected
+    }
+
+    var body: some View {
+        MonitorRowChrome(
+            frictionScore: row.frictionScore,
+            isSelected: isSelected,
+            helpText: row.helpText
+        ) { _ in
+            Image(systemName: "cpu")
+                .font(AetowerDesign.Typography.compactData(size: 11))
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                Text(row.displayName)
+                    .font(AetowerDesign.Typography.caption.weight(.medium))
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                    .lineLimit(1)
+
+                Text(row.subtitle)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(row.cpuText)
+                .font(AetowerDesign.Typography.data)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
+                .frame(width: 64, alignment: .center)
+
+            Text(row.memoryText)
+                .font(AetowerDesign.Typography.data)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
+                .frame(width: 84, alignment: .center)
+
+            Text(row.threadsText)
+                .font(AetowerDesign.Typography.compactData())
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
+                .frame(width: 72, alignment: .center)
+
+            Text(row.pidText)
+                .font(AetowerDesign.Typography.compactData())
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
+                .lineLimit(1)
+                .frame(width: 72, alignment: .center)
         }
     }
 }
