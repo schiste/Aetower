@@ -4,6 +4,8 @@ All notable public changes to Aetower should be documented here.
 
 ## Unreleased
 
+## 0.8.1 (build 801) - 2026-07-14
+
 Cost model:
 
 - Added unified resource-cost rollups for repositories, sessions, entities,
@@ -70,6 +72,15 @@ Storage:
   cloud placeholders, purgeable capacity, and clone-lineage caveats, with docs
   that frame the feature as local reclaim estimates rather than exact
   filesystem ownership forensics.
+
+Responsiveness:
+
+- Storage and Repos now keep tab-open paths cache-first: when no display cache
+  is available, the app shows a scan-needed idle state instead of reconstructing
+  the first paint from the persistent storage index.
+- History-backed tabs now reuse the in-memory history page on repeat opens
+  instead of forcing a persisted-history reload every time AI Agents, Chau7, or
+  History becomes visible.
 
 ## 0.8 (build 800) - 2026-07-08
 
