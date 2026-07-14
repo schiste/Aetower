@@ -10,6 +10,7 @@ struct ProcessOperatorPanel: View {
     let entity: EntitySnapshot
     let processEntities: [EntitySnapshot]
     let state: AppState
+    let processSortKey: SortKey?
     let quickRequest: ProcessOperatorRequest?
 
     @State private var selectedPID: UInt32?
@@ -25,11 +26,13 @@ struct ProcessOperatorPanel: View {
         entity: EntitySnapshot,
         state: AppState,
         processEntities: [EntitySnapshot]? = nil,
+        processSortKey: SortKey? = nil,
         quickRequest: ProcessOperatorRequest? = nil
     ) {
         self.entity = entity
         self.processEntities = processEntities ?? [entity]
         self.state = state
+        self.processSortKey = processSortKey
         self.quickRequest = quickRequest
     }
 
@@ -965,24 +968,34 @@ struct ProcessOperatorPanel: View {
     }
 
     private var processes: [OperatorProcess] {
-        processEntities.flatMap(\.components)
-            .filter { $0.kind != .adapterContext }
-            .compactMap { component in
-                component.processId.map { OperatorProcess(id: $0, component: component) }
-            }
-            .reduce(into: [UInt32: OperatorProcess]()) { processes, process in
-                let existing = processes[process.id]
-                if existing == nil || process.component.cpuPercent > (existing?.component.cpuPercent ?? 0) {
-                    processes[process.id] = process
+        let orderedEntities = processSortKey.map { sortEntities(processEntities, by: $0) } ?? processEntities
+        var processesByPID: [UInt32: OperatorProcess] = [:]
+        for (entityIndex, processEntity) in orderedEntities.enumerated() {
+            for component in processEntity.components where component.kind != .adapterContext {
+                guard let pid = component.processId else { continue }
+                let process = OperatorProcess(
+                    id: pid,
+                    component: component,
+                    owner: processEntity,
+                    ownerIndex: entityIndex
+                )
+                if let existing = processesByPID[pid] {
+                    if shouldReplaceProcess(process, existing: existing) {
+                        processesByPID[pid] = process
+                    }
+                } else {
+                    processesByPID[pid] = process
                 }
             }
-            .values
-            .sorted {
-                if $0.component.cpuPercent != $1.component.cpuPercent {
-                    return $0.component.cpuPercent > $1.component.cpuPercent
-                }
-                return $0.component.memoryBytes > $1.component.memoryBytes
+        }
+
+        let uniqueProcesses = Array(processesByPID.values)
+        if let processSortKey {
+            return uniqueProcesses.sorted {
+                compareOperatorProcesses($0, $1, by: processSortKey)
             }
+        }
+        return uniqueProcesses.sorted(by: defaultOperatorProcessOrder)
     }
 
     private var operatorColumns: [GridItem] {
@@ -1255,6 +1268,9 @@ struct ProcessOperatorPanel: View {
             String(format: "%.1f%% CPU", component.cpuPercent),
             formatBytes(component.memoryBytes),
         ]
+        if processEntities.count > 1 {
+            parts.insert(process.owner.displayName, at: 0)
+        }
         if let user = component.user {
             parts.append(user)
         }
@@ -1263,11 +1279,136 @@ struct ProcessOperatorPanel: View {
         }
         return parts.joined(separator: " · ")
     }
+
+    private func shouldReplaceProcess(_ candidate: OperatorProcess, existing: OperatorProcess) -> Bool {
+        if candidate.ownerIndex != existing.ownerIndex {
+            return candidate.ownerIndex < existing.ownerIndex
+        }
+        if candidate.component.cpuPercent != existing.component.cpuPercent {
+            return candidate.component.cpuPercent > existing.component.cpuPercent
+        }
+        if candidate.component.memoryBytes != existing.component.memoryBytes {
+            return candidate.component.memoryBytes > existing.component.memoryBytes
+        }
+        return candidate.id < existing.id
+    }
+
+    private func defaultOperatorProcessOrder(_ left: OperatorProcess, _ right: OperatorProcess) -> Bool {
+        if left.component.cpuPercent != right.component.cpuPercent {
+            return left.component.cpuPercent > right.component.cpuPercent
+        }
+        if left.component.memoryBytes != right.component.memoryBytes {
+            return left.component.memoryBytes > right.component.memoryBytes
+        }
+        return operatorProcessTieBreak(left, right)
+    }
+
+    private func compareOperatorProcesses(_ left: OperatorProcess, _ right: OperatorProcess, by sortKey: SortKey) -> Bool {
+        switch sortKey {
+        case .friction:
+            return descending(left.owner.friction.totalScore, right.owner.friction.totalScore) {
+                operatorProcessTieBreak(left, right)
+            }
+        case .cpu:
+            return descending(left.component.cpuPercent, right.component.cpuPercent) {
+                operatorProcessTieBreak(left, right)
+            }
+        case .memory:
+            return descending(left.component.memoryBytes, right.component.memoryBytes) {
+                operatorProcessTieBreak(left, right)
+            }
+        case .wakeups:
+            return descending(left.owner.metrics.wakeupsPerSecond, right.owner.metrics.wakeupsPerSecond) {
+                operatorProcessTieBreak(left, right)
+            }
+        case .processCount:
+            return descending(liveProcessCount(for: left.owner), liveProcessCount(for: right.owner)) {
+                operatorProcessTieBreak(left, right)
+            }
+        case .disk:
+            return descending(left.owner.metrics.diskReadBps + left.owner.metrics.diskWriteBps, right.owner.metrics.diskReadBps + right.owner.metrics.diskWriteBps) {
+                operatorProcessTieBreak(left, right)
+            }
+        case .network:
+            return descending(left.owner.metrics.networkReceiveBps + left.owner.metrics.networkSendBps, right.owner.metrics.networkReceiveBps + right.owner.metrics.networkSendBps) {
+                operatorProcessTieBreak(left, right)
+            }
+        case .energy:
+            return descending(left.owner.friction.energyImpactScore, right.owner.friction.energyImpactScore) {
+                operatorProcessTieBreak(left, right)
+            }
+        case .alphabeticalAsc:
+            return processNameAscending(left, right)
+        case .alphabeticalDesc:
+            return processNameDescending(left, right)
+        case .oldestFirst:
+            return ascending(processStartMillis(left, missingValue: UInt64.max), processStartMillis(right, missingValue: UInt64.max)) {
+                operatorProcessTieBreak(left, right)
+            }
+        case .newestFirst:
+            return descending(processStartMillis(left, missingValue: 0), processStartMillis(right, missingValue: 0)) {
+                operatorProcessTieBreak(left, right)
+            }
+        }
+    }
+
+    private func operatorProcessTieBreak(_ left: OperatorProcess, _ right: OperatorProcess) -> Bool {
+        if left.ownerIndex != right.ownerIndex {
+            return left.ownerIndex < right.ownerIndex
+        }
+        let titleOrder = left.component.title.localizedCaseInsensitiveCompare(right.component.title)
+        if titleOrder != .orderedSame {
+            return titleOrder == .orderedAscending
+        }
+        return left.id < right.id
+    }
+
+    private func processNameAscending(_ left: OperatorProcess, _ right: OperatorProcess) -> Bool {
+        let titleOrder = left.component.title.localizedCaseInsensitiveCompare(right.component.title)
+        if titleOrder != .orderedSame {
+            return titleOrder == .orderedAscending
+        }
+        return operatorProcessTieBreak(left, right)
+    }
+
+    private func processNameDescending(_ left: OperatorProcess, _ right: OperatorProcess) -> Bool {
+        let titleOrder = left.component.title.localizedCaseInsensitiveCompare(right.component.title)
+        if titleOrder != .orderedSame {
+            return titleOrder == .orderedDescending
+        }
+        return operatorProcessTieBreak(left, right)
+    }
+
+    private func processStartMillis(_ process: OperatorProcess, missingValue: UInt64) -> UInt64 {
+        if process.component.startTimeMillis > 0 {
+            return process.component.startTimeMillis
+        }
+        if process.owner.oldestProcessStartMillis > 0 {
+            return process.owner.oldestProcessStartMillis
+        }
+        return missingValue
+    }
+
+    private func descending<T: Comparable>(_ left: T, _ right: T, tieBreak: () -> Bool) -> Bool {
+        if left != right {
+            return left > right
+        }
+        return tieBreak()
+    }
+
+    private func ascending<T: Comparable>(_ left: T, _ right: T, tieBreak: () -> Bool) -> Bool {
+        if left != right {
+            return left < right
+        }
+        return tieBreak()
+    }
 }
 
 private struct OperatorProcess: Identifiable {
     let id: UInt32
     let component: ComponentSnapshot
+    let owner: EntitySnapshot
+    let ownerIndex: Int
 }
 
 private struct ProcessActionDraft: Equatable {

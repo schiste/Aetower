@@ -293,6 +293,7 @@ public struct EntityDetailView: View {
     let settings: SettingsStore
     let processTreeSeedEntities: [EntitySnapshot]
     let processOperatorRequest: ProcessOperatorRequest?
+    let processSortKey: SortKey?
     @State private var selectedSection: EntityDetailSection = .summary
     /// Set when a recommendation's one-click action is tapped — staged into the
     /// always-visible operator panel below, where the dry-run preview shows and
@@ -311,6 +312,23 @@ public struct EntityDetailView: View {
         self.settings = settings
         self.processTreeSeedEntities = processTreeSeedEntities ?? [entity]
         self.processOperatorRequest = processOperatorRequest
+        self.processSortKey = nil
+    }
+
+    init(
+        entity: EntitySnapshot,
+        state: AppState,
+        settings: SettingsStore,
+        processTreeSeedEntities: [EntitySnapshot]? = nil,
+        processOperatorRequest: ProcessOperatorRequest? = nil,
+        processSortKey: SortKey?
+    ) {
+        self.entity = entity
+        self.state = state
+        self.settings = settings
+        self.processTreeSeedEntities = processTreeSeedEntities ?? [entity]
+        self.processOperatorRequest = processOperatorRequest
+        self.processSortKey = processSortKey
     }
 
     public var body: some View {
@@ -322,6 +340,7 @@ public struct EntityDetailView: View {
                     entity: entity,
                     state: state,
                     processEntities: processTreeSeedEntities,
+                    processSortKey: processSortKey,
                     quickRequest: effectiveOperatorRequest
                 )
                 sectionPicker
