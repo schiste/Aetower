@@ -305,11 +305,34 @@
         font-weight: 550;
       }
 
+      /* The scroll container clips absolutely-positioned tooltips, so on
+         viewports where the matrix fits (verified 0px overflow at desktop)
+         let it be non-clipping; narrow screens keep the scroll behavior. */
+      @media (min-width: 960px) {
+        .table-scroll {
+          overflow: visible;
+        }
+      }
+
       .tip {
         position: relative;
         cursor: help;
         border-bottom: 1px dotted var(--line-strong);
         outline: none;
+      }
+
+      .tip:hover,
+      .tip:focus {
+        z-index: 30;
+      }
+
+      /* Last two columns: right-align the tooltip so it never pokes past
+         the page edge. */
+      td:nth-last-child(-n + 2) .tip:hover::after,
+      td:nth-last-child(-n + 2) .tip:focus::after {
+        left: auto;
+        right: 0;
+        transform: none;
       }
 
       .tip:hover::after,
