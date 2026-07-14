@@ -212,6 +212,31 @@ def check_mcp_default_tool_safety(validator: ClaimsValidator) -> None:
     )
 
 
+def check_published_tool_count(validator: ClaimsValidator) -> None:
+    """Every published '<N> tools' figure must match the registered descriptor count."""
+    descriptors = read_text(ROOT / "rust/crates/aetower-mcp/src/tools/descriptors.rs")
+    registered = len(set(re.findall(r'"(aetower_[a-z_]+)"', descriptors)))
+    published_sources = [
+        ROOT / "docs/mcp-tools.md",
+        ROOT / "site/llms.txt",
+        ROOT / "scripts/build-site-pages.py",
+        ROOT / "site/pages/comparisons.html",
+    ]
+    mismatches = []
+    for path in published_sources:
+        # Matches bare "<N> tools" claims; qualified counts like
+        # "45 read-only tools" are intentionally out of scope.
+        for count in re.findall(r"(\d+)\s+tools", read_text(path)):
+            if int(count) != registered:
+                mismatches.append(f"{path.name} says {count}")
+    validator.require(
+        registered > 0 and not mismatches,
+        "published MCP tool count",
+        f"descriptors register {registered} tools"
+        + (f"; stale claims: {', '.join(mismatches)}" if mismatches else ""),
+    )
+
+
 def swift_default_false(source: str, property_name: str) -> bool:
     pattern = (
         rf"self\.{re.escape(property_name)}\s*=\s*defaults\.object"
@@ -557,6 +582,7 @@ def main(argv: list[str]) -> int:
 
     check_history_retention(validator)
     check_mcp_default_tool_safety(validator)
+    check_published_tool_count(validator)
     check_outbound_defaults(validator)
     check_local_release_artifacts(validator, context, args.require_local_release)
     if args.published:
