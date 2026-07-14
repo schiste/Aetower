@@ -1,72 +1,77 @@
 # Aetower Feature List
 
+Current shipped product surfaces, technical capabilities, and maturity notes.
+
 Aetower is a local-first macOS observability and operator dashboard. It helps a
 technical user, developer, or AI agent understand what is making a Mac slow,
-hot, noisy, memory pressured, or expensive to run. This document lists the major
-features in both practical human terms and technical implementation terms.
+hot, noisy, memory pressured, storage constrained, or expensive to run.
 
-## Feature overview
+Updated: 2026-07-14
+Applies to: Developer Preview 0.8.1
+
+This document is the product feature inventory. For product direction and
+priorities, read [Product Direction](product-direction.md). For navigation, read
+[Tab-by-Tab Guide](tabs-guide.md).
+
+## Feature Overview
 
 | Area | Human-readable value | Technical capability |
 | --- | --- | --- |
-| Live monitor | See what is hurting the Mac right now. | Groups running processes into entities, ranks them by friction, and shows host pressure signals. |
-| Entity friction scoring | Replace dozens of raw counters with one triage number. | Combines CPU, memory, disk, network, wakeups, energy, thermal, and anomaly signals into a 0-100 score. |
-| Entity detail and provenance | Understand what an item is, where it came from, and what to do next. | Shows process membership, launcher/origin context, trend data, recommendations, and action planning. |
-| History | Reconstruct past slowdowns instead of guessing. | Persists local snapshots and supports historical investigation, comparison, and store-health checks. |
-| Timeline | Read a machine incident as a story. | Correlates lifecycle events, host state changes, sensor alerts, restart loops, and AI session markers. |
-| AI agent observability | Measure the local cost of coding agents and model runtimes. | Detects supported AI runtimes, attributes burden, estimates GPU/VRAM pressure, and tracks session energy/cost context. |
-| Storage hygiene | See reclaimable storage without confusing logical size with local disk savings. | Reports logical bytes, APFS physical-block estimates, hardlink dedupe, sparse/cloud placeholder flags, purgeable capacity, and clone-lineage caveats. |
-| Local MCP server | Let trusted local agents inspect Aetower data without a second collector. | Ships a local MCP interface over an app-owned socket and stdio helper; guarded operator actions are visible by default and can be hidden in Settings. |
-| Diagnostics | Debug Aetower itself when collection, adapters, or persistence misbehave. | Exposes subsystem events, pipeline timing, capability state, session health, and support-bundle manifests. |
-| Fleet | Compare nearby Macs without a cloud account. | Uses local peer discovery to surface summary machine health across Aetower peers. |
-| Settings and setup | Tune depth versus overhead safely. | Controls collection cadence, optional integrations, MCP registration, export behavior, and reset/support flows. |
-| Export and observability integrations | Send selected telemetry to an existing stack when needed. | Supports optional OTLP/HTTP metrics export and documented dashboard/collector workflows. |
-| Privacy and safety controls | Keep local machine data understandable and deliberate. | Keeps collection local by default, documents observed data, and supports privacy-aware export/support workflows. |
+| Monitor | See what is hurting the Mac right now. | Groups processes into entities, ranks them by friction, and shows host pressure. |
+| Friction scoring | Replace raw counters with one triage score. | Combines CPU, memory, disk, network, wakeups, energy, thermal, and anomaly signals. |
+| Entity detail and actions | Understand what an item is and what action is safe. | Shows process membership, launcher/origin context, trends, recommendations, and guarded action previews. |
+| Activity | Reconstruct incidents over time. | Combines Overview, History, Timeline, and history-store health. |
+| Storage | Free space without lying about reclaimability. | Separates Reclaim, Similar, Explore, Audit, and Insights; distinguishes logical bytes from APFS/local estimates. |
+| Repos | See local workspace truth. | Uses cached inventory, fingerprints, Git state, storage footprint, agent contracts, AI spend, and provider context. |
+| Projects | Link local repos to provider surfaces. | Connects GitHub and Cloudflare project status to local repository records. |
+| Agents | Understand local AI work. | Tracks Chau7 sessions, AI-agent/runtime burden, estimated energy/cost, and source/confidence badges. |
+| Local MCP and CLI | Let trusted local tools query Aetower. | Ships a socket-backed MCP server, stdio helper, and `aetower` CLI commands. |
+| Diagnostics | Debug Aetower itself. | Exposes subsystem events, pipeline timing, MCP state, payload sizes, memory, and support bundles. |
+| System and Fleet | Inspect machine, startup, and peer state. | Shows sensors, startup inventory, diagnostics, and opt-in Bonjour peer discovery. |
+| Settings and privacy | Make outbound behavior visible and deliberate. | Controls collection, integrations, MCP registration, CLI status, telemetry, Fleet, VirusTotal, and resets. |
+| Release validation | Keep public claims honest. | Validates claims against code/config/artifacts before website deploy. |
 
-## 1. Live Monitor
+## 1. Monitor
 
 ### What it does for people
 
-The Monitor view is the first place to look when the machine feels slow. Instead
-of forcing the user to scan hundreds of raw processes, Aetower groups related
+Monitor is the first place to look when the machine feels bad. Instead of
+forcing the user to scan hundreds of raw processes, Aetower groups related
 processes into understandable entities such as an app, daemon family, terminal
-session, local AI runtime, or browser group. The highest-cost entities appear at
-the top so the operator can quickly answer: "What should I look at first?"
+session, local AI runtime, or browser group.
 
 ### Technical details
 
 - Samples host and process-level runtime signals.
 - Groups raw processes into higher-level entities using identity, origin,
   runtime, repository, workspace, and launcher context where available.
-- Surfaces host-level health such as CPU pressure, memory pressure, wakeups,
-  thermal state, battery context, and active entity count.
-- Presents ranked entities and drill-down detail rather than only process IDs.
+- Presents ranked entities and drill-down detail instead of only process IDs.
+- Supports guarded process-action previews through explicit operator surfaces.
 
-## 2. Friction scoring
+## 2. Friction Scoring
 
 ### What it does for people
 
 Friction is Aetower's shorthand for "how much this thing is costing the machine
-right now." A high friction score does not simply mean high CPU. It can also
-mean memory pressure, wakeups, disk churn, network activity, energy impact,
-thermal contribution, or an unusual change from recent behavior.
+right now." A high friction score can come from CPU, memory pressure, wakeups,
+disk churn, network activity, energy impact, thermal contribution, or unusual
+change from recent behavior.
 
 ### Technical details
 
 - Produces a 0-100 score for triage and ranking.
-- Combines multiple burden dimensions instead of relying on one counter.
-- Separates host pressure from per-entity contribution so the user can see both
-  the overall machine condition and likely causes.
-- Feeds recommendations, anomaly explanations, trend cards, and timeline events.
+- Separates host pressure from per-entity contribution.
+- Feeds recommendations, anomaly explanations, trend cards, timeline events,
+  and top-findings surfaces.
+- Keeps scoring explainable from collected signals.
 
-## 3. Entity detail, provenance, and action planning
+## 3. Entity Detail, Provenance, And Action Planning
 
 ### What it does for people
 
-When an entity looks suspicious, the detail view explains what it is, which
-processes belong to it, why it is ranked highly, and what actions are safe or
-reasonable. This is intended to reduce the "is this process important?" anxiety
-that often happens in Activity Monitor.
+When an entity looks suspicious, detail views explain what it is, which
+processes belong to it, why it is ranked highly, and which actions are safe or
+reasonable.
 
 ### Technical details
 
@@ -74,187 +79,201 @@ that often happens in Activity Monitor.
 - Uses process origin metadata to explain launch paths and runtime context.
 - Provides recommendations based on dominant burden signals and environment
   context such as battery or thermal pressure.
-- Supports action planning through controller surfaces rather than blindly
-  killing processes.
+- Keeps actions preview- and approval-gated.
 
-## 4. History
+## 4. Activity
 
 ### What it does for people
 
-History lets the user investigate what happened earlier. If the Mac was sluggish
-during a meeting, the user can go back to that time window and inspect which
-entities were active, which scores were high, and whether host pressure changed.
+Activity answers time-based questions: what changed, what happened earlier, and
+what sequence of events led to an incident.
 
 ### Technical details
 
-- Persists snapshots locally for post-incident review.
-- Supports paged historical data access and before/after comparison workflows.
-- Tracks history store health, quality, gaps, ordering, and retention-related
-  metadata.
-- Enables investigations that do not require cloud telemetry.
+- Overview summarizes recent changes, event pressure, history coverage, and
+  load state.
+- History persists seven days of local entity snapshots by default under normal
+  budget and exposes paged historical access.
+- Timeline correlates lifecycle events, host changes, sensor alerts,
+  restart-loop signals, and AI-session markers.
+- Storage reports history DB/WAL size, retention coverage, quarantine, and
+  maintenance state.
 
-## 5. Timeline
+## 5. Storage
 
 ### What it does for people
 
-Timeline turns raw monitoring data into a chronological narrative. It helps the
-operator see the order of events: a process spiked, memory pressure rose,
-thermal state changed, an AI session ended, or a restart loop appeared.
+Storage helps the operator reclaim disk space and understand growth without
+overstating safety or reclaimable bytes.
 
 ### Technical details
 
-- Emits entity lifecycle and behavior events.
-- Correlates host state changes with entity changes.
-- Includes sensor and pressure alerts when available.
-- Records AI-session and runtime markers for later correlation.
+- Provides Quick, Complete, Forensic, and Custom scan profiles.
+- Reclaim focuses on quick wins, duplicate review, old screenshots, staging,
+  and move-to-Trash flows.
+- Similar is a first-class redundancy page for exact duplicates, similar
+  images, docs/text, videos, binaries, and other redundancy.
+- Explore handles indexed browsing, visual full-disk/treemap/table views, cold
+  data, optimization leads, and raw artifacts.
+- Audit records local cleanup actions.
+- Separates logical bytes from local APFS estimates, hardlink dedupe, sparse
+  files, cloud placeholders, purgeable capacity, and clone-lineage caveats.
 
-## 6. AI agent and local model observability
+## 6. Repos
 
 ### What it does for people
 
-Aetower makes the cost of local AI work visible. It helps answer whether a coding
-agent, local model server, transcription tool, or inference runtime is consuming
-excess CPU, memory, GPU-like resources, battery, or project budget.
+Repos shows which local repositories are active, stale, dirty, duplicated,
+growing, missing agent contracts, linked to AI sessions, or carrying large
+rebuildable artifacts.
+
+### Technical details
+
+- Opens from cached repository inventory.
+- Uses Git/index/config fingerprints to mark stale repos without hiding them.
+- Sorts by attention, size, growth, artifacts, AI spend, or name.
+- Shows detail tabs for Actions, Storage, Contracts, Scorecard, Git, and Live.
+- Surfaces agent-contract readiness for `AGENTS.md` and `.agents/*.yaml`.
+- Includes estimated per-repo cost, energy, and carbon only when attribution is
+  strong enough, with source/confidence labels.
+
+## 7. Projects
+
+### What it does for people
+
+Projects maps local repositories to provider status so a user can see the
+outside-world context for a local workspace.
+
+### Technical details
+
+- Stores local project records keyed to repository roots.
+- Supports GitHub and Cloudflare connectors.
+- Surfaces pull requests, workflow runs, checks, and Cloudflare deployment
+  status when credentials and links are configured.
+- Keeps provider configuration deliberate through Settings and connector cards.
+
+## 8. Agents
+
+### What it does for people
+
+Agents makes the cost of local AI work visible: which session is active, which
+runtime is heavy, what repo is involved, and how much energy or money was
+estimated.
 
 ### Technical details
 
 - Detects and groups common local AI tools and model runtimes.
-- Surfaces runtime burden leaders, delegated-session context, approval queue
-  context, and recent AI-related changes where integrations provide them.
-- Estimates GPU attribution and VRAM/unified-memory pressure when direct
-  per-process GPU data is unavailable.
-- Integrates optional Chau7 context for AI session state, project cost, and
-  adapter metadata.
+- Integrates optional Chau7 context for sessions, terminal tabs, repositories,
+  branches, active apps, and cost data.
+- Shows GPU and unified-memory source badges such as "GPU inferred" rather than
+  claiming exact per-process VRAM.
+- Accumulates session and repo cost through the shared resource-cost model when
+  attribution is available.
 
-## 7. Storage hygiene and APFS-aware estimates
-
-### What it does for people
-
-Storage hygiene helps the operator find rebuildable or redundant local data
-without overstating how much space cleanup will actually free. On APFS, logical
-file size can differ from local allocated blocks because of sparse files,
-compression, cloud placeholders, hardlinks, and cloned/shared extents.
-
-### Technical details
-
-- Tracks logical bytes and local physical-block estimates separately.
-- Uses local allocated blocks for reclaim estimates when available, and treats
-  zero-block cloud or sparse placeholders as 0 bytes of proven local reclaim.
-- Deduplicates hardlinked files within a sized directory while warning that
-  external hardlinks can still reduce the space actually freed.
-- Reports volume free-now, available, important/opportunistic available, and
-  purgeable-capacity estimates where the platform exposes them.
-- Labels sparse/shared-block candidates as estimates; Aetower does not infer or
-  promise exact APFS clone lineage.
-
-## 8. Local MCP server
+## 9. Local MCP And CLI
 
 ### What it does for people
 
-Trusted local AI agents can ask Aetower what is happening on the machine. This
-means an agent can inspect machine pressure, entity details, history, diagnostics,
-and recommendations without launching its own duplicate monitoring engine.
+Trusted local AI agents and shell scripts can ask Aetower what is happening on
+the machine without starting a second monitor.
 
 ### Technical details
 
 - Runs an app-owned local MCP server when Aetower is active.
 - Uses a local Unix socket and packaged stdio helper for supported clients.
-- Offers one-click registration for supported Claude and Codex clients; automatic
-  registration remains off by default.
-- Exposes tools for snapshots, host summaries, entity details, diagnostics,
-  history pages, recommendations, support-bundle manifests, runtime lag, export
-  queries, investigation bundles, and guarded operator actions. Operator actions
-  are visible by default, can be hidden in Settings, and remain preview- and
-  approval-gated.
-- Standard cached tools can still provide last-known state when the app is not
-  running; deeper profiling requires the live app.
+- Offers one-click registration for supported Claude and Codex clients;
+  automatic registration remains off by default.
+- Exposes snapshot, host, entity, history, diagnostics, storage, repository,
+  recommendation, cost, and support-bundle tools.
+- Operator actions are visible by default for trusted local clients, hideable in
+  Settings, and still preview- and approval-gated.
+- Ships an `aetower` CLI with `top`, `storage`, `repos`, `alerts`, `findings`,
+  `doctor`, `tab`, and `call` workflows.
 
-## 9. Diagnostics and self-observability
+## 10. Diagnostics
 
 ### What it does for people
 
-Diagnostics explains whether Aetower itself is healthy. It is useful before
-filing an issue, sharing a support bundle, or investigating why a sensor,
-adapter, database, or collection path is unavailable.
+Diagnostics explains whether Aetower itself is healthy before the user files an
+issue, exports a support bundle, or investigates why a sensor, adapter,
+database, or collection path is unavailable.
 
 ### Technical details
 
 - Tracks subsystem events for engine, collector, adapters, persistence, history,
-  runtime, GPU-related sampling, and export paths.
-- Surfaces pipeline timing so expensive collection phases can be spotted.
-- Reports capability status and permission/adaptor availability.
-- Provides support-bundle previews and diagnostics summaries for issue reports.
+  MCP, UI payloads, and export paths.
+- Surfaces pipeline timing and payload pressure.
+- Reports capability state and permission/adapter availability.
+- Provides support-bundle previews and diagnostics summaries.
 
-## 10. Fleet
+## 11. System And Fleet
 
 ### What it does for people
 
-Fleet gives a lightweight view of nearby Aetower machines with Fleet enabled,
-useful for comparing a MacBook, Mac Studio, build host, or teammate machine on
-the same trusted network. It is meant for local awareness, not enterprise cloud
-monitoring.
+System covers machine state, startup state, Aetower health, and optional local
+peer discovery.
 
 ### Technical details
 
-- Uses opt-in local network peer discovery.
-- Displays summary host health such as CPU, memory pressure, thermal state, and
-  active entity count.
-- Avoids requiring a centralized account or external service for basic peer
-  awareness.
+- Sensors show thermals, fans, power, storage, battery, Bluetooth, and per-core
+  load.
+- Startup scans login items, launch agents/daemons, active-now links, scanned
+  locations, and attention items.
+- Fleet uses remembered opt-in local-network discovery and shows nearby Macs
+  running Aetower with Fleet enabled.
+- Peer data is local-network oriented and not a cloud fleet service.
 
-## 11. Settings, setup, and runtime tuning
+## 12. Settings, Privacy, And Runtime Tuning
 
 ### What it does for people
 
-Settings lets users choose how much detail Aetower collects and which optional
-features are enabled. The default path is designed for Developer Preview users
-who want useful observability without turning on every advanced capability.
+Settings lets users choose how much detail Aetower collects and exactly when
+data can leave the Mac.
 
 ### Technical details
 
-- Controls UI refresh, engine collection cadence, GPU sample cadence, and
-  full-collection behavior.
-- Configures optional integrations such as Chau7, Chromium-compatible debug
-  endpoints, Docker, telemetry export, and advanced helper paths.
-- Manages local MCP client registration.
-- Includes setup, diagnostics, support, and reset workflows.
+- Controls startup checklist, appearance, collection cadence, repository roots,
+  integrations, AI-client registration, notifications, automation, updates, and
+  advanced reset/support operations.
+- Shows Outbound Data status for telemetry, Fleet, VirusTotal, provider tokens,
+  and MCP clients.
+- Keeps telemetry, Fleet, VirusTotal, automatic MCP registration, scheduled
+  storage scans, and privileged helper behavior off by default.
+- Makes CLI readiness visible in setup and AI-client flows.
 
-## 12. Export and external observability
+## 13. Export And External Observability
 
 ### What it does for people
 
-Some teams already use OpenTelemetry, Prometheus, Grafana, or other internal
-observability systems. Aetower can optionally export selected metrics so local
-Mac performance can be investigated alongside the rest of a developer platform.
+Teams with OpenTelemetry, Prometheus, Grafana, or internal observability systems
+can optionally export selected metrics.
 
 ### Technical details
 
 - Supports optional OTLP/HTTP metric export.
-- Documents collector and dashboard setup for local or enterprise use.
-- Keeps export opt-in so users do not accidentally send local machine metadata
-  outside their device.
+- Documents collector and dashboard setup.
+- Keeps export opt-in so local machine metadata is not sent accidentally.
 
-## 13. Privacy, safety, and Developer Preview boundaries
+## 14. Release Validation
 
 ### What it does for people
 
-Aetower observes sensitive local machine metadata, so the product needs clear
-privacy expectations. The default behavior is local-first, and users should know
-which optional features increase visibility or require extra permissions.
+The public site should not claim a feature that the app, release scripts, or
+published artifacts cannot support.
 
 ### Technical details
 
-- Local collection is the default operating model.
-- Optional exports and integrations must be configured deliberately.
-- Developer Preview builds avoid assuming production readiness.
-- Documentation calls out observed data classes, known limitations, signed build
-  expectations, and reset/support guidance.
+- Validates history retention days, MCP operator visibility/hiding, outbound
+  defaults, Fleet defaults, appcast metadata, release artifacts, source
+  archives, CLI bundling, Homebrew cask, and published URLs.
+- Runs before website deploys.
+- Keeps changelog and website language tied to release facts.
 
-## Feature maturity notes
+## Feature Maturity Notes
 
-Aetower is currently a Developer Preview. The core monitor, history, diagnostics,
-settings, and local MCP workflows are documented as primary product surfaces.
-Some integrations depend on macOS permissions, local services, supported AI
-clients, adapter availability, or build configuration. Treat optional helpers,
-export paths, and advanced integrations as deliberately configurable rather than
-always-on behavior.
+Aetower is a Developer Preview. The Monitor, Activity, Storage, Repos,
+Diagnostics, Settings, local MCP, CLI, and release-validation workflows are
+primary product surfaces. Some integrations depend on local permissions,
+provider credentials, Chau7 availability, supported AI clients, or release build
+configuration. Optional helpers, exports, Fleet, VirusTotal, and provider
+lookups are deliberately configurable instead of always-on behavior.

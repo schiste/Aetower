@@ -35,7 +35,14 @@ SLUG_OVERRIDES = {"local-mcp": "mcp"}
 DOC_GROUPS = [
     (
         "Using Aetower",
-        ["getting-started", "features", "tabs-guide", "download", "known-limitations"],
+        [
+            "getting-started",
+            "product-direction",
+            "features",
+            "tabs-guide",
+            "download",
+            "known-limitations",
+        ],
     ),
     ("Automation & agents", ["local-mcp", "mcp-tools"]),
     (

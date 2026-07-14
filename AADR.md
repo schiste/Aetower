@@ -1,7 +1,8 @@
 # Aetower AADR
 
-Status: Draft v1  
-Date: 2026-03-20  
+Status: Draft v2
+Created: 2026-03-20
+Updated: 2026-07-14
 Scope: macOS-only desktop application, direct distribution, Rust core, SwiftUI frontend
 
 ## 1. Executive summary
@@ -18,6 +19,12 @@ The primary design decision is therefore:
 - Aggregate system behavior around those entities.
 - Rank those entities by explainable user impact.
 - Add app-specific context only through explicit, supportable adapters.
+
+As of Developer Preview 0.8.1, this architecture has expanded from a monitor
+into a local operator console with eight product workspaces: Monitor, Activity,
+Storage, Repos, Projects, Agents, System, and Settings. The current product
+direction is maintained in [Product Direction](docs/product-direction.md); this
+document remains the architecture and ADR record.
 
 ## 2. Product thesis
 
@@ -199,6 +206,69 @@ Consequences:
 
 - Signing, notarization, update delivery, and trust UX are first-class concerns.
 - If a privileged helper is introduced later, it must be isolated and optional.
+
+### ADR-006: Cache-first operator workspaces
+
+Decision:
+
+- Heavy operator workspaces should render last-known truth first, then refresh
+  freshness, fingerprints, or scan state in the background.
+- Stale data should be labeled, not hidden.
+
+Rationale:
+
+- A monitoring app that blocks while opening the page creates the same friction
+  it is meant to explain.
+- Storage, Repos, and History can hold large datasets; UI paths need bounded
+  first paint, paging, or background jobs.
+
+Consequences:
+
+- Storage and Repos maintain persisted display state and freshness signals.
+- History and storage item lists must prefer server-side paging over loading
+  large in-memory arrays.
+- Scan progress and background work need visible state.
+
+### ADR-007: Local automation surfaces are product APIs
+
+Decision:
+
+- The URL router, `aetower` CLI, local MCP tools, accessibility identifiers,
+  and Cmd+number navigation are supported automation surfaces.
+
+Rationale:
+
+- Aetower is built for operators and AI agents; mouse-only workflows are not
+  sufficient.
+- One live engine should feed the app, CLI, and MCP instead of each client
+  starting duplicate collectors.
+
+Consequences:
+
+- Slugs and tool names must be kept stable or migrated deliberately.
+- Generated MCP docs and claim validation must stay tied to descriptors.
+- Operator actions may be visible to trusted local clients, but execution stays
+  preview- and approval-gated.
+
+### ADR-008: Public claims must be validated before website deploy
+
+Decision:
+
+- Website-facing release claims should be checked against code defaults, local
+  artifacts, appcast metadata, and published URLs before deployment.
+
+Rationale:
+
+- The website changes faster than low-level implementation details.
+- Drift between marketing copy and actual defaults damages trust, especially
+  for privacy, MCP safety, release assets, and local-first guarantees.
+
+Consequences:
+
+- Release scripts include a public-claims validation gate.
+- Claims such as history retention, outbound defaults, Fleet defaults, CLI
+  bundling, Homebrew distribution, and appcast version/build are tested.
+- Product copy should prefer explicit limitations over broad claims.
 
 ## 5. System model
 

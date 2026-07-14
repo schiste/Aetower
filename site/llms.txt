@@ -17,6 +17,9 @@ answers questions like "what is straining this machine", with tools such as
 ## Docs
 
 - [Getting started](https://aetower.dev/docs/): install, first-run checklist, safe defaults
+- [Product direction](https://aetower.dev/docs/product-direction/): PRD-style direction, priorities, invariants, and source map
+- [Feature list](https://aetower.dev/docs/features/): current shipped product surfaces and maturity notes
+- [Tab guide](https://aetower.dev/docs/tabs-guide/): current app workspaces and nested sections
 - [Local MCP server](https://aetower.dev/docs/mcp/): tools, runtime model, client registration
 - [CLI reference](https://aetower.dev/docs/cli/): `aetower top/storage/repos/tab/call`, `--json`, exit codes
 - [MCP tool reference](https://aetower.dev/docs/mcp-tools/): all 46 tools with parameters, generated from the running app

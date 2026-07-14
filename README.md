@@ -80,6 +80,9 @@ brew install --cask aetower
 
 See [Getting Started](docs/getting-started.md) for the first-run flow.
 See [Feature List](docs/features.md) for a structured technical and non-technical overview of Aetower capabilities.
+See [Product Direction](docs/product-direction.md) for the current PRD-style
+direction, priorities, and source map across architecture, features, release,
+privacy, and validation docs.
 See [Download Aetower Developer Preview](docs/download.md) for the public
 download-page copy, privacy summary, update expectations, and support/reset
 guidance.

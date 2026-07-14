@@ -337,9 +337,11 @@ Diagnostics UI should support:
 
 ## In-App Diagnostics Console
 
-Add a new top-level app tab:
+Current placement: **System -> Diagnostics**.
 
-- `Diagnostics`
+The original plan called for a top-level Diagnostics tab. The shipped app now
+groups Diagnostics with Sensors, Startup, and Fleet under System so machine
+health and Aetower self-observability live together.
 
 ### Primary sections
 
