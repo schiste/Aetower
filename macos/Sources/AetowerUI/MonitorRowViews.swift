@@ -194,6 +194,9 @@ struct MonitorGroupRowModel: Identifiable, Equatable {
     let iconName: String
     let displayName: String
     let memberOverflowText: String?
+    let burdenLeaderText: String?
+    let burdenLeaderHelpText: String?
+    let burdenLeaderSeverity: OperatorSeverity?
     let cpuText: String
     let memoryText: String
     let wakeupsText: String
@@ -202,13 +205,17 @@ struct MonitorGroupRowModel: Identifiable, Equatable {
     let frictionScore: Float
     let helpText: String
 
-    init(group: EntityGroup, origin: ProcessOriginSummary) {
+    init(group: EntityGroup, origin: ProcessOriginSummary, burdenLeaders: [BurdenLeaderSummary] = []) {
+        let leaderAnnotation = Self.burdenLeaderAnnotation(for: burdenLeaders)
         self.id = group.id
         self.group = group
         self.origin = origin
         self.iconName = MonitorEntityRowModel.iconName(for: group.root.entityKind)
         self.displayName = group.root.displayName
         self.memberOverflowText = group.members.count > 1 ? "+\(group.members.count - 1)" : nil
+        self.burdenLeaderText = leaderAnnotation.text
+        self.burdenLeaderHelpText = leaderAnnotation.helpText
+        self.burdenLeaderSeverity = leaderAnnotation.severity
         self.cpuText = String(format: "%.1f%%", group.cpuPercent)
         self.memoryText = formatBytes(group.memoryBytes)
         self.wakeupsText = formatWakeups(group.wakeupsPerSecond)
@@ -216,6 +223,36 @@ struct MonitorGroupRowModel: Identifiable, Equatable {
         self.frictionText = String(format: "%.1f", group.frictionScore)
         self.frictionScore = group.frictionScore
         self.helpText = Self.helpText(for: group, origin: origin)
+    }
+
+    private static func burdenLeaderAnnotation(
+        for burdenLeaders: [BurdenLeaderSummary]
+    ) -> (text: String?, helpText: String?, severity: OperatorSeverity?) {
+        var seen = Set<String>()
+        let uniqueLeaders = burdenLeaders.filter { leader in
+            seen.insert(leader.id).inserted
+        }
+        guard !uniqueLeaders.isEmpty else {
+            return (nil, nil, nil)
+        }
+
+        let sorted = uniqueLeaders.sorted {
+            if $0.severity != $1.severity {
+                return $0.severity > $1.severity
+            }
+            return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+        let severity = sorted.map(\.severity).max()
+        let text: String
+        if let leader = sorted.first, sorted.count == 1 {
+            text = "\(leader.title.replacingOccurrences(of: " leader", with: "")): \(leader.metricValue)"
+        } else {
+            text = "\(sorted.count) leaders"
+        }
+        let helpText = sorted.map { leader in
+            "\(leader.title): \(leader.entityName) \(leader.metricValue). \(leader.detail)"
+        }.joined(separator: "\n")
+        return (text, helpText, severity)
     }
 
     private static func helpText(for group: EntityGroup, origin: ProcessOriginSummary) -> String {
@@ -237,7 +274,7 @@ struct MonitorProcessRowModel: Identifiable, Equatable {
     let id: String
     let ownerEntityID: String
     let owner: EntitySnapshot
-    let component: ComponentSnapshot
+    let commandLine: String?
     let pid: UInt32
     let displayName: String
     let subtitle: String
@@ -252,42 +289,41 @@ struct MonitorProcessRowModel: Identifiable, Equatable {
         self.id = reference.id
         self.ownerEntityID = reference.owner.entityId
         self.owner = reference.owner
-        self.component = reference.component
+        self.commandLine = reference.commandLine
         self.pid = reference.pid
-        self.displayName = reference.component.title.isEmpty
+        self.displayName = reference.title.isEmpty
             ? reference.owner.displayName
-            : reference.component.title
+            : reference.title
         self.subtitle = Self.subtitle(for: reference)
-        self.cpuText = String(format: "%.1f%%", reference.component.cpuPercent)
+        self.cpuText = String(format: "%.1f%%", reference.cpuPercent)
         self.memoryText = formatBytes(
-            max(reference.component.memoryPhysicalFootprintBytes, reference.component.memoryBytes)
+            max(reference.memoryPhysicalFootprintBytes, reference.memoryBytes)
         )
-        self.threadsText = "\(reference.component.threadCount) th"
+        self.threadsText = "\(reference.threadCount) th"
         self.pidText = "PID \(reference.pid)"
         self.frictionScore = reference.owner.friction.totalScore
         self.helpText = Self.helpText(for: reference)
     }
 
     private static func subtitle(for reference: MonitorProcessComponentRef) -> String {
-        let component = reference.component
-        if let cwd = component.cwd, !cwd.isEmpty {
+        if let cwd = reference.cwd, !cwd.isEmpty {
             return "\(reference.owner.displayName) · \(cwd)"
         }
-        if let user = component.user, !user.isEmpty {
+        if let user = reference.user, !user.isEmpty {
             return "\(reference.owner.displayName) · \(user)"
         }
         return reference.owner.displayName
     }
 
     private static func helpText(for reference: MonitorProcessComponentRef) -> String {
-        let component = reference.component
         return [
             "Owner: \(reference.owner.displayName)",
             "PID: \(reference.pid)",
-            component.user.map { "User: \($0)" },
-            component.parentSummary.map { "Parent: \($0)" },
-            component.cwd.map { "CWD: \($0)" },
-            component.commandLine.map { "Command: \($0)" },
+            reference.parentPid.map { "Parent PID: \($0)" },
+            reference.user.map { "User: \($0)" },
+            reference.cwd.map { "CWD: \($0)" },
+            reference.commandLine.map { "Command: \($0)" },
+            "Lineage: \(reference.source) · \(Int((reference.confidence * 100).rounded()))% confidence",
         ]
         .compactMap { $0 }
         .joined(separator: "\n")
@@ -478,6 +514,15 @@ struct GroupedEntityRow: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             ProcessOriginChip(summary: row.origin)
+
+            if let burdenLeaderText = row.burdenLeaderText {
+                AetowerBadge(
+                    burdenLeaderText,
+                    tone: row.burdenLeaderSeverity?.color ?? AetowerDesign.Status.neutral,
+                    size: .compact
+                )
+                    .help(row.burdenLeaderHelpText ?? "Burden leader in this grouped process tree.")
+            }
 
             if let memberOverflowText = row.memberOverflowText {
                 Text(memberOverflowText)

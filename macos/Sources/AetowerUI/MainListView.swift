@@ -876,7 +876,7 @@ public struct MainListView: View {
                 )
             } else {
                 LazyVStack(spacing: 2) {
-                    if !burdenLeaderRows.isEmpty {
+                    if !isGroupedMode && !burdenLeaderRows.isEmpty {
                         listSectionHeader("Burden leaders")
                         ForEach(burdenLeaderRows) { row in
                             Button {
@@ -1027,9 +1027,7 @@ public struct MainListView: View {
 
         Divider()
         Button("Copy Process IDs") {
-            let pids = members
-                .flatMap(\.components)
-                .compactMap(\.processId)
+            let pids = processIDs(in: members)
                 .map(String.init)
                 .joined(separator: ", ")
             NSPasteboard.general.clearContents()
@@ -1077,7 +1075,7 @@ public struct MainListView: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(row.displayName, forType: .string)
         }
-        if let commandLine = row.component.commandLine, !commandLine.isEmpty {
+        if let commandLine = row.commandLine, !commandLine.isEmpty {
             Button("Copy Command") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(commandLine, forType: .string)
@@ -1115,13 +1113,31 @@ public struct MainListView: View {
     }
 
     private func primaryProcessID(in members: [EntitySnapshot]) -> UInt32? {
-        members
+        let lineageCandidates = members
+            .flatMap(\.processLineage)
+            .map { node in
+                (
+                    pid: node.pid,
+                    cpu: node.cpuPercent,
+                    memory: max(node.memoryPhysicalFootprintBytes, node.memoryBytes)
+                )
+            }
+        if let pid = primaryProcessID(from: lineageCandidates) {
+            return pid
+        }
+
+        let componentCandidates = members
             .flatMap(\.components)
             .filter { $0.kind != .adapterContext }
             .compactMap { component -> (pid: UInt32, cpu: Float, memory: UInt64)? in
                 guard let pid = component.processId else { return nil }
-                return (pid, component.cpuPercent, component.memoryBytes)
+                return (pid, component.cpuPercent, max(component.memoryPhysicalFootprintBytes, component.memoryBytes))
             }
+        return primaryProcessID(from: componentCandidates)
+    }
+
+    private func primaryProcessID(from candidates: [(pid: UInt32, cpu: Float, memory: UInt64)]) -> UInt32? {
+        candidates
             .sorted {
                 if $0.cpu != $1.cpu {
                     return $0.cpu > $1.cpu
@@ -1130,6 +1146,17 @@ public struct MainListView: View {
             }
             .first?
             .pid
+    }
+
+    private func processIDs(in members: [EntitySnapshot]) -> [UInt32] {
+        var seen = Set<UInt32>()
+        return members.flatMap { entity -> [UInt32] in
+            let lineagePIDs = entity.processLineage.map(\.pid)
+            let pids = lineagePIDs.isEmpty
+                ? entity.components.compactMap(\.processId)
+                : lineagePIDs
+            return pids.filter { seen.insert($0).inserted }
+        }
     }
 
     @ViewBuilder
@@ -1637,10 +1664,6 @@ public struct MainListView: View {
         monitorSections.burdenLeaderRows
     }
 
-    private var burdenLeaderEntityIDs: Set<String> {
-        monitorSections.burdenLeaderEntityIDs
-    }
-
     private var allProcessRows: [MonitorEntityRowModel] {
         monitorSections.allProcessRows
     }
@@ -1652,30 +1675,39 @@ public struct MainListView: View {
     private var allProcessGroupSection: MonitorGroupRowSection {
         guard let groupingKey = currentGroupingCacheKey else { return .empty }
         let groups = groupedEntities
-        let excludedIDs = burdenLeaderEntityIDs
         let key = MonitorGroupRowCacheKey(
             groupingKey: groupingKey,
-            excludedEntityIDs: excludedIDs.sorted(),
+            burdenLeaderSignature: burdenLeaderSignature,
             groupEntityIDs: groups.map(\.id)
         )
         return monitorGroupRowCacheStore.section(
             for: key,
             groups: groups,
             originCache: processOriginCache,
-            excludedEntityIDs: excludedIDs
+            burdenLeaderSummariesByEntityID: monitorSections.burdenLeaderSummariesByEntityID
         )
+    }
+
+    private var burdenLeaderSignature: [String] {
+        monitorSections.burdenLeaderSummariesByEntityID
+            .flatMap { entityID, summaries in
+                summaries.map { summary in
+                    "\(entityID):\(summary.id):\(summary.metricValue):\(summary.severity.rawValue)"
+                }
+            }
+            .sorted()
     }
 
     private var monitorVisibleRowCount: Int {
         if isGroupedMode {
-            return burdenLeaderRows.count + allProcessGroupRows.count + visibleExpandedProcessRowCount
+            return allProcessGroupRows.count + visibleExpandedProcessRowCount
         }
         return burdenLeaderRows.count + allProcessRows.count
     }
 
     private var visiblePrimaryRowCount: Int {
         if isGroupedMode {
-            return burdenLeaderRows.count + allProcessGroupRows.count
+            return allProcessGroupRows.count
         }
         return visibleEntityIDs.count
     }
@@ -1759,7 +1791,7 @@ public struct MainListView: View {
     private var visibleEntityIDs: [String] {
         let sections = monitorSections
         if isGroupedMode {
-            return sections.burdenLeaderRows.map(\.id) + visibleGroupedEntityIDs
+            return visibleGroupedEntityIDs
         }
         return sections.flatVisibleEntityIDs
     }
@@ -1784,7 +1816,7 @@ public struct MainListView: View {
     private var visibleProcessCount: Int {
         let sections = monitorSections
         if isGroupedMode {
-            return sections.burdenLeaderProcessCount + allProcessGroupRows.reduce(0) {
+            return allProcessGroupRows.reduce(0) {
                 $0 + $1.group.processCount
             }
         }
@@ -1988,12 +2020,13 @@ public struct MainListView: View {
         groupingTask?.cancel()
 
         let originCache = processOriginCache
-        let entities = monitorSections.filteredEntities
+        let entities = monitorSections.groupingEntities
         let sortKey = key.sortKey
+        let query = key.query
         isGrouping = true
 
         let task = Task.detached(priority: .utility) {
-            buildGroupedEntities(from: entities, query: "", sortKey: sortKey, originCache: originCache)
+            buildGroupedEntities(from: entities, query: query, sortKey: sortKey, originCache: originCache)
         }
         groupingTask = task
 

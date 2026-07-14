@@ -101,15 +101,62 @@ struct EntityGroup: Equatable {
 
 struct MonitorProcessComponentRef: Identifiable, Equatable {
     let owner: EntitySnapshot
-    let component: ComponentSnapshot
     let ownerSortIndex: Int
-
-    var pid: UInt32 {
-        component.processId ?? 0
-    }
+    let pid: UInt32
+    let parentPid: UInt32?
+    let title: String
+    let executablePath: String?
+    let commandLine: String?
+    let cwd: String?
+    let user: String?
+    let startTimeMillis: UInt64
+    let cpuPercent: Float
+    let memoryBytes: UInt64
+    let memoryPhysicalFootprintBytes: UInt64
+    let threadCount: UInt32
+    let source: String
+    let confidence: Float
 
     var id: String {
         "\(owner.entityId):\(pid)"
+    }
+
+    init(owner: EntitySnapshot, lineage: ProcessLineageNode, ownerSortIndex: Int) {
+        self.owner = owner
+        self.ownerSortIndex = ownerSortIndex
+        self.pid = lineage.pid
+        self.parentPid = lineage.parentPid
+        self.title = lineage.title
+        self.executablePath = lineage.executablePath
+        self.commandLine = lineage.commandLine
+        self.cwd = lineage.cwd
+        self.user = lineage.user
+        self.startTimeMillis = lineage.startTimeMillis
+        self.cpuPercent = lineage.cpuPercent
+        self.memoryBytes = lineage.memoryBytes
+        self.memoryPhysicalFootprintBytes = lineage.memoryPhysicalFootprintBytes
+        self.threadCount = lineage.threadCount
+        self.source = lineage.source
+        self.confidence = lineage.confidence
+    }
+
+    init(owner: EntitySnapshot, component: ComponentSnapshot, ownerSortIndex: Int) {
+        self.owner = owner
+        self.ownerSortIndex = ownerSortIndex
+        self.pid = component.processId ?? 0
+        self.parentPid = component.parentSummary.flatMap(extractParentPIDForGrouping)
+        self.title = component.title
+        self.executablePath = component.executablePath
+        self.commandLine = component.commandLine
+        self.cwd = component.cwd
+        self.user = component.user
+        self.startTimeMillis = component.startTimeMillis
+        self.cpuPercent = component.cpuPercent
+        self.memoryBytes = component.memoryBytes
+        self.memoryPhysicalFootprintBytes = component.memoryPhysicalFootprintBytes
+        self.threadCount = component.threadCount
+        self.source = "component-parent-summary"
+        self.confidence = 0.55
     }
 }
 
@@ -131,14 +178,16 @@ struct MonitorSectionCacheKey: Hashable {
 
 struct MonitorGroupRowCacheKey: Hashable {
     let groupingKey: GroupingCacheKey
-    let excludedEntityIDs: [String]
+    let burdenLeaderSignature: [String]
     let groupEntityIDs: [String]
 }
 
 struct MonitorEntitySections {
     let filteredEntities: [EntitySnapshot]
+    let groupingEntities: [EntitySnapshot]
     let burdenLeaderRows: [MonitorEntityRowModel]
     let burdenLeaderEntityIDs: Set<String>
+    let burdenLeaderSummariesByEntityID: [String: [BurdenLeaderSummary]]
     let allProcessRows: [MonitorEntityRowModel]
     let flatVisibleEntityIDs: [String]
     let burdenLeaderProcessCount: Int
@@ -147,8 +196,10 @@ struct MonitorEntitySections {
 
     static let empty = MonitorEntitySections(
         filteredEntities: [],
+        groupingEntities: [],
         burdenLeaderRows: [],
         burdenLeaderEntityIDs: [],
+        burdenLeaderSummariesByEntityID: [:],
         allProcessRows: [],
         flatVisibleEntityIDs: [],
         burdenLeaderProcessCount: 0,
@@ -210,11 +261,13 @@ final class MonitorEntitySectionCacheStore: ObservableObject {
             uniqueKeysWithValues: filteredEntities.map { ($0.entityId, $0) }
         )
         var seenLeaderIDs = Set<String>()
-        let burdenLeaderEntities = buildBurdenLeaders(entities: entities, host: host)
+        let burdenLeaderSummaries = buildBurdenLeaders(entities: originFilteredEntities, host: host)
+        let burdenLeaderEntities = burdenLeaderSummaries
             .map(\.entityId)
             .filter { seenLeaderIDs.insert($0).inserted }
             .compactMap { eligibleByID[$0] }
         let burdenLeaderEntityIDs = Set(burdenLeaderEntities.map(\.entityId))
+        let burdenLeaderSummariesByEntityID = Dictionary(grouping: burdenLeaderSummaries, by: \.entityId)
         let allProcessEntities = filteredEntities.filter {
             !burdenLeaderEntityIDs.contains($0.entityId)
         }
@@ -234,8 +287,10 @@ final class MonitorEntitySectionCacheStore: ObservableObject {
 
         let refreshed = MonitorEntitySections(
             filteredEntities: filteredEntities,
+            groupingEntities: originFilteredEntities,
             burdenLeaderRows: burdenLeaderRows,
             burdenLeaderEntityIDs: burdenLeaderEntityIDs,
+            burdenLeaderSummariesByEntityID: burdenLeaderSummariesByEntityID,
             allProcessRows: allProcessRows,
             flatVisibleEntityIDs: burdenLeaderEntities.map(\.entityId)
                 + allProcessEntities.map(\.entityId),
@@ -258,18 +313,23 @@ final class MonitorGroupRowCacheStore: ObservableObject {
         for key: MonitorGroupRowCacheKey,
         groups: [EntityGroup],
         originCache: ProcessOriginSnapshotCache,
-        excludedEntityIDs: Set<String>
+        burdenLeaderSummariesByEntityID: [String: [BurdenLeaderSummary]]
     ) -> MonitorGroupRowSection {
         if self.key == key {
             return section
         }
 
         let buildStartedAt = CFAbsoluteTimeGetCurrent()
-        let refreshed = groups
-            .filter { !excludedEntityIDs.contains($0.root.entityId) }
-            .map {
-                MonitorGroupRowModel(group: $0, origin: originCache.summary(for: $0.members))
+        let refreshed = groups.map { group in
+            let summaries = group.members.flatMap { member in
+                burdenLeaderSummariesByEntityID[member.entityId] ?? []
             }
+            return MonitorGroupRowModel(
+                group: group,
+                origin: originCache.summary(for: group.members),
+                burdenLeaders: summaries
+            )
+        }
         self.key = key
         section = MonitorGroupRowSection(
             rows: refreshed,
@@ -281,13 +341,7 @@ final class MonitorGroupRowCacheStore: ObservableObject {
 
 func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
     let entityByID = Dictionary(uniqueKeysWithValues: entities.map { ($0.entityId, $0) })
-    let pidToEntityID = Dictionary(
-        uniqueKeysWithValues: entities.flatMap { entity in
-            entity.components.compactMap { component in
-                component.processId.map { ($0, entity.entityId) }
-            }
-        }
-    )
+    let pidToEntityID = pidOwnerMap(for: entities)
 
     func sessionIDs(for entity: EntitySnapshot) -> Set<String> {
         var ids = Set<String>()
@@ -400,6 +454,21 @@ func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
 
     func parentEntityIDCandidates(for entity: EntitySnapshot) -> [String] {
         var seen = Set<String>()
+        let lineageCandidates = entity.processLineage.compactMap { node -> String? in
+            guard
+                let parentPID = node.parentPid,
+                let ownerID = pidToEntityID[parentPID],
+                ownerID != entity.entityId,
+                seen.insert(ownerID).inserted
+            else {
+                return nil
+            }
+            return ownerID
+        }
+        if !lineageCandidates.isEmpty {
+            return lineageCandidates
+        }
+
         return entity.components.compactMap { component -> String? in
             guard
                 let parentSummary = component.parentSummary,
@@ -421,33 +490,10 @@ func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
             if isGenericSystemRoot(owner) {
                 continue
             }
-            if isChau7ProxyRoot(owner) || sharesStrongContext(entity, owner) {
+            if !entity.processLineage.isEmpty || isChau7ProxyRoot(owner) || sharesStrongContext(entity, owner) {
                 return ownerID
             }
         }
-        return nil
-    }
-
-    func nearestChau7AncestorEntityID(for entity: EntitySnapshot) -> String? {
-        var visited = Set([entity.entityId])
-        var queue = parentEntityIDCandidates(for: entity)
-
-        while !queue.isEmpty {
-            let ownerID = queue.removeFirst()
-            guard visited.insert(ownerID).inserted,
-                  let owner = entityByID[ownerID],
-                  !isGenericSystemRoot(owner)
-            else {
-                continue
-            }
-
-            if isChau7ProxyRoot(owner) {
-                return ownerID
-            }
-
-            queue.append(contentsOf: parentEntityIDCandidates(for: owner))
-        }
-
         return nil
     }
 
@@ -457,10 +503,6 @@ func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
             if let root = sessionRoots[id] {
                 return root
             }
-        }
-
-        if let chau7AncestorID = nearestChau7AncestorEntityID(for: entity) {
-            return chau7AncestorID
         }
 
         var visited = Set<String>()
@@ -790,7 +832,14 @@ func expandedProcessComponents(for group: EntityGroup, by sortKey: SortKey) -> [
     sortEntities(group.members, by: sortKey)
         .enumerated()
         .flatMap { ownerIndex, owner in
-            owner.components.compactMap { component -> MonitorProcessComponentRef? in
+            let lineageRefs = owner.processLineage.map {
+                MonitorProcessComponentRef(owner: owner, lineage: $0, ownerSortIndex: ownerIndex)
+            }
+            if !lineageRefs.isEmpty {
+                return lineageRefs
+            }
+
+            return owner.components.compactMap { component -> MonitorProcessComponentRef? in
                 guard component.kind != .adapterContext, component.processId != nil else {
                     return nil
                 }
@@ -798,6 +847,27 @@ func expandedProcessComponents(for group: EntityGroup, by sortKey: SortKey) -> [
             }
         }
         .sorted { compareProcessComponents($0, $1, by: sortKey) }
+}
+
+func pidOwnerMap(for entities: [EntitySnapshot]) -> [UInt32: String] {
+    var owners: [UInt32: String] = [:]
+    for entity in entities {
+        for node in entity.processLineage {
+            owners[node.pid] = entity.entityId
+        }
+    }
+    if !owners.isEmpty {
+        return owners
+    }
+
+    for entity in entities {
+        for component in entity.components {
+            if let pid = component.processId {
+                owners[pid] = entity.entityId
+            }
+        }
+    }
+    return owners
 }
 
 func uniqueEntityIDsPreservingOrder(_ entityIDs: [String]) -> [String] {
@@ -811,7 +881,17 @@ func buildGroupedEntities(
     sortKey: SortKey,
     originCache: ProcessOriginSnapshotCache
 ) -> [EntityGroup] {
-    sortGroups(buildEntityGroups(from: filterEntities(entities, query: query, originCache: originCache)), by: sortKey)
+    let groups = buildEntityGroups(from: entities)
+    let predicates = parseSearchQuery(query, originCache: originCache)
+    guard !predicates.isEmpty else {
+        return sortGroups(groups, by: sortKey)
+    }
+    let visibleGroups = groups.filter { group in
+        group.members.contains { entity in
+            predicates.allSatisfy { $0(entity) }
+        }
+    }
+    return sortGroups(visibleGroups, by: sortKey)
 }
 
 func extractParentPIDForGrouping(from parentSummary: String) -> UInt32? {
@@ -821,13 +901,19 @@ func extractParentPIDForGrouping(from parentSummary: String) -> UInt32? {
 }
 
 func visibleProcessComponentCount(_ entity: EntitySnapshot) -> Int {
-    entity.components.reduce(0) { total, component in
+    if !entity.processLineage.isEmpty {
+        return entity.processLineage.count
+    }
+    return entity.components.reduce(0) { total, component in
         total + (component.kind != .adapterContext && component.processId != nil ? 1 : 0)
     }
 }
 
 func liveProcessCount(for entity: EntitySnapshot) -> Int {
-    entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
+    if !entity.processLineage.isEmpty {
+        return entity.processLineage.count
+    }
+    return entity.components.filter { $0.kind != .adapterContext && $0.processId != nil }.count
 }
 
 func compareEntities(_ left: EntitySnapshot, _ right: EntitySnapshot, by sortKey: SortKey) -> Bool {
@@ -943,11 +1029,11 @@ func compareProcessComponents(
             processComponentTieBreak(left, right)
         }
     case .cpu:
-        return descending(left.component.cpuPercent, right.component.cpuPercent) {
+        return descending(left.cpuPercent, right.cpuPercent) {
             processComponentTieBreak(left, right)
         }
     case .memory:
-        return descending(componentEffectiveMemoryBytes(left.component), componentEffectiveMemoryBytes(right.component)) {
+        return descending(componentEffectiveMemoryBytes(left), componentEffectiveMemoryBytes(right)) {
             processComponentTieBreak(left, right)
         }
     case .wakeups:
@@ -979,13 +1065,13 @@ func compareProcessComponents(
     case .alphabeticalDesc:
         return processComponentNameDescending(left, right)
     case .oldestFirst:
-        let leftStart = left.component.startTimeMillis == 0 ? UInt64.max : left.component.startTimeMillis
-        let rightStart = right.component.startTimeMillis == 0 ? UInt64.max : right.component.startTimeMillis
+        let leftStart = left.startTimeMillis == 0 ? UInt64.max : left.startTimeMillis
+        let rightStart = right.startTimeMillis == 0 ? UInt64.max : right.startTimeMillis
         return ascending(leftStart, rightStart) {
             processComponentTieBreak(left, right)
         }
     case .newestFirst:
-        return descending(left.component.startTimeMillis, right.component.startTimeMillis) {
+        return descending(left.startTimeMillis, right.startTimeMillis) {
             processComponentTieBreak(left, right)
         }
     }
@@ -1053,7 +1139,7 @@ private func groupNameDescending(_ left: EntityGroup, _ right: EntityGroup) -> B
     return left.id < right.id
 }
 
-private func componentEffectiveMemoryBytes(_ component: ComponentSnapshot) -> UInt64 {
+private func componentEffectiveMemoryBytes(_ component: MonitorProcessComponentRef) -> UInt64 {
     max(component.memoryPhysicalFootprintBytes, component.memoryBytes)
 }
 
@@ -1065,7 +1151,7 @@ private func processComponentTieBreak(
         return left.ownerSortIndex < right.ownerSortIndex
     }
 
-    let nameOrder = left.component.title.localizedCaseInsensitiveCompare(right.component.title)
+    let nameOrder = left.title.localizedCaseInsensitiveCompare(right.title)
     if nameOrder != .orderedSame {
         return nameOrder == .orderedAscending
     }
@@ -1081,7 +1167,7 @@ private func processComponentNameAscending(
     _ left: MonitorProcessComponentRef,
     _ right: MonitorProcessComponentRef
 ) -> Bool {
-    let nameOrder = left.component.title.localizedCaseInsensitiveCompare(right.component.title)
+    let nameOrder = left.title.localizedCaseInsensitiveCompare(right.title)
     if nameOrder != .orderedSame {
         return nameOrder == .orderedAscending
     }
@@ -1092,7 +1178,7 @@ private func processComponentNameDescending(
     _ left: MonitorProcessComponentRef,
     _ right: MonitorProcessComponentRef
 ) -> Bool {
-    let nameOrder = left.component.title.localizedCaseInsensitiveCompare(right.component.title)
+    let nameOrder = left.title.localizedCaseInsensitiveCompare(right.title)
     if nameOrder != .orderedSame {
         return nameOrder == .orderedDescending
     }

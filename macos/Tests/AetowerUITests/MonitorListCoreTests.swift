@@ -107,19 +107,14 @@ final class MonitorListCoreTests: XCTestCase {
         XCTAssertEqual(expandedProcessComponents(for: group, by: .cpu).map(\.pid), [101, 100, 102])
     }
 
-    func testChau7ParentProxyGroupsAgentGrandchildrenWithoutSharedWorkspaceContext() throws {
-        let chau7 = entity(
-            id: "chau7",
-            name: "Chau7",
+    func testStructuredLineageGroupsAgentGrandchildrenWithoutSharedWorkspaceContext() throws {
+        let terminal = entity(
+            id: "terminal",
+            name: "Terminal Host",
             kind: .terminalSession,
-            badges: ["chau7-live"],
-            executablePath: "/Applications/Chau7.app/Contents/MacOS/Chau7",
-            components: [
-                component(
-                    title: "Chau7",
-                    pid: 700,
-                    executablePath: "/Applications/Chau7.app/Contents/MacOS/Chau7"
-                ),
+            executablePath: "/Applications/Terminal Host.app/Contents/MacOS/Terminal Host",
+            processLineage: [
+                lineage(title: "Terminal Host", pid: 700, entityID: "terminal", executablePath: "/Applications/Terminal Host.app/Contents/MacOS/Terminal Host"),
             ]
         )
         let codex = entity(
@@ -127,14 +122,8 @@ final class MonitorListCoreTests: XCTestCase {
             name: "codex",
             kind: .aiAgent,
             executablePath: "/opt/homebrew/bin/codex",
-            components: [
-                component(
-                    title: "codex",
-                    pid: 701,
-                    parentSummary: "zsh pid 702",
-                    executablePath: "/opt/homebrew/bin/codex",
-                    cwd: "/Users/me/ProjectA"
-                ),
+            processLineage: [
+                lineage(title: "codex", pid: 701, parentPid: 702, entityID: "codex", executablePath: "/opt/homebrew/bin/codex", cwd: "/Users/me/ProjectA"),
             ]
         )
         let zsh = entity(
@@ -142,22 +131,107 @@ final class MonitorListCoreTests: XCTestCase {
             name: "zsh",
             kind: .terminalSession,
             executablePath: "/bin/zsh",
-            components: [
-                component(
-                    title: "zsh",
-                    pid: 702,
-                    parentSummary: "Chau7 pid 700",
-                    executablePath: "/bin/zsh",
-                    cwd: "/Users/me/ProjectB"
-                ),
+            processLineage: [
+                lineage(title: "zsh", pid: 702, parentPid: 700, entityID: "zsh", executablePath: "/bin/zsh", cwd: "/Users/me/ProjectB"),
             ]
         )
 
-        let groups = buildEntityGroups(from: [codex, chau7, zsh])
-        let group = try XCTUnwrap(groups.first { $0.root.entityId == "chau7" })
+        let groups = buildEntityGroups(from: [codex, terminal, zsh])
+        let group = try XCTUnwrap(groups.first { $0.root.entityId == "terminal" })
 
-        XCTAssertEqual(Set(group.members.map(\.entityId)), Set(["chau7", "codex", "zsh"]))
+        XCTAssertEqual(Set(group.members.map(\.entityId)), Set(["terminal", "codex", "zsh"]))
         XCTAssertEqual(group.processCount, 3)
+    }
+
+    func testGroupedSearchPreservesAncestorsForMatchingLineageChild() throws {
+        let terminal = entity(
+            id: "terminal",
+            name: "Terminal Host",
+            kind: .terminalSession,
+            processLineage: [
+                lineage(title: "Terminal Host", pid: 700, entityID: "terminal"),
+            ]
+        )
+        let shell = entity(
+            id: "zsh",
+            name: "zsh",
+            kind: .terminalSession,
+            processLineage: [
+                lineage(title: "zsh", pid: 702, parentPid: 700, entityID: "zsh"),
+            ]
+        )
+        let agent = entity(
+            id: "codex",
+            name: "codex",
+            kind: .aiAgent,
+            processLineage: [
+                lineage(title: "codex", pid: 701, parentPid: 702, entityID: "codex"),
+            ]
+        )
+        let originCache = ProcessOriginSnapshotCache(sequence: 1, entities: [terminal, shell, agent])
+
+        let groups = buildGroupedEntities(
+            from: [agent, terminal, shell],
+            query: "codex",
+            sortKey: .friction,
+            originCache: originCache
+        )
+        let group = try XCTUnwrap(groups.first)
+
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(group.root.entityId, "terminal")
+        XCTAssertEqual(Set(group.members.map(\.entityId)), Set(["terminal", "zsh", "codex"]))
+    }
+
+    @MainActor
+    func testGroupRowAnnotatesBurdenLeaderWithoutDroppingGroup() throws {
+        let root = entity(id: "root", name: "Root", memory: 1_024)
+        let child = entity(id: "child", name: "Child", memory: 512)
+        let group = EntityGroup(
+            root: root,
+            members: [root, child],
+            cpuPercent: 0,
+            memoryBytes: 1_536,
+            wakeupsPerSecond: 0,
+            diskBps: 0,
+            networkBps: 0,
+            energyScore: 0,
+            frictionScore: 0,
+            processCount: 2,
+            userSummary: "",
+            oldestStartMillis: 0,
+            newestStartMillis: 0
+        )
+        let key = MonitorGroupRowCacheKey(
+            groupingKey: GroupingCacheKey(
+                sequence: 1,
+                query: "",
+                originFilter: .all,
+                sortKey: .friction,
+                filterSignature: ""
+            ),
+            burdenLeaderSignature: ["root:memory:1 KB:1"],
+            groupEntityIDs: ["root"]
+        )
+        let leader = BurdenLeaderSummary(
+            id: "memory",
+            title: "Memory leader",
+            entityId: "root",
+            entityName: "Root",
+            metricValue: "1 KB",
+            detail: "Largest charged memory footprint in the current snapshot.",
+            severity: .warning
+        )
+        let cache = ProcessOriginSnapshotCache(sequence: 1, entities: [root, child])
+        let section = MonitorGroupRowCacheStore().section(
+            for: key,
+            groups: [group],
+            originCache: cache,
+            burdenLeaderSummariesByEntityID: ["root": [leader]]
+        )
+
+        XCTAssertEqual(section.rows.map(\.id), ["root"])
+        XCTAssertEqual(section.rows.first?.burdenLeaderText, "Memory: 1 KB")
     }
 
     func testRegexTokenizerKeepsEscapedSlashInsideRegexToken() {
@@ -191,11 +265,13 @@ final class MonitorListCoreTests: XCTestCase {
         friction: Float = 0,
         badges: [String] = [],
         executablePath: String? = nil,
-        components: [ComponentSnapshot]? = nil
+        components: [ComponentSnapshot]? = nil,
+        processLineage: [ProcessLineageNode]? = nil
     ) -> EntitySnapshot {
         let resolvedComponents = components ?? [
             component(title: name, pid: UInt32(abs(id.hashValue % 10_000) + 1), cpu: cpu, memory: memory),
         ]
+        let resolvedLineage = processLineage ?? []
         let resolvedCPU = components == nil ? cpu : resolvedComponents.reduce(0) { $0 + $1.cpuPercent }
         let resolvedMemory = components == nil ? memory : resolvedComponents.reduce(0) {
             $0 + max($1.memoryPhysicalFootprintBytes, $1.memoryBytes)
@@ -247,6 +323,7 @@ final class MonitorListCoreTests: XCTestCase {
                 contributors: []
             ),
             components: resolvedComponents,
+            processLineage: resolvedLineage,
             trend: MetricTrend(
                 friction: [],
                 cpuPercent: [],
@@ -299,6 +376,39 @@ final class MonitorListCoreTests: XCTestCase {
             cwd: cwd,
             user: nil,
             threadCount: 1
+        )
+    }
+
+    private func lineage(
+        title: String,
+        pid: UInt32,
+        parentPid: UInt32? = nil,
+        entityID: String,
+        cpu: Float = 0,
+        memory: UInt64 = 0,
+        executablePath: String? = nil,
+        cwd: String? = nil,
+        source: String = "test-lineage",
+        confidence: Float = 1.0
+    ) -> ProcessLineageNode {
+        ProcessLineageNode(
+            pid: pid,
+            parentPid: parentPid,
+            entityId: entityID,
+            title: title,
+            startTimeMillis: 1_000,
+            executablePath: executablePath ?? "/usr/bin/\(title)",
+            commandLine: nil,
+            cwd: cwd,
+            user: nil,
+            sessionId: nil,
+            workspace: cwd,
+            cpuPercent: cpu,
+            memoryBytes: memory,
+            memoryPhysicalFootprintBytes: memory,
+            threadCount: 1,
+            source: source,
+            confidence: confidence
         )
     }
 }
