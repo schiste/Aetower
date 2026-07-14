@@ -233,9 +233,7 @@ package struct AIAgentsView: View {
             .padding(.bottom, AetowerDesign.Spacing.lg)
         }
         .task {
-            if state.historySnapshots.isEmpty && !state.historyIsLoading {
-                state.loadHistory(force: true)
-            }
+            state.ensureHistoryLoaded()
         }
     }
 

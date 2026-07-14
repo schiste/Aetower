@@ -392,9 +392,7 @@ public struct Chau7View: View {
         }
         .navigationTitle("Chau7")
         .task {
-            if state.historySnapshots.isEmpty && !state.historyIsLoading {
-                state.loadHistory(force: true)
-            }
+            state.ensureHistoryLoaded()
             if let entityID = chau7Entity?.entityId {
                 state.loadEntityStaticAnalysis(entityID: entityID, force: true)
             }

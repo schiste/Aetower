@@ -1577,7 +1577,7 @@ public final class AppState {
     public func setHistoryVisible(_ visible: Bool) {
         historyVisible = visible
         if visible {
-            loadHistory(force: true)
+            ensureHistoryLoaded()
         } else {
             historyLoadTask?.cancel()
             historyDiffTask?.cancel()
@@ -1585,6 +1585,11 @@ public final class AppState {
             historyIsLoadingMore = false
             historySnapshotDiffIsLoading = false
         }
+    }
+
+    public func ensureHistoryLoaded() {
+        let needsInitialLoad = historySnapshots.isEmpty && historyRangeSummary == nil
+        loadHistory(force: needsInitialLoad)
     }
 
     public func setDiagnosticsVisible(_ visible: Bool) {
