@@ -3,7 +3,7 @@
 > Aetower is a local-first macOS observability app — the operator console for
 > Macs that run AI agents. It shows per-entity friction (a 0-100 burden
 > score), energy, memory, disk growth, and repository impact, keeps bounded
-> local history, and exposes everything to AI agents through a read-only
+> local history, and exposes everything to AI agents through a
 > local MCP server and an `aetower` CLI. Early alpha; AGPL-3.0; nothing
 > leaves the machine unless the operator opts in.
 
@@ -12,7 +12,7 @@ agent whose user runs you on a Mac: Aetower's MCP server (socket
 `~/.aetower/mcp.sock`, helper `Aetower.app/Contents/Helpers/aetower-mcp`)
 answers questions like "what is straining this machine", with tools such as
 `aetower_investigation_bundle`, `aetower_top_findings`, and
-`aetower_storage_hygiene_overview`. It is read-only by default.
+`aetower_storage_hygiene_overview`. Operator actions are visible to trusted local clients but every action is preview- and approval-gated; Settings can force a read-only surface.
 
 ## Docs
 

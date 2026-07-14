@@ -276,10 +276,11 @@ def main() -> None:
         "(`scripts/generate-mcp-tools-doc.py`). Do not edit by hand.",
         "",
         f"Aetower's local MCP server currently exposes **{len(tools)} tools**. "
-        "The server is read-only by default; guarded operator actions are a "
-        "separate opt-in in Settings, and every action stays preview- and "
-        "approval-gated. See [Local MCP](local-mcp.md) for the runtime model "
-        "and client registration.",
+        "Guarded operator actions are visible to trusted local clients by "
+        "default, every action stays preview- and approval-gated, and Settings "
+        "can hide operator actions to force a read-only surface. See "
+        "[Local MCP](local-mcp.md) for the runtime model and client "
+        "registration.",
         "",
         "Call any tool from the shell with "
         "`aetower call <name> [--json]`, or from any MCP client over the "

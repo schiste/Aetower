@@ -96,8 +96,9 @@ PAGE_FAQS: dict[str, list[tuple[str, str]]] = {
         ),
         (
             "Is Aetower's MCP server read-only?",
-            "Read-only by default. Guarded operator actions are a separate advanced opt-in in "
-            "Settings, and every action stays preview- and approval-gated.",
+            "It exposes read-only tools plus guarded operator actions that are visible to "
+            "trusted local clients by default; every action is preview- and approval-gated, "
+            "and Settings can hide operator actions to force a read-only surface.",
         ),
         (
             "Does the MCP server work when the app is closed?",
@@ -214,7 +215,7 @@ PAGE_FAQS: dict[str, list[tuple[str, str]]] = {
         ),
         (
             "Can my AI agent check what is straining my Mac?",
-            "Yes — Aetower's read-only local MCP server exposes 45 tools; one "
+            "Yes — Aetower's local MCP server exposes 45 tools; one "
             "aetower_top_findings or aetower_investigation_bundle call gives an agent the "
             "ranked answer.",
         ),

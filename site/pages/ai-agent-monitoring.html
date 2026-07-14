@@ -37,13 +37,13 @@
 
 <h2>Your agents can read it too</h2>
 <p>
-  The same engine that renders the app serves a <strong>read-only local MCP server</strong> —
+  The same engine that renders the app serves a <strong>local MCP server</strong> —
   30+ tools for snapshots, history, anomaly explanations, memory breakdowns, storage, and
   repository state. Point Claude Code or any MCP client at it and ask
   <em>"what's straining my Mac right now?"</em>; one
   <code>aetower_investigation_bundle</code> call replaces twenty shell commands. Guarded
-  operator actions exist behind a separate opt-in, and every action stays preview- and
-  approval-gated.
+  operator actions are visible to trusted local clients, every action stays preview- and
+  approval-gated, and Settings can force the surface back to read-only tools.
 </p>
 <pre><code>{
   "mcpServers": {
